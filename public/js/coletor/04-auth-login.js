@@ -60,7 +60,7 @@ function doCriarConta() {
     .finally(() => { btn.disabled = false; btn.textContent = 'ENTRAR'; });
 }
 
-async function doLogin() {
+function doLogin() {
   const login = (document.getElementById('l-login')?.value || '').trim().toLowerCase();
   const pass  = document.getElementById('l-pass')?.value || '';
 
@@ -76,15 +76,7 @@ async function doLogin() {
 
   _salvarOuLimparLoginColetor(login, pass);
   const email    = _montarEmail(login);
-
-  // Aguarda obrigatoriamente o encerramento da sessão antiga.
-  // Corrige o coletor físico, onde o Firebase inicializa mais devagar.
-  try {
-    if (window.DT_AUTH_READY) await window.DT_AUTH_READY;
-  } catch (_) {}
   const btnLogin = document.getElementById('btn-login');
-  if (window.__DT_LOGIN_EM_ANDAMENTO) return;
-  window.__DT_LOGIN_EM_ANDAMENTO = true;
   const fbLogin  = document.getElementById('fb-login-erro'); // div de feedback opcional
 
   const _setBtn = (txt, disabled) => {
@@ -173,9 +165,6 @@ async function doLogin() {
       _setBtn('ENTRAR', false);
       const msg = traduzirErroAuth(err.code);
       _setFb('✗ ' + msg, 'err');
-    })
-    .finally(() => {
-      window.__DT_LOGIN_EM_ANDAMENTO = false;
     });
 }
 
@@ -237,23 +226,3 @@ function _doLogoutConfirmado() {
 }
 
 
-
-
-// Compatibilidade com coletor físico: um único fluxo de envio.
-(function prepararLoginColetorFisico(){
- const init=()=>{
-  const form=document.getElementById('form-login-coletor');
-  const btn=document.getElementById('btn-login');
-  const login=document.getElementById('l-login');
-  const pass=document.getElementById('l-pass');
-  const criar=document.getElementById('btn-criar-conta');
-  [login,pass].forEach(el=>{if(el){el.setAttribute('autocapitalize','none');el.setAttribute('spellcheck','false');}});
-  const enviar=e=>{if(e){e.preventDefault();e.stopPropagation();}doLogin();return false;};
-  if(form&&!form.dataset.bound){form.dataset.bound='1';form.addEventListener('submit',enviar,false);}
-  if(btn){btn.type='submit';btn.style.touchAction='manipulation';}
-  if(pass&&!pass.dataset.enterBound){pass.dataset.enterBound='1';pass.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();if(form?.requestSubmit)form.requestSubmit();else enviar(e);}},false);}
-  if(login&&!login.dataset.enterBound){login.dataset.enterBound='1';login.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();pass?.focus();}},false);}
-  if(criar&&!criar.dataset.bound){criar.dataset.bound='1';criar.addEventListener('click',e=>{e.preventDefault();doCriarConta();},false);}
- };
- if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
-})();

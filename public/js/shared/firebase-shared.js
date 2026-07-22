@@ -5,7 +5,7 @@ window.DT_FIREBASE_CFG = {
   projectId:         "daterrinha-inventario",
   storageBucket:     "daterrinha-inventario.firebasestorage.app",
   messagingSenderId: "310264955486",
-  appId:             "1:310264955486:web:b9954757ba022d91bd6acf"
+  appId:             "1:310264955486:web:16f22d7b5db6f8f2b8a9b4"
 };
 window.DT_FCOL = {
   inventarios:   'dt_inventarios',
@@ -27,12 +27,3 @@ window.getDTFirebaseApp = function(){
 };
 window.getDTFirestore = function(){ return getDTFirebaseApp().firestore(); };
 window.getDTAuth = function(){ return getDTFirebaseApp().auth(); };
-
-// Instâncias globais de compatibilidade usadas pelos módulos legados e refatorados.
-window.DT_FIREBASE_APP = window.getDTFirebaseApp();
-window.FS_AN = window.getDTFirestore();
-window.AUTH_AN = window.getDTAuth();
-window.FS = window.FS || window.FS_AN;
-window.AUTH = window.AUTH || window.AUTH_AN;
-window.FCOL = window.FCOL || window.DT_FCOL;
-console.log('[Firebase] projeto conectado:', window.DT_FIREBASE_CFG.projectId);

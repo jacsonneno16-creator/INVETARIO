@@ -8,10 +8,9 @@ function state(){ return window.AnalistaStore.getState(); }
 getDTFirebaseApp();
 const FS_AN   = getDTFirestore();
 const AUTH_AN = getDTAuth();
-window.FS_AN = FS_AN;
+// Exposto explicitamente em window pois firebaseService.js acessa via global.FS_AN
+window.FS_AN   = FS_AN;
 window.AUTH_AN = AUTH_AN;
-window.FS = window.FS || FS_AN;
-window.AUTH = window.AUTH || AUTH_AN;
 
 window._currentAnalistaUser = null;
 let _loginSolicitadoPeloUsuario = false;

@@ -35,36 +35,38 @@ function goPage(id, el) {
 function renderCurrentPage() { renderPage(_currentPage); }
 
 function renderPage(id) {
-  const call = (name, ...args) => {
-    const fn = window[name];
-    if (typeof fn === 'function') return fn(...args);
-    console.warn('[Navegação] Função indisponível:', name);
-    const page = document.getElementById('page-' + id);
-    if (page && !page.querySelector('.module-warning')) {
-      page.insertAdjacentHTML('afterbegin','<div class="module-warning" style="margin:12px;padding:10px;border:1px solid #f59e0b;background:#fffbeb;border-radius:8px;color:#92400e">Módulo ainda não carregado: '+name+'</div>');
+  try {
+    switch(id) {
+      case 'dashboard':         renderDashboard();        break;
+      case 'inventarios':       renderInvTable();          break;
+      case 'acompanhamento':    renderAcompanhamento();    break;
+      case 'contagens':
+        if (getInventariosAtivos().length > 0 && window.AnalistaFirebaseService?.start) {
+          window.AnalistaFirebaseService.start();
+        }
+        renderContagens();
+        break;
+      case 'pendencias':        renderPendencias();        break;
+      case 'divergencias':      renderDivergencias();      break;
+      case 'recontagens':       renderRecontagens();       break;
+      case 'rel-divergencias':  renderRelDivergencias();   break;
+      case 'capas-duplicadas':  renderCapasDuplicadas();   break;
+      case 'produtividade':     renderProdutividade();     break;
+      case 'enderecos':         atualizarEnderecos();      break;
+      case 'coletores':         renderColetores();         break;
+      case 'operadores':        listarOperadores(); opVerificarMinhaConta(); opCarregarOperadoresParaFiltro(); break;
+      case 'auditoria':         renderAuditoriaOperacional();  break;
+      case 'rastreabilidade':   renderRastreabilidade();       break;
+      case 'importar-exportar': ieAbrirPagina();           break;
     }
-  };
-  switch(id) {
-    case 'dashboard': call('renderDashboard'); break;
-    case 'inventarios': call('renderInvTable'); break;
-    case 'acompanhamento': call('renderAcompanhamento'); break;
-    case 'contagens':
-      if (typeof window.getInventariosAtivos==='function' && window.getInventariosAtivos().length > 0) window.AnalistaFirebaseService?.start?.();
-      call('renderContagens'); break;
-    case 'pendencias': call('renderPendencias'); break;
-    case 'divergencias': call('renderDivergencias'); break;
-    case 'recontagens': call('renderRecontagens'); break;
-    case 'rel-divergencias': call('renderRelDivergencias'); break;
-    case 'capas-duplicadas': call('renderCapasDuplicadas'); break;
-    case 'produtividade': call('renderProdutividade'); break;
-    case 'enderecos': call('atualizarEnderecos'); break;
-    case 'coletores':
-      window.AnalistaFirebaseService?.start?.().finally(()=>call('renderColetores'));
-      break;
-    case 'operadores': call('listarOperadores'); call('opVerificarMinhaConta'); call('opCarregarOperadoresParaFiltro'); break;
-    case 'auditoria': call('renderAuditoriaOperacional'); break;
-    case 'rastreabilidade': call('renderRastreabilidade'); break;
-    case 'importar-exportar': call('ieAbrirPagina'); break;
+  } catch (e) {
+    console.error('[Navegação] Falha ao renderizar a página "' + id + '":', e);
+    const pageEl = document.getElementById('page-' + id);
+    if (pageEl) {
+      pageEl.innerHTML = '<div class="empty"><div class="empty-icon">🚧</div>'
+        + '<div class="empty-title">Esta página ainda não foi implementada</div>'
+        + '<div class="empty-sub">Detalhe técnico: ' + (e.message || e) + '</div></div>';
+    }
   }
 }
 

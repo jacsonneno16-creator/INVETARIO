@@ -10,7 +10,7 @@
       global.AnalistaNavigation?.renderCurrentPage?.();
       if (typeof global.atualizarBadgesNav === 'function') global.atualizarBadgesNav();
       if (typeof global.updateStaticTexts === 'function') global.updateStaticTexts();
-    }, 180);
+    }, 16);
   }
 
   function scheduleBusinessReprocess(){

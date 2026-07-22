@@ -1,7 +1,6 @@
 (function(global){
   const Actions           = global.AnalistaActions;
   const InventarioService = global.AnalistaInventarioService;
-  function db(){ return global.FS_AN || global.getDTFirestore?.(); }
 
   const state = {
     started: false,
@@ -69,7 +68,7 @@
     };
 
     // A publicação atual grava os endereços em dt_locais_chunks.
-    return db().collection('dt_locais_chunks')
+    return global.FS_AN.collection('dt_locais_chunks')
       .orderBy('parte')
       .onSnapshot(async snapshot => {
         const docs = [];
@@ -87,7 +86,7 @@
         // mostrada no Firebase Console: dt_locais.
         if (!docs.length) {
           try {
-            const snap = await db().collection('dt_locais').get();
+            const snap = await global.FS_AN.collection('dt_locais').get();
             aplicar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
             return;
           } catch (fallbackErr) {
@@ -99,7 +98,7 @@
         console.warn('[FirebaseService] dt_locais_chunks:', err.message);
         // Compatibilidade com bases antigas publicadas documento a documento.
         try {
-          const snap = await db().collection('dt_locais').get();
+          const snap = await global.FS_AN.collection('dt_locais').get();
           aplicar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         } catch (fallbackErr) {
           console.warn('[FirebaseService] dt_locais fallback:', fallbackErr.message);
@@ -114,7 +113,7 @@
     if (!ids.length || !navigator.onLine) return [];
     const chunks = InventarioService.chunkIds(ids, 10);
     return chunks.map(chunk =>
-      db().collection(path)
+      global.FS_AN.collection(path)
         .where('inventario_id', 'in', chunk)
         .onSnapshot(snapshot => {
           let changed = false;
@@ -133,7 +132,7 @@
   // Listener sem filtro de inventário — usado quando nenhum inventário está ativo no cache
   function _listenCollectionAll(collection, path){
     if (!navigator.onLine) return [];
-    const unsub = db().collection(path)
+    const unsub = global.FS_AN.collection(path)
       .orderBy('criado_em', 'desc')
       .limit(500)
       .onSnapshot(snapshot => {
@@ -152,16 +151,20 @@
   // ── Listener de coletores (sem filtro por inventario_id) ─────────────────────
   function _listenColetores(){
     if (!navigator.onLine) return null;
-    return db().collection('dt_coletores')
+    return global.FS_AN.collection('dt_coletores')
       .onSnapshot(snapshot => {
-        // Uma única atualização de estado por snapshot evita remontar a tela várias vezes.
-        const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-        global.AnalistaStore.dispatch(Actions.replaceSlice('coletores', docs, {
-          source: 'firebase-coletores-snapshot', collection: 'coletores'
-        }));
+        snapshot.docChanges().forEach(change => {
+          const doc = { id: change.doc.id, ...change.doc.data() };
+          if (change.type === 'removed') {
+            global.AnalistaStore.dispatch(Actions.removeEntity('coletores', doc, { source: 'firebase', collection: 'coletores' }));
+          } else {
+            global.AnalistaStore.dispatch(Actions.upsertEntity('coletores', doc, { source: 'firebase', collection: 'coletores' }));
+          }
+        });
+        // Persistir no cache para uso offline
         const Storage = global.AnalistaStorage;
         if (Storage?.storageSave && Storage?.KEYS?.coletores) {
-          Storage.storageSave(Storage.KEYS.coletores, docs);
+          Storage.storageSave(Storage.KEYS.coletores, global.AnalistaStore.getState().coletores);
         }
       }, err => {
         console.warn('[FirebaseService] coletores:', err.message);
@@ -170,34 +173,19 @@
 
   // ── Carrega inventários do Firestore se o cache estiver vazio ────────────────
   async function _carregarInventariosSeNecessario(){
+    const ids = _getActiveInventoryIds();
+    if (ids.length) return; // cache já tem dados, não precisa buscar
     try {
-      const snap = await db().collection('dt_inventarios').get();
+      const snap = await global.FS_AN.collection('dt_inventarios').get();
+      if (snap.empty) return;
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init' }));
       const Storage = global.AnalistaStorage;
-      if (Storage?.storageSave && Storage?.KEYS?.inventarios) Storage.storageSave(Storage.KEYS.inventarios, docs);
-      return docs;
+      if (Storage?.storageSave && Storage?.KEYS?.inventarios) {
+        Storage.storageSave(Storage.KEYS.inventarios, docs);
+      }
     } catch(e) {
-      console.error('[FirebaseService] Falha ao carregar inventários:', e);
-      _emitSync(false, 'Erro ao ler dt_inventarios: ' + (e.code || e.message));
-      return [];
-    }
-  }
-
-
-  async function _carregarColetoresAgora(){
-    try {
-      const snap = await db().collection('dt_coletores').get();
-      const docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
-      global.AnalistaStore.dispatch(Actions.replaceSlice('coletores', docs, {source:'firebase-init'}));
-      const Storage=global.AnalistaStorage;
-      if(Storage?.storageSave && Storage?.KEYS?.coletores) Storage.storageSave(Storage.KEYS.coletores,docs);
-      if(typeof global.renderColetores==='function') global.renderColetores();
-      return docs;
-    } catch(e){
-      console.error('[FirebaseService] Erro ao ler dt_coletores:',e);
-      _emitSync(false,'Erro ao ler dt_coletores: '+(e.code||e.message));
-      return [];
+      console.warn('[FirebaseService] Falha ao carregar inventários:', e.message);
     }
   }
 
@@ -233,9 +221,6 @@
       return false;
     }
 
-    if (!db()) throw new Error('Firestore não inicializado.');
-    // Carga imediata garante que pendentes apareçam mesmo antes do onSnapshot.
-    await _carregarColetoresAgora();
     // Sempre garantir listener de coletores ativo (independe de inventários)
     if (!state.unsubscribers.coletores) {
       state.unsubscribers.coletores = _listenColetores();

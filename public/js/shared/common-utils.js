@@ -41,10 +41,3 @@ function _agruparCapasDuplicadas(origem) {
   return Array.from(mapa.values()).filter(x => x.total > 1);
 }
 window._agruparCapasDuplicadas = window._agruparCapasDuplicadas || _agruparCapasDuplicadas;
-
-
-// Compatibilidade: extrai a rua do padrão loja.local.area.rua.coluna.nivel.sequencia.
-window.extrairRua = window.extrairRua || function(endereco){
-  const partes = String(endereco || '').trim().split('.');
-  return partes.length >= 4 ? partes[3] : '';
-};
