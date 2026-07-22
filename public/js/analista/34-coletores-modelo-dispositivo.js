@@ -153,11 +153,19 @@ function excluirColetor(id) {
 }
 
 async function _removerColetorConfirmado(coletorId) {
-  FS_AN.collection(FS_COL_COLETORES).doc(coletorId).delete().catch(e => console.warn(e));
-  window.AnalistaState.replaceSlice('coletores', (state().coletores || []).filter(c => c.id !== coletorId), { source: 'removerColetor' });
-  salvarDB_coletores();
-  renderColetores();
-  showToast('Coletor removido', 'i');
+  try {
+    await FS_AN.collection(FS_COL_COLETORES).doc(coletorId).delete();
+    // Remoção local só acontece DEPOIS de confirmar sucesso no Firestore —
+    // caso contrário o listener em tempo real poderia trazer o coletor de
+    // volta e dar a impressão de que "não excluiu".
+    window.AnalistaState.replaceSlice('coletores', (state().coletores || []).filter(c => c.id !== coletorId), { source: 'removerColetor' });
+    salvarDB_coletores();
+    renderColetores();
+    showToast('🗑️ Coletor removido', 'i');
+    logAuditoria('SISTEMA', 'Coletor removido', coletorId);
+  } catch (e) {
+    showToast('Erro ao remover coletor: ' + e.message, 'e');
+  }
 }
 
 async function aprovarColetor(id) {

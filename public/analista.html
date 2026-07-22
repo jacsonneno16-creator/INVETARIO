@@ -3182,6 +3182,18 @@
 </div>
 </div>
 </div>
+<!-- Modal de confirmação genérico (usado por showConfirm) -->
+<div class="modal-bg" id="modal-confirm-generico">
+<div class="modal modal-sm" style="text-align:center;gap:16px">
+<div id="mcg-icon" style="font-size:2.1rem">⚠️</div>
+<div id="mcg-title" class="modal-title" style="text-align:center">Confirmar</div>
+<div id="mcg-msg" style="font-size:.85rem;color:var(--text-2);line-height:1.55"></div>
+<div style="display:flex;gap:10px">
+<button class="btn btn-ghost" style="flex:1" onclick="closeModal('modal-confirm-generico')">Cancelar</button>
+<button class="btn btn-danger" style="flex:1" id="mcg-ok">Confirmar</button>
+</div>
+</div>
+</div>
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 <!-- ══════════ JAVASCRIPT ══════════ -->

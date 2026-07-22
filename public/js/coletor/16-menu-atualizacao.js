@@ -276,11 +276,15 @@ let _deferredPrompt = null;
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   _deferredPrompt = e;
-  // Mostrar banner e botão
+  // Mostrar banner, botão e as opções dentro dos menus de três pontos
   const banner = document.getElementById('pwa-install-banner');
   if (banner) banner.style.display = 'flex';
   const btnInst = document.getElementById('btn-instalar-pwa');
   if (btnInst) btnInst.style.display = 'inline-block';
+  ['menu-instalar-pwa-login', 'menu-instalar-pwa-app'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'block';
+  });
 });
 
 function instalarPWA() {
@@ -298,6 +302,10 @@ function instalarPWA() {
     if (banner) banner.style.display = 'none';
     const btnInst = document.getElementById('btn-instalar-pwa');
     if (btnInst) btnInst.style.display = 'none';
+    ['menu-instalar-pwa-login', 'menu-instalar-pwa-app'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
   });
 }
 
@@ -367,4 +375,10 @@ window.addEventListener('appinstalled', () => {
   toast('🎉 DT Coletor instalado!', 's');
   const banner = document.getElementById('pwa-install-banner');
   if (banner) banner.style.display = 'none';
+  const btnInst = document.getElementById('btn-instalar-pwa');
+  if (btnInst) btnInst.style.display = 'none';
+  ['menu-instalar-pwa-login', 'menu-instalar-pwa-app'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
 });

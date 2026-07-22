@@ -183,17 +183,71 @@ _iniciarAuthAnalista();
 
 // ── UTIL ─────────────────────────────────────────────────────────────
 
-function showToast(msg) {
-  console.log('[Toast]', msg);
+// ── TOAST (feedback visual real, usa a <div id="toast"> já existente no HTML) ──
+let _toastTimer;
+function showToast(msg, type) {
+  const el = document.getElementById('toast');
+  if (!el) { console.log('[Toast]', msg); return; }
+  el.className = 'toast' + (type ? ' ' + type : '');
+  el.textContent = msg;
+  void el.offsetWidth; // força reflow para reiniciar a animação
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
 }
 
-function showConfirm(msg, ok) {
-  if (confirm(msg)) ok();
+// ── MODAL GENÉRICO (abre/fecha qualquer .modal-bg pelo id) ──
+// Antes desta correção, openModal/closeModal eram CHAMADAS em ~20 lugares do
+// app mas nunca haviam sido definidas — todo modal (login rápido de operador,
+// simular coletor, importar endereços etc.) simplesmente não abria.
+function openModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.add('open');
+}
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.remove('open');
 }
 
-function logSistema(tipo, desc, dados) {
-  console.log('[LOG]', tipo, desc, dados);
+// ── CONFIRMAÇÃO CUSTOMIZADA (substitui o confirm() nativo) ──
+function showConfirm(msg, onOk, opts) {
+  opts = opts || {};
+  const modalId = 'modal-confirm-generico';
+  const modal = document.getElementById(modalId);
+  if (!modal) { if (confirm(msg)) onOk(); return; } // fallback de segurança
+  document.getElementById('mcg-icon').textContent  = opts.icon  || '⚠️';
+  document.getElementById('mcg-title').textContent = opts.title || 'Confirmar';
+  document.getElementById('mcg-msg').textContent   = msg;
+  const btnOk = document.getElementById('mcg-ok');
+  btnOk.textContent = opts.okLabel || 'Confirmar';
+  btnOk.className   = 'btn ' + (opts.okClass || 'btn-danger');
+  btnOk.style.background = opts.okColor || '';
+  btnOk.onclick = () => { closeModal(modalId); onOk(); };
+  openModal(modalId);
 }
+
+// ── LOG DE AUDITORIA (grava no Firestore; nunca lança erro) ──
+// Antes desta correção, logAuditoria() era chamada dentro de aprovarColetor()
+// e bloquearColetor() mas não existia — a função estourava um erro DEPOIS do
+// Firestore já ter sido atualizado com sucesso, e esse erro caía no catch()
+// da própria função, fazendo aparecer "Erro ao aprovar" mesmo quando a
+// aprovação tinha funcionado.
+function logAuditoria(tipo, descricao, dados) {
+  try {
+    if (window.FS_AN) {
+      const user = window._currentAnalistaUser;
+      window.FS_AN.collection('dt_logs_analista').add({
+        tipo:       tipo || 'SISTEMA',
+        descricao:  descricao || '',
+        dados:      dados !== undefined ? dados : null,
+        usuario:    user ? (user.displayName || user.email) : null,
+        criado_em:  new Date().toISOString(),
+      }).catch(e => console.warn('[logAuditoria]', e.message));
+    }
+  } catch (e) { console.warn('[logAuditoria]', e); }
+  console.log('[LOG]', tipo, descricao, dados);
+}
+function logSistema(tipo, desc, dados) { return logAuditoria(tipo, desc, dados); }
 
 function atualizarBadgesNav(){}
 
@@ -211,3 +265,6 @@ window.atualizarBadgesNav = atualizarBadgesNav;
 window.showToast = showToast;
 window.showConfirm = showConfirm;
 window.logSistema = logSistema;
+window.logAuditoria = logAuditoria;
+window.openModal = openModal;
+window.closeModal = closeModal;
