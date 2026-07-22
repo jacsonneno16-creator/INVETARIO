@@ -60,7 +60,7 @@ function doCriarConta() {
     .finally(() => { btn.disabled = false; btn.textContent = 'ENTRAR'; });
 }
 
-function doLogin() {
+async function doLogin() {
   const login = (document.getElementById('l-login')?.value || '').trim().toLowerCase();
   const pass  = document.getElementById('l-pass')?.value || '';
 
@@ -76,7 +76,15 @@ function doLogin() {
 
   _salvarOuLimparLoginColetor(login, pass);
   const email    = _montarEmail(login);
+
+  // Aguarda obrigatoriamente o encerramento da sessão antiga.
+  // Corrige o coletor físico, onde o Firebase inicializa mais devagar.
+  try {
+    if (window.DT_AUTH_READY) await window.DT_AUTH_READY;
+  } catch (_) {}
   const btnLogin = document.getElementById('btn-login');
+  if (window.__DT_LOGIN_EM_ANDAMENTO) return;
+  window.__DT_LOGIN_EM_ANDAMENTO = true;
   const fbLogin  = document.getElementById('fb-login-erro'); // div de feedback opcional
 
   const _setBtn = (txt, disabled) => {
@@ -165,6 +173,9 @@ function doLogin() {
       _setBtn('ENTRAR', false);
       const msg = traduzirErroAuth(err.code);
       _setFb('✗ ' + msg, 'err');
+    })
+    .finally(() => {
+      window.__DT_LOGIN_EM_ANDAMENTO = false;
     });
 }
 
@@ -226,3 +237,33 @@ function _doLogoutConfirmado() {
 }
 
 
+
+
+// Compatibilidade com coletores físicos / WebView: não depender apenas de onclick.
+(function prepararLoginColetorFisico(){
+  const init=()=>{
+    const btn=document.getElementById('btn-login');
+    const login=document.getElementById('l-login');
+    const pass=document.getElementById('l-pass');
+    if(btn){
+      btn.type='button';
+      btn.style.touchAction='manipulation';
+      btn.onclick=null;
+      let ultimo=0;
+      const executar=e=>{
+        if(e){e.preventDefault();e.stopPropagation();}
+        const agora=Date.now(); if(agora-ultimo<700)return; ultimo=agora;
+        doLogin();
+      };
+      btn.addEventListener('pointerup',executar,{passive:false});
+      btn.addEventListener('click',executar,{passive:false});
+      btn.addEventListener('touchend',executar,{passive:false});
+    }
+    [login,pass].forEach(el=>{
+      if(!el)return;
+      el.setAttribute('autocapitalize','none');
+      el.setAttribute('spellcheck','false');
+    });
+  };
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true}); else init();
+})();

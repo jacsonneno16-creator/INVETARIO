@@ -1,50 +1,38 @@
 
-
 // ══════════════════════════════════════════════════════════
-//  MENU TRÊS PONTOS  (melhoria 3)
+// MENU TRÊS PONTOS — compatível com toque, caneta e gatilho
 // ══════════════════════════════════════════════════════════
-function toggleMenu3pts() {
-  const dd  = document.getElementById('menu3pts-dropdown');
-  const btn = document.getElementById('btn-menu3pts');
-  if (!dd) return;
-  const aberto = dd.style.display !== 'none';
-  dd.style.display = aberto ? 'none' : 'block';
-  if (btn) btn.classList.toggle('aberto', !aberto);
-  // Fechar ao clicar fora
-  if (!aberto) {
-    setTimeout(() => {
-      document.addEventListener('click', _fecharMenu3pts, { once: true });
-    }, 0);
-  }
+function _setMenu3pts(tipo, abrir){
+  const login=tipo==='login';
+  const dd=document.getElementById(login?'menu3pts-dropdown-login':'menu3pts-dropdown');
+  const btn=document.getElementById(login?'btn-menu3pts-login':'btn-menu3pts');
+  if(!dd)return;
+  dd.style.display=abrir?'block':'none';
+  dd.hidden=!abrir;
+  if(btn){btn.classList.toggle('aberto',abrir);btn.setAttribute('aria-expanded',String(abrir));}
 }
+function toggleMenu3pts(e){if(e){e.preventDefault();e.stopPropagation()}const d=document.getElementById('menu3pts-dropdown');_setMenu3pts('app',!(d&&d.style.display==='block'));}
+function toggleMenu3ptsLogin(e){if(e){e.preventDefault();e.stopPropagation()}const d=document.getElementById('menu3pts-dropdown-login');_setMenu3pts('login',!(d&&d.style.display==='block'));}
+function _fecharMenu3pts(){_setMenu3pts('app',false)}
+function _fecharMenu3ptsLogin(){_setMenu3pts('login',false)}
 
-function toggleMenu3ptsLogin() {
-  const dd  = document.getElementById('menu3pts-dropdown-login');
-  const btn = document.getElementById('btn-menu3pts-login');
-  if (!dd) return;
-  const aberto = dd.style.display !== 'none';
-  dd.style.display = aberto ? 'none' : 'block';
-  if (btn) btn.classList.toggle('aberto', !aberto);
-  if (!aberto) {
-    setTimeout(() => {
-      document.addEventListener('click', _fecharMenu3ptsLogin, { once: true });
-    }, 0);
-  }
-}
-
-function _fecharMenu3ptsLogin(e) {
-  const dd = document.getElementById('menu3pts-dropdown-login');
-  if (dd) dd.style.display = 'none';
-  const btn = document.getElementById('btn-menu3pts-login');
-  if (btn) btn.classList.remove('aberto');
-}
-
-function _fecharMenu3pts(e) {
-  const dd = document.getElementById('menu3pts-dropdown');
-  if (dd) dd.style.display = 'none';
-  const btn = document.getElementById('btn-menu3pts');
-  if (btn) btn.classList.remove('aberto');
-}
+(function prepararMenuColetorFisico(){
+ const init=()=>{
+  [['btn-menu3pts','app'],['btn-menu3pts-login','login']].forEach(([id,tipo])=>{
+   const btn=document.getElementById(id);if(!btn)return;
+   btn.type='button';btn.onclick=null;btn.style.touchAction='manipulation';
+   const fn=e=>tipo==='login'?toggleMenu3ptsLogin(e):toggleMenu3pts(e);
+   btn.addEventListener('pointerup',fn,{passive:false});
+   btn.addEventListener('click',fn,{passive:false});
+  });
+  document.addEventListener('pointerup',e=>{
+   if(!e.target.closest('#btn-menu3pts,#menu3pts-dropdown'))_fecharMenu3pts();
+   if(!e.target.closest('#btn-menu3pts-login,#menu3pts-dropdown-login'))_fecharMenu3ptsLogin();
+  });
+  document.querySelectorAll('.menu3pts-item').forEach(b=>{b.type='button';b.style.touchAction='manipulation';});
+ };
+ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
+})();
 
 // ── Mostrar versão no menu ──
 window.addEventListener('DOMContentLoaded', () => {
@@ -66,98 +54,35 @@ const LS_APP_VER = 'col_app_ver_confirmada';
 
 async function atualizarAplicativo() {
   _fecharMenu3pts();
-
-  // Mostrar modal de verificação
-  _showUpdateModal({
-    icon: '🔄', title: 'Verificando atualização…',
-    msg: 'Buscando a versão mais recente do aplicativo…',
-    ver: 'v' + APP_VERSION,
-    barPct: 20, showBtns: false
-  });
-
-  // Verificar SW registrado
-  if (!('serviceWorker' in navigator)) {
-    _showUpdateModal({
-      icon: '⚠️', title: 'Service Worker não disponível',
-      msg: 'Para atualizar, feche e reabra o aplicativo no navegador ou recarregue a página.',
-      ver: 'v' + APP_VERSION, barPct: 0, showBtns: true,
-      btnOk: 'Recarregar', onOk: () => location.reload(true),
-      btnCancel: 'Fechar',  onCancel: _hideUpdateModal
-    });
-    return;
-  }
-
-  try {
-    _updateModalProgress(40, 'Contactando servidor…');
-    const regs = await navigator.serviceWorker.getRegistrations();
-
-    if (regs.length > 0) {
-      // Forçar check de atualização em todos os SWs registrados
-      await Promise.all(regs.map(r => r.update()));
-      _updateModalProgress(70, 'Verificando nova versão…');
-      await new Promise(r => setTimeout(r, 600)); // pequeno delay
-
-      const waiting = regs.some(r => r.waiting);
-      if (waiting) {
-        _updateModalProgress(100, 'Nova versão encontrada!');
-        _showUpdateModal({
-          icon: '🚀', title: 'Nova versão disponível!',
-          msg: 'Uma nova versão do aplicativo está pronta para ser instalada.',
-          ver: 'Atualizando…', barPct: 100, showBtns: true,
-          btnOk: 'Instalar agora', onOk: () => {
-            regs.forEach(r => r.waiting?.postMessage({ type: 'SKIP_WAITING' }));
-            setTimeout(() => location.reload(true), 500);
-          },
-          btnCancel: 'Depois', onCancel: _hideUpdateModal
-        });
-        return;
+  _fecharMenu3ptsLogin();
+  _showUpdateModal({icon:'🔄',title:'Atualizando aplicativo…',msg:'Limpando a versão antiga e buscando todos os arquivos novamente.',ver:'v'+APP_VERSION,barPct:10,showBtns:false});
+  try{
+    _updateModalProgress(25,'Encerrando cache antigo…');
+    if('serviceWorker' in navigator){
+      const regs=await navigator.serviceWorker.getRegistrations();
+      for(const reg of regs){
+        try{await reg.update()}catch(_){}
+        if(reg.waiting)reg.waiting.postMessage({type:'SKIP_WAITING'});
       }
     }
-
-    // Verificar pelo cache do navegador comparando header Last-Modified / ETag
-    _updateModalProgress(85, 'Verificando cache…');
-    let novaVersaoRemota = false;
-    try {
-      const resp = await fetch(location.href, {
-        method: 'HEAD', cache: 'no-cache',
-        headers: { 'Cache-Control': 'no-cache' }
-      });
-      const etag       = resp.headers.get('ETag') || '';
-      const lastMod    = resp.headers.get('Last-Modified') || '';
-      const chaveLocal = localStorage.getItem(LS_APP_VER) || '';
-      const chaveRemota = etag || lastMod;
-      if (chaveRemota && chaveRemota !== chaveLocal) {
-        novaVersaoRemota = true;
-        localStorage.setItem(LS_APP_VER, chaveRemota);
-      }
-    } catch(e) { /* offline ou CORS */ }
-
-    _updateModalProgress(100);
-
-    if (novaVersaoRemota) {
-      _showUpdateModal({
-        icon: '🚀', title: 'Nova versão disponível!',
-        msg: 'Atualizando para a versão mais recente do aplicativo…',
-        ver: 'Recarregando…', barPct: 100, showBtns: true,
-        btnOk: 'Recarregar agora', onOk: () => location.reload(true),
-        btnCancel: 'Depois', onCancel: _hideUpdateModal
-      });
-    } else {
-      _showUpdateModal({
-        icon: '✅', title: 'Aplicativo atualizado!',
-        msg: 'Você já está usando a versão mais recente do aplicativo.',
-        ver: 'v' + APP_VERSION, barPct: 100, showBtns: true,
-        btnOk: 'OK', onOk: _hideUpdateModal,
-        btnCancel: null
-      });
+    _updateModalProgress(45,'Limpando arquivos temporários…');
+    if('caches' in window){
+      const keys=await caches.keys();
+      await Promise.all(keys.map(k=>caches.delete(k)));
     }
-  } catch(e) {
-    _showUpdateModal({
-      icon: '❌', title: 'Erro ao verificar',
-      msg: 'Não foi possível verificar atualizações: ' + (e.message || e),
-      ver: 'v' + APP_VERSION, barPct: 0, showBtns: true,
-      btnOk: 'Fechar', onOk: _hideUpdateModal, btnCancel: null
-    });
+    // Limpa apenas caches de versão; mantém login lembrado, fila e bases offline.
+    try{
+      Object.keys(localStorage).filter(k=>/^col_app_ver|^dt_asset_ver/.test(k)).forEach(k=>localStorage.removeItem(k));
+    }catch(_){}
+    _updateModalProgress(70,'Baixando página mais recente…');
+    const cleanUrl=location.origin+location.pathname+'?atualizar='+Date.now();
+    const resp=await fetch(cleanUrl,{cache:'reload',headers:{'Cache-Control':'no-cache, no-store, must-revalidate'}});
+    if(!resp.ok)throw new Error('Servidor respondeu '+resp.status);
+    await resp.text();
+    _updateModalProgress(100,'Atualização pronta. Reiniciando…');
+    setTimeout(()=>location.replace(cleanUrl),450);
+  }catch(e){
+    _showUpdateModal({icon:'⚠️',title:'Atualização manual necessária',msg:'Não foi possível limpar tudo automaticamente. Feche o aplicativo e abra novamente. Detalhe: '+(e?.message||e),ver:'v'+APP_VERSION,barPct:0,showBtns:true,btnOk:'Tentar novamente',onOk:atualizarAplicativo,btnCancel:'Fechar',onCancel:_hideUpdateModal});
   }
 }
 
@@ -236,38 +161,21 @@ function _hideUpdateModal() {
   if (overlay) overlay.style.display = 'none';
 }
 
-// ── SERVICE WORKER via <script type="text/js-worker"> ──
-// O arquivo é servido via link direto — registrar SW via URL do próprio HTML com parâmetro ?sw=1
-(function() {
-  if (!('serviceWorker' in navigator)) return;
-
-  // Detectar a URL base do próprio app
-  const selfUrl = location.href.split('?')[0].split('#')[0];
-
-  window.addEventListener('load', () => {
-    // Verificar se há um SW já registrado para este escopo
-    navigator.serviceWorker.getRegistration(selfUrl).then(reg => {
-      if (reg) {
-        dbg('[SW] já registrado:', reg.scope);
-        return;
-      }
-      // Tentar registrar — só funciona se o servidor retornar JS com Content-Type correto
-      // Como é um arquivo .html, o SW não pode ser registrado normalmente.
-      // Para instalação PWA, tentamos via importScripts workaround.
-      dbg('[SW] arquivo HTML — instalação via "Adicionar à tela inicial" disponível');
-    }).catch(() => {});
-  });
-
-  // Mostrar instruções de instalação manual para iOS (Safari não tem beforeinstallprompt)
-  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  const isInStandalone = window.navigator.standalone;
-  if (isIos && !isInStandalone) {
-    // Mostrar banner iOS após 3s
-    setTimeout(() => {
-      const banner = document.getElementById('pwa-ios-banner');
-      if (banner) banner.style.display = 'flex';
-    }, 3000);
-  }
+// ── SERVICE WORKER REAL ─────────────────────────────
+(function registrarServiceWorkerColetor(){
+ if(!('serviceWorker' in navigator))return;
+ window.addEventListener('load',async()=>{
+  try{
+   const reg=await navigator.serviceWorker.register('/sw.js',{scope:'/'});
+   console.log('[PWA coletor] Service Worker ativo:',reg.scope);
+   reg.update().catch(()=>{});
+  }catch(e){console.warn('[PWA coletor] falha no Service Worker:',e?.message||e)}
+ });
+ navigator.serviceWorker.addEventListener('controllerchange',()=>{
+  if(window.__DT_RECARREGANDO_SW)return;
+  window.__DT_RECARREGANDO_SW=true;
+  location.reload();
+ });
 })();
 
 // ── INSTALL BANNER (A2HS) ──

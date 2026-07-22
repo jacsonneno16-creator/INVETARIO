@@ -536,6 +536,8 @@
     }
     .screen-watermark + * { position: relative; z-index: 1; }
   </style>
+<link rel="manifest" href="/manifest.webmanifest?v=330">
+<style>button,.btn,.btn-menu3pts,.menu3pts-item{touch-action:manipulation;-webkit-tap-highlight-color:rgba(0,0,0,0)}.btn-menu3pts{min-width:48px;min-height:48px;position:relative;z-index:10002}.menu3pts-dropdown{z-index:10001}.menu3pts-item{min-height:52px;width:100%;position:relative}.login-card{isolation:isolate}</style>
 </head>
 <body>
 <!-- ══════════ SCREEN: LOGIN ══════════ -->
@@ -543,9 +545,9 @@
 <!-- Menu 3 pontos na tela de login -->
 <div style="position:absolute;top:14px;right:14px;z-index:20">
 <div style="position:relative">
-<button class="btn-menu3pts" id="btn-menu3pts-login" onclick="toggleMenu3ptsLogin()" title="Opções">⋮</button>
+<button class="btn-menu3pts" id="btn-menu3pts-login" title="Opções">⋮</button>
 <div class="menu3pts-dropdown" id="menu3pts-dropdown-login" style="display:none">
-<button class="menu3pts-item" onclick="atualizarAplicativo()">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item js-atualizar-app" type="button">🔄 Atualizar aplicativo</button>
 <div class="menu3pts-sep"></div>
 <div class="menu3pts-ver">v<span id="login-ver-label">—</span></div>
 </div>
@@ -594,7 +596,7 @@
 </div>
 </div>
 <label class="coletor-remember"><input id="l-remember" type="checkbox"/> <span>Lembrar login e senha neste dispositivo</span></label>
-<button class="btn btn-primary" id="btn-login" onclick="doLogin()" style="margin-top:4px">ENTRAR</button>
+<button class="btn btn-primary" id="btn-login" style="margin-top:4px">ENTRAR</button>
 <div id="fb-login-erro"></div>
 <div style="text-align:center;margin-top:4px">
 <button class="login-link" onclick="doCriarConta()">Primeiro acesso? Criar conta</button>
@@ -753,9 +755,9 @@
 </div>
 <!-- Menu três pontos (melhoria 3) -->
 <div style="position:relative">
-<button class="btn-menu3pts" id="btn-menu3pts" onclick="toggleMenu3pts()" title="Opções">⋮</button>
+<button class="btn-menu3pts" id="btn-menu3pts" title="Opções">⋮</button>
 <div class="menu3pts-dropdown" id="menu3pts-dropdown" style="display:none">
-<button class="menu3pts-item" onclick="atualizarAplicativo()">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item js-atualizar-app" type="button">🔄 Atualizar aplicativo</button>
 <button class="menu3pts-item" onclick="atualizarBase()">⬇️ Atualizar base de dados</button>
 <div class="menu3pts-sep"></div>
 <button class="menu3pts-item" onclick="toggleMenu3pts();voltarInventarios()">📦 Trocar inventário</button>
@@ -1221,5 +1223,12 @@
 </div>
 
 
-<script src="js/shared/common-utils.js?v=20260722-7"></script><script src="js/shared/firebase-shared.js?v=20260722-7"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260722-7"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260722-7"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260722-7"></script><script src="js/coletor/03-estado-app.js?v=20260722-7"></script><script src="js/coletor/04-auth-login.js?v=20260722-7"></script><script src="js/coletor/05-inventarios-download.js?v=20260722-7"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260722-7"></script><script src="js/coletor/07-etapa-endereco.js?v=20260722-7"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260722-7"></script><script src="js/coletor/09-historico-stats.js?v=20260722-7"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260722-7"></script><script src="js/coletor/11-recontagens.js?v=20260722-7"></script><script src="js/coletor/12-scanner-hardware.js?v=20260722-7"></script><script src="js/coletor/13-audio-feedback.js?v=20260722-7"></script><script src="js/coletor/14-toast.js?v=20260722-7"></script><script src="js/coletor/15-utils-init.js?v=20260722-7"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260722-7"></script><script src="js/coletor/17-auditoria-meta.js?v=20260722-7"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260722-7"></script></body>
+<script src="js/shared/common-utils.js?v=20260722-9"></script><script src="js/shared/firebase-shared.js?v=20260722-9"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260722-9"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260722-9"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260722-9"></script><script src="js/coletor/03-estado-app.js?v=20260722-9"></script><script src="js/coletor/04-auth-login.js?v=20260722-9"></script><script src="js/coletor/05-inventarios-download.js?v=20260722-9"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260722-9"></script><script src="js/coletor/07-etapa-endereco.js?v=20260722-9"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260722-9"></script><script src="js/coletor/09-historico-stats.js?v=20260722-9"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260722-9"></script><script src="js/coletor/11-recontagens.js?v=20260722-9"></script><script src="js/coletor/12-scanner-hardware.js?v=20260722-9"></script><script src="js/coletor/13-audio-feedback.js?v=20260722-9"></script><script src="js/coletor/14-toast.js?v=20260722-9"></script><script src="js/coletor/15-utils-init.js?v=20260722-9"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260722-9"></script><script src="js/coletor/17-auditoria-meta.js?v=20260722-9"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260722-9"></script><script>
+document.addEventListener('DOMContentLoaded',function(){
+ document.querySelectorAll('.js-atualizar-app').forEach(function(btn){
+  var last=0;function run(e){e.preventDefault();e.stopPropagation();var n=Date.now();if(n-last<700)return;last=n;atualizarAplicativo();}
+  btn.addEventListener('pointerup',run,{passive:false});btn.addEventListener('click',run,{passive:false});
+ });
+});
+</script></body>
 </html>

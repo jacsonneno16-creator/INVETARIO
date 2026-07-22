@@ -154,18 +154,14 @@
     if (!navigator.onLine) return null;
     return db().collection('dt_coletores')
       .onSnapshot(snapshot => {
-        snapshot.docChanges().forEach(change => {
-          const doc = { id: change.doc.id, ...change.doc.data() };
-          if (change.type === 'removed') {
-            global.AnalistaStore.dispatch(Actions.removeEntity('coletores', doc, { source: 'firebase', collection: 'coletores' }));
-          } else {
-            global.AnalistaStore.dispatch(Actions.upsertEntity('coletores', doc, { source: 'firebase', collection: 'coletores' }));
-          }
-        });
-        // Persistir no cache para uso offline
+        // Uma única atualização de estado por snapshot evita remontar a tela várias vezes.
+        const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        global.AnalistaStore.dispatch(Actions.replaceSlice('coletores', docs, {
+          source: 'firebase-coletores-snapshot', collection: 'coletores'
+        }));
         const Storage = global.AnalistaStorage;
         if (Storage?.storageSave && Storage?.KEYS?.coletores) {
-          Storage.storageSave(Storage.KEYS.coletores, global.AnalistaStore.getState().coletores);
+          Storage.storageSave(Storage.KEYS.coletores, docs);
         }
       }, err => {
         console.warn('[FirebaseService] coletores:', err.message);
