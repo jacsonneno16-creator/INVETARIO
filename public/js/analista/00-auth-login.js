@@ -8,16 +8,46 @@ function state(){ return window.AnalistaStore.getState(); }
 getDTFirebaseApp();
 const FS_AN   = getDTFirestore();
 const AUTH_AN = getDTAuth();
-window.FS_AN = FS_AN;
-window.AUTH_AN = AUTH_AN;
 
 window._currentAnalistaUser = null;
 let _loginSolicitadoPeloUsuario = false;
+const DT_LOGIN_MEM_KEY = 'dt_analista_login_lembrado_v1';
+
+function _normalizarEmailAnalista(valor) {
+  let email = String(valor || '').trim().toLowerCase().replace(/\s+/g, '');
+  // Corrige erros comuns de digitação no domínio corporativo.
+  email = email
+    .replace('@daterrinhaalimnentos.com.br', '@daterrinhaalimentos.com.br')
+    .replace('@daterrinhaalimetos.com.br', '@daterrinhaalimentos.com.br')
+    .replace('@daterrinhaalimentos.com', '@daterrinhaalimentos.com.br');
+  return email;
+}
+
+function _carregarLoginLembrado() {
+  try {
+    const salvo = JSON.parse(localStorage.getItem(DT_LOGIN_MEM_KEY) || 'null');
+    if (!salvo || !salvo.email || !salvo.senha) return;
+    const email = document.getElementById('an-email');
+    const senha = document.getElementById('an-pass');
+    const lembrar = document.getElementById('an-remember');
+    if (email) email.value = salvo.email;
+    if (senha) senha.value = salvo.senha;
+    if (lembrar) lembrar.checked = true;
+  } catch (_) {}
+}
+
+function _salvarOuLimparLogin(email, senha) {
+  const lembrar = document.getElementById('an-remember')?.checked === true;
+  try {
+    if (lembrar) localStorage.setItem(DT_LOGIN_MEM_KEY, JSON.stringify({ email, senha }));
+    else localStorage.removeItem(DT_LOGIN_MEM_KEY);
+  } catch (_) {}
+}
 
 // ── LOGIN ────────────────────────────────────────────────────────────
 
 function doLoginAnalista() {
-  const email = (document.getElementById('an-email')?.value || '').trim().toLowerCase();
+  const email = _normalizarEmailAnalista(document.getElementById('an-email')?.value || '');
   const senha = document.getElementById('an-pass')?.value || '';
 
   _clearLoginErro();
@@ -25,17 +55,17 @@ function doLoginAnalista() {
   if (!email) return _setLoginErro('Informe o e-mail.');
   if (!senha) return _setLoginErro('Informe a senha.');
 
+  _salvarOuLimparLogin(email, senha);
   _loginSolicitadoPeloUsuario = true;
   AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE)
     .then(() => AUTH_AN.signInWithEmailAndPassword(email, senha))
-    .catch(err => { _loginSolicitadoPeloUsuario = false; _setLoginErro(err.message); });
+    .catch(err => { _loginSolicitadoPeloUsuario = false; _setLoginErro(_traduzirErroLoginAnalista(err)); });
 }
 
 function doLogoutAnalista() {
   _loginSolicitadoPeloUsuario = false;
   AUTH_AN.signOut().then(() => {
     window._currentAnalistaUser = null;
-let _loginSolicitadoPeloUsuario = false;
     _mostrarLogin();
   });
 }
@@ -43,6 +73,18 @@ let _loginSolicitadoPeloUsuario = false;
 function togglePassAnalista() {
   const f = document.getElementById('an-pass');
   if (f) f.type = f.type === 'password' ? 'text' : 'password';
+}
+
+function _traduzirErroLoginAnalista(err) {
+  const code = err?.code || '';
+  const mensagens = {
+    'auth/invalid-credential': 'E-mail ou senha incorretos. Confira também se o domínio é @daterrinhaalimentos.com.br.',
+    'auth/invalid-email': 'O e-mail informado é inválido.',
+    'auth/user-disabled': 'Este usuário está desativado no Firebase.',
+    'auth/too-many-requests': 'Muitas tentativas. Aguarde alguns minutos e tente novamente.',
+    'auth/network-request-failed': 'Não foi possível conectar ao Firebase. Verifique a internet.'
+  };
+  return mensagens[code] || err?.message || 'Não foi possível realizar o login.';
 }
 
 function _setLoginErro(msg) {
@@ -63,7 +105,7 @@ function _clearLoginErro() {
 
 // ── LOGIN OK ─────────────────────────────────────────────────────────
 
-async function _onAnalistaLogado(user) {
+function _onAnalistaLogado(user) {
   window._currentAnalistaUser = user;
 
   if (window.AnalistaStore) {
@@ -79,9 +121,6 @@ async function _onAnalistaLogado(user) {
   if (elAvatar) elAvatar.textContent = nome.slice(0,2).toUpperCase();
 
   _mostrarApp();
-
-  // Garante que o token de autenticação já esteja válido antes das leituras.
-  try { await user.getIdToken(true); } catch(e) { console.warn('[Auth] Token:', e.message); }
 
   // 🔥 CHAMADA SEGURA DO INIT
   if (window.AnalistaBootstrap?.initApp) {
@@ -118,6 +157,7 @@ async function _iniciarAuthAnalista() {
   const senha = document.getElementById('an-pass');
   if (email) email.value = '';
   if (senha) senha.value = '';
+  _carregarLoginLembrado();
 
   try {
     await AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE);

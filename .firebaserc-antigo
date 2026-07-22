@@ -70,7 +70,6 @@
     .login-box .field{background:#f8fafc;border:1.5px solid #e2e8f0;color:#1F2937}
     .login-box .field:focus{border-color:#1E6F4E !important;box-shadow:0 0 0 3px rgba(30,111,78,.12) !important}
     .login-box .btn-primary{background:linear-gradient(135deg,#1E6F4E,#155d3f) !important;color:#fff !important;box-shadow:0 4px 16px rgba(30,111,78,.35) !important}
-    .coletor-remember{display:flex;align-items:center;gap:8px;font-size:.78rem;color:#64748b;cursor:pointer;user-select:none}.coletor-remember input{width:16px;height:16px;accent-color:#1E6F4E}
     .login-link{background:transparent;border:none;color:#1E6F4E;font-size:.78rem;cursor:pointer;font-family:var(--sans);text-decoration:underline;opacity:.85}
     .f-wrap{position:relative}
     .field{width:100%;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:14px 16px;font-size:1rem;font-family:var(--mono);color:var(--text);outline:none;transition:border-color .2s,box-shadow .2s;-webkit-appearance:none}
@@ -593,7 +592,6 @@
 <span class="f-icon" onclick="togglePass()">👁</span>
 </div>
 </div>
-<label class="coletor-remember"><input id="l-remember" type="checkbox"/> <span>Lembrar login e senha neste dispositivo</span></label>
 <button class="btn btn-primary" id="btn-login" onclick="doLogin()" style="margin-top:4px">ENTRAR</button>
 <div id="fb-login-erro"></div>
 <div style="text-align:center;margin-top:4px">

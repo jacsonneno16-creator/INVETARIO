@@ -2,6 +2,24 @@
 //  LOGIN  (Firebase Auth)
 // ═══════════════════════════════════════════════════
 
+
+const DT_COLETOR_LOGIN_MEM_KEY = 'dt_coletor_login_lembrado_v1';
+function _carregarLoginColetorLembrado(){
+  try{
+    const salvo=JSON.parse(localStorage.getItem(DT_COLETOR_LOGIN_MEM_KEY)||'null');
+    if(!salvo?.login||!salvo?.senha)return;
+    const l=document.getElementById('l-login'),p=document.getElementById('l-pass'),r=document.getElementById('l-remember');
+    if(l)l.value=salvo.login;if(p)p.value=salvo.senha;if(r)r.checked=true;
+  }catch(_){}
+}
+function _salvarOuLimparLoginColetor(login,senha){
+  try{
+    if(document.getElementById('l-remember')?.checked) localStorage.setItem(DT_COLETOR_LOGIN_MEM_KEY,JSON.stringify({login,senha}));
+    else localStorage.removeItem(DT_COLETOR_LOGIN_MEM_KEY);
+  }catch(_){}
+}
+window.addEventListener('DOMContentLoaded',_carregarLoginColetorLembrado);
+
 // Monta email interno a partir do login (ex: jacson.souza → jacson.souza@daterrinhaalimentos.com.br)
 function _montarEmail(login) {
   return login.trim().toLowerCase().replace(/\s+/g, '') + '@daterrinhaalimentos.com.br';
@@ -56,6 +74,7 @@ function doLogin() {
     return;
   }
 
+  _salvarOuLimparLoginColetor(login, pass);
   const email    = _montarEmail(login);
   const btnLogin = document.getElementById('btn-login');
   const fbLogin  = document.getElementById('fb-login-erro'); // div de feedback opcional

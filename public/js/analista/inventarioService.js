@@ -1,7 +1,7 @@
 (function(global){
   const InventarioService = {
     getInventariosAtivosIds(inventarios){
-      return (inventarios || []).filter(i => { if(!i) return false; const st=String(i.status||'').toUpperCase(); return i.ativo===true || ['ATIVO','ABERTO','EM_ANDAMENTO','LIBERADO'].includes(st); }).map(i => i.id).filter(Boolean);
+      return (inventarios || []).filter(i => i && i.status === 'ATIVO').map(i => i.id).filter(Boolean);
     },
 
     chunkIds(ids, size = 10){

@@ -42,8 +42,5 @@ service cloud.firestore {
     match /dt_produtos/{id}                { allow read, write: if signedIn(); }
     match /dt_ranking_operadores/{id}      { allow read, write: if signedIn(); }
     match /dt_recontagens/{id}             { allow read, write: if signedIn(); }
-
-    // Compatibilidade para qualquer coleção adicional usada pelo sistema.
-    match /{document=**} { allow read, write: if signedIn(); }
   }
 }
