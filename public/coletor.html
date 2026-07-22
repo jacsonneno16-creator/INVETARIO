@@ -2,7 +2,6 @@
 
 <html lang="pt-BR">
 <head>
-<link rel="manifest" href="manifest.webmanifest?v=14">
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, user-scalable=no" name="viewport"/>
 <meta content="#060d1a" name="theme-color"/>
@@ -537,7 +536,7 @@
     }
     .screen-watermark + * { position: relative; z-index: 1; }
   </style>
-</head>
+<link rel="manifest" href="/manifest.webmanifest?v=16"><meta name="theme-color" content="#0f5b3a"><script>(function(){window.DT_ERRORS=[];window.addEventListener('error',e=>DT_ERRORS.push({t:new Date().toISOString(),m:e.message,f:e.filename,l:e.lineno}));window.addEventListener('unhandledrejection',e=>DT_ERRORS.push({t:new Date().toISOString(),m:String(e.reason&&e.reason.message||e.reason)}));})();</script></head>
 <body>
 <!-- ══════════ SCREEN: LOGIN ══════════ -->
 <div class="screen active" id="screen-login">
@@ -547,7 +546,7 @@
 <button class="btn-menu3pts" id="btn-menu3pts-login" onclick="toggleMenu3ptsLogin()" title="Opções">⋮</button>
 <div class="menu3pts-dropdown" id="menu3pts-dropdown-login" style="display:none">
 <button class="menu3pts-item" onclick="atualizarAplicativo()">🔄 Atualizar aplicativo</button>
-<button class="menu3pts-item" id="menu-instalar-pwa-login" onclick="instalarPWA()" style="display:block">📲 Instalar aplicativo</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-login" onclick="toggleMenu3ptsLogin();instalarPWA()" style="display:none">📲 Instalar aplicativo</button>
 <div class="menu3pts-sep"></div>
 <div class="menu3pts-ver">v<span id="login-ver-label">—</span></div>
 </div>
@@ -595,7 +594,7 @@
 <span class="f-icon" onclick="togglePass()">👁</span>
 </div>
 </div>
-<label class="coletor-remember"><input id="l-remember" type="checkbox"/> <span>Lembrar login e senha neste dispositivo</span></label>
+<label class="coletor-remember"><input id="l-remember" type="checkbox"/> <span>Lembrar apenas o login neste dispositivo</span></label>
 <button class="btn btn-primary" id="btn-login" onclick="doLogin()" style="margin-top:4px">ENTRAR</button>
 <div id="fb-login-erro"></div>
 <div style="text-align:center;margin-top:4px">
@@ -759,7 +758,7 @@
 <div class="menu3pts-dropdown" id="menu3pts-dropdown" style="display:none">
 <button class="menu3pts-item" onclick="atualizarAplicativo()">🔄 Atualizar aplicativo</button>
 <button class="menu3pts-item" onclick="atualizarBase()">⬇️ Atualizar base de dados</button>
-<button class="menu3pts-item" id="menu-instalar-pwa-app" onclick="instalarPWA()" style="display:block">📲 Instalar aplicativo</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-app" onclick="toggleMenu3pts();instalarPWA()" style="display:none">📲 Instalar aplicativo</button>
 <div class="menu3pts-sep"></div>
 <button class="menu3pts-item" onclick="toggleMenu3pts();voltarInventarios()">📦 Trocar inventário</button>
 <button class="menu3pts-item" onclick="toggleMenu3pts();doLogout()" style="color:#ff6b6b">🚪 Sair</button>
@@ -1224,5 +1223,5 @@
 </div>
 
 
-<script src="js/shared/common-utils.js?v=20260722-15"></script><script src="js/shared/firebase-shared.js?v=20260722-15"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260722-15"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260722-15"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260722-15"></script><script src="js/coletor/03-estado-app.js?v=20260722-15"></script><script src="js/coletor/04-auth-login.js?v=20260722-15"></script><script src="js/coletor/05-inventarios-download.js?v=20260722-15"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260722-15"></script><script src="js/coletor/07-etapa-endereco.js?v=20260722-15"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260722-15"></script><script src="js/coletor/09-historico-stats.js?v=20260722-15"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260722-15"></script><script src="js/coletor/11-recontagens.js?v=20260722-15"></script><script src="js/coletor/12-scanner-hardware.js?v=20260722-15"></script><script src="js/coletor/13-audio-feedback.js?v=20260722-15"></script><script src="js/coletor/14-toast.js?v=20260722-15"></script><script src="js/coletor/15-utils-init.js?v=20260722-15"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260722-15"></script><script src="js/coletor/17-auditoria-meta.js?v=20260722-15"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260722-15"></script><script src="js/coletor/19-runtime-estavel-v15.js?v=20260722-15"></script></body>
+<script src="js/shared/common-utils.js?v=20260722-16"></script><script src="js/shared/firebase-shared.js?v=20260722-16"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260722-16"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260722-16"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260722-16"></script><script src="js/coletor/03-estado-app.js?v=20260722-16"></script><script src="js/coletor/04-auth-login.js?v=20260722-16"></script><script src="js/coletor/05-inventarios-download.js?v=20260722-16"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260722-16"></script><script src="js/coletor/07-etapa-endereco.js?v=20260722-16"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260722-16"></script><script src="js/coletor/09-historico-stats.js?v=20260722-16"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260722-16"></script><script src="js/coletor/11-recontagens.js?v=20260722-16"></script><script src="js/coletor/12-scanner-hardware.js?v=20260722-16"></script><script src="js/coletor/13-audio-feedback.js?v=20260722-16"></script><script src="js/coletor/14-toast.js?v=20260722-16"></script><script src="js/coletor/15-utils-init.js?v=20260722-16"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260722-16"></script><script src="js/coletor/17-auditoria-meta.js?v=20260722-16"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260722-16"></script><script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js?v=16').catch(e=>console.warn('[PWA]',e)));}</script></body>
 </html>

@@ -280,12 +280,3 @@ window.iniciarListenerAuditoria = function(invId){
   };
 })();
 
-
-// v14: remover service workers antigos e registrar versão de rede-primeiro.
-window.addEventListener('load', function(){
-  if(!('serviceWorker' in navigator)) return;
-  navigator.serviceWorker.getRegistrations().then(function(regs){
-    return Promise.all(regs.map(function(r){ return r.unregister(); }));
-  }).then(function(){ return navigator.serviceWorker.register('/sw-v14.js?v=14', {scope:'/'}); })
-    .catch(function(e){ console.warn('[SW v14]',e && e.message); });
-});

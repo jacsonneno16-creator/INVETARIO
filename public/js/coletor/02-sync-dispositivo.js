@@ -108,14 +108,10 @@ function obterDeviceId() {
 /** Obtém o IP público do aparelho via API gratuita */
 async function obterIPPublico() {
   try {
-    var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
-    var timer = controller ? setTimeout(function(){ controller.abort(); }, 3500) : null;
-    var opts = controller ? { signal: controller.signal, cache: 'no-store' } : { cache: 'no-store' };
-    var r = await fetch('https://api.ipify.org?format=json', opts);
-    if (timer) clearTimeout(timer);
-    var j = await r.json();
+    const r = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(4000) });
+    const j = await r.json();
     return j.ip || null;
-  } catch (e) { return null; }
+  } catch { return null; }
 }
 
 let _heartbeatInterval = null;
@@ -133,44 +129,103 @@ let _heartbeatInterval = null;
  * Nunca cria mais de um documento para o mesmo aparelho.
  */
 async function registrarColetorNoFirestore(operadorInfo) {
-  var deviceId = obterDeviceId();
-  var ref = FS.collection(FCOL.coletores).doc(deviceId);
-  var ip = null; // IP não bloqueia o login; será atualizado em segundo plano.
+  const deviceId = obterDeviceId();
+  const ref      = FS.collection(FCOL.coletores).doc(deviceId);
+
+  // O registro não pode depender de serviço externo de IP.
+  const ip = null;
+
   try {
-    var snap = await ref.get();
+    const snap = await ref.get();
+
+    // ── APARELHO NOVO ────────────────────────────────────────────────────
     if (!snap.exists) {
-      // Não consultar a coleção inteira. Essa consulta atrasava/falhava em
-      // coletores físicos. O número provisório é derivado do próprio device_id.
-      var numero = String(parseInt(_djb2(deviceId).slice(-4), 36) % 10000).padStart(4, '0');
+      // Número provisório estável, sem consultar toda a coleção.
+      const numero = deviceId.slice(-4).toUpperCase();
+
       await ref.set({
-        device_id: deviceId, nome_coletor: 'Coletor ' + numero, numero: numero,
-        ip: ip || null, operador_atual: operadorInfo.name || '',
-        operador_email: operadorInfo.email || '', operador_uid: operadorInfo.uid || '',
-        status: 'pendente', aprovado: 'pendente',
-        data_registro: ST(), criado_em: ST(), ultimo_ping: ST(),
-        sessao: null, contagens_enviadas: 0, contagens_pendentes: 0
+        device_id:           deviceId,
+        nome_coletor:        'Coletor ' + numero,
+        numero:              numero,
+        operador_atual:      operadorInfo.name,
+        operador_email:      operadorInfo.email || null,
+        operador_uid:        operadorInfo.uid || null,
+        status:              'pendente',
+        aprovado:            'pendente',
+        data_registro:       ST(),
+        ultimo_ping:         ST(),
+        sessao:              null,
+        contagens_enviadas:  0,
+        contagens_pendentes: 0,
+        versao_app:          (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '2.0.0')
       }, { merge: true });
+
+      // IP é enriquecimento opcional e assíncrono; nunca bloqueia o login.
+      obterIPPublico().then(v => v && ref.set({ip:v},{merge:true})).catch(()=>{});
+      dbg('[Coletor] Novo aparelho registrado como Coletor', numero, '— pendente — ID:', deviceId);
       return 'pendente';
     }
-    var dados = snap.data() || {};
-    if (dados.aprovado === 'bloqueado') return 'bloqueado';
+
+    // ── APARELHO JÁ EXISTE ───────────────────────────────────────────────
+    const dados = snap.data();
+
+    if (dados.aprovado === 'bloqueado') {
+      console.warn('[Coletor] Aparelho bloqueado — acesso negado.');
+      return 'bloqueado';
+    }
+
     if (dados.aprovado !== 'aprovado') {
-      await ref.set({ operador_atual: operadorInfo.name || '', operador_email: operadorInfo.email || '', operador_uid: operadorInfo.uid || '', ultimo_ping: ST(), status:'pendente', ip: ip || dados.ip || null }, {merge:true});
+      // Atualiza operador_atual e ping mesmo estando pendente (analista vê quem tentou)
+      await ref.set({ operador_atual: operadorInfo.name, operador_email: operadorInfo.email || null, operador_uid: operadorInfo.uid || null, ultimo_ping: ST() }, {merge:true});
+      dbg('[Coletor] Aparelho pendente — acesso aguardando aprovacao.');
       return 'pendente';
     }
+
+    // APROVADO: atualizar operador e sessão (nunca cria novo doc)
     await ref.set({
-      operador_atual: operadorInfo.name || '', operador_email: operadorInfo.email || '', operador_uid: operadorInfo.uid || '',
-      ultimo_ping: ST(), status: 'online',
-      sessao: { operador: operadorInfo.name || '', email: operadorInfo.email || '', uid: operadorInfo.uid || '', inventario_id: APP.inventario ? APP.inventario.id : null, inventario_nome: APP.inventario ? APP.inventario.nome : null, login_em: ST() },
-      ip: ip || dados.ip || null
-    }, {merge:true});
+      operador_atual:   operadorInfo.name,
+      ultimo_ping:      ST(),
+      status:           'online',
+      sessao: {
+        operador:        operadorInfo.name,
+        email:           operadorInfo.email,
+        inventario_id:   APP.inventario?.id    || null,
+        inventario_nome: APP.inventario?.nome  || null,
+        login_em:        ST(),
+      },
+    }, { merge: true });
+    obterIPPublico().then(v => v && ref.set({ip:v},{merge:true})).catch(()=>{});
+    dbg('[Coletor] Sessao atualizada —', operadorInfo.name, '— aprovado — ID:', deviceId);
     return 'aprovado';
+
   } catch (e) {
-    console.error('[Coletor] Falha real ao registrar:', e);
-    e.message = 'Falha ao registrar aparelho: ' + (e.message || e.code || 'erro');
-    throw e;
+    console.warn('[Coletor] registrarColetorNoFirestore falhou:', e.message);
+    // Em caso de erro de rede, permitir acesso se já tinha sessão local
+    return 'erro';
   }
 }
+
+
+let _aprovacaoListener = null;
+function iniciarListenerAprovacaoColetor(operadorInfo) {
+  if (_aprovacaoListener) { try { _aprovacaoListener(); } catch(_){} }
+  const ref = FS.collection(FCOL.coletores).doc(obterDeviceId());
+  _aprovacaoListener = ref.onSnapshot(async snap => {
+    if (!snap.exists) return;
+    const d = snap.data() || {};
+    if (d.aprovado === 'bloqueado') {
+      if (typeof _mostrarTelaBloqueado === 'function') _mostrarTelaBloqueado();
+      return;
+    }
+    if (d.aprovado !== 'aprovado') return;
+    try {
+      await ref.set({status:'online', operador_atual:operadorInfo.name, operador_email:operadorInfo.email, operador_uid:operadorInfo.uid, ultimo_ping:ST()}, {merge:true});
+      if (_aprovacaoListener) { _aprovacaoListener(); _aprovacaoListener=null; }
+      location.reload();
+    } catch(e) { console.error('[Aprovação] Falha ao liberar coletor:', e); }
+  }, err => console.error('[Aprovação] Listener:', err));
+}
+window.iniciarListenerAprovacaoColetor = iniciarListenerAprovacaoColetor;
 
 /**
  * Atualiza apenas o inventário dentro da sessão.
@@ -618,13 +673,3 @@ async function enfileirarContagem(contagem) {
   }
 }
 
-
-
-// v15 — Atualiza o IP sem bloquear login/cadastro.
-function atualizarIPColetorEmSegundoPlano(){
-  obterIPPublico().then(function(ip){
-    if(!ip) return;
-    return FS.collection(FCOL.coletores).doc(obterDeviceId()).set({ip:ip, ip_atualizado_em:ST()},{merge:true});
-  }).catch(function(){});
-}
-window.atualizarIPColetorEmSegundoPlano=atualizarIPColetorEmSegundoPlano;

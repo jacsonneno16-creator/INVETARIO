@@ -8,7 +8,7 @@
     ],
     "headers": [
       {
-        "source": "**/*.@(html|js|css|webmanifest)",
+        "source": "**/*.@(html|js|webmanifest)",
         "headers": [
           {
             "key": "Cache-Control",
@@ -17,11 +17,11 @@
         ]
       },
       {
-        "source": "/sw-v15.js",
+        "source": "/sw.js",
         "headers": [
           {
             "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
+            "value": "no-cache"
           },
           {
             "key": "Service-Worker-Allowed",

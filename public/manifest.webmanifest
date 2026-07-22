@@ -1,23 +1,10 @@
 {
-  "name": "Meu Inventário — Coletor",
-  "short_name": "Inventário",
-  "start_url": "/coletor.html?v=15",
+  "name": "DT Inventário - Coletor",
+  "short_name": "DT Inventário",
+  "start_url": "/coletor.html",
   "scope": "/",
   "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#060d1a",
-  "theme_color": "#1E6F4E",
-  "icons": [
-    {
-      "src": "/icons/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png"
-    },
-    {
-      "src": "/icons/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
-    }
-  ],
-  "id": "/coletor.html"
+  "background_color": "#0f5b3a",
+  "theme_color": "#0f5b3a",
+  "icons": []
 }

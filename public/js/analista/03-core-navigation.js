@@ -34,38 +34,42 @@ function goPage(id, el) {
 
 function renderCurrentPage() { renderPage(_currentPage); }
 
+function _callPage(fnName, fallback) {
+  const fn = window[fnName];
+  if (typeof fn === 'function') return fn();
+  console.warn('[Navegação] Função ausente:', fnName);
+  if (typeof fallback === 'function') return fallback();
+}
 function renderPage(id) {
   try {
     switch(id) {
-      case 'dashboard':         renderDashboard();        break;
-      case 'inventarios':       renderInvTable();          break;
-      case 'acompanhamento':    renderAcompanhamento();    break;
+      case 'dashboard':          return _callPage('renderDashboard');
+      case 'inventarios':        return _callPage('renderInvTable');
+      case 'acompanhamento':     return _callPage('renderAcompanhamento');
       case 'contagens':
-        if (getInventariosAtivos().length > 0 && window.AnalistaFirebaseService?.start) {
-          window.AnalistaFirebaseService.start();
-        }
-        renderContagens();
-        break;
-      case 'pendencias':        renderPendencias();        break;
-      case 'divergencias':      renderDivergencias();      break;
-      case 'recontagens':       renderRecontagens();       break;
-      case 'rel-divergencias':  renderRelDivergencias();   break;
-      case 'capas-duplicadas':  renderCapasDuplicadas();   break;
-      case 'produtividade':     renderProdutividade();     break;
-      case 'enderecos':         atualizarEnderecos();      break;
-      case 'coletores':         renderColetores();         break;
-      case 'operadores':        listarOperadores(); opVerificarMinhaConta(); opCarregarOperadoresParaFiltro(); break;
-      case 'auditoria':         renderAuditoriaOperacional();  break;
-      case 'rastreabilidade':   renderRastreabilidade();       break;
-      case 'importar-exportar': ieAbrirPagina();           break;
+        if (typeof window.getInventariosAtivos === 'function' && getInventariosAtivos().length > 0 && window.AnalistaFirebaseService?.start) window.AnalistaFirebaseService.start();
+        return _callPage('renderContagens');
+      case 'pendencias':         return _callPage('renderPendencias');
+      case 'divergencias':       return _callPage('renderDivergencias');
+      case 'recontagens':        return _callPage('renderRecontagens');
+      case 'rel-divergencias':   return _callPage('renderRelDivergencias');
+      case 'capas-duplicadas':   return _callPage('renderCapasDuplicadas');
+      case 'produtividade':      return _callPage('renderProdutividade');
+      case 'enderecos':          return _callPage('atualizarEnderecos');
+      case 'coletores':          return _callPage('renderColetores');
+      case 'operadores':         return _callPage('listarOperadores');
+      case 'auditoria':          return _callPage('renderAuditoriaOperacional');
+      case 'rastreabilidade':    return _callPage('renderRastreabilidade');
+      case 'importar-exportar':  return _callPage('ieAbrirPagina');
     }
   } catch (e) {
     console.error('[Navegação] Falha ao renderizar a página "' + id + '":', e);
     const pageEl = document.getElementById('page-' + id);
     if (pageEl) {
-      pageEl.innerHTML = '<div class="empty"><div class="empty-icon">🚧</div>'
-        + '<div class="empty-title">Esta página ainda não foi implementada</div>'
-        + '<div class="empty-sub">Detalhe técnico: ' + (e.message || e) + '</div></div>';
+      const msg = String(e && (e.message || e)).replace(/[<>&]/g, '');
+      const alert = document.createElement('div');
+      alert.className='empty'; alert.innerHTML='<div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar esta página</div><div class="empty-sub">'+msg+'</div>';
+      pageEl.prepend(alert);
     }
   }
 }

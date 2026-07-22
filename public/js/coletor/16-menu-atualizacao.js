@@ -3,32 +3,49 @@
 // ══════════════════════════════════════════════════════════
 //  MENU TRÊS PONTOS  (melhoria 3)
 // ══════════════════════════════════════════════════════════
-function _dtToggleMenu(id, btnId) {
-  var dd=document.getElementById(id), btn=document.getElementById(btnId);
-  if(!dd)return false;
-  var abrir=(dd.style.display==='none'||getComputedStyle(dd).display==='none');
-  dd.style.display=abrir?'block':'none';
-  if(btn)btn.classList.toggle('aberto',abrir);
-  return abrir;
+function toggleMenu3pts() {
+  const dd  = document.getElementById('menu3pts-dropdown');
+  const btn = document.getElementById('btn-menu3pts');
+  if (!dd) return;
+  const aberto = dd.style.display !== 'none';
+  dd.style.display = aberto ? 'none' : 'block';
+  if (btn) btn.classList.toggle('aberto', !aberto);
+  // Fechar ao clicar fora
+  if (!aberto) {
+    setTimeout(() => {
+      document.addEventListener('click', _fecharMenu3pts, { once: true });
+    }, 0);
+  }
 }
-function toggleMenu3pts(e){if(e){e.preventDefault();e.stopPropagation();}return _dtToggleMenu('menu3pts-dropdown','btn-menu3pts');}
-function toggleMenu3ptsLogin(e){if(e){e.preventDefault();e.stopPropagation();}return _dtToggleMenu('menu3pts-dropdown-login','btn-menu3pts-login');}
-function _fecharMenu3pts(){var d=document.getElementById('menu3pts-dropdown');if(d)d.style.display='none';var b=document.getElementById('btn-menu3pts');if(b)b.classList.remove('aberto');}
-function _fecharMenu3ptsLogin(){var d=document.getElementById('menu3pts-dropdown-login');if(d)d.style.display='none';var b=document.getElementById('btn-menu3pts-login');if(b)b.classList.remove('aberto');}
-window.addEventListener('DOMContentLoaded',function(){
-  [['btn-menu3pts-login',toggleMenu3ptsLogin],['btn-menu3pts',toggleMenu3pts]].forEach(function(pair){
-    var b=document.getElementById(pair[0]); if(!b)return;
-    b.onclick=null;
-    var ultimo=0;
-    var acionar=function(e){
-      var agora=Date.now(); if(agora-ultimo<500){ if(e){e.preventDefault();e.stopPropagation();} return; }
-      ultimo=agora; pair[1](e);
-    };
-    if(window.PointerEvent) b.addEventListener('pointerup', acionar, false);
-    else b.addEventListener('click', acionar, false);
-  });
-  ['menu-instalar-pwa-login','menu-instalar-pwa-app'].forEach(function(id){var el=document.getElementById(id);if(el)el.style.display='block';});
-});
+
+function toggleMenu3ptsLogin() {
+  const dd  = document.getElementById('menu3pts-dropdown-login');
+  const btn = document.getElementById('btn-menu3pts-login');
+  if (!dd) return;
+  const aberto = dd.style.display !== 'none';
+  dd.style.display = aberto ? 'none' : 'block';
+  if (btn) btn.classList.toggle('aberto', !aberto);
+  if (!aberto) {
+    setTimeout(() => {
+      document.addEventListener('click', _fecharMenu3ptsLogin, { once: true });
+    }, 0);
+  }
+}
+
+function _fecharMenu3ptsLogin(e) {
+  const dd = document.getElementById('menu3pts-dropdown-login');
+  if (dd) dd.style.display = 'none';
+  const btn = document.getElementById('btn-menu3pts-login');
+  if (btn) btn.classList.remove('aberto');
+}
+
+function _fecharMenu3pts(e) {
+  const dd = document.getElementById('menu3pts-dropdown');
+  if (dd) dd.style.display = 'none';
+  const btn = document.getElementById('btn-menu3pts');
+  if (btn) btn.classList.remove('aberto');
+}
+
 // ── Mostrar versão no menu ──
 window.addEventListener('DOMContentLoaded', () => {
   const el = document.getElementById('app-ver-label');
