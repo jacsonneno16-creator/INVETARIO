@@ -1,6 +1,7 @@
 (function(global){
   const Actions           = global.AnalistaActions;
   const InventarioService = global.AnalistaInventarioService;
+  function db(){ return global.FS_AN || global.getDTFirestore?.(); }
 
   const state = {
     started: false,
@@ -68,7 +69,7 @@
     };
 
     // A publicação atual grava os endereços em dt_locais_chunks.
-    return global.FS_AN.collection('dt_locais_chunks')
+    return db().collection('dt_locais_chunks')
       .orderBy('parte')
       .onSnapshot(async snapshot => {
         const docs = [];
@@ -86,7 +87,7 @@
         // mostrada no Firebase Console: dt_locais.
         if (!docs.length) {
           try {
-            const snap = await global.FS_AN.collection('dt_locais').get();
+            const snap = await db().collection('dt_locais').get();
             aplicar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
             return;
           } catch (fallbackErr) {
@@ -98,7 +99,7 @@
         console.warn('[FirebaseService] dt_locais_chunks:', err.message);
         // Compatibilidade com bases antigas publicadas documento a documento.
         try {
-          const snap = await global.FS_AN.collection('dt_locais').get();
+          const snap = await db().collection('dt_locais').get();
           aplicar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         } catch (fallbackErr) {
           console.warn('[FirebaseService] dt_locais fallback:', fallbackErr.message);
@@ -113,7 +114,7 @@
     if (!ids.length || !navigator.onLine) return [];
     const chunks = InventarioService.chunkIds(ids, 10);
     return chunks.map(chunk =>
-      global.FS_AN.collection(path)
+      db().collection(path)
         .where('inventario_id', 'in', chunk)
         .onSnapshot(snapshot => {
           let changed = false;
@@ -132,7 +133,7 @@
   // Listener sem filtro de inventário — usado quando nenhum inventário está ativo no cache
   function _listenCollectionAll(collection, path){
     if (!navigator.onLine) return [];
-    const unsub = global.FS_AN.collection(path)
+    const unsub = db().collection(path)
       .orderBy('criado_em', 'desc')
       .limit(500)
       .onSnapshot(snapshot => {
@@ -151,7 +152,7 @@
   // ── Listener de coletores (sem filtro por inventario_id) ─────────────────────
   function _listenColetores(){
     if (!navigator.onLine) return null;
-    return global.FS_AN.collection('dt_coletores')
+    return db().collection('dt_coletores')
       .onSnapshot(snapshot => {
         snapshot.docChanges().forEach(change => {
           const doc = { id: change.doc.id, ...change.doc.data() };
@@ -173,19 +174,34 @@
 
   // ── Carrega inventários do Firestore se o cache estiver vazio ────────────────
   async function _carregarInventariosSeNecessario(){
-    const ids = _getActiveInventoryIds();
-    if (ids.length) return; // cache já tem dados, não precisa buscar
     try {
-      const snap = await global.FS_AN.collection('dt_inventarios').get();
-      if (snap.empty) return;
+      const snap = await db().collection('dt_inventarios').get();
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init' }));
       const Storage = global.AnalistaStorage;
-      if (Storage?.storageSave && Storage?.KEYS?.inventarios) {
-        Storage.storageSave(Storage.KEYS.inventarios, docs);
-      }
+      if (Storage?.storageSave && Storage?.KEYS?.inventarios) Storage.storageSave(Storage.KEYS.inventarios, docs);
+      return docs;
     } catch(e) {
-      console.warn('[FirebaseService] Falha ao carregar inventários:', e.message);
+      console.error('[FirebaseService] Falha ao carregar inventários:', e);
+      _emitSync(false, 'Erro ao ler dt_inventarios: ' + (e.code || e.message));
+      return [];
+    }
+  }
+
+
+  async function _carregarColetoresAgora(){
+    try {
+      const snap = await db().collection('dt_coletores').get();
+      const docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+      global.AnalistaStore.dispatch(Actions.replaceSlice('coletores', docs, {source:'firebase-init'}));
+      const Storage=global.AnalistaStorage;
+      if(Storage?.storageSave && Storage?.KEYS?.coletores) Storage.storageSave(Storage.KEYS.coletores,docs);
+      if(typeof global.renderColetores==='function') global.renderColetores();
+      return docs;
+    } catch(e){
+      console.error('[FirebaseService] Erro ao ler dt_coletores:',e);
+      _emitSync(false,'Erro ao ler dt_coletores: '+(e.code||e.message));
+      return [];
     }
   }
 
@@ -221,6 +237,9 @@
       return false;
     }
 
+    if (!db()) throw new Error('Firestore não inicializado.');
+    // Carga imediata garante que pendentes apareçam mesmo antes do onSnapshot.
+    await _carregarColetoresAgora();
     // Sempre garantir listener de coletores ativo (independe de inventários)
     if (!state.unsubscribers.coletores) {
       state.unsubscribers.coletores = _listenColetores();
