@@ -40,15 +40,51 @@ function doCriarConta() {
   const btn = document.getElementById('btn-login');
   btn.disabled = true; btn.textContent = 'Criando conta...';
   AUTH.createUserWithEmailAndPassword(email, pass)
-    .then(cred => {
+    .then(async cred => {
       const displayName = _nomeDisplay(login);
-      cred.user.updateProfile({ displayName }).catch(() => {});
-      APP.operador = displayName;
-      APP.uid      = cred.user.uid;
-      document.getElementById('op-name-inv').textContent = displayName;
+      await cred.user.updateProfile({ displayName }).catch(() => {});
+
+      // Primeiro acesso também precisa registrar e aguardar aprovação do aparelho.
+      // Antes, a criação de conta entrava direto no sistema e nunca criava o
+      // documento em dt_coletores, por isso nada aparecia para o analista.
+      let status = 'erro';
+      try {
+        status = await registrarColetorNoFirestore({
+          email: cred.user.email,
+          name: displayName,
+          uid: cred.user.uid
+        });
+      } catch (e) {
+        console.error('[Coletor] Falha ao registrar aparelho no primeiro acesso:', e);
+      }
+
+      if (status === 'bloqueado') {
+        _mostrarTelaBloqueado();
+        return;
+      }
+      if (status === 'pendente') {
+        _mostrarTelaAguardandoAprovacao(displayName);
+        if (typeof iniciarListenerAprovacaoColetor === 'function') {
+          iniciarListenerAprovacaoColetor({ email: cred.user.email, name: displayName, uid: cred.user.uid });
+        }
+        toast('Conta criada. Aguarde a aprovação deste aparelho pelo analista.', 'w');
+        return;
+      }
+      if (status !== 'aprovado') {
+        toast('Conta criada, mas não foi possível registrar o aparelho. Verifique a conexão e tente entrar novamente.', 'e');
+        return;
+      }
+
+      // Caso o aparelho já estivesse previamente aprovado.
+      APP.operador = { email: cred.user.email, name: displayName, uid: cred.user.uid, acesso_todas_lojas: false, lojas_permitidas: [] };
+      APP.uid = cred.user.uid;
+      ['op-name-inv','op-name-app','op-name-mode','op-name-aud'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.textContent = displayName;
+      });
       toast('✅ Conta criada! Bem-vindo, ' + displayName + '!', 's');
+      goScreen('mode');
       carregarInventarios();
-      goScreen('inventarios');
+      carregarAuditoriasMenu();
     })
     .catch(err => {
       const msgs = {

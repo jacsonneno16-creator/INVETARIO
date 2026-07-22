@@ -1,4 +1,20 @@
 function state(){ return window.AnalistaStore.getState(); }
+// Busca direta usada pelo botão Atualizar e ao abrir a aba.
+async function atualizarAbaColetores() {
+  const btn = document.activeElement;
+  try {
+    if (window.AnalistaFirebaseService?.refreshColetores) {
+      await window.AnalistaFirebaseService.refreshColetores();
+    } else {
+      renderColetores();
+    }
+  } catch (e) {
+    renderColetores();
+    if (typeof showToast === 'function') showToast('Não foi possível atualizar os coletores: ' + e.message, 'e');
+  }
+}
+window.atualizarAbaColetores = atualizarAbaColetores;
+
 // ── RENDER PRINCIPAL ─────────────────────────────────────────────────
 function renderColetores() {
   const fInv = document.getElementById('col-sel-inv')?.value || '';

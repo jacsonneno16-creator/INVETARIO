@@ -149,23 +149,39 @@
   }
 
   // ── Listener de coletores (sem filtro por inventario_id) ─────────────────────
+  function _aplicarSnapshotColetores(snapshot, source){
+    // Substitui a lista inteira para evitar registros presos no cache e garantir
+    // que solicitações pendentes apareçam mesmo quando o listener perdeu eventos.
+    const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    global.AnalistaStore.dispatch(Actions.replaceSlice('coletores', docs, {
+      source: source || 'firebase', collection: 'coletores'
+    }));
+    const Storage = global.AnalistaStorage;
+    if (Storage?.storageSave && Storage?.KEYS?.coletores) {
+      Storage.storageSave(Storage.KEYS.coletores, docs);
+    }
+    if (document.getElementById('page-coletores')?.classList.contains('on') && typeof global.renderColetores === 'function') {
+      global.renderColetores();
+    }
+    return docs;
+  }
+
+  async function refreshColetores(){
+    if (!navigator.onLine) return global.AnalistaStore.getState().coletores || [];
+    try {
+      const snapshot = await global.FS_AN.collection('dt_coletores').get();
+      return _aplicarSnapshotColetores(snapshot, 'firebase-refresh-coletores');
+    } catch (err) {
+      console.warn('[FirebaseService] refresh coletores:', err.message);
+      throw err;
+    }
+  }
+
   function _listenColetores(){
     if (!navigator.onLine) return null;
     return global.FS_AN.collection('dt_coletores')
       .onSnapshot(snapshot => {
-        snapshot.docChanges().forEach(change => {
-          const doc = { id: change.doc.id, ...change.doc.data() };
-          if (change.type === 'removed') {
-            global.AnalistaStore.dispatch(Actions.removeEntity('coletores', doc, { source: 'firebase', collection: 'coletores' }));
-          } else {
-            global.AnalistaStore.dispatch(Actions.upsertEntity('coletores', doc, { source: 'firebase', collection: 'coletores' }));
-          }
-        });
-        // Persistir no cache para uso offline
-        const Storage = global.AnalistaStorage;
-        if (Storage?.storageSave && Storage?.KEYS?.coletores) {
-          Storage.storageSave(Storage.KEYS.coletores, global.AnalistaStore.getState().coletores);
-        }
+        _aplicarSnapshotColetores(snapshot, 'firebase-listener-coletores');
       }, err => {
         console.warn('[FirebaseService] coletores:', err.message);
       });
@@ -283,5 +299,5 @@
     _emitSync(true, 'Cache local recarregado', { started: false, source: 'cache' });
   }
 
-  global.AnalistaFirebaseService = { start, stop, refreshFromCache, state };
+  global.AnalistaFirebaseService = { start, stop, refreshFromCache, refreshColetores, state };
 })(window);

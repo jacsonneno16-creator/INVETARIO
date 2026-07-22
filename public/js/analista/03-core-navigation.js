@@ -56,7 +56,10 @@ function renderPage(id) {
       case 'capas-duplicadas':   return _callPage('renderCapasDuplicadas');
       case 'produtividade':      return _callPage('renderProdutividade');
       case 'enderecos':          return _callPage('atualizarEnderecos');
-      case 'coletores':          return _callPage('renderColetores');
+      case 'coletores':
+        _callPage('renderColetores');
+        if (typeof window.atualizarAbaColetores === 'function') window.atualizarAbaColetores();
+        return;
       case 'operadores':         return _callPage('listarOperadores');
       case 'auditoria':          return _callPage('renderAuditoriaOperacional');
       case 'rastreabilidade':    return _callPage('renderRastreabilidade');
