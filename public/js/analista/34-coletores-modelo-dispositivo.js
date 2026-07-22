@@ -1,5 +1,4 @@
 function state(){ return window.AnalistaStore.getState(); }
-const FS_COL_COLETORES = (window.DT_FCOL && window.DT_FCOL.coletores) || 'dt_coletores';
 // ───────────────────────────────────────────────────────────────────
 //  19. RENDERIZAÇÃO — COLETORES
 // ═══════════════════════════════════════════════════════════════════
@@ -155,7 +154,7 @@ function excluirColetor(id) {
 
 async function _removerColetorConfirmado(coletorId) {
   try {
-    await FS_AN.collection(FS_COL_COLETORES).doc(coletorId).delete();
+    await FS_AN.collection('dt_coletores').doc(coletorId).delete();
     // Remoção local só acontece DEPOIS de confirmar sucesso no Firestore —
     // caso contrário o listener em tempo real poderia trazer o coletor de
     // volta e dar a impressão de que "não excluiu".
@@ -173,8 +172,9 @@ async function aprovarColetor(id) {
   const col = state().coletores.find(c => c.id === id);
   const nome = col ? 'Coletor ' + col.numero : id;
   try {
-    await FS_AN.collection(FS_COL_COLETORES).doc(id).set({ aprovado: 'aprovado', status: 'offline' }, { merge: true });
-    showToast('✅ ' + nome + ' aprovado! Operadores já podem logar.', 's');
+    await FS_AN.collection('dt_coletores').doc(id).set({ aprovado: 'aprovado', status: 'offline', aprovado_em: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    if (col) { col.aprovado='aprovado'; col.status='offline'; salvarDB_coletores(); renderColetores(); }
+    showToast('✅ ' + nome + ' aprovado! O coletor será liberado automaticamente.', 's');
     logAuditoria('SISTEMA', 'Coletor aprovado: ' + nome, id);
   } catch(e) { showToast('Erro ao aprovar: ' + e.message, 'e'); }
 }
@@ -187,7 +187,8 @@ async function bloquearColetor(id) {
 
 async function _bloquearColetorConfirmado(coletorId, nome) {
   try {
-    await FS_AN.collection(FS_COL_COLETORES).doc(coletorId).set({ aprovado: 'bloqueado', status: 'offline', sessao: null, operador_atual: null }, { merge: true });
+    await FS_AN.collection('dt_coletores').doc(coletorId).set({ aprovado: 'bloqueado', status: 'offline', sessao: null, bloqueado_em: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+    const c = state().coletores.find(x => x.id === coletorId); if (c) { c.aprovado='bloqueado'; c.status='offline'; c.sessao=null; salvarDB_coletores(); renderColetores(); }
     showToast('🚫 ' + nome + ' bloqueado.', 'w');
     logAuditoria('SISTEMA', 'Coletor bloqueado: ' + nome, coletorId);
   } catch(e) { showToast('Erro ao bloquear: ' + e.message, 'e'); }
@@ -250,4 +251,4 @@ function sincronizarFilaOffline() {
 window.addEventListener('online', sincronizarFilaOffline);
 
 
-Object.assign(window,{aprovarColetor,bloquearColetor,_bloquearColetorConfirmado,excluirColetor,_removerColetorConfirmado,logoutOperadorColetor,editarNomeColetor:window.editarNomeColetor});
+window.aprovarColetor=aprovarColetor; window.bloquearColetor=bloquearColetor; window.excluirColetor=excluirColetor; window._removerColetorConfirmado=_removerColetorConfirmado; window._bloquearColetorConfirmado=_bloquearColetorConfirmado;

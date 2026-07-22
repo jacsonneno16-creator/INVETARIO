@@ -8,7 +8,7 @@
     ],
     "headers": [
       {
-        "source": "/coletor.html",
+        "source": "**/*.@(html|js|css|webmanifest)",
         "headers": [
           {
             "key": "Cache-Control",
@@ -17,37 +17,15 @@
         ]
       },
       {
-        "source": "/sw.js",
+        "source": "/sw-v15.js",
         "headers": [
           {
             "key": "Cache-Control",
-            "value": "no-cache"
+            "value": "no-cache, no-store, must-revalidate"
           },
           {
             "key": "Service-Worker-Allowed",
             "value": "/"
-          }
-        ]
-      },
-      {
-        "source": "/manifest.webmanifest",
-        "headers": [
-          {
-            "key": "Content-Type",
-            "value": "application/manifest+json"
-          },
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          }
-        ]
-      },
-      {
-        "source": "/**/*.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
           }
         ]
       }

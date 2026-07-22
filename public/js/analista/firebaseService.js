@@ -153,19 +153,20 @@
     if (!navigator.onLine) return null;
     return global.FS_AN.collection('dt_coletores')
       .onSnapshot(snapshot => {
-        snapshot.docChanges().forEach(change => {
-          const doc = { id: change.doc.id, ...change.doc.data() };
-          if (change.type === 'removed') {
-            global.AnalistaStore.dispatch(Actions.removeEntity('coletores', doc, { source: 'firebase', collection: 'coletores' }));
-          } else {
-            global.AnalistaStore.dispatch(Actions.upsertEntity('coletores', doc, { source: 'firebase', collection: 'coletores' }));
-          }
-        });
-        // Persistir no cache para uso offline
+        // Substituir pela fotografia completa evita perder documentos novos
+        // quando o cache local está desatualizado ou houve remoção.
+        const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        global.AnalistaStore.dispatch(Actions.replaceSlice('coletores', docs, { source: 'firebase', collection: 'coletores' }));
         const Storage = global.AnalistaStorage;
-        if (Storage?.storageSave && Storage?.KEYS?.coletores) {
-          Storage.storageSave(Storage.KEYS.coletores, global.AnalistaStore.getState().coletores);
-        }
+        if (Storage?.storageSave && Storage?.KEYS?.coletores) Storage.storageSave(Storage.KEYS.coletores, docs);
+        // Heartbeats chegam com frequência. Agrupar as renderizações evita piscar e
+        // evita que os botões sejam recriados enquanto o usuário está tocando.
+        clearTimeout(state._coletoresRenderTimer);
+        state._coletoresRenderTimer = setTimeout(function(){
+          var page=document.getElementById('page-coletores');
+          if (page && page.classList.contains('on') && typeof global.renderColetores === 'function') global.renderColetores();
+        }, 350);
+        _emitSync(true, docs.length + ' coletor(es) sincronizado(s)');
       }, err => {
         console.warn('[FirebaseService] coletores:', err.message);
       });

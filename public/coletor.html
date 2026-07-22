@@ -2,6 +2,7 @@
 
 <html lang="pt-BR">
 <head>
+<link rel="manifest" href="manifest.webmanifest?v=14">
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0, user-scalable=no" name="viewport"/>
 <meta content="#060d1a" name="theme-color"/>
@@ -10,7 +11,7 @@
 <title>DT Coletor — Operador</title>
 <!-- PWA -->
 <meta content="black-translucent" name="apple-mobile-web-app-status-bar-style"/>
-<link rel="manifest" href="manifest.webmanifest?v=330">
+<!-- Manifest inline — não depende de manifest.json externo -->
 
 <!-- Apple touch icons (inline SVG via data URI) -->
 <link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='36' fill='%231E6F4E'/%3E%3Ctext x='96' y='80' font-family='monospace' font-weight='700' font-size='52' fill='white' text-anchor='middle' dominant-baseline='middle'%3EDT%3C/text%3E%3Crect x='62' y='105' width='68' height='9' rx='4' fill='%23F59E0B'/%3E%3C/svg%3E" rel="apple-touch-icon"/>
@@ -379,7 +380,6 @@
 
     /* ─── MENU TRÊS PONTOS ───────────────────────────────── */
     .btn-menu3pts {
-      touch-action:manipulation;min-width:48px;min-height:48px;position:relative;z-index:10002;
       width: 32px; height: 32px;
       background: transparent; border: 1px solid rgba(255,255,255,.12);
       border-radius: 8px; color: var(--muted); font-size: 1.25rem;
@@ -392,7 +392,6 @@
       border-color: rgba(255,255,255,.2);
     }
     .menu3pts-dropdown {
-      z-index:10001 !important;pointer-events:auto !important;
       position: absolute; right: 0; top: calc(100% + 6px);
       background: var(--card); border: 1px solid var(--border);
       border-radius: 12px; padding: 6px;
@@ -545,7 +544,7 @@
 <!-- Menu 3 pontos na tela de login -->
 <div style="position:absolute;top:14px;right:14px;z-index:20">
 <div style="position:relative">
-<button class="btn-menu3pts" id="btn-menu3pts-login" title="Opções">⋮</button>
+<button class="btn-menu3pts" id="btn-menu3pts-login" onclick="toggleMenu3ptsLogin()" title="Opções">⋮</button>
 <div class="menu3pts-dropdown" id="menu3pts-dropdown-login" style="display:none">
 <button class="menu3pts-item" onclick="atualizarAplicativo()">🔄 Atualizar aplicativo</button>
 <button class="menu3pts-item" id="menu-instalar-pwa-login" onclick="instalarPWA()" style="display:block">📲 Instalar aplicativo</button>
@@ -597,7 +596,7 @@
 </div>
 </div>
 <label class="coletor-remember"><input id="l-remember" type="checkbox"/> <span>Lembrar login e senha neste dispositivo</span></label>
-<button class="btn btn-primary" id="btn-login" type="button" style="margin-top:4px">ENTRAR</button>
+<button class="btn btn-primary" id="btn-login" onclick="doLogin()" style="margin-top:4px">ENTRAR</button>
 <div id="fb-login-erro"></div>
 <div style="text-align:center;margin-top:4px">
 <button class="login-link" onclick="doCriarConta()">Primeiro acesso? Criar conta</button>
@@ -756,7 +755,7 @@
 </div>
 <!-- Menu três pontos (melhoria 3) -->
 <div style="position:relative">
-<button class="btn-menu3pts" id="btn-menu3pts" title="Opções">⋮</button>
+<button class="btn-menu3pts" id="btn-menu3pts" onclick="toggleMenu3pts()" title="Opções">⋮</button>
 <div class="menu3pts-dropdown" id="menu3pts-dropdown" style="display:none">
 <button class="menu3pts-item" onclick="atualizarAplicativo()">🔄 Atualizar aplicativo</button>
 <button class="menu3pts-item" onclick="atualizarBase()">⬇️ Atualizar base de dados</button>
@@ -1225,5 +1224,5 @@
 </div>
 
 
-<script>window.addEventListener('error',function(e){var box=document.getElementById('fb-login-erro');if(box){box.innerHTML='<div class="fb err" style="margin-top:8px">Erro do aplicativo: '+String(e.message||'desconhecido')+'</div>';}});window.addEventListener('unhandledrejection',function(e){console.error(e.reason);});</script><script src="js/shared/common-utils.js?v=20260722-13"></script><script src="js/shared/firebase-shared.js?v=20260722-13"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260722-13"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260722-13"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260722-13"></script><script src="js/coletor/03-estado-app.js?v=20260722-13"></script><script src="js/coletor/04-auth-login.js?v=20260722-13"></script><script src="js/coletor/05-inventarios-download.js?v=20260722-13"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260722-13"></script><script src="js/coletor/07-etapa-endereco.js?v=20260722-13"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260722-13"></script><script src="js/coletor/09-historico-stats.js?v=20260722-13"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260722-13"></script><script src="js/coletor/11-recontagens.js?v=20260722-13"></script><script src="js/coletor/12-scanner-hardware.js?v=20260722-13"></script><script src="js/coletor/13-audio-feedback.js?v=20260722-13"></script><script src="js/coletor/14-toast.js?v=20260722-13"></script><script src="js/coletor/15-utils-init.js?v=20260722-13"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260722-13"></script><script src="js/coletor/17-auditoria-meta.js?v=20260722-13"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260722-13"></script></body>
+<script src="js/shared/common-utils.js?v=20260722-15"></script><script src="js/shared/firebase-shared.js?v=20260722-15"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260722-15"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260722-15"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260722-15"></script><script src="js/coletor/03-estado-app.js?v=20260722-15"></script><script src="js/coletor/04-auth-login.js?v=20260722-15"></script><script src="js/coletor/05-inventarios-download.js?v=20260722-15"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260722-15"></script><script src="js/coletor/07-etapa-endereco.js?v=20260722-15"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260722-15"></script><script src="js/coletor/09-historico-stats.js?v=20260722-15"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260722-15"></script><script src="js/coletor/11-recontagens.js?v=20260722-15"></script><script src="js/coletor/12-scanner-hardware.js?v=20260722-15"></script><script src="js/coletor/13-audio-feedback.js?v=20260722-15"></script><script src="js/coletor/14-toast.js?v=20260722-15"></script><script src="js/coletor/15-utils-init.js?v=20260722-15"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260722-15"></script><script src="js/coletor/17-auditoria-meta.js?v=20260722-15"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260722-15"></script><script src="js/coletor/19-runtime-estavel-v15.js?v=20260722-15"></script></body>
 </html>
