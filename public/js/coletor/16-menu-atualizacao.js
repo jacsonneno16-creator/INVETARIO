@@ -1,6 +1,6 @@
 
 // ══════════════════════════════════════════════════════════
-// MENU TRÊS PONTOS — compatível com toque, caneta e gatilho
+// MENU TRÊS PONTOS — um único evento por toque
 // ══════════════════════════════════════════════════════════
 function _setMenu3pts(tipo, abrir){
   const login=tipo==='login';
@@ -15,21 +15,28 @@ function toggleMenu3pts(e){if(e){e.preventDefault();e.stopPropagation()}const d=
 function toggleMenu3ptsLogin(e){if(e){e.preventDefault();e.stopPropagation()}const d=document.getElementById('menu3pts-dropdown-login');_setMenu3pts('login',!(d&&d.style.display==='block'));}
 function _fecharMenu3pts(){_setMenu3pts('app',false)}
 function _fecharMenu3ptsLogin(){_setMenu3pts('login',false)}
-
+function _bindTap(el,fn){
+ if(!el||el.dataset.tapBound==='1')return;
+ el.dataset.tapBound='1';
+ el.style.touchAction='manipulation';
+ // Click funciona em Chrome, WebView, toque, mouse e caneta sem abrir/fechar duas vezes.
+ el.addEventListener('click',function(e){e.preventDefault();e.stopPropagation();fn(e);},false);
+ el.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();fn(e);}},false);
+}
 (function prepararMenuColetorFisico(){
  const init=()=>{
-  [['btn-menu3pts','app'],['btn-menu3pts-login','login']].forEach(([id,tipo])=>{
-   const btn=document.getElementById(id);if(!btn)return;
-   btn.type='button';btn.onclick=null;btn.style.touchAction='manipulation';
-   const fn=e=>tipo==='login'?toggleMenu3ptsLogin(e):toggleMenu3pts(e);
-   btn.addEventListener('pointerup',fn,{passive:false});
-   btn.addEventListener('click',fn,{passive:false});
-  });
-  document.addEventListener('pointerup',e=>{
-   if(!e.target.closest('#btn-menu3pts,#menu3pts-dropdown'))_fecharMenu3pts();
-   if(!e.target.closest('#btn-menu3pts-login,#menu3pts-dropdown-login'))_fecharMenu3ptsLogin();
-  });
-  document.querySelectorAll('.menu3pts-item').forEach(b=>{b.type='button';b.style.touchAction='manipulation';});
+  _bindTap(document.getElementById('btn-menu3pts'),toggleMenu3pts);
+  _bindTap(document.getElementById('btn-menu3pts-login'),toggleMenu3ptsLogin);
+  document.querySelectorAll('.js-instalar-app').forEach(b=>_bindTap(b,()=>{_fecharMenu3pts();_fecharMenu3ptsLogin();instalarPWA();}));
+  document.querySelectorAll('.js-atualizar-app').forEach(b=>_bindTap(b,atualizarAplicativo));
+  document.querySelectorAll('.js-atualizar-base').forEach(b=>_bindTap(b,()=>{_fecharMenu3pts();atualizarBase();}));
+  document.querySelectorAll('.js-trocar-inventario').forEach(b=>_bindTap(b,()=>{_fecharMenu3pts();voltarInventarios();}));
+  document.querySelectorAll('.js-sair-app').forEach(b=>_bindTap(b,()=>{_fecharMenu3pts();doLogout();}));
+  document.addEventListener('click',e=>{
+   const t=e.target;
+   if(!(t&&t.closest&&t.closest('#btn-menu3pts,#menu3pts-dropdown')))_fecharMenu3pts();
+   if(!(t&&t.closest&&t.closest('#btn-menu3pts-login,#menu3pts-dropdown-login')))_fecharMenu3ptsLogin();
+  },false);
  };
  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init,{once:true});else init();
 })();
@@ -191,21 +198,26 @@ window.addEventListener('beforeinstallprompt', e => {
   if (btnInst) btnInst.style.display = 'inline-block';
 });
 
-function instalarPWA() {
-  if (!_deferredPrompt) {
-    toast('Use o menu do navegador > "Adicionar à tela inicial"', 'w');
-    return;
+async function instalarPWA() {
+  _fecharMenu3pts(); _fecharMenu3ptsLogin();
+  const standalone=window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone===true;
+  if(standalone){toast('✅ O aplicativo já está instalado neste aparelho','s');return;}
+  if(_deferredPrompt){
+    try{
+      await _deferredPrompt.prompt();
+      const result=await _deferredPrompt.userChoice;
+      if(result.outcome==='accepted')toast('✅ Instalação iniciada','s');
+      else toast('Instalação cancelada','w');
+      _deferredPrompt=null;
+      const banner=document.getElementById('pwa-install-banner');if(banner)banner.style.display='none';
+      return;
+    }catch(e){console.warn('[PWA] prompt falhou',e);}
   }
-  _deferredPrompt.prompt();
-  _deferredPrompt.userChoice.then(result => {
-    if (result.outcome === 'accepted') {
-      toast('✅ App instalado com sucesso!', 's');
-    }
-    _deferredPrompt = null;
-    const banner = document.getElementById('pwa-install-banner');
-    if (banner) banner.style.display = 'none';
-    const btnInst = document.getElementById('btn-instalar-pwa');
-    if (btnInst) btnInst.style.display = 'none';
+  // Alguns coletores usam WebView/Enterprise Browser e não fornecem beforeinstallprompt.
+  _showUpdateModal({
+    icon:'📲',title:'Instalar DT Coletor',
+    msg:'Abra o menu do navegador (⋮) e toque em “Instalar aplicativo” ou “Adicionar à tela inicial”. Se essa opção não existir, o navegador do coletor não permite instalação PWA; use o Chrome atualizado como navegador padrão.',
+    ver:'v'+APP_VERSION,barPct:100,showBtns:true,btnOk:'Entendi',onOk:_hideUpdateModal
   });
 }
 

@@ -1,5 +1,5 @@
-const CACHE='dt-coletor-3.3.0';
-const CORE=['/coletor.html','/manifest.webmanifest','/icon-coletor.svg'];
+const CACHE='dt-coletor-v10';
+const CORE=['/coletor.html','/manifest.webmanifest','/icon-192.png','/icon-512.png','/icon-coletor.svg'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(CORE)).catch(()=>{}));});
 self.addEventListener('activate',e=>{e.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));});
 self.addEventListener('message',e=>{if(e.data&&e.data.type==='SKIP_WAITING')self.skipWaiting();});
