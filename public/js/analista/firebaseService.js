@@ -41,60 +41,68 @@
   }
 
   
-  function _listenEnderecos(){
-    if (!navigator.onLine) return null;
-
-    const aplicar = docs => {
-      global.AnalistaStore.dispatch(
-        Actions.replaceSlice('enderecosLista', docs, { source: 'firebase' })
-      );
-      const agrupados = global.AnalistaBootstrap?.agruparEnderecosPorSetor
-        ? global.AnalistaBootstrap.agruparEnderecosPorSetor(docs)
-        : docs.reduce((acc, item) => {
-            const setor = item?.setor || item?.local || item?.nome_local || 'SEM_SETOR';
-            if (!acc[setor]) acc[setor] = [];
-            acc[setor].push(item);
-            return acc;
-          }, {});
-      global.AnalistaStore.dispatch(
-        Actions.setPath('enderecosPorSetor', agrupados, { source: 'firebase' })
-      );
-      const Storage = global.AnalistaStorage;
-      if (Storage?.storageSave && Storage?.KEYS?.enderecos) {
-        Storage.storageSave(Storage.KEYS.enderecos, docs);
-      }
-      if (typeof global.atualizarEnderecos === 'function') global.atualizarEnderecos();
-      _emitSync(true, `${docs.length} endereços carregados do Firebase`);
-    };
-
-    // A publicação atual grava os endereços em dt_locais_chunks.
-    return global.FS_AN.collection('dt_locais_chunks')
-      .orderBy('parte')
-      .onSnapshot(snapshot => {
-        const docs = [];
-        snapshot.docs.forEach(doc => {
-          const data = doc.data() || {};
-          const itens = Array.isArray(data.dados) ? data.dados
-                     : Array.isArray(data.itens) ? data.itens : [];
-          itens.forEach((item, index) => docs.push({
-            id: item.id || `${doc.id}_${index}`,
-            ...item
-          }));
-        });
-        aplicar(docs);
-      }, async err => {
-        console.warn('[FirebaseService] dt_locais_chunks:', err.message);
-        // Compatibilidade com bases antigas publicadas documento a documento.
-        try {
-          const snap = await global.FS_AN.collection('dt_locais').get();
-          aplicar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        } catch (fallbackErr) {
-          console.warn('[FirebaseService] dt_locais fallback:', fallbackErr.message);
-          _emitSync(false, 'Falha ao carregar endereços do Firebase');
-        }
-      });
+  function _normalizarEndereco(doc){
+    const data = doc.data ? (doc.data() || {}) : (doc || {});
+    const id = doc.id || data.id || data.endereco || data.endereco_completo || '';
+    return { id, ...data, endereco: data.endereco || data.endereco_completo || id };
   }
 
+  function _aplicarEnderecos(docs, origem){
+    const limpos = (docs || []).filter(Boolean).map(item => ({
+      ...item,
+      id: item.id || item.endereco || item.endereco_completo,
+      endereco: item.endereco || item.endereco_completo || item.id
+    })).filter(item => item.endereco);
+    global.AnalistaStore.dispatch(Actions.replaceSlice('enderecosLista', limpos, { source: origem || 'firebase' }));
+    const agrupados = global.AnalistaBootstrap?.agruparEnderecosPorSetor
+      ? global.AnalistaBootstrap.agruparEnderecosPorSetor(limpos)
+      : {};
+    global.AnalistaStore.dispatch(Actions.setPath('enderecosPorSetor', agrupados, { source: origem || 'firebase' }));
+    const Storage = global.AnalistaStorage;
+    if (Storage?.storageSave && Storage?.KEYS?.enderecos) Storage.storageSave(Storage.KEYS.enderecos, limpos);
+    if (typeof global.atualizarEnderecos === 'function') global.atualizarEnderecos();
+    _emitSync(true, `${limpos.length} endereços carregados de ${origem || 'Firebase'}`);
+    return limpos;
+  }
+
+  async function _baixarEnderecosAgora(){
+    // Fonte principal real: dt_locais, documento por endereço.
+    try {
+      const snap = await global.FS_AN.collection('dt_locais').get();
+      if (!snap.empty) return _aplicarEnderecos(snap.docs.map(_normalizarEndereco), 'dt_locais');
+    } catch (e) {
+      console.error('[FirebaseService] dt_locais:', e);
+      _emitSync(false, `Erro dt_locais: ${e.code || e.message}`);
+    }
+    // Compatibilidade com publicação em chunks.
+    try {
+      const snap = await global.FS_AN.collection('dt_locais_chunks').get();
+      const docs=[];
+      snap.docs.forEach(doc => {
+        const data=doc.data()||{};
+        const itens=Array.isArray(data.dados)?data.dados:(Array.isArray(data.itens)?data.itens:[]);
+        itens.forEach((item,index)=>docs.push({id:item.id||`${doc.id}_${index}`,...item}));
+      });
+      if (docs.length) return _aplicarEnderecos(docs, 'dt_locais_chunks');
+    } catch(e){
+      console.error('[FirebaseService] dt_locais_chunks:', e);
+      _emitSync(false, `Erro dt_locais_chunks: ${e.code || e.message}`);
+    }
+    _emitSync(false, 'Firebase conectado, mas nenhuma base de endereços foi encontrada.');
+    return [];
+  }
+
+  function _listenEnderecos(){
+    if (!navigator.onLine) return null;
+    // Escuta a coleção que existe no console do usuário.
+    return global.FS_AN.collection('dt_locais').onSnapshot(snapshot => {
+      _aplicarEnderecos(snapshot.docs.map(_normalizarEndereco), 'dt_locais');
+    }, err => {
+      console.error('[FirebaseService] listener dt_locais:', err);
+      _emitSync(false, `Falha ao ler dt_locais: ${err.code || err.message}`);
+      _baixarEnderecosAgora();
+    });
+  }
 
   function _listenCollection(collection, path){
     const ids = _getActiveInventoryIds();
@@ -161,19 +169,17 @@
 
   // ── Carrega inventários do Firestore se o cache estiver vazio ────────────────
   async function _carregarInventariosSeNecessario(){
-    const ids = _getActiveInventoryIds();
-    if (ids.length) return; // cache já tem dados, não precisa buscar
     try {
       const snap = await global.FS_AN.collection('dt_inventarios').get();
-      if (snap.empty) return;
       const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init' }));
       const Storage = global.AnalistaStorage;
-      if (Storage?.storageSave && Storage?.KEYS?.inventarios) {
-        Storage.storageSave(Storage.KEYS.inventarios, docs);
-      }
+      if (Storage?.storageSave && Storage?.KEYS?.inventarios) Storage.storageSave(Storage.KEYS.inventarios, docs);
+      return docs;
     } catch(e) {
-      console.warn('[FirebaseService] Falha ao carregar inventários:', e.message);
+      console.error('[FirebaseService] Falha ao carregar inventários:', e);
+      _emitSync(false, `Erro em dt_inventarios: ${e.code || e.message}`);
+      return [];
     }
   }
 
@@ -203,19 +209,59 @@
     _emitSync(false, 'Escutas pausadas', { started: false });
   }
 
+  async function _carregarColecaoCompleta(slice, path, normalizer){
+    try {
+      const snap = await global.FS_AN.collection(path).get();
+      const docs = snap.docs.map(d => {
+        const raw={id:d.id,...d.data()};
+        return normalizer ? normalizer(raw) : raw;
+      });
+      global.AnalistaStore.dispatch(Actions.replaceSlice(slice, docs, {source:'firebase-init', collection:path}));
+      return docs;
+    } catch(e){
+      console.error(`[FirebaseService] ${path}:`, e);
+      _emitSync(false, `Erro em ${path}: ${e.code || e.message}`);
+      return [];
+    }
+  }
+
+  async function _cargaInicialCompleta(){
+    if (!global.AUTH_AN?.currentUser && !global.firebase?.auth?.()?.currentUser) {
+      throw new Error('Usuário ainda não autenticado no Firebase.');
+    }
+    await _carregarInventariosSeNecessario();
+    await Promise.all([
+      _baixarEnderecosAgora(),
+      _carregarColecaoCompleta('contagens','dt_contagens', InventarioService.normalizarContagem),
+      _carregarColecaoCompleta('recontagens','dt_recontagens'),
+      _carregarColecaoCompleta('divergencias','dt_divergencias'),
+      _carregarColecaoCompleta('coletores','dt_coletores'),
+      _carregarColecaoCompleta('auditorias','dt_auditorias'),
+      _carregarColecaoCompleta('auditoria_imports','dt_auditoria_imports')
+    ]);
+    global.AnalistaBootstrap?.saveAll?.();
+    global.AnalistaNavigation?.renderCurrentPage?.();
+  }
+
   async function start(){
     if (!navigator.onLine) {
       _emitSync(false, 'Offline — usando cache local', { started: false, source: 'cache' });
       return false;
     }
 
+    if (!global.AUTH_AN?.currentUser) {
+      _emitSync(false, 'Aguardando autenticação do Firebase');
+      return false;
+    }
+
+    await _cargaInicialCompleta();
+
     // Sempre garantir listener de coletores ativo (independe de inventários)
     if (!state.unsubscribers.coletores) {
       state.unsubscribers.coletores = _listenColetores();
     }
 
-    // Carregar inventários e catálogo de endereços do Firebase.
-    await _carregarInventariosSeNecessario();
+    // Ativar atualização em tempo real depois da carga inicial.
     if (!state.unsubscribers.enderecos) state.unsubscribers.enderecos = _listenEnderecos();
 
     const ids = _getActiveInventoryIds();
@@ -271,5 +317,5 @@
     _emitSync(true, 'Cache local recarregado', { started: false, source: 'cache' });
   }
 
-  global.AnalistaFirebaseService = { start, stop, refreshFromCache, state };
+  global.AnalistaFirebaseService = { start, stop, refreshFromCache, refreshFirebase: _cargaInicialCompleta, state };
 })(window);

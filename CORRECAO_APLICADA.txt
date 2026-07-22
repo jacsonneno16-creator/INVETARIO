@@ -1,0 +1,12 @@
+CORREÇÕES APLICADAS
+
+1. Login não reutiliza sessão anterior do Firebase.
+2. O painel só abre após o usuário preencher e-mail/senha e solicitar o login.
+3. A leitura de endereços tenta dt_locais_chunks e, se estiver vazio, busca dt_locais.
+4. As regras do Firestore liberam dt_locais, dt_locais_chunks e base_chunks para usuários autenticados.
+5. O projeto foi entregue sem a pasta .git, portanto não contém rebase nem conflitos.
+
+PUBLICAÇÃO:
+firebase deploy --only hosting,firestore:rules
+
+Depois, pressione Ctrl+F5 no navegador.

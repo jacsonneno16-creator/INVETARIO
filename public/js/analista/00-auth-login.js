@@ -8,8 +8,11 @@ function state(){ return window.AnalistaStore.getState(); }
 getDTFirebaseApp();
 const FS_AN   = getDTFirestore();
 const AUTH_AN = getDTAuth();
+window.FS_AN = FS_AN;
+window.AUTH_AN = AUTH_AN;
 
 window._currentAnalistaUser = null;
+let _loginSolicitadoPeloUsuario = false;
 
 // ── LOGIN ────────────────────────────────────────────────────────────
 
@@ -22,14 +25,17 @@ function doLoginAnalista() {
   if (!email) return _setLoginErro('Informe o e-mail.');
   if (!senha) return _setLoginErro('Informe a senha.');
 
+  _loginSolicitadoPeloUsuario = true;
   AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE)
     .then(() => AUTH_AN.signInWithEmailAndPassword(email, senha))
-    .catch(err => _setLoginErro(err.message));
+    .catch(err => { _loginSolicitadoPeloUsuario = false; _setLoginErro(err.message); });
 }
 
 function doLogoutAnalista() {
+  _loginSolicitadoPeloUsuario = false;
   AUTH_AN.signOut().then(() => {
     window._currentAnalistaUser = null;
+let _loginSolicitadoPeloUsuario = false;
     _mostrarLogin();
   });
 }
@@ -57,7 +63,7 @@ function _clearLoginErro() {
 
 // ── LOGIN OK ─────────────────────────────────────────────────────────
 
-function _onAnalistaLogado(user) {
+async function _onAnalistaLogado(user) {
   window._currentAnalistaUser = user;
 
   if (window.AnalistaStore) {
@@ -73,6 +79,9 @@ function _onAnalistaLogado(user) {
   if (elAvatar) elAvatar.textContent = nome.slice(0,2).toUpperCase();
 
   _mostrarApp();
+
+  // Garante que o token de autenticação já esteja válido antes das leituras.
+  try { await user.getIdToken(true); } catch(e) { console.warn('[Auth] Token:', e.message); }
 
   // 🔥 CHAMADA SEGURA DO INIT
   if (window.AnalistaBootstrap?.initApp) {
@@ -99,48 +108,39 @@ function _mostrarLogin() {
 }
 
 // ── SESSION ──────────────────────────────────────────────────────────
-// Sempre inicia deslogado. O Firebase não reutiliza a sessão anterior.
-let _authInicializado = false;
-
-<<<<<<< HEAD
-let _authAnalistaInicializado = false;
-AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE)
-  .then(() => AUTH_AN.signOut().catch(() => {}))
-  .finally(() => {
-    _authAnalistaInicializado = true;
-    window._currentAnalistaUser = null;
-    _mostrarLogin();
-  });
-
-AUTH_AN.onAuthStateChanged(user => {
-  if (!_authAnalistaInicializado) return;
-  if (user) _onAnalistaLogado(user);
-  else _mostrarLogin();
-});
-=======
+// Nunca reaproveita sessão anterior. Só abre o painel depois que o usuário
+// clicar em Entrar ou pressionar Enter com e-mail e senha preenchidos.
 async function _iniciarAuthAnalista() {
-  try {
-    await AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE);
-    await AUTH_AN.signOut();
-  } catch (e) {
-    console.warn('[Auth] Não foi possível limpar a sessão anterior:', e.message);
-  }
+  _loginSolicitadoPeloUsuario = false;
+  _mostrarLogin();
 
   const email = document.getElementById('an-email');
   const senha = document.getElementById('an-pass');
   if (email) email.value = '';
   if (senha) senha.value = '';
-  _mostrarLogin();
 
-  AUTH_AN.onAuthStateChanged(user => {
-    if (!_authInicializado) { _authInicializado = true; if (!user) _mostrarLogin(); return; }
-    if (user) _onAnalistaLogado(user);
-    else _mostrarLogin();
+  try {
+    await AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE);
+    await AUTH_AN.signOut();
+  } catch (e) {
+    console.warn('[Auth] Limpeza da sessão anterior:', e.message);
+  }
+
+  AUTH_AN.onAuthStateChanged(async user => {
+    if (user && _loginSolicitadoPeloUsuario) {
+      _loginSolicitadoPeloUsuario = false;
+      _onAnalistaLogado(user);
+      return;
+    }
+    if (user && !_loginSolicitadoPeloUsuario) {
+      // Proteção extra contra login restaurado pelo navegador/Firebase.
+      try { await AUTH_AN.signOut(); } catch (_) {}
+    }
+    _mostrarLogin();
   });
 }
 
 _iniciarAuthAnalista();
->>>>>>> 0790537 (Atualização do sistema)
 
 // ── UTIL ─────────────────────────────────────────────────────────────
 
