@@ -7,10 +7,9 @@ const FS   = getDTFirestore();
 const AUTH = getDTAuth();
 const FCOL = window.DT_FCOL;
 
-// Não reutilizar login antigo neste aparelho/navegador.
-AUTH.setPersistence(firebase.auth.Auth.Persistence.NONE)
-  .then(() => AUTH.signOut())
-  .catch(e => console.warn('[Auth] Falha ao limpar sessão anterior:', e.message));
+// Inicialização da autenticação. Nunca fazemos signOut automático ao abrir,
+// pois em coletores físicos lentos isso pode encerrar um login recém-iniciado.
+window.DT_AUTH_READY = Promise.resolve(true);
 
 // ── Persistência offline das contagens ──
 const LS_FILA    = 'col_fila_envio';
@@ -40,7 +39,7 @@ function normProd(v) {
   if (!s || s === 'NULL' || s === 'UNDEFINED' || s === 'NAN') return PROD_VAZIO;
   return s;
 }
-const APP_VERSION = '3.2.0';            // versão do aplicativo
+const APP_VERSION = '4.0.0';            // versão do aplicativo
 
 // ══════════════════════════════════════════════════
 //  NORMALIZAÇÃO DA BASE  (melhoria 1 e 2)

@@ -1,3 +1,40 @@
+// ══════════════════════════════════════════════════════════
+//  MENU TRÊS PONTOS — toque único, compatível com coletor físico
+// ══════════════════════════════════════════════════════════
+let _menuAbertoId = null;
+function _posicionarMenu(btn,dd){
+  const r=btn.getBoundingClientRect();
+  dd.style.position='fixed';
+  dd.style.top=Math.max(8,r.bottom+6)+'px';
+  dd.style.right=Math.max(8,window.innerWidth-r.right)+'px';
+  dd.style.left='auto';
+  dd.style.zIndex='2147483647';
+}
+function _toggleMenu(btnId,ddId,ev){
+  if(ev){ ev.preventDefault(); ev.stopPropagation(); }
+  const btn=document.getElementById(btnId),dd=document.getElementById(ddId); if(!btn||!dd)return;
+  const abrir=dd.style.display==='none'||getComputedStyle(dd).display==='none';
+  _fecharTodosMenus();
+  if(abrir){ _posicionarMenu(btn,dd); dd.style.display='block'; btn.classList.add('aberto'); _menuAbertoId=ddId; }
+}
+function toggleMenu3pts(ev){ _toggleMenu('btn-menu3pts','menu3pts-dropdown',ev); }
+function toggleMenu3ptsLogin(ev){ _toggleMenu('btn-menu3pts-login','menu3pts-dropdown-login',ev); }
+function _fecharTodosMenus(){
+  [['btn-menu3pts','menu3pts-dropdown'],['btn-menu3pts-login','menu3pts-dropdown-login']].forEach(([b,d])=>{const be=document.getElementById(b),de=document.getElementById(d);if(de)de.style.display='none';if(be)be.classList.remove('aberto');});
+  _menuAbertoId=null;
+}
+function _fecharMenu3pts(){_fecharTodosMenus();}
+function _fecharMenu3ptsLogin(){_fecharTodosMenus();}
+
+function _bindMenuColetor(){
+  const bind=(id,fn)=>{ const el=document.getElementById(id); if(!el||el.dataset.dtBound)return; el.dataset.dtBound='1'; el.addEventListener('click',fn,false); };
+  bind('btn-menu3pts',e=>toggleMenu3pts(e));
+  bind('btn-menu3pts-login',e=>toggleMenu3ptsLogin(e));
+  document.addEventListener('click',e=>{ if(_menuAbertoId && !e.target.closest('.menu3pts-dropdown') && !e.target.closest('.btn-menu3pts')) _fecharTodosMenus(); },true);
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape')_fecharTodosMenus(); });
+}
+window.addEventListener('DOMContentLoaded',_bindMenuColetor);
+
 
 
 // ══════════════════════════════════════════════════════════
@@ -236,38 +273,10 @@ function _hideUpdateModal() {
   if (overlay) overlay.style.display = 'none';
 }
 
-// ── SERVICE WORKER via <script type="text/js-worker"> ──
-// O arquivo é servido via link direto — registrar SW via URL do próprio HTML com parâmetro ?sw=1
-(function() {
-  if (!('serviceWorker' in navigator)) return;
-
-  // Detectar a URL base do próprio app
-  const selfUrl = location.href.split('?')[0].split('#')[0];
-
-  window.addEventListener('load', () => {
-    // Verificar se há um SW já registrado para este escopo
-    navigator.serviceWorker.getRegistration(selfUrl).then(reg => {
-      if (reg) {
-        dbg('[SW] já registrado:', reg.scope);
-        return;
-      }
-      // Tentar registrar — só funciona se o servidor retornar JS com Content-Type correto
-      // Como é um arquivo .html, o SW não pode ser registrado normalmente.
-      // Para instalação PWA, tentamos via importScripts workaround.
-      dbg('[SW] arquivo HTML — instalação via "Adicionar à tela inicial" disponível');
-    }).catch(() => {});
-  });
-
-  // Mostrar instruções de instalação manual para iOS (Safari não tem beforeinstallprompt)
-  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
-  const isInStandalone = window.navigator.standalone;
-  if (isIos && !isInStandalone) {
-    // Mostrar banner iOS após 3s
-    setTimeout(() => {
-      const banner = document.getElementById('pwa-ios-banner');
-      if (banner) banner.style.display = 'flex';
-    }, 3000);
-  }
+// ── SERVICE WORKER REAL ──
+(function(){
+  if(!('serviceWorker' in navigator)||!window.isSecureContext)return;
+  window.addEventListener('load',()=>navigator.serviceWorker.register('/sw-coletor.js',{scope:'/'}).then(reg=>reg.update()).catch(e=>console.warn('[SW]',e.message)));
 })();
 
 // ── INSTALL BANNER (A2HS) ──
@@ -289,7 +298,10 @@ window.addEventListener('beforeinstallprompt', e => {
 
 function instalarPWA() {
   if (!_deferredPrompt) {
-    toast('Use o menu do navegador > "Adicionar à tela inicial"', 'w');
+    _fecharTodosMenus();
+    const msg = 'Para instalar: abra este endereço no Chrome do coletor, toque nos 3 pontos do navegador e escolha “Instalar app” ou “Adicionar à tela inicial”.';
+    if (typeof showConfirm === 'function') showConfirm(msg, () => {}, {title:'📲 Instalar aplicativo',icon:'📲',okLabel:'Entendi'});
+    else alert(msg);
     return;
   }
   _deferredPrompt.prompt();
@@ -304,7 +316,7 @@ function instalarPWA() {
     if (btnInst) btnInst.style.display = 'none';
     ['menu-instalar-pwa-login', 'menu-instalar-pwa-app'].forEach(id => {
       const el = document.getElementById(id);
-      if (el) el.style.display = 'none';
+      if (el) el.style.display = 'block';
     });
   });
 }
@@ -379,6 +391,6 @@ window.addEventListener('appinstalled', () => {
   if (btnInst) btnInst.style.display = 'none';
   ['menu-instalar-pwa-login', 'menu-instalar-pwa-app'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.style.display = 'none';
+    if (el) el.style.display = 'block';
   });
 });
