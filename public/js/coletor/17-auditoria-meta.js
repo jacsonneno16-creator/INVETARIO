@@ -1,0 +1,125 @@
+
+(function(){
+  function _auditoriaMeta(lista){
+    return (lista || []).map(a => ({
+      id: String(a.auditoria_id || a.id || '').trim(),
+      auditoria_nome: a.auditoria_nome || a.nome || a.id || '',
+      total_registros: Number(a.total_registros || 0),
+      lojas: Array.isArray(a.lojas) ? a.lojas : [],
+      importado_em: a.importado_em || '',
+      liberada: !!a.liberada_coletor,
+      disponivel_coletor: a.disponivel_coletor !== false
+    })).filter(a => a.id && a.disponivel_coletor !== false && a.liberada);
+  }
+  window._extrairLojasDaAuditoria = function(aud){ return Array.isArray(aud?.lojas) ? aud.lojas : []; };
+
+  async function _carregarEnderecoAuditoria(auditoriaId){
+    const audRef = FS.collection(FCOL.auditorias).doc(auditoriaId);
+    // v15: auditoria também lê por chunks de 1000 para reduzir leituras.
+    const chunkSnap = await audRef.collection('base_chunks').orderBy('parte').get();
+    if (!chunkSnap.empty) {
+      const rows = [];
+      chunkSnap.docs.forEach(doc => {
+        const d = doc.data();
+        rows.push(...(d.dados || d.itens || d.registros || []));
+      });
+      return rows.filter(a => a.disponivel_coletor !== false && !['CONFIRMADO_SEM_AJUSTE','CONFIRMADO_COM_AJUSTE'].includes(String(a.status || '').toUpperCase()));
+    }
+    // Fallback para auditorias antigas sem chunks.
+    const snap = await audRef.collection('enderecos').get();
+    return snap.docs.map(d => ({ id:d.id, ...d.data() })).filter(a => a.disponivel_coletor !== false && !['CONFIRMADO_SEM_AJUSTE','CONFIRMADO_COM_AJUSTE'].includes(String(a.status || '').toUpperCase()));
+  }
+  window._carregarEnderecoAuditoria = _carregarEnderecoAuditoria;
+
+  window.carregarAuditoriasMenu = function(){
+    const el = document.getElementById('aud-list-menu');
+    if (!el) return;
+    el.innerHTML = '<div class="empty-inv"><div class="empty-inv-icon" style="font-size:1.5rem">⏳</div><div>Carregando auditorias…</div></div>';
+    const fromCache = () => {
+      const cache = JSON.parse(localStorage.getItem('auditorias_menu_cache_v2') || '[]');
+      APP.auditoriasMenu = cache;
+      renderListaAuditorias(cache);
+    };
+    if (!navigator.onLine) { fromCache(); return; }
+    FS.collection(FCOL.auditorias)
+      .where('liberada_coletor', '==', true)
+      .get()
+      .then(snap => {
+        const docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+        const grupos = _auditoriaMeta(docs);
+        APP.auditoriasMenu = grupos;
+        localStorage.setItem('auditorias_menu_cache_v2', JSON.stringify(grupos));
+        renderListaAuditorias(grupos);
+      })
+      .catch(() => fromCache());
+  };
+
+  window.renderListaAuditorias = function(lista){
+    const el = document.getElementById('aud-list-menu');
+    if (!el) return;
+    lista = lista || APP.auditoriasMenu || [];
+    const select = document.getElementById('aud-loja-select');
+    const lojas = [...new Set((lista || []).flatMap(x => _extrairLojasDaAuditoria(x)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+    if (select) {
+      const atual = APP.lojaFiltroAuditoria || '';
+      select.innerHTML = '<option value="">Todas as lojas</option>' + lojas.map(loja => `<option value="${escHTML(loja)}">${escHTML(loja)}</option>`).join('');
+      select.value = atual;
+    }
+    const card = document.getElementById('aud-loja-card');
+    if (card) card.style.display = lojas.length > 1 ? '' : 'none';
+    if (APP.lojaFiltroAuditoria) lista = (lista || []).filter(x => _extrairLojasDaAuditoria(x).includes(APP.lojaFiltroAuditoria));
+    if (!lista.length) {
+      el.innerHTML = '<div class="empty-inv"><div class="empty-inv-icon">📝</div><div style="font-size:.9rem;font-weight:600">Nenhuma auditoria disponível</div><div style="font-size:.78rem;margin-top:6px">Aguarde o analista liberar a auditoria</div></div>';
+      return;
+    }
+    el.innerHTML = lista.map(aud => `
+      <div class="inv-card" onclick="selecionarAuditoriaMenu('${aud.id}')">
+        <div class="inv-card-code">${escHTML(aud.id)}</div>
+        <div class="inv-card-name">Auditoria — ${escHTML(aud.auditoria_nome || aud.id)}</div>
+        <div class="inv-card-meta">
+          <span class="badge badge-info">📝 Auditoria</span>
+          <span class="badge badge-muted">${aud.total_registros || 0} endereços</span>
+          ${aud.lojas?.[0] ? `<span class="badge badge-muted">${escHTML(aud.lojas[0])}</span>` : ''}
+        </div>
+      </div>
+    `).join('');
+  };
+
+  window.aplicarFiltroLojaAuditoria = function(loja) {
+    APP.lojaFiltroAuditoria = String(loja || '').trim();
+    renderListaAuditorias(APP.auditoriasMenu || []);
+  };
+
+  window.selecionarAuditoriaMenu = async function(auditoriaId){
+    const meta = (APP.auditoriasMenu || []).find(x => x.id === auditoriaId);
+    if (!meta) { toast('Auditoria não encontrada', 'e'); return; }
+    APP.modoPendente = 'auditoria';
+    APP.modoAcesso = 'auditoria';
+    APP.inventario = { id: auditoriaId, nome: meta.auditoria_nome || auditoriaId, status: 'ATIVO', auditoria_id: auditoriaId };
+    APP.base = [];
+    APP.auditoriaBase = [];
+    APP.contagens = [];
+    try {
+      APP.auditorias = await _carregarEnderecoAuditoria(auditoriaId);
+      const audTab = document.getElementById('tab-auditoria');
+      if (audTab) audTab.style.display = '';
+      goScreen('coleta');
+      if (audTab) showView('auditoria', audTab);
+      renderAuditoriaColetor();
+    } catch (err) {
+      toast('Erro ao abrir auditoria: ' + err.message, 'e');
+    }
+  };
+
+  const _oldVoltar = window._voltarInventarioConfirmado;
+  window._voltarInventarioConfirmado = function(){
+    const modo = APP.modoPendente;
+    _oldVoltar && _oldVoltar();
+    if (modo === 'auditoria') goScreen('auditorias');
+  };
+
+  document.addEventListener('DOMContentLoaded', function(){
+    const subt = document.querySelector('#screen-auditorias .screen-sub');
+    if (subt) subt.textContent = 'Selecione a auditoria liberada para conferência';
+  });
+})();
