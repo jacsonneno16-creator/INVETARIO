@@ -14,13 +14,9 @@ let _loginSolicitadoPeloUsuario = false;
 const DT_LOGIN_MEM_KEY = 'dt_analista_login_lembrado_v1';
 
 function _normalizarEmailAnalista(valor) {
-  let email = String(valor || '').trim().toLowerCase().replace(/\s+/g, '');
-  // Corrige erros comuns de digitação no domínio corporativo.
-  email = email
-    .replace('@daterrinhaalimnentos.com.br', '@daterrinhaalimentos.com.br')
-    .replace('@daterrinhaalimetos.com.br', '@daterrinhaalimentos.com.br')
-    .replace('@daterrinhaalimentos.com', '@daterrinhaalimentos.com.br');
-  return email;
+  // Mantém exatamente o e-mail cadastrado no Firebase Authentication.
+  // Apenas remove espaços e converte para minúsculas.
+  return String(valor || '').trim().toLowerCase().replace(/\s+/g, '');
 }
 
 function _carregarLoginLembrado() {
@@ -78,7 +74,7 @@ function togglePassAnalista() {
 function _traduzirErroLoginAnalista(err) {
   const code = err?.code || '';
   const mensagens = {
-    'auth/invalid-credential': 'E-mail ou senha incorretos. Confira também se o domínio é @daterrinhaalimentos.com.br.',
+    'auth/invalid-credential': 'E-mail ou senha incorretos. Digite exatamente o mesmo e-mail cadastrado no Firebase Authentication.',
     'auth/invalid-email': 'O e-mail informado é inválido.',
     'auth/user-disabled': 'Este usuário está desativado no Firebase.',
     'auth/too-many-requests': 'Muitas tentativas. Aguarde alguns minutos e tente novamente.',
