@@ -1,87 +1,44 @@
-// ══════════════════════════════════════════════════════════
-//  MENU TRÊS PONTOS — toque único, compatível com coletor físico
-// ══════════════════════════════════════════════════════════
-let _menuAbertoId = null;
-function _posicionarMenu(btn,dd){
-  const r=btn.getBoundingClientRect();
-  dd.style.position='fixed';
-  dd.style.top=Math.max(8,r.bottom+6)+'px';
-  dd.style.right=Math.max(8,window.innerWidth-r.right)+'px';
-  dd.style.left='auto';
-  dd.style.zIndex='2147483647';
-}
-function _toggleMenu(btnId,ddId,ev){
-  if(ev){ ev.preventDefault(); ev.stopPropagation(); }
-  const btn=document.getElementById(btnId),dd=document.getElementById(ddId); if(!btn||!dd)return;
-  const abrir=dd.style.display==='none'||getComputedStyle(dd).display==='none';
-  _fecharTodosMenus();
-  if(abrir){ _posicionarMenu(btn,dd); dd.style.display='block'; btn.classList.add('aberto'); _menuAbertoId=ddId; }
-}
-function toggleMenu3pts(ev){ _toggleMenu('btn-menu3pts','menu3pts-dropdown',ev); }
-function toggleMenu3ptsLogin(ev){ _toggleMenu('btn-menu3pts-login','menu3pts-dropdown-login',ev); }
-function _fecharTodosMenus(){
-  [['btn-menu3pts','menu3pts-dropdown'],['btn-menu3pts-login','menu3pts-dropdown-login']].forEach(([b,d])=>{const be=document.getElementById(b),de=document.getElementById(d);if(de)de.style.display='none';if(be)be.classList.remove('aberto');});
-  _menuAbertoId=null;
-}
-function _fecharMenu3pts(){_fecharTodosMenus();}
-function _fecharMenu3ptsLogin(){_fecharTodosMenus();}
-
-function _bindMenuColetor(){
-  const bind=(id,fn)=>{ const el=document.getElementById(id); if(!el||el.dataset.dtBound)return; el.dataset.dtBound='1'; el.addEventListener('click',fn,false); };
-  bind('btn-menu3pts',e=>toggleMenu3pts(e));
-  bind('btn-menu3pts-login',e=>toggleMenu3ptsLogin(e));
-  document.addEventListener('click',e=>{ if(_menuAbertoId && !e.target.closest('.menu3pts-dropdown') && !e.target.closest('.btn-menu3pts')) _fecharTodosMenus(); },true);
-  document.addEventListener('keydown',e=>{ if(e.key==='Escape')_fecharTodosMenus(); });
-}
-window.addEventListener('DOMContentLoaded',_bindMenuColetor);
-
 
 
 // ══════════════════════════════════════════════════════════
-//  MENU TRÊS PONTOS  (melhoria 3)
+//  MENU TRÊS PONTOS — compatível com mouse, toque e coletor físico
 // ══════════════════════════════════════════════════════════
-function toggleMenu3pts() {
-  const dd  = document.getElementById('menu3pts-dropdown');
-  const btn = document.getElementById('btn-menu3pts');
+function _setMenuAberto(tipo, abrir) {
+  const login = tipo === 'login';
+  const dd = document.getElementById(login ? 'menu3pts-dropdown-login' : 'menu3pts-dropdown');
+  const btn = document.getElementById(login ? 'btn-menu3pts-login' : 'btn-menu3pts');
   if (!dd) return;
-  const aberto = dd.style.display !== 'none';
-  dd.style.display = aberto ? 'none' : 'block';
-  if (btn) btn.classList.toggle('aberto', !aberto);
-  // Fechar ao clicar fora
-  if (!aberto) {
-    setTimeout(() => {
-      document.addEventListener('click', _fecharMenu3pts, { once: true });
-    }, 0);
-  }
+  dd.style.display = abrir ? 'block' : 'none';
+  dd.classList.toggle('menu-aberto', abrir);
+  if (btn) btn.classList.toggle('aberto', abrir);
 }
-
-function toggleMenu3ptsLogin() {
-  const dd  = document.getElementById('menu3pts-dropdown-login');
-  const btn = document.getElementById('btn-menu3pts-login');
-  if (!dd) return;
-  const aberto = dd.style.display !== 'none';
-  dd.style.display = aberto ? 'none' : 'block';
-  if (btn) btn.classList.toggle('aberto', !aberto);
-  if (!aberto) {
-    setTimeout(() => {
-      document.addEventListener('click', _fecharMenu3ptsLogin, { once: true });
-    }, 0);
-  }
-}
-
-function _fecharMenu3ptsLogin(e) {
-  const dd = document.getElementById('menu3pts-dropdown-login');
-  if (dd) dd.style.display = 'none';
-  const btn = document.getElementById('btn-menu3pts-login');
-  if (btn) btn.classList.remove('aberto');
-}
-
-function _fecharMenu3pts(e) {
+function toggleMenu3pts(e) {
+  e?.preventDefault?.(); e?.stopPropagation?.();
   const dd = document.getElementById('menu3pts-dropdown');
-  if (dd) dd.style.display = 'none';
-  const btn = document.getElementById('btn-menu3pts');
-  if (btn) btn.classList.remove('aberto');
+  _setMenuAberto('app', !(dd && dd.style.display === 'block'));
 }
+function toggleMenu3ptsLogin(e) {
+  e?.preventDefault?.(); e?.stopPropagation?.();
+  const dd = document.getElementById('menu3pts-dropdown-login');
+  _setMenuAberto('login', !(dd && dd.style.display === 'block'));
+}
+function _fecharMenu3pts(){ _setMenuAberto('app', false); }
+function _fecharMenu3ptsLogin(){ _setMenuAberto('login', false); }
+
+window.addEventListener('DOMContentLoaded', () => {
+  const ligar = (id, fn) => {
+    const el = document.getElementById(id); if (!el) return;
+    el.addEventListener('click', fn, { passive:false });
+    el.addEventListener('keydown', e => { if (e.key==='Enter' || e.key===' ') fn(e); });
+  };
+  ligar('btn-menu3pts-login', toggleMenu3ptsLogin);
+  ligar('btn-menu3pts', toggleMenu3pts);
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#btn-menu3pts-login,#menu3pts-dropdown-login')) _fecharMenu3ptsLogin();
+    if (!e.target.closest('#btn-menu3pts,#menu3pts-dropdown')) _fecharMenu3pts();
+  });
+  document.querySelectorAll('.menu3pts-dropdown').forEach(el => el.addEventListener('click', e => e.stopPropagation()));
+});
 
 // ── Mostrar versão no menu ──
 window.addEventListener('DOMContentLoaded', () => {
@@ -273,10 +230,38 @@ function _hideUpdateModal() {
   if (overlay) overlay.style.display = 'none';
 }
 
-// ── SERVICE WORKER REAL ──
-(function(){
-  if(!('serviceWorker' in navigator)||!window.isSecureContext)return;
-  window.addEventListener('load',()=>navigator.serviceWorker.register('/sw-coletor.js',{scope:'/'}).then(reg=>reg.update()).catch(e=>console.warn('[SW]',e.message)));
+// ── SERVICE WORKER via <script type="text/js-worker"> ──
+// O arquivo é servido via link direto — registrar SW via URL do próprio HTML com parâmetro ?sw=1
+(function() {
+  if (!('serviceWorker' in navigator)) return;
+
+  // Detectar a URL base do próprio app
+  const selfUrl = location.href.split('?')[0].split('#')[0];
+
+  window.addEventListener('load', () => {
+    // Verificar se há um SW já registrado para este escopo
+    navigator.serviceWorker.getRegistration(selfUrl).then(reg => {
+      if (reg) {
+        dbg('[SW] já registrado:', reg.scope);
+        return;
+      }
+      // Tentar registrar — só funciona se o servidor retornar JS com Content-Type correto
+      // Como é um arquivo .html, o SW não pode ser registrado normalmente.
+      // Para instalação PWA, tentamos via importScripts workaround.
+      dbg('[SW] arquivo HTML — instalação via "Adicionar à tela inicial" disponível');
+    }).catch(() => {});
+  });
+
+  // Mostrar instruções de instalação manual para iOS (Safari não tem beforeinstallprompt)
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isInStandalone = window.navigator.standalone;
+  if (isIos && !isInStandalone) {
+    // Mostrar banner iOS após 3s
+    setTimeout(() => {
+      const banner = document.getElementById('pwa-ios-banner');
+      if (banner) banner.style.display = 'flex';
+    }, 3000);
+  }
 })();
 
 // ── INSTALL BANNER (A2HS) ──
@@ -296,28 +281,28 @@ window.addEventListener('beforeinstallprompt', e => {
   });
 });
 
-function instalarPWA() {
-  if (!_deferredPrompt) {
-    _fecharTodosMenus();
-    const msg = 'Para instalar: abra este endereço no Chrome do coletor, toque nos 3 pontos do navegador e escolha “Instalar app” ou “Adicionar à tela inicial”.';
-    if (typeof showConfirm === 'function') showConfirm(msg, () => {}, {title:'📲 Instalar aplicativo',icon:'📲',okLabel:'Entendi'});
-    else alert(msg);
-    return;
+async function instalarPWA() {
+  _fecharMenu3pts(); _fecharMenu3ptsLogin();
+  if (window.matchMedia?.('(display-mode: standalone)').matches || window.navigator.standalone === true) {
+    toast('O aplicativo já está instalado neste aparelho.', 's'); return;
   }
-  _deferredPrompt.prompt();
-  _deferredPrompt.userChoice.then(result => {
-    if (result.outcome === 'accepted') {
-      toast('✅ App instalado com sucesso!', 's');
-    }
-    _deferredPrompt = null;
-    const banner = document.getElementById('pwa-install-banner');
-    if (banner) banner.style.display = 'none';
-    const btnInst = document.getElementById('btn-instalar-pwa');
-    if (btnInst) btnInst.style.display = 'none';
-    ['menu-instalar-pwa-login', 'menu-instalar-pwa-app'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'block';
-    });
+  if (_deferredPrompt) {
+    try {
+      _deferredPrompt.prompt();
+      const result = await _deferredPrompt.userChoice;
+      if (result.outcome === 'accepted') toast('✅ Aplicativo instalado!', 's');
+      _deferredPrompt = null;
+      return;
+    } catch(e) { console.warn('[PWA] prompt:', e.message); }
+  }
+  const isChrome = /Chrome|Chromium/i.test(navigator.userAgent) && !/Edg|OPR/i.test(navigator.userAgent);
+  _showUpdateModal({
+    icon:'📲', title:'Instalar aplicativo',
+    msg: isChrome
+      ? 'Abra o menu do navegador (⋮) e toque em “Instalar aplicativo” ou “Adicionar à tela inicial”. Caso a opção não apareça, atualize o Chrome do coletor.'
+      : 'A instalação automática depende do Chrome/Edge atualizado. Abra este endereço no Chrome e use o menu do navegador: “Instalar aplicativo”.',
+    ver:'v'+APP_VERSION, barPct:100, showBtns:true,
+    btnOk:'Entendi', onOk:_hideUpdateModal, btnCancel:null
   });
 }
 
@@ -391,6 +376,11 @@ window.addEventListener('appinstalled', () => {
   if (btnInst) btnInst.style.display = 'none';
   ['menu-instalar-pwa-login', 'menu-instalar-pwa-app'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.style.display = 'block';
+    if (el) el.style.display = 'none';
   });
+});
+
+window.addEventListener('load',()=>{
+  if('serviceWorker' in navigator){ navigator.serviceWorker.register('/sw.js',{scope:'/'}).catch(e=>console.warn('[SW]',e.message)); }
+  ['menu-instalar-pwa-login','menu-instalar-pwa-app'].forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='block';});
 });

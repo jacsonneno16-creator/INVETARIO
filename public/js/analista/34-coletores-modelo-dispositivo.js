@@ -1,4 +1,5 @@
 function state(){ return window.AnalistaStore.getState(); }
+const FS_COL_COLETORES = (window.DT_FCOL && window.DT_FCOL.coletores) || 'dt_coletores';
 // ───────────────────────────────────────────────────────────────────
 //  19. RENDERIZAÇÃO — COLETORES
 // ═══════════════════════════════════════════════════════════════════
@@ -172,8 +173,7 @@ async function aprovarColetor(id) {
   const col = state().coletores.find(c => c.id === id);
   const nome = col ? 'Coletor ' + col.numero : id;
   try {
-    await FS_AN.collection(FS_COL_COLETORES).doc(id).set({ aprovado: 'aprovado', atualizado_em: new Date().toISOString() }, { merge:true });
-    if(col){ col.aprovado='aprovado'; renderColetores(); }
+    await FS_AN.collection(FS_COL_COLETORES).doc(id).set({ aprovado: 'aprovado', status: 'offline' }, { merge: true });
     showToast('✅ ' + nome + ' aprovado! Operadores já podem logar.', 's');
     logAuditoria('SISTEMA', 'Coletor aprovado: ' + nome, id);
   } catch(e) { showToast('Erro ao aprovar: ' + e.message, 'e'); }
@@ -187,8 +187,7 @@ async function bloquearColetor(id) {
 
 async function _bloquearColetorConfirmado(coletorId, nome) {
   try {
-    await FS_AN.collection(FS_COL_COLETORES).doc(coletorId).set({ aprovado: 'bloqueado', status: 'offline', sessao: null, operador_atual:null, atualizado_em:new Date().toISOString() }, { merge:true });
-    const colLocal=state().coletores.find(c=>c.id===coletorId); if(colLocal){colLocal.aprovado='bloqueado';colLocal.status='offline';colLocal.sessao=null;colLocal.operador_atual=null;renderColetores();}
+    await FS_AN.collection(FS_COL_COLETORES).doc(coletorId).set({ aprovado: 'bloqueado', status: 'offline', sessao: null, operador_atual: null }, { merge: true });
     showToast('🚫 ' + nome + ' bloqueado.', 'w');
     logAuditoria('SISTEMA', 'Coletor bloqueado: ' + nome, coletorId);
   } catch(e) { showToast('Erro ao bloquear: ' + e.message, 'e'); }
@@ -250,3 +249,5 @@ function sincronizarFilaOffline() {
 }
 window.addEventListener('online', sincronizarFilaOffline);
 
+
+Object.assign(window,{aprovarColetor,bloquearColetor,_bloquearColetorConfirmado,excluirColetor,_removerColetorConfirmado,logoutOperadorColetor,editarNomeColetor:window.editarNomeColetor});

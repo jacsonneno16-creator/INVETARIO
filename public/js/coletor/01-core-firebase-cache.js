@@ -7,9 +7,16 @@ const FS   = getDTFirestore();
 const AUTH = getDTAuth();
 const FCOL = window.DT_FCOL;
 
-// Inicialização da autenticação. Nunca fazemos signOut automático ao abrir,
-// pois em coletores físicos lentos isso pode encerrar um login recém-iniciado.
-window.DT_AUTH_READY = Promise.resolve(true);
+// Inicialização da autenticação do coletor.
+// IMPORTANTE: não executar signOut() ao abrir a página. Em coletores físicos mais
+// lentos esse logout terminava depois do clique em Entrar e derrubava a sessão nova.
+window.DT_AUTH_READY = Promise.resolve();
+try {
+  window.DT_AUTH_READY = AUTH.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
+    .catch(e => console.warn('[Auth] Persistência local indisponível:', e.message));
+} catch (e) {
+  console.warn('[Auth] Inicialização da persistência falhou:', e.message);
+}
 
 // ── Persistência offline das contagens ──
 const LS_FILA    = 'col_fila_envio';
@@ -39,7 +46,7 @@ function normProd(v) {
   if (!s || s === 'NULL' || s === 'UNDEFINED' || s === 'NAN') return PROD_VAZIO;
   return s;
 }
-const APP_VERSION = '4.0.0';            // versão do aplicativo
+const APP_VERSION = '3.3.0';            // versão do aplicativo
 
 // ══════════════════════════════════════════════════
 //  NORMALIZAÇÃO DA BASE  (melhoria 1 e 2)
