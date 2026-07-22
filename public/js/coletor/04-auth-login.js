@@ -77,7 +77,8 @@ function doLogin() {
     _setFb('⏱ Conexão lenta — verifique a internet e tente novamente', 'warn');
   }, 15000);
 
-  AUTH.signInWithEmailAndPassword(email, pass)
+  AUTH.setPersistence(firebase.auth.Auth.Persistence.NONE)
+    .then(() => AUTH.signInWithEmailAndPassword(email, pass))
     .then(async cred => {
       clearTimeout(_tid);
       const user = cred.user;
@@ -207,3 +208,16 @@ function _doLogoutConfirmado() {
 }
 
 
+
+
+// Segurança de sessão: sempre exigir login ao abrir ou recarregar o coletor.
+AUTH.setPersistence(firebase.auth.Auth.Persistence.NONE)
+  .then(() => AUTH.signOut().catch(() => {}))
+  .finally(() => {
+    APP.operador = null;
+    goScreen('login');
+    const login = document.getElementById('l-login');
+    const pass = document.getElementById('l-pass');
+    if (login) login.value = '';
+    if (pass) pass.value = '';
+  });

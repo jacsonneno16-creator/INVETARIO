@@ -22,8 +22,8 @@ function doLoginAnalista() {
   if (!email) return _setLoginErro('Informe o e-mail.');
   if (!senha) return _setLoginErro('Informe a senha.');
 
-  AUTH_AN.signInWithEmailAndPassword(email, senha)
-    .then(cred => _onAnalistaLogado(cred.user))
+  AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE)
+    .then(() => AUTH_AN.signInWithEmailAndPassword(email, senha))
     .catch(err => _setLoginErro(err.message));
 }
 
@@ -100,7 +100,17 @@ function _mostrarLogin() {
 
 // ── SESSION ──────────────────────────────────────────────────────────
 
+let _authAnalistaInicializado = false;
+AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE)
+  .then(() => AUTH_AN.signOut().catch(() => {}))
+  .finally(() => {
+    _authAnalistaInicializado = true;
+    window._currentAnalistaUser = null;
+    _mostrarLogin();
+  });
+
 AUTH_AN.onAuthStateChanged(user => {
+  if (!_authAnalistaInicializado) return;
   if (user) _onAnalistaLogado(user);
   else _mostrarLogin();
 });
