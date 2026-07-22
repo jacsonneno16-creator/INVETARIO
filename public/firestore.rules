@@ -5,7 +5,11 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+<<<<<<< HEAD
     match /dt_inventarios/{id} {
+=======
+    match /dt_inventarios/{inventarioId} {
+>>>>>>> 0790537 (Atualização do sistema)
       allow read, write: if signedIn();
       match /base_chunks/{chunkId} {
         allow read, write: if signedIn();
@@ -33,8 +37,14 @@ service cloud.firestore {
     match /dt_auditoria_imports/{id}       { allow read, write: if signedIn(); }
     match /dt_coletores/{id}               { allow read, write: if signedIn(); }
     match /dt_locais/{id}                  { allow read, write: if signedIn(); }
+<<<<<<< HEAD
     match /dt_locais_chunks/{id}           { allow read, write: if signedIn(); }
     match /dt_enderecos/{id}               { allow read, write: if signedIn(); }
+=======
+    match /dt_enderecos/{id}            { allow read, write: if signedIn(); }
+    match /dt_locais_chunks/{id}         { allow read, write: if signedIn(); }
+
+>>>>>>> 0790537 (Atualização do sistema)
     match /dt_logs_analista/{id}           { allow read, write: if signedIn(); }
     match /dt_logs_coletor/{id}            { allow read, write: if signedIn(); }
     match /dt_operadores/{id}              { allow read, write: if signedIn(); }

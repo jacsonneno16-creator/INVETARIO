@@ -6,5 +6,8 @@
       "**/.*",
       "**/node_modules/**"
     ]
+  },
+  "firestore": {
+    "rules": "public/firestore.rules"
   }
 }

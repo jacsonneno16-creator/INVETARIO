@@ -7,6 +7,11 @@ const FS   = getDTFirestore();
 const AUTH = getDTAuth();
 const FCOL = window.DT_FCOL;
 
+// Não reutilizar login antigo neste aparelho/navegador.
+AUTH.setPersistence(firebase.auth.Auth.Persistence.NONE)
+  .then(() => AUTH.signOut())
+  .catch(e => console.warn('[Auth] Falha ao limpar sessão anterior:', e.message));
+
 // ── Persistência offline das contagens ──
 const LS_FILA    = 'col_fila_envio';
 const LS_INV     = 'col_inventarios';

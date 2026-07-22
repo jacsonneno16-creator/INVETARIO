@@ -99,7 +99,10 @@ function _mostrarLogin() {
 }
 
 // ── SESSION ──────────────────────────────────────────────────────────
+// Sempre inicia deslogado. O Firebase não reutiliza a sessão anterior.
+let _authInicializado = false;
 
+<<<<<<< HEAD
 let _authAnalistaInicializado = false;
 AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE)
   .then(() => AUTH_AN.signOut().catch(() => {}))
@@ -114,6 +117,30 @@ AUTH_AN.onAuthStateChanged(user => {
   if (user) _onAnalistaLogado(user);
   else _mostrarLogin();
 });
+=======
+async function _iniciarAuthAnalista() {
+  try {
+    await AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE);
+    await AUTH_AN.signOut();
+  } catch (e) {
+    console.warn('[Auth] Não foi possível limpar a sessão anterior:', e.message);
+  }
+
+  const email = document.getElementById('an-email');
+  const senha = document.getElementById('an-pass');
+  if (email) email.value = '';
+  if (senha) senha.value = '';
+  _mostrarLogin();
+
+  AUTH_AN.onAuthStateChanged(user => {
+    if (!_authInicializado) { _authInicializado = true; if (!user) _mostrarLogin(); return; }
+    if (user) _onAnalistaLogado(user);
+    else _mostrarLogin();
+  });
+}
+
+_iniciarAuthAnalista();
+>>>>>>> 0790537 (Atualização do sistema)
 
 // ── UTIL ─────────────────────────────────────────────────────────────
 
