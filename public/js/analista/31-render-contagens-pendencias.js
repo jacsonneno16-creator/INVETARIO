@@ -1,4 +1,15 @@
 function state(){ return window.AnalistaStore.getState(); }
+
+function contStatusBadge(status){
+  const st = String(status || 'PENDENTE').toUpperCase();
+  if (st === 'PROCESSADO' || st === 'OK' || st === 'CONCLUIDA') return 'b-green';
+  if (st === 'DIVERGENTE' || st === 'CONFLITO' || st === 'PERSISTENTE') return 'b-red';
+  if (st === 'ESTORNADA' || st === 'EXCLUIDA') return 'b-gray';
+  if (st === 'EM_RECONTAGEM' || st === 'RECONTAGEM') return 'b-purple';
+  return 'b-orange';
+}
+window.contStatusBadge = window.contStatusBadge || contStatusBadge;
+
 // ───────────────────────────────────────────────────────────────────
 //  14. RENDERIZAÇÃO — CONTAGENS
 // ───────────────────────────────────────────────────────────────────

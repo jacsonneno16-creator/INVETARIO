@@ -5,7 +5,7 @@
   const state = {
     started: false,
     currentInventoryIds: [],
-    unsubscribers: { contagens: [], vazios: [], recontagens: [], coletores: null, enderecos: null }
+    unsubscribers: { contagens: [], vazios: [], divergencias: [], recontagens: [], coletores: null, enderecos: null }
   };
 
   function _emitSync(ok, message, extra){
@@ -29,7 +29,7 @@
 
   function _handleCollectionChange(collection, docChange){
     const raw        = { id: docChange.doc.id, ...docChange.doc.data() };
-    const normalized = collection === 'recontagens'
+    const normalized = (collection === 'recontagens' || collection === 'divergencias')
       ? raw
       : InventarioService.normalizarContagem(raw);
     const slice = collection === 'vazios' ? 'contagens' : collection;
@@ -44,6 +44,7 @@
       if (Storage?.storageSave) {
         if (slice === 'contagens') Storage.storageSave(Storage.KEYS.contagens, st.contagens || []);
         if (slice === 'recontagens') Storage.storageSave(Storage.KEYS.recontagens, st.recontagens || []);
+        if (slice === 'divergencias') Storage.storageSave(Storage.KEYS.divergencias, st.divergencias || []);
       }
       if (typeof global.atualizarBadgesNav === 'function') global.atualizarBadgesNav();
       const page = global.AnalistaStore.getState()?.ui?.currentPage;
@@ -305,13 +306,14 @@
     }
 
     // Parar listeners de contagens antes de reiniciar
-    ['contagens', 'vazios', 'recontagens'].forEach(collection => {
+    ['contagens', 'vazios', 'divergencias', 'recontagens'].forEach(collection => {
       (state.unsubscribers[collection] || []).forEach(unsub => { try { unsub(); } catch(_) {} });
       state.unsubscribers[collection] = [];
     });
 
     state.unsubscribers.contagens   = _listenCollection('contagens',   'dt_contagens');
     state.unsubscribers.vazios      = _listenCollection('vazios',      'dt_vazios');
+    state.unsubscribers.divergencias = _listenCollection('divergencias', 'dt_divergencias');
     state.unsubscribers.recontagens = _listenCollection('recontagens', 'dt_recontagens');
     state.started = true;
     state.currentInventoryIds = ids.slice();

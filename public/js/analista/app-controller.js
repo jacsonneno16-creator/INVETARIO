@@ -3,13 +3,26 @@
   let uiBound = false;
   let renderTid = null;
   let processTid = null;
+  let rendering = false;
+  let lastRenderError = '';
 
   function scheduleRender(){
     clearTimeout(renderTid);
     renderTid = setTimeout(() => {
-      global.AnalistaNavigation?.renderCurrentPage?.();
-      if (typeof global.atualizarBadgesNav === 'function') global.atualizarBadgesNav();
-      if (typeof global.updateStaticTexts === 'function') global.updateStaticTexts();
+      if (rendering) return;
+      rendering = true;
+      try {
+        global.AnalistaNavigation?.renderCurrentPage?.();
+        if (typeof global.atualizarBadgesNav === 'function') global.atualizarBadgesNav();
+        if (typeof global.updateStaticTexts === 'function') global.updateStaticTexts();
+        lastRenderError = '';
+      } catch (err) {
+        const sig = String(err && (err.stack || err.message) || err);
+        if (sig !== lastRenderError) console.error('[AppController] falha ao renderizar:', err);
+        lastRenderError = sig;
+      } finally {
+        rendering = false;
+      }
     }, 16);
   }
 

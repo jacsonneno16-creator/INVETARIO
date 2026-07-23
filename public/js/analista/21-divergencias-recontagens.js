@@ -23,13 +23,13 @@
     const endN = _nd(endereco);
     if (tipo === 'VAZIO_COM_PRODUTO_NA_BASE'){
       return state().divergencias.find(d =>
-        d.inventario_id === invId && _nd(d.endereco) === endN &&
+        String(d.inventario_id || d.inventarioId || d.inventario || d.inv_id || '') === String(invId) && _nd(d.endereco) === endN &&
         d.tipo_divergencia === 'VAZIO_COM_PRODUTO_NA_BASE'
       ) || null;
     }
     const prodN = _nd(produto);
     return state().divergencias.find(d =>
-      d.inventario_id === invId && _nd(d.endereco) === endN &&
+      String(d.inventario_id || d.inventarioId || d.inventario || d.inv_id || '') === String(invId) && _nd(d.endereco) === endN &&
       _nd(d.produto) === prodN && d.tipo_divergencia === tipo
     ) || null;
   }
@@ -42,7 +42,7 @@
     if (!div) return;
     let houve = false;
     const updated = state().contagens.map(c => {
-      if (c.inventario_id !== div.inventario_id) return c;
+      if (String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') !== String(div.inventario_id || div.inventarioId || div.inventario || div.inv_id || '')) return c;
       if (_nd(c.endereco)  !== _nd(div.endereco))  return c;
       if (c.status === novoStatus) return c;
       houve = true;
@@ -137,9 +137,10 @@
 
   function processarDivergencias({ criarRecontagens = true } = {}){
     const invId      = document.getElementById('div-sel-inv')?.value || '';
+    const statusAtivos = new Set(['ATIVO','ABERTO','PUBLICADO','LIBERADO','EM_ANDAMENTO','PAUSADO']);
     const inventarios = invId
-      ? [state().inventarios.find(i => i.id === invId)].filter(Boolean)
-      : state().inventarios.filter(i => i && i.status === 'ATIVO');
+      ? [state().inventarios.find(i => String(i.id) === String(invId))].filter(Boolean)
+      : state().inventarios.filter(i => i && (statusAtivos.has(String(i.status || '').toUpperCase()) || (Array.isArray(i.base) && i.base.length)));
 
     let novos = 0;
 
@@ -154,7 +155,7 @@
       if (!inv.base?.length) return;
 
       const conts = state().contagens.filter(c =>
-        c.inventario_id === inv.id &&
+        String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) &&
         c.tipo_contagem !== 'RECONTAGEM' &&
         !c._excluida &&
         c.status !== 'ESTORNADA' &&
@@ -211,7 +212,7 @@
 
       // ── Atualizar status de RECONTAGEMs ──
       state().contagens.filter(c =>
-        c.inventario_id === inv.id && c.tipo_contagem === 'RECONTAGEM' &&
+        String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) && c.tipo_contagem === 'RECONTAGEM' &&
         !c._excluida && c.status !== 'ESTORNADA'
       ).forEach(c => {
         const divRef = c.divergencia_id
@@ -324,7 +325,7 @@
 
       // ── 1d. Endereço vazio mas base espera produto ──
       state().contagens.filter(c =>
-        c.inventario_id === inv.id && _isVazio(c) && !c._excluida &&
+        String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) && _isVazio(c) && !c._excluida &&
         c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA'
       ).forEach(vazio => {
         const itensEsperados = inv.base.filter(item =>
@@ -356,6 +357,26 @@
         if (criarRecontagens) _criarRecontagemParaDivergencia(div, inv, 0, novasRecs);
       });
     });
+
+    // ── Garantia: toda divergência aberta deve possuir recontagem pendente ──
+    if (criarRecontagens) {
+      const candidatas = [...state().divergencias, ...novasDivs, ...divsUpdate];
+      const vistos = new Set();
+      candidatas.forEach(div => {
+        if (!div || vistos.has(div.id)) return;
+        vistos.add(div.id);
+        const st = String(div.status || 'ABERTA').toUpperCase();
+        if (st === 'RESOLVIDA' || st === 'PERSISTENTE' || div.precisa_recontagem === false) return;
+        const jaExiste = [...state().recontagens, ...novasRecs].some(r =>
+          String(r.divergencia_id || '') === String(div.id) &&
+          !['CONCLUIDA','CANCELADA'].includes(String(r.status || '').toUpperCase())
+        );
+        if (jaExiste) return;
+        const inv = inventarios.find(i => String(i.id) === String(div.inventario_id || div.inventarioId || ''));
+        if (!inv) return;
+        _criarRecontagemParaDivergencia(div, inv, Number(div.qtd_contada || 0), novasRecs);
+      });
+    }
 
     // ── Deduplicação final de divergências ──
     const _seenDiv = new Set();
@@ -447,7 +468,7 @@
 
     // Vincular contagem original
     const contOriginal = state().contagens.find(c =>
-      c.inventario_id === inv.id &&
+      String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) &&
       _nd(c.endereco) === _nd(div.endereco) &&
       (_nd(c.codigo_produto) === _nd(div.produto) || _nd(c.gtin) === _nd(div.produto)) &&
       !c._excluida && c.status !== 'ESTORNADA'
