@@ -800,7 +800,27 @@
       text-align: center; margin-top: 22px;
       font-size: .73rem; color: #aaa;
     }
-  </style>
+  
+/* Dashboard v37 — visual analítico moderno */
+.dash-modern-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px;margin:16px 0}
+.dash-modern-card{background:linear-gradient(145deg,var(--surface),var(--surface-2));border:1px solid var(--border);border-radius:18px;box-shadow:0 10px 30px rgba(15,23,42,.06);overflow:hidden}
+.dash-modern-card .dm-head{padding:16px 18px 8px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.dash-modern-card .dm-title{font-size:.9rem;font-weight:800;color:var(--text)}
+.dash-modern-card .dm-sub{font-size:.69rem;color:var(--muted);margin-top:3px}
+.dash-summary{grid-column:span 4;padding:20px;display:flex;align-items:center;gap:18px;min-height:180px}
+.dash-donut{width:126px;height:126px;border-radius:50%;display:grid;place-items:center;position:relative;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(255,255,255,.5)}
+.dash-donut:after{content:'';position:absolute;inset:17px;border-radius:50%;background:var(--surface);box-shadow:0 5px 18px rgba(15,23,42,.08)}
+.dash-donut-value{position:relative;z-index:1;text-align:center;font-family:var(--mono);font-size:1.45rem;font-weight:900}.dash-donut-value small{display:block;font:600 .58rem var(--sans);color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+.dash-stat-list{display:grid;gap:9px;flex:1}.dash-stat-row{display:flex;align-items:center;justify-content:space-between;font-size:.75rem}.dash-stat-row b{font-family:var(--mono);font-size:.86rem}.dash-dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:7px}
+.dash-ranking{grid-column:span 8}.dash-ranking-body{padding:10px 18px 18px;display:grid;gap:10px}
+.dash-rank-row{border:0;background:transparent;width:100%;display:grid;grid-template-columns:minmax(120px,220px) 1fr 42px;gap:12px;align-items:center;text-align:left;cursor:pointer;padding:5px;border-radius:10px;transition:.18s}.dash-rank-row:hover{background:var(--surface-2);transform:translateX(3px)}
+.dash-rank-label{font-size:.72rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dash-rank-track{height:13px;background:rgba(148,163,184,.16);border-radius:999px;overflow:hidden}.dash-rank-fill{height:100%;border-radius:999px;box-shadow:0 2px 8px rgba(15,23,42,.12);transition:width .6s ease}.dash-rank-value{font-family:var(--mono);font-size:.75rem;font-weight:800;text-align:right}
+.dash-mini{grid-column:span 4}.dash-mini-body{padding:10px 18px 18px;display:grid;gap:9px}.dash-mini-row{display:grid;grid-template-columns:58px 1fr 34px;gap:10px;align-items:center;font-size:.7rem}.dash-mini-track{height:8px;background:rgba(148,163,184,.15);border-radius:99px;overflow:hidden}.dash-mini-fill{height:100%;border-radius:99px}
+.dash-insights{grid-column:span 12;padding:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.dash-insight{padding:13px 14px;border-radius:14px;background:var(--surface-2);border:1px solid var(--border)}.dash-insight strong{display:block;font-size:1.15rem;font-family:var(--mono)}.dash-insight span{font-size:.66rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+#acomp-live-hero{margin:12px 0 16px;padding:20px;border-radius:18px;background:linear-gradient(135deg,#0f5132,#1e7a50);color:#fff;display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:center;box-shadow:0 14px 35px rgba(15,81,50,.22)}
+#acomp-live-ring{width:112px;height:112px;border-radius:50%;display:grid;place-items:center;position:relative}#acomp-live-ring:after{content:'';position:absolute;inset:13px;border-radius:50%;background:#145f3d}#acomp-live-value{position:relative;z-index:1;font:900 1.5rem var(--mono)}
+@media(max-width:980px){.dash-summary,.dash-ranking,.dash-mini{grid-column:span 12}}
+</style>
 </head>
 <body>
 <!-- ══════════ TELA DE LOGIN ══════════ -->
@@ -1085,11 +1105,15 @@
 <div class="sec-hdr">
 <div>
 <div class="sec-title">🎯 Acompanhamento em Tempo Real</div>
-<div class="sec-sub" id="acomp-inv-nome">Selecione uma auditoria para monitorar</div>
+<div class="sec-sub" id="acomp-inv-nome">Selecione o tipo e a operação que deseja monitorar</div>
 </div>
 <div style="display:flex;gap:8px;flex-wrap:wrap">
-<select class="filter-sel" id="acomp-sel-inv" onchange="trocarInventarioAcomp()">
-<option value="">Selecione uma auditoria...</option>
+<select class="filter-sel" id="acomp-tipo" onchange="trocarTipoAcompanhamento()" style="min-width:190px;font-weight:700">
+<option value="inventario">📦 Acompanhar Inventário</option>
+<option value="auditoria">🔎 Acompanhar Auditoria</option>
+</select>
+<select class="filter-sel" id="acomp-sel-inv" onchange="trocarInventarioAcomp()" style="min-width:250px">
+<option value="">Selecione um inventário...</option>
 </select>
 <button class="btn btn-primary btn-sm" onclick="sincronizarContagens()">🔄 Atualizar</button>
 </div>
@@ -1739,14 +1763,8 @@
         <div class="fi"><div class="fl">Auditoria selecionada</div><select id="aud-op-auditoria"></select></div>
         <div class="fi"><div class="fl">Status</div><select id="aud-op-status"><option value="">Todos</option><option value="PENDENTE">Pendente</option><option value="OK">OK</option><option value="DIVERGENTE">Divergente</option><option value="ENDERECO_VAZIO">Endereço vazio</option></select></div>
       </div>
-      <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(125px,1fr));margin-bottom:12px">
-        <div class="kpi blue"><span class="kpi-icon">📦</span><div class="kpi-val" id="audop-k-total">0</div><div class="kpi-lbl">Total importado</div></div>
-        <div class="kpi purple"><span class="kpi-icon">📋</span><div class="kpi-val" id="audop-k-auditados">0</div><div class="kpi-lbl">Auditados</div></div>
-        <div class="kpi yellow"><span class="kpi-icon">⏳</span><div class="kpi-val" id="audop-k-pend">0</div><div class="kpi-lbl">Pendentes</div></div>
-        <div class="kpi green"><span class="kpi-icon">✅</span><div class="kpi-val" id="audop-k-ok">0</div><div class="kpi-lbl">OK</div></div>
-        <div class="kpi orange"><span class="kpi-icon">⚠️</span><div class="kpi-val" id="audop-k-div">0</div><div class="kpi-lbl">Divergentes</div></div>
-        <div class="kpi red"><span class="kpi-icon">📭</span><div class="kpi-val" id="audop-k-vaz">0</div><div class="kpi-lbl">Vazios</div></div>
-        <div class="kpi blue"><span class="kpi-icon">📈</span><div class="kpi-val" id="audop-k-perc">0%</div><div class="kpi-lbl">Concluído</div></div>
+      <div id="auditoria-operacional-kpis-legado" style="display:none" aria-hidden="true">
+        <span id="audop-k-total">0</span><span id="audop-k-auditados">0</span><span id="audop-k-pend">0</span><span id="audop-k-ok">0</span><span id="audop-k-div">0</span><span id="audop-k-vaz">0</span><span id="audop-k-perc">0%</span>
       </div>
       <div id="auditoria-import-status"></div>
       <div id="auditoria-import-preview" style="display:none;margin:10px 0 14px"></div>
@@ -3209,5 +3227,5 @@
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260722-19"></script></body>
+<script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260722-19"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260723-37"></script></body>
 </html>
