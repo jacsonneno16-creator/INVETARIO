@@ -345,9 +345,13 @@
     APP.contagens = [];
 
     try {
-      if (window._carregarBaseGeralEnderecosAuditoria) await window._carregarBaseGeralEnderecosAuditoria(false);
-      APP.auditorias = await window._carregarEnderecoAuditoria(auditoriaSelecionadaId);
       goScreen('app');
+      if (window._carregarBaseGeralEnderecosAuditoria) window._carregarBaseGeralEnderecosAuditoria(false).catch(function(){});
+      const lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+      let cacheAuditoria = [];
+      try { cacheAuditoria = JSON.parse(localStorage.getItem('dt_auditoria_cache_' + lojaId + '_' + auditoriaSelecionadaId) || '[]'); } catch(e) {}
+      if (cacheAuditoria.length) APP.auditorias = cacheAuditoria;
+      else APP.auditorias = await window._carregarEnderecoAuditoria(auditoriaSelecionadaId);
       const tabs = {
         contar: document.getElementById('tab-contar'),
         historico: document.getElementById('tab-historico'),
@@ -364,6 +368,14 @@
       if (tabs.status) tabs.status.style.display = '';
       showView('auditoria', tabs.auditoria);
       renderAuditoriaColetor();
+      if (cacheAuditoria.length) {
+        window._carregarEnderecoAuditoria(auditoriaSelecionadaId).then(function(lista){
+          if (APP.modoAcesso === 'auditoria' && auditoriaId() === auditoriaSelecionadaId) {
+            APP.auditorias = lista;
+            atualizarContadorTitulo();
+          }
+        }).catch(function(erro){ console.warn('[AUDITORIA] Atualização em segundo plano falhou:', erro); });
+      }
     } catch(error) {
       console.error('[AUDITORIA] Erro ao abrir auditoria:', error);
       toast('Erro ao abrir auditoria: ' + error.message, 'e');

@@ -131,16 +131,26 @@ async function trocarLojaColetor(event) {
   }
 
   const atual = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
-  card.style.position = 'relative';
   menu = document.createElement('div');
   menu.id = 'coletor-menu-lojas';
-  menu.style.cssText = 'position:absolute;right:12px;top:58px;z-index:5000;min-width:230px;max-width:calc(100vw - 48px);background:#fff;border:1px solid #dbe3ea;border-radius:10px;box-shadow:0 14px 35px rgba(0,0,0,.20);padding:6px';
+  // O menu é anexado ao body e usa position:fixed para não ficar atrás dos cards
+  // nem ser cortado por containers com overflow/stacking context.
+  const rect = botao.getBoundingClientRect();
+  const largura = Math.min(286, Math.max(230, window.innerWidth - 24));
+  let esquerda = rect.right - largura;
+  if (esquerda < 12) esquerda = 12;
+  let topo = rect.bottom + 8;
+  const alturaEstimada = Math.min(320, (lojas.length * 48) + 12);
+  if (topo + alturaEstimada > window.innerHeight - 12) {
+    topo = Math.max(12, rect.top - alturaEstimada - 8);
+  }
+  menu.style.cssText = 'position:fixed;left:'+esquerda+'px;top:'+topo+'px;width:'+largura+'px;z-index:2147483647;max-height:320px;overflow-y:auto;background:#fff;color:#111827;border:1px solid #dbe3ea;border-radius:10px;box-shadow:0 18px 48px rgba(0,0,0,.35);padding:6px;pointer-events:auto;touch-action:manipulation';
   menu.innerHTML = lojas.map(function(loja){
     const ativa = loja.id === atual;
     const nome = String(loja.nome || loja.id).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
     return '<button type="button" data-loja-id="'+loja.id+'" style="display:flex;width:100%;align-items:center;justify-content:space-between;gap:12px;padding:11px 10px;border:0;border-radius:7px;background:'+(ativa?'#eef8f2':'transparent')+';font:inherit;text-align:left;cursor:pointer"><span style="font-weight:'+(ativa?'800':'650')+'">'+nome+'</span>'+(ativa?'<span style="font-size:.68rem;color:#1e6f4e;font-weight:800">ATUAL</span>':'')+'</button>';
   }).join('');
-  card.appendChild(menu);
+  document.body.appendChild(menu);
 
   const fechar = function(ev){
     if (!menu || !menu.isConnected) return;
@@ -151,7 +161,9 @@ async function trocarLojaColetor(event) {
   setTimeout(function(){ document.addEventListener('click', fechar, true); }, 0);
 
   menu.addEventListener('click', async function(ev){
-    const item = ev.target.closest('[data-loja-id]');
+    let item = ev.target;
+    while (item && item !== menu && !(item.getAttribute && item.getAttribute('data-loja-id'))) item = item.parentNode;
+    if (item === menu) item = null;
     if (!item) return;
     const selecionada = item.getAttribute('data-loja-id');
     menu.remove();

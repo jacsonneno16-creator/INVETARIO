@@ -85,7 +85,7 @@
         const nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
         if (codigo && nome) APP.auditoriaProdutosMap[codigo] = nome;
       });
-      const resultadosSnap = await audRef.collection('enderecos').get();
+      const resultadosSnap = await audRef.collection('enderecos').where('disponivel_coletor', '==', false).get();
       const finalizados = new Set();
       resultadosSnap.docs.forEach(doc => {
         const d = doc.data() || {};
@@ -95,7 +95,7 @@
           finalizados.add(String(d.endereco || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,''));
         }
       });
-      return rows.filter(a => {
+      const pendentes = rows.filter(a => {
         const status = String(a.status || '').toUpperCase();
         const id = String(a.id || '');
         const endereco = String(a.endereco || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
@@ -103,6 +103,11 @@
           !['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(status) &&
           !finalizados.has(id) && !finalizados.has(endereco);
       });
+      try {
+        const lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+        localStorage.setItem('dt_auditoria_cache_' + lojaId + '_' + auditoriaId, JSON.stringify(pendentes));
+      } catch(e) {}
+      return pendentes;
     }
     // Fallback para auditorias antigas sem chunks.
     const snap = await audRef.collection('enderecos').get();
@@ -189,8 +194,15 @@
     APP.auditoriaBase = [];
     APP.contagens = [];
     try {
-      await _carregarBaseGeralEnderecosAuditoria(false);
-      APP.auditorias = await _carregarEnderecoAuditoria(auditoriaId);
+      _carregarBaseGeralEnderecosAuditoria(false).catch(function(){});
+      const lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+      let cacheAuditoria = [];
+      try { cacheAuditoria = JSON.parse(localStorage.getItem('dt_auditoria_cache_' + lojaId + '_' + auditoriaId) || '[]'); } catch(e) {}
+      if (cacheAuditoria.length) APP.auditorias = cacheAuditoria;
+      else APP.auditorias = await _carregarEnderecoAuditoria(auditoriaId);
+      if (cacheAuditoria.length) {
+        _carregarEnderecoAuditoria(auditoriaId).then(function(lista){ APP.auditorias = lista; if (APP.modoAcesso === 'auditoria') renderAuditoriaColetor(); }).catch(function(){});
+      }
       const audTab = document.getElementById('tab-auditoria');
       if (audTab) audTab.style.display = '';
       goScreen('coleta');

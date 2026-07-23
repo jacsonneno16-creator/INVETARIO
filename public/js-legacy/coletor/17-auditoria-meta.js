@@ -147,7 +147,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     window._carregarBaseGeralEnderecosAuditoria = _carregarBaseGeralEnderecosAuditoria;
     function _carregarEnderecoAuditoria(auditoriaId) {
         return __awaiter(this, void 0, void 0, function () {
-            var audRef, chunkSnap, rows_1, resultadosSnap, finalizados_1, snap, todos;
+            var audRef, chunkSnap, rows_1, resultadosSnap, finalizados_1, pendentes, lojaId, snap, todos;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -168,7 +168,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                             if (codigo && nome)
                                 APP.auditoriaProdutosMap[codigo] = nome;
                         });
-                        return [4 /*yield*/, audRef.collection('enderecos').get()];
+                        return [4 /*yield*/, audRef.collection('enderecos').where('disponivel_coletor', '==', false).get()];
                     case 2:
                         resultadosSnap = _a.sent();
                         finalizados_1 = new Set();
@@ -180,14 +180,20 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                                 finalizados_1.add(String(d.endereco || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, ''));
                             }
                         });
-                        return [2 /*return*/, rows_1.filter(function (a) {
-                                var status = String(a.status || '').toUpperCase();
-                                var id = String(a.id || '');
-                                var endereco = String(a.endereco || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-                                return a.disponivel_coletor !== false &&
-                                    !['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(status) &&
-                                    !finalizados_1.has(id) && !finalizados_1.has(endereco);
-                            })];
+                        pendentes = rows_1.filter(function (a) {
+                            var status = String(a.status || '').toUpperCase();
+                            var id = String(a.id || '');
+                            var endereco = String(a.endereco || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+                            return a.disponivel_coletor !== false &&
+                                !['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(status) &&
+                                !finalizados_1.has(id) && !finalizados_1.has(endereco);
+                        });
+                        try {
+                            lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+                            localStorage.setItem('dt_auditoria_cache_' + lojaId + '_' + auditoriaId, JSON.stringify(pendentes));
+                        }
+                        catch (e) { }
+                        return [2 /*return*/, pendentes];
                     case 3: return [4 /*yield*/, audRef.collection('enderecos').get()];
                     case 4:
                         snap = _a.sent();
@@ -266,7 +272,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     };
     window.selecionarAuditoriaMenu = function (auditoriaId) {
         return __awaiter(this, void 0, void 0, function () {
-            var meta, _a, audTab, err_1;
+            var meta, lojaId, cacheAuditoria, _a, audTab, err_1;
             return __generator(this, function (_b) {
                 switch (_b.label) {
                     case 0:
@@ -283,14 +289,28 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         APP.contagens = [];
                         _b.label = 1;
                     case 1:
-                        _b.trys.push([1, 4, , 5]);
-                        return [4 /*yield*/, _carregarBaseGeralEnderecosAuditoria(false)];
+                        _b.trys.push([1, 5, , 6]);
+                        _carregarBaseGeralEnderecosAuditoria(false).catch(function () { });
+                        lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+                        cacheAuditoria = [];
+                        try {
+                            cacheAuditoria = JSON.parse(localStorage.getItem('dt_auditoria_cache_' + lojaId + '_' + auditoriaId) || '[]');
+                        }
+                        catch (e) { }
+                        if (!cacheAuditoria.length) return [3 /*break*/, 2];
+                        APP.auditorias = cacheAuditoria;
+                        return [3 /*break*/, 4];
                     case 2:
-                        _b.sent();
                         _a = APP;
                         return [4 /*yield*/, _carregarEnderecoAuditoria(auditoriaId)];
                     case 3:
                         _a.auditorias = _b.sent();
+                        _b.label = 4;
+                    case 4:
+                        if (cacheAuditoria.length) {
+                            _carregarEnderecoAuditoria(auditoriaId).then(function (lista) { APP.auditorias = lista; if (APP.modoAcesso === 'auditoria')
+                                renderAuditoriaColetor(); }).catch(function () { });
+                        }
                         audTab = document.getElementById('tab-auditoria');
                         if (audTab)
                             audTab.style.display = '';
@@ -298,12 +318,12 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         if (audTab)
                             showView('auditoria', audTab);
                         renderAuditoriaColetor();
-                        return [3 /*break*/, 5];
-                    case 4:
+                        return [3 /*break*/, 6];
+                    case 5:
                         err_1 = _b.sent();
                         toast('Erro ao abrir auditoria: ' + err_1.message, 'e');
-                        return [3 /*break*/, 5];
-                    case 5: return [2 /*return*/];
+                        return [3 /*break*/, 6];
+                    case 6: return [2 /*return*/];
                 }
             });
         });
