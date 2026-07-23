@@ -548,6 +548,11 @@ function _executarSalvar(qty) {
   const _isDunBipado = _gtinBipado.length === 14;
   const _fatorCx     = Math.max(1, parseFloat(a.produtoAtual?.fator_caixa) || 1);
 
+  const _produtoGlobal = window.DTProdutos?.buscarSync(_gtinBipado) || { encontrado:false };
+  const _nomeProdutoLido = _produtoGlobal.encontrado
+    ? _produtoGlobal.nomeProduto
+    : (a.produtoAtual?.descricao_produto || 'Produto não identificado');
+
   const contagem = {
     id:   Date.now(),
     uuid: gerarUUID(),
@@ -559,8 +564,13 @@ function _executarSalvar(qty) {
     gtin:           _gtinBipado,
     codigo_produto: normProd(a.produtoAtual?.codigo_produto || a.gtin),
     produto_codigo: normProd(a.produtoAtual?.codigo_produto || a.gtin),
-    descricao:         a.produtoAtual?.descricao_produto || 'Código sem cadastro',
-    descricao_produto: a.produtoAtual?.descricao_produto || 'Código sem cadastro',
+    codigoLido:       _gtinBipado,
+    dunLido:          _gtinBipado.length === 14 ? _gtinBipado : '',
+    gtinLido:         _gtinBipado.length !== 14 ? _gtinBipado : (_produtoGlobal.gtin || ''),
+    produtoLidoId:    _produtoGlobal.encontrado ? _produtoGlobal.produtoId : '',
+    produtoLidoNome:  _nomeProdutoLido,
+    descricao:         _nomeProdutoLido,
+    descricao_produto: _nomeProdutoLido,
     validade: a.validade,
     quantidade: qty,                               // sempre em caixas (ou unidades, se GTIN)
     qtd_caixas:  _isDunBipado ? qty : null,        // quantas caixas o operador informou

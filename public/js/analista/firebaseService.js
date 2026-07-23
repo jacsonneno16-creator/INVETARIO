@@ -149,19 +149,45 @@
   }
 
   // ── Listener de coletores (sem filtro por inventario_id) ─────────────────────
+  let _coletoresFingerprint = '';
+
+  function _normalizarColetores(snapshot){
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+  }
+
+  function _fingerprintColetores(docs){
+    return JSON.stringify(docs.map(item => ({
+      id: item.id,
+      aprovado: item.aprovado || 'pendente',
+      bloqueado: item.bloqueado === true,
+      ativo: item.ativo !== false,
+      status: item.status || 'offline',
+      nome_exibicao: item.nome_exibicao || item.nome_coletor || '',
+      operador_atual: item.operador_atual || '',
+      ultimo_ping: item.ultimo_ping || '',
+      sessao: item.sessao || null,
+      contagens_enviadas: item.contagens_enviadas || 0,
+      contagens_pendentes: item.contagens_pendentes || 0
+    })));
+  }
+
   function _aplicarSnapshotColetores(snapshot, source){
-    // Substitui a lista inteira para evitar registros presos no cache e garantir
-    // que solicitações pendentes apareçam mesmo quando o listener perdeu eventos.
-    const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    const docs = _normalizarColetores(snapshot);
+    const fingerprint = _fingerprintColetores(docs);
+
+    // Um mesmo snapshot chegava por refresh + onSnapshot e era renderizado duas
+    // vezes: diretamente aqui e novamente pelo subscriber do Store. Agora o
+    // Store é o único responsável por solicitar a renderização e snapshots
+    // idênticos são ignorados.
+    if (fingerprint === _coletoresFingerprint) return docs;
+    _coletoresFingerprint = fingerprint;
+
     global.AnalistaStore.dispatch(Actions.replaceSlice('coletores', docs, {
       source: source || 'firebase', collection: 'coletores'
     }));
     const Storage = global.AnalistaStorage;
     if (Storage?.storageSave && Storage?.KEYS?.coletores) {
       Storage.storageSave(Storage.KEYS.coletores, docs);
-    }
-    if (document.getElementById('page-coletores')?.classList.contains('on') && typeof global.renderColetores === 'function') {
-      global.renderColetores();
     }
     return docs;
   }

@@ -19,6 +19,7 @@
   };
 
   // ── Storage ─────────────────────────────────────────────────────────────────
+  function scopedKey(key){ const loja=(window.getDTLojaAtiva&&window.getDTLojaAtiva())||'sem_loja'; return `${key}__${loja}`; }
 
   /** Salva dado com timestamp (para detectar mudanças externas) */
   function storageSave(key, data){
@@ -46,29 +47,29 @@
           local_estoque_auditoria: a.local_estoque_auditoria || '',
           assinatura_base: a.assinatura_base || ''
         }));
-        localStorage.setItem(key, JSON.stringify({ v: slim, ts: Date.now() }));
+        localStorage.setItem(scopedKey(key), JSON.stringify({ v: slim, ts: Date.now() }));
         return;
       }
       if (key === KEYS.inventarios && Array.isArray(data)){
         data.forEach(inv => {
           if (inv.base?.length){
             try {
-              localStorage.setItem(`invcount_base_${inv.id}`, JSON.stringify({ v: inv.base, ts: Date.now() }));
+              localStorage.setItem(`invcount_base_${(window.getDTLojaAtiva&&window.getDTLojaAtiva())||'sem_loja'}_${inv.id}`, JSON.stringify({ v: inv.base, ts: Date.now() }));
             } catch(e){ console.warn('[Storage] Falha ao salvar base do inventário', inv.id, e); }
           }
         });
         const semBase = data.map(inv => { const { base, ...rest } = inv; return rest; });
-        localStorage.setItem(key, JSON.stringify({ v: semBase, ts: Date.now() }));
+        localStorage.setItem(scopedKey(key), JSON.stringify({ v: semBase, ts: Date.now() }));
         return;
       }
-      localStorage.setItem(key, JSON.stringify({ v: data, ts: Date.now() }));
+      localStorage.setItem(scopedKey(key), JSON.stringify({ v: data, ts: Date.now() }));
     } catch(e){ console.error('[Storage] Erro ao salvar', key, e); }
   }
 
   /** Carrega dado; retorna null se não existir */
   function storageLoad(key){
     try {
-      const raw = localStorage.getItem(key);
+      const raw = localStorage.getItem(scopedKey(key));
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       const data = parsed && 'v' in parsed ? parsed.v : parsed;
@@ -76,7 +77,7 @@
         data.forEach(inv => {
           if (!inv.base?.length){
             try {
-              const rawBase = localStorage.getItem(`invcount_base_${inv.id}`);
+              const rawBase = localStorage.getItem(`invcount_base_${(window.getDTLojaAtiva&&window.getDTLojaAtiva())||'sem_loja'}_${inv.id}`);
               if (rawBase){
                 const parsedBase = JSON.parse(rawBase);
                 inv.base = parsedBase && 'v' in parsedBase ? parsedBase.v : parsedBase;
@@ -92,7 +93,7 @@
   /** Retorna o timestamp da última gravação de uma chave */
   function storageTs(key){
     try {
-      const raw = localStorage.getItem(key);
+      const raw = localStorage.getItem(scopedKey(key));
       if (!raw) return 0;
       const parsed = JSON.parse(raw);
       return parsed?.ts || 0;

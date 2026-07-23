@@ -12,14 +12,15 @@ window.DT_AUTH_READY = AUTH.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
   .catch(e => { console.warn('[Auth] Persistência LOCAL indisponível:', e.message); });
 
 // ── Persistência offline das contagens ──
-const LS_FILA    = 'col_fila_envio';
-const LS_INV     = 'col_inventarios';
-const LS_BASE    = 'col_base_';
-const LS_ENDCAP  = 'col_endcap_';
-const LS_BVER    = 'col_bver_';
-const LS_LOCAIS      = 'col_locais';        // cache de dt_locais (capacidade + set)
-const LS_LOCAIS_VER  = 'col_locais_ver';    // versão do cache (compara com config/locais_meta)
-const LS_LOCAIS_SET  = 'col_locais_set';    // set de endereços válidos
+const _LOJA_CACHE = () => (window.getDTLojaAtiva&&window.getDTLojaAtiva()) || 'sem_loja';
+const LS_FILA    = 'col_fila_envio_' + _LOJA_CACHE();
+const LS_INV     = 'col_inventarios_' + _LOJA_CACHE();
+const LS_BASE    = 'col_base_' + _LOJA_CACHE() + '_';
+const LS_ENDCAP  = 'col_endcap_' + _LOJA_CACHE() + '_';
+const LS_BVER    = 'col_bver_' + _LOJA_CACHE() + '_';
+const LS_LOCAIS      = 'col_locais_' + _LOJA_CACHE();        // cache de dt_locais (capacidade + set)
+const LS_LOCAIS_VER  = 'col_locais_ver_' + _LOJA_CACHE();    // versão do cache (compara com config/locais_meta)
+const LS_LOCAIS_SET  = 'col_locais_set_' + _LOJA_CACHE();    // set de endereços válidos
 
 // ─── Sentinel único para "vazio" ────────────────────────────────────────────
 // Todo produto/gtin ausente é salvo como __VAZIO__, nunca null/undefined/"".

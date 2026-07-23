@@ -97,6 +97,9 @@ function doCriarConta() {
 }
 
 async function doLogin() {
+  const lojaSelecionada=document.getElementById('l-loja')?.value||window.getDTLojaAtiva();
+  if(!lojaSelecionada){ toast('Selecione a loja antes de entrar','e'); return; }
+  window.setDTLojaAtiva(lojaSelecionada);
   const login = (document.getElementById('l-login')?.value || '').trim().toLowerCase();
   const pass  = document.getElementById('l-pass')?.value || '';
 
@@ -167,8 +170,24 @@ async function doLogin() {
         return;
       }
 
+      // ── Aprovado — validar permissão global da loja ──
+      let acessoGlobal = null;
+      try {
+        const acc = await window.getDTRawFirestore().collection('usuarios_acessos').doc(user.uid).get();
+        if (acc.exists) acessoGlobal = acc.data() || null;
+      } catch (e) { console.warn('[Coletor] Falha ao carregar permissões globais:', e.message); }
+      if (acessoGlobal && acessoGlobal.acesso_todas_lojas !== true) {
+        const permitidas = Array.isArray(acessoGlobal.lojas_permitidas) ? acessoGlobal.lojas_permitidas : [];
+        if (!permitidas.includes(lojaSelecionada)) {
+          _setBtn('ENTRAR', false);
+          await AUTH.signOut().catch(()=>{});
+          _setFb('Este login não possui acesso à loja selecionada.', 'err');
+          return;
+        }
+      }
+
       // ── Aprovado — liberar acesso ──
-      let opDoc = null;
+      let opDoc = acessoGlobal;
       try {
         const opSnap = await FS.collection('dt_operadores').doc(user.uid).get();
         if (opSnap.exists) opDoc = opSnap.data() || null;

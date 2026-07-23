@@ -104,7 +104,7 @@ function _clearLoginErro() {
 
 // ── LOGIN OK ─────────────────────────────────────────────────────────
 
-function _onAnalistaLogado(user) {
+async function _onAnalistaLogado(user) {
   window._currentAnalistaUser = user;
 
   if (window.AnalistaStore) {
@@ -119,7 +119,20 @@ function _onAnalistaLogado(user) {
   if (elNome)   elNome.textContent   = nome;
   if (elAvatar) elAvatar.textContent = nome.slice(0,2).toUpperCase();
 
+  try {
+    const raw = window.getDTRawFirestore();
+    const acc = await raw.collection('usuarios_acessos').doc(user.uid).get();
+    // Compatibilidade: usuário antigo sem configuração mantém acesso total até ser configurado.
+    window.DT_USUARIO_ACESSO_ATUAL = acc.exists ? { uid:user.uid, ...acc.data() } : { uid:user.uid, email:user.email, acesso_todas_lojas:true, lojas_permitidas:[] };
+    const permitidas = await window.DTLoja.listar(true);
+    if (!permitidas.length) throw new Error('Este login não possui acesso a nenhuma loja. Solicite a liberação ao administrador.');
+    const atual = window.getDTLojaAtiva();
+    if (atual && !permitidas.some(l=>l.id===atual)) window.setDTLojaAtiva('');
+    await window.DTLoja.selecionarInterativamente('Selecione a loja do inventário');
+  }
+  catch(e){ _setLoginErro('Não foi possível carregar as lojas: '+e.message); await AUTH_AN.signOut(); return; }
   _mostrarApp();
+  atualizarIndicadorLojaAtual();
 
   // 🔥 CHAMADA SEGURA DO INIT
   if (window.AnalistaBootstrap?.initApp) {
@@ -268,3 +281,19 @@ window.logSistema = logSistema;
 window.logAuditoria = logAuditoria;
 window.openModal = openModal;
 window.closeModal = closeModal;
+
+async function atualizarIndicadorLojaAtual(){
+  try{
+    const lojas=await window.DTLoja.listar(false), id=window.getDTLojaAtiva();
+    const loja=lojas.find(x=>x.id===id);
+    const el=document.getElementById('dt-loja-atual-label'); if(el) el.textContent=loja?.nome||id||'Sem loja';
+  }catch(_){ }
+}
+async function trocarLojaInventario(){
+  const anterior=window.getDTLojaAtiva();
+  window.setDTLojaAtiva('');
+  const nova=await window.DTLoja.selecionarInterativamente('Trocar ambiente de loja');
+  if(!nova){window.setDTLojaAtiva(anterior);return;}
+  location.reload();
+}
+window.trocarLojaInventario=trocarLojaInventario;

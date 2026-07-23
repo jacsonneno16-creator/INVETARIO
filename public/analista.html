@@ -502,6 +502,14 @@
     .btn-purple { background: linear-gradient(135deg, #7C3AED, #5B21B6); color: #fff; }
     .btn-sm { padding: 5px 12px; font-size: .73rem; border-radius: var(--r-sm); }
 
+    /* Coletores: os botões não se deslocam sob o ponteiro e o brilho visual
+       não intercepta o clique. A correção principal continua no JavaScript,
+       que não recria mais os cards repetidamente. */
+    #page-coletores .coletor-acao-btn::after { pointer-events: none; }
+    #page-coletores .coletor-acao-btn:hover { transform: none; }
+    #page-coletores .coletor-card { animation: none; transition: border-color .18s ease, box-shadow .18s ease; }
+    #page-coletores .coletor-card:hover { transform: none; }
+
     /* ════════════════════════════════════════
        PROGRESS BARS
     ════════════════════════════════════════ */
@@ -883,12 +891,19 @@
 <span class="nav-icon">📍</span>Endereços
     <span class="nav-badge" id="nb-enderecos" style="background:#1E6F4E;border:1px solid rgba(255,255,255,.3)">0</span>
 </div>
+<div class="nav-item" id="nav-produtos" onclick="goPage('produtos',this)">
+<span class="nav-icon">📦</span><span class="nav-label">Base de Produtos</span>
+<span class="nav-badge" id="nb-produtos" style="background:#2563EB;border:1px solid rgba(255,255,255,.3)">0</span>
+</div>
 <div class="nav-item" id="nav-coletores" onclick="goPage('coletores',this)">
 <span class="nav-icon">👤</span>Coletores
   </div>
 <div class="nav-item" id="nav-operadores" onclick="goPage('operadores',this)">
-<span class="nav-icon">🔑</span>Operadores / Lojas
+<span class="nav-icon">🔑</span>Usuários / Lojas
   </div>
+<div class="nav-item" id="nav-lojas" onclick="goPage('lojas',this);renderGestaoLojas()">
+<span class="nav-icon">🏪</span>Gestão de Lojas
+</div>
 <div class="nav-item" id="nav-rastreabilidade" onclick="goPage('rastreabilidade',this)">
 <span class="nav-icon">📜</span>Rastreabilidade
   </div>
@@ -930,6 +945,7 @@
 </div>
 </div>
 <div class="topbar-actions">
+<button class="btn btn-ghost btn-sm" onclick="trocarLojaInventario()" title="Trocar ambiente"><span>🏪</span> <span id="dt-loja-atual-label">Loja</span> ▾</button>
 <button class="btn btn-ghost btn-sm" id="btn-inv-ativo" onclick="goPage('acompanhamento',document.getElementById('nav-acompanhamento'))" style="display:none">
         🟢 <span id="inv-ativo-nome">—</span>
 </button>
@@ -1572,6 +1588,12 @@
 </div>
 </div>
 </div>
+<!-- ══ BASE DE PRODUTOS ══ -->
+<div class="page" id="page-produtos">
+<div class="sec-hdr"><div><div class="sec-title">📦 Base de Produtos</div><div class="sec-sub">Cadastro central para identificar códigos bipados no Inventário e na Auditoria.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" onclick="produtoBaixarModelo()">⬇ Modelo</button><label class="btn btn-primary btn-sm" style="cursor:pointer">⬆ Importar CSV/XLSX<input type="file" accept=".csv,.xlsx,.xls" style="display:none" onchange="produtoImportar(this.files[0]);this.value=''"/></label><button class="btn btn-ghost btn-sm" onclick="produtoNovo()">＋ Manual</button><button class="btn btn-export btn-sm" onclick="produtoExportar()">⬇ Exportar</button></div></div>
+<div class="kpi-grid"><div class="kpi"><div class="kpi-val" id="prod-k-total">0</div><div class="kpi-lbl">Total de produtos</div></div><div class="kpi"><div class="kpi-val" id="prod-k-semdun">0</div><div class="kpi-lbl">Sem DUN</div></div><div class="kpi"><div class="kpi-val" id="prod-k-semgtin">0</div><div class="kpi-lbl">Sem GTIN</div></div></div>
+<div class="tc"><div class="tc-toolbar"><input class="search" id="prod-busca" oninput="renderBaseProdutos()" placeholder="🔍 Buscar código, produto, DUN ou GTIN..."/><select class="filter-sel" id="prod-status" onchange="renderBaseProdutos()"><option value="">Todos os status</option><option value="ativo">Ativos</option><option value="inativo">Inativos</option></select></div><div id="prod-table-wrap"><div class="empty"><div class="empty-icon">📦</div><div class="empty-title">Nenhum produto cadastrado</div><div class="empty-sub">Importe uma planilha ou cadastre manualmente.</div></div></div></div>
+</div>
 <!-- ══ COLETORES ══ -->
 <div class="page" id="page-coletores">
 <div class="sec-hdr">
@@ -1687,92 +1709,49 @@
 </div>
 <!-- ══ AUDITORIA ══ -->
 <div class="page" id="page-auditoria">
-<div class="tc" style="margin-bottom:18px;border:1.5px solid rgba(232,117,26,.25)">
-<div class="tc-header" style="border-left-color:var(--orange);background:linear-gradient(90deg,var(--orange-soft) 0%, transparent 70%)">
-<div>
-<div class="tc-title">📦 Auditoria Operacional</div>
-<div class="sec-sub">Importe a base da auditoria, compare versões e libere os endereços pendentes para os coletores.</div>
-</div>
-<div style="display:flex;gap:8px;flex-wrap:wrap">
-<button class="btn btn-ghost btn-sm" onclick="criarNovaAuditoriaStandalone()">＋ Nova Auditoria</button>
-<button class="btn btn-primary btn-sm" onclick="document.getElementById('auditoria-file').click()">⬆ Importar base</button>
-<button class="btn btn-success btn-sm" onclick="liberarAuditoriaColetores()">📲 Liberar para coletores</button>
-<button class="btn btn-export btn-sm" onclick="exportarAuditoriaOperacional()">⬇ Exportar auditoria</button>
-<input accept=".csv,.xlsx,.xls" id="auditoria-file" onchange="processFileAuditoria(this.files?.[0])" style="display:none" type="file">
-</input></div>
-</div>
-<div style="padding:16px 20px 10px">
-<div class="alert info" style="margin-bottom:12px">
-<div>ℹ️</div>
-<div>
-<b>Regra aplicada:</b> endereço já auditado não volta para o coletor quando a nova base vier igual.
-        Se mudar <b>endereço, capa palete, data, quantidade DUN ou nome do produto</b>, ele volta automaticamente para auditoria.
+  <div class="tc" style="margin-bottom:18px;border:1.5px solid rgba(232,117,26,.25)">
+    <div class="tc-header" style="border-left-color:var(--orange);background:linear-gradient(90deg,var(--orange-soft) 0%, transparent 70%)">
+      <div><div class="tc-title">📦 Auditoria Operacional</div><div class="sec-sub">Compare o DUN importado com o produto bipado pelo operador.</div></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="criarNovaAuditoriaStandalone()">＋ Nova Auditoria</button>
+        <button class="btn btn-primary btn-sm" onclick="document.getElementById('auditoria-file').click()">⬆ Importar base</button>
+        <button class="btn btn-success btn-sm" onclick="liberarAuditoriaColetores()">📲 Liberar para coletores</button>
+        <button class="btn btn-ghost btn-sm" onclick="finalizarAuditoriaOperacional()">🏁 Finalizar</button>
+        <button class="btn btn-export btn-sm" onclick="exportarAuditoriaOperacional()">⬇ Exportar auditoria</button>
+        <input accept=".csv,.xlsx,.xls" id="auditoria-file" onchange="processFileAuditoria(this.files?.[0]);this.value=''" style="display:none" type="file">
       </div>
-</div>
-<div class="fg" style="margin-bottom:12px">
-<div class="fi">
-<div class="fl">Auditoria selecionada</div>
-<select id="aud-op-auditoria" onchange="renderAuditoriaOperacional()"></select>
-</div>
-<div class="fi">
-<div class="fl">Filtro de status</div>
-<select id="aud-op-status" onchange="renderAuditoriaOperacional()">
-<option value="">Todos</option>
-<option value="PENDENTE">Pendente</option>
-<option value="CONFIRMADO_SEM_AJUSTE">Confirmado sem ajuste</option>
-<option value="CONFIRMADO_COM_AJUSTE">Confirmado com ajuste</option>
-<option value="REABERTO_ALTERACAO_BASE">Reaberto por alteração</option>
-</select>
-</div>
-</div>
-<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:12px">
-<div class="kpi blue"><span class="kpi-icon">📦</span><div class="kpi-val" id="audop-k-total">0</div><div class="kpi-lbl">Endereços da auditoria</div></div>
-<div class="kpi yellow"><span class="kpi-icon">⏳</span><div class="kpi-val" id="audop-k-pend">0</div><div class="kpi-lbl">Pendentes</div></div>
-<div class="kpi green"><span class="kpi-icon">✅</span><div class="kpi-val" id="audop-k-ok">0</div><div class="kpi-lbl">Sem ajuste</div></div>
-<div class="kpi orange"><span class="kpi-icon">✏️</span><div class="kpi-val" id="audop-k-aj">0</div><div class="kpi-lbl">Com ajuste</div></div>
-<div class="kpi purple"><span class="kpi-icon">🔁</span><div class="kpi-val" id="audop-k-re">0</div><div class="kpi-lbl">Reabertos</div></div>
-</div>
-<div id="auditoria-import-status"></div>
-<div id="auditoria-import-preview" style="display:none;margin:10px 0 14px"></div>
-<div id="auditoria-import-actions" style="display:none;margin:8px 0 14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-  <select id="aud-op-local-estoque" onchange="window.mountLocalSelect && window.mountLocalSelect(window._auditoriaImportPreview||[])" style="min-width:180px;font-size:.8rem">
-    <option value="">Todos os locais</option>
-  </select>
-  <button class="btn btn-success btn-sm" onclick="window.confirmarImportAuditoria && window.confirmarImportAuditoria()" style="font-weight:700">✅ Confirmar Importação</button>
-</div>
-<div class="tc" style="box-shadow:none;border:1px solid var(--border)">
-<div class="tc-toolbar">
-<input class="search" id="aud-op-busca" oninput="_debounce('audop',renderAuditoriaOperacional)" placeholder="🔍 Buscar rua, endereço, produto ou operador da auditoria..."/>
-</div>
-<div class="tbl-wrap">
-<table>
-<thead>
-<tr>
-<th>Rua</th>
-<th>Endereço</th>
-<th>Produto</th>
-<th>Validade</th>
-<th>Capa</th>
-<th>DUN</th>
-<th>Qtd. Estoque</th>
-<th>Qtd. Contada</th>
-<th>Status</th>
-<th>Confirmado por</th>
-</tr>
-</thead>
-<tbody id="auditoria-op-tbody">
-<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:18px">Nenhuma base importada ainda.</td></tr>
-</tbody>
-</table>
-</div>
-</div>
-<div class="tc" style="margin-top:14px;box-shadow:none;border:1px solid var(--border)">
-<div class="tc-header"><div class="tc-title">🧾 Histórico de importações da auditoria</div></div>
-<div id="auditoria-import-list" style="padding:10px 18px 16px">
-<div class="empty" style="padding:18px 10px"><div class="empty-title">Nenhuma importação ainda</div></div>
-</div>
-</div>
-</div>
+    </div>
+    <div style="padding:16px 20px 10px">
+      <div class="alert info" style="margin-bottom:12px"><div>ℹ️</div><div>A base da Auditoria deve conter somente <b>Endereço, DUN e Produto</b>. O operador não vê antecipadamente o produto esperado.</div></div>
+      <div class="fg" style="margin-bottom:12px">
+        <div class="fi"><div class="fl">Auditoria selecionada</div><select id="aud-op-auditoria"></select></div>
+        <div class="fi"><div class="fl">Status</div><select id="aud-op-status"><option value="">Todos</option><option value="PENDENTE">Pendente</option><option value="OK">OK</option><option value="DIVERGENTE">Divergente</option><option value="ENDERECO_VAZIO">Endereço vazio</option></select></div>
+      </div>
+      <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(125px,1fr));margin-bottom:12px">
+        <div class="kpi blue"><span class="kpi-icon">📦</span><div class="kpi-val" id="audop-k-total">0</div><div class="kpi-lbl">Total importado</div></div>
+        <div class="kpi purple"><span class="kpi-icon">📋</span><div class="kpi-val" id="audop-k-auditados">0</div><div class="kpi-lbl">Auditados</div></div>
+        <div class="kpi yellow"><span class="kpi-icon">⏳</span><div class="kpi-val" id="audop-k-pend">0</div><div class="kpi-lbl">Pendentes</div></div>
+        <div class="kpi green"><span class="kpi-icon">✅</span><div class="kpi-val" id="audop-k-ok">0</div><div class="kpi-lbl">OK</div></div>
+        <div class="kpi orange"><span class="kpi-icon">⚠️</span><div class="kpi-val" id="audop-k-div">0</div><div class="kpi-lbl">Divergentes</div></div>
+        <div class="kpi red"><span class="kpi-icon">📭</span><div class="kpi-val" id="audop-k-vaz">0</div><div class="kpi-lbl">Vazios</div></div>
+        <div class="kpi blue"><span class="kpi-icon">📈</span><div class="kpi-val" id="audop-k-perc">0%</div><div class="kpi-lbl">Concluído</div></div>
+      </div>
+      <div id="auditoria-import-status"></div>
+      <div id="auditoria-import-preview" style="display:none;margin:10px 0 14px"></div>
+      <div id="auditoria-import-actions" style="display:none;margin:8px 0 14px;gap:8px;align-items:center;flex-wrap:wrap"><button class="btn btn-success btn-sm" onclick="confirmarImportAuditoria()">✅ Confirmar Importação</button></div>
+      <div class="tc" style="box-shadow:none;border:1px solid var(--border)">
+        <div class="tc-toolbar" style="display:grid;grid-template-columns:2fr repeat(4,1fr);gap:8px">
+          <input class="search" id="aud-op-busca" placeholder="🔍 Endereço ou produto...">
+          <input class="search" id="aud-f-dun-esperado" placeholder="DUN esperado">
+          <input class="search" id="aud-f-dun-lido" placeholder="DUN lido">
+          <input class="search" id="aud-f-operador" placeholder="Operador">
+          <input class="search" id="aud-f-data" type="date">
+        </div>
+        <div class="tbl-wrap"><table><thead><tr><th>Endereço</th><th>DUN esperado</th><th>Produto esperado</th><th>DUN lido</th><th>Produto lido</th><th>Resultado</th><th>Operador</th><th>Data/Hora</th></tr></thead><tbody id="auditoria-op-tbody"><tr><td colspan="8" style="text-align:center;color:var(--muted);padding:18px">Selecione uma auditoria.</td></tr></tbody></table></div>
+      </div>
+      <div id="auditoria-resumo-finalizacao" style="margin-top:12px;font-size:.78rem;color:var(--muted)"></div>
+    </div>
+  </div>
 </div>
 <!-- ══ RASTREABILIDADE ══ -->
 <div class="page" id="page-rastreabilidade">
@@ -1832,8 +1811,8 @@
 <div class="page" id="page-operadores">
 <div class="sec-hdr">
 <div>
-<div class="sec-title">🔑 Operadores / Lojas</div>
-<div class="sec-sub">Gerencie usuários, acessos e lojas do sistema</div>
+<div class="sec-title">🔑 Configuração de Usuários e Lojas</div>
+<div class="sec-sub">Defina quais lojas cada login pode acessar</div>
 </div>
 <div id="op-header-actions" style="display:flex;gap:8px">
 <button class="btn btn-ghost btn-sm" id="op-btn-atualizar" onclick="listarOperadores();opVerificarMinhaConta()">🔄 Atualizar</button>
@@ -1843,7 +1822,7 @@
 <!-- ── TABS Operadores / Lojas ── -->
 <div style="display:flex;gap:3px;background:var(--surface-2);border-radius:10px;padding:4px;width:fit-content;border:1px solid var(--border);margin-bottom:20px">
 <button id="opl-tab-operadores" onclick="oplSetTab('operadores')" style="padding:9px 24px;border-radius:8px;border:none;cursor:pointer;font-family:var(--sans);font-size:.84rem;font-weight:700;transition:all .18s;background:var(--green,#1E6F4E);color:#fff;box-shadow:0 2px 10px rgba(30,111,78,.3)">
-          🔑 Operadores
+          👤 Configuração de Usuários
         </button>
 <button id="opl-tab-lojas" onclick="oplSetTab('lojas')" style="padding:9px 24px;border-radius:8px;border:none;cursor:pointer;font-family:var(--sans);font-size:.84rem;font-weight:700;transition:all .18s;background:transparent;color:var(--muted)">
           🏪 Lojas
@@ -1960,7 +1939,7 @@
 <!-- Lista de operadores -->
 <div class="tc">
 <div class="tc-header" style="border-left-color:var(--green-light);display:flex;align-items:center;justify-content:space-between">
-<div class="tc-title">👥 Operadores Cadastrados</div>
+<div class="tc-title">👥 Usuários Cadastrados e Permissões</div>
 <div style="display:flex;gap:8px;align-items:center">
 <input id="op-busca" oninput="opFiltrarLista()" placeholder="🔍 Buscar..." style="padding:5px 10px;border:1px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface-2);color:var(--text);outline:none;width:160px">
 </input></div>
@@ -2186,6 +2165,17 @@
 </div>
 </div>
 <!-- ══ IMPORTAR / EXPORTAR ══ -->
+
+<div class="page" id="page-lojas">
+  <div class="sec-title">🏪 Gestão de Lojas</div>
+  <div class="sec-sub">Cada loja possui ambiente próprio: inventários, coletores, contagens, auditorias, endereços e operadores separados.</div>
+  <div class="toolbar" style="margin-top:14px;gap:8px;flex-wrap:wrap">
+    <button class="btn btn-primary btn-sm" onclick="abrirCadastroLoja()">＋ Nova loja</button>
+    <button class="btn btn-ghost btn-sm" onclick="renderGestaoLojas()">🔄 Atualizar</button>
+    <button class="btn btn-ghost btn-sm" onclick="migrarDadosLegadosParaLojaAtual()">📦 Migrar dados antigos para esta loja</button>
+  </div>
+  <div id="lojas-lista" style="margin-top:14px"></div>
+</div>
 <div class="page" id="page-importar-exportar">
 <div class="sec-hdr">
 <div>
@@ -3198,5 +3188,14 @@
 <div class="toast" id="toast"></div>
 <!-- ══════════ JAVASCRIPT ══════════ -->
 
-</div><script src="js/shared/common-utils.js?v=20260722-16"></script><script src="js/shared/firebase-shared.js?v=20260722-16"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/00-auth-login.js?v=20260722-16"></script><script src="js/analista/01-core-base-storage.js?v=20260722-16"></script><script src="js/analista/services/inventarioService.js?v=20260722-16"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260722-16"></script><script src="js/analista/firebaseService.js?v=20260722-17"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260722-16"></script><script src="js/analista/03-core-navigation.js?v=20260722-17"></script><script src="js/analista/04-compat-pages.js?v=20260722-16"></script><script src="js/analista/09-fs-publicar.js?v=20260722-16"></script><script src="js/analista/10-inventarios-negocio.js?v=20260722-16"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260722-16"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260722-16"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260722-16"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260722-16"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260722-16"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260722-16"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260722-16"></script><script src="js/analista/33-render-enderecos.js?v=20260722-16"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-16"></script><script src="js/analista/35-coletores-render.js?v=20260722-17"></script><script src="js/analista/app-controller.js?v=20260722-16"></script></body>
+</div><script src="js/shared/common-utils.js?v=20260722-16"></script><script src="js/shared/firebase-shared.js?v=20260722-18"></script><script src="js/shared/produtos-service.js?v=20260722-23"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/00-auth-login.js?v=20260722-16"></script><script src="js/analista/01-core-base-storage.js?v=20260722-16"></script><script src="js/analista/services/inventarioService.js?v=20260722-16"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260722-16"></script><script src="js/analista/firebaseService.js?v=20260722-20"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260722-16"></script><script src="js/analista/03-core-navigation.js?v=20260722-20"></script><script src="js/analista/04-compat-pages.js?v=20260722-16"></script><script src="js/analista/09-fs-publicar.js?v=20260722-16"></script><script src="js/analista/10-inventarios-negocio.js?v=20260722-16"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260722-16"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260722-16"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260722-16"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260722-16"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260722-16"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260722-16"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260722-16"></script><script src="js/analista/33-render-enderecos.js?v=20260722-16"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-20"></script><script src="js/analista/35-coletores-render.js?v=20260722-20"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260722-22"></script><script src="js/analista/39-base-produtos.js?v=20260722-23"></script><script src="js/analista/app-controller.js?v=20260722-16"></script>
+<div class="modal-bg" id="modal-loja-cadastro"><div class="modal" style="max-width:480px">
+  <div class="modal-title">🏪 <span id="ml-title">Cadastrar loja</span></div>
+  <input type="hidden" id="ml-id"/>
+  <div class="form-group"><label>Nome da loja</label><input class="field" id="ml-nome" placeholder="Ex.: CD Matriz"/></div>
+  <div class="form-group"><label>Código</label><input class="field" id="ml-codigo" placeholder="Ex.: MATRIZ"/></div>
+  <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
+  <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
+</div></div>
+<script src="js/analista/36-lojas.js?v=20260722-18"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260722-19"></script></body>
 </html>

@@ -1,4 +1,70 @@
 function state(){ return window.AnalistaStore.getState(); }
+
+let _abaColetoresInicializada = false;
+const _acoesColetoresEmAndamento = new Set();
+
+function inicializarAbaColetores() {
+  if (_abaColetoresInicializada) return;
+  _abaColetoresInicializada = true;
+
+  ['col-painel-cards', 'col-cadastro-wrap'].forEach(id => {
+    const container = document.getElementById(id);
+    if (!container || container.dataset.eventosColetores === '1') return;
+    container.dataset.eventosColetores = '1';
+    container.addEventListener('click', tratarCliqueAcaoColetor);
+  });
+}
+window.inicializarAbaColetores = inicializarAbaColetores;
+
+async function tratarCliqueAcaoColetor(event) {
+  const botao = event.target.closest('[data-acao-coletor]');
+  if (!botao) return;
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  const acao = botao.dataset.acaoColetor;
+  const coletorId = botao.dataset.coletorId;
+  if (!acao || !coletorId || _acoesColetoresEmAndamento.has(coletorId)) return;
+
+  if (acao === 'editar') {
+    editarNomeColetor(coletorId);
+    return;
+  }
+  if (acao === 'logout') {
+    logoutOperadorColetor(coletorId);
+    return;
+  }
+
+  const botoesDoColetor = document.querySelectorAll(`[data-coletor-id="${CSS.escape(coletorId)}"]`);
+  const textosOriginais = new Map();
+  botoesDoColetor.forEach(btn => {
+    textosOriginais.set(btn, btn.innerHTML);
+    btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+  });
+  botao.innerHTML = '⏳ Processando…';
+  _acoesColetoresEmAndamento.add(coletorId);
+
+  try {
+    if (acao === 'aprovar') await aprovarColetor(coletorId);
+    else if (acao === 'reprovar') await reprovarColetor(coletorId);
+    else if (acao === 'bloquear') await bloquearColetor(coletorId);
+    else if (acao === 'desbloquear') await desbloquearColetor(coletorId);
+    else if (acao === 'excluir') await excluirColetor(coletorId);
+  } catch (error) {
+    console.error(`[Coletores] Falha na ação ${acao}:`, error);
+  } finally {
+    _acoesColetoresEmAndamento.delete(coletorId);
+    botoesDoColetor.forEach(btn => {
+      if (!btn.isConnected) return;
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+      if (textosOriginais.has(btn)) btn.innerHTML = textosOriginais.get(btn);
+    });
+  }
+}
+
 // Busca direta usada pelo botão Atualizar e ao abrir a aba.
 async function atualizarAbaColetores() {
   const btn = document.activeElement;
@@ -17,6 +83,7 @@ window.atualizarAbaColetores = atualizarAbaColetores;
 
 // ── RENDER PRINCIPAL ─────────────────────────────────────────────────
 function renderColetores() {
+  inicializarAbaColetores();
   const fInv = document.getElementById('col-sel-inv')?.value || '';
   // Apenas contagens ativas (excluindo estornadas/excluídas)
   let conts = state().contagens.filter(c => !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA');
@@ -110,7 +177,7 @@ function _renderPainelVisualColetores(cols) {
     el.innerHTML = `<div class="empty" style="padding:20px;width:100%">
       <div class="empty-icon">📡</div><div class="empty-title">Nenhum coletor registrado</div>
       <div class="empty-sub">Coletores são registrados automaticamente quando um aparelho acessa o sistema</div>
-      <button class="btn btn-warn btn-sm" style="margin-top:12px" onclick="abrirModalSimularColetor()">🧪 Simular acesso de coletor</button>
+      <button class="btn btn-warn btn-sm coletor-acao-btn" style="margin-top:12px" onclick="abrirModalSimularColetor()">🧪 Simular acesso de coletor</button>
     </div>`;
     return;
   }
@@ -122,14 +189,16 @@ function _renderPainelVisualColetores(cols) {
     const pendentes = col.contagens_pendentes || 0;
     const turnoEncerrado = col.turno_encerrado === true;
     const tempoOnline = isOnline && op ? _calcTempoOnline(op.login_em) : null;
-    const apBg    = ap==='aprovado' ? (isOnline?'#f0fdf4':'var(--surface-2)') : ap==='bloqueado' ? '#fff5f5' : '#fffbeb';
-    const apBord  = ap==='aprovado' ? (isOnline?'var(--success)':'var(--border)') : ap==='bloqueado' ? '#fca5a5' : '#fcd34d';
+    const apBg    = ap==='aprovado' ? (isOnline?'#f0fdf4':'var(--surface-2)') : (ap==='bloqueado'||ap==='reprovado') ? '#fff5f5' : '#fffbeb';
+    const apBord  = ap==='aprovado' ? (isOnline?'var(--success)':'var(--border)') : (ap==='bloqueado'||ap==='reprovado') ? '#fca5a5' : '#fcd34d';
     const apBadge = ap==='aprovado'
       ? `<span style="font-size:.6rem;padding:2px 7px;border-radius:20px;background:rgba(34,197,94,.12);color:var(--success);font-weight:700">✓ Aprovado</span>`
       : ap==='bloqueado'
       ? `<span style="font-size:.6rem;padding:2px 7px;border-radius:20px;background:rgba(255,71,87,.12);color:var(--danger);font-weight:700">🚫 Bloqueado</span>`
+      : ap==='reprovado'
+      ? `<span style="font-size:.6rem;padding:2px 7px;border-radius:20px;background:rgba(255,71,87,.12);color:var(--danger);font-weight:700">❌ Reprovado</span>`
       : `<span style="font-size:.6rem;padding:2px 7px;border-radius:20px;background:rgba(251,191,36,.15);color:#d97706;font-weight:700">⏳ Pendente</span>`;
-    return `<div style="
+    return `<div class="coletor-card" data-coletor-card="${col.id}" style="
       background:${apBg};
       border:2px solid ${apBord};
       border-radius:14px;padding:14px 16px;min-width:210px;flex:1;max-width:280px;
@@ -140,7 +209,7 @@ function _renderPainelVisualColetores(cols) {
         <span style="font-weight:800;font-size:1rem;font-family:var(--mono)">${col.nome_exibicao || ('Coletor ' + col.numero)}</span>
         ${apBadge}
         ${turnoEncerrado ? `<span style="font-size:.6rem;padding:2px 7px;border-radius:20px;background:rgba(14,165,233,.15);color:#0ea5e9;font-weight:700;margin-left:4px">🔒 Encerrado</span>` : ''}
-        <button onclick="editarNomeColetor('${col.id}')" title="Editar nome" style="margin-left:auto;background:none;border:none;cursor:pointer;font-size:.85rem;opacity:.5;padding:2px 4px;flex-shrink:0" title="Renomear">✏️</button>
+        <button data-acao-coletor="editar" data-coletor-id="${col.id}" title="Editar nome" style="margin-left:auto;background:none;border:none;cursor:pointer;font-size:.85rem;opacity:.5;padding:2px 4px;flex-shrink:0" title="Renomear">✏️</button>
       </div>
       <div style="margin-bottom:8px">
         <div style="font-size:.72rem;font-weight:600;color:var(--text);margin-bottom:2px">
@@ -151,7 +220,7 @@ function _renderPainelVisualColetores(cols) {
           <div style="font-size:.68rem;color:var(--muted)">📦 ${invNomeDisplay}</div>
         ` : ''}
         ${ap==='pendente' ? '<div style="font-size:.7rem;color:#d97706;margin-top:4px">Aguardando aprovação do analista</div>' : ''}
-        ${ap==='bloqueado' ? '<div style="font-size:.7rem;color:var(--danger);margin-top:4px">Acesso bloqueado</div>' : ''}
+        ${ap==='bloqueado' ? '<div style="font-size:.7rem;color:var(--danger);margin-top:4px">Acesso bloqueado</div>' : ''}${ap==='reprovado' ? '<div style="font-size:.7rem;color:var(--danger);margin-top:4px">Solicitação reprovada</div>' : ''}
       </div>
       ${ap==='aprovado' ? `
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
@@ -169,16 +238,16 @@ function _renderPainelVisualColetores(cols) {
       <div style="font-size:.58rem;color:#94a3b8;margin-bottom:8px;word-break:break-all">🔑 ${col.device_id.slice(0,22)}</div>
       <div style="display:flex;gap:4px;flex-wrap:wrap">
         ${ap==='pendente'
-          ? `<button class="btn btn-success btn-sm" style="flex:1;font-size:.68rem" onclick="aprovarColetor('${col.id}')">✅ Aprovar</button>
-             <button class="btn btn-danger btn-sm" style="font-size:.68rem" onclick="bloquearColetor('${col.id}')">🚫</button>`
-          : ap==='bloqueado'
-          ? `<button class="btn btn-success btn-sm" style="flex:1;font-size:.68rem" onclick="aprovarColetor('${col.id}')">✅ Reativar</button>
-             <button class="btn btn-danger btn-sm" style="font-size:.68rem" onclick="excluirColetor('${col.id}')">🗑</button>`
+          ? `<button class="btn btn-success btn-sm coletor-acao-btn" style="flex:1;font-size:.68rem" data-acao-coletor="aprovar" data-coletor-id="${col.id}">✅ Aprovar</button>
+             <button class="btn btn-danger btn-sm coletor-acao-btn" style="font-size:.68rem" data-acao-coletor="reprovar" data-coletor-id="${col.id}">❌ Reprovar</button>`
+          : (ap==='bloqueado'||ap==='reprovado')
+          ? `<button class="btn btn-success btn-sm coletor-acao-btn" style="flex:1;font-size:.68rem" data-acao-coletor="desbloquear" data-coletor-id="${col.id}">🔓 Desbloquear</button>
+             <button class="btn btn-danger btn-sm coletor-acao-btn" style="font-size:.68rem" data-acao-coletor="excluir" data-coletor-id="${col.id}">🗑</button>`
           : `${op && isOnline
-              ? `<button class="btn btn-ghost btn-sm" style="flex:1;font-size:.68rem" onclick="logoutOperadorColetor('${col.id}')">🚪 Logout</button>`
+              ? `<button class="btn btn-ghost btn-sm coletor-acao-btn" style="flex:1;font-size:.68rem" data-acao-coletor="logout" data-coletor-id="${col.id}">🚪 Logout</button>`
               : `<span style="flex:1"></span>`}
-             <button class="btn btn-warn btn-sm" style="font-size:.68rem" onclick="bloquearColetor('${col.id}')">🚫 Bloquear</button>
-             <button class="btn btn-danger btn-sm" style="font-size:.68rem" onclick="excluirColetor('${col.id}')">🗑</button>`}
+             <button class="btn btn-warn btn-sm coletor-acao-btn" style="font-size:.68rem" data-acao-coletor="bloquear" data-coletor-id="${col.id}">🚫 Bloquear</button>
+             <button class="btn btn-danger btn-sm coletor-acao-btn" style="font-size:.68rem" data-acao-coletor="excluir" data-coletor-id="${col.id}">🗑</button>`}
       </div>
     </div>`;
   }).join('') + `
@@ -198,7 +267,7 @@ function _renderTabelaColetores(cols) {
   if (!cols.length) {
     el.innerHTML = `<div class="empty"><div class="empty-icon">📱</div><div class="empty-title">Nenhum dispositivo registrado</div>
       <div class="empty-sub">Os coletores aparecem automaticamente quando um aparelho acessa o sistema</div>
-      <button class="btn btn-warn btn-sm" style="margin-top:12px" onclick="abrirModalSimularColetor()">🧪 Simular acesso de coletor</button></div>`;
+      <button class="btn btn-warn btn-sm coletor-acao-btn" style="margin-top:12px" onclick="abrirModalSimularColetor()">🧪 Simular acesso de coletor</button></div>`;
     return;
   }
   el.innerHTML = `<div class="tbl-wrap"><table>
@@ -209,7 +278,7 @@ function _renderTabelaColetores(cols) {
       const invNomeDisplay = op?.inventario_nome || (op?.inventario_id ? '(inv. ' + op.inventario_id.slice(-6) + ')' : '—');
       const pendentes = col.contagens_pendentes || 0;
       return `<tr>
-        <td><div style="font-weight:800;font-family:var(--mono);font-size:.9rem">${col.nome_exibicao || ('Coletor ' + col.numero)}</div>${col.apelido?`<div style="font-size:.68rem;color:var(--muted)">${col.apelido}</div>`:''}<button onclick="editarNomeColetor('${col.id}')" style="background:none;border:none;cursor:pointer;font-size:.72rem;color:var(--muted);padding:2px 0;margin-top:2px">✏️ renomear</button></td>
+        <td><div style="font-weight:800;font-family:var(--mono);font-size:.9rem">${col.nome_exibicao || ('Coletor ' + col.numero)}</div>${col.apelido?`<div style="font-size:.68rem;color:var(--muted)">${col.apelido}</div>`:''}<button data-acao-coletor="editar" data-coletor-id="${col.id}" style="background:none;border:none;cursor:pointer;font-size:.72rem;color:var(--muted);padding:2px 0;margin-top:2px">✏️ renomear</button></td>
         <td><span class="mono" style="font-size:.62rem;color:var(--muted)">${col.device_id.slice(0,18)}…</span></td>
         <td><span class="badge ${(col.aprovado||'pendente')==='aprovado'?(isOnline?'b-green':'b-gray'):(col.aprovado==='bloqueado'?'b-red':'b-yellow')}">${(col.aprovado||'pendente')==='aprovado'?(isOnline?'🟢 Online':'✓ Aprovado'):(col.aprovado==='bloqueado'?'🚫 Bloqueado':'⏳ Pendente')}</span></td>
         <td>${col.operador_atual ? `<div style="font-weight:600;font-size:.82rem">${col.operador_atual}</div>${op?`<div style="font-size:.67rem;color:var(--muted)">Sessão ativa</div>`:''}` : '<span style="color:var(--muted);font-size:.78rem;font-style:italic">Nenhum</span>'}</td>
@@ -220,11 +289,11 @@ function _renderTabelaColetores(cols) {
         <td class="mono" style="text-align:center">${pendentes>0?`<span class="badge b-red">${pendentes}</span>`:'0'}</td>
         <td><div style="display:flex;gap:4px">
           ${(col.aprovado||'pendente')==='pendente'
-            ? `<button class="btn btn-success btn-sm" style="font-size:.65rem" onclick="aprovarColetor('${col.id}')">✅ Aprovar</button><button class="btn btn-danger btn-sm" style="font-size:.65rem" onclick="bloquearColetor('${col.id}')">🚫</button>`
-            : col.aprovado==='bloqueado'
-            ? `<button class="btn btn-success btn-sm" style="font-size:.65rem" onclick="aprovarColetor('${col.id}')">✅ Reativar</button>`
-            : `${op&&isOnline?`<button class="btn btn-ghost btn-sm" style="font-size:.65rem" onclick="logoutOperadorColetor('${col.id}')">🚪 Logout</button>`:''}<button class="btn btn-warn btn-sm" style="font-size:.65rem" onclick="bloquearColetor('${col.id}')">🚫</button>`}
-          <button class="btn btn-danger btn-sm" style="font-size:.68rem" onclick="excluirColetor('${col.id}')">🗑</button>
+            ? `<button class="btn btn-success btn-sm coletor-acao-btn" style="font-size:.65rem" data-acao-coletor="aprovar" data-coletor-id="${col.id}">✅ Aprovar</button><button class="btn btn-danger btn-sm coletor-acao-btn" style="font-size:.65rem" data-acao-coletor="reprovar" data-coletor-id="${col.id}">❌ Reprovar</button>`
+            : (col.aprovado==='bloqueado'||col.aprovado==='reprovado')
+            ? `<button class="btn btn-success btn-sm coletor-acao-btn" style="font-size:.65rem" data-acao-coletor="desbloquear" data-coletor-id="${col.id}">🔓 Desbloquear</button>`
+            : `${op&&isOnline?`<button class="btn btn-ghost btn-sm coletor-acao-btn" style="font-size:.65rem" data-acao-coletor="logout" data-coletor-id="${col.id}">🚪 Logout</button>`:''}<button class="btn btn-warn btn-sm coletor-acao-btn" style="font-size:.65rem" data-acao-coletor="bloquear" data-coletor-id="${col.id}">🚫</button>`}
+          <button class="btn btn-danger btn-sm coletor-acao-btn" style="font-size:.68rem" data-acao-coletor="excluir" data-coletor-id="${col.id}">🗑</button>
         </div></td>
       </tr>`;
     }).join('')}</tbody>

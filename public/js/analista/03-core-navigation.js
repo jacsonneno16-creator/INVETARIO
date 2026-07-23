@@ -13,6 +13,7 @@ const PAGE_NAMES = {
   'capas-duplicadas': 'Capas Duplicadas',
   produtividade:    'Produtividade de Operadores',
   enderecos:        'Endereços do Armazém',
+  produtos:         'Base de Produtos',
   coletores:        'Coletores / Operadores',
   auditoria:        'Auditoria',
   'importar-exportar': 'Importar / Exportar',
@@ -56,10 +57,10 @@ function renderPage(id) {
       case 'capas-duplicadas':   return _callPage('renderCapasDuplicadas');
       case 'produtividade':      return _callPage('renderProdutividade');
       case 'enderecos':          return _callPage('atualizarEnderecos');
+      case 'produtos':           return _callPage('renderBaseProdutos');
       case 'coletores':
-        _callPage('renderColetores');
-        if (typeof window.atualizarAbaColetores === 'function') window.atualizarAbaColetores();
-        return;
+        if (typeof window.inicializarAbaColetores === 'function') window.inicializarAbaColetores();
+        return _callPage('renderColetores');
       case 'operadores':         return _callPage('listarOperadores');
       case 'auditoria':          return _callPage('renderAuditoriaOperacional');
       case 'rastreabilidade':    return _callPage('renderRastreabilidade');

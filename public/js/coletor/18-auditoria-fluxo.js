@@ -1,342 +1,339 @@
-
+// ═══════════════════════════════════════════════════════════════
+// AUDITORIA DO COLETOR — FLUXO ISOLADO E SIMPLIFICADO
+// Endereço -> Produto OU Endereço vazio -> gravação -> próximo endereço
+// Este arquivo não usa nem altera as funções de contagem do Inventário.
+// ═══════════════════════════════════════════════════════════════
 (function(){
-  function norm(v){ return (window._audEndNorm ? window._audEndNorm(v) : String(v || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'')); }
-  function getAuditoriaPendentePorEndereco(endereco){
-    const endNorm = norm(endereco);
-    return (APP.auditorias || []).find(a => norm(a.endereco || a.endereco_norm || '') === endNorm && a.disponivel_coletor !== false);
+  'use strict';
+
+  const STATUS_OK = 'OK';
+  const STATUS_DIVERGENTE = 'DIVERGENTE';
+  const STATUS_VAZIO = 'ENDERECO_VAZIO';
+  const STATUS_FINAIS = new Set([STATUS_OK, STATUS_DIVERGENTE, STATUS_VAZIO]);
+
+  let estado = {
+    etapa: 'endereco',
+    item: null,
+    processando: false,
+    timerRetorno: null
+  };
+
+  function texto(v){ return String(v == null ? '' : v).trim(); }
+  function normalizarEndereco(v){
+    return texto(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
   }
-  function getAuditoriaItemPorDun(endereco, dun){
-    const endNorm = norm(endereco || APP.atual?.endereco || '');
-    const dunNorm = String(dun || '').replace(/\D+/g,'');
-    if (!dunNorm) return { pend: null, item: null };
-    const pend = (APP.auditorias || []).find(a =>
-      a.disponivel_coletor !== false &&
-      (!endNorm || norm(a.endereco || a.endereco_norm || '') === endNorm) &&
-      ((a.itens || []).some(it => String(it.dun || '').replace(/\D+/g,'') === dunNorm) ||
-       (a.itens_confirmados || []).some(it => String(it.dun || '').replace(/\D+/g,'') === dunNorm))
-    ) || getAuditoriaPendentePorEndereco(endereco || APP.atual?.endereco || '');
-    const item = (pend?.itens || []).find(it => String(it.dun || '').replace(/\D+/g,'') === dunNorm) || null;
-    return { pend, item };
+  function normalizarCodigo(v){
+    return texto(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
   }
-  function getAuditoriaAtualNome(){
-    return APP.inventario?.nome || APP.inventario?.auditoria_nome || APP.inventario?.id || 'Auditoria';
+  function escapar(v){
+    return texto(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
-  function setAuditSubtitle(){
-    const subt = document.querySelector('#view-contar .view-sub');
-    if (subt) subt.textContent = 'Bipe endereço, capa/palete, DUM e quantidade. Após informar o endereço, use “endereço vazio” quando não houver produto.';
+  function agoraISO(){ return new Date().toISOString(); }
+  function operadorNome(){ return APP.operador?.name || APP.operador?.nome || ''; }
+  function operadorUsuario(){ return APP.operador?.email || APP.operador?.usuario || APP.operador?.login || ''; }
+  function lojaAtual(){
+    return APP.lojaAtual?.id || APP.lojaAtual?.nome || APP.lojaId || APP.inventario?.loja || '';
   }
-  function ensureAuditHint(){
-    const wrap = document.getElementById('view-contar');
-    if (!wrap) return;
-    let box = document.getElementById('audit-manual-hint');
-    if (!box) {
-      box = document.createElement('div');
-      box.id = 'audit-manual-hint';
-      box.style.cssText = 'margin-bottom:10px;background:rgba(232,117,26,.08);border:1px solid rgba(232,117,26,.24);border-radius:12px;padding:12px 14px';
-      wrap.insertBefore(box, wrap.firstChild);
-    }
-    box.innerHTML = '<div style="font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin-bottom:4px">Modo auditoria</div><div style="font-size:.82rem;color:var(--text)">'+esc(getAuditoriaAtualNome())+'</div><div style="font-size:.72rem;color:var(--muted);margin-top:4px">A conferência é manual por bipagem: endereço, capa/palete, DUM e quantidade.</div>';
-    box.style.display = (APP.modoAcesso === 'auditoria') ? '' : 'none';
-  }
-  function applyAuditoriaCountLayout(){
-    ensureAuditHint();
-    setAuditSubtitle();
-    const steps = document.getElementById('steps');
-    if (steps) steps.style.display = (APP.modoAcesso === 'auditoria') ? 'none' : '';
-    const mapa = {
-      'step-endereco':'',
-      'step-capa':'',
-      'step-gtin':'',
-      'step-validade':'none',
-      'step-quantidade':''
-    };
-    Object.entries(mapa).forEach(([id,show]) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.style.display = (APP.modoAcesso === 'auditoria') ? show : el.style.display;
+  function auditoriaId(){ return APP.inventario?.auditoria_id || APP.inventario?.id || ''; }
+
+  function listaAuditoria(){
+    return (APP.auditorias || []).filter(item => {
+      const status = texto(item.status).toUpperCase();
+      return item.disponivel_coletor !== false && !STATUS_FINAIS.has(status);
     });
-    const blocoTravado = document.getElementById('bloco-endereco-travado');
-    if (blocoTravado && APP.modoAcesso === 'auditoria') blocoTravado.style.display = 'none';
-    const painellote = document.getElementById('painel-lote');
-    if (painellote && APP.modoAcesso === 'auditoria') painellote.style.display = 'none';
-    const resumo = document.getElementById('resumo-atual');
-    if (resumo && APP.modoAcesso === 'auditoria') resumo.style.display = 'none';
-    const gtinLabel = document.getElementById('gtin-label-txt');
-    if (gtinLabel && APP.modoAcesso === 'auditoria') gtinLabel.textContent = 'DUM';
-    const fgtin = document.getElementById('f-gtin');
-    if (fgtin && APP.modoAcesso === 'auditoria') {
-      fgtin.placeholder = 'Bipe o DUM';
-      fgtin.oninput = function(){ flashField('f-gtin'); };
-    }
-    const fend = document.getElementById('f-endereco');
-    if (fend && APP.modoAcesso === 'auditoria') {
-      fend.placeholder = 'Bipe o endereço';
-      fend.oninput = function(){ this.value = this.value.toUpperCase(); flashField('f-endereco'); };
-    }
-    const fcapa = document.getElementById('f-capa');
-    if (fcapa && APP.modoAcesso === 'auditoria') {
-      fcapa.placeholder = 'Informe a capa/palete';
-      fcapa.oninput = function(){ this.value = this.value.replace(/\D+/g,'').slice(0,7); flashField('f-capa'); };
-    }
-    const btnCapa = document.getElementById('btn-confirmar-capa');
-    if (btnCapa && APP.modoAcesso === 'auditoria') btnCapa.textContent = 'Próximo →';
-    const vazioWrap = document.getElementById('btn-vazio-wrap');
-    if (vazioWrap && APP.modoAcesso === 'auditoria') vazioWrap.style.display = (APP.atual?.endereco ? '' : 'none');
-    const btnQtd = document.getElementById('btn-confirmar-qty');
-    if (btnQtd && APP.modoAcesso === 'auditoria') btnQtd.textContent = '✓ Confirmar contagem';
-    const fqty = document.getElementById('f-qty');
-    if (fqty && APP.modoAcesso === 'auditoria') fqty.placeholder = 'Informe a quantidade';
-    const qtdDisplay = document.getElementById('f-qty-display');
-    if (qtdDisplay && APP.modoAcesso === 'auditoria') qtdDisplay.placeholder = 'Quantidade';
-    const btnCalc = document.getElementById('btn-toggle-calc');
-    if (btnCalc) btnCalc.style.display = (APP.modoAcesso === 'auditoria') ? 'none' : '';
-    const fbEnd = document.getElementById('fb-endereco'); if (fbEnd && APP.modoAcesso === 'auditoria') fbEnd.innerHTML = '';
-    const fbG = document.getElementById('fb-gtin'); if (fbG && APP.modoAcesso === 'auditoria') fbG.innerHTML = '';
-    const fbV = document.getElementById('fb-validade'); if (fbV && APP.modoAcesso === 'auditoria') fbV.innerHTML = '';
-    const prodBox = document.getElementById('prod-found-box'); if (prodBox && APP.modoAcesso === 'auditoria') prodBox.style.display = 'none';
-    const btnEndereco = document.getElementById('btn-confirmar-endereco'); if (btnEndereco && APP.modoAcesso === 'auditoria') btnEndereco.textContent = 'Próximo →';
-    const btnGtin = document.getElementById('btn-confirmar-gtin'); if (btnGtin && APP.modoAcesso === 'auditoria') btnGtin.textContent = 'Próximo →';
   }
 
-  const _oldSelecionarAuditoriaMenu = window.selecionarAuditoriaMenu;
-  window.selecionarAuditoriaMenu = function(auditoriaId){
-    const meta = (APP.auditoriasMenu || []).find(x => x.id === auditoriaId);
+  function dunEsperado(item){
+    return texto(item?.dunEsperado || item?.dun_esperado || item?.dun || item?.codigoProduto || item?.codigo_produto || item?.gtin);
+  }
+
+  function descricaoEsperada(item){
+    return texto(item?.produtoEsperado || item?.produto_esperado || item?.descricaoProdutoEsperado || item?.produto_nome || item?.descricao || item?.produto);
+  }
+
+  function localizarProdutoLido(codigoLido){
+    const globalProduto = window.DTProdutos?.buscarSync(codigoLido);
+    if (globalProduto?.encontrado) return texto(globalProduto.nomeProduto);
+    const alvo = normalizarCodigo(codigoLido);
+    const nomeMapeado = APP.auditoriaProdutosMap?.[alvo];
+    if (nomeMapeado) return texto(nomeMapeado);
+    const encontrado = (APP.auditorias || []).find(item => normalizarCodigo(dunEsperado(item)) === alvo);
+    return encontrado ? descricaoEsperada(encontrado) : 'Produto não identificado';
+  }
+
+  function encontrarEndereco(valor){
+    const alvo = normalizarEndereco(valor);
+    if (!alvo) return null;
+    return listaAuditoria().find(item => normalizarEndereco(item.endereco || item.endereco_norm) === alvo) || null;
+  }
+
+  function elementos(){
+    return {
+      titulo: document.getElementById('auditoria-titulo'),
+      etapaEndereco: document.getElementById('auditoria-etapa-endereco'),
+      etapaProduto: document.getElementById('auditoria-etapa-produto'),
+      endereco: document.getElementById('auditoria-endereco'),
+      produto: document.getElementById('auditoria-produto'),
+      enderecoConfirmado: document.getElementById('auditoria-endereco-confirmado'),
+      feedbackEndereco: document.getElementById('auditoria-feedback-endereco'),
+      feedbackFinal: document.getElementById('auditoria-feedback-final'),
+      btnEndereco: document.getElementById('auditoria-confirmar-endereco'),
+      btnProduto: document.getElementById('auditoria-confirmar-produto'),
+      btnVazio: document.getElementById('auditoria-endereco-vazio')
+    };
+  }
+
+  function tocar(tipo){
+    try {
+      if (tipo === 'erro' && typeof beepErr === 'function') beepErr();
+      else if (tipo === 'vazio' && typeof beepSuave === 'function') beepSuave();
+      else if (typeof beepOk === 'function') beepOk();
+    } catch(e) { console.warn('[AUDITORIA] Falha ao tocar som:', e); }
+  }
+
+  function mostrarFeedbackEndereco(mensagem, erro){
+    const el = elementos().feedbackEndereco;
+    if (!el) return;
+    el.style.display = '';
+    el.className = erro ? 'fb err' : 'fb ok';
+    el.textContent = mensagem;
+  }
+
+  function mostrarResultado(mensagem, tipo){
+    const el = elementos().feedbackFinal;
+    if (!el) return;
+    el.style.display = '';
+    el.className = tipo === 'erro' ? 'fb err' : (tipo === 'vazio' ? 'fb warn' : 'fb ok');
+    el.textContent = mensagem;
+  }
+
+  function setProcessando(valor){
+    estado.processando = !!valor;
+    const el = elementos();
+    [el.btnEndereco, el.btnProduto, el.btnVazio].forEach(btn => { if (btn) btn.disabled = estado.processando; });
+    if (el.endereco) el.endereco.disabled = estado.processando || estado.etapa !== 'endereco';
+    if (el.produto) el.produto.disabled = estado.processando || estado.etapa !== 'produto';
+  }
+
+  function atualizarContadorTitulo(){
+    const el = elementos().titulo;
+    if (!el) return;
+    const nome = APP.inventario?.auditoria_nome || APP.inventario?.nome || auditoriaId() || 'Auditoria';
+    el.textContent = `${nome} · ${listaAuditoria().length} pendente(s)`;
+  }
+
+  function irParaEndereco(){
+    if (estado.timerRetorno) clearTimeout(estado.timerRetorno);
+    estado = { etapa: 'endereco', item: null, processando: false, timerRetorno: null };
+    const el = elementos();
+    if (el.etapaEndereco) el.etapaEndereco.style.display = '';
+    if (el.etapaProduto) el.etapaProduto.style.display = 'none';
+    if (el.endereco) { el.endereco.disabled = false; el.endereco.value = ''; }
+    if (el.produto) { el.produto.disabled = true; el.produto.value = ''; }
+    if (el.feedbackEndereco) { el.feedbackEndereco.style.display = 'none'; el.feedbackEndereco.textContent = ''; }
+    if (el.feedbackFinal) { el.feedbackFinal.style.display = 'none'; el.feedbackFinal.textContent = ''; }
+    atualizarContadorTitulo();
+    setTimeout(() => el.endereco?.focus(), 60);
+  }
+
+  function irParaProduto(item){
+    estado.etapa = 'produto';
+    estado.item = item;
+    const el = elementos();
+    if (el.etapaEndereco) el.etapaEndereco.style.display = 'none';
+    if (el.etapaProduto) el.etapaProduto.style.display = '';
+    if (el.enderecoConfirmado) el.enderecoConfirmado.textContent = texto(item.endereco);
+    if (el.produto) { el.produto.disabled = false; el.produto.value = ''; }
+    if (el.feedbackFinal) { el.feedbackFinal.style.display = 'none'; el.feedbackFinal.textContent = ''; }
+    setProcessando(false);
+    setTimeout(() => el.produto?.focus(), 60);
+  }
+
+  function confirmarEnderecoAuditoria(){
+    if (estado.processando || estado.etapa !== 'endereco') return;
+    const el = elementos();
+    const valor = texto(el.endereco?.value);
+    if (!valor) {
+      mostrarFeedbackEndereco('Bipe o endereço.', true);
+      tocar('erro');
+      el.endereco?.focus();
+      return;
+    }
+    const item = encontrarEndereco(valor);
+    if (!item) {
+      mostrarFeedbackEndereco('Endereço não encontrado nesta auditoria.', true);
+      tocar('erro');
+      if (el.endereco) { el.endereco.select(); el.endereco.focus(); }
+      return;
+    }
+    mostrarFeedbackEndereco('Endereço confirmado.', false);
+    tocar('ok');
+    irParaProduto(item);
+  }
+
+  function documentoId(item){
+    return texto(item?.id || `${auditoriaId()}__${normalizarEndereco(item?.endereco)}`);
+  }
+
+  async function salvarResultado(status, produtoLido){
+    if (estado.processando || !estado.item) return;
+    const item = estado.item;
+    const docId = documentoId(item);
+    if (!docId || !auditoriaId()) {
+      mostrarResultado('Não foi possível identificar a auditoria.', 'erro');
+      tocar('erro');
+      return;
+    }
+
+    setProcessando(true);
+    const momento = agoraISO();
+    const esperado = dunEsperado(item);
+    const lido = status === STATUS_VAZIO ? null : texto(produtoLido);
+    const nomeLido = status === STATUS_VAZIO ? null : localizarProdutoLido(lido);
+    const payload = {
+      auditoriaId: auditoriaId(),
+      endereco: texto(item.endereco),
+      dunEsperado: esperado,
+      produtoEsperado: descricaoEsperada(item),
+      dunLido: lido,
+      produtoLido: nomeLido,
+      status,
+      operadorId: operadorUsuario(),
+      operadorNome: operadorNome(),
+      lidoEm: momento,
+      loja: lojaAtual(),
+      observacao: '',
+      disponivel_coletor: false,
+      atualizadoEm: momento
+    };
+
+    try {
+      await FS.collection(FCOL.auditorias)
+        .doc(auditoriaId())
+        .collection('enderecos')
+        .doc(docId)
+        .set(payload, { merge: true });
+
+      APP.auditorias = (APP.auditorias || []).filter(a => documentoId(a) !== docId);
+      atualizarContadorTitulo();
+
+      if (status === STATUS_OK) {
+        mostrarResultado('Auditoria concluída.', 'ok');
+        tocar('ok');
+      } else if (status === STATUS_DIVERGENTE) {
+        mostrarResultado('Produto divergente.', 'erro');
+        tocar('erro');
+      } else {
+        mostrarResultado('Endereço registrado como vazio.', 'vazio');
+        tocar('vazio');
+      }
+
+      estado.timerRetorno = setTimeout(irParaEndereco, 900);
+    } catch(error) {
+      console.error('[AUDITORIA] Erro ao salvar resultado:', error);
+      mostrarResultado('Não foi possível salvar a auditoria.', 'erro');
+      tocar('erro');
+      setProcessando(false);
+    }
+  }
+
+  function confirmarProdutoAuditoria(){
+    if (estado.processando || estado.etapa !== 'produto' || !estado.item) return;
+    const el = elementos();
+    const lido = texto(el.produto?.value);
+    if (!lido) {
+      mostrarResultado('Bipe o produto.', 'erro');
+      tocar('erro');
+      el.produto?.focus();
+      return;
+    }
+    const correto = normalizarCodigo(lido) === normalizarCodigo(dunEsperado(estado.item));
+    salvarResultado(correto ? STATUS_OK : STATUS_DIVERGENTE, lido);
+  }
+
+  function registrarEnderecoVazio(){
+    if (estado.processando || estado.etapa !== 'produto' || !estado.item) return;
+    salvarResultado(STATUS_VAZIO, '');
+  }
+
+  function renderAuditoriaColetor(){
+    atualizarContadorTitulo();
+    irParaEndereco();
+  }
+
+  window.renderAuditoriaColetor = renderAuditoriaColetor;
+  window.confirmarEnderecoAuditoria = confirmarEnderecoAuditoria;
+  window.confirmarProdutoAuditoria = confirmarProdutoAuditoria;
+  window.registrarEnderecoVazioAuditoria = registrarEnderecoVazio;
+
+  // Substitui somente a abertura de Auditoria. Não chama resetContagem(),
+  // Não chama nenhuma rotina de confirmação ou gravação do Inventário.
+  window.selecionarAuditoriaMenu = async function(auditoriaSelecionadaId){
+    const meta = (APP.auditoriasMenu || []).find(x => x.id === auditoriaSelecionadaId);
     if (!meta) { toast('Auditoria não encontrada', 'e'); return; }
+
     APP.modoPendente = 'auditoria';
     APP.modoAcesso = 'auditoria';
-    APP.inventario = { id: auditoriaId, nome: meta.auditoria_nome || auditoriaId, status: 'ATIVO', auditoria_id: auditoriaId, auditoria_nome: meta.auditoria_nome || auditoriaId };
+    APP.inventario = {
+      id: auditoriaSelecionadaId,
+      nome: meta.auditoria_nome || auditoriaSelecionadaId,
+      auditoria_nome: meta.auditoria_nome || auditoriaSelecionadaId,
+      status: 'ATIVO',
+      auditoria_id: auditoriaSelecionadaId
+    };
     APP.base = [];
     APP.auditoriaBase = [];
     APP.contagens = [];
-    if (typeof _auditoriaListener === 'function') { try { _auditoriaListener(); } catch(e){} }
-    _auditoriaListener = null;
-    (window._carregarEnderecoAuditoria
-      ? window._carregarEnderecoAuditoria(auditoriaId)
-      : FS.collection(FCOL.auditorias).doc(auditoriaId).collection('enderecos').get().then(snap => snap.docs.map(d => ({ id:d.id, ...d.data() }))))
-      .then(lista => {
-        APP.auditorias = (lista || []).filter(a => a.disponivel_coletor !== false);
-        goScreen('app');
-        const contTab = document.getElementById('tab-contar');
-        const histTab = document.getElementById('tab-historico');
-        const recTab = document.getElementById('tab-recontagens');
-        const estTab = document.getElementById('tab-estorno');
-        const audTab = document.getElementById('tab-auditoria');
-        const stTab = document.getElementById('tab-status');
-        if (contTab) contTab.style.display = '';
-        if (histTab) histTab.style.display = 'none';
-        if (recTab) recTab.style.display = 'none';
-        if (estTab) estTab.style.display = 'none';
-        if (audTab) audTab.style.display = 'none';
-        if (stTab) stTab.style.display = '';
-        resetContagem();
-        applyAuditoriaCountLayout();
-        if (contTab) showView('contar', contTab);
-      }).catch(err => toast('Erro ao abrir auditoria: ' + err.message, 'e'));
-  };
 
-  const _oldAplicarInventario = window._aplicarInventario;
-  window._aplicarInventario = async function(inv, modo){
-    const out = await _oldAplicarInventario.apply(this, arguments);
-    if ((modo || APP.modoAcesso) === 'auditoria') {
-      const contTab = document.getElementById('tab-contar');
-      const histTab = document.getElementById('tab-historico');
-      const recTab = document.getElementById('tab-recontagens');
-      const estTab = document.getElementById('tab-estorno');
-      const audTab = document.getElementById('tab-auditoria');
-      if (contTab) contTab.style.display = '';
-      if (histTab) histTab.style.display = 'none';
-      if (recTab) recTab.style.display = 'none';
-      if (estTab) estTab.style.display = 'none';
-      if (audTab) audTab.style.display = 'none';
-      applyAuditoriaCountLayout();
-      if (contTab) showView('contar', contTab);
-    }
-    return out;
-  };
-
-  const _oldReset = window.resetContagem;
-  window.resetContagem = function(){
-    const res = _oldReset.apply(this, arguments);
-    if (APP.modoAcesso === 'auditoria') {
-      APP.atual = APP.atual || {};
-      APP.atual.step = 1;
-      APP.atual.capa = '';
-      APP.atual.validade = '';
-      APP.atual.produtoAtual = null;
-      const fqty = document.getElementById('f-qty'); if (fqty) fqty.value = '';
-      const fqtyd = document.getElementById('f-qty-display'); if (fqtyd) fqtyd.value = '';
-      const fcapa = document.getElementById('f-capa'); if (fcapa) fcapa.value = '';
-      const fgtin = document.getElementById('f-gtin'); if (fgtin) fgtin.value = '';
-      const fval = document.getElementById('f-validade'); if (fval) fval.value = '';
-      const vazioWrap = document.getElementById('btn-vazio-wrap'); if (vazioWrap) vazioWrap.style.display = 'none';
-      applyAuditoriaCountLayout();
-      setTimeout(() => { const el = document.getElementById('f-endereco'); if (el) el.focus(); }, 80);
-    }
-    return res;
-  };
-
-  const _origConfirmarEndereco = window.confirmarEndereco;
-  const _origConfirmarCapa = window.confirmarCapa;
-  const _origConfirmarGtin = window.confirmarGtin;
-  const _origConfirmarValidade = window.confirmarValidade;
-  window.confirmarEndereco = function(){
-    if (APP.modoAcesso !== 'auditoria') return _origConfirmarEndereco.apply(this, arguments);
-    const el = document.getElementById('f-endereco');
-    const val = (el?.value || '').trim().toUpperCase();
-    if (!val) { toast('Bipe o endereço', 'e'); if (typeof beepErr === 'function') beepErr(); return; }
-    APP.atual = APP.atual || {};
-    APP.atual.endereco = val;
-    APP.atual._endNorm = norm(val);
-    const fb = document.getElementById('fb-endereco');
-    const pend = getAuditoriaPendentePorEndereco(val);
-    if (fb) fb.innerHTML = pend ? `<div class="fb ok">✓ Endereço encontrado na auditoria</div>` : `<div class="fb warn">⚠ Endereço não estava pendente na base — será registrado assim mesmo</div>`;
-    const vazioWrap = document.getElementById('btn-vazio-wrap'); if (vazioWrap) vazioWrap.style.display = '';
-    const cp = document.getElementById('f-capa'); if (cp) cp.focus();
-  };
-  window.confirmarCapa = function(){
-    if (APP.modoAcesso !== 'auditoria') return _origConfirmarCapa.apply(this, arguments);
-    const val = (document.getElementById('f-capa')?.value || '').trim();
-    const n = parseInt(val, 10);
-    if (!val || isNaN(n) || n < 1000000) { toast('Informe o número da capa/palete com no mínimo 7 dígitos', 'e'); if (typeof beepErr === 'function') beepErr(); return; }
-    APP.atual = APP.atual || {};
-    APP.atual.capa = val;
-    const fb = document.getElementById('fb-capa');
-    if (fb) fb.innerHTML = `<div class="fb ok">✓ Capa/Palete nº ${val}</div>`;
-    const gt = document.getElementById('f-gtin'); if (gt) gt.focus();
-  };
-  window.confirmarGtin = function(){
-    if (APP.modoAcesso !== 'auditoria') return _origConfirmarGtin.apply(this, arguments);
-    const val = (document.getElementById('f-gtin')?.value || '').trim();
-    if (!val) { toast('Bipe o DUN/DUM do produto', 'e'); if (typeof beepErr === 'function') beepErr(); return; }
-    APP.atual = APP.atual || {};
-    const dun = String(val).replace(/\D+/g,'') || normProd(val);
-    const achado = getAuditoriaItemPorDun(APP.atual.endereco, dun);
-    APP.atual.gtin = dun;
-    APP.atual.dun = dun;
-    APP.atual.produtoAtual = achado.item ? {
-      descricao_produto: achado.item.produto_nome || achado.item.descricao_produto || '',
-      codigo_produto: achado.item.codigo_produto || '',
-      dun: achado.item.dun || dun,
-      gtin: achado.item.dun || dun,
-      _auditoria_item: achado.item
-    } : { descricao_produto: '', codigo_produto: '', dun, gtin: dun, _nao_encontrado: true };
-    const fb = document.getElementById('fb-gtin');
-    if (fb) fb.innerHTML = achado.item
-      ? `<div class="fb ok">✓ Produto identificado pelo DUN: ${esc(achado.item.produto_nome || achado.item.codigo_produto || dun)}</div>`
-      : `<div class="fb warn">⚠ DUN não encontrado na base deste endereço — será registrado como ajuste</div>`;
-    const q = document.getElementById('f-qty'); if (q) q.focus();
-  };
-  window.confirmarValidade = function(){
-    if (APP.modoAcesso !== 'auditoria') return _origConfirmarValidade.apply(this, arguments);
-    const q = document.getElementById('f-qty'); if (q) q.focus();
-  };
-
-  async function salvarAuditoriaManual(){
-    const endereco = (document.getElementById('f-endereco')?.value || '').trim().toUpperCase();
-    const capa = (document.getElementById('f-capa')?.value || '').trim();
-    const dum = (document.getElementById('f-gtin')?.value || '').trim();
-    const qtyRaw = (document.getElementById('f-qty')?.value || document.getElementById('f-qty-display')?.value || '').trim();
-    const qty = parseInt(String(qtyRaw).replace(/\D+/g,''), 10);
-    if (!endereco) { toast('Bipe o endereço', 'e'); return; }
-    if (!capa) { toast('Informe a capa/palete', 'e'); return; }
-    if (!dum) { toast('Bipe o DUM', 'e'); return; }
-    if (!Number.isFinite(qty)) { toast('Informe a quantidade', 'e'); return; }
-    const achado = getAuditoriaItemPorDun(endereco, dum);
-    const pend = achado.pend || getAuditoriaPendentePorEndereco(endereco);
-    const itemBase = achado.item || APP.atual?.produtoAtual?._auditoria_item || null;
-    const docId = pend?.id || `${APP.inventario?.auditoria_id || APP.inventario?.id}__${norm(endereco)}__${String(dum).replace(/\D+/g,'')}`;
-    const payload = {
-      auditoria_id: pend?.auditoria_id || APP.inventario?.auditoria_id || APP.inventario?.id || '',
-      auditoria_nome: pend?.auditoria_nome || getAuditoriaAtualNome(),
-      inventario_id: '',
-      inventario_nome: '',
-      endereco: endereco,
-      endereco_norm: norm(endereco),
-      rua: pend?.rua || 'SEM RUA',
-      itens_confirmados: [{
-        codigo_produto: itemBase?.codigo_produto || '',
-        produto_nome: itemBase?.produto_nome || itemBase?.descricao_produto || '',
-        capa_palete: capa,
-        data: itemBase?.data || '',
-        dun: String(dum).replace(/\D+/g,'') || dum,
-        quantidade: qty,
-        quantidade_dun: qty
-      }],
-      confirmado_por: APP.operador?.name || '',
-      confirmado_por_email: APP.operador?.email || '',
-      confirmado_em: new Date().toISOString(),
-      com_ajuste: true,
-      status: 'CONFIRMADO_COM_AJUSTE',
-      disponivel_coletor: false,
-      liberada_coletor: true,
-      atualizado_em: new Date().toISOString(),
-      origem: 'COLETOR_AUDITORIA_MANUAL'
-    };
-    if (pend?.itens?.length) payload.itens = pend.itens;
     try {
-      await FS.collection(FCOL.auditorias).doc(APP.inventario?.auditoria_id || APP.inventario?.id).collection('enderecos').doc(docId).set(payload, { merge: true });
-      APP.auditorias = (APP.auditorias || []).filter(a => a.id !== docId);
-      toast('✅ Auditoria salva', 's');
-      beepOk && beepOk();
-      resetContagem();
-    } catch (e) {
-      toast('Erro ao salvar auditoria: ' + e.message, 'e');
+      APP.auditorias = await window._carregarEnderecoAuditoria(auditoriaSelecionadaId);
+      goScreen('app');
+      const tabs = {
+        contar: document.getElementById('tab-contar'),
+        historico: document.getElementById('tab-historico'),
+        recontagens: document.getElementById('tab-recontagens'),
+        estorno: document.getElementById('tab-estorno'),
+        auditoria: document.getElementById('tab-auditoria'),
+        status: document.getElementById('tab-status')
+      };
+      if (tabs.contar) tabs.contar.style.display = 'none';
+      if (tabs.historico) tabs.historico.style.display = 'none';
+      if (tabs.recontagens) tabs.recontagens.style.display = 'none';
+      if (tabs.estorno) tabs.estorno.style.display = 'none';
+      if (tabs.auditoria) tabs.auditoria.style.display = '';
+      if (tabs.status) tabs.status.style.display = '';
+      showView('auditoria', tabs.auditoria);
+      renderAuditoriaColetor();
+    } catch(error) {
+      console.error('[AUDITORIA] Erro ao abrir auditoria:', error);
+      toast('Erro ao abrir auditoria: ' + error.message, 'e');
     }
+  };
+
+  function registrarEventosUmaVez(){
+    if (window.__auditoriaFluxoEventosRegistrados) return;
+    window.__auditoriaFluxoEventosRegistrados = true;
+
+    document.addEventListener('click', event => {
+      if (event.target.closest('#auditoria-confirmar-endereco')) confirmarEnderecoAuditoria();
+      else if (event.target.closest('#auditoria-confirmar-produto')) confirmarProdutoAuditoria();
+      else if (event.target.closest('#auditoria-endereco-vazio')) registrarEnderecoVazio();
+    });
+
+    document.addEventListener('keydown', event => {
+      if (APP.modoAcesso !== 'auditoria' || event.key !== 'Enter') return;
+      const id = document.activeElement?.id;
+      if (id === 'auditoria-endereco') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        confirmarEnderecoAuditoria();
+      } else if (id === 'auditoria-produto') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        confirmarProdutoAuditoria();
+      }
+    }, true);
   }
 
-  const _oldSalvar = window.salvarContagem;
-  window.salvarContagem = function(){
-    if (APP.modoAcesso === 'auditoria') return salvarAuditoriaManual();
-    return _oldSalvar.apply(this, arguments);
-  };
-
-  const _oldConfirmarVazio = window.confirmarVazio;
-  window.confirmarVazio = function(){
-    if (APP.modoAcesso !== 'auditoria') return _oldConfirmarVazio.apply(this, arguments);
-    const endereco = (document.getElementById('f-endereco')?.value || '').trim().toUpperCase();
-    if (!endereco) { toast('Bipe o endereço primeiro', 'e'); return; }
-    const ok = confirm('Confirmar endereço vazio na auditoria?\n' + endereco);
-    if (!ok) return;
-    const achado = getAuditoriaItemPorDun(endereco, dum);
-    const pend = achado.pend || getAuditoriaPendentePorEndereco(endereco);
-    const itemBase = achado.item || APP.atual?.produtoAtual?._auditoria_item || null;
-    const docId = pend?.id || `${APP.inventario?.auditoria_id || APP.inventario?.id}__${norm(endereco)}__${String(dum).replace(/\D+/g,'')}`;
-    const payload = {
-      auditoria_id: pend?.auditoria_id || APP.inventario?.auditoria_id || APP.inventario?.id || '',
-      auditoria_nome: pend?.auditoria_nome || getAuditoriaAtualNome(),
-      inventario_id: '',
-      inventario_nome: '',
-      endereco: endereco,
-      endereco_norm: norm(endereco),
-      rua: pend?.rua || 'SEM RUA',
-      itens_confirmados: [],
-      confirmado_por: APP.operador?.name || '',
-      confirmado_por_email: APP.operador?.email || '',
-      confirmado_em: new Date().toISOString(),
-      com_ajuste: true,
-      status: 'CONFIRMADO_COM_AJUSTE',
-      disponivel_coletor: false,
-      liberada_coletor: true,
-      atualizado_em: new Date().toISOString(),
-      endereco_vazio_confirmado: true,
-      origem: 'COLETOR_AUDITORIA_VAZIO'
-    };
-    FS.collection(FCOL.auditorias).doc(APP.inventario?.auditoria_id || APP.inventario?.id).collection('enderecos').doc(docId).set(payload, { merge: true }).then(() => {
-      APP.auditorias = (APP.auditorias || []).filter(a => a.id !== docId);
-      toast('✅ Endereço vazio confirmado', 's');
-      beepOk && beepOk();
-      resetContagem();
-    }).catch(e => toast('Erro ao confirmar vazio: ' + e.message, 'e'));
-  };
-
-  const _oldShowView = window.showView;
-  window.showView = function(view, tab){
-    const r = _oldShowView.apply(this, arguments);
-    if (APP.modoAcesso === 'auditoria' && view === 'contar') applyAuditoriaCountLayout();
-    return r;
-  };
-
-  document.addEventListener('DOMContentLoaded', function(){
-    setTimeout(() => { if (APP.modoAcesso === 'auditoria') applyAuditoriaCountLayout(); }, 50);
-  });
+  registrarEventosUmaVez();
 })();

@@ -3,11 +3,11 @@
   function _auditoriaMeta(lista){
     return (lista || []).map(a => ({
       id: String(a.auditoria_id || a.id || '').trim(),
-      auditoria_nome: a.auditoria_nome || a.nome || a.id || '',
-      total_registros: Number(a.total_registros || 0),
+      auditoria_nome: a.nome || a.auditoria_nome || a.id || '',
+      total_registros: Number(a.totalItens || a.total_registros || 0),
       lojas: Array.isArray(a.lojas) ? a.lojas : [],
       importado_em: a.importado_em || '',
-      liberada: !!a.liberada_coletor,
+      liberada: a.status === 'LIBERADA' || a.status === 'EM_ANDAMENTO' || !!a.liberada_coletor,
       disponivel_coletor: a.disponivel_coletor !== false
     })).filter(a => a.id && a.disponivel_coletor !== false && a.liberada);
   }
@@ -23,11 +23,44 @@
         const d = doc.data();
         rows.push(...(d.dados || d.itens || d.registros || []));
       });
-      return rows.filter(a => a.disponivel_coletor !== false && !['CONFIRMADO_SEM_AJUSTE','CONFIRMADO_COM_AJUSTE'].includes(String(a.status || '').toUpperCase()));
+      APP.auditoriaProdutosMap = APP.auditoriaProdutosMap || {};
+      rows.forEach(r => {
+        const codigo = String(r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || r.gtin || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
+        if (codigo && nome) APP.auditoriaProdutosMap[codigo] = nome;
+      });
+      const resultadosSnap = await audRef.collection('enderecos').get();
+      const finalizados = new Set();
+      resultadosSnap.docs.forEach(doc => {
+        const d = doc.data() || {};
+        const status = String(d.status || '').toUpperCase();
+        if (['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(status) || d.disponivel_coletor === false) {
+          finalizados.add(String(doc.id));
+          finalizados.add(String(d.endereco || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,''));
+        }
+      });
+      return rows.filter(a => {
+        const status = String(a.status || '').toUpperCase();
+        const id = String(a.id || '');
+        const endereco = String(a.endereco || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+        return a.disponivel_coletor !== false &&
+          !['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(status) &&
+          !finalizados.has(id) && !finalizados.has(endereco);
+      });
     }
     // Fallback para auditorias antigas sem chunks.
     const snap = await audRef.collection('enderecos').get();
-    return snap.docs.map(d => ({ id:d.id, ...d.data() })).filter(a => a.disponivel_coletor !== false && !['CONFIRMADO_SEM_AJUSTE','CONFIRMADO_COM_AJUSTE'].includes(String(a.status || '').toUpperCase()));
+    const todos = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    APP.auditoriaProdutosMap = {};
+    todos.forEach(r => {
+      const codigo = String(r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || r.gtin || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+      const nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
+      if (codigo && nome) APP.auditoriaProdutosMap[codigo] = nome;
+    });
+    return todos.filter(a => {
+      const status = String(a.status || '').toUpperCase();
+      return a.disponivel_coletor !== false && !['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(status);
+    });
   }
   window._carregarEnderecoAuditoria = _carregarEnderecoAuditoria;
 

@@ -16,11 +16,12 @@
 <link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='36' fill='%231E6F4E'/%3E%3Ctext x='96' y='80' font-family='monospace' font-weight='700' font-size='52' fill='white' text-anchor='middle' dominant-baseline='middle'%3EDT%3C/text%3E%3Crect x='62' y='105' width='68' height='9' rx='4' fill='%23F59E0B'/%3E%3C/svg%3E" rel="apple-touch-icon"/>
 <link href="https://fonts.googleapis.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&amp;family=Barlow:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<script src="js/legacy-polyfills.js?v=20260722-24"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <!-- Firebase SDK v10 compat -->
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
 <style>
 
     :root {
@@ -536,7 +537,7 @@
     }
     .screen-watermark + * { position: relative; z-index: 1; }
   </style>
-<link rel="manifest" href="/manifest.webmanifest?v=16"><meta name="theme-color" content="#0f5b3a"><script>(function(){window.DT_ERRORS=[];window.addEventListener('error',e=>DT_ERRORS.push({t:new Date().toISOString(),m:e.message,f:e.filename,l:e.lineno}));window.addEventListener('unhandledrejection',e=>DT_ERRORS.push({t:new Date().toISOString(),m:String(e.reason&&e.reason.message||e.reason)}));})();</script></head>
+<link rel="manifest" href="/manifest.webmanifest?v=16"><meta name="theme-color" content="#0f5b3a"><script>(function(){window.DT_ERRORS=[];window.addEventListener('error',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:e.message,f:e.filename,l:e.lineno});});window.addEventListener('unhandledrejection',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:String(e.reason&&e.reason.message||e.reason)});});})();</script></head>
 <body>
 <!-- ══════════ SCREEN: LOGIN ══════════ -->
 <div class="screen active" id="screen-login">
@@ -546,6 +547,7 @@
 <button class="btn-menu3pts" id="btn-menu3pts-login" onclick="toggleMenu3ptsLogin()" title="Opções">⋮</button>
 <div class="menu3pts-dropdown" id="menu3pts-dropdown-login" style="display:none">
 <button class="menu3pts-item" onclick="atualizarAplicativo()">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item" onclick="toggleMenu3ptsLogin();diagnosticoCompatibilidade()">🔍 Diagnóstico</button>
 <button class="menu3pts-item" id="menu-instalar-pwa-login" onclick="toggleMenu3ptsLogin();instalarPWA()" style="display:none">📲 Instalar aplicativo</button>
 <div class="menu3pts-sep"></div>
 <div class="menu3pts-ver">v<span id="login-ver-label">—</span></div>
@@ -581,7 +583,7 @@
 <div style="font-size:.78rem;color:#94a3b8;line-height:1.5">Este aparelho foi bloqueado pelo analista.<br/>Entre em contato com o responsável.</div>
 <button onclick="_fecharTelaAprovacao()" style="background:none;border:1px solid rgba(255,71,87,.35);color:#ff4757;border-radius:8px;padding:6px 16px;font-size:.78rem;cursor:pointer">← Voltar ao login</button>
 </div>
-<div class="login-box">
+<form class="login-box" id="login-form-legacy" action="#" method="post">
 <div>
 <div class="f-label">Login</div>
 <input autocomplete="off" class="field" id="l-login" oninput="this.value=this.value.toLowerCase()" placeholder="Ex: joao.silva" style="text-transform:lowercase" type="text"/>
@@ -594,13 +596,14 @@
 <span class="f-icon" onclick="togglePass()">👁</span>
 </div>
 </div>
+<div><div class="f-label">Loja / ambiente</div><select class="field" id="l-loja" onchange="if(this.value!==getDTLojaAtiva()){setDTLojaAtiva(this.value);location.reload()}" style="width:100%"><option value="">Carregando lojas...</option></select><div style="font-size:.68rem;color:#94a3b8;margin-top:5px">A solicitação de aprovação aparecerá somente para o analista desta loja.</div></div>
 <label class="coletor-remember"><input id="l-remember" type="checkbox"/> <span>Lembrar apenas o login neste dispositivo</span></label>
-<button class="btn btn-primary" id="btn-login" onclick="doLogin()" style="margin-top:4px">ENTRAR</button>
+<button class="btn btn-primary" id="btn-login" type="submit" style="margin-top:4px">ENTRAR</button>
 <div id="fb-login-erro"></div>
 <div style="text-align:center;margin-top:4px">
-<button class="login-link" onclick="doCriarConta()">Primeiro acesso? Criar conta</button>
+<button class="login-link" type="button" onclick="doCriarConta()">Primeiro acesso? Criar conta</button>
 </div>
-</div>
+</form>
 </div>
 </div>
 <!-- ══════════ SCREEN: MODO ══════════ -->
@@ -761,6 +764,7 @@
 <button class="menu3pts-item" id="menu-instalar-pwa-app" onclick="toggleMenu3pts();instalarPWA()" style="display:none">📲 Instalar aplicativo</button>
 <div class="menu3pts-sep"></div>
 <button class="menu3pts-item" onclick="toggleMenu3pts();voltarInventarios()">📦 Trocar inventário</button>
+<button class="menu3pts-item" onclick="toggleMenu3pts();diagnosticoCompatibilidade()">🔍 Diagnóstico</button>
 <button class="menu3pts-item" onclick="toggleMenu3pts();doLogout()" style="color:#ff6b6b">🚪 Sair</button>
 <div class="menu3pts-sep"></div>
 <div class="menu3pts-ver" id="menu3pts-ver">v<span id="app-ver-label">—</span></div>
@@ -1105,12 +1109,28 @@
 </div>
 <!-- ── VIEW: AUDITORIA ── -->
 <div class="view" id="view-auditoria">
-<div class="card hi">
-<div class="card-label">Auditoria semanal</div>
-<div style="font-size:.9rem;font-weight:800;color:var(--text);margin-bottom:6px">Confirmar base carregada pelo analista</div>
-<div style="font-size:.76rem;color:var(--muted)">Escolha a rua, abra o endereço e confirme os dados. Quando confirmar, o endereço some da lista.</div>
-</div>
-<div id="auditoria-lista-wrap"></div>
+  <div class="card hi" id="auditoria-fluxo-card">
+    <div class="card-label">Auditoria</div>
+    <div id="auditoria-titulo" style="font-size:.95rem;font-weight:800;color:var(--text);margin-bottom:12px">Auditoria</div>
+
+    <div id="auditoria-etapa-endereco">
+      <label for="auditoria-endereco" style="display:block;font-size:.72rem;font-weight:800;color:var(--muted);margin-bottom:6px">ENDEREÇO</label>
+      <input class="field" id="auditoria-endereco" autocomplete="off" inputmode="text" placeholder="Bipe o endereço"/>
+      <div id="auditoria-feedback-endereco" class="fb" style="display:none;margin-top:8px"></div>
+      <button class="btn btn-primary" id="auditoria-confirmar-endereco" type="button" style="margin-top:10px;width:100%">Confirmar endereço</button>
+    </div>
+
+    <div id="auditoria-etapa-produto" style="display:none">
+      <div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Endereço confirmado</div>
+      <div id="auditoria-endereco-confirmado" style="font-family:var(--mono);font-size:1rem;font-weight:800;color:var(--text);margin-bottom:14px"></div>
+      <label for="auditoria-produto" style="display:block;font-size:.72rem;font-weight:800;color:var(--muted);margin-bottom:6px">PRODUTO</label>
+      <input class="field" id="auditoria-produto" autocomplete="off" inputmode="numeric" placeholder="Bipe o produto"/>
+      <button class="btn btn-primary" id="auditoria-confirmar-produto" type="button" style="margin-top:10px;width:100%">Bipar Produto</button>
+      <button class="btn" id="auditoria-endereco-vazio" type="button" style="margin-top:10px;width:100%;background:var(--card);border:1.5px solid var(--warn);color:var(--warn)">Endereço vazio</button>
+    </div>
+
+    <div id="auditoria-feedback-final" style="display:none;margin-top:12px"></div>
+  </div>
 </div>
 <!-- ── VIEW: STATUS ── -->
 <div class="view" id="view-status">
@@ -1223,5 +1243,5 @@
 </div>
 
 
-<script src="js/shared/common-utils.js?v=20260722-16"></script><script src="js/shared/firebase-shared.js?v=20260722-16"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260722-16"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260722-16"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260722-16"></script><script src="js/coletor/03-estado-app.js?v=20260722-16"></script><script src="js/coletor/04-auth-login.js?v=20260722-17"></script><script src="js/coletor/05-inventarios-download.js?v=20260722-16"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260722-16"></script><script src="js/coletor/07-etapa-endereco.js?v=20260722-16"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260722-16"></script><script src="js/coletor/09-historico-stats.js?v=20260722-16"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260722-16"></script><script src="js/coletor/11-recontagens.js?v=20260722-16"></script><script src="js/coletor/12-scanner-hardware.js?v=20260722-16"></script><script src="js/coletor/13-audio-feedback.js?v=20260722-16"></script><script src="js/coletor/14-toast.js?v=20260722-16"></script><script src="js/coletor/15-utils-init.js?v=20260722-16"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260722-16"></script><script src="js/coletor/17-auditoria-meta.js?v=20260722-16"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260722-16"></script><script>if('serviceWorker' in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js?v=16').catch(e=>console.warn('[PWA]',e)));}</script></body>
+<script src="js-legacy/shared/common-utils.js?v=20260722-16"></script><script src="js-legacy/shared/firebase-shared.js?v=20260722-18"></script><script src="js-legacy/shared/produtos-service.js?v=20260722-23"></script><script src="js-legacy/coletor/00-bootstrap-manifest.js?v=20260722-16"></script><script src="js-legacy/coletor/01-core-firebase-cache.js?v=20260722-16"></script><script src="js-legacy/coletor/02-sync-dispositivo.js?v=20260722-16"></script><script src="js-legacy/coletor/03-estado-app.js?v=20260722-16"></script><script src="js-legacy/coletor/04-auth-login.js?v=20260722-17"></script><script src="js-legacy/coletor/05-inventarios-download.js?v=20260722-16"></script><script src="js-legacy/coletor/06-capa-fluxo-steps.js?v=20260722-16"></script><script src="js-legacy/coletor/07-etapa-endereco.js?v=20260722-16"></script><script src="js-legacy/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260722-16"></script><script src="js-legacy/coletor/09-historico-stats.js?v=20260722-16"></script><script src="js-legacy/coletor/10-navegacao-estorno.js?v=20260722-16"></script><script src="js-legacy/coletor/11-recontagens.js?v=20260722-16"></script><script src="js-legacy/coletor/12-scanner-hardware.js?v=20260722-16"></script><script src="js-legacy/coletor/13-audio-feedback.js?v=20260722-16"></script><script src="js-legacy/coletor/14-toast.js?v=20260722-16"></script><script src="js-legacy/coletor/15-utils-init.js?v=20260722-16"></script><script src="js-legacy/coletor/16-menu-atualizacao.js?v=20260722-16"></script><script src="js-legacy/coletor/17-auditoria-meta.js?v=20260722-22"></script><script src="js-legacy/coletor/18-auditoria-fluxo.js?v=20260722-22"></script><script src="js/legacy-ui-compat.js?v=20260722-24"></script><script>(function(){if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js?v=24').catch(function(e){if(window.console)console.warn('[PWA]',e);});});}document.addEventListener('DOMContentLoaded',function(){try{if(window.DTProdutos&&DTProdutos.carregar)DTProdutos.carregar().catch(function(){});var antes=getDTLojaAtiva();DTLoja.preencherSelect('l-loja').then(function(){if(!antes&&getDTLojaAtiva())location.reload();}).catch(function(){var el=document.getElementById('l-loja');if(el)el.innerHTML='<option value="">Erro ao carregar lojas</option>';});}catch(e){var el=document.getElementById('l-loja');if(el)el.innerHTML='<option value="">Erro ao carregar lojas</option>';}});})();</script></body>
 </html>

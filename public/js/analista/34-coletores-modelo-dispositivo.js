@@ -149,48 +149,119 @@ function logoutOperadorColetor(colId) {
   showToast(`🔴 ${nomeOp} saiu do Coletor ${col.numero}`, 'w');
 }
 
-function excluirColetor(id) {
-  showConfirm('Remover este coletor do sistema? O histórico de contagens é mantido.', () => _removerColetorConfirmado(id), { title: 'Remover coletor', icon: '🗑️', okLabel: 'Remover', okClass: 'btn-danger' }); return;
+async function excluirColetor(id) {
+  const col = state().coletores.find(c => c.id === id);
+  const nome = col ? (col.nome_exibicao || `Coletor ${col.numero}`) : id;
+  if (!window.confirm(`Remover ${nome} do sistema? O histórico de contagens será mantido.`)) return false;
+  return _removerColetorConfirmado(id);
 }
 
 async function _removerColetorConfirmado(coletorId) {
   try {
     await FS_AN.collection(FS_COL_COLETORES).doc(coletorId).delete();
-    // Remoção local só acontece DEPOIS de confirmar sucesso no Firestore —
-    // caso contrário o listener em tempo real poderia trazer o coletor de
-    // volta e dar a impressão de que "não excluiu".
-    window.AnalistaState.replaceSlice('coletores', (state().coletores || []).filter(c => c.id !== coletorId), { source: 'removerColetor' });
-    salvarDB_coletores();
-    renderColetores();
     showToast('🗑️ Coletor removido', 'i');
     logAuditoria('SISTEMA', 'Coletor removido', coletorId);
+    return true;
   } catch (e) {
+    console.error('[Coletores] Erro ao remover:', e);
     showToast('Erro ao remover coletor: ' + e.message, 'e');
+    throw e;
   }
 }
 
 async function aprovarColetor(id) {
   const col = state().coletores.find(c => c.id === id);
-  const nome = col ? 'Coletor ' + col.numero : id;
+  const nome = col ? (col.nome_exibicao || `Coletor ${col.numero}`) : id;
   try {
-    await FS_AN.collection(FS_COL_COLETORES).doc(id).set({ aprovado: 'aprovado', status: 'offline', aprovado_em: firebase.firestore.FieldValue.serverTimestamp() }, {merge:true});
-    showToast('✅ ' + nome + ' aprovado! Operadores já podem logar.', 's');
+    await FS_AN.collection(FS_COL_COLETORES).doc(id).set({
+      aprovado: 'aprovado',
+      bloqueado: false,
+      ativo: true,
+      status: 'offline',
+      aprovado_em: firebase.firestore.FieldValue.serverTimestamp(),
+      reprovado_em: firebase.firestore.FieldValue.delete(),
+      bloqueado_em: firebase.firestore.FieldValue.delete()
+    }, { merge: true });
+    showToast('✅ ' + nome + ' aprovado!', 's');
     logAuditoria('SISTEMA', 'Coletor aprovado: ' + nome, id);
-  } catch(e) { showToast('Erro ao aprovar: ' + e.message, 'e'); }
+    return true;
+  } catch (e) {
+    console.error('[Coletores] Erro ao aprovar:', e);
+    showToast('Erro ao aprovar: ' + e.message, 'e');
+    throw e;
+  }
+}
+
+async function reprovarColetor(id) {
+  const col = state().coletores.find(c => c.id === id);
+  const nome = col ? (col.nome_exibicao || `Coletor ${col.numero}`) : id;
+  if (!window.confirm(`Reprovar a solicitação de ${nome}?`)) return false;
+  try {
+    await FS_AN.collection(FS_COL_COLETORES).doc(id).set({
+      aprovado: 'reprovado',
+      bloqueado: false,
+      ativo: false,
+      status: 'offline',
+      sessao: null,
+      reprovado_em: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    showToast('❌ ' + nome + ' reprovado.', 'w');
+    logAuditoria('SISTEMA', 'Coletor reprovado: ' + nome, id);
+    return true;
+  } catch (e) {
+    console.error('[Coletores] Erro ao reprovar:', e);
+    showToast('Erro ao reprovar: ' + e.message, 'e');
+    throw e;
+  }
 }
 
 async function bloquearColetor(id) {
   const col = state().coletores.find(c => c.id === id);
-  const nome = col ? 'Coletor ' + col.numero : id;
-  showConfirm(`Bloquear ${escHTML(nome)}? Ninguém conseguirá logar neste aparelho.`, () => _bloquearColetorConfirmado(id, nome), { title: 'Bloquear coletor', icon: '🔒', okLabel: 'Bloquear', okClass: 'btn-danger' }); return;
+  const nome = col ? (col.nome_exibicao || `Coletor ${col.numero}`) : id;
+  if (!window.confirm(`Bloquear ${nome}? Ninguém conseguirá entrar neste aparelho.`)) return false;
+  return _bloquearColetorConfirmado(id, nome);
 }
 
 async function _bloquearColetorConfirmado(coletorId, nome) {
   try {
-    await FS_AN.collection(FS_COL_COLETORES).doc(coletorId).set({ aprovado: 'bloqueado', status: 'offline', sessao: null, bloqueado_em: firebase.firestore.FieldValue.serverTimestamp() }, {merge:true});
+    await FS_AN.collection(FS_COL_COLETORES).doc(coletorId).set({
+      aprovado: 'bloqueado',
+      bloqueado: true,
+      ativo: false,
+      status: 'offline',
+      sessao: null,
+      bloqueado_em: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
     showToast('🚫 ' + nome + ' bloqueado.', 'w');
     logAuditoria('SISTEMA', 'Coletor bloqueado: ' + nome, coletorId);
-  } catch(e) { showToast('Erro ao bloquear: ' + e.message, 'e'); }
+    return true;
+  } catch (e) {
+    console.error('[Coletores] Erro ao bloquear:', e);
+    showToast('Erro ao bloquear: ' + e.message, 'e');
+    throw e;
+  }
+}
+
+async function desbloquearColetor(id) {
+  const col = state().coletores.find(c => c.id === id);
+  const nome = col ? (col.nome_exibicao || `Coletor ${col.numero}`) : id;
+  try {
+    await FS_AN.collection(FS_COL_COLETORES).doc(id).set({
+      aprovado: 'aprovado',
+      bloqueado: false,
+      ativo: true,
+      status: 'offline',
+      desbloqueado_em: firebase.firestore.FieldValue.serverTimestamp(),
+      bloqueado_em: firebase.firestore.FieldValue.delete()
+    }, { merge: true });
+    showToast('🔓 ' + nome + ' desbloqueado.', 's');
+    logAuditoria('SISTEMA', 'Coletor desbloqueado: ' + nome, id);
+    return true;
+  } catch (e) {
+    console.error('[Coletores] Erro ao desbloquear:', e);
+    showToast('Erro ao desbloquear: ' + e.message, 'e');
+    throw e;
+  }
 }
 
 // ── HEARTBEAT / STATUS AUTOMÁTICO ───────────────────────────────────

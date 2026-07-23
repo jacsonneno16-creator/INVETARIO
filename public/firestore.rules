@@ -1,46 +1,17 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() {
-      return request.auth != null;
+    function signedIn(){ return request.auth != null; }
+    match /usuarios_acessos/{userId} { allow read, write: if signedIn(); }
+    match /lojas/{lojaId} {
+      allow read, create, update: if signedIn();
+      allow delete: if false;
+      match /{document=**} { allow read, write: if signedIn(); }
     }
-
-    match /dt_inventarios/{inventarioId} {
-      allow read, write: if signedIn();
-      match /base_chunks/{chunkId} {
-        allow read, write: if signedIn();
-      }
+    // Coleções antigas: somente leitura para permitir migração para lojas/{lojaId}.
+    match /{legacyCollection}/{document=**} {
+      allow read: if signedIn() && legacyCollection != 'lojas';
+      allow write: if false;
     }
-    match /dt_contagens/{id}         { allow read, write: if signedIn(); }
-    match /dt_vazios/{id}            { allow read, write: if signedIn(); }
-    match /dt_divergencias/{id}      { allow read, write: if signedIn(); }
-    match /dt_analistas/{id}         { allow read, write: if signedIn(); }
-    match /dt_auditoria_meta/{id}    { allow read, write: if signedIn(); }
-    match /dt_locais_meta/{id}        { allow read, write: if signedIn(); }
-
-    match /dt_auditorias/{auditoriaId} {
-      allow read, write: if signedIn();
-
-      match /enderecos/{docId} {
-        allow read, write: if signedIn();
-      }
-
-      match /base_chunks/{chunkId} {
-        allow read, write: if signedIn();
-      }
-    }
-
-    match /dt_auditoria_imports/{id}       { allow read, write: if signedIn(); }
-    match /dt_coletores/{id}               { allow read, write: if signedIn(); }
-    match /dt_locais/{id}                  { allow read, write: if signedIn(); }
-    match /dt_enderecos/{id}            { allow read, write: if signedIn(); }
-    match /dt_locais_chunks/{id}         { allow read, write: if signedIn(); }
-
-    match /dt_logs_analista/{id}           { allow read, write: if signedIn(); }
-    match /dt_logs_coletor/{id}            { allow read, write: if signedIn(); }
-    match /dt_operadores/{id}              { allow read, write: if signedIn(); }
-    match /dt_produtos/{id}                { allow read, write: if signedIn(); }
-    match /dt_ranking_operadores/{id}      { allow read, write: if signedIn(); }
-    match /dt_recontagens/{id}             { allow read, write: if signedIn(); }
   }
 }
