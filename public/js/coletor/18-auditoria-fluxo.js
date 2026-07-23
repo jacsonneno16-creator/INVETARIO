@@ -44,11 +44,32 @@
   }
 
   function dunEsperado(item){
-    return texto(item?.dunEsperado || item?.dun_esperado || item?.dun || item?.codigoProduto || item?.codigo_produto || item?.gtin);
+    return texto(item?.gtinEsperado || item?.gtin_esperado || item?.eanEsperado || item?.ean_esperado || item?.ean || item?.gtin || item?.dunEsperado || item?.dun_esperado || item?.dun || item?.codigoProduto || item?.codigo_produto);
   }
 
   function descricaoEsperada(item){
     return texto(item?.produtoEsperado || item?.produto_esperado || item?.descricaoProdutoEsperado || item?.produto_nome || item?.descricao || item?.produto);
+  }
+
+  function codigosEsperados(item){
+    const valores=[item?.gtinEsperado,item?.gtin_esperado,item?.eanEsperado,item?.ean_esperado,item?.ean,item?.gtin,item?.dunEsperado,item?.dun_esperado,item?.dun,item?.codigoProduto,item?.codigo_produto,item?.codigoInterno,item?.codigo_interno];
+    return Array.from(new Set(valores.map(normalizarCodigo).filter(Boolean)));
+  }
+  function mesmoProdutoDaBase(lido,item){
+    const prodLido=window.DTProdutos?.buscarSync?.(lido)||{encontrado:false};
+    if(!prodLido.encontrado)return false;
+    const esperados=codigosEsperados(item);
+    for(let i=0;i<esperados.length;i++){
+      const prodEsp=window.DTProdutos?.buscarSync?.(esperados[i]);
+      if(!prodEsp?.encontrado)continue;
+      if(prodLido.id&&prodEsp.id&&prodLido.id===prodEsp.id)return true;
+      const famL=normalizarCodigo(prodLido.familiaCodigo||prodLido.familiaNome||prodLido.produtoPrincipal);
+      const famE=normalizarCodigo(prodEsp.familiaCodigo||prodEsp.familiaNome||prodEsp.produtoPrincipal);
+      if(famL&&famE&&famL===famE&&texto(prodLido.embalagem).toUpperCase()===texto(prodEsp.embalagem).toUpperCase())return true;
+    }
+    const nomeEsperado=normalizarCodigo(descricaoEsperada(item));
+    const nomeLido=normalizarCodigo(prodLido.nomeProduto);
+    return !!(nomeEsperado&&nomeLido&&(nomeEsperado===nomeLido||nomeEsperado.includes(nomeLido)||nomeLido.includes(nomeEsperado)));
   }
 
   function localizarProdutoLido(codigoLido){
@@ -224,7 +245,7 @@
   function gravarFilaAuditoria(fila){ try { localStorage.setItem(chaveFilaAuditoria(), JSON.stringify(fila || [])); } catch(e) {} }
   function enfileirarAuditoria(docId,payload){ const fila=lerFilaAuditoria().filter(x=>x.docId!==docId); fila.push({docId:docId,auditoriaId:auditoriaId(),payload:payload}); gravarFilaAuditoria(fila); }
   async function sincronizarFilaAuditoria(){
-    const fila=lerFilaAuditoria(); if(!fila.length || !navigator.onLine) return;
+    const fila=lerFilaAuditoria(); if(!fila.length) return;
     const restantes=[];
     for(let i=0;i<fila.length;i++){
       const x=fila[i];
@@ -256,6 +277,10 @@
       endereco: texto(item.endereco),
       dunEsperado: esperado,
       produtoEsperado: descricaoEsperada(item),
+      gtinLido: lido,
+      gtin_lido: lido,
+      eanLido: lido,
+      ean_lido: lido,
       dunLido: lido,
       dun_lido: lido,
       codigoLido: lido,
@@ -281,7 +306,11 @@
         .set(payload, { merge: true });
 
       APP.auditorias = (APP.auditorias || []).filter(a => documentoId(a) !== docId);
+      APP.contagens = (APP.contagens || []).filter(a => texto(a.id) !== docId);
+      APP.contagens.unshift({id:docId,...payload});
+      try { localStorage.setItem('dt_auditoria_resultados_' + lojaAtual() + '_' + auditoriaId(), JSON.stringify(APP.contagens.slice(0,500))); } catch(e) {}
       atualizarContadorTitulo();
+      try { window.dispatchEvent(new CustomEvent('dt-auditoria-salva',{detail:{id:docId,payload:payload}})); } catch(e) {}
 
       if (status === STATUS_OK) {
         mostrarResultado('Auditoria concluída.', 'ok');
@@ -299,7 +328,11 @@
       console.error('[AUDITORIA] Erro ao salvar resultado:', error);
       enfileirarAuditoria(docId,payload);
       APP.auditorias = (APP.auditorias || []).filter(a => documentoId(a) !== docId);
+      APP.contagens = (APP.contagens || []).filter(a => texto(a.id) !== docId);
+      APP.contagens.unshift({id:docId,...payload});
+      try { localStorage.setItem('dt_auditoria_resultados_' + lojaAtual() + '_' + auditoriaId(), JSON.stringify(APP.contagens.slice(0,500))); } catch(e) {}
       atualizarContadorTitulo();
+      try { window.dispatchEvent(new CustomEvent('dt-auditoria-salva',{detail:{id:docId,payload:payload}})); } catch(e) {}
       mostrarResultado('Auditoria salva no coletor. Será enviada quando houver conexão.', 'vazio');
       tocar('vazio');
       estado.timerRetorno = setTimeout(irParaEndereco, 900);
@@ -324,12 +357,12 @@
       return;
     }
     const prod=window.DTProdutos&&window.DTProdutos.buscarSync?window.DTProdutos.buscarSync(lido):{encontrado:false};
-    const esperado=dunEsperado(estado.item);
-    let correto=esperado&&normalizarCodigo(lido)===normalizarCodigo(esperado);
+    const esperados=codigosEsperados(estado.item);
+    let correto=esperados.indexOf(normalizarCodigo(lido))>=0||mesmoProdutoDaBase(lido,estado.item);
     const meta=(APP.auditoriasMenu||[]).find(function(x){return x.id===auditoriaId();})||{};
-    if(meta.tipoAuditoria==='produto'&&meta.familiaId){correto=(prod.familiaCodigo||prod.familiaNome)===meta.familiaId||prod.familiaNome===meta.familiaNome;}
-    if(!prod.encontrado)correto=false;
-    if(estado.item.previstoVazio===true||!esperado)correto=false;
+    if(meta.tipoAuditoria==='produto'&&meta.familiaId&&prod.encontrado){const famProd=normalizarCodigo(prod.familiaCodigo||prod.familiaNome);correto=famProd===normalizarCodigo(meta.familiaId)||famProd===normalizarCodigo(meta.familiaNome);}
+    if(!prod.encontrado&&esperados.indexOf(normalizarCodigo(lido))<0)correto=false;
+    if(estado.item.previstoVazio===true||!esperados.length)correto=false;
     if(!prod.encontrado) mostrarResultado('Produto não cadastrado. Será registrado como divergente.','erro');
     salvarResultado(correto?STATUS_OK:STATUS_DIVERGENTE,lido);
   }

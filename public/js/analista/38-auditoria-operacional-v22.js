@@ -1,5 +1,5 @@
 // AUDITORIA OPERACIONAL V22 — módulo isolado do Inventário
-// Importação: Endereço + DUN + Produto. Comparação e resultados pelo DUN.
+// Importação: Endereço + GTIN/EAN + Produto. Comparação pelos códigos cadastrados.
 (function(){
   'use strict';
 
@@ -214,7 +214,7 @@
     const escolher = nomes => nomes.map(cab).find(n => map[n]);
     return {
       endereco: map[escolher(['ENDEREÇO','ENDERECO','LOCAL','POSIÇÃO','POSICAO'])],
-      dun: map[escolher(['DUN','CÓDIGO DUN','CODIGO DUN','CÓDIGO DO PRODUTO','CODIGO DO PRODUTO'])],
+      dun: map[escolher(['GTIN','GTIN/EAN','GTIN PRINCIPAL','EAN','EAN/GTIN','CÓDIGO DE BARRAS','CODIGO DE BARRAS','DUN','CÓDIGO DUN','CODIGO DUN','CÓDIGO DO PRODUTO','CODIGO DO PRODUTO'])],
       produto: map[escolher(['PRODUTO','DESCRIÇÃO','DESCRICAO','NOME DO PRODUTO'])]
     };
   }
@@ -232,7 +232,7 @@
       const rows = await lerArquivo(file);
       if (!rows.length) throw new Error('O arquivo não possui linhas de dados.');
       const col = detectarColunas(Object.keys(rows[0]));
-      const ausentes = [!col.endereco&&'Endereço',!col.dun&&'DUN',!col.produto&&'Produto'].filter(Boolean);
+      const ausentes = [!col.endereco&&'Endereço',!col.dun&&'GTIN/EAN',!col.produto&&'Produto'].filter(Boolean);
       if (ausentes.length) throw new Error(`Colunas obrigatórias ausentes: ${ausentes.join(', ')}.`);
       const erros=[]; const vistos=new Map(); const validos=[];
       rows.forEach((r,idx) => {
@@ -240,7 +240,7 @@
         const motivos=[];
         if(!endereco) motivos.push('endereço vazio');
         if(endereco && !/[0-9]/.test(endereco)) motivos.push('endereço inválido');
-        if(!dunEsperado) motivos.push('DUN vazio');
+        if(!dunEsperado) motivos.push('GTIN/EAN vazio');
         if(!produtoEsperado) motivos.push('nome do produto vazio');
         const chave=endNorm(endereco)+'__'+dun(dunEsperado);
         if(chave && vistos.has(chave)) motivos.push(`produto duplicado no mesmo endereço (também na linha ${vistos.get(chave)})`);
@@ -267,7 +267,7 @@
       const preview=document.getElementById('auditoria-import-preview');
       const actions=document.getElementById('auditoria-import-actions');
       if(status) status.innerHTML = erros.length ? `<div class="alert error"><div>⚠️</div><div><b>Base inválida:</b> ${erros.length} erro(s). Corrija antes de importar.</div></div>` : `<div class="alert success"><div>✅</div><div>${validos.length} linha(s) válidas prontas para importação.</div></div>`;
-      if(preview){ preview.style.display=''; preview.innerHTML = erros.length ? `<div class="tbl-wrap"><table><thead><tr><th>Linha</th><th>Endereço</th><th>Motivo</th></tr></thead><tbody>${erros.map(e=>`<tr><td>${e.linha}</td><td>${esc(e.endereco)}</td><td>${esc(e.motivo)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="alert info"><div>📄</div><div>Arquivo: <b>${esc(file.name)}</b><br>Campos reconhecidos: Endereço, DUN e Produto.</div></div>`; }
+      if(preview){ preview.style.display=''; preview.innerHTML = erros.length ? `<div class="tbl-wrap"><table><thead><tr><th>Linha</th><th>Endereço</th><th>Motivo</th></tr></thead><tbody>${erros.map(e=>`<tr><td>${e.linha}</td><td>${esc(e.endereco)}</td><td>${esc(e.motivo)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="alert info"><div>📄</div><div>Arquivo: <b>${esc(file.name)}</b><br>Campos reconhecidos: Endereço, GTIN/EAN e Produto.</div></div>`; }
       if(actions) actions.style.display = erros.length ? 'none' : 'flex';
     } catch(e){ console.error(e); toast(e.message || 'Erro ao ler arquivo.','e'); }
   }
@@ -325,7 +325,7 @@
     if(!auditoriaAtual || !itensAtuais.length) return toast('Selecione uma auditoria com dados.','w');
     const rows=aplicarFiltros(itensAtuais).map(i=>({
       Auditoria:metaAtual?.nome||metaAtual?.auditoria_nome||auditoriaAtual,Loja:i.loja||metaAtual?.loja||loja(),Endereço:i.endereco,
-      'DUN esperado':i.dunEsperado,'Produto esperado':i.produtoEsperado,'DUN lido':i.dunLido||'','Produto lido':i.produtoLido||'',
+      'GTIN/EAN esperado':i.dunEsperado,'Produto esperado':i.produtoEsperado,'GTIN/EAN lido':i.dunLido||'','Produto lido':i.produtoLido||'',
       Resultado:rotuloStatus(i.status),Operador:i.operadorNome||'','Data e hora':fmt(i.lidoEm)
     }));
     const ws=XLSX.utils.json_to_sheet(rows), wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Auditoria');

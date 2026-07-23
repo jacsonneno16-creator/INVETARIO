@@ -81,7 +81,7 @@
       });
       APP.auditoriaProdutosMap = APP.auditoriaProdutosMap || {};
       rows.forEach(r => {
-        const codigo = String(r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || r.gtin || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
         const nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
         if (codigo && nome) APP.auditoriaProdutosMap[codigo] = nome;
       });
@@ -114,7 +114,7 @@
     const todos = snap.docs.map(d => ({ id:d.id, ...d.data() }));
     APP.auditoriaProdutosMap = {};
     todos.forEach(r => {
-      const codigo = String(r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || r.gtin || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+      const codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
       const nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
       if (codigo && nome) APP.auditoriaProdutosMap[codigo] = nome;
     });

@@ -1,3 +1,14 @@
+var __assign = (this && this.__assign) || function () {
+    __assign = Object.assign || function(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+            s = arguments[i];
+            for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p))
+                t[p] = s[p];
+        }
+        return t;
+    };
+    return __assign.apply(this, arguments);
+};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -76,10 +87,35 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         });
     }
     function dunEsperado(item) {
-        return texto((item === null || item === void 0 ? void 0 : item.dunEsperado) || (item === null || item === void 0 ? void 0 : item.dun_esperado) || (item === null || item === void 0 ? void 0 : item.dun) || (item === null || item === void 0 ? void 0 : item.codigoProduto) || (item === null || item === void 0 ? void 0 : item.codigo_produto) || (item === null || item === void 0 ? void 0 : item.gtin));
+        return texto((item === null || item === void 0 ? void 0 : item.gtinEsperado) || (item === null || item === void 0 ? void 0 : item.gtin_esperado) || (item === null || item === void 0 ? void 0 : item.eanEsperado) || (item === null || item === void 0 ? void 0 : item.ean_esperado) || (item === null || item === void 0 ? void 0 : item.ean) || (item === null || item === void 0 ? void 0 : item.gtin) || (item === null || item === void 0 ? void 0 : item.dunEsperado) || (item === null || item === void 0 ? void 0 : item.dun_esperado) || (item === null || item === void 0 ? void 0 : item.dun) || (item === null || item === void 0 ? void 0 : item.codigoProduto) || (item === null || item === void 0 ? void 0 : item.codigo_produto));
     }
     function descricaoEsperada(item) {
         return texto((item === null || item === void 0 ? void 0 : item.produtoEsperado) || (item === null || item === void 0 ? void 0 : item.produto_esperado) || (item === null || item === void 0 ? void 0 : item.descricaoProdutoEsperado) || (item === null || item === void 0 ? void 0 : item.produto_nome) || (item === null || item === void 0 ? void 0 : item.descricao) || (item === null || item === void 0 ? void 0 : item.produto));
+    }
+    function codigosEsperados(item) {
+        var valores = [item === null || item === void 0 ? void 0 : item.gtinEsperado, item === null || item === void 0 ? void 0 : item.gtin_esperado, item === null || item === void 0 ? void 0 : item.eanEsperado, item === null || item === void 0 ? void 0 : item.ean_esperado, item === null || item === void 0 ? void 0 : item.ean, item === null || item === void 0 ? void 0 : item.gtin, item === null || item === void 0 ? void 0 : item.dunEsperado, item === null || item === void 0 ? void 0 : item.dun_esperado, item === null || item === void 0 ? void 0 : item.dun, item === null || item === void 0 ? void 0 : item.codigoProduto, item === null || item === void 0 ? void 0 : item.codigo_produto, item === null || item === void 0 ? void 0 : item.codigoInterno, item === null || item === void 0 ? void 0 : item.codigo_interno];
+        return Array.from(new Set(valores.map(normalizarCodigo).filter(Boolean)));
+    }
+    function mesmoProdutoDaBase(lido, item) {
+        var _a, _b, _c, _d;
+        var prodLido = ((_b = (_a = window.DTProdutos) === null || _a === void 0 ? void 0 : _a.buscarSync) === null || _b === void 0 ? void 0 : _b.call(_a, lido)) || { encontrado: false };
+        if (!prodLido.encontrado)
+            return false;
+        var esperados = codigosEsperados(item);
+        for (var i = 0; i < esperados.length; i++) {
+            var prodEsp = (_d = (_c = window.DTProdutos) === null || _c === void 0 ? void 0 : _c.buscarSync) === null || _d === void 0 ? void 0 : _d.call(_c, esperados[i]);
+            if (!(prodEsp === null || prodEsp === void 0 ? void 0 : prodEsp.encontrado))
+                continue;
+            if (prodLido.id && prodEsp.id && prodLido.id === prodEsp.id)
+                return true;
+            var famL = normalizarCodigo(prodLido.familiaCodigo || prodLido.familiaNome || prodLido.produtoPrincipal);
+            var famE = normalizarCodigo(prodEsp.familiaCodigo || prodEsp.familiaNome || prodEsp.produtoPrincipal);
+            if (famL && famE && famL === famE && texto(prodLido.embalagem).toUpperCase() === texto(prodEsp.embalagem).toUpperCase())
+                return true;
+        }
+        var nomeEsperado = normalizarCodigo(descricaoEsperada(item));
+        var nomeLido = normalizarCodigo(prodLido.nomeProduto);
+        return !!(nomeEsperado && nomeLido && (nomeEsperado === nomeLido || nomeEsperado.includes(nomeLido) || nomeLido.includes(nomeEsperado)));
     }
     function localizarProdutoLido(codigoLido) {
         var _a, _b;
@@ -319,6 +355,56 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     function documentoId(item) {
         return texto((item === null || item === void 0 ? void 0 : item.id) || "".concat(auditoriaId(), "__").concat(normalizarEndereco(item === null || item === void 0 ? void 0 : item.endereco)));
     }
+    function chaveFilaAuditoria() { return 'dt_auditoria_fila_' + lojaAtual(); }
+    function lerFilaAuditoria() { try {
+        return JSON.parse(localStorage.getItem(chaveFilaAuditoria()) || '[]');
+    }
+    catch (e) {
+        return [];
+    } }
+    function gravarFilaAuditoria(fila) { try {
+        localStorage.setItem(chaveFilaAuditoria(), JSON.stringify(fila || []));
+    }
+    catch (e) { } }
+    function enfileirarAuditoria(docId, payload) { var fila = lerFilaAuditoria().filter(function (x) { return x.docId !== docId; }); fila.push({ docId: docId, auditoriaId: auditoriaId(), payload: payload }); gravarFilaAuditoria(fila); }
+    function sincronizarFilaAuditoria() {
+        return __awaiter(this, void 0, void 0, function () {
+            var fila, restantes, i, x, e_1;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        fila = lerFilaAuditoria();
+                        if (!fila.length)
+                            return [2 /*return*/];
+                        restantes = [];
+                        i = 0;
+                        _a.label = 1;
+                    case 1:
+                        if (!(i < fila.length)) return [3 /*break*/, 6];
+                        x = fila[i];
+                        _a.label = 2;
+                    case 2:
+                        _a.trys.push([2, 4, , 5]);
+                        return [4 /*yield*/, FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection('enderecos').doc(x.docId).set(x.payload, { merge: true })];
+                    case 3:
+                        _a.sent();
+                        return [3 /*break*/, 5];
+                    case 4:
+                        e_1 = _a.sent();
+                        restantes.push(x);
+                        return [3 /*break*/, 5];
+                    case 5:
+                        i++;
+                        return [3 /*break*/, 1];
+                    case 6:
+                        gravarFilaAuditoria(restantes);
+                        return [2 /*return*/];
+                }
+            });
+        });
+    }
+    window.sincronizarFilaAuditoria = sincronizarFilaAuditoria;
+    window.addEventListener('online', function () { sincronizarFilaAuditoria(); });
     function salvarResultado(status, produtoLido) {
         return __awaiter(this, void 0, void 0, function () {
             var item, docId, momento, esperado, lido, nomeLido, payload, error_1;
@@ -344,6 +430,10 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             endereco: texto(item.endereco),
                             dunEsperado: esperado,
                             produtoEsperado: descricaoEsperada(item),
+                            gtinLido: lido,
+                            gtin_lido: lido,
+                            eanLido: lido,
+                            ean_lido: lido,
                             dunLido: lido,
                             dun_lido: lido,
                             codigoLido: lido,
@@ -371,7 +461,17 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                     case 2:
                         _a.sent();
                         APP.auditorias = (APP.auditorias || []).filter(function (a) { return documentoId(a) !== docId; });
+                        APP.contagens = (APP.contagens || []).filter(function (a) { return texto(a.id) !== docId; });
+                        APP.contagens.unshift(__assign({ id: docId }, payload));
+                        try {
+                            localStorage.setItem('dt_auditoria_resultados_' + lojaAtual() + '_' + auditoriaId(), JSON.stringify(APP.contagens.slice(0, 500)));
+                        }
+                        catch (e) { }
                         atualizarContadorTitulo();
+                        try {
+                            window.dispatchEvent(new CustomEvent('dt-auditoria-salva', { detail: { id: docId, payload: payload } }));
+                        }
+                        catch (e) { }
                         if (status === STATUS_OK) {
                             mostrarResultado('Auditoria concluída.', 'ok');
                             tocar('ok');
@@ -389,14 +489,19 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                     case 3:
                         error_1 = _a.sent();
                         console.error('[AUDITORIA] Erro ao salvar resultado:', error_1);
-                        try {
-                            var chave = 'dt_auditoria_fila_' + lojaAtual();
-                            var fila = JSON.parse(localStorage.getItem(chave) || '[]').filter(function (x) { return x.docId !== docId; });
-                            fila.push({ docId: docId, auditoriaId: auditoriaId(), payload: payload });
-                            localStorage.setItem(chave, JSON.stringify(fila));
-                        } catch (e) {}
+                        enfileirarAuditoria(docId, payload);
                         APP.auditorias = (APP.auditorias || []).filter(function (a) { return documentoId(a) !== docId; });
+                        APP.contagens = (APP.contagens || []).filter(function (a) { return texto(a.id) !== docId; });
+                        APP.contagens.unshift(__assign({ id: docId }, payload));
+                        try {
+                            localStorage.setItem('dt_auditoria_resultados_' + lojaAtual() + '_' + auditoriaId(), JSON.stringify(APP.contagens.slice(0, 500)));
+                        }
+                        catch (e) { }
                         atualizarContadorTitulo();
+                        try {
+                            window.dispatchEvent(new CustomEvent('dt-auditoria-salva', { detail: { id: docId, payload: payload } }));
+                        }
+                        catch (e) { }
                         mostrarResultado('Auditoria salva no coletor. Será enviada quando houver conexão.', 'vazio');
                         tocar('vazio');
                         estado.timerRetorno = setTimeout(irParaEndereco, 900);
@@ -426,15 +531,16 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             return;
         }
         var prod = window.DTProdutos && window.DTProdutos.buscarSync ? window.DTProdutos.buscarSync(lido) : { encontrado: false };
-        var esperado = dunEsperado(estado.item);
-        var correto = esperado && normalizarCodigo(lido) === normalizarCodigo(esperado);
+        var esperados = codigosEsperados(estado.item);
+        var correto = esperados.indexOf(normalizarCodigo(lido)) >= 0 || mesmoProdutoDaBase(lido, estado.item);
         var meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId(); }) || {};
-        if (meta.tipoAuditoria === 'produto' && meta.familiaId) {
-            correto = (prod.familiaCodigo || prod.familiaNome) === meta.familiaId || prod.familiaNome === meta.familiaNome;
+        if (meta.tipoAuditoria === 'produto' && meta.familiaId && prod.encontrado) {
+            var famProd = normalizarCodigo(prod.familiaCodigo || prod.familiaNome);
+            correto = famProd === normalizarCodigo(meta.familiaId) || famProd === normalizarCodigo(meta.familiaNome);
         }
-        if (!prod.encontrado)
+        if (!prod.encontrado && esperados.indexOf(normalizarCodigo(lido)) < 0)
             correto = false;
-        if (estado.item.previstoVazio === true || !esperado)
+        if (estado.item.previstoVazio === true || !esperados.length)
             correto = false;
         if (!prod.encontrado)
             mostrarResultado('Produto não cadastrado. Será registrado como divergente.', 'erro');
@@ -483,6 +589,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                     case 1:
                         _b.trys.push([1, 5, , 6]);
                         goScreen('app');
+                        sincronizarFilaAuditoria().catch(function () { });
                         if (window._carregarBaseGeralEnderecosAuditoria)
                             window._carregarBaseGeralEnderecosAuditoria(false).catch(function () { });
                         lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';

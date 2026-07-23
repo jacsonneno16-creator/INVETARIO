@@ -163,7 +163,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         });
                         APP.auditoriaProdutosMap = APP.auditoriaProdutosMap || {};
                         rows_1.forEach(function (r) {
-                            var codigo = String(r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || r.gtin || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+                            var codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
                             var nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
                             if (codigo && nome)
                                 APP.auditoriaProdutosMap[codigo] = nome;
@@ -200,7 +200,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         todos = snap.docs.map(function (d) { return (__assign({ id: d.id }, d.data())); });
                         APP.auditoriaProdutosMap = {};
                         todos.forEach(function (r) {
-                            var codigo = String(r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || r.gtin || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+                            var codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
                             var nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
                             if (codigo && nome)
                                 APP.auditoriaProdutosMap[codigo] = nome;

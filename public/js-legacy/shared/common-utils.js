@@ -14,6 +14,9 @@ function escAttr(str) {
     return escHTML(str).replace(/`/g, '&#096;');
 }
 window.escHTML = window.escHTML || escHTML;
+// Aliases legados usados por telas antigas do Analista.
+window.escapeHTML = window.escapeHTML || escHTML;
+window.escapeHtml = window.escapeHtml || escHTML;
 window.esc = window.esc || escHTML;
 window.escAttr = window.escAttr || escAttr;
 var _isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
