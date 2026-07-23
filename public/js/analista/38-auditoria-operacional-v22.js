@@ -12,6 +12,41 @@
   let assinaturaAnterior = '';
   let importacaoPendente = null;
 
+  let configuracaoNova = null;
+  function ruaDoEndereco(v){ const p=txt(v).split(/[.\-_/]/).filter(Boolean); return p[0] || ''; }
+  async function enderecosGerais(){
+    try{
+      const chunks=await DB().collection('dt_locais_chunks').orderBy('parte').get();
+      let out=[]; chunks.docs.forEach(d=>{ const x=d.data(); out=out.concat(x.itens||x.enderecos||x.lista||[]); });
+      if(out.length) return out.map(x=>typeof x==='string'?{endereco:x}:x);
+    }catch(e){}
+    try{ const snap=await DB().collection('dt_locais').get(); return snap.docs.map(d=>({id:d.id,...d.data()})); }catch(e){ return []; }
+  }
+  async function abrirCriacaoAuditoria(){
+    await window.DTProdutos?.carregar?.();
+    const familias=(window.DTProdutos?.familias?.()||[]).filter(f=>f.unidade);
+    const ends=await enderecosGerais();
+    const ruas=[...new Set(ends.map(e=>ruaDoEndereco(e.endereco||e.codigo||e.id)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+    const html=`<div id="modal-nova-aud-v39" class="modal-bg on"><div class="modal" style="max-width:720px"><div class="modal-hdr"><div class="modal-title">Nova Auditoria</div><button class="modal-close" data-fechar-aud-v39>✕</button></div><div class="fg"><div class="fi full"><div class="fl">Nome da auditoria *</div><input id="aud39-nome" placeholder="Ex.: Auditoria Rua 14"></div><div class="fi full"><div class="fl">Como deseja auditar?</div><select id="aud39-tipo"><option value="rua">Por rua</option><option value="produto">Por produto</option></select></div><div class="fi full" id="aud39-box-rua"><div class="fl">Ruas</div><select id="aud39-ruas" multiple size="8">${ruas.map(r=>`<option value="${esc(r)}">Rua ${esc(r)}</option>`).join('')}</select><div class="sec-sub">Use Ctrl para selecionar mais de uma rua.</div></div><div class="fi full" id="aud39-box-prod" style="display:none"><div class="fl">Produto principal (somente UND)</div><input id="aud39-busca-prod" placeholder="Pesquisar produto..."><select id="aud39-prod" size="9">${familias.map(f=>`<option value="${esc(f.id)}">${esc(f.nome)}</option>`).join('')}</select></div></div><div class="modal-actions"><button class="btn btn-ghost" data-fechar-aud-v39>Cancelar</button><button class="btn btn-primary" id="aud39-criar">Criar auditoria</button></div></div></div>`;
+    document.body.insertAdjacentHTML('beforeend',html);
+    const modal=document.getElementById('modal-nova-aud-v39');
+    modal.querySelectorAll('[data-fechar-aud-v39]').forEach(b=>b.onclick=()=>modal.remove());
+    const tipo=document.getElementById('aud39-tipo'); tipo.onchange=()=>{document.getElementById('aud39-box-rua').style.display=tipo.value==='rua'?'':'none';document.getElementById('aud39-box-prod').style.display=tipo.value==='produto'?'':'none';};
+    document.getElementById('aud39-busca-prod').oninput=function(){const q=this.value.toLowerCase();[...document.getElementById('aud39-prod').options].forEach(o=>o.hidden=!o.text.toLowerCase().includes(q));};
+    document.getElementById('aud39-criar').onclick=async()=>{
+      const nome=txt(document.getElementById('aud39-nome').value); if(!nome)return toast('Informe o nome da auditoria.','w');
+      const modo=tipo.value; let selecao=[];
+      if(modo==='rua')selecao=[...document.getElementById('aud39-ruas').selectedOptions].map(o=>o.value);
+      else {const v=document.getElementById('aud39-prod').value;if(v)selecao=[v];}
+      if(!selecao.length)return toast(modo==='rua'?'Selecione ao menos uma rua.':'Selecione um produto principal.','w');
+      const id=`AUD-${Date.now()}`; configuracaoNova={modo,selecao};
+      const familia=modo==='produto'?familias.find(f=>f.id===selecao[0]):null;
+      await DB().collection('dt_auditorias').doc(id).set({nome,loja:loja(),tipoAuditoria:modo,ruas:modo==='rua'?selecao:[],familiaId:familia?.id||'',familiaNome:familia?.nome||'',familiaCodigos:familia?familia.produtos.map(p=>p.codigoInterno):[],status:'RASCUNHO',totalItens:0,totalPendentes:0,totalOk:0,totalDivergentes:0,totalVazios:0,criadoEm:agora(),criadoPor:usuario()});
+      auditoriaAtual=id; metaAtual={id,nome,tipoAuditoria:modo,ruas:modo==='rua'?selecao:[],familiaId:familia?.id||'',familiaNome:familia?.nome||''}; modal.remove(); await popularSelect(); const sel=document.getElementById('aud-op-auditoria');if(sel)sel.value=id;await selecionarAuditoria(id);toast('Auditoria criada. Importe a base para completar os produtos esperados.','s');
+    };
+  }
+
+
   const txt = v => String(v == null ? '' : v).trim();
   const esc = v => txt(v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const semAcento = v => txt(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'');
@@ -21,7 +56,7 @@
   const agora = () => new Date().toISOString();
   const usuario = () => window._currentAnalistaUser?.email || localStorage.getItem('dt_analista_email') || 'analista';
   const loja = () => window.DTMultiStore?.getLojaAtual?.()?.id || window.getLojaAtual?.()?.id || localStorage.getItem('dt_loja_atual') || '';
-  const docId = (auditoriaId, endereco) => `${auditoriaId}__${endNorm(endereco).replace(/[^A-Z0-9]/g,'_')}`;
+  const docId = (auditoriaId, endereco, codigo='') => `${auditoriaId}__${endNorm(endereco).replace(/[^A-Z0-9]/g,'_')}__${dun(codigo)||'VAZIO'}`;
   const fmt = v => {
     if (!v) return '—';
     const d = v?.toDate ? v.toDate() : new Date(v);
@@ -207,13 +242,27 @@
         if(endereco && !/[0-9]/.test(endereco)) motivos.push('endereço inválido');
         if(!dunEsperado) motivos.push('DUN vazio');
         if(!produtoEsperado) motivos.push('nome do produto vazio');
-        const chave=endNorm(endereco);
-        if(chave && vistos.has(chave)) motivos.push(`endereço duplicado (também na linha ${vistos.get(chave)})`);
+        const chave=endNorm(endereco)+'__'+dun(dunEsperado);
+        if(chave && vistos.has(chave)) motivos.push(`produto duplicado no mesmo endereço (também na linha ${vistos.get(chave)})`);
         else if(chave) vistos.set(chave,linha);
         if(motivos.length) erros.push({linha,endereco:endereco||'—',motivo:motivos.join('; ')});
         else validos.push({endereco,dunEsperado,produtoEsperado});
       });
-      importacaoPendente={file,validos,erros};
+      let selecionados=validos;
+      const cfg=metaAtual||configuracaoNova||{};
+      if(cfg.tipoAuditoria==='produto' && cfg.familiaId){
+        const fam=(window.DTProdutos?.familias?.()||[]).find(f=>f.id===cfg.familiaId);
+        const codigos=new Set((fam?.produtos||[]).flatMap(p=>[dun(p.codigoInterno),dun(p.dun),dun(p.gtin)]).filter(Boolean));
+        selecionados=validos.filter(r=>codigos.has(dun(r.dunEsperado)) || txt(r.produtoEsperado).toLowerCase().includes(txt(cfg.familiaNome).toLowerCase()));
+      }
+      if(cfg.tipoAuditoria==='rua' && (cfg.ruas||[]).length){
+        const ruasSet=new Set(cfg.ruas.map(txt)); selecionados=validos.filter(r=>ruasSet.has(ruaDoEndereco(r.endereco)));
+        const existentes=new Set(selecionados.map(r=>endNorm(r.endereco)));
+        const gerais=await enderecosGerais();
+        gerais.forEach(e=>{const endereco=txt(e.endereco||e.codigo||e.id);if(endereco&&ruasSet.has(ruaDoEndereco(endereco))&&!existentes.has(endNorm(endereco)))selecionados.push({endereco,dunEsperado:'',produtoEsperado:'ENDEREÇO PREVISTO VAZIO',previstoVazio:true});});
+      }
+      if(!selecionados.length) erros.push({linha:'—',endereco:'—',motivo:'Nenhum item da base corresponde ao tipo selecionado para esta auditoria'});
+      importacaoPendente={file,validos:selecionados,erros};
       const status=document.getElementById('auditoria-import-status');
       const preview=document.getElementById('auditoria-import-preview');
       const actions=document.getElementById('auditoria-import-actions');
@@ -223,19 +272,7 @@
     } catch(e){ console.error(e); toast(e.message || 'Erro ao ler arquivo.','e'); }
   }
 
-  async function criarNova(){
-    const nome=txt(prompt('Nome da nova auditoria:'));
-    if(!nome) return;
-    const id=`AUD-${Date.now()}`;
-    await DB().collection('dt_auditorias').doc(id).set({
-      nome,loja:loja(),status:'RASCUNHO',totalItens:0,totalPendentes:0,totalOk:0,totalDivergentes:0,totalVazios:0,criadoEm:agora(),criadoPor:usuario()
-    });
-    auditoriaAtual=id;
-    await popularSelect();
-    const sel=document.getElementById('aud-op-auditoria'); if(sel)sel.value=id;
-    await selecionarAuditoria(id);
-    toast('Auditoria criada. Agora importe a base.','s');
-  }
+  async function criarNova(){ return abrirCriacaoAuditoria(); }
 
   async function confirmarImportacao(){
     if(!importacaoPendente || importacaoPendente.erros.length) return;
@@ -248,10 +285,10 @@
     for(let i=0;i<lista.length;i+=350){
       const b=DB().batch();
       lista.slice(i,i+350).forEach(row=>{
-        const id=docId(auditoriaAtual,row.endereco);
+        const id=docId(auditoriaAtual,row.endereco,row.dunEsperado);
         b.set(itensRef.doc(id),{
           auditoriaId:auditoriaAtual,endereco:row.endereco,dunEsperado:row.dunEsperado,produtoEsperado:row.produtoEsperado,
-          dunLido:null,produtoLido:null,status:'PENDENTE',operadorId:null,operadorNome:null,lidoEm:null,loja:loja(),disponivel_coletor:false
+          previstoVazio:row.previstoVazio===true,dunLido:null,produtoLido:null,status:'PENDENTE',operadorId:null,operadorNome:null,lidoEm:null,loja:loja(),disponivel_coletor:false
         });
       });
       await b.commit();

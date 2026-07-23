@@ -64,7 +64,10 @@
   function encontrarEndereco(valor){
     const alvo = normalizarEndereco(valor);
     if (!alvo) return null;
-    return listaAuditoria().find(item => normalizarEndereco(item.endereco || item.endereco_norm) === alvo) || null;
+    const previsto=listaAuditoria().find(function(item){return normalizarEndereco(item.endereco||item.endereco_norm)===alvo;});
+    if(previsto)return previsto;
+    if(APP.locaisAtivos&&APP.locaisAtivos.has(alvo))return {id:auditoriaId()+'__'+alvo,endereco:texto(valor),dunEsperado:'',produtoEsperado:'ENDEREÇO PREVISTO VAZIO',previstoVazio:true,disponivel_coletor:true};
+    return null;
   }
 
   function elementos(){
@@ -161,7 +164,7 @@
     }
     const item = encontrarEndereco(valor);
     if (!item) {
-      mostrarFeedbackEndereco('Endereço não encontrado nesta auditoria.', true);
+      mostrarFeedbackEndereco('Endereço não cadastrado na Base Geral de Endereços.', true);
       tocar('erro');
       if (el.endereco) { el.endereco.select(); el.endereco.focus(); }
       return;
@@ -247,8 +250,14 @@
       el.produto?.focus();
       return;
     }
-    const correto = normalizarCodigo(lido) === normalizarCodigo(dunEsperado(estado.item));
-    salvarResultado(correto ? STATUS_OK : STATUS_DIVERGENTE, lido);
+    const prod=window.DTProdutos&&window.DTProdutos.buscarSync?window.DTProdutos.buscarSync(lido):{encontrado:false};
+    if(!prod.encontrado){mostrarResultado('Produto não cadastrado na Base Geral de Produtos.','erro');tocar('erro');el.produto.select();el.produto.focus();return;}
+    const esperado=dunEsperado(estado.item);
+    let correto=esperado&&normalizarCodigo(lido)===normalizarCodigo(esperado);
+    const meta=(APP.auditoriasMenu||[]).find(function(x){return x.id===auditoriaId();})||{};
+    if(meta.tipoAuditoria==='produto'&&meta.familiaId){correto=(prod.familiaCodigo||prod.familiaNome)===meta.familiaId||prod.familiaNome===meta.familiaNome;}
+    if(estado.item.previstoVazio===true||!esperado)correto=false;
+    salvarResultado(correto?STATUS_OK:STATUS_DIVERGENTE,lido);
   }
 
   function registrarEnderecoVazio(){
@@ -279,7 +288,8 @@
       nome: meta.auditoria_nome || auditoriaSelecionadaId,
       auditoria_nome: meta.auditoria_nome || auditoriaSelecionadaId,
       status: 'ATIVO',
-      auditoria_id: auditoriaSelecionadaId
+      auditoria_id: auditoriaSelecionadaId,
+      tipoAuditoria: meta.tipoAuditoria||'',familiaId:meta.familiaId||'',familiaNome:meta.familiaNome||'',ruas:meta.ruas||[]
     };
     APP.base = [];
     APP.auditoriaBase = [];

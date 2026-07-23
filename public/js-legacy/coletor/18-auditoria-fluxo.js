@@ -97,7 +97,12 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         var alvo = normalizarEndereco(valor);
         if (!alvo)
             return null;
-        return listaAuditoria().find(function (item) { return normalizarEndereco(item.endereco || item.endereco_norm) === alvo; }) || null;
+        var previsto = listaAuditoria().find(function (item) { return normalizarEndereco(item.endereco || item.endereco_norm) === alvo; });
+        if (previsto)
+            return previsto;
+        if (APP.locaisAtivos && APP.locaisAtivos.has(alvo))
+            return { id: auditoriaId() + '__' + alvo, endereco: texto(valor), dunEsperado: '', produtoEsperado: 'ENDEREÇO PREVISTO VAZIO', previstoVazio: true, disponivel_coletor: true };
+        return null;
     }
     function elementos() {
         return {
@@ -224,7 +229,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         }
         var item = encontrarEndereco(valor);
         if (!item) {
-            mostrarFeedbackEndereco('Endereço não encontrado nesta auditoria.', true);
+            mostrarFeedbackEndereco('Endereço não cadastrado na Base Geral de Endereços.', true);
             tocar('erro');
             if (el.endereco) {
                 el.endereco.select();
@@ -325,7 +330,22 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             (_b = el.produto) === null || _b === void 0 ? void 0 : _b.focus();
             return;
         }
-        var correto = normalizarCodigo(lido) === normalizarCodigo(dunEsperado(estado.item));
+        var prod = window.DTProdutos && window.DTProdutos.buscarSync ? window.DTProdutos.buscarSync(lido) : { encontrado: false };
+        if (!prod.encontrado) {
+            mostrarResultado('Produto não cadastrado na Base Geral de Produtos.', 'erro');
+            tocar('erro');
+            el.produto.select();
+            el.produto.focus();
+            return;
+        }
+        var esperado = dunEsperado(estado.item);
+        var correto = esperado && normalizarCodigo(lido) === normalizarCodigo(esperado);
+        var meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId(); }) || {};
+        if (meta.tipoAuditoria === 'produto' && meta.familiaId) {
+            correto = (prod.familiaCodigo || prod.familiaNome) === meta.familiaId || prod.familiaNome === meta.familiaNome;
+        }
+        if (estado.item.previstoVazio === true || !esperado)
+            correto = false;
         salvarResultado(correto ? STATUS_OK : STATUS_DIVERGENTE, lido);
     }
     function registrarEnderecoVazio() {
@@ -361,7 +381,8 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             nome: meta.auditoria_nome || auditoriaSelecionadaId,
                             auditoria_nome: meta.auditoria_nome || auditoriaSelecionadaId,
                             status: 'ATIVO',
-                            auditoria_id: auditoriaSelecionadaId
+                            auditoria_id: auditoriaSelecionadaId,
+                            tipoAuditoria: meta.tipoAuditoria || '', familiaId: meta.familiaId || '', familiaNome: meta.familiaNome || '', ruas: meta.ruas || []
                         };
                         APP.base = [];
                         APP.auditoriaBase = [];

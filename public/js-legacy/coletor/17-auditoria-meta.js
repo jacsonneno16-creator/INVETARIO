@@ -63,6 +63,11 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             lojas: Array.isArray(a.lojas) ? a.lojas : [],
             importado_em: a.importado_em || '',
             liberada: a.status === 'LIBERADA' || a.status === 'EM_ANDAMENTO' || !!a.liberada_coletor,
+            tipoAuditoria: a.tipoAuditoria || a.tipo_auditoria || '',
+            ruas: Array.isArray(a.ruas) ? a.ruas : [],
+            familiaId: a.familiaId || a.familia_id || '',
+            familiaNome: a.familiaNome || a.familia_nome || '',
+            familiaCodigos: Array.isArray(a.familiaCodigos) ? a.familiaCodigos : [],
             disponivel_coletor: a.disponivel_coletor !== false
         }); }).filter(function (a) { return a.id && a.disponivel_coletor !== false && a.liberada; });
     }
