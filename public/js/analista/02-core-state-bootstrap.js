@@ -173,4 +173,6 @@ global.initApp = initApp;
   // updateSyncUI: mantido como global pois firebaseService.js o usa diretamente.
   // Todos os outros aliases foram removidos — usar global.AnalistaBootstrap.<método>.
   global.updateSyncUI = updateSyncUI;
+  // Compatibilidade com módulos antigos ainda chamando saveAll() diretamente.
+  global.saveAll = global.saveAll || function(){ return global.AnalistaBootstrap.saveAll(); };
 })(window);

@@ -234,19 +234,15 @@
       const col = detectarColunas(Object.keys(rows[0]));
       const ausentes = [!col.endereco&&'Endereço',!col.dun&&'GTIN/EAN',!col.produto&&'Produto'].filter(Boolean);
       if (ausentes.length) throw new Error(`Colunas obrigatórias ausentes: ${ausentes.join(', ')}.`);
-      const erros=[]; const vistos=new Map(); const validos=[];
+      const erros=[]; const validos=[];
       rows.forEach((r,idx) => {
         const linha=idx+2, endereco=txt(r[col.endereco]), dunEsperado=txt(r[col.dun]), produtoEsperado=txt(r[col.produto]);
         const motivos=[];
         if(!endereco) motivos.push('endereço vazio');
-        if(endereco && !/[0-9]/.test(endereco)) motivos.push('endereço inválido');
         if(!dunEsperado) motivos.push('GTIN/EAN vazio');
         if(!produtoEsperado) motivos.push('nome do produto vazio');
-        const chave=endNorm(endereco)+'__'+dun(dunEsperado);
-        if(chave && vistos.has(chave)) motivos.push(`produto duplicado no mesmo endereço (também na linha ${vistos.get(chave)})`);
-        else if(chave) vistos.set(chave,linha);
-        if(motivos.length) erros.push({linha,endereco:endereco||'—',motivo:motivos.join('; ')});
-        else validos.push({endereco,dunEsperado,produtoEsperado});
+        if(motivos.length) erros.push({linha,endereco:endereco||'—',dunEsperado,produtoEsperado,motivo:motivos.join('; ')});
+        else validos.push({endereco,dunEsperado,produtoEsperado,_linha:linha,_seq:idx});
       });
       let selecionados=validos;
       const cfg=metaAtual||configuracaoNova||{};
@@ -261,21 +257,27 @@
         const gerais=await enderecosGerais();
         gerais.forEach(e=>{const endereco=txt(e.endereco||e.codigo||e.id);if(endereco&&ruasSet.has(ruaDoEndereco(endereco))&&!existentes.has(endNorm(endereco)))selecionados.push({endereco,dunEsperado:'',produtoEsperado:'ENDEREÇO PREVISTO VAZIO',previstoVazio:true});});
       }
-      if(!selecionados.length) erros.push({linha:'—',endereco:'—',motivo:'Nenhum item da base corresponde ao tipo selecionado para esta auditoria'});
+      if(!selecionados.length) erros.push({linha:'—',endereco:'—',dunEsperado:'',produtoEsperado:'',motivo:'Nenhum item da base corresponde ao tipo selecionado para esta auditoria'});
       importacaoPendente={file,validos:selecionados,erros};
       const status=document.getElementById('auditoria-import-status');
       const preview=document.getElementById('auditoria-import-preview');
       const actions=document.getElementById('auditoria-import-actions');
-      if(status) status.innerHTML = erros.length ? `<div class="alert error"><div>⚠️</div><div><b>Base inválida:</b> ${erros.length} erro(s). Corrija antes de importar.</div></div>` : `<div class="alert success"><div>✅</div><div>${validos.length} linha(s) válidas prontas para importação.</div></div>`;
-      if(preview){ preview.style.display=''; preview.innerHTML = erros.length ? `<div class="tbl-wrap"><table><thead><tr><th>Linha</th><th>Endereço</th><th>Motivo</th></tr></thead><tbody>${erros.map(e=>`<tr><td>${e.linha}</td><td>${esc(e.endereco)}</td><td>${esc(e.motivo)}</td></tr>`).join('')}</tbody></table></div>` : `<div class="alert info"><div>📄</div><div>Arquivo: <b>${esc(file.name)}</b><br>Campos reconhecidos: Endereço, GTIN/EAN e Produto.</div></div>`; }
-      if(actions) actions.style.display = erros.length ? 'none' : 'flex';
+      if(status) status.innerHTML = selecionados.length
+        ? `<div class="alert ${erros.length?'warn':'success'}"><div>${erros.length?'⚠️':'✅'}</div><div><b>${selecionados.length} linha(s) pronta(s) para importação.</b>${erros.length?` ${erros.length} linha(s) incompleta(s) serão ignoradas.`:''}<br>Produtos repetidos no mesmo endereço são permitidos.</div></div>`
+        : `<div class="alert error"><div>⚠️</div><div><b>Nenhuma linha válida para importar.</b></div></div>`;
+      if(preview){
+        preview.style.display='';
+        const amostra=selecionados.slice(0,300);
+        preview.innerHTML = `<div class="tbl-wrap"><table><thead><tr><th>DUN / GTIN-EAN</th><th>Produto</th><th>Endereço</th></tr></thead><tbody>${amostra.map(e=>`<tr><td class="mono">${esc(e.dunEsperado)}</td><td>${esc(e.produtoEsperado)}</td><td class="mono">${esc(e.endereco)}</td></tr>`).join('')}</tbody></table></div>${selecionados.length>300?`<div style="padding:10px;color:var(--muted);font-size:.78rem">Mostrando 300 de ${selecionados.length} linhas.</div>`:''}`;
+      }
+      if(actions) actions.style.display = selecionados.length ? 'flex' : 'none';
     } catch(e){ console.error(e); toast(e.message || 'Erro ao ler arquivo.','e'); }
   }
 
   async function criarNova(){ return abrirCriacaoAuditoria(); }
 
   async function confirmarImportacao(){
-    if(!importacaoPendente || importacaoPendente.erros.length) return;
+    if(!importacaoPendente || !importacaoPendente.validos.length) return;
     if(!auditoriaAtual) return toast('Crie ou selecione uma auditoria antes de importar.','w');
     const ref=DB().collection('dt_auditorias').doc(auditoriaAtual);
     const itensRef=ref.collection('enderecos');
@@ -285,7 +287,7 @@
     for(let i=0;i<lista.length;i+=350){
       const b=DB().batch();
       lista.slice(i,i+350).forEach(row=>{
-        const id=docId(auditoriaAtual,row.endereco,row.dunEsperado);
+        const id=docId(auditoriaAtual,row.endereco,row.dunEsperado,String(row._seq==null?'':row._seq));
         b.set(itensRef.doc(id),{
           auditoriaId:auditoriaAtual,endereco:row.endereco,dunEsperado:row.dunEsperado,produtoEsperado:row.produtoEsperado,
           previstoVazio:row.previstoVazio===true,dunLido:null,produtoLido:null,status:'PENDENTE',operadorId:null,operadorNome:null,lidoEm:null,loja:loja(),disponivel_coletor:false

@@ -19,6 +19,25 @@ window.escapeHtml = window.escapeHtml || escHTML;
 window.esc = window.esc || escHTML;
 window.escAttr = window.escAttr || escAttr;
 
+function fmtData(valor) {
+  if (!valor) return '—';
+  try {
+    var d = valor;
+    if (valor && typeof valor.toDate === 'function') d = valor.toDate();
+    else if (!(valor instanceof Date)) {
+      var txt = String(valor).trim();
+      if (/^\d{4}-\d{2}-\d{2}$/.test(txt)) {
+        var partes = txt.split('-');
+        return partes[2] + '/' + partes[1] + '/' + partes[0];
+      }
+      d = new Date(valor);
+    }
+    if (!(d instanceof Date) || isNaN(d.getTime())) return String(valor);
+    return d.toLocaleDateString('pt-BR');
+  } catch (e) { return String(valor || '—'); }
+}
+window.fmtData = window.fmtData || fmtData;
+
 const _isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 function dbg(...args) { if (_isDev) console.log(...args); }
 window.dbg = window.dbg || dbg;

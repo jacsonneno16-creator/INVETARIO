@@ -610,7 +610,22 @@
 <div class="screen" id="screen-mode">
 <div class="top-bar">
 <div class="top-logo">DT Inventário</div>
+<div style="display:flex;align-items:center;gap:8px">
 <div class="op-badge"><div class="op-dot"></div><span id="op-name-mode">Operador</span></div>
+<div style="position:relative">
+<button class="btn-menu3pts" id="btn-menu3pts-mode" onclick="toggleMenu3ptsMode()" title="Opções">⋮</button>
+<div class="menu3pts-dropdown" id="menu3pts-dropdown-mode" style="display:none">
+<button class="menu3pts-item" onclick="atualizarAplicativo()">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item" onclick="toggleMenu3ptsMode();atualizarBase()">⬇️ Atualizar base de dados</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-mode" onclick="toggleMenu3ptsMode();instalarPWA()">📲 Baixar aplicativo</button>
+<div class="menu3pts-sep"></div>
+<button class="menu3pts-item" onclick="toggleMenu3ptsMode();diagnosticoCompatibilidade()">🔍 Diagnóstico</button>
+<button class="menu3pts-item" onclick="toggleMenu3ptsMode();doLogout()" style="color:#ff6b6b">🚪 Sair</button>
+<div class="menu3pts-sep"></div>
+<div class="menu3pts-ver">v<span id="mode-ver-label">—</span></div>
+</div>
+</div>
+</div>
 </div>
 <div class="screen-content">
 <div>
