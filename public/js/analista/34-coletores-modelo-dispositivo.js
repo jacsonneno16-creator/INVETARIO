@@ -158,9 +158,32 @@ async function excluirColetor(id) {
 
 async function _removerColetorConfirmado(coletorId) {
   try {
-    await FS_AN.collection(FS_COL_COLETORES).doc(coletorId).delete();
-    showToast('🗑️ Coletor removido', 'i');
-    logAuditoria('SISTEMA', 'Coletor removido', coletorId);
+    const raw = window.getDTRawFirestore ? window.getDTRawFirestore() : FS_AN;
+
+    // Mantém um marcador invisível no mesmo documento. Isso revoga a aprovação
+    // sem depender de outra coleção e impede o Coletor de recuperar aprovações
+    // antigas existentes dentro das lojas. No próximo login o aparelho volta
+    // como pendente e precisa ser aprovado novamente.
+    await raw.collection(FS_COL_COLETORES).doc(coletorId).set({
+      aprovado: 'revogado',
+      status: 'revogado',
+      ativo: false,
+      bloqueado: false,
+      excluido: true,
+      sessao: null,
+      revogado_em: firebase.firestore.FieldValue.serverTimestamp(),
+      revogado_por: (firebase.auth().currentUser && firebase.auth().currentUser.email) || 'analista'
+    }, { merge: true });
+
+    try {
+      const lojasSnap = await raw.collection('lojas').get();
+      for (const lojaDoc of lojasSnap.docs) {
+        await raw.collection('lojas').doc(lojaDoc.id).collection(FS_COL_COLETORES).doc(coletorId).delete().catch(function(){});
+      }
+    } catch (_) {}
+
+    showToast('🗑️ Coletor removido. O aparelho precisará de nova aprovação.', 'i');
+    logAuditoria('SISTEMA', 'Coletor removido e aprovação revogada', coletorId);
     return true;
   } catch (e) {
     console.error('[Coletores] Erro ao remover:', e);

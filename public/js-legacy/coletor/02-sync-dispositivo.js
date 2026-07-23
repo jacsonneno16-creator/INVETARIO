@@ -204,7 +204,7 @@ var _heartbeatInterval = null;
  */
 function registrarColetorNoFirestore(operadorInfo) {
     return __awaiter(this, void 0, void 0, function () {
-        var deviceId, ref, ip, snap, lojas, _i, lojas_1, loja, antiga, legado, compatError_1, numero, dados, e_1;
+        var deviceId, ref, ip, snap, dadosAtuais, foiRevogado, lojas, _i, lojas_1, loja, antiga, legado, compatError_1, numero, dados, e_1;
         var _a, _b;
         return __generator(this, function (_c) {
             switch (_c.label) {
@@ -218,7 +218,9 @@ function registrarColetorNoFirestore(operadorInfo) {
                     return [4 /*yield*/, ref.get()];
                 case 2:
                     snap = _c.sent();
-                    if (!!snap.exists) return [3 /*break*/, 14];
+                    dadosAtuais = snap.exists ? (snap.data() || {}) : {};
+                    foiRevogado = snap.exists && (dadosAtuais.aprovado === 'revogado' || dadosAtuais.excluido === true);
+                    if (!(!snap.exists && !foiRevogado)) return [3 /*break*/, 14];
                     _c.label = 3;
                 case 3:
                     _c.trys.push([3, 13, , 14]);
@@ -265,7 +267,7 @@ function registrarColetorNoFirestore(operadorInfo) {
                     console.warn('[Coletor] Não foi possível consultar aprovação antiga:', compatError_1.message);
                     return [3 /*break*/, 14];
                 case 14:
-                    if (!!snap.exists) return [3 /*break*/, 16];
+                    if (!(!snap.exists || foiRevogado)) return [3 /*break*/, 16];
                     numero = deviceId.slice(-4).toUpperCase();
                     return [4 /*yield*/, ref.set({
                             device_id: deviceId,
@@ -281,10 +283,15 @@ function registrarColetorNoFirestore(operadorInfo) {
                             sessao: null,
                             contagens_enviadas: 0,
                             contagens_pendentes: 0,
-                            versao_app: (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '2.0.0')
+                            versao_app: (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '2.0.0'),
+                            excluido: false,
+                            revogado_em: null
                         }, { merge: true })];
                 case 15:
                     _c.sent();
+                    // A revogação cumpriu seu papel: bloqueou a restauração automática da
+                    // aprovação antiga. O aparelho reaparece agora como pendente e precisa
+                    // ser aprovado novamente pelo analista.
                     // IP é enriquecimento opcional e assíncrono; nunca bloqueia o login.
                     obterIPPublico().then(function (v) { return v && ref.set({ ip: v }, { merge: true }); }).catch(function () { });
                     dbg('[Coletor] Novo aparelho registrado como Coletor', numero, '— pendente — ID:', deviceId);

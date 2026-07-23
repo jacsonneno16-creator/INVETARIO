@@ -358,7 +358,7 @@ async function aplicarTrocaLojaAnalista(novaLojaId){
       window.AnalistaNavigation.renderCurrentPage();
     }
     if(typeof window.atualizarBadgesNav==='function') window.atualizarBadgesNav();
-    if(typeof window.showToast==='function') window.showToast('Loja alterada sem sair da conta.','success');
+    if(typeof window.showToast==='function') window.showToast('Loja alterada com sucesso.','success');
     return true;
   }catch(e){
     console.error('[Lojas] Falha ao trocar ambiente:',e);

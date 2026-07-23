@@ -374,7 +374,6 @@ function instalarPWA() {
         alert('Abra o menu do navegador (⋮) e escolha "Adicionar à tela inicial".');
     });
 }
-
 function diagnosticoFirebase() {
     return __awaiter(this, void 0, void 0, function () {
         var el, user, uid, snap, docs, err_1;

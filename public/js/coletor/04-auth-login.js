@@ -109,31 +109,74 @@ function _atualizarLojaColetorUI(lojas) {
   if (trocar) trocar.style.display = lojas.length > 1 ? '' : 'none';
 }
 
-async function trocarLojaColetor() {
+async function trocarLojaColetor(event) {
   const lojas = window.DT_LOJAS_USUARIO_ATUAL || [];
   if (lojas.length <= 1) {
     toast('Este login possui acesso somente a uma loja.', 'w');
     return;
   }
-  const anterior = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
-  try {
-    const selecionada = await window.DTLoja.selecionarInterativamente('Escolha a loja para trabalhar', true);
-    if (!selecionada) return;
-    _atualizarLojaColetorUI(lojas);
-    if (selecionada !== anterior) {
+
+  // Menu compacto no próprio cartão da loja. Não abre modal e não sai da conta.
+  let menu = document.getElementById('coletor-menu-lojas');
+  if (menu) {
+    menu.remove();
+    return;
+  }
+
+  const card = document.getElementById('coletor-loja-card');
+  const botao = document.getElementById('coletor-trocar-loja');
+  if (!card || !botao) {
+    toast('Não foi possível abrir a lista de lojas.', 'e');
+    return;
+  }
+
+  const atual = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+  card.style.position = 'relative';
+  menu = document.createElement('div');
+  menu.id = 'coletor-menu-lojas';
+  menu.style.cssText = 'position:absolute;right:12px;top:58px;z-index:5000;min-width:230px;max-width:calc(100vw - 48px);background:#fff;border:1px solid #dbe3ea;border-radius:10px;box-shadow:0 14px 35px rgba(0,0,0,.20);padding:6px';
+  menu.innerHTML = lojas.map(function(loja){
+    const ativa = loja.id === atual;
+    const nome = String(loja.nome || loja.id).replace(/[&<>"']/g, function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
+    return '<button type="button" data-loja-id="'+loja.id+'" style="display:flex;width:100%;align-items:center;justify-content:space-between;gap:12px;padding:11px 10px;border:0;border-radius:7px;background:'+(ativa?'#eef8f2':'transparent')+';font:inherit;text-align:left;cursor:pointer"><span style="font-weight:'+(ativa?'800':'650')+'">'+nome+'</span>'+(ativa?'<span style="font-size:.68rem;color:#1e6f4e;font-weight:800">ATUAL</span>':'')+'</button>';
+  }).join('');
+  card.appendChild(menu);
+
+  const fechar = function(ev){
+    if (!menu || !menu.isConnected) return;
+    if (ev && (menu.contains(ev.target) || botao.contains(ev.target))) return;
+    menu.remove();
+    document.removeEventListener('click', fechar, true);
+  };
+  setTimeout(function(){ document.addEventListener('click', fechar, true); }, 0);
+
+  menu.addEventListener('click', async function(ev){
+    const item = ev.target.closest('[data-loja-id]');
+    if (!item) return;
+    const selecionada = item.getAttribute('data-loja-id');
+    menu.remove();
+    document.removeEventListener('click', fechar, true);
+    if (!selecionada || selecionada === atual) return;
+
+    try {
+      window.setDTLojaAtiva(selecionada);
+      _atualizarLojaColetorUI(lojas);
       APP.inventario = null;
       APP.auditoria = null;
       APP.lojaFiltroInventario = '';
       APP.lojaFiltroAuditoria = '';
       if (window.DTProdutos && typeof window.DTProdutos.limparCache === 'function') window.DTProdutos.limparCache();
       goScreen('mode');
-      carregarInventarios();
-      carregarAuditoriasMenu();
-      toast('Loja alterada para ' + ((lojas.find(function(x){return x.id===selecionada;}) || {}).nome || selecionada) + '.', 's');
+      await Promise.all([
+        Promise.resolve(typeof carregarInventarios === 'function' ? carregarInventarios() : null),
+        Promise.resolve(typeof carregarAuditoriasMenu === 'function' ? carregarAuditoriasMenu() : null)
+      ]);
+      const loja = lojas.find(function(x){ return x.id === selecionada; });
+      toast('Loja alterada para ' + ((loja && loja.nome) || selecionada) + '.', 's');
+    } catch (e) {
+      toast('Não foi possível trocar a loja: ' + (e.message || e), 'e');
     }
-  } catch (e) {
-    toast('Não foi possível trocar a loja: ' + (e.message || e), 'e');
-  }
+  });
 }
 window.trocarLojaColetor = trocarLojaColetor;
 

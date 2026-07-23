@@ -138,10 +138,14 @@ async function registrarColetorNoFirestore(operadorInfo) {
   try {
     let snap = await ref.get();
 
-    // Compatibilidade com versões antigas: a aprovação era salva dentro de
-    // lojas/{lojaId}/dt_coletores. Se o documento global ainda não existe,
-    // procura o mesmo device_id nas lojas permitidas e reaproveita a aprovação.
-    if (!snap.exists) {
+    // Compatibilidade com versões antigas: só reaproveita aprovação por loja
+    // quando o dispositivo nunca foi removido pelo analista. A exclusão grava
+    // um marcador global de revogação para impedir que uma aprovação legada
+    // apagada seja recriada automaticamente.
+    const dadosAtuais = snap.exists ? (snap.data() || {}) : {};
+    const foiRevogado = snap.exists && (dadosAtuais.aprovado === 'revogado' || dadosAtuais.excluido === true);
+
+    if (!snap.exists && !foiRevogado) {
       try {
         const lojas = Array.isArray(window.DT_LOJAS_USUARIO_ATUAL) ? window.DT_LOJAS_USUARIO_ATUAL : [];
         for (const loja of lojas) {
@@ -170,7 +174,7 @@ async function registrarColetorNoFirestore(operadorInfo) {
     }
 
     // ── APARELHO NOVO ────────────────────────────────────────────────────
-    if (!snap.exists) {
+    if (!snap.exists || foiRevogado) {
       // Número provisório estável, sem consultar toda a coleção.
       const numero = deviceId.slice(-4).toUpperCase();
 
@@ -188,9 +192,14 @@ async function registrarColetorNoFirestore(operadorInfo) {
         sessao:              null,
         contagens_enviadas:  0,
         contagens_pendentes: 0,
-        versao_app:          (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '2.0.0')
+        versao_app:          (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '2.0.0'),
+        excluido:            false,
+        revogado_em:         null
       }, { merge: true });
 
+      // A revogação cumpriu seu papel: bloqueou a restauração automática da
+      // aprovação antiga. O aparelho reaparece agora como pendente e precisa
+      // ser aprovado novamente pelo analista.
       // IP é enriquecimento opcional e assíncrono; nunca bloqueia o login.
       obterIPPublico().then(v => v && ref.set({ip:v},{merge:true})).catch(()=>{});
       dbg('[Coletor] Novo aparelho registrado como Coletor', numero, '— pendente — ID:', deviceId);

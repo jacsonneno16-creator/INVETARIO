@@ -152,7 +152,7 @@
   let _coletoresFingerprint = '';
 
   function _normalizarColetores(snapshot){
-    return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => d.excluido !== true && d.aprovado !== 'revogado');
   }
 
   function _fingerprintColetores(docs){
