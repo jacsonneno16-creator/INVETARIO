@@ -108,7 +108,7 @@ function obterDeviceId() {
 /** Obtém o IP público do aparelho via API gratuita */
 async function obterIPPublico() {
   try {
-    const r = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(4000) });
+    const r = await fetch('https://api.ipify.org?format=json');
     const j = await r.json();
     return j.ip || null;
   } catch { return null; }

@@ -18,6 +18,57 @@
   }
   window._extrairLojasDaAuditoria = function(aud){ return Array.isArray(aud?.lojas) ? aud.lojas : []; };
 
+  function _normalizarEnderecoGeral(valor){
+    return String(valor == null ? '' : valor).trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+  }
+
+  async function _carregarBaseGeralEnderecosAuditoria(forcar){
+    const lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+    const cacheKey = 'dt_auditoria_locais_' + lojaId;
+    if (!forcar && APP._locaisDoFirebase && APP.locaisAtivos && APP.locaisAtivos.size) {
+      return APP.locaisAtivos;
+    }
+    const locais = new Set();
+    try {
+      const chunks = await FS.collection('dt_locais_chunks').orderBy('parte').get();
+      if (!chunks.empty) {
+        chunks.docs.forEach(function(doc){
+          const dados = doc.data() || {};
+          const itens = dados.dados || dados.itens || dados.registros || [];
+          itens.forEach(function(item){
+            if (item && item.ativo === false) return;
+            const endereco = _normalizarEnderecoGeral(item && (item.endereco || item.endereco_norm || item.codigo_endereco));
+            if (endereco) locais.add(endereco);
+          });
+        });
+      } else {
+        const snap = await FS.collection(FCOL.locais).get();
+        snap.docs.forEach(function(doc){
+          const item = doc.data() || {};
+          if (item.ativo === false) return;
+          const endereco = _normalizarEnderecoGeral(item.endereco || item.endereco_norm || item.codigo_endereco || doc.id);
+          if (endereco) locais.add(endereco);
+        });
+      }
+      APP.locaisAtivos = locais;
+      APP._locaisDoFirebase = true;
+      try { localStorage.setItem(cacheKey, JSON.stringify(Array.from(locais))); } catch(e) {}
+      console.log('[AUDITORIA] Base Geral de Endereços carregada:', locais.size, 'loja:', lojaId);
+      return locais;
+    } catch (erro) {
+      console.warn('[AUDITORIA] Falha ao carregar Base Geral de Endereços:', erro);
+      try {
+        const cache = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+        APP.locaisAtivos = new Set(cache);
+      } catch(e) {
+        APP.locaisAtivos = APP.locaisAtivos || new Set();
+      }
+      APP._locaisDoFirebase = false;
+      return APP.locaisAtivos;
+    }
+  }
+  window._carregarBaseGeralEnderecosAuditoria = _carregarBaseGeralEnderecosAuditoria;
+
   async function _carregarEnderecoAuditoria(auditoriaId){
     const audRef = FS.collection(FCOL.auditorias).doc(auditoriaId);
     // v15: auditoria também lê por chunks de 1000 para reduzir leituras.
@@ -138,6 +189,7 @@
     APP.auditoriaBase = [];
     APP.contagens = [];
     try {
+      await _carregarBaseGeralEnderecosAuditoria(false);
       APP.auditorias = await _carregarEnderecoAuditoria(auditoriaId);
       const audTab = document.getElementById('tab-auditoria');
       if (audTab) audTab.style.display = '';

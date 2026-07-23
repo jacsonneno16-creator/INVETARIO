@@ -152,7 +152,33 @@
     setTimeout(() => el.produto?.focus(), 60);
   }
 
-  function confirmarEnderecoAuditoria(){
+
+  async function consultarEnderecoNaBaseGeral(valor){
+    const alvo = normalizarEndereco(valor);
+    if (!alvo) return false;
+    if (APP.locaisAtivos && APP.locaisAtivos.has(alvo)) return true;
+    try {
+      let snap = await FS.collection(FCOL.locais).doc(alvo).get();
+      let existe = snap.exists && (!snap.data() || snap.data().ativo !== false);
+      if (!existe) {
+        const consultas = ['endereco', 'endereco_norm', 'codigo_endereco'];
+        for (let i = 0; i < consultas.length && !existe; i++) {
+          const q = await FS.collection(FCOL.locais).where(consultas[i], '==', valor).limit(1).get();
+          if (!q.empty && q.docs[0].data().ativo !== false) existe = true;
+        }
+      }
+      if (existe) {
+        if (!APP.locaisAtivos) APP.locaisAtivos = new Set();
+        APP.locaisAtivos.add(alvo);
+      }
+      return existe;
+    } catch (erro) {
+      console.warn('[AUDITORIA] Falha na consulta direta do endereço:', erro);
+      return false;
+    }
+  }
+
+  async function confirmarEnderecoAuditoria(){
     if (estado.processando || estado.etapa !== 'endereco') return;
     const el = elementos();
     const valor = texto(el.endereco?.value);
@@ -162,9 +188,23 @@
       el.endereco?.focus();
       return;
     }
-    const item = encontrarEndereco(valor);
+    let item = encontrarEndereco(valor);
     if (!item) {
-      mostrarFeedbackEndereco('Endereço não cadastrado na Base Geral de Endereços.', true);
+      mostrarFeedbackEndereco('Consultando a Base Geral de Endereços…', false);
+      const existeNaBaseGeral = await consultarEnderecoNaBaseGeral(valor);
+      if (existeNaBaseGeral) {
+        item = encontrarEndereco(valor) || {
+          id: auditoriaId() + '__' + normalizarEndereco(valor),
+          endereco: valor,
+          dunEsperado: '',
+          produtoEsperado: 'ENDEREÇO PREVISTO VAZIO',
+          previstoVazio: true,
+          disponivel_coletor: true
+        };
+      }
+    }
+    if (!item) {
+      mostrarFeedbackEndereco('Endereço não cadastrado na Base Geral de Endereços desta loja.', true);
       tocar('erro');
       if (el.endereco) { el.endereco.select(); el.endereco.focus(); }
       return;
@@ -296,6 +336,7 @@
     APP.contagens = [];
 
     try {
+      if (window._carregarBaseGeralEnderecosAuditoria) await window._carregarBaseGeralEnderecosAuditoria(false);
       APP.auditorias = await window._carregarEnderecoAuditoria(auditoriaSelecionadaId);
       goScreen('app');
       const tabs = {

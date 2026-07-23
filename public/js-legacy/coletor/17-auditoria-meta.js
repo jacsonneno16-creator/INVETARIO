@@ -72,6 +72,79 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         }); }).filter(function (a) { return a.id && a.disponivel_coletor !== false && a.liberada; });
     }
     window._extrairLojasDaAuditoria = function (aud) { return Array.isArray(aud === null || aud === void 0 ? void 0 : aud.lojas) ? aud.lojas : []; };
+    function _normalizarEnderecoGeral(valor) {
+        return String(valor == null ? '' : valor).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    }
+    function _carregarBaseGeralEnderecosAuditoria(forcar) {
+        return __awaiter(this, void 0, void 0, function () {
+            var lojaId, cacheKey, locais, chunks, snap, erro_1, cache;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+                        cacheKey = 'dt_auditoria_locais_' + lojaId;
+                        if (!forcar && APP._locaisDoFirebase && APP.locaisAtivos && APP.locaisAtivos.size) {
+                            return [2 /*return*/, APP.locaisAtivos];
+                        }
+                        locais = new Set();
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 6, , 7]);
+                        return [4 /*yield*/, FS.collection('dt_locais_chunks').orderBy('parte').get()];
+                    case 2:
+                        chunks = _a.sent();
+                        if (!!chunks.empty) return [3 /*break*/, 3];
+                        chunks.docs.forEach(function (doc) {
+                            var dados = doc.data() || {};
+                            var itens = dados.dados || dados.itens || dados.registros || [];
+                            itens.forEach(function (item) {
+                                if (item && item.ativo === false)
+                                    return;
+                                var endereco = _normalizarEnderecoGeral(item && (item.endereco || item.endereco_norm || item.codigo_endereco));
+                                if (endereco)
+                                    locais.add(endereco);
+                            });
+                        });
+                        return [3 /*break*/, 5];
+                    case 3: return [4 /*yield*/, FS.collection(FCOL.locais).get()];
+                    case 4:
+                        snap = _a.sent();
+                        snap.docs.forEach(function (doc) {
+                            var item = doc.data() || {};
+                            if (item.ativo === false)
+                                return;
+                            var endereco = _normalizarEnderecoGeral(item.endereco || item.endereco_norm || item.codigo_endereco || doc.id);
+                            if (endereco)
+                                locais.add(endereco);
+                        });
+                        _a.label = 5;
+                    case 5:
+                        APP.locaisAtivos = locais;
+                        APP._locaisDoFirebase = true;
+                        try {
+                            localStorage.setItem(cacheKey, JSON.stringify(Array.from(locais)));
+                        }
+                        catch (e) { }
+                        console.log('[AUDITORIA] Base Geral de Endereços carregada:', locais.size, 'loja:', lojaId);
+                        return [2 /*return*/, locais];
+                    case 6:
+                        erro_1 = _a.sent();
+                        console.warn('[AUDITORIA] Falha ao carregar Base Geral de Endereços:', erro_1);
+                        try {
+                            cache = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+                            APP.locaisAtivos = new Set(cache);
+                        }
+                        catch (e) {
+                            APP.locaisAtivos = APP.locaisAtivos || new Set();
+                        }
+                        APP._locaisDoFirebase = false;
+                        return [2 /*return*/, APP.locaisAtivos];
+                    case 7: return [2 /*return*/];
+                }
+            });
+        });
+    }
+    window._carregarBaseGeralEnderecosAuditoria = _carregarBaseGeralEnderecosAuditoria;
     function _carregarEnderecoAuditoria(auditoriaId) {
         return __awaiter(this, void 0, void 0, function () {
             var audRef, chunkSnap, rows_1, resultadosSnap, finalizados_1, snap, todos;
@@ -210,10 +283,13 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         APP.contagens = [];
                         _b.label = 1;
                     case 1:
-                        _b.trys.push([1, 3, , 4]);
+                        _b.trys.push([1, 4, , 5]);
+                        return [4 /*yield*/, _carregarBaseGeralEnderecosAuditoria(false)];
+                    case 2:
+                        _b.sent();
                         _a = APP;
                         return [4 /*yield*/, _carregarEnderecoAuditoria(auditoriaId)];
-                    case 2:
+                    case 3:
                         _a.auditorias = _b.sent();
                         audTab = document.getElementById('tab-auditoria');
                         if (audTab)
@@ -222,12 +298,12 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         if (audTab)
                             showView('auditoria', audTab);
                         renderAuditoriaColetor();
-                        return [3 /*break*/, 4];
-                    case 3:
+                        return [3 /*break*/, 5];
+                    case 4:
                         err_1 = _b.sent();
                         toast('Erro ao abrir auditoria: ' + err_1.message, 'e');
-                        return [3 /*break*/, 4];
-                    case 4: return [2 /*return*/];
+                        return [3 /*break*/, 5];
+                    case 5: return [2 /*return*/];
                 }
             });
         });

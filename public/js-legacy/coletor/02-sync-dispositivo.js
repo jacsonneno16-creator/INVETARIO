@@ -174,7 +174,7 @@ function obterIPPublico() {
             switch (_b.label) {
                 case 0:
                     _b.trys.push([0, 3, , 4]);
-                    return [4 /*yield*/, fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(4000) })];
+                    return [4 /*yield*/, fetch('https://api.ipify.org?format=json')];
                 case 1:
                     r = _b.sent();
                     return [4 /*yield*/, r.json()];

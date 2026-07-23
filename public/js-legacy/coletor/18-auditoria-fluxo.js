@@ -215,31 +215,106 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         setProcessando(false);
         setTimeout(function () { var _a; return (_a = el.produto) === null || _a === void 0 ? void 0 : _a.focus(); }, 60);
     }
+    function consultarEnderecoNaBaseGeral(valor) {
+        return __awaiter(this, void 0, void 0, function () {
+            var alvo, snap, existe, consultas, i, q, erro_1;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        alvo = normalizarEndereco(valor);
+                        if (!alvo)
+                            return [2 /*return*/, false];
+                        if (APP.locaisAtivos && APP.locaisAtivos.has(alvo))
+                            return [2 /*return*/, true];
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 7, , 8]);
+                        return [4 /*yield*/, FS.collection(FCOL.locais).doc(alvo).get()];
+                    case 2:
+                        snap = _a.sent();
+                        existe = snap.exists && (!snap.data() || snap.data().ativo !== false);
+                        if (!!existe) return [3 /*break*/, 6];
+                        consultas = ['endereco', 'endereco_norm', 'codigo_endereco'];
+                        i = 0;
+                        _a.label = 3;
+                    case 3:
+                        if (!(i < consultas.length && !existe)) return [3 /*break*/, 6];
+                        return [4 /*yield*/, FS.collection(FCOL.locais).where(consultas[i], '==', valor).limit(1).get()];
+                    case 4:
+                        q = _a.sent();
+                        if (!q.empty && q.docs[0].data().ativo !== false)
+                            existe = true;
+                        _a.label = 5;
+                    case 5:
+                        i++;
+                        return [3 /*break*/, 3];
+                    case 6:
+                        if (existe) {
+                            if (!APP.locaisAtivos)
+                                APP.locaisAtivos = new Set();
+                            APP.locaisAtivos.add(alvo);
+                        }
+                        return [2 /*return*/, existe];
+                    case 7:
+                        erro_1 = _a.sent();
+                        console.warn('[AUDITORIA] Falha na consulta direta do endereço:', erro_1);
+                        return [2 /*return*/, false];
+                    case 8: return [2 /*return*/];
+                }
+            });
+        });
+    }
     function confirmarEnderecoAuditoria() {
-        var _a, _b;
-        if (estado.processando || estado.etapa !== 'endereco')
-            return;
-        var el = elementos();
-        var valor = texto((_a = el.endereco) === null || _a === void 0 ? void 0 : _a.value);
-        if (!valor) {
-            mostrarFeedbackEndereco('Bipe o endereço.', true);
-            tocar('erro');
-            (_b = el.endereco) === null || _b === void 0 ? void 0 : _b.focus();
-            return;
-        }
-        var item = encontrarEndereco(valor);
-        if (!item) {
-            mostrarFeedbackEndereco('Endereço não cadastrado na Base Geral de Endereços.', true);
-            tocar('erro');
-            if (el.endereco) {
-                el.endereco.select();
-                el.endereco.focus();
-            }
-            return;
-        }
-        mostrarFeedbackEndereco('Endereço confirmado.', false);
-        tocar('ok');
-        irParaProduto(item);
+        return __awaiter(this, void 0, void 0, function () {
+            var el, valor, item, existeNaBaseGeral;
+            var _a, _b;
+            return __generator(this, function (_c) {
+                switch (_c.label) {
+                    case 0:
+                        if (estado.processando || estado.etapa !== 'endereco')
+                            return [2 /*return*/];
+                        el = elementos();
+                        valor = texto((_a = el.endereco) === null || _a === void 0 ? void 0 : _a.value);
+                        if (!valor) {
+                            mostrarFeedbackEndereco('Bipe o endereço.', true);
+                            tocar('erro');
+                            (_b = el.endereco) === null || _b === void 0 ? void 0 : _b.focus();
+                            return [2 /*return*/];
+                        }
+                        item = encontrarEndereco(valor);
+                        if (!!item) return [3 /*break*/, 2];
+                        mostrarFeedbackEndereco('Consultando a Base Geral de Endereços…', false);
+                        return [4 /*yield*/, consultarEnderecoNaBaseGeral(valor)];
+                    case 1:
+                        existeNaBaseGeral = _c.sent();
+                        if (existeNaBaseGeral) {
+                            item = encontrarEndereco(valor) || {
+                                id: auditoriaId() + '__' + normalizarEndereco(valor),
+                                endereco: valor,
+                                dunEsperado: '',
+                                produtoEsperado: 'ENDEREÇO PREVISTO VAZIO',
+                                previstoVazio: true,
+                                disponivel_coletor: true
+                            };
+                        }
+                        _c.label = 2;
+                    case 2:
+                        if (!item) {
+                            mostrarFeedbackEndereco('Endereço não cadastrado na Base Geral de Endereços desta loja.', true);
+                            tocar('erro');
+                            if (el.endereco) {
+                                el.endereco.select();
+                                el.endereco.focus();
+                            }
+                            return [2 /*return*/];
+                        }
+                        mostrarFeedbackEndereco('Endereço confirmado.', false);
+                        tocar('ok');
+                        irParaProduto(item);
+                        return [2 /*return*/];
+                }
+            });
+        });
     }
     function documentoId(item) {
         return texto((item === null || item === void 0 ? void 0 : item.id) || "".concat(auditoriaId(), "__").concat(normalizarEndereco(item === null || item === void 0 ? void 0 : item.endereco)));
@@ -389,10 +464,16 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         APP.contagens = [];
                         _b.label = 1;
                     case 1:
-                        _b.trys.push([1, 3, , 4]);
+                        _b.trys.push([1, 5, , 6]);
+                        if (!window._carregarBaseGeralEnderecosAuditoria) return [3 /*break*/, 3];
+                        return [4 /*yield*/, window._carregarBaseGeralEnderecosAuditoria(false)];
+                    case 2:
+                        _b.sent();
+                        _b.label = 3;
+                    case 3:
                         _a = APP;
                         return [4 /*yield*/, window._carregarEnderecoAuditoria(auditoriaSelecionadaId)];
-                    case 2:
+                    case 4:
                         _a.auditorias = _b.sent();
                         goScreen('app');
                         tabs = {
@@ -417,13 +498,13 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             tabs.status.style.display = '';
                         showView('auditoria', tabs.auditoria);
                         renderAuditoriaColetor();
-                        return [3 /*break*/, 4];
-                    case 3:
+                        return [3 /*break*/, 6];
+                    case 5:
                         error_2 = _b.sent();
                         console.error('[AUDITORIA] Erro ao abrir auditoria:', error_2);
                         toast('Erro ao abrir auditoria: ' + error_2.message, 'e');
-                        return [3 /*break*/, 4];
-                    case 4: return [2 /*return*/];
+                        return [3 /*break*/, 6];
+                    case 6: return [2 /*return*/];
                 }
             });
         });
