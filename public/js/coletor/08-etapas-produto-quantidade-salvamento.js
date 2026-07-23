@@ -1,57 +1,66 @@
 // ═══════════════════════════════════════════════════
 //  ETAPA 2: CAPA/PALETE
 // ═══════════════════════════════════════════════════
+function _capaNumero(val) {
+  if (!/^\d+$/.test(String(val || '').trim())) return NaN;
+  return parseInt(String(val).trim(), 10);
+}
+
+function _capaExisteNaBase(val) {
+  const alvo = String(val || '').trim().replace(/^0+(?=\d)/, '');
+  if (!alvo) return false;
+  return (APP.base || []).some(r => {
+    const bruto = r.pallete_ou_capa ?? r.capa_palete ?? r.capa ?? r.palete_key ?? r.pallet ?? '';
+    return String(bruto).trim().replace(/^0+(?=\d)/, '') === alvo;
+  });
+}
+
+function _validarCapaInformada(val) {
+  const n = _capaNumero(val);
+  if (!val || isNaN(n) || n < 1) return { ok:false, msg:'Capa Palete inválida' };
+
+  // Capa já existente na base do inventário: aceita normalmente, mesmo fora do range.
+  if (_capaExisteNaBase(val)) return { ok:true, existente:true, n };
+
+  // Capa não encontrada na base: só pode ser uma capa nova dentro do range reservado.
+  const range = APP.capaRange;
+  if (!range || !range.min || !range.max) return { ok:false, msg:'Range do operador ainda não foi reservado. Atualize a base e tente novamente.' };
+  if (n < range.min || n > range.max) return { ok:false, msg:`Capa não encontrada no inventário e fora do seu range (${String(range.min).padStart(3,'0')}–${String(range.max).padStart(3,'0')})` };
+  return { ok:true, existente:false, nova:true, n };
+}
+
 function onCapaInput() {
   const elCapa = document.getElementById('f-capa');
-  // Limite rígido de 7 caracteres — corta scanner ou paste acima do limite
-  if (elCapa.value.length > 7) elCapa.value = elCapa.value.slice(0, 7);
-
+  elCapa.value = elCapa.value.replace(/\D/g, '').slice(0, 7);
   const val = elCapa.value.trim();
-  const fb  = document.getElementById('fb-capa');
-  if (!val) { fb.innerHTML = ''; return; }
-  const n = parseInt(val);
+  const fb = document.getElementById('fb-capa');
+  if (!val) { fb.innerHTML = ''; APP.atual.capaGerada = false; return; }
 
-  // Mínimo 7 dígitos (número menor que 1000000 é inválido)
-  if (isNaN(n) || n < 1000000) {
-    fb.innerHTML = `<div class="fb err">✗ Capa Palete inválida — mínimo 7 dígitos (ex: 1000001)</div>`;
+  const v = _validarCapaInformada(val);
+  if (!v.ok) {
+    fb.innerHTML = `<div class="fb err">✗ ${v.msg}</div>`;
     elCapa.className = 'field field-err';
     return;
   }
-
-  // Verificar se está dentro do range do operador
-  const range = APP.capaRange;
-  if (range && range.min && range.max) {
-    if (n < range.min || n > range.max) {
-      fb.innerHTML = `<div class="fb err">✗ Número ${n} fora do range do operador (${range.min}–${range.max})</div>`;
-      elCapa.className = 'field field-err';
-      return;
-    }
-  }
-
-  fb.innerHTML = `<div class="fb ok">✓ Capa/Palete nº ${n}</div>`;
+  fb.innerHTML = v.existente
+    ? `<div class="fb ok">✓ Capa existente no inventário: ${val}</div>`
+    : `<div class="fb info">⚡ Nova capa dentro do seu range: ${String(v.n).padStart(3,'0')}</div>`;
   elCapa.className = 'field field-ok';
-  // ► SEM SOM AQUI — o som toca em confirmarCapa() quando o Enter chega
 }
 
 function confirmarCapa() {
-  const val = document.getElementById('f-capa').value.trim();
-  const n = parseInt(val);
+  const input = document.getElementById('f-capa');
+  const val = input.value.trim();
+  const v = _validarCapaInformada(val);
+  if (!v.ok) { toast(v.msg, 'e'); beepErr(); return; }
 
-  if (!val || isNaN(n) || n < 1000000) {
-    toast('Capa Palete inválida — mínimo 7 dígitos', 'e'); beepErr(); return;
-  }
-
-  // Verificar range
-  const range = APP.capaRange;
-  if (range && range.min && range.max && (n < range.min || n > range.max)) {
-    toast(`Número ${n} fora do range do operador (${range.min}–${range.max})`, 'e'); beepErr(); return;
-  }
-
-  beepSuave(); // ✓ capa confirmada com sucesso
-  APP.atual.capa = val;
+  const capaFinal = v.existente ? val : String(v.n).padStart(3, '0');
+  input.value = capaFinal;
+  beepSuave();
+  APP.atual.capa = capaFinal;
+  APP.atual.capaGerada = !!v.nova;
   APP.atual.step = 3;
 
-  // Config do campo GTIN
   if (APP.atual.somentesDun) {
     document.getElementById('gtin-label').textContent = '🔢 Etapa 3 — DUN (obrigatório)';
     document.getElementById('gtin-sublabel').textContent = 'Este endereço só aceita DUN';
@@ -66,7 +75,6 @@ function confirmarCapa() {
   document.getElementById('f-gtin').value = '';
   document.getElementById('fb-gtin').innerHTML = '';
   document.getElementById('prod-found-box').style.display = 'none';
-
   updateSteps();
   setTimeout(() => document.getElementById('f-gtin').focus(), 100);
 }

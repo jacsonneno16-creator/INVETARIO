@@ -40,7 +40,8 @@ function calcularProximoCapa() {
 }
 function gerarNumeroCapa() {
     var n = APP.proximoCapa;
-    document.getElementById('f-capa').value = String(n);
+    document.getElementById('f-capa').value = String(n).padStart(3, '0');
+    APP.atual.capaGerada = true;
     _atualizarHintCapa();
     document.getElementById('fb-capa').innerHTML = "<div class=\"fb info\">\u26A1 N\u00FAmero ".concat(n, " gerado automaticamente</div>");
     onCapaInput();

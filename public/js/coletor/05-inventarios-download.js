@@ -321,21 +321,38 @@ function _atualizarHintCapa() {
     : 'Próximo disponível: ' + APP.proximoCapa;
 }
 
+function _chaveOperadorCapa() {
+  const op = APP.operador || {};
+  return String(op.uid || op.id || op.email || op.name || '').trim().toLowerCase();
+}
+
+function _rangePertenceOperador(r, chave, nome, email) {
+  if (!r) return false;
+  const rk = String(r.operador_chave || r.operador_uid || r.operador_email || '').trim().toLowerCase();
+  if (rk && chave && rk === chave) return true;
+  const re = String(r.operador_email || '').trim().toLowerCase();
+  if (re && email && re === email) return true;
+  return String(r.operador || '').trim() === nome;
+}
+
 async function garantirRangeCapaOperador(inv) {
-  const nomeOp = String(APP.operador?.name || '').trim();
+  const op = APP.operador || {};
+  const nomeOp = String(op.name || op.email || '').trim();
+  const emailOp = String(op.email || '').trim().toLowerCase();
+  const chaveOp = _chaveOperadorCapa();
   const inicioBase = Math.max(1, parseInt(inv?.capa_inicio_base ?? inv?.capa_inicio ?? 1) || 1);
-  const lotePorOperador = Math.max(1, parseInt(inv?.capa_lote_por_operador ?? 200) || 200);
+  const lotePorOperador = 200;
   const listaAtual = Array.isArray(inv?.capa_ranges) ? inv.capa_ranges.slice() : [];
 
-  let meuRange = listaAtual.find(r => String(r?.operador || '').trim() === nomeOp || r?.operador === '*');
+  let meuRange = listaAtual.find(r => _rangePertenceOperador(r, chaveOp, nomeOp, emailOp));
   if (meuRange) {
-    APP.capaRange = { min: parseInt(meuRange.min) || inicioBase, max: parseInt(meuRange.max) || (inicioBase + lotePorOperador - 1) };
+    APP.capaRange = { min: parseInt(meuRange.min) || inicioBase, max: parseInt(meuRange.max) || (inicioBase + 199) };
     APP.proximoCapa = calcularProximoCapa();
     _atualizarHintCapa();
     return APP.capaRange;
   }
 
-  if (!inv?.id || !nomeOp || !navigator.onLine) {
+  if (!inv?.id || !chaveOp || !navigator.onLine) {
     APP.capaRange = null;
     APP.proximoCapa = calcularProximoCapa();
     _atualizarHintCapa();
@@ -351,7 +368,7 @@ async function garantirRangeCapaOperador(inv) {
       const data = snap.exists ? (snap.data() || {}) : {};
       const ranges = Array.isArray(data.capa_ranges) ? data.capa_ranges.slice() : [];
 
-      const existente = ranges.find(r => String(r?.operador || '').trim() === nomeOp || r?.operador === '*');
+      const existente = ranges.find(r => _rangePertenceOperador(r, chaveOp, nomeOp, emailOp));
       if (existente) {
         rangeGerado = existente;
         return;
@@ -359,13 +376,16 @@ async function garantirRangeCapaOperador(inv) {
 
       const maiorFim = ranges.reduce((acc, r) => Math.max(acc, parseInt(r?.max) || 0), inicioBase - 1);
       const min = Math.max(inicioBase, maiorFim + 1);
-      const max = min + lotePorOperador - 1;
+      const max = min + 199;
 
       rangeGerado = {
         operador: nomeOp,
+        operador_chave: chaveOp,
+        operador_uid: String(op.uid || op.id || ''),
+        operador_email: emailOp,
         min,
         max,
-        lote: lotePorOperador,
+        lote: 200,
         criado_em: new Date().toISOString()
       };
 
@@ -373,20 +393,16 @@ async function garantirRangeCapaOperador(inv) {
       tx.set(ref, {
         capa_ranges: ranges,
         capa_inicio_base: inicioBase,
-        capa_lote_por_operador: lotePorOperador,
+        capa_lote_por_operador: 200,
         atualizado_em: new Date()
       }, { merge: true });
     });
 
     if (rangeGerado) {
       inv.capa_ranges = Array.isArray(inv.capa_ranges) ? inv.capa_ranges : [];
-      if (!inv.capa_ranges.some(r => String(r?.operador || '').trim() === nomeOp || r?.operador === '*')) {
-        inv.capa_ranges.push(rangeGerado);
-      }
-      APP.capaRange = { min: parseInt(rangeGerado.min) || inicioBase, max: parseInt(rangeGerado.max) || (inicioBase + lotePorOperador - 1) };
-    } else {
-      APP.capaRange = null;
-    }
+      if (!inv.capa_ranges.some(r => _rangePertenceOperador(r, chaveOp, nomeOp, emailOp))) inv.capa_ranges.push(rangeGerado);
+      APP.capaRange = { min: parseInt(rangeGerado.min) || inicioBase, max: parseInt(rangeGerado.max) || (inicioBase + 199) };
+    } else APP.capaRange = null;
   } catch (e) {
     console.warn('[capa] Falha ao reservar range automático:', e?.message || e);
     APP.capaRange = null;

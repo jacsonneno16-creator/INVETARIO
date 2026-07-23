@@ -12,56 +12,72 @@ var __assign = (this && this.__assign) || function () {
 // ═══════════════════════════════════════════════════
 //  ETAPA 2: CAPA/PALETE
 // ═══════════════════════════════════════════════════
+function _capaNumero(val) {
+    if (!/^\d+$/.test(String(val || '').trim()))
+        return NaN;
+    return parseInt(String(val).trim(), 10);
+}
+function _capaExisteNaBase(val) {
+    var alvo = String(val || '').trim().replace(/^0+(?=\d)/, '');
+    if (!alvo)
+        return false;
+    return (APP.base || []).some(function (r) {
+        var _a, _b, _c, _d, _e;
+        var bruto = (_e = (_d = (_c = (_b = (_a = r.pallete_ou_capa) !== null && _a !== void 0 ? _a : r.capa_palete) !== null && _b !== void 0 ? _b : r.capa) !== null && _c !== void 0 ? _c : r.palete_key) !== null && _d !== void 0 ? _d : r.pallet) !== null && _e !== void 0 ? _e : '';
+        return String(bruto).trim().replace(/^0+(?=\d)/, '') === alvo;
+    });
+}
+function _validarCapaInformada(val) {
+    var n = _capaNumero(val);
+    if (!val || isNaN(n) || n < 1)
+        return { ok: false, msg: 'Capa Palete inválida' };
+    // Capa já existente na base do inventário: aceita normalmente, mesmo fora do range.
+    if (_capaExisteNaBase(val))
+        return { ok: true, existente: true, n: n };
+    // Capa não encontrada na base: só pode ser uma capa nova dentro do range reservado.
+    var range = APP.capaRange;
+    if (!range || !range.min || !range.max)
+        return { ok: false, msg: 'Range do operador ainda não foi reservado. Atualize a base e tente novamente.' };
+    if (n < range.min || n > range.max)
+        return { ok: false, msg: "Capa n\u00E3o encontrada no invent\u00E1rio e fora do seu range (".concat(String(range.min).padStart(3, '0'), "\u2013").concat(String(range.max).padStart(3, '0'), ")") };
+    return { ok: true, existente: false, nova: true, n: n };
+}
 function onCapaInput() {
     var elCapa = document.getElementById('f-capa');
-    // Limite rígido de 7 caracteres — corta scanner ou paste acima do limite
-    if (elCapa.value.length > 7)
-        elCapa.value = elCapa.value.slice(0, 7);
+    elCapa.value = elCapa.value.replace(/\D/g, '').slice(0, 7);
     var val = elCapa.value.trim();
     var fb = document.getElementById('fb-capa');
     if (!val) {
         fb.innerHTML = '';
+        APP.atual.capaGerada = false;
         return;
     }
-    var n = parseInt(val);
-    // Mínimo 7 dígitos (número menor que 1000000 é inválido)
-    if (isNaN(n) || n < 1000000) {
-        fb.innerHTML = "<div class=\"fb err\">\u2717 Capa Palete inv\u00E1lida \u2014 m\u00EDnimo 7 d\u00EDgitos (ex: 1000001)</div>";
+    var v = _validarCapaInformada(val);
+    if (!v.ok) {
+        fb.innerHTML = "<div class=\"fb err\">\u2717 ".concat(v.msg, "</div>");
         elCapa.className = 'field field-err';
         return;
     }
-    // Verificar se está dentro do range do operador
-    var range = APP.capaRange;
-    if (range && range.min && range.max) {
-        if (n < range.min || n > range.max) {
-            fb.innerHTML = "<div class=\"fb err\">\u2717 N\u00FAmero ".concat(n, " fora do range do operador (").concat(range.min, "\u2013").concat(range.max, ")</div>");
-            elCapa.className = 'field field-err';
-            return;
-        }
-    }
-    fb.innerHTML = "<div class=\"fb ok\">\u2713 Capa/Palete n\u00BA ".concat(n, "</div>");
+    fb.innerHTML = v.existente
+        ? "<div class=\"fb ok\">\u2713 Capa existente no invent\u00E1rio: ".concat(val, "</div>")
+        : "<div class=\"fb info\">\u26A1 Nova capa dentro do seu range: ".concat(String(v.n).padStart(3, '0'), "</div>");
     elCapa.className = 'field field-ok';
-    // ► SEM SOM AQUI — o som toca em confirmarCapa() quando o Enter chega
 }
 function confirmarCapa() {
-    var val = document.getElementById('f-capa').value.trim();
-    var n = parseInt(val);
-    if (!val || isNaN(n) || n < 1000000) {
-        toast('Capa Palete inválida — mínimo 7 dígitos', 'e');
+    var input = document.getElementById('f-capa');
+    var val = input.value.trim();
+    var v = _validarCapaInformada(val);
+    if (!v.ok) {
+        toast(v.msg, 'e');
         beepErr();
         return;
     }
-    // Verificar range
-    var range = APP.capaRange;
-    if (range && range.min && range.max && (n < range.min || n > range.max)) {
-        toast("N\u00FAmero ".concat(n, " fora do range do operador (").concat(range.min, "\u2013").concat(range.max, ")"), 'e');
-        beepErr();
-        return;
-    }
-    beepSuave(); // ✓ capa confirmada com sucesso
-    APP.atual.capa = val;
+    var capaFinal = v.existente ? val : String(v.n).padStart(3, '0');
+    input.value = capaFinal;
+    beepSuave();
+    APP.atual.capa = capaFinal;
+    APP.atual.capaGerada = !!v.nova;
     APP.atual.step = 3;
-    // Config do campo GTIN
     if (APP.atual.somentesDun) {
         document.getElementById('gtin-label').textContent = '🔢 Etapa 3 — DUN (obrigatório)';
         document.getElementById('gtin-sublabel').textContent = 'Este endereço só aceita DUN';

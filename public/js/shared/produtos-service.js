@@ -43,7 +43,10 @@
           carregarLocal();
           if(cache.carregado&&cache.loja===loja)return cache.lista;
         }
-        const chunks=await fs.collection('dt_produtos_chunks').orderBy('parte').get();
+        const chunks=await Promise.race([
+          fs.collection('dt_produtos_chunks').orderBy('parte').get(),
+          new Promise(function(_,reject){setTimeout(function(){reject(new Error('Tempo excedido ao carregar chunks de produtos'));},12000);})
+        ]);
         let rows=[];
         if(!chunks.empty){
           chunks.docs.forEach(function(d){const x=d.data()||{};const itens=x.itens||x.dados||x.registros||[];rows=rows.concat(itens);});
@@ -66,7 +69,8 @@
   function enriquecer(reg){const r={...reg};if(r.produtoLidoNome||r.produtoLido)return r;const cod=r.dunLido||r.gtinLido||r.codigoLido||r.gtin_bipado||r.gtin;const ach=buscarSync(cod);if(ach.encontrado){r.produtoLidoNome=ach.nomeProduto;r.produtoLido=ach.nomeProduto;r.produtoLidoId=ach.produtoId;}return r;}
   carregarLocal();
   function familias(){var mapa={};cache.lista.forEach(function(p){if(!p.ativo)return;var k=p.familiaCodigo||p.familiaNome;if(!k)return;if(!mapa[k])mapa[k]={id:k,nome:p.familiaNome||p.produtoPrincipal||p.nomeProduto,codigo:p.familiaCodigo,produtos:[],unidade:null};mapa[k].produtos.push(p);if(p.embalagem==='UND')mapa[k].unidade=p;});return Object.keys(mapa).map(function(k){return mapa[k];}).sort(function(a,b){return a.nome.localeCompare(b.nome);});}
-  global.DTProdutos={cache,normalizarCodigo:codigo,normalizarProduto:produto,indexar,carregar,buscar,buscarSync,enriquecer,familias:familias,inferirFamilia:inferirFamilia,inferirEmbalagem:inferirEmbalagem};
+  function limparCache(){cache.lista=[];cache.porDun.clear();cache.porGtin.clear();cache.porCodigo.clear();cache.carregado=false;cache.carregando=null;cache.loja='';}
+  global.DTProdutos={cache,normalizarCodigo:codigo,normalizarProduto:produto,indexar,carregar,buscar,buscarSync,enriquecer,familias:familias,inferirFamilia:inferirFamilia,inferirEmbalagem:inferirEmbalagem,limparCache:limparCache};
   global.buscarProdutoPorCodigo=buscar;
   global.enriquecerProdutoLido=enriquecer;
 })(window);

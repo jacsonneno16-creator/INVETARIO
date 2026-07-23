@@ -342,34 +342,52 @@ function _atualizarHintCapa() {
         ? "Range: ".concat(range.min, "\u2013").concat(range.max, " \u00B7 Pr\u00F3ximo: ").concat(APP.proximoCapa)
         : 'Próximo disponível: ' + APP.proximoCapa;
 }
+function _chaveOperadorCapa() {
+    var op = APP.operador || {};
+    return String(op.uid || op.id || op.email || op.name || '').trim().toLowerCase();
+}
+function _rangePertenceOperador(r, chave, nome, email) {
+    if (!r)
+        return false;
+    var rk = String(r.operador_chave || r.operador_uid || r.operador_email || '').trim().toLowerCase();
+    if (rk && chave && rk === chave)
+        return true;
+    var re = String(r.operador_email || '').trim().toLowerCase();
+    if (re && email && re === email)
+        return true;
+    return String(r.operador || '').trim() === nome;
+}
 function garantirRangeCapaOperador(inv) {
     return __awaiter(this, void 0, void 0, function () {
-        var nomeOp, inicioBase, lotePorOperador, listaAtual, meuRange, ref_1, rangeGerado_1, e_1;
+        var op, nomeOp, emailOp, chaveOp, inicioBase, lotePorOperador, listaAtual, meuRange, ref_1, rangeGerado_1, e_1;
         var _this = this;
-        var _a, _b, _c, _d;
-        return __generator(this, function (_e) {
-            switch (_e.label) {
+        var _a, _b;
+        return __generator(this, function (_c) {
+            switch (_c.label) {
                 case 0:
-                    nomeOp = String(((_a = APP.operador) === null || _a === void 0 ? void 0 : _a.name) || '').trim();
-                    inicioBase = Math.max(1, parseInt((_c = (_b = inv === null || inv === void 0 ? void 0 : inv.capa_inicio_base) !== null && _b !== void 0 ? _b : inv === null || inv === void 0 ? void 0 : inv.capa_inicio) !== null && _c !== void 0 ? _c : 1) || 1);
-                    lotePorOperador = Math.max(1, parseInt((_d = inv === null || inv === void 0 ? void 0 : inv.capa_lote_por_operador) !== null && _d !== void 0 ? _d : 200) || 200);
+                    op = APP.operador || {};
+                    nomeOp = String(op.name || op.email || '').trim();
+                    emailOp = String(op.email || '').trim().toLowerCase();
+                    chaveOp = _chaveOperadorCapa();
+                    inicioBase = Math.max(1, parseInt((_b = (_a = inv === null || inv === void 0 ? void 0 : inv.capa_inicio_base) !== null && _a !== void 0 ? _a : inv === null || inv === void 0 ? void 0 : inv.capa_inicio) !== null && _b !== void 0 ? _b : 1) || 1);
+                    lotePorOperador = 200;
                     listaAtual = Array.isArray(inv === null || inv === void 0 ? void 0 : inv.capa_ranges) ? inv.capa_ranges.slice() : [];
-                    meuRange = listaAtual.find(function (r) { return String((r === null || r === void 0 ? void 0 : r.operador) || '').trim() === nomeOp || (r === null || r === void 0 ? void 0 : r.operador) === '*'; });
+                    meuRange = listaAtual.find(function (r) { return _rangePertenceOperador(r, chaveOp, nomeOp, emailOp); });
                     if (meuRange) {
-                        APP.capaRange = { min: parseInt(meuRange.min) || inicioBase, max: parseInt(meuRange.max) || (inicioBase + lotePorOperador - 1) };
+                        APP.capaRange = { min: parseInt(meuRange.min) || inicioBase, max: parseInt(meuRange.max) || (inicioBase + 199) };
                         APP.proximoCapa = calcularProximoCapa();
                         _atualizarHintCapa();
                         return [2 /*return*/, APP.capaRange];
                     }
-                    if (!(inv === null || inv === void 0 ? void 0 : inv.id) || !nomeOp || !navigator.onLine) {
+                    if (!(inv === null || inv === void 0 ? void 0 : inv.id) || !chaveOp || !navigator.onLine) {
                         APP.capaRange = null;
                         APP.proximoCapa = calcularProximoCapa();
                         _atualizarHintCapa();
                         return [2 /*return*/, null];
                     }
-                    _e.label = 1;
+                    _c.label = 1;
                 case 1:
-                    _e.trys.push([1, 3, , 4]);
+                    _c.trys.push([1, 3, , 4]);
                     ref_1 = FS.collection(FCOL.inventarios).doc(inv.id);
                     rangeGerado_1 = null;
                     return [4 /*yield*/, FS.runTransaction(function (tx) { return __awaiter(_this, void 0, void 0, function () {
@@ -381,26 +399,29 @@ function garantirRangeCapaOperador(inv) {
                                         snap = _a.sent();
                                         data = snap.exists ? (snap.data() || {}) : {};
                                         ranges = Array.isArray(data.capa_ranges) ? data.capa_ranges.slice() : [];
-                                        existente = ranges.find(function (r) { return String((r === null || r === void 0 ? void 0 : r.operador) || '').trim() === nomeOp || (r === null || r === void 0 ? void 0 : r.operador) === '*'; });
+                                        existente = ranges.find(function (r) { return _rangePertenceOperador(r, chaveOp, nomeOp, emailOp); });
                                         if (existente) {
                                             rangeGerado_1 = existente;
                                             return [2 /*return*/];
                                         }
                                         maiorFim = ranges.reduce(function (acc, r) { return Math.max(acc, parseInt(r === null || r === void 0 ? void 0 : r.max) || 0); }, inicioBase - 1);
                                         min = Math.max(inicioBase, maiorFim + 1);
-                                        max = min + lotePorOperador - 1;
+                                        max = min + 199;
                                         rangeGerado_1 = {
                                             operador: nomeOp,
+                                            operador_chave: chaveOp,
+                                            operador_uid: String(op.uid || op.id || ''),
+                                            operador_email: emailOp,
                                             min: min,
                                             max: max,
-                                            lote: lotePorOperador,
+                                            lote: 200,
                                             criado_em: new Date().toISOString()
                                         };
                                         ranges.push(rangeGerado_1);
                                         tx.set(ref_1, {
                                             capa_ranges: ranges,
                                             capa_inicio_base: inicioBase,
-                                            capa_lote_por_operador: lotePorOperador,
+                                            capa_lote_por_operador: 200,
                                             atualizado_em: new Date()
                                         }, { merge: true });
                                         return [2 /*return*/];
@@ -408,20 +429,18 @@ function garantirRangeCapaOperador(inv) {
                             });
                         }); })];
                 case 2:
-                    _e.sent();
+                    _c.sent();
                     if (rangeGerado_1) {
                         inv.capa_ranges = Array.isArray(inv.capa_ranges) ? inv.capa_ranges : [];
-                        if (!inv.capa_ranges.some(function (r) { return String((r === null || r === void 0 ? void 0 : r.operador) || '').trim() === nomeOp || (r === null || r === void 0 ? void 0 : r.operador) === '*'; })) {
+                        if (!inv.capa_ranges.some(function (r) { return _rangePertenceOperador(r, chaveOp, nomeOp, emailOp); }))
                             inv.capa_ranges.push(rangeGerado_1);
-                        }
-                        APP.capaRange = { min: parseInt(rangeGerado_1.min) || inicioBase, max: parseInt(rangeGerado_1.max) || (inicioBase + lotePorOperador - 1) };
+                        APP.capaRange = { min: parseInt(rangeGerado_1.min) || inicioBase, max: parseInt(rangeGerado_1.max) || (inicioBase + 199) };
                     }
-                    else {
+                    else
                         APP.capaRange = null;
-                    }
                     return [3 /*break*/, 4];
                 case 3:
-                    e_1 = _e.sent();
+                    e_1 = _c.sent();
                     console.warn('[capa] Falha ao reservar range automático:', (e_1 === null || e_1 === void 0 ? void 0 : e_1.message) || e_1);
                     APP.capaRange = null;
                     return [3 /*break*/, 4];

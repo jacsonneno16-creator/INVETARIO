@@ -34,7 +34,8 @@ function calcularProximoCapa() {
 
 function gerarNumeroCapa() {
   const n = APP.proximoCapa;
-  document.getElementById('f-capa').value = String(n);
+  document.getElementById('f-capa').value = String(n).padStart(3, '0');
+  APP.atual.capaGerada = true;
 
   _atualizarHintCapa();
   document.getElementById('fb-capa').innerHTML = `<div class="fb info">⚡ Número ${n} gerado automaticamente</div>`;

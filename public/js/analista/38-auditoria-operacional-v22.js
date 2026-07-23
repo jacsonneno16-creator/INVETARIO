@@ -13,6 +13,14 @@
   let importacaoPendente = null;
   let criacaoToken = 0;
   let criacaoAberta = false;
+  let criacaoPromise = null;
+
+  function comTimeout(promise, ms, fallback){
+    return Promise.race([
+      Promise.resolve(promise).catch(function(){ return fallback; }),
+      new Promise(function(resolve){ setTimeout(function(){ resolve(fallback); }, ms); })
+    ]);
+  }
 
   let configuracaoNova = null;
   function ruaDoEndereco(v){ const p=txt(v).split(/[.\-_/]/).filter(Boolean); return p[0] || ''; }
@@ -33,7 +41,7 @@
       const campo=modalExistente.querySelector('#aud39-nome'); if(campo)campo.focus();
       return;
     }
-    if(criacaoAberta) return;
+    if(criacaoAberta && criacaoPromise) return criacaoPromise;
     criacaoAberta=true;
     const meuToken=++criacaoToken;
     document.getElementById('aud-v52-loading')?.remove();
@@ -43,11 +51,16 @@
     document.body.appendChild(carregando);
     const cancelar=()=>{ if(meuToken===criacaoToken)++criacaoToken; criacaoAberta=false; carregando.remove(); };
     carregando.querySelector('#aud39-cancelar-loading').onclick=cancelar;
+    criacaoPromise=(async function(){
     try{
-      await window.DTProdutos?.carregar?.();
+      // Nunca deixa a criação presa esperando Firebase. Primeiro tenta usar o cache
+      // já carregado e limita cada consulta a poucos segundos.
+      if(window.DTProdutos && typeof window.DTProdutos.carregar==='function'){
+        await comTimeout(window.DTProdutos.carregar(false), 8000, []);
+      }
       if(meuToken!==criacaoToken) return;
-      const familias=(window.DTProdutos?.familias?.()||[]).filter(f=>f.unidade);
-      const ends=await enderecosGerais();
+      const familias=(window.DTProdutos?.familias?.()||[]).filter(function(f){ return f && f.produtos && f.produtos.length; });
+      const ends=await comTimeout(enderecosGerais(), 8000, []);
       if(meuToken!==criacaoToken) return;
       const ruas=[...new Set(ends.map(e=>ruaDoEndereco(e.endereco||e.codigo||e.id)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
       carregando.remove();
@@ -106,9 +119,14 @@
       };
       modal.querySelector('#aud39-nome')?.focus();
     } finally {
-      if(meuToken===criacaoToken) criacaoAberta=false;
       document.getElementById('aud-v52-loading')?.remove();
+      if(meuToken===criacaoToken){
+        criacaoPromise=null;
+        if(!document.getElementById('modal-nova-aud-v39')) criacaoAberta=false;
+      }
     }
+    })();
+    return criacaoPromise;
   }
 
 
@@ -288,13 +306,30 @@
   }
 
   function detectarColunas(headers){
-    const map = {};
-    headers.forEach(h => map[cab(h)] = h);
-    const escolher = nomes => nomes.map(cab).find(n => map[n]);
+    const lista=(headers||[]).map(function(original){
+      return { original:original, normal: cab(original) };
+    });
+    function achar(exatos, contem){
+      const ex=(exatos||[]).map(cab);
+      for(const h of lista){ if(ex.indexOf(h.normal)>=0) return h.original; }
+      for(const h of lista){
+        for(const termo of (contem||[]).map(cab)){ if(termo && h.normal.indexOf(termo)>=0) return h.original; }
+      }
+      return null;
+    }
     return {
-      endereco: map[escolher(['ENDEREÇO','ENDERECO','LOCAL','POSIÇÃO','POSICAO'])],
-      dun: map[escolher(['GTIN','GTIN/EAN','GTIN PRINCIPAL','EAN','EAN/GTIN','CÓDIGO DE BARRAS','CODIGO DE BARRAS','DUN','CÓDIGO DUN','CODIGO DUN','CÓDIGO DO PRODUTO','CODIGO DO PRODUTO'])],
-      produto: map[escolher(['PRODUTO','DESCRIÇÃO','DESCRICAO','NOME DO PRODUTO'])]
+      endereco: achar(
+        ['ENDEREÇO','ENDERECO','LOCAL','POSIÇÃO','POSICAO','LOCALIZAÇÃO','LOCALIZACAO','ADDRESS'],
+        ['ENDERECO','POSICAO','LOCALIZACAO']
+      ),
+      dun: achar(
+        ['GTIN','EAN','GTIN/EAN','EAN/GTIN','GTIN EAN','EAN GTIN','GTIN PRINCIPAL','EAN PRINCIPAL','DUN','DUN14','EAN14','GTIN14','CÓDIGO DE BARRAS','CODIGO DE BARRAS','COD BARRAS','BARCODE','CÓDIGO DO PRODUTO','CODIGO DO PRODUTO'],
+        ['GTINEAN','EANGTIN','GTIN','EAN','DUN','CODIGODEBARRAS','CODBARRAS','BARCODE']
+      ),
+      produto: achar(
+        ['PRODUTO','DESCRIÇÃO','DESCRICAO','NOME DO PRODUTO','DESCRIÇÃO DO PRODUTO','DESCRICAO DO PRODUTO','ITEM'],
+        ['PRODUTO','DESCRICAO','NOMEITEM']
+      )
     };
   }
 
@@ -309,8 +344,8 @@
     const rows = await lerArquivo(file);
     if (!rows.length) throw new Error('O arquivo não possui linhas de dados.');
     const col = detectarColunas(Object.keys(rows[0]));
-    const ausentes = [!col.endereco&&'Endereço',!col.dun&&'GTIN/EAN',!col.produto&&'Produto'].filter(Boolean);
-    if (ausentes.length) throw new Error(`Colunas obrigatórias ausentes: ${ausentes.join(', ')}.`);
+    const ausentes = [!col.endereco&&'Endereço',!col.dun&&'GTIN/EAN/DUN',!col.produto&&'Produto'].filter(Boolean);
+    if (ausentes.length) throw new Error(`Colunas obrigatórias ausentes: ${ausentes.join(', ')}. Cabeçalhos encontrados: ${Object.keys(rows[0]).join(' | ')}`);
     const erros=[]; const validos=[];
     rows.forEach((r,idx) => {
       const linha=idx+2, endereco=txt(r[col.endereco]), dunEsperado=txt(r[col.dun]), produtoEsperado=txt(r[col.produto]);
@@ -417,6 +452,7 @@
   }
 
   // Sobrescreve apenas as funções públicas da aba Auditoria.
+  window.detectarColunasAuditoria=detectarColunas;
   window.processFileAuditoria=processarArquivo;
   window.importarBaseAuditoriaSelecionada=importarBaseSelecionada;
   window.confirmarImportAuditoria=confirmarImportacao;
