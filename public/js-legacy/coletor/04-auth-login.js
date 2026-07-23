@@ -1,6 +1,17 @@
 // ═══════════════════════════════════════════════════
 //  LOGIN  (Firebase Auth)
 // ═══════════════════════════════════════════════════
+var __assign = (this && this.__assign) || function () {
+    __assign = Object.assign || function(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+            s = arguments[i];
+            for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p))
+                t[p] = s[p];
+        }
+        return t;
+    };
+    return __assign.apply(this, arguments);
+};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -164,20 +175,14 @@ function doCriarConta() {
 }
 function doLogin() {
     return __awaiter(this, void 0, void 0, function () {
-        var lojaSelecionada, login, pass, email, btnLogin, fbLogin, _setBtn, _setFb, _tid, _1;
+        var login, pass, email, btnLogin, fbLogin, _setBtn, _setFb, _tid, _1;
         var _this = this;
-        var _a, _b, _c;
-        return __generator(this, function (_d) {
-            switch (_d.label) {
+        var _a, _b;
+        return __generator(this, function (_c) {
+            switch (_c.label) {
                 case 0:
-                    lojaSelecionada = ((_a = document.getElementById('l-loja')) === null || _a === void 0 ? void 0 : _a.value) || window.getDTLojaAtiva();
-                    if (!lojaSelecionada) {
-                        toast('Selecione a loja antes de entrar', 'e');
-                        return [2 /*return*/];
-                    }
-                    window.setDTLojaAtiva(lojaSelecionada);
-                    login = (((_b = document.getElementById('l-login')) === null || _b === void 0 ? void 0 : _b.value) || '').trim().toLowerCase();
-                    pass = ((_c = document.getElementById('l-pass')) === null || _c === void 0 ? void 0 : _c.value) || '';
+                    login = (((_a = document.getElementById('l-login')) === null || _a === void 0 ? void 0 : _a.value) || '').trim().toLowerCase();
+                    pass = ((_b = document.getElementById('l-pass')) === null || _b === void 0 ? void 0 : _b.value) || '';
                     if (!login) {
                         toast('Informe o login', 'e');
                         return [2 /*return*/];
@@ -215,39 +220,85 @@ function doLogin() {
                         _setBtn('ENTRAR', false);
                         _setFb('⏱ Conexão lenta — verifique a internet e tente novamente', 'warn');
                     }, 15000);
-                    _d.label = 1;
+                    _c.label = 1;
                 case 1:
-                    _d.trys.push([1, 3, , 4]);
+                    _c.trys.push([1, 3, , 4]);
                     return [4 /*yield*/, (window.DT_AUTH_READY || Promise.resolve())];
                 case 2:
-                    _d.sent();
+                    _c.sent();
                     return [3 /*break*/, 4];
                 case 3:
-                    _1 = _d.sent();
+                    _1 = _c.sent();
                     return [3 /*break*/, 4];
                 case 4:
                     AUTH.signInWithEmailAndPassword(email, pass)
                         .then(function (cred) { return __awaiter(_this, void 0, void 0, function () {
-                        var user, name, status, e_2, acessoGlobal, acc, e_3, permitidas, opDoc, opSnap, e_4, stOp, stInicio;
+                        var user, name, acessoGlobal, acc, e_2, lojaSelecionada, e_3, status, e_4, opDoc, opSnap, e_5, stOp, stInicio;
                         return __generator(this, function (_a) {
                             switch (_a.label) {
                                 case 0:
                                     clearTimeout(_tid);
                                     user = cred.user;
                                     name = user.displayName || _nomeDisplay(login);
-                                    _setBtn('Verificando aparelho…', true);
+                                    _setBtn('Carregando lojas…', true);
+                                    acessoGlobal = null;
                                     _a.label = 1;
                                 case 1:
                                     _a.trys.push([1, 3, , 4]);
-                                    return [4 /*yield*/, registrarColetorNoFirestore({ email: user.email, name: name, uid: user.uid })];
+                                    return [4 /*yield*/, window.getDTRawFirestore().collection('usuarios_acessos').doc(user.uid).get()];
                                 case 2:
-                                    status = _a.sent();
+                                    acc = _a.sent();
+                                    if (acc.exists)
+                                        acessoGlobal = __assign({ uid: user.uid }, acc.data());
                                     return [3 /*break*/, 4];
                                 case 3:
                                     e_2 = _a.sent();
-                                    status = 'erro';
+                                    console.warn('[Coletor] Falha ao carregar permissões globais:', e_2.message);
                                     return [3 /*break*/, 4];
                                 case 4:
+                                    window.DT_USUARIO_ACESSO_ATUAL = acessoGlobal || {
+                                        uid: user.uid, email: user.email, acesso_todas_lojas: true, lojas_permitidas: []
+                                    };
+                                    // Não reutiliza silenciosamente a loja de outro operador neste aparelho.
+                                    window.setDTLojaAtiva('');
+                                    lojaSelecionada = '';
+                                    _a.label = 5;
+                                case 5:
+                                    _a.trys.push([5, 7, , 9]);
+                                    return [4 /*yield*/, window.DTLoja.selecionarInterativamente('Selecione a loja para trabalhar')];
+                                case 6:
+                                    lojaSelecionada = _a.sent();
+                                    return [3 /*break*/, 9];
+                                case 7:
+                                    e_3 = _a.sent();
+                                    _setBtn('ENTRAR', false);
+                                    return [4 /*yield*/, AUTH.signOut().catch(function () { })];
+                                case 8:
+                                    _a.sent();
+                                    _setFb('Não foi possível carregar as lojas: ' + e_3.message, 'err');
+                                    return [2 /*return*/];
+                                case 9:
+                                    if (!!lojaSelecionada) return [3 /*break*/, 11];
+                                    _setBtn('ENTRAR', false);
+                                    return [4 /*yield*/, AUTH.signOut().catch(function () { })];
+                                case 10:
+                                    _a.sent();
+                                    _setFb('Selecione uma loja para continuar.', 'err');
+                                    return [2 /*return*/];
+                                case 11:
+                                    _setBtn('Verificando aparelho…', true);
+                                    _a.label = 12;
+                                case 12:
+                                    _a.trys.push([12, 14, , 15]);
+                                    return [4 /*yield*/, registrarColetorNoFirestore({ email: user.email, name: name, uid: user.uid })];
+                                case 13:
+                                    status = _a.sent();
+                                    return [3 /*break*/, 15];
+                                case 14:
+                                    e_4 = _a.sent();
+                                    status = 'erro';
+                                    return [3 /*break*/, 15];
+                                case 15:
                                     if (status === 'bloqueado') {
                                         _setBtn('ENTRAR', false);
                                         _mostrarTelaBloqueado();
@@ -265,46 +316,21 @@ function doLogin() {
                                         _setFb('Não foi possível registrar o aparelho no Firebase. Abra ⋮ → Diagnóstico.', 'err');
                                         return [2 /*return*/];
                                     }
-                                    acessoGlobal = null;
-                                    _a.label = 5;
-                                case 5:
-                                    _a.trys.push([5, 7, , 8]);
-                                    return [4 /*yield*/, window.getDTRawFirestore().collection('usuarios_acessos').doc(user.uid).get()];
-                                case 6:
-                                    acc = _a.sent();
-                                    if (acc.exists)
-                                        acessoGlobal = acc.data() || null;
-                                    return [3 /*break*/, 8];
-                                case 7:
-                                    e_3 = _a.sent();
-                                    console.warn('[Coletor] Falha ao carregar permissões globais:', e_3.message);
-                                    return [3 /*break*/, 8];
-                                case 8:
-                                    if (!(acessoGlobal && acessoGlobal.acesso_todas_lojas !== true)) return [3 /*break*/, 10];
-                                    permitidas = Array.isArray(acessoGlobal.lojas_permitidas) ? acessoGlobal.lojas_permitidas : [];
-                                    if (!!permitidas.includes(lojaSelecionada)) return [3 /*break*/, 10];
-                                    _setBtn('ENTRAR', false);
-                                    return [4 /*yield*/, AUTH.signOut().catch(function () { })];
-                                case 9:
-                                    _a.sent();
-                                    _setFb('Este login não possui acesso à loja selecionada.', 'err');
-                                    return [2 /*return*/];
-                                case 10:
                                     opDoc = acessoGlobal;
-                                    _a.label = 11;
-                                case 11:
-                                    _a.trys.push([11, 13, , 14]);
+                                    _a.label = 16;
+                                case 16:
+                                    _a.trys.push([16, 18, , 19]);
                                     return [4 /*yield*/, FS.collection('dt_operadores').doc(user.uid).get()];
-                                case 12:
+                                case 17:
                                     opSnap = _a.sent();
                                     if (opSnap.exists)
                                         opDoc = opSnap.data() || null;
-                                    return [3 /*break*/, 14];
-                                case 13:
-                                    e_4 = _a.sent();
-                                    console.warn('[Coletor] Falha ao carregar acesso do operador:', e_4.message);
-                                    return [3 /*break*/, 14];
-                                case 14:
+                                    return [3 /*break*/, 19];
+                                case 18:
+                                    e_5 = _a.sent();
+                                    console.warn('[Coletor] Falha ao carregar acesso do operador:', e_5.message);
+                                    return [3 /*break*/, 19];
+                                case 19:
                                     APP.operador = {
                                         email: user.email,
                                         name: name,

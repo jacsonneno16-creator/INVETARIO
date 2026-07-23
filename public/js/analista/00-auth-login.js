@@ -139,8 +139,19 @@ async function _onAnalistaLogado(user) {
     const atual = window.getDTLojaAtiva();
     if (atual && !permitidas.some(l=>l.id===atual)) window.setDTLojaAtiva('');
     await window.DTLoja.selecionarInterativamente('Selecione a loja do inventário');
+
+    // Compatibilidade com a instalação anterior: os dados existentes estavam
+    // nas coleções da raiz. No primeiro acesso do administrador à Loja Matriz,
+    // eles são copiados uma única vez para o ambiente da loja antes dos
+    // listeners do Analista iniciarem.
+    if (typeof window.sincronizarDadosLegadosAutomaticamente === 'function') {
+      const migracao = await window.sincronizarDadosLegadosAutomaticamente();
+      if (migracao && migracao.executado) {
+        console.info('[Multiloja] Dados antigos copiados para a loja:', migracao.total);
+      }
+    }
   }
-  catch(e){ _setLoginErro('Não foi possível carregar as lojas: '+e.message); await AUTH_AN.signOut(); return; }
+  catch(e){ _setLoginErro('Não foi possível preparar o ambiente da loja: '+e.message); await AUTH_AN.signOut(); return; }
   _mostrarApp();
   atualizarIndicadorLojaAtual();
 

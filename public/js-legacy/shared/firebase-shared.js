@@ -80,6 +80,17 @@ window.getDTFirebaseApp = function () {
     }
 };
 window.getDTRawFirestore = function () { return getDTFirebaseApp().firestore(); };
+// Administradores mestres autorizados a inicializar e recuperar o ambiente multiloja.
+// Após o primeiro acesso, a permissão também fica persistida em usuarios_acessos.
+window.DT_ADMIN_MESTRE_EMAILS = window.DT_ADMIN_MESTRE_EMAILS || [
+    'jacson@daterrinhaalimentos.com.br',
+    'jacson.souza@daterrinhaalimentos.com.br'
+];
+window.isDTAdminMestre = function (user, acesso) {
+    var email = String((user && user.email) || (acesso && acesso.email) || '').trim().toLowerCase();
+    return !!(acesso && (acesso.admin_mestre === true || acesso.administrador_mestre === true)) ||
+        window.DT_ADMIN_MESTRE_EMAILS.indexOf(email) >= 0;
+};
 // ── MULTILOJA ───────────────────────────────────────────────────────────────
 // Coleções operacionais são automaticamente direcionadas para
 // lojas/{lojaAtiva}/{colecao}. A coleção raiz "lojas" permanece global.
@@ -117,6 +128,71 @@ window.getDTFirestore = function () {
 };
 window.getDTAuth = function () { return getDTFirebaseApp().auth(); };
 window.DTLoja = {
+    bootstrapAdministrador: function (user, acessoExistente) {
+        return __awaiter(this, void 0, void 0, function () {
+            var raw, acesso, primeiroSetup, resultados, _1, adminMestre, agora, lojaRef, lojaDoc, dadosAdmin;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        raw = window.getDTRawFirestore();
+                        acesso = acessoExistente || null;
+                        primeiroSetup = false;
+                        if (!!acesso) return [3 /*break*/, 4];
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, Promise.all([
+                                raw.collection('lojas').limit(1).get(),
+                                raw.collection('usuarios_acessos').limit(1).get()
+                            ])];
+                    case 2:
+                        resultados = _a.sent();
+                        primeiroSetup = resultados[0].empty && resultados[1].empty;
+                        return [3 /*break*/, 4];
+                    case 3:
+                        _1 = _a.sent();
+                        return [3 /*break*/, 4];
+                    case 4:
+                        adminMestre = window.isDTAdminMestre(user, acesso) || primeiroSetup;
+                        if (!adminMestre)
+                            return [2 /*return*/, acesso];
+                        agora = new Date().toISOString();
+                        lojaRef = raw.collection('lojas').doc('loja_matriz');
+                        return [4 /*yield*/, lojaRef.get()];
+                    case 5:
+                        lojaDoc = _a.sent();
+                        if (!!lojaDoc.exists) return [3 /*break*/, 7];
+                        return [4 /*yield*/, lojaRef.set({
+                                nome: 'Loja Matriz', codigo: 'MATRIZ', ativa: true,
+                                criada_em: agora, criada_por: user && user.email ? user.email : ''
+                            }, { merge: true })];
+                    case 6:
+                        _a.sent();
+                        _a.label = 7;
+                    case 7:
+                        dadosAdmin = {
+                            uid: user.uid,
+                            email: String(user.email || '').toLowerCase(),
+                            nome: user.displayName || String(user.email || '').split('@')[0],
+                            perfil: 'administrador',
+                            ativo: true,
+                            admin_mestre: true,
+                            administrador_mestre: true,
+                            acesso_todas_lojas: true,
+                            lojas_permitidas: [],
+                            atualizado_em: agora,
+                            atualizado_por: 'BOOTSTRAP_AUTOMATICO'
+                        };
+                        if (!acesso)
+                            dadosAdmin.criado_em = agora;
+                        return [4 /*yield*/, raw.collection('usuarios_acessos').doc(user.uid).set(dadosAdmin, { merge: true })];
+                    case 8:
+                        _a.sent();
+                        return [2 /*return*/, Object.assign({}, acesso || {}, dadosAdmin)];
+                }
+            });
+        });
+    },
     listar: function () {
         return __awaiter(this, arguments, void 0, function (apenasAtivas) {
             var raw, snap, acesso;

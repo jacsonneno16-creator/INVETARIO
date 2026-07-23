@@ -97,9 +97,6 @@ function doCriarConta() {
 }
 
 async function doLogin() {
-  const lojaSelecionada=document.getElementById('l-loja')?.value||window.getDTLojaAtiva();
-  if(!lojaSelecionada){ toast('Selecione a loja antes de entrar','e'); return; }
-  window.setDTLojaAtiva(lojaSelecionada);
   const login = (document.getElementById('l-login')?.value || '').trim().toLowerCase();
   const pass  = document.getElementById('l-pass')?.value || '';
 
@@ -143,8 +140,38 @@ async function doLogin() {
       const user = cred.user;
       const name = user.displayName || _nomeDisplay(login);
 
-      _setBtn('Verificando aparelho…', true);
+      _setBtn('Carregando lojas…', true);
 
+      // A loja é escolhida somente depois da autenticação. Assim o login pode
+      // ser validado primeiro e a lista exibida já respeita as permissões do usuário.
+      let acessoGlobal = null;
+      try {
+        const acc = await window.getDTRawFirestore().collection('usuarios_acessos').doc(user.uid).get();
+        if (acc.exists) acessoGlobal = { uid:user.uid, ...acc.data() };
+      } catch (e) { console.warn('[Coletor] Falha ao carregar permissões globais:', e.message); }
+      window.DT_USUARIO_ACESSO_ATUAL = acessoGlobal || {
+        uid:user.uid, email:user.email, acesso_todas_lojas:true, lojas_permitidas:[]
+      };
+
+      // Não reutiliza silenciosamente a loja de outro operador neste aparelho.
+      window.setDTLojaAtiva('');
+      let lojaSelecionada = '';
+      try {
+        lojaSelecionada = await window.DTLoja.selecionarInterativamente('Selecione a loja para trabalhar');
+      } catch (e) {
+        _setBtn('ENTRAR', false);
+        await AUTH.signOut().catch(()=>{});
+        _setFb('Não foi possível carregar as lojas: ' + e.message, 'err');
+        return;
+      }
+      if (!lojaSelecionada) {
+        _setBtn('ENTRAR', false);
+        await AUTH.signOut().catch(()=>{});
+        _setFb('Selecione uma loja para continuar.', 'err');
+        return;
+      }
+
+      _setBtn('Verificando aparelho…', true);
       let status;
       try {
         status = await registrarColetorNoFirestore({ email: user.email, name, uid: user.uid });
@@ -168,22 +195,6 @@ async function doLogin() {
         _setBtn('ENTRAR', false);
         _setFb('Não foi possível registrar o aparelho no Firebase. Abra ⋮ → Diagnóstico.', 'err');
         return;
-      }
-
-      // ── Aprovado — validar permissão global da loja ──
-      let acessoGlobal = null;
-      try {
-        const acc = await window.getDTRawFirestore().collection('usuarios_acessos').doc(user.uid).get();
-        if (acc.exists) acessoGlobal = acc.data() || null;
-      } catch (e) { console.warn('[Coletor] Falha ao carregar permissões globais:', e.message); }
-      if (acessoGlobal && acessoGlobal.acesso_todas_lojas !== true) {
-        const permitidas = Array.isArray(acessoGlobal.lojas_permitidas) ? acessoGlobal.lojas_permitidas : [];
-        if (!permitidas.includes(lojaSelecionada)) {
-          _setBtn('ENTRAR', false);
-          await AUTH.signOut().catch(()=>{});
-          _setFb('Este login não possui acesso à loja selecionada.', 'err');
-          return;
-        }
       }
 
       // ── Aprovado — liberar acesso ──
