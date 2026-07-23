@@ -315,15 +315,114 @@ window.closeModal = closeModal;
 async function atualizarIndicadorLojaAtual(){
   try{
     const lojas=await window.DTLoja.listar(false), id=window.getDTLojaAtiva();
-    const loja=lojas.find(x=>x.id===id);
-    const el=document.getElementById('dt-loja-atual-label'); if(el) el.textContent=loja?.nome||id||'Sem loja';
-  }catch(_){ }
+    const loja=lojas.find(function(x){ return x.id===id; });
+    const el=document.getElementById('dt-loja-atual-label');
+    if(el) el.textContent=(loja && loja.nome)||id||'Sem loja';
+    return lojas;
+  }catch(_){ return []; }
 }
-async function trocarLojaInventario(){
+
+function fecharMenuLojasAnalista(){
+  const menu=document.getElementById('dt-loja-switcher-menu');
+  const btn=document.getElementById('dt-loja-switcher-btn');
+  if(menu) menu.style.display='none';
+  if(btn) btn.setAttribute('aria-expanded','false');
+}
+
+async function aplicarTrocaLojaAnalista(novaLojaId){
   const anterior=window.getDTLojaAtiva();
-  const nova=await window.DTLoja.selecionarInterativamente('Trocar ambiente de loja', true);
-  if(!nova || nova===anterior)return;
-  await atualizarIndicadorLojaAtual();
-  location.reload();
+  const nova=String(novaLojaId||'').trim();
+  fecharMenuLojasAnalista();
+  if(!nova || nova===anterior) return false;
+
+  try{
+    if(window.AnalistaFirebaseService && window.AnalistaFirebaseService.stop){
+      window.AnalistaFirebaseService.stop();
+    }
+    if(typeof window.encerrarListenerAuditoriaPorTrocaLoja==='function'){
+      window.encerrarListenerAuditoriaPorTrocaLoja();
+    }
+
+    window.setDTLojaAtiva(nova);
+    await atualizarIndicadorLojaAtual();
+
+    // Recarrega somente o estado e os listeners da loja, sem recarregar a página
+    // e sem tocar na sessão autenticada do Firebase.
+    if(window.AnalistaBootstrap && window.AnalistaBootstrap.loadAll){
+      window.AnalistaBootstrap.loadAll();
+    }
+    if(window.AnalistaFirebaseService && window.AnalistaFirebaseService.refreshFromCache){
+      window.AnalistaFirebaseService.refreshFromCache();
+    }
+    if(window.AnalistaBootstrap && window.AnalistaBootstrap.renderAll){
+      window.AnalistaBootstrap.renderAll();
+    }
+    if(window.AnalistaFirebaseService && window.AnalistaFirebaseService.start){
+      await window.AnalistaFirebaseService.start();
+    }
+    if(typeof window.recarregarAuditoriaAposTrocaLoja==='function'){
+      await window.recarregarAuditoriaAposTrocaLoja();
+    }
+    if(window.AnalistaNavigation && window.AnalistaNavigation.renderCurrentPage){
+      window.AnalistaNavigation.renderCurrentPage();
+    }
+    if(typeof window.atualizarBadgesNav==='function') window.atualizarBadgesNav();
+    if(typeof window.showToast==='function') window.showToast('Loja alterada sem sair da conta.','success');
+    return true;
+  }catch(e){
+    console.error('[Lojas] Falha ao trocar ambiente:',e);
+    if(typeof window.showToast==='function') window.showToast('Não foi possível trocar de loja: '+e.message,'error');
+    return false;
+  }
 }
+
+async function montarMenuLojasAnalista(){
+  const menu=document.getElementById('dt-loja-switcher-menu');
+  if(!menu) return [];
+  const lojas=await window.DTLoja.listar(true);
+  const atual=window.getDTLojaAtiva();
+  if(!lojas.length){
+    menu.innerHTML='<div style="padding:10px;font-size:.78rem;color:var(--muted)">Nenhuma loja disponível.</div>';
+    return lojas;
+  }
+  menu.innerHTML=lojas.map(function(loja){
+    const ativa=loja.id===atual;
+    return '<button type="button" data-trocar-loja="'+String(loja.id).replace(/"/g,'&quot;')+'" style="width:100%;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 11px;border:0;border-radius:8px;background:'+(ativa?'rgba(30,111,78,.12)':'transparent')+';color:var(--text,#17202a);cursor:pointer;text-align:left;font-family:inherit">'+
+      '<span><strong style="display:block;font-size:.82rem">'+String(loja.nome||loja.id).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];})+'</strong>'+
+      '<span style="font-size:.67rem;color:var(--muted)">'+String(loja.codigo||loja.id).replace(/[&<>]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;'}[c];})+'</span></span>'+
+      (ativa?'<span style="font-size:.72rem;color:var(--accent,#1e6f4e);font-weight:800">ATUAL</span>':'')+
+      '</button>';
+  }).join('');
+  return lojas;
+}
+
+async function trocarLojaInventario(event){
+  if(event){ event.preventDefault(); event.stopPropagation(); }
+  const menu=document.getElementById('dt-loja-switcher-menu');
+  const btn=document.getElementById('dt-loja-switcher-btn');
+  if(!menu) return;
+  const abrindo=menu.style.display==='none' || !menu.style.display;
+  if(!abrindo){ fecharMenuLojasAnalista(); return; }
+  await montarMenuLojasAnalista();
+  menu.style.display='block';
+  if(btn) btn.setAttribute('aria-expanded','true');
+}
+
+if(!window.__dtLojaSwitcherBound){
+  window.__dtLojaSwitcherBound=true;
+  document.addEventListener('click',function(event){
+    const alvo=event.target && event.target.closest ? event.target.closest('[data-trocar-loja]') : null;
+    if(alvo){
+      event.preventDefault();
+      event.stopPropagation();
+      aplicarTrocaLojaAnalista(alvo.getAttribute('data-trocar-loja'));
+      return;
+    }
+    const wrap=document.getElementById('dt-loja-switcher');
+    if(wrap && !wrap.contains(event.target)) fecharMenuLojasAnalista();
+  });
+  document.addEventListener('keydown',function(event){ if(event.key==='Escape') fecharMenuLojasAnalista(); });
+}
+
+window.aplicarTrocaLojaAnalista=aplicarTrocaLojaAnalista;
 window.trocarLojaInventario=trocarLojaInventario;

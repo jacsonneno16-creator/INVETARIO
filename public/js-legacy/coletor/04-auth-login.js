@@ -173,6 +173,64 @@ function doCriarConta() {
     })
         .finally(function () { btn.disabled = false; btn.textContent = 'ENTRAR'; });
 }
+function _atualizarLojaColetorUI(lojas) {
+    lojas = Array.isArray(lojas) ? lojas : (window.DT_LOJAS_USUARIO_ATUAL || []);
+    var atual = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+    var loja = lojas.find(function (item) { return item && item.id === atual; }) || null;
+    var card = document.getElementById('coletor-loja-card');
+    var nome = document.getElementById('coletor-loja-nome');
+    var trocar = document.getElementById('coletor-trocar-loja');
+    if (card)
+        card.style.display = loja ? '' : 'none';
+    if (nome)
+        nome.textContent = loja ? (loja.nome || loja.id) : '—';
+    if (trocar)
+        trocar.style.display = lojas.length > 1 ? '' : 'none';
+}
+function trocarLojaColetor() {
+    return __awaiter(this, void 0, void 0, function () {
+        var lojas, anterior, selecionada_1, e_2;
+        return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0:
+                    lojas = window.DT_LOJAS_USUARIO_ATUAL || [];
+                    if (lojas.length <= 1) {
+                        toast('Este login possui acesso somente a uma loja.', 'w');
+                        return [2 /*return*/];
+                    }
+                    anterior = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+                    _a.label = 1;
+                case 1:
+                    _a.trys.push([1, 3, , 4]);
+                    return [4 /*yield*/, window.DTLoja.selecionarInterativamente('Escolha a loja para trabalhar', true)];
+                case 2:
+                    selecionada_1 = _a.sent();
+                    if (!selecionada_1)
+                        return [2 /*return*/];
+                    _atualizarLojaColetorUI(lojas);
+                    if (selecionada_1 !== anterior) {
+                        APP.inventario = null;
+                        APP.auditoria = null;
+                        APP.lojaFiltroInventario = '';
+                        APP.lojaFiltroAuditoria = '';
+                        if (window.DTProdutos && typeof window.DTProdutos.limparCache === 'function')
+                            window.DTProdutos.limparCache();
+                        goScreen('mode');
+                        carregarInventarios();
+                        carregarAuditoriasMenu();
+                        toast('Loja alterada para ' + ((lojas.find(function (x) { return x.id === selecionada_1; }) || {}).nome || selecionada_1) + '.', 's');
+                    }
+                    return [3 /*break*/, 4];
+                case 3:
+                    e_2 = _a.sent();
+                    toast('Não foi possível trocar a loja: ' + (e_2.message || e_2), 'e');
+                    return [3 /*break*/, 4];
+                case 4: return [2 /*return*/];
+            }
+        });
+    });
+}
+window.trocarLojaColetor = trocarLojaColetor;
 function doLogin() {
     return __awaiter(this, void 0, void 0, function () {
         var login, pass, email, btnLogin, fbLogin, _setBtn, _setFb, _tid, _1;
@@ -233,7 +291,7 @@ function doLogin() {
                 case 4:
                     AUTH.signInWithEmailAndPassword(email, pass)
                         .then(function (cred) { return __awaiter(_this, void 0, void 0, function () {
-                        var user, name, acessoGlobal, acc, e_2, lojaSelecionada, e_3, status, e_4, opDoc, opSnap, e_5, stOp, stInicio;
+                        var user, name, acessoGlobal, acc, e_3, lojaSelecionada, lojasPermitidas, e_4, status, e_5, opDoc, opSnap, e_6, stOp, stInicio;
                         return __generator(this, function (_a) {
                             switch (_a.label) {
                                 case 0:
@@ -252,53 +310,65 @@ function doLogin() {
                                         acessoGlobal = __assign({ uid: user.uid }, acc.data());
                                     return [3 /*break*/, 4];
                                 case 3:
-                                    e_2 = _a.sent();
-                                    console.warn('[Coletor] Falha ao carregar permissões globais:', e_2.message);
+                                    e_3 = _a.sent();
+                                    console.warn('[Coletor] Falha ao carregar permissões globais:', e_3.message);
                                     return [3 /*break*/, 4];
                                 case 4:
                                     window.DT_USUARIO_ACESSO_ATUAL = acessoGlobal || {
                                         uid: user.uid, email: user.email, acesso_todas_lojas: true, lojas_permitidas: []
                                     };
-                                    // Não reutiliza silenciosamente a loja de outro operador neste aparelho.
+                                    // Carrega as lojas permitidas. Uma única loja entra direto; duas ou
+                                    // mais exibem o seletor antes do menu principal.
                                     window.setDTLojaAtiva('');
                                     lojaSelecionada = '';
+                                    lojasPermitidas = [];
                                     _a.label = 5;
                                 case 5:
-                                    _a.trys.push([5, 7, , 9]);
-                                    return [4 /*yield*/, window.DTLoja.selecionarInterativamente('Selecione a loja para trabalhar')];
+                                    _a.trys.push([5, 10, , 12]);
+                                    return [4 /*yield*/, window.DTLoja.listar(true)];
                                 case 6:
-                                    lojaSelecionada = _a.sent();
+                                    lojasPermitidas = _a.sent();
+                                    window.DT_LOJAS_USUARIO_ATUAL = lojasPermitidas;
+                                    if (!lojasPermitidas.length)
+                                        throw new Error('Este login não possui acesso a nenhuma loja.');
+                                    if (!(lojasPermitidas.length === 1)) return [3 /*break*/, 7];
+                                    lojaSelecionada = window.setDTLojaAtiva(lojasPermitidas[0].id);
                                     return [3 /*break*/, 9];
-                                case 7:
-                                    e_3 = _a.sent();
-                                    _setBtn('ENTRAR', false);
-                                    return [4 /*yield*/, AUTH.signOut().catch(function () { })];
+                                case 7: return [4 /*yield*/, window.DTLoja.selecionarInterativamente('Selecione a loja para trabalhar', true)];
                                 case 8:
-                                    _a.sent();
-                                    _setFb('Não foi possível carregar as lojas: ' + e_3.message, 'err');
-                                    return [2 /*return*/];
-                                case 9:
-                                    if (!!lojaSelecionada) return [3 /*break*/, 11];
+                                    lojaSelecionada = _a.sent();
+                                    _a.label = 9;
+                                case 9: return [3 /*break*/, 12];
+                                case 10:
+                                    e_4 = _a.sent();
                                     _setBtn('ENTRAR', false);
                                     return [4 /*yield*/, AUTH.signOut().catch(function () { })];
-                                case 10:
+                                case 11:
+                                    _a.sent();
+                                    _setFb('Não foi possível carregar as lojas: ' + e_4.message, 'err');
+                                    return [2 /*return*/];
+                                case 12:
+                                    if (!!lojaSelecionada) return [3 /*break*/, 14];
+                                    _setBtn('ENTRAR', false);
+                                    return [4 /*yield*/, AUTH.signOut().catch(function () { })];
+                                case 13:
                                     _a.sent();
                                     _setFb('Selecione uma loja para continuar.', 'err');
                                     return [2 /*return*/];
-                                case 11:
-                                    _setBtn('Verificando aparelho…', true);
-                                    _a.label = 12;
-                                case 12:
-                                    _a.trys.push([12, 14, , 15]);
-                                    return [4 /*yield*/, registrarColetorNoFirestore({ email: user.email, name: name, uid: user.uid })];
-                                case 13:
-                                    status = _a.sent();
-                                    return [3 /*break*/, 15];
                                 case 14:
-                                    e_4 = _a.sent();
-                                    status = 'erro';
-                                    return [3 /*break*/, 15];
+                                    _setBtn('Verificando aparelho…', true);
+                                    _a.label = 15;
                                 case 15:
+                                    _a.trys.push([15, 17, , 18]);
+                                    return [4 /*yield*/, registrarColetorNoFirestore({ email: user.email, name: name, uid: user.uid })];
+                                case 16:
+                                    status = _a.sent();
+                                    return [3 /*break*/, 18];
+                                case 17:
+                                    e_5 = _a.sent();
+                                    status = 'erro';
+                                    return [3 /*break*/, 18];
+                                case 18:
                                     if (status === 'bloqueado') {
                                         _setBtn('ENTRAR', false);
                                         _mostrarTelaBloqueado();
@@ -317,20 +387,20 @@ function doLogin() {
                                         return [2 /*return*/];
                                     }
                                     opDoc = acessoGlobal;
-                                    _a.label = 16;
-                                case 16:
-                                    _a.trys.push([16, 18, , 19]);
+                                    _a.label = 19;
+                                case 19:
+                                    _a.trys.push([19, 21, , 22]);
                                     return [4 /*yield*/, FS.collection('dt_operadores').doc(user.uid).get()];
-                                case 17:
+                                case 20:
                                     opSnap = _a.sent();
                                     if (opSnap.exists)
                                         opDoc = opSnap.data() || null;
-                                    return [3 /*break*/, 19];
-                                case 18:
-                                    e_5 = _a.sent();
-                                    console.warn('[Coletor] Falha ao carregar acesso do operador:', e_5.message);
-                                    return [3 /*break*/, 19];
-                                case 19:
+                                    return [3 /*break*/, 22];
+                                case 21:
+                                    e_6 = _a.sent();
+                                    console.warn('[Coletor] Falha ao carregar acesso do operador:', e_6.message);
+                                    return [3 /*break*/, 22];
+                                case 22:
                                     APP.operador = {
                                         email: user.email,
                                         name: name,
@@ -353,6 +423,7 @@ function doLogin() {
                                     if (stInicio)
                                         stInicio.textContent = fmtTime(APP.sessionStart);
                                     _setBtn('ENTRAR', false);
+                                    _atualizarLojaColetorUI(window.DT_LOJAS_USUARIO_ATUAL || []);
                                     goScreen('mode');
                                     APP.modoAcesso = 'inventario';
                                     APP.modoPendente = 'inventario';

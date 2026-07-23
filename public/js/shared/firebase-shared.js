@@ -59,8 +59,10 @@ window.getDTFirestore = function(){
       if (prop === 'collection') {
         return function(nome){
           const path = String(nome || '');
-          // Somente lojas é global. Todo dado do inventário fica isolado por loja.
-          if (path === 'lojas' || path.startsWith('lojas/') || path === 'usuarios_acessos') return raw.collection(path);
+          // Coleções globais: cadastro de lojas, permissões de usuários e
+          // aprovação física dos dispositivos. A aprovação de um coletor é do
+          // navegador/aparelho, não da loja selecionada.
+          if (path === 'lojas' || path.startsWith('lojas/') || path === 'usuarios_acessos' || path === 'dt_coletores') return raw.collection(path);
           const lojaId = window.getDTLojaAtiva();
           if (!lojaId) throw new Error('Nenhuma loja selecionada. Selecione uma loja para continuar.');
           return raw.collection('lojas').doc(lojaId).collection(path);

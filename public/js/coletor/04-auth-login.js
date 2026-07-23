@@ -96,6 +96,47 @@ function doCriarConta() {
     .finally(() => { btn.disabled = false; btn.textContent = 'ENTRAR'; });
 }
 
+
+function _atualizarLojaColetorUI(lojas) {
+  lojas = Array.isArray(lojas) ? lojas : (window.DT_LOJAS_USUARIO_ATUAL || []);
+  const atual = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+  const loja = lojas.find(function(item){ return item && item.id === atual; }) || null;
+  const card = document.getElementById('coletor-loja-card');
+  const nome = document.getElementById('coletor-loja-nome');
+  const trocar = document.getElementById('coletor-trocar-loja');
+  if (card) card.style.display = loja ? '' : 'none';
+  if (nome) nome.textContent = loja ? (loja.nome || loja.id) : '—';
+  if (trocar) trocar.style.display = lojas.length > 1 ? '' : 'none';
+}
+
+async function trocarLojaColetor() {
+  const lojas = window.DT_LOJAS_USUARIO_ATUAL || [];
+  if (lojas.length <= 1) {
+    toast('Este login possui acesso somente a uma loja.', 'w');
+    return;
+  }
+  const anterior = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+  try {
+    const selecionada = await window.DTLoja.selecionarInterativamente('Escolha a loja para trabalhar', true);
+    if (!selecionada) return;
+    _atualizarLojaColetorUI(lojas);
+    if (selecionada !== anterior) {
+      APP.inventario = null;
+      APP.auditoria = null;
+      APP.lojaFiltroInventario = '';
+      APP.lojaFiltroAuditoria = '';
+      if (window.DTProdutos && typeof window.DTProdutos.limparCache === 'function') window.DTProdutos.limparCache();
+      goScreen('mode');
+      carregarInventarios();
+      carregarAuditoriasMenu();
+      toast('Loja alterada para ' + ((lojas.find(function(x){return x.id===selecionada;}) || {}).nome || selecionada) + '.', 's');
+    }
+  } catch (e) {
+    toast('Não foi possível trocar a loja: ' + (e.message || e), 'e');
+  }
+}
+window.trocarLojaColetor = trocarLojaColetor;
+
 async function doLogin() {
   const login = (document.getElementById('l-login')?.value || '').trim().toLowerCase();
   const pass  = document.getElementById('l-pass')?.value || '';
@@ -153,11 +194,20 @@ async function doLogin() {
         uid:user.uid, email:user.email, acesso_todas_lojas:true, lojas_permitidas:[]
       };
 
-      // Não reutiliza silenciosamente a loja de outro operador neste aparelho.
+      // Carrega as lojas permitidas. Uma única loja entra direto; duas ou
+      // mais exibem o seletor antes do menu principal.
       window.setDTLojaAtiva('');
       let lojaSelecionada = '';
+      let lojasPermitidas = [];
       try {
-        lojaSelecionada = await window.DTLoja.selecionarInterativamente('Selecione a loja para trabalhar');
+        lojasPermitidas = await window.DTLoja.listar(true);
+        window.DT_LOJAS_USUARIO_ATUAL = lojasPermitidas;
+        if (!lojasPermitidas.length) throw new Error('Este login não possui acesso a nenhuma loja.');
+        if (lojasPermitidas.length === 1) {
+          lojaSelecionada = window.setDTLojaAtiva(lojasPermitidas[0].id);
+        } else {
+          lojaSelecionada = await window.DTLoja.selecionarInterativamente('Selecione a loja para trabalhar', true);
+        }
       } catch (e) {
         _setBtn('ENTRAR', false);
         await AUTH.signOut().catch(()=>{});
@@ -224,6 +274,7 @@ async function doLogin() {
       const stInicio = document.getElementById('st-inicio'); if (stInicio) stInicio.textContent = fmtTime(APP.sessionStart);
 
       _setBtn('ENTRAR', false);
+      _atualizarLojaColetorUI(window.DT_LOJAS_USUARIO_ATUAL || []);
       goScreen('mode');
       APP.modoAcesso = 'inventario';
       APP.modoPendente = 'inventario';

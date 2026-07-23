@@ -112,8 +112,10 @@ window.getDTFirestore = function () {
             if (prop === 'collection') {
                 return function (nome) {
                     var path = String(nome || '');
-                    // Somente lojas é global. Todo dado do inventário fica isolado por loja.
-                    if (path === 'lojas' || path.startsWith('lojas/') || path === 'usuarios_acessos')
+                    // Coleções globais: cadastro de lojas, permissões de usuários e
+                    // aprovação física dos dispositivos. A aprovação de um coletor é do
+                    // navegador/aparelho, não da loja selecionada.
+                    if (path === 'lojas' || path.startsWith('lojas/') || path === 'usuarios_acessos' || path === 'dt_coletores')
                         return raw.collection(path);
                     var lojaId = window.getDTLojaAtiva();
                     if (!lojaId)
@@ -239,18 +241,19 @@ window.DTLoja = {
         });
     },
     selecionarInterativamente: function () {
-        return __awaiter(this, arguments, void 0, function (titulo) {
+        return __awaiter(this, arguments, void 0, function (titulo, forcarEscolha) {
             var lojas, atual;
             if (titulo === void 0) { titulo = 'Selecione a loja'; }
+            if (forcarEscolha === void 0) { forcarEscolha = false; }
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0: return [4 /*yield*/, this.garantirLojaInicial()];
                     case 1:
                         lojas = _a.sent();
                         atual = window.getDTLojaAtiva();
-                        if (atual && lojas.some(function (l) { return l.id === atual; }))
+                        if (!forcarEscolha && atual && lojas.some(function (l) { return l.id === atual; }))
                             return [2 /*return*/, atual];
-                        if (lojas.length === 1) {
+                        if (!forcarEscolha && lojas.length === 1) {
                             window.setDTLojaAtiva(lojas[0].id);
                             return [2 /*return*/, lojas[0].id];
                         }
@@ -263,6 +266,9 @@ window.DTLoja = {
                                 bg.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(3,10,18,.86);display:flex;align-items:center;justify-content:center;padding:20px';
                                 bg.innerHTML = "<div style=\"width:min(460px,95vw);background:#fff;color:#17202a;border-radius:16px;padding:24px;box-shadow:0 25px 70px rgba(0,0,0,.4)\">\n        <div style=\"font-size:1.15rem;font-weight:800;margin-bottom:6px\">\uD83C\uDFEA ".concat(titulo, "</div>\n        <div style=\"font-size:.82rem;color:#667085;margin-bottom:16px\">Cada loja possui invent\u00E1rios, coletores e dados separados.</div>\n        <select id=\"dt-loja-modal-select\" style=\"width:100%;padding:12px;border:1px solid #d0d5dd;border-radius:9px;font-size:.95rem\">").concat(lojas.map(function (l) { return "<option value=\"".concat(l.id, "\">").concat(l.nome || l.id).concat(l.codigo ? ' · ' + l.codigo : '', "</option>"); }).join(''), "</select>\n        <button id=\"dt-loja-modal-ok\" style=\"width:100%;margin-top:14px;padding:12px;border:0;border-radius:9px;background:#1e6f4e;color:#fff;font-weight:800;cursor:pointer\">ENTRAR NESTA LOJA</button>\n      </div>");
                                 document.body.appendChild(bg);
+                                var seletor = bg.querySelector('#dt-loja-modal-select');
+                                if (atual && lojas.some(function (l) { return l.id === atual; }))
+                                    seletor.value = atual;
                                 bg.querySelector('#dt-loja-modal-ok').onclick = function () { var id = bg.querySelector('#dt-loja-modal-select').value; window.setDTLojaAtiva(id); bg.remove(); resolve(id); };
                             })];
                     case 2: return [2 /*return*/, _a.sent()];

@@ -303,6 +303,22 @@
   window.finalizarAuditoriaOperacional=finalizar;
   window.exportarAuditoriaOperacional=exportar;
   window.renderAuditoriaOperacional=renderizar;
+  window.encerrarListenerAuditoriaPorTrocaLoja=function(){
+    encerrarListener();
+    auditoriaAtual='';
+    metaAtual=null;
+    itensAtuais=[];
+  };
+  window.recarregarAuditoriaAposTrocaLoja=async function(){
+    encerrarListener();
+    auditoriaAtual='';
+    metaAtual=null;
+    itensAtuais=[];
+    await popularSelect();
+    const sel=document.getElementById('aud-op-auditoria');
+    const first=(sel&&sel.value)||'';
+    if(first) await selecionarAuditoria(first); else renderizar();
+  };
 
   document.addEventListener('DOMContentLoaded', async () => {
     const sel=document.getElementById('aud-op-auditoria');

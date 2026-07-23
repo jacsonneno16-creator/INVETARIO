@@ -1,37 +1,15 @@
 {
-  "hosting": {
-    "public": "public",
-    "ignore": [
-      "firebase.json",
-      "**/.*",
-      "**/node_modules/**"
-    ],
-    "headers": [
-      {
-        "source": "**/*.@(html|js|webmanifest)",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
-          }
-        ]
-      },
-      {
-        "source": "/sw.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          },
-          {
-            "key": "Service-Worker-Allowed",
-            "value": "/"
-          }
-        ]
-      }
-    ]
+  "compilerOptions": {
+    "target": "ES5",
+    "module": "none",
+    "allowJs": true,
+    "checkJs": false,
+    "outDir": "public/js-legacy",
+    "removeComments": false,
+    "downlevelIteration": false,
+    "noEmitOnError": false,
+    "skipLibCheck": true,
+    "lib": ["DOM", "ES2015", "ES2016.Array.Include", "ES2017.Object", "ES2018.Promise"]
   },
-  "firestore": {
-    "rules": "public/firestore.rules"
-  }
+  "include": ["legacy-src/js/**/*.js"]
 }

@@ -945,7 +945,10 @@
 </div>
 </div>
 <div class="topbar-actions">
-<button class="btn btn-ghost btn-sm" onclick="trocarLojaInventario()" title="Trocar ambiente"><span>🏪</span> <span id="dt-loja-atual-label">Loja</span> ▾</button>
+<div id="dt-loja-switcher" style="position:relative">
+<button class="btn btn-ghost btn-sm" id="dt-loja-switcher-btn" onclick="trocarLojaInventario(event)" title="Trocar ambiente" aria-haspopup="true" aria-expanded="false"><span>🏪</span> <span id="dt-loja-atual-label">Loja</span> ▾</button>
+<div id="dt-loja-switcher-menu" style="display:none;position:absolute;right:0;top:calc(100% + 7px);z-index:1200;min-width:245px;max-width:330px;background:var(--surface,#fff);border:1px solid var(--border,#dfe3e8);border-radius:12px;box-shadow:0 14px 35px rgba(15,23,42,.18);padding:7px"></div>
+</div>
 <button class="btn btn-ghost btn-sm" id="btn-inv-ativo" onclick="goPage('acompanhamento',document.getElementById('nav-acompanhamento'))" style="display:none">
         🟢 <span id="inv-ativo-nome">—</span>
 </button>

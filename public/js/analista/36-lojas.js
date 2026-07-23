@@ -23,7 +23,7 @@
     try{await raw().collection('lojas').doc(id).set({nome,codigo,ativa:document.getElementById('ml-ativa').value==='true',atualizada_em:new Date().toISOString(),...(atualId?{}:{criada_em:new Date().toISOString()})},{merge:true});closeModal('modal-loja-cadastro');showToast('Loja salva com sucesso','success');renderGestaoLojas();}
     catch(e){showToast('Erro ao salvar loja: '+e.message,'error');}
   }
-  function usarLoja(id){if(id===global.getDTLojaAtiva())return;global.setDTLojaAtiva(id);location.reload();}
+  async function usarLoja(id){if(id===global.getDTLojaAtiva())return;if(typeof global.aplicarTrocaLojaAnalista==='function'){await global.aplicarTrocaLojaAnalista(id);await renderGestaoLojas();return;}global.setDTLojaAtiva(id);await renderGestaoLojas();}
 
   function _pausarMigracao(ms){
     return new Promise(function(resolve){ setTimeout(resolve, ms); });
