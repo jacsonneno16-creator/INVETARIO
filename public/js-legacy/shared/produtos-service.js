@@ -110,26 +110,68 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                     return [2 /*return*/, cache.lista];
                 if (cache.carregando)
                     return [2 /*return*/, cache.carregando];
-                cache.carregando = (function () { return __awaiter(_this, void 0, void 0, function () { var fs, snap, e_1; return __generator(this, function (_a) {
-                    switch (_a.label) {
-                        case 0:
-                            _a.trys.push([0, 2, 3, 4]);
-                            fs = global.getDTFirestore();
-                            return [4 /*yield*/, fs.collection((global.DT_FCOL && global.DT_FCOL.produtos) || 'dt_produtos').get()];
-                        case 1:
-                            snap = _a.sent();
-                            return [2 /*return*/, indexar(snap.docs.map(function (d) { return (__assign({ id: d.id }, d.data())); }))];
-                        case 2:
-                            e_1 = _a.sent();
-                            console.warn('[Produtos] Falha ao carregar base:', e_1);
-                            carregarLocal();
-                            return [2 /*return*/, cache.lista];
-                        case 3:
-                            cache.carregando = null;
-                            return [7 /*endfinally*/];
-                        case 4: return [2 /*return*/];
-                    }
-                }); }); })();
+                cache.carregando = (function () { return __awaiter(_this, void 0, void 0, function () {
+                    var fs, versaoKey, versaoServidor, meta, _e_1, versaoLocal, chunks, rows_1, snap, result, e_1;
+                    return __generator(this, function (_a) {
+                        switch (_a.label) {
+                            case 0:
+                                _a.trys.push([0, 9, 10, 11]);
+                                fs = global.getDTFirestore();
+                                versaoKey = 'dt_produtos_versao__' + loja;
+                                versaoServidor = '';
+                                _a.label = 1;
+                            case 1:
+                                _a.trys.push([1, 3, , 4]);
+                                return [4 /*yield*/, fs.collection('dt_produtos_meta').doc('versao').get()];
+                            case 2:
+                                meta = _a.sent();
+                                if (meta.exists)
+                                    versaoServidor = texto(meta.data().versao || meta.data().atualizadoEm || '');
+                                return [3 /*break*/, 4];
+                            case 3:
+                                _e_1 = _a.sent();
+                                return [3 /*break*/, 4];
+                            case 4:
+                                versaoLocal = localStorage.getItem(versaoKey) || '';
+                                if (!force && versaoServidor && versaoLocal === versaoServidor) {
+                                    carregarLocal();
+                                    if (cache.carregado && cache.loja === loja)
+                                        return [2 /*return*/, cache.lista];
+                                }
+                                return [4 /*yield*/, fs.collection('dt_produtos_chunks').orderBy('parte').get()];
+                            case 5:
+                                chunks = _a.sent();
+                                rows_1 = [];
+                                if (!!chunks.empty) return [3 /*break*/, 6];
+                                chunks.docs.forEach(function (d) { var x = d.data() || {}; var itens = x.itens || x.dados || x.registros || []; rows_1 = rows_1.concat(itens); });
+                                console.log('[Produtos] Base carregada em chunks:', chunks.docs.length, 'documentos /', rows_1.length, 'produtos');
+                                return [3 /*break*/, 8];
+                            case 6: return [4 /*yield*/, fs.collection((global.DT_FCOL && global.DT_FCOL.produtos) || 'dt_produtos').get()];
+                            case 7:
+                                snap = _a.sent();
+                                rows_1 = snap.docs.map(function (d) { return (__assign({ id: d.id }, d.data())); });
+                                console.warn('[Produtos] Chunks ausentes; usando coleção individual:', rows_1.length);
+                                _a.label = 8;
+                            case 8:
+                                result = indexar(rows_1);
+                                if (versaoServidor)
+                                    try {
+                                        localStorage.setItem(versaoKey, versaoServidor);
+                                    }
+                                    catch (_e) { }
+                                return [2 /*return*/, result];
+                            case 9:
+                                e_1 = _a.sent();
+                                console.warn('[Produtos] Falha ao carregar base:', e_1);
+                                carregarLocal();
+                                return [2 /*return*/, cache.lista];
+                            case 10:
+                                cache.carregando = null;
+                                return [7 /*endfinally*/];
+                            case 11: return [2 /*return*/];
+                        }
+                    });
+                }); })();
                 return [2 /*return*/, cache.carregando];
             });
         });

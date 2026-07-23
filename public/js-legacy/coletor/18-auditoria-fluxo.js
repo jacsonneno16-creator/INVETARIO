@@ -345,12 +345,16 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             dunEsperado: esperado,
                             produtoEsperado: descricaoEsperada(item),
                             dunLido: lido,
+                            dun_lido: lido,
+                            codigoLido: lido,
                             produtoLido: nomeLido,
+                            produto_lido: nomeLido,
                             produtoNaoCadastrado: status !== STATUS_VAZIO && !(window.DTProdutos && window.DTProdutos.buscarSync && window.DTProdutos.buscarSync(lido).encontrado),
                             status: status,
                             operadorId: operadorUsuario(),
                             operadorNome: operadorNome(),
                             lidoEm: momento,
+                            lido_em: momento,
                             loja: lojaAtual(),
                             observacao: '',
                             disponivel_coletor: false,
@@ -385,9 +389,17 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                     case 3:
                         error_1 = _a.sent();
                         console.error('[AUDITORIA] Erro ao salvar resultado:', error_1);
-                        mostrarResultado('Não foi possível salvar a auditoria.', 'erro');
-                        tocar('erro');
-                        setProcessando(false);
+                        try {
+                            var chave = 'dt_auditoria_fila_' + lojaAtual();
+                            var fila = JSON.parse(localStorage.getItem(chave) || '[]').filter(function (x) { return x.docId !== docId; });
+                            fila.push({ docId: docId, auditoriaId: auditoriaId(), payload: payload });
+                            localStorage.setItem(chave, JSON.stringify(fila));
+                        } catch (e) {}
+                        APP.auditorias = (APP.auditorias || []).filter(function (a) { return documentoId(a) !== docId; });
+                        atualizarContadorTitulo();
+                        mostrarResultado('Auditoria salva no coletor. Será enviada quando houver conexão.', 'vazio');
+                        tocar('vazio');
+                        estado.timerRetorno = setTimeout(irParaEndereco, 900);
                         return [3 /*break*/, 4];
                     case 4: return [2 /*return*/];
                 }

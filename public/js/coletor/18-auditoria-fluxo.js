@@ -218,6 +218,24 @@
     return texto(item?.id || `${auditoriaId()}__${normalizarEndereco(item?.endereco)}`);
   }
 
+
+  function chaveFilaAuditoria(){ return 'dt_auditoria_fila_' + lojaAtual(); }
+  function lerFilaAuditoria(){ try { return JSON.parse(localStorage.getItem(chaveFilaAuditoria()) || '[]'); } catch(e) { return []; } }
+  function gravarFilaAuditoria(fila){ try { localStorage.setItem(chaveFilaAuditoria(), JSON.stringify(fila || [])); } catch(e) {} }
+  function enfileirarAuditoria(docId,payload){ const fila=lerFilaAuditoria().filter(x=>x.docId!==docId); fila.push({docId:docId,auditoriaId:auditoriaId(),payload:payload}); gravarFilaAuditoria(fila); }
+  async function sincronizarFilaAuditoria(){
+    const fila=lerFilaAuditoria(); if(!fila.length || !navigator.onLine) return;
+    const restantes=[];
+    for(let i=0;i<fila.length;i++){
+      const x=fila[i];
+      try { await FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection('enderecos').doc(x.docId).set(x.payload,{merge:true}); }
+      catch(e){ restantes.push(x); }
+    }
+    gravarFilaAuditoria(restantes);
+  }
+  window.sincronizarFilaAuditoria=sincronizarFilaAuditoria;
+  window.addEventListener('online',function(){ sincronizarFilaAuditoria(); });
+
   async function salvarResultado(status, produtoLido){
     if (estado.processando || !estado.item) return;
     const item = estado.item;
@@ -239,12 +257,16 @@
       dunEsperado: esperado,
       produtoEsperado: descricaoEsperada(item),
       dunLido: lido,
+      dun_lido: lido,
+      codigoLido: lido,
       produtoLido: nomeLido,
+      produto_lido: nomeLido,
       produtoNaoCadastrado: status !== STATUS_VAZIO && !(window.DTProdutos && window.DTProdutos.buscarSync && window.DTProdutos.buscarSync(lido).encontrado),
       status,
       operadorId: operadorUsuario(),
       operadorNome: operadorNome(),
       lidoEm: momento,
+      lido_em: momento,
       loja: lojaAtual(),
       observacao: '',
       disponivel_coletor: false,
@@ -275,9 +297,12 @@
       estado.timerRetorno = setTimeout(irParaEndereco, 900);
     } catch(error) {
       console.error('[AUDITORIA] Erro ao salvar resultado:', error);
-      mostrarResultado('Não foi possível salvar a auditoria.', 'erro');
-      tocar('erro');
-      setProcessando(false);
+      enfileirarAuditoria(docId,payload);
+      APP.auditorias = (APP.auditorias || []).filter(a => documentoId(a) !== docId);
+      atualizarContadorTitulo();
+      mostrarResultado('Auditoria salva no coletor. Será enviada quando houver conexão.', 'vazio');
+      tocar('vazio');
+      estado.timerRetorno = setTimeout(irParaEndereco, 900);
     }
   }
 
@@ -346,6 +371,7 @@
 
     try {
       goScreen('app');
+      sincronizarFilaAuditoria().catch(function(){});
       if (window._carregarBaseGeralEnderecosAuditoria) window._carregarBaseGeralEnderecosAuditoria(false).catch(function(){});
       const lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
       let cacheAuditoria = [];
