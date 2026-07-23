@@ -677,7 +677,7 @@ function renderRecontagens() {
     if (!ex || (r.numero_recontagem || 1) > (ex.numero_recontagem || 1)) _recPorDiv[key] = r;
   });
   let dados = Object.values(_recPorDiv);
-  if (fInv)    dados = dados.filter(r => r.inventario_id === fInv);
+  if (fInv)    dados = dados.filter(r => String(r.inventario_id || r.inventarioId || '') === String(fInv));
   if (fStatus) dados = dados.filter(r => r.status === fStatus);
   if (fRua)    dados = dados.filter(r => (getEnderecoInfo(r.endereco)?.rua || '—') === fRua);
 

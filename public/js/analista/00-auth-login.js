@@ -286,7 +286,29 @@ function logAuditoria(tipo, descricao, dados) {
 }
 function logSistema(tipo, desc, dados) { return logAuditoria(tipo, desc, dados); }
 
-function atualizarBadgesNav(){}
+function atualizarBadgesNav(){
+  try {
+    const st = window.AnalistaStore?.getState?.() || {};
+    const conts = (st.contagens || []).filter(c => !c._excluida && c.status !== 'ESTORNADA');
+    const divs  = (st.divergencias || []).filter(d => !['RESOLVIDA','CANCELADA'].includes(String(d.status||'').toUpperCase()));
+    const recs  = (st.recontagens || []).filter(r => !['CONCLUIDA','CANCELADA','RESOLVIDA'].includes(String(r.status||'').toUpperCase()));
+    const invs  = st.inventarios || [];
+    const ativos = new Set(['ATIVO','ABERTO','PUBLICADO','LIBERADO','EM_ANDAMENTO','PAUSADO']);
+    const invAtivos = invs.filter(i => ativos.has(String(i.status||'').toUpperCase()));
+    let pend = 0;
+    invAtivos.forEach(inv => {
+      const ids = Array.isArray(inv.enderecos_selecionados) ? inv.enderecos_selecionados : [];
+      if (!ids.length) return;
+      const feitos = new Set(conts.filter(c => String(c.inventario_id||c.inventarioId||'')===String(inv.id)).map(c => String(c.endereco||'')));
+      pend += ids.filter(e => !feitos.has(String(typeof e==='string'?e:(e.endereco||e.id||'')))).length;
+    });
+    const set=(id,v)=>{const el=document.getElementById(id);if(el)el.textContent=String(v)};
+    set('nb-contagens', conts.length);
+    set('nb-pendencias', pend);
+    set('nb-divergencias', divs.length);
+    set('nb-recontagens', recs.length);
+  } catch(e) { console.warn('[Badges inventário]', e.message); }
+}
 
 function updateStaticTexts(){}
 

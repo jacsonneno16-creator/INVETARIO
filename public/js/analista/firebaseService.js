@@ -38,6 +38,19 @@
     } else {
       global.AnalistaStore.dispatch(Actions.upsertEntity(slice, normalized, { source: 'firebase', collection }));
     }
+    try {
+      const Storage = global.AnalistaStorage;
+      const st = global.AnalistaStore.getState();
+      if (Storage?.storageSave) {
+        if (slice === 'contagens') Storage.storageSave(Storage.KEYS.contagens, st.contagens || []);
+        if (slice === 'recontagens') Storage.storageSave(Storage.KEYS.recontagens, st.recontagens || []);
+      }
+      if (typeof global.atualizarBadgesNav === 'function') global.atualizarBadgesNav();
+      const page = global.AnalistaStore.getState()?.ui?.currentPage;
+      if (['contagens','pendencias','divergencias','recontagens','acompanhamento'].includes(page)) {
+        global.AnalistaNavigation?.renderCurrentPage?.();
+      }
+    } catch (_) {}
   }
 
   

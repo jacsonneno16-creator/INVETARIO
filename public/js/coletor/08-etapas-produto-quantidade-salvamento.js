@@ -16,19 +16,27 @@ function _capaExisteNaBase(val) {
 }
 
 function _validarCapaInformada(val) {
-  const n = _capaNumero(val);
-  if (!val || isNaN(n) || n < 1) return { ok:false, msg:'Capa Palete inválida' };
+  const texto = String(val == null ? '' : val).replace(/\D/g, '');
+  const n = _capaNumero(texto);
+  if (!texto || isNaN(n) || n < 1) return { ok:false, msg:'Capa Palete inválida' };
 
-  // Capa já existente na base do inventário: aceita normalmente, mesmo fora do range.
-  if (_capaExisteNaBase(val)) return { ok:true, existente:true, n };
+  // Capas físicas/padrão com exatamente 7 dígitos são sempre permitidas.
+  // Elas não usam o range reservado do operador.
+  if (texto.length === 7) {
+    return { ok:true, existente:_capaExisteNaBase(texto), manualSeteDigitos:true, n, valor:texto };
+  }
 
-  // Capa não encontrada na base: só pode ser uma capa nova dentro do range reservado.
-  const range = APP.capaRange;
-  if (!range || !range.min || !range.max) return { ok:false, msg:'Range do operador ainda não foi reservado. Atualize a base e tente novamente.' };
-  if (n < range.min || n > range.max) return { ok:false, msg:`Capa não encontrada no inventário e fora do seu range (${String(range.min).padStart(3,'0')}–${String(range.max).padStart(3,'0')})` };
-  return { ok:true, existente:false, nova:true, n };
+  // Qualquer capa com menos de 7 dígitos representa uma capa criada pelo sistema
+  // e precisa obrigatoriamente pertencer ao range reservado do operador.
+  if (texto.length < 7) {
+    const range = APP.capaRange;
+    if (!range || !range.min || !range.max) return { ok:false, msg:'Range do operador ainda não foi reservado. Atualize a base e tente novamente.' };
+    if (n < range.min || n > range.max) return { ok:false, msg:`Capas com menos de 7 dígitos só podem ser usadas dentro do seu range (${String(range.min).padStart(3,'0')}–${String(range.max).padStart(3,'0')})` };
+    return { ok:true, existente:_capaExisteNaBase(texto), nova:!_capaExisteNaBase(texto), n, valor:String(n).padStart(3,'0') };
+  }
+
+  return { ok:false, msg:'A capa deve ter exatamente 7 dígitos ou estar dentro do range reservado.' };
 }
-
 function onCapaInput() {
   const elCapa = document.getElementById('f-capa');
   elCapa.value = elCapa.value.replace(/\D/g, '').slice(0, 7);
@@ -42,9 +50,11 @@ function onCapaInput() {
     elCapa.className = 'field field-err';
     return;
   }
-  fb.innerHTML = v.existente
-    ? `<div class="fb ok">✓ Capa existente no inventário: ${val}</div>`
-    : `<div class="fb info">⚡ Nova capa dentro do seu range: ${String(v.n).padStart(3,'0')}</div>`;
+  fb.innerHTML = v.manualSeteDigitos
+    ? `<div class="fb ok">✓ Capa de 7 dígitos aceita: ${v.valor}</div>`
+    : (v.existente
+      ? `<div class="fb ok">✓ Capa dentro do seu range: ${v.valor}</div>`
+      : `<div class="fb info">⚡ Nova capa dentro do seu range: ${v.valor}</div>`);
   elCapa.className = 'field field-ok';
 }
 
@@ -54,7 +64,7 @@ function confirmarCapa() {
   const v = _validarCapaInformada(val);
   if (!v.ok) { toast(v.msg, 'e'); beepErr(); return; }
 
-  const capaFinal = v.existente ? val : String(v.n).padStart(3, '0');
+  const capaFinal = v.manualSeteDigitos ? v.valor : (v.valor || String(v.n).padStart(3, '0'));
   input.value = capaFinal;
   beepSuave();
   APP.atual.capa = capaFinal;

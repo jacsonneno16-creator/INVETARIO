@@ -21,8 +21,8 @@ function renderContagens() {
     if (cur) selInv.value = cur;
   }
 
-  let dados = state().contagens;
-  if (fInv)    dados = dados.filter(c => c.inventario_id === fInv);
+  let dados = state().contagens || [];
+  if (fInv)    dados = dados.filter(c => String(c.inventario_id || c.inventarioId || '') === String(fInv));
   if (fTipo)   dados = dados.filter(c => c.tipo_contagem === fTipo);
   if (fStatus) {
     if (fStatus === 'DIVERGENTE') {
@@ -161,15 +161,15 @@ function renderPendencias() {
   // Preencher select de inventários
   if (selInv) {
     const cur = selInv.value;
-    selInv.innerHTML = '<option value="">Selecione uma auditoria...</option>' +
-      state().inventarios.filter(i => i.status === 'ATIVO' || i.enderecos_selecionados?.length).map(i =>
+    selInv.innerHTML = '<option value="">Selecione um inventário...</option>' +
+      state().inventarios.filter(i => ['ATIVO','ABERTO','PUBLICADO','LIBERADO','EM_ANDAMENTO','PAUSADO'].includes(String(i.status||'').toUpperCase()) || i.enderecos_selecionados?.length).map(i =>
         `<option value="${i.id}" ${i.id === cur ? 'selected' : ''}>${i.codigo} — ${i.nome}</option>`
       ).join('');
     if (cur) selInv.value = cur;
   }
 
   if (!invId) {
-    document.getElementById('pend-table-wrap').innerHTML = `<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Selecione uma auditoria</div></div>`;
+    document.getElementById('pend-table-wrap').innerHTML = `<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Selecione um inventário</div></div>`;
     ['pk-total','pk-contados','pk-pendentes','pk-pct'].forEach(id => document.getElementById(id).textContent = '—');
     return;
   }
@@ -178,12 +178,19 @@ function renderPendencias() {
   if (!inv) return;
 
   // Usar state().enderecosLista como base oficial de endereços
-  const conts   = state().contagens.filter(c => c.inventario_id === invId && !c._excluida);
+  const conts   = (state().contagens || []).filter(c => String(c.inventario_id || c.inventarioId || '') === String(invId) && !c._excluida && c.status !== 'ESTORNADA');
   const endsContadosSet = new Set(conts.filter(c => !_isVazio(c)).map(c => c.endereco));
   const endsVaziosConfSet = new Set(conts.filter(c => _isVazio(c) && c.status !== 'ESTORNADA').map(c => c.endereco));
 
-  // Enriquecer state().enderecosLista com status de contagem
-  const lista = state().enderecosLista.map(e => {
+  // Usar somente os endereços pertencentes ao inventário selecionado.
+  const selecionados = Array.isArray(inv.enderecos_selecionados) ? inv.enderecos_selecionados : [];
+  const selecionadosSet = new Set(selecionados.map(x => String(typeof x === 'string' ? x : (x.endereco || x.id || ''))).filter(Boolean));
+  const baseInventario = selecionadosSet.size
+    ? (state().enderecosLista || []).filter(e => selecionadosSet.has(String(e.endereco || e.id || '')))
+    : (Array.isArray(inv.base) && inv.base.length ? inv.base : (state().enderecosLista || []));
+
+  // Enriquecer a base do inventário com status de contagem
+  const lista = baseInventario.map(e => {
     const endInfo  = e; // já é o objeto completo do ENDDB
     const contado  = endsContadosSet.has(e.endereco);
     const vazioConf = endsVaziosConfSet.has(e.endereco);
@@ -283,7 +290,7 @@ function renderPendencias() {
   if (endCountEl) endCountEl.textContent = `${pendentes} endereço(s) aguardando de ${total} total`;
 
   // ── SEÇÃO: Recontagens pendentes ──────────────────────────────────
-  const recPend = state().recontagens.filter(r => r.inventario_id === invId && r.status === 'PENDENTE');
+  const recPend = (state().recontagens || []).filter(r => String(r.inventario_id || r.inventarioId || '') === String(invId) && String(r.status || '').toUpperCase() === 'PENDENTE');
   const recSec = document.getElementById('pend-rec-section');
   const pkRecPend = document.getElementById('pk-rec-pend');
   if (pkRecPend) pkRecPend.textContent = recPend.length.toLocaleString('pt-BR');
@@ -317,7 +324,7 @@ function renderPendencias() {
   }
 
   // ── SEÇÃO: Divergências abertas ──────────────────────────────────
-  const divAbertas = state().divergencias.filter(d => d.inventario_id === invId && d.status === 'ABERTA');
+  const divAbertas = (state().divergencias || []).filter(d => String(d.inventario_id || d.inventarioId || '') === String(invId) && ['ABERTA','DIVERGENTE','PENDENTE','PERSISTENTE'].includes(String(d.status || '').toUpperCase()));
   const divSec = document.getElementById('pend-div-section');
   const pkDivAbertas = document.getElementById('pk-div-abertas');
   if (pkDivAbertas) pkDivAbertas.textContent = divAbertas.length.toLocaleString('pt-BR');
