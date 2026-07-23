@@ -136,7 +136,38 @@ async function registrarColetorNoFirestore(operadorInfo) {
   const ip = null;
 
   try {
-    const snap = await ref.get();
+    let snap = await ref.get();
+
+    // Compatibilidade com versões antigas: a aprovação era salva dentro de
+    // lojas/{lojaId}/dt_coletores. Se o documento global ainda não existe,
+    // procura o mesmo device_id nas lojas permitidas e reaproveita a aprovação.
+    if (!snap.exists) {
+      try {
+        const lojas = Array.isArray(window.DT_LOJAS_USUARIO_ATUAL) ? window.DT_LOJAS_USUARIO_ATUAL : [];
+        for (const loja of lojas) {
+          const antiga = await window.getDTRawFirestore().collection('lojas').doc(loja.id).collection(FCOL.coletores).doc(deviceId).get();
+          if (!antiga.exists) continue;
+          const legado = antiga.data() || {};
+          if (legado.aprovado === 'aprovado' || legado.status === 'aprovado') {
+            await ref.set(Object.assign({}, legado, {
+              device_id: deviceId,
+              aprovado: 'aprovado',
+              status: 'online',
+              migrado_aprovacao_global_em: ST()
+            }), { merge: true });
+            snap = await ref.get();
+            break;
+          }
+          if (legado.aprovado === 'bloqueado') {
+            await ref.set(Object.assign({}, legado, {device_id:deviceId, aprovado:'bloqueado'}), {merge:true});
+            snap = await ref.get();
+            break;
+          }
+        }
+      } catch (compatError) {
+        console.warn('[Coletor] Não foi possível consultar aprovação antiga:', compatError.message);
+      }
+    }
 
     // ── APARELHO NOVO ────────────────────────────────────────────────────
     if (!snap.exists) {

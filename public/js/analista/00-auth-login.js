@@ -142,6 +142,13 @@ async function _onAnalistaLogado(user) {
     if (atual && !permitidas.some(l=>l.id===atual)) window.setDTLojaAtiva('');
     await window.DTLoja.selecionarInterativamente('Selecione a loja do inventário');
 
+    // Corrige uma única vez filiais que receberam dados da raiz por engano nas
+    // versões anteriores. A Loja Matriz nunca é limpa por esta rotina.
+    if (typeof window.corrigirIsolamentoLojaAtual === 'function') {
+      const correcao = await window.corrigirIsolamentoLojaAtual();
+      if (correcao && correcao.corrigido) console.info('[Multiloja] Isolamento corrigido:', correcao.total);
+    }
+
     // A migração dos dados legados não deve bloquear o login nem iniciar
     // múltiplas filas de escrita. Ela é disparada depois que o painel abre,
     // com trava única, checkpoints e lotes pequenos.
@@ -194,29 +201,13 @@ function _mostrarLogin() {
 async function _iniciarAuthAnalista() {
   _loginSolicitadoPeloUsuario = false;
   _mostrarLogin();
-
-  const email = document.getElementById('an-email');
-  const senha = document.getElementById('an-pass');
-  if (email) email.value = '';
-  if (senha) senha.value = '';
   _carregarLoginLembrado();
 
-  try {
-    await AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE);
-    await AUTH_AN.signOut();
-  } catch (e) {
-    console.warn('[Auth] Limpeza da sessão anterior:', e.message);
-  }
-
   AUTH_AN.onAuthStateChanged(async user => {
-    if (user && _loginSolicitadoPeloUsuario) {
+    if (user) {
       _loginSolicitadoPeloUsuario = false;
-      _onAnalistaLogado(user);
+      await _onAnalistaLogado(user);
       return;
-    }
-    if (user && !_loginSolicitadoPeloUsuario) {
-      // Proteção extra contra login restaurado pelo navegador/Firebase.
-      try { await AUTH_AN.signOut(); } catch (_) {}
     }
     _mostrarLogin();
   });

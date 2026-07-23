@@ -204,7 +204,7 @@ var _heartbeatInterval = null;
  */
 function registrarColetorNoFirestore(operadorInfo) {
     return __awaiter(this, void 0, void 0, function () {
-        var deviceId, ref, ip, snap, numero, dados, e_1;
+        var deviceId, ref, ip, snap, lojas, _i, lojas_1, loja, antiga, legado, compatError_1, numero, dados, e_1;
         var _a, _b;
         return __generator(this, function (_c) {
             switch (_c.label) {
@@ -214,11 +214,58 @@ function registrarColetorNoFirestore(operadorInfo) {
                     ip = null;
                     _c.label = 1;
                 case 1:
-                    _c.trys.push([1, 8, , 9]);
+                    _c.trys.push([1, 20, , 21]);
                     return [4 /*yield*/, ref.get()];
                 case 2:
                     snap = _c.sent();
-                    if (!!snap.exists) return [3 /*break*/, 4];
+                    if (!!snap.exists) return [3 /*break*/, 14];
+                    _c.label = 3;
+                case 3:
+                    _c.trys.push([3, 13, , 14]);
+                    lojas = Array.isArray(window.DT_LOJAS_USUARIO_ATUAL) ? window.DT_LOJAS_USUARIO_ATUAL : [];
+                    _i = 0, lojas_1 = lojas;
+                    _c.label = 4;
+                case 4:
+                    if (!(_i < lojas_1.length)) return [3 /*break*/, 12];
+                    loja = lojas_1[_i];
+                    return [4 /*yield*/, window.getDTRawFirestore().collection('lojas').doc(loja.id).collection(FCOL.coletores).doc(deviceId).get()];
+                case 5:
+                    antiga = _c.sent();
+                    if (!antiga.exists)
+                        return [3 /*break*/, 11];
+                    legado = antiga.data() || {};
+                    if (!(legado.aprovado === 'aprovado' || legado.status === 'aprovado')) return [3 /*break*/, 8];
+                    return [4 /*yield*/, ref.set(Object.assign({}, legado, {
+                            device_id: deviceId,
+                            aprovado: 'aprovado',
+                            status: 'online',
+                            migrado_aprovacao_global_em: ST()
+                        }), { merge: true })];
+                case 6:
+                    _c.sent();
+                    return [4 /*yield*/, ref.get()];
+                case 7:
+                    snap = _c.sent();
+                    return [3 /*break*/, 12];
+                case 8:
+                    if (!(legado.aprovado === 'bloqueado')) return [3 /*break*/, 11];
+                    return [4 /*yield*/, ref.set(Object.assign({}, legado, { device_id: deviceId, aprovado: 'bloqueado' }), { merge: true })];
+                case 9:
+                    _c.sent();
+                    return [4 /*yield*/, ref.get()];
+                case 10:
+                    snap = _c.sent();
+                    return [3 /*break*/, 12];
+                case 11:
+                    _i++;
+                    return [3 /*break*/, 4];
+                case 12: return [3 /*break*/, 14];
+                case 13:
+                    compatError_1 = _c.sent();
+                    console.warn('[Coletor] Não foi possível consultar aprovação antiga:', compatError_1.message);
+                    return [3 /*break*/, 14];
+                case 14:
+                    if (!!snap.exists) return [3 /*break*/, 16];
                     numero = deviceId.slice(-4).toUpperCase();
                     return [4 /*yield*/, ref.set({
                             device_id: deviceId,
@@ -236,27 +283,27 @@ function registrarColetorNoFirestore(operadorInfo) {
                             contagens_pendentes: 0,
                             versao_app: (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '2.0.0')
                         }, { merge: true })];
-                case 3:
+                case 15:
                     _c.sent();
                     // IP é enriquecimento opcional e assíncrono; nunca bloqueia o login.
                     obterIPPublico().then(function (v) { return v && ref.set({ ip: v }, { merge: true }); }).catch(function () { });
                     dbg('[Coletor] Novo aparelho registrado como Coletor', numero, '— pendente — ID:', deviceId);
                     return [2 /*return*/, 'pendente'];
-                case 4:
+                case 16:
                     dados = snap.data();
                     if (dados.aprovado === 'bloqueado') {
                         console.warn('[Coletor] Aparelho bloqueado — acesso negado.');
                         return [2 /*return*/, 'bloqueado'];
                     }
-                    if (!(dados.aprovado !== 'aprovado')) return [3 /*break*/, 6];
+                    if (!(dados.aprovado !== 'aprovado')) return [3 /*break*/, 18];
                     // Atualiza operador_atual e ping mesmo estando pendente (analista vê quem tentou)
                     return [4 /*yield*/, ref.set({ operador_atual: operadorInfo.name, operador_email: operadorInfo.email || null, operador_uid: operadorInfo.uid || null, ultimo_ping: ST() }, { merge: true })];
-                case 5:
+                case 17:
                     // Atualiza operador_atual e ping mesmo estando pendente (analista vê quem tentou)
                     _c.sent();
                     dbg('[Coletor] Aparelho pendente — acesso aguardando aprovacao.');
                     return [2 /*return*/, 'pendente'];
-                case 6: 
+                case 18: 
                 // APROVADO: atualizar operador e sessão (nunca cria novo doc)
                 return [4 /*yield*/, ref.set({
                         operador_atual: operadorInfo.name,
@@ -270,18 +317,18 @@ function registrarColetorNoFirestore(operadorInfo) {
                             login_em: ST(),
                         },
                     }, { merge: true })];
-                case 7:
+                case 19:
                     // APROVADO: atualizar operador e sessão (nunca cria novo doc)
                     _c.sent();
                     obterIPPublico().then(function (v) { return v && ref.set({ ip: v }, { merge: true }); }).catch(function () { });
                     dbg('[Coletor] Sessao atualizada —', operadorInfo.name, '— aprovado — ID:', deviceId);
                     return [2 /*return*/, 'aprovado'];
-                case 8:
+                case 20:
                     e_1 = _c.sent();
                     console.warn('[Coletor] registrarColetorNoFirestore falhou:', e_1.message);
                     // Em caso de erro de rede, permitir acesso se já tinha sessão local
                     return [2 /*return*/, 'erro'];
-                case 9: return [2 /*return*/];
+                case 21: return [2 /*return*/];
             }
         });
     });

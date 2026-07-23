@@ -76,7 +76,8 @@
     if(ops) await _commitMigracaoControlado(batch, ops);
     return total;
   }
-  const COLECOES_LEGADAS=['dt_inventarios','dt_contagens','dt_vazios','dt_recontagens','dt_divergencias','dt_coletores','dt_locais','dt_locais_chunks','dt_locais_meta','dt_produtos','dt_auditorias','dt_auditoria_imports','dt_auditoria_meta','dt_operadores','dt_analistas','dt_logs_analista','dt_logs_coletor','dt_ranking_operadores'];
+  const COLECOES_LEGADAS=['dt_inventarios','dt_contagens','dt_vazios','dt_recontagens','dt_divergencias','dt_locais','dt_locais_chunks','dt_locais_meta','dt_produtos','dt_auditorias','dt_auditoria_imports','dt_auditoria_meta','dt_operadores','dt_analistas','dt_logs_analista','dt_logs_coletor','dt_ranking_operadores'];
+  const COLECOES_OPERACIONAIS_LOJA=COLECOES_LEGADAS.slice();
 
   async function sincronizarDadosLegadosAutomaticamente(){
     if(global.__dtMigracaoLegadaPromise) return global.__dtMigracaoLegadaPromise;
@@ -89,6 +90,10 @@
       if(!usuario || !lojaId || (acesso.perfil!=='administrador' && acesso.admin_mestre!==true && acesso.administrador_mestre!==true)) {
         return {executado:false,total:0};
       }
+      // Dados legados pertencem exclusivamente à Loja Matriz. Nunca copiar a
+      // raiz automaticamente para filiais, pois isso mistura endereços,
+      // produtos, inventários e auditorias entre ambientes.
+      if(lojaId!=='loja_matriz') return {executado:false,total:0,isolado:true};
 
       const lojaRef=raw().collection('lojas').doc(lojaId);
       const lojaSnap=await lojaRef.get();
@@ -160,6 +165,69 @@
     finally { global.__dtMigracaoLegadaPromise=null; }
   }
 
+  async function _excluirColecaoLojaControlado(lojaId,nome){
+    const ref=raw().collection('lojas').doc(lojaId).collection(nome);
+    let total=0;
+    while(true){
+      const snap=await ref.limit(100).get();
+      if(snap.empty) break;
+      const batch=raw().batch();
+      for(const d of snap.docs){
+        if(nome==='dt_inventarios' || nome==='dt_auditorias'){
+          for(const sub of ['base_chunks','enderecos']){
+            try{
+              const ss=await d.ref.collection(sub).get();
+              if(!ss.empty){
+                let sb=raw().batch(),n=0;
+                for(const sd of ss.docs){ sb.delete(sd.ref); n++; if(n>=100){await sb.commit();await _pausarMigracao(100);sb=raw().batch();n=0;} }
+                if(n) await sb.commit();
+              }
+            }catch(_){ }
+          }
+        }
+        batch.delete(d.ref); total++;
+      }
+      await batch.commit();
+      await _pausarMigracao(140);
+    }
+    return total;
+  }
+
+  async function corrigirIsolamentoLojaAtual(){
+    const lojaId=global.getDTLojaAtiva();
+    if(!lojaId || lojaId==='loja_matriz') return {corrigido:false,total:0};
+    const lojaRef=raw().collection('lojas').doc(lojaId);
+    const snap=await lojaRef.get();
+    const loja=snap.exists?(snap.data()||{}):{};
+    if(loja.isolamento_corrigido_v33===true) return {corrigido:false,total:0};
+    // A limpeza só ocorre quando há prova registrada de que esta filial recebeu
+    // automaticamente uma cópia das coleções raiz na versão anterior.
+    if(loja.migracao_origem!=='COLECOES_RAIZ' || loja.migracao_legada_concluida!==true){
+      await lojaRef.set({isolamento_corrigido_v33:true,isolamento_verificado_em:new Date().toISOString()},{merge:true});
+      return {corrigido:false,total:0};
+    }
+    let total=0;
+    for(const nome of COLECOES_OPERACIONAIS_LOJA){
+      total+=await _excluirColecaoLojaControlado(lojaId,nome);
+    }
+    await lojaRef.set({
+      isolamento_corrigido_v33:true,
+      isolamento_corrigido_em:new Date().toISOString(),
+      isolamento_documentos_removidos:total,
+      migracao_legada_concluida:false,
+      migracao_legada_status:'CANCELADA_POR_ISOLAMENTO',
+      migracao_origem:firebase.firestore.FieldValue.delete(),
+      migracao_colecoes_concluidas:firebase.firestore.FieldValue.delete()
+    },{merge:true});
+    // Limpa somente o cache local da filial atual.
+    try{
+      Object.values(global.KEYS||{}).forEach(function(k){localStorage.removeItem(k+'__'+lojaId);});
+      localStorage.removeItem('invcount_auditoria_metas__'+lojaId);
+      localStorage.removeItem('dt_produtos_cache__'+lojaId);
+    }catch(_){ }
+    return {corrigido:true,total:total};
+  }
+
   async function migrarDadosLegadosParaLojaAtual(){
     const lojaId=global.getDTLojaAtiva(); if(!lojaId){showToast('Selecione uma loja','error');return;}
     const colecoes=COLECOES_LEGADAS;
@@ -174,5 +242,5 @@
     }catch(e){showToast('Erro na migração: '+e.message,'error');console.error(e);}
   }
 
-  Object.assign(global,{renderGestaoLojas,abrirCadastroLoja,editarLoja,salvarLoja,usarLoja,migrarDadosLegadosParaLojaAtual,sincronizarDadosLegadosAutomaticamente});
+  Object.assign(global,{renderGestaoLojas,abrirCadastroLoja,editarLoja,salvarLoja,usarLoja,migrarDadosLegadosParaLojaAtual,sincronizarDadosLegadosAutomaticamente,corrigirIsolamentoLojaAtual});
 })(window);
