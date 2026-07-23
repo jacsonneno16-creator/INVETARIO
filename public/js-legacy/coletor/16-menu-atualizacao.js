@@ -339,14 +339,28 @@ window.addEventListener('beforeinstallprompt', function (e) {
     });
 });
 function instalarPWA() {
+    var instalado = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    if (instalado) {
+        toast('✅ O aplicativo já está instalado neste dispositivo.', 's');
+        return;
+    }
     if (!_deferredPrompt) {
-        toast('Use o menu do navegador > "Adicionar à tela inicial"', 'w');
+        var ua = String(navigator.userAgent || '').toLowerCase();
+        var mensagem = 'Para colocar o aplicativo na tela inicial:\n\nAbra o menu do navegador (⋮) e escolha "Adicionar à tela inicial" ou "Instalar aplicativo".';
+        if (/zebra|honeywell|chainway|urovo/.test(ua) || /; wv\)/.test(ua)) {
+            mensagem += '\n\nEm alguns coletores antigos, abra esta página pelo Chrome para que a opção de instalação apareça.';
+        }
+        alert(mensagem);
+        toast('Use o menu do navegador para adicionar à tela inicial.', 'w');
         return;
     }
     _deferredPrompt.prompt();
     _deferredPrompt.userChoice.then(function (result) {
         if (result.outcome === 'accepted') {
-            toast('✅ App instalado com sucesso!', 's');
+            toast('✅ Aplicativo adicionado à tela inicial!', 's');
+        }
+        else {
+            toast('Instalação cancelada.', 'w');
         }
         _deferredPrompt = null;
         var banner = document.getElementById('pwa-install-banner');
@@ -355,13 +369,12 @@ function instalarPWA() {
         var btnInst = document.getElementById('btn-instalar-pwa');
         if (btnInst)
             btnInst.style.display = 'none';
-        ['menu-instalar-pwa-login', 'menu-instalar-pwa-app'].forEach(function (id) {
-            var el = document.getElementById(id);
-            if (el)
-                el.style.display = 'none';
-        });
+    }).catch(function (error) {
+        console.warn('[PWA] Não foi possível abrir a instalação:', error);
+        alert('Abra o menu do navegador (⋮) e escolha "Adicionar à tela inicial".');
     });
 }
+
 function diagnosticoFirebase() {
     return __awaiter(this, void 0, void 0, function () {
         var el, user, uid, snap, docs, err_1;
@@ -423,9 +436,4 @@ window.addEventListener('appinstalled', function () {
     var btnInst = document.getElementById('btn-instalar-pwa');
     if (btnInst)
         btnInst.style.display = 'none';
-    ['menu-instalar-pwa-login', 'menu-instalar-pwa-app'].forEach(function (id) {
-        var el = document.getElementById(id);
-        if (el)
-            el.style.display = 'none';
-    });
 });

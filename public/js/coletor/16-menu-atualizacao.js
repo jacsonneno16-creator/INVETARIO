@@ -288,24 +288,38 @@ window.addEventListener('beforeinstallprompt', e => {
 });
 
 function instalarPWA() {
-  if (!_deferredPrompt) {
-    toast('Use o menu do navegador > "Adicionar à tela inicial"', 'w');
+  const instalado = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  if (instalado) {
+    toast('✅ O aplicativo já está instalado neste dispositivo.', 's');
     return;
   }
+
+  if (!_deferredPrompt) {
+    const ua = String(navigator.userAgent || '').toLowerCase();
+    let mensagem = 'Para colocar o aplicativo na tela inicial:\n\nAbra o menu do navegador (⋮) e escolha "Adicionar à tela inicial" ou "Instalar aplicativo".';
+    if (/zebra|honeywell|chainway|urovo/.test(ua) || /; wv\)/.test(ua)) {
+      mensagem += '\n\nEm alguns coletores antigos, abra esta página pelo Chrome para que a opção de instalação apareça.';
+    }
+    alert(mensagem);
+    toast('Use o menu do navegador para adicionar à tela inicial.', 'w');
+    return;
+  }
+
   _deferredPrompt.prompt();
   _deferredPrompt.userChoice.then(result => {
     if (result.outcome === 'accepted') {
-      toast('✅ App instalado com sucesso!', 's');
+      toast('✅ Aplicativo adicionado à tela inicial!', 's');
+    } else {
+      toast('Instalação cancelada.', 'w');
     }
     _deferredPrompt = null;
     const banner = document.getElementById('pwa-install-banner');
     if (banner) banner.style.display = 'none';
     const btnInst = document.getElementById('btn-instalar-pwa');
     if (btnInst) btnInst.style.display = 'none';
-    ['menu-instalar-pwa-login', 'menu-instalar-pwa-app'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.style.display = 'none';
-    });
+  }).catch(error => {
+    console.warn('[PWA] Não foi possível abrir a instalação:', error);
+    alert('Abra o menu do navegador (⋮) e escolha "Adicionar à tela inicial".');
   });
 }
 
@@ -377,8 +391,4 @@ window.addEventListener('appinstalled', () => {
   if (banner) banner.style.display = 'none';
   const btnInst = document.getElementById('btn-instalar-pwa');
   if (btnInst) btnInst.style.display = 'none';
-  ['menu-instalar-pwa-login', 'menu-instalar-pwa-app'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.style.display = 'none';
-  });
 });

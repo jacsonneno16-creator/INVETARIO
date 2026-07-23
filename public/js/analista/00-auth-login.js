@@ -56,7 +56,9 @@ function doLoginAnalista() {
 
   _salvarOuLimparLogin(email, senha);
   _loginSolicitadoPeloUsuario = true;
-  AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE)
+  AUTH_AN.setPersistence((document.getElementById('an-remember')?.checked === true)
+      ? firebase.auth.Auth.Persistence.LOCAL
+      : firebase.auth.Auth.Persistence.SESSION)
     .then(() => AUTH_AN.signInWithEmailAndPassword(email, senha))
     .catch(err => { _loginSolicitadoPeloUsuario = false; _setLoginErro(_traduzirErroLoginAnalista(err)); });
 }
@@ -140,16 +142,9 @@ async function _onAnalistaLogado(user) {
     if (atual && !permitidas.some(l=>l.id===atual)) window.setDTLojaAtiva('');
     await window.DTLoja.selecionarInterativamente('Selecione a loja do inventário');
 
-    // Compatibilidade com a instalação anterior: os dados existentes estavam
-    // nas coleções da raiz. No primeiro acesso do administrador à Loja Matriz,
-    // eles são copiados uma única vez para o ambiente da loja antes dos
-    // listeners do Analista iniciarem.
-    if (typeof window.sincronizarDadosLegadosAutomaticamente === 'function') {
-      const migracao = await window.sincronizarDadosLegadosAutomaticamente();
-      if (migracao && migracao.executado) {
-        console.info('[Multiloja] Dados antigos copiados para a loja:', migracao.total);
-      }
-    }
+    // A migração dos dados legados não deve bloquear o login nem iniciar
+    // múltiplas filas de escrita. Ela é disparada depois que o painel abre,
+    // com trava única, checkpoints e lotes pequenos.
   }
   catch(e){ _setLoginErro('Não foi possível preparar o ambiente da loja: '+e.message); await AUTH_AN.signOut(); return; }
   _mostrarApp();
@@ -165,6 +160,20 @@ async function _onAnalistaLogado(user) {
   }
 
   logSistema('SISTEMA', 'Login realizado', { email: user.email });
+
+  if (typeof window.sincronizarDadosLegadosAutomaticamente === 'function') {
+    setTimeout(function(){
+      window.sincronizarDadosLegadosAutomaticamente().then(function(migracao){
+        if (migracao && migracao.executado) {
+          console.info('[Multiloja] Migração legada concluída:', migracao.total);
+          try { showToast('Dados antigos carregados na loja atual.', 'success'); } catch (_) {}
+        }
+      }).catch(function(error){
+        console.error('[Multiloja] Falha na migração controlada:', error);
+        try { showToast('Não foi possível concluir a migração dos dados antigos. Tente novamente pela Gestão de Lojas.', 'error'); } catch (_) {}
+      });
+    }, 1200);
+  }
 }
 
 // ── UI ───────────────────────────────────────────────────────────────
@@ -312,9 +321,9 @@ async function atualizarIndicadorLojaAtual(){
 }
 async function trocarLojaInventario(){
   const anterior=window.getDTLojaAtiva();
-  window.setDTLojaAtiva('');
-  const nova=await window.DTLoja.selecionarInterativamente('Trocar ambiente de loja');
-  if(!nova){window.setDTLojaAtiva(anterior);return;}
+  const nova=await window.DTLoja.selecionarInterativamente('Trocar ambiente de loja', true);
+  if(!nova || nova===anterior)return;
+  await atualizarIndicadorLojaAtual();
   location.reload();
 }
 window.trocarLojaInventario=trocarLojaInventario;

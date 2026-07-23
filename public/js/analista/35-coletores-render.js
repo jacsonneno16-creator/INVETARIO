@@ -852,10 +852,25 @@ function editarNomeColetor(colId) {
     return (snap.docs || []).map(doc => ({ id: doc.id, ...doc.data() }));
   }
 
+  function _auditoriaPodeAcessarFirestore(){
+    var autenticado = false;
+    try {
+      autenticado = !!(
+        (typeof AUTH_AN !== 'undefined' && AUTH_AN && AUTH_AN.currentUser) ||
+        (window.firebase && window.firebase.auth && window.firebase.auth().currentUser)
+      );
+    } catch (_) {
+      autenticado = false;
+    }
+    if (!autenticado) return false;
+    if (typeof window.getDTLojaAtiva === 'function' && !window.getDTLojaAtiva()) return false;
+    return true;
+  }
+
   async function reloadAuditoriaFromFirestore(preferredAuditoriaId){
     if (!navigator.onLine || typeof FS_AN === 'undefined' || !FS_AN) return false;
-    if (typeof window.getDTLojaAtiva === 'function' && !window.getDTLojaAtiva()) {
-      console.info('[AUDITORIA] Recarga adiada: nenhuma loja selecionada.');
+    if (!_auditoriaPodeAcessarFirestore()) {
+      console.info('[AUDITORIA] Recarga adiada: autenticação ou loja ainda não disponível.');
       return false;
     }
     try {
@@ -1254,7 +1269,7 @@ function editarNomeColetor(colId) {
       try { window._popularSelectAuditorias(); } catch(e) {}
       try { window.renderAuditoriaOperacional(); } catch(e) {}
       const recarregarQuandoLojaPronta = function(){
-        if (typeof window.getDTLojaAtiva === 'function' && !window.getDTLojaAtiva()) return;
+        if (!_auditoriaPodeAcessarFirestore()) return;
         reloadAuditoriaFromFirestore(window.__ultimaAuditoriaSelecionada || window.__ultimaAuditoriaImportada || '').then(function(ok){
           if (!ok) return;
           try { window._popularSelectAuditorias(); } catch(e) {}

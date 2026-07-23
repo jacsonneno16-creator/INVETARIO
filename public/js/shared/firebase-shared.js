@@ -142,11 +142,11 @@ window.DTLoja = {
     await raw.collection('lojas').doc(id).set({nome:'Loja Matriz',codigo:'MATRIZ',ativa:true,criada_em:new Date().toISOString()},{merge:true});
     return [{id,nome:'Loja Matriz',codigo:'MATRIZ',ativa:true}];
   },
-  async selecionarInterativamente(titulo='Selecione a loja'){
+  async selecionarInterativamente(titulo='Selecione a loja', forcarEscolha=false){
     const lojas = await this.garantirLojaInicial();
     const atual = window.getDTLojaAtiva();
-    if (atual && lojas.some(l=>l.id===atual)) return atual;
-    if (lojas.length===1){ window.setDTLojaAtiva(lojas[0].id); return lojas[0].id; }
+    if (!forcarEscolha && atual && lojas.some(l=>l.id===atual)) return atual;
+    if (!forcarEscolha && lojas.length===1){ window.setDTLojaAtiva(lojas[0].id); return lojas[0].id; }
     return await new Promise(resolve=>{
       let bg=document.getElementById('dt-loja-modal');
       if(bg) bg.remove();
@@ -159,6 +159,8 @@ window.DTLoja = {
         <button id="dt-loja-modal-ok" style="width:100%;margin-top:14px;padding:12px;border:0;border-radius:9px;background:#1e6f4e;color:#fff;font-weight:800;cursor:pointer">ENTRAR NESTA LOJA</button>
       </div>`;
       document.body.appendChild(bg);
+      const seletor=bg.querySelector('#dt-loja-modal-select');
+      if(atual && lojas.some(l=>l.id===atual)) seletor.value=atual;
       bg.querySelector('#dt-loja-modal-ok').onclick=()=>{const id=bg.querySelector('#dt-loja-modal-select').value;window.setDTLojaAtiva(id);bg.remove();resolve(id);};
     });
   },

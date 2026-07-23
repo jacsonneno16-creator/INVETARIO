@@ -19,7 +19,45 @@ async function salvarProduto(p,id){const agora=new Date().toISOString();const pa
 function abrirModal(p={}){const html=`<div id="modal-produto-bg" class="modal-bg on"><div class="modal"><div class="modal-hdr"><div class="modal-title">${p.id?'Editar':'Novo'} produto</div><button class="modal-close" data-prod-fechar>✕</button></div><div class="fg"><div class="fi"><div class="fl">Código interno</div><input id="mp-cod" value="${esc(p.codigoInterno||'')}"></div><div class="fi full"><div class="fl">Produto *</div><input id="mp-nome" value="${esc(p.nomeProduto||'')}"></div><div class="fi"><div class="fl">DUN</div><input id="mp-dun" value="${esc(p.dun||'')}"></div><div class="fi"><div class="fl">GTIN/EAN</div><input id="mp-gtin" value="${esc(p.gtin||'')}"></div><div class="fi"><div class="fl">Unidade</div><input id="mp-un" value="${esc(p.unidade||'')}"></div></div><div class="modal-actions"><button class="btn btn-ghost" data-prod-fechar>Cancelar</button><button class="btn btn-primary" id="mp-salvar">Salvar</button></div></div></div>`;document.body.insertAdjacentHTML('beforeend',html);document.querySelectorAll('[data-prod-fechar]').forEach(b=>b.onclick=()=>document.getElementById('modal-produto-bg')?.remove());document.getElementById('mp-salvar').onclick=async()=>{const obj={codigoInterno:txt(document.getElementById('mp-cod').value),nomeProduto:txt(document.getElementById('mp-nome').value),dun:txt(document.getElementById('mp-dun').value),gtin:txt(document.getElementById('mp-gtin').value),unidade:txt(document.getElementById('mp-un').value),ativo:p.ativo!==false};const er=validar([obj]);if(er.length)return alert(er[0].motivo);await salvarProduto(obj,p.id);document.getElementById('modal-produto-bg')?.remove();};}
 async function importar(file){if(!file)return;const data=await file.arrayBuffer();const wb=XLSX.read(data,{type:'array',raw:false});const rows=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:'',raw:false});const normalized=rows.map(normalizeRow).filter(p=>p.nomeProduto||p.codigoInterno||p.dun||p.gtin);const erros=validar(normalized);if(erros.length){alert('Base inválida:\n'+erros.slice(0,20).map(e=>`Linha ${e.linha} · ${e.codigo||'sem código'} · ${e.motivo}`).join('\n'));return;}const ativos=lista.filter(p=>p.ativo);for(let i=0;i<normalized.length;i++){const p=normalized[i];const existente=ativos.find(x=>(cod(p.codigoInterno)&&cod(x.codigoInterno)===cod(p.codigoInterno))||(cod(p.dun)&&cod(x.dun)===cod(p.dun))||(cod(p.gtin)&&cod(x.gtin)===cod(p.gtin)));await salvarProduto(p,existente?.id);}alert(`${normalized.length} produto(s) importado(s)/atualizado(s).`);}
 function exportar(){const dados=lista.map(p=>({'Código interno':p.codigoInterno,'Produto':p.nomeProduto,'DUN':p.dun,'GTIN/EAN':p.gtin,'Unidade':p.unidade,'Status':p.ativo?'ATIVO':'INATIVO'}));const ws=XLSX.utils.json_to_sheet(dados);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Produtos');XLSX.writeFile(wb,'base_produtos.xlsx');}
+
+async function excluirTodos(){
+  const total=lista.length;
+  if(!total){ if(global.showToast) global.showToast('Não há produtos para excluir.','error'); return; }
+  const executar=async function(){
+    let excluidos=0;
+    try{
+      const snap=await COL().get();
+      const docs=snap.docs||[];
+      for(let i=0;i<docs.length;i+=300){
+        const batch=global.getDTRawFirestore().batch();
+        docs.slice(i,i+300).forEach(function(d){ batch.delete(d.ref); });
+        await batch.commit();
+        excluidos+=Math.min(300,docs.length-i);
+      }
+      lista=[];
+      global.DTProdutos.indexar([]);
+      render();
+      if(global.showToast) global.showToast(excluidos+' produto(s) excluído(s).','success');
+    }catch(e){
+      console.error('[Base Produtos] Erro ao excluir todos:',e);
+      if(global.showToast) global.showToast('Erro ao excluir todos os produtos: '+e.message,'error');
+    }
+  };
+  if(global.showConfirm){
+    global.showConfirm('Excluir TODOS os '+total.toLocaleString('pt-BR')+' produtos desta loja? Esta ação não pode ser desfeita.',executar,{title:'Excluir todos os produtos',icon:'🗑️',okLabel:'Excluir tudo',okClass:'btn-danger'});
+  }else if(confirm('Excluir TODOS os '+total+' produtos desta loja?')) await executar();
+}
+
+function reiniciarAoTrocarLoja(){
+  if(listener){ try{listener();}catch(_){} listener=null; }
+  lista=[];
+  global.DTProdutos.indexar([]);
+  render();
+  iniciar();
+}
+
 function modelo(){const ws=XLSX.utils.json_to_sheet([{'CÓDIGO INTERNO':'000123','PRODUTO':'PRODUTO EXEMPLO','DUN':'07890000000001','GTIN':'0789000000001','UNIDADE':'CX'}]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Modelo');XLSX.writeFile(wb,'modelo_base_produtos.xlsx');}
 document.addEventListener('click',async e=>{const b=e.target.closest('[data-prod-acao]');if(!b)return;const p=lista.find(x=>x.id===b.dataset.id);if(!p)return;if(b.dataset.prodAcao==='editar')abrirModal(p);if(b.dataset.prodAcao==='toggle')await salvarProduto({...p,ativo:!p.ativo},p.id);if(b.dataset.prodAcao==='excluir'&&confirm(`Excluir ${p.nomeProduto}?`))await COL().doc(p.id).delete();});
-global.renderBaseProdutos=()=>{render();if(!listener)iniciar();};global.produtoNovo=()=>abrirModal();global.produtoImportar=importar;global.produtoExportar=exportar;global.produtoBaixarModelo=modelo;
+if(!global.__baseProdutosListenerLoja){global.__baseProdutosListenerLoja=true;global.addEventListener('dt-loja-alterada',reiniciarAoTrocarLoja);}
+global.renderBaseProdutos=()=>{render();if(!listener)iniciar();};global.produtoNovo=()=>abrirModal();global.produtoImportar=importar;global.produtoExportar=exportar;global.produtoBaixarModelo=modelo;global.produtoExcluirTodos=excluirTodos;
 })(window);
