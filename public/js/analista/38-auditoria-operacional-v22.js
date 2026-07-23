@@ -27,22 +27,47 @@
     const familias=(window.DTProdutos?.familias?.()||[]).filter(f=>f.unidade);
     const ends=await enderecosGerais();
     const ruas=[...new Set(ends.map(e=>ruaDoEndereco(e.endereco||e.codigo||e.id)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-    const html=`<div id="modal-nova-aud-v39" class="modal-bg on"><div class="modal" style="max-width:720px"><div class="modal-hdr"><div class="modal-title">Nova Auditoria</div><button class="modal-close" data-fechar-aud-v39>✕</button></div><div class="fg"><div class="fi full"><div class="fl">Nome da auditoria *</div><input id="aud39-nome" placeholder="Ex.: Auditoria Rua 14"></div><div class="fi full"><div class="fl">Como deseja auditar?</div><select id="aud39-tipo"><option value="rua">Por rua</option><option value="produto">Por produto</option></select></div><div class="fi full" id="aud39-box-rua"><div class="fl">Ruas</div><select id="aud39-ruas" multiple size="8">${ruas.map(r=>`<option value="${esc(r)}">Rua ${esc(r)}</option>`).join('')}</select><div class="sec-sub">Use Ctrl para selecionar mais de uma rua.</div></div><div class="fi full" id="aud39-box-prod" style="display:none"><div class="fl">Produto principal (somente UND)</div><input id="aud39-busca-prod" placeholder="Pesquisar produto..."><select id="aud39-prod" size="9">${familias.map(f=>`<option value="${esc(f.id)}">${esc(f.nome)}</option>`).join('')}</select></div></div><div class="modal-actions"><button class="btn btn-ghost" data-fechar-aud-v39>Cancelar</button><button class="btn btn-primary" id="aud39-criar">Criar auditoria</button></div></div></div>`;
+    const html=`<div id="modal-nova-aud-v39" class="modal-bg on"><div class="modal" style="max-width:760px"><div class="modal-hdr"><div><div class="modal-title">Criar nova auditoria</div><div class="sec-sub">Informe o nome, escolha o tipo e carregue a base antes de criar.</div></div><button class="modal-close" data-fechar-aud-v39>✕</button></div><div class="fg"><div class="fi full"><div class="fl">Nome da auditoria *</div><input id="aud39-nome" placeholder="Ex.: Auditoria Rua 14"></div><div class="fi full"><div class="fl">Como deseja auditar?</div><select id="aud39-tipo"><option value="rua">Por rua</option><option value="produto">Por produto</option></select></div><div class="fi full" id="aud39-box-rua"><div class="fl">Ruas</div><select id="aud39-ruas" multiple size="7">${ruas.map(r=>`<option value="${esc(r)}">Rua ${esc(r)}</option>`).join('')}</select><div class="sec-sub">Use Ctrl para selecionar mais de uma rua.</div></div><div class="fi full" id="aud39-box-prod" style="display:none"><div class="fl">Produto principal (somente UND)</div><input id="aud39-busca-prod" placeholder="Pesquisar produto..."><select id="aud39-prod" size="8">${familias.map(f=>`<option value="${esc(f.id)}">${esc(f.nome)}</option>`).join('')}</select></div><div class="fi full"><div class="fl">Base da auditoria *</div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="btn btn-ghost" id="aud39-escolher-arquivo">⬆ Selecionar arquivo</button><span id="aud39-arquivo-nome" class="sec-sub">Nenhum arquivo selecionado</span><input id="aud39-arquivo" type="file" accept=".csv,.xlsx,.xls" style="display:none"></div><div id="aud39-arquivo-status" style="margin-top:10px"></div></div></div><div class="modal-actions"><button class="btn btn-ghost" data-fechar-aud-v39>Cancelar</button><button class="btn btn-primary" id="aud39-criar">Criar e importar auditoria</button></div></div></div>`;
     document.body.insertAdjacentHTML('beforeend',html);
     const modal=document.getElementById('modal-nova-aud-v39');
+    let arquivoSelecionado=null;
     modal.querySelectorAll('[data-fechar-aud-v39]').forEach(b=>b.onclick=()=>modal.remove());
-    const tipo=document.getElementById('aud39-tipo'); tipo.onchange=()=>{document.getElementById('aud39-box-rua').style.display=tipo.value==='rua'?'':'none';document.getElementById('aud39-box-prod').style.display=tipo.value==='produto'?'':'none';};
+    const tipo=document.getElementById('aud39-tipo');
+    tipo.onchange=()=>{document.getElementById('aud39-box-rua').style.display=tipo.value==='rua'?'':'none';document.getElementById('aud39-box-prod').style.display=tipo.value==='produto'?'':'none';};
     document.getElementById('aud39-busca-prod').oninput=function(){const q=this.value.toLowerCase();[...document.getElementById('aud39-prod').options].forEach(o=>o.hidden=!o.text.toLowerCase().includes(q));};
+    const inputArquivo=document.getElementById('aud39-arquivo');
+    document.getElementById('aud39-escolher-arquivo').onclick=()=>inputArquivo.click();
+    inputArquivo.onchange=async()=>{
+      arquivoSelecionado=inputArquivo.files&&inputArquivo.files[0]||null;
+      document.getElementById('aud39-arquivo-nome').textContent=arquivoSelecionado?arquivoSelecionado.name:'Nenhum arquivo selecionado';
+      document.getElementById('aud39-arquivo-status').innerHTML=arquivoSelecionado?'<div class="alert info"><div>📄</div><div>Arquivo selecionado. A validação será feita ao criar a auditoria.</div></div>':'';
+    };
     document.getElementById('aud39-criar').onclick=async()=>{
       const nome=txt(document.getElementById('aud39-nome').value); if(!nome)return toast('Informe o nome da auditoria.','w');
+      if(!arquivoSelecionado)return toast('Selecione a base da auditoria.','w');
       const modo=tipo.value; let selecao=[];
       if(modo==='rua')selecao=[...document.getElementById('aud39-ruas').selectedOptions].map(o=>o.value);
       else {const v=document.getElementById('aud39-prod').value;if(v)selecao=[v];}
       if(!selecao.length)return toast(modo==='rua'?'Selecione ao menos uma rua.':'Selecione um produto principal.','w');
-      const id=`AUD-${Date.now()}`; configuracaoNova={modo,selecao};
       const familia=modo==='produto'?familias.find(f=>f.id===selecao[0]):null;
-      await DB().collection('dt_auditorias').doc(id).set({nome,loja:loja(),tipoAuditoria:modo,ruas:modo==='rua'?selecao:[],familiaId:familia?.id||'',familiaNome:familia?.nome||'',familiaCodigos:familia?familia.produtos.map(p=>p.codigoInterno):[],status:'RASCUNHO',totalItens:0,totalPendentes:0,totalOk:0,totalDivergentes:0,totalVazios:0,criadoEm:agora(),criadoPor:usuario()});
-      auditoriaAtual=id; metaAtual={id,nome,tipoAuditoria:modo,ruas:modo==='rua'?selecao:[],familiaId:familia?.id||'',familiaNome:familia?.nome||''}; modal.remove(); await popularSelect(); const sel=document.getElementById('aud-op-auditoria');if(sel)sel.value=id;await selecionarAuditoria(id);toast('Auditoria criada. Importe a base para completar os produtos esperados.','s');
+      const cfg={tipoAuditoria:modo,ruas:modo==='rua'?selecao:[],familiaId:familia?.id||'',familiaNome:familia?.nome||''};
+      const btn=document.getElementById('aud39-criar'); btn.disabled=true; btn.textContent='Criando...';
+      try{
+        const preparada=await prepararImportacao(arquivoSelecionado,cfg);
+        if(!preparada.validos.length)throw new Error('Nenhuma linha válida foi encontrada para esta auditoria.');
+        const id=`AUD-${Date.now()}`;
+        await DB().collection('dt_auditorias').doc(id).set({nome,loja:loja(),...cfg,familiaCodigos:familia?familia.produtos.map(p=>p.codigoInterno):[],status:'RASCUNHO',totalItens:0,totalPendentes:0,totalOk:0,totalDivergentes:0,totalVazios:0,criadoEm:agora(),criadoPor:usuario()});
+        auditoriaAtual=id; metaAtual={id,nome,...cfg,status:'RASCUNHO'}; importacaoPendente={file:arquivoSelecionado,...preparada};
+        await gravarImportacao();
+        modal.remove();
+        await popularSelect(); const sel=document.getElementById('aud-op-auditoria');if(sel)sel.value=id;
+        await selecionarAuditoria(id);
+        toast(`Auditoria criada com ${preparada.validos.length} item(ns). Agora ela pode ser liberada para os coletores.`,'s');
+      }catch(e){
+        console.error('[AUDITORIA] criação:',e);
+        document.getElementById('aud39-arquivo-status').innerHTML=`<div class="alert error"><div>⚠️</div><div>${esc(e.message||'Falha ao criar auditoria.')}</div></div>`;
+        btn.disabled=false; btn.textContent='Criar e importar auditoria';
+      }
     };
   }
 
@@ -56,7 +81,7 @@
   const agora = () => new Date().toISOString();
   const usuario = () => window._currentAnalistaUser?.email || localStorage.getItem('dt_analista_email') || 'analista';
   const loja = () => window.DTMultiStore?.getLojaAtual?.()?.id || window.getLojaAtual?.()?.id || localStorage.getItem('dt_loja_atual') || '';
-  const docId = (auditoriaId, endereco, codigo='') => `${auditoriaId}__${endNorm(endereco).replace(/[^A-Z0-9]/g,'_')}__${dun(codigo)||'VAZIO'}`;
+  const docId = (auditoriaId, endereco, codigo='', sequencia='') => `${auditoriaId}__${endNorm(endereco).replace(/[^A-Z0-9]/g,'_')}__${dun(codigo)||'VAZIO'}__${txt(sequencia)||'0'}`;
   const fmt = v => {
     if (!v) return '—';
     const d = v?.toDate ? v.toDate() : new Date(v);
@@ -103,6 +128,17 @@
     return snap.docs.map(d => ({id:d.id,...d.data()})).sort((a,b)=>txt(b.criadoEm||b.importado_em).localeCompare(txt(a.criadoEm||a.importado_em)));
   }
 
+  function atualizarAcoesAuditoria(){
+    const btn=document.getElementById('btn-aud-atualizar-base');
+    if(btn) btn.style.display=auditoriaAtual?'':'none';
+  }
+
+  async function importarBaseSelecionada(){
+    if(!auditoriaAtual) return toast('Crie ou selecione uma auditoria antes de atualizar a base.','w');
+    const input=document.getElementById('auditoria-file');
+    if(input) input.click();
+  }
+
   async function popularSelect(){
     const sel = document.getElementById('aud-op-auditoria');
     if (!sel) return;
@@ -110,6 +146,7 @@
     const metas = await listarMetas().catch(() => []);
     sel.innerHTML = '<option value="">Selecione uma auditoria...</option>' + metas.map(m => `<option value="${esc(m.id)}">${esc(m.nome || m.auditoria_nome || m.id)}</option>`).join('');
     if (atual && [...sel.options].some(o=>o.value===atual)) sel.value = atual;
+    atualizarAcoesAuditoria();
   }
 
   function encerrarListener(){
@@ -123,11 +160,13 @@
     auditoriaAtual = txt(id);
     itensAtuais = [];
     metaAtual = null;
+    atualizarAcoesAuditoria();
     renderizar();
     if (!auditoriaAtual) return;
     const ref = DB().collection('dt_auditorias').doc(auditoriaAtual);
     const metaSnap = await ref.get();
     metaAtual = metaSnap.exists ? {id:metaSnap.id,...metaSnap.data()} : null;
+    atualizarAcoesAuditoria();
     unsubscribeItens = ref.collection('enderecos').onSnapshot(snap => {
       const nova = snap.docs.map(d => normalizarItem(d.data(), d.id));
       const sig = assinatura(nova);
@@ -226,59 +265,54 @@
     return XLSX.utils.sheet_to_json(ws,{defval:'',raw:false});
   }
 
+  async function prepararImportacao(file,cfg){
+    const rows = await lerArquivo(file);
+    if (!rows.length) throw new Error('O arquivo não possui linhas de dados.');
+    const col = detectarColunas(Object.keys(rows[0]));
+    const ausentes = [!col.endereco&&'Endereço',!col.dun&&'GTIN/EAN',!col.produto&&'Produto'].filter(Boolean);
+    if (ausentes.length) throw new Error(`Colunas obrigatórias ausentes: ${ausentes.join(', ')}.`);
+    const erros=[]; const validos=[];
+    rows.forEach((r,idx) => {
+      const linha=idx+2, endereco=txt(r[col.endereco]), dunEsperado=txt(r[col.dun]), produtoEsperado=txt(r[col.produto]);
+      const motivos=[];
+      if(!endereco) motivos.push('endereço vazio');
+      if(!dunEsperado) motivos.push('GTIN/EAN vazio');
+      if(!produtoEsperado) motivos.push('nome do produto vazio');
+      if(motivos.length) erros.push({linha,endereco:endereco||'—',dunEsperado,produtoEsperado,motivo:motivos.join('; ')});
+      else validos.push({endereco,dunEsperado,produtoEsperado,_linha:linha,_seq:idx});
+    });
+    let selecionados=validos;
+    cfg=cfg||metaAtual||configuracaoNova||{};
+    if(cfg.tipoAuditoria==='produto' && cfg.familiaId){
+      const fam=(window.DTProdutos?.familias?.()||[]).find(f=>f.id===cfg.familiaId);
+      const codigos=new Set((fam?.produtos||[]).flatMap(p=>[dun(p.codigoInterno),dun(p.dun),dun(p.gtin)]).filter(Boolean));
+      selecionados=validos.filter(r=>codigos.has(dun(r.dunEsperado)) || txt(r.produtoEsperado).toLowerCase().includes(txt(cfg.familiaNome).toLowerCase()));
+    }
+    if(cfg.tipoAuditoria==='rua' && (cfg.ruas||[]).length){
+      const ruasSet=new Set(cfg.ruas.map(txt)); selecionados=validos.filter(r=>ruasSet.has(ruaDoEndereco(r.endereco)));
+      const existentes=new Set(selecionados.map(r=>endNorm(r.endereco)));
+      const gerais=await enderecosGerais();
+      gerais.forEach(e=>{const endereco=txt(e.endereco||e.codigo||e.id);if(endereco&&ruasSet.has(ruaDoEndereco(endereco))&&!existentes.has(endNorm(endereco)))selecionados.push({endereco,dunEsperado:'',produtoEsperado:'ENDEREÇO PREVISTO VAZIO',previstoVazio:true});});
+    }
+    if(!selecionados.length) erros.push({linha:'—',endereco:'—',dunEsperado:'',produtoEsperado:'',motivo:'Nenhum item da base corresponde ao tipo selecionado para esta auditoria'});
+    return {validos:selecionados,erros};
+  }
+
   async function processarArquivo(file){
     if (!file) return;
+    if(!auditoriaAtual) return toast('Crie ou selecione uma auditoria antes de atualizar a base.','w');
     try {
-      const rows = await lerArquivo(file);
-      if (!rows.length) throw new Error('O arquivo não possui linhas de dados.');
-      const col = detectarColunas(Object.keys(rows[0]));
-      const ausentes = [!col.endereco&&'Endereço',!col.dun&&'GTIN/EAN',!col.produto&&'Produto'].filter(Boolean);
-      if (ausentes.length) throw new Error(`Colunas obrigatórias ausentes: ${ausentes.join(', ')}.`);
-      const erros=[]; const validos=[];
-      rows.forEach((r,idx) => {
-        const linha=idx+2, endereco=txt(r[col.endereco]), dunEsperado=txt(r[col.dun]), produtoEsperado=txt(r[col.produto]);
-        const motivos=[];
-        if(!endereco) motivos.push('endereço vazio');
-        if(!dunEsperado) motivos.push('GTIN/EAN vazio');
-        if(!produtoEsperado) motivos.push('nome do produto vazio');
-        if(motivos.length) erros.push({linha,endereco:endereco||'—',dunEsperado,produtoEsperado,motivo:motivos.join('; ')});
-        else validos.push({endereco,dunEsperado,produtoEsperado,_linha:linha,_seq:idx});
-      });
-      let selecionados=validos;
-      const cfg=metaAtual||configuracaoNova||{};
-      if(cfg.tipoAuditoria==='produto' && cfg.familiaId){
-        const fam=(window.DTProdutos?.familias?.()||[]).find(f=>f.id===cfg.familiaId);
-        const codigos=new Set((fam?.produtos||[]).flatMap(p=>[dun(p.codigoInterno),dun(p.dun),dun(p.gtin)]).filter(Boolean));
-        selecionados=validos.filter(r=>codigos.has(dun(r.dunEsperado)) || txt(r.produtoEsperado).toLowerCase().includes(txt(cfg.familiaNome).toLowerCase()));
-      }
-      if(cfg.tipoAuditoria==='rua' && (cfg.ruas||[]).length){
-        const ruasSet=new Set(cfg.ruas.map(txt)); selecionados=validos.filter(r=>ruasSet.has(ruaDoEndereco(r.endereco)));
-        const existentes=new Set(selecionados.map(r=>endNorm(r.endereco)));
-        const gerais=await enderecosGerais();
-        gerais.forEach(e=>{const endereco=txt(e.endereco||e.codigo||e.id);if(endereco&&ruasSet.has(ruaDoEndereco(endereco))&&!existentes.has(endNorm(endereco)))selecionados.push({endereco,dunEsperado:'',produtoEsperado:'ENDEREÇO PREVISTO VAZIO',previstoVazio:true});});
-      }
-      if(!selecionados.length) erros.push({linha:'—',endereco:'—',dunEsperado:'',produtoEsperado:'',motivo:'Nenhum item da base corresponde ao tipo selecionado para esta auditoria'});
-      importacaoPendente={file,validos:selecionados,erros};
-      const status=document.getElementById('auditoria-import-status');
-      const preview=document.getElementById('auditoria-import-preview');
-      const actions=document.getElementById('auditoria-import-actions');
-      if(status) status.innerHTML = selecionados.length
-        ? `<div class="alert ${erros.length?'warn':'success'}"><div>${erros.length?'⚠️':'✅'}</div><div><b>${selecionados.length} linha(s) pronta(s) para importação.</b>${erros.length?` ${erros.length} linha(s) incompleta(s) serão ignoradas.`:''}<br>Produtos repetidos no mesmo endereço são permitidos.</div></div>`
-        : `<div class="alert error"><div>⚠️</div><div><b>Nenhuma linha válida para importar.</b></div></div>`;
-      if(preview){
-        preview.style.display='';
-        const amostra=selecionados.slice(0,300);
-        preview.innerHTML = `<div class="tbl-wrap"><table><thead><tr><th>DUN / GTIN-EAN</th><th>Produto</th><th>Endereço</th></tr></thead><tbody>${amostra.map(e=>`<tr><td class="mono">${esc(e.dunEsperado)}</td><td>${esc(e.produtoEsperado)}</td><td class="mono">${esc(e.endereco)}</td></tr>`).join('')}</tbody></table></div>${selecionados.length>300?`<div style="padding:10px;color:var(--muted);font-size:.78rem">Mostrando 300 de ${selecionados.length} linhas.</div>`:''}`;
-      }
-      if(actions) actions.style.display = selecionados.length ? 'flex' : 'none';
+      const preparada=await prepararImportacao(file,metaAtual||{});
+      if(!preparada.validos.length) throw new Error('Nenhuma linha válida foi encontrada.');
+      importacaoPendente={file,...preparada};
+      await gravarImportacao();
+      toast(`Base atualizada com ${preparada.validos.length} item(ns).`,'s');
     } catch(e){ console.error(e); toast(e.message || 'Erro ao ler arquivo.','e'); }
   }
 
-  async function criarNova(){ return abrirCriacaoAuditoria(); }
-
-  async function confirmarImportacao(){
+  async function gravarImportacao(){
     if(!importacaoPendente || !importacaoPendente.validos.length) return;
-    if(!auditoriaAtual) return toast('Crie ou selecione uma auditoria antes de importar.','w');
+    if(!auditoriaAtual) throw new Error('Nenhuma auditoria selecionada.');
     const ref=DB().collection('dt_auditorias').doc(auditoriaAtual);
     const itensRef=ref.collection('enderecos');
     const old=await itensRef.get();
@@ -297,8 +331,16 @@
     }
     await ref.set({status:'RASCUNHO',totalItens:lista.length,totalPendentes:lista.length,totalOk:0,totalDivergentes:0,totalVazios:0,arquivo:importacaoPendente.file.name,importadoEm:agora(),importadoPor:usuario()},{merge:true});
     importacaoPendente=null;
+    const status=document.getElementById('auditoria-import-status'); if(status) status.innerHTML='';
+    const preview=document.getElementById('auditoria-import-preview'); if(preview){preview.innerHTML='';preview.style.display='none';}
     const actions=document.getElementById('auditoria-import-actions'); if(actions)actions.style.display='none';
-    toast('Base importada com sucesso. Todos os itens estão PENDENTES.','s');
+  }
+
+  async function criarNova(){ return abrirCriacaoAuditoria(); }
+
+  async function confirmarImportacao(){
+    try{ await gravarImportacao(); toast('Base importada com sucesso.','s'); }
+    catch(e){ console.error(e); toast(e.message||'Falha ao importar a base.','e'); }
   }
 
   async function liberar(){
@@ -336,6 +378,7 @@
 
   // Sobrescreve apenas as funções públicas da aba Auditoria.
   window.processFileAuditoria=processarArquivo;
+  window.importarBaseAuditoriaSelecionada=importarBaseSelecionada;
   window.confirmarImportAuditoria=confirmarImportacao;
   window.criarNovaAuditoriaStandalone=criarNova;
   window.liberarAuditoriaColetores=liberar;
@@ -347,12 +390,14 @@
     auditoriaAtual='';
     metaAtual=null;
     itensAtuais=[];
+    atualizarAcoesAuditoria();
   };
   window.recarregarAuditoriaAposTrocaLoja=async function(){
     encerrarListener();
     auditoriaAtual='';
     metaAtual=null;
     itensAtuais=[];
+    atualizarAcoesAuditoria();
     await popularSelect();
     const sel=document.getElementById('aud-op-auditoria');
     const first=(sel&&sel.value)||'';

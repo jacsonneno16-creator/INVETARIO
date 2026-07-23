@@ -38,6 +38,33 @@ function fmtData(valor) {
 }
 window.fmtData = window.fmtData || fmtData;
 
+// Compatibilidade global usada pelos módulos do Analista.
+// Mantida aqui para que a ordem de carregamento dos módulos não quebre as telas.
+function fmtTs(valor) {
+  if (!valor) return '—';
+  try {
+    var d = valor;
+    if (valor && typeof valor.toDate === 'function') d = valor.toDate();
+    else if (!(valor instanceof Date)) d = new Date(valor);
+    if (!(d instanceof Date) || isNaN(d.getTime())) return String(valor || '—');
+    return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+  } catch (e) { return String(valor || '—'); }
+}
+window.fmtTs = window.fmtTs || fmtTs;
+window.fmtDataHora = window.fmtDataHora || fmtTs;
+
+function statusBadge(status) {
+  var s = String(status || '').trim().toUpperCase();
+  if (s === 'ATIVO' || s === 'ABERTO' || s === 'CONCLUIDO' || s === 'CONCLUÍDO' || s === 'OK' || s === 'CONFIRMADO' || s === 'CONFIRMADO_SEM_AJUSTE') return 'b-green';
+  if (s === 'PAUSADO' || s === 'PENDENTE' || s === 'AGUARDANDO' || s === 'CONFIRMADO_COM_AJUSTE') return 'b-yellow';
+  if (s === 'DIVERGENTE' || s === 'ERRO' || s === 'BLOQUEADO' || s === 'CANCELADO') return 'b-red';
+  if (s === 'FECHADO' || s === 'FINALIZADO' || s === 'INATIVO') return 'b-gray';
+  if (s === 'LIBERADO' || s === 'LIBERADA' || s === 'EM_ANDAMENTO' || s === 'REABERTO_ALTERACAO_BASE') return 'b-blue';
+  return 'b-gray';
+}
+window.statusBadge = window.statusBadge || statusBadge;
+
+
 const _isDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
 function dbg(...args) { if (_isDev) console.log(...args); }
 window.dbg = window.dbg || dbg;

@@ -2,19 +2,28 @@ function state(){ return window.AnalistaStore.getState(); }
 //  12. RENDERIZAÇÃO — INVENTÁRIOS
 // ───────────────────────────────────────────────────────────────────
 
-function filtrarInv(v) { window.AnalistaState.set('ui.filtroInventarioTexto', v.toLowerCase(), { source: 'ui-filter' }); renderInvTable(); }
+function filtrarInv(v) { window.AnalistaState.set('ui.filtroInventarioTexto', String(v || '').toLowerCase(), { source: 'ui-filter' }); renderInvTable(); }
 function filtrarInvStatus(v) { window.AnalistaState.set('ui.filtroInventarioStatus', v, { source: 'ui-filter' }); renderInvTable(); }
 
 function renderInvTable() {
-  let dados = state().inventarios;
-  if (state().ui.filtroInventarioTexto) dados = dados.filter(i => i.nome.toLowerCase().includes(state().ui.filtroInventarioTexto) || i.codigo.toLowerCase().includes(state().ui.filtroInventarioTexto));
-  if (state().ui.filtroInventarioStatus) dados = dados.filter(i => i.status === state().ui.filtroInventarioStatus);
+  const st = state() || {};
+  const ui = st.ui || {};
+  let dados = Array.isArray(st.inventarios) ? st.inventarios.slice() : [];
+  if (ui.filtroInventarioTexto) {
+    const termo = String(ui.filtroInventarioTexto).toLowerCase();
+    dados = dados.filter(i => String(i?.nome || '').toLowerCase().includes(termo) || String(i?.codigo || '').toLowerCase().includes(termo));
+  }
+  if (ui.filtroInventarioStatus) dados = dados.filter(i => String(i?.status || '') === String(ui.filtroInventarioStatus));
 
   if (!dados.length) {
-    document.getElementById('inv-table-wrap').innerHTML = `<div class="empty"><div class="empty-icon">📦</div><div class="empty-title">Nenhum inventário encontrado</div><div class="empty-sub">Clique em + Novo Inventário para começar</div></div>`;
+    const wrapVazio = document.getElementById('inv-table-wrap');
+    if (!wrapVazio) return;
+    wrapVazio.innerHTML = `<div class="empty"><div class="empty-icon">📦</div><div class="empty-title">Nenhum inventário encontrado</div><div class="empty-sub">Clique em + Novo Inventário para começar</div></div>`;
     return;
   }
-  document.getElementById('inv-table-wrap').innerHTML = `
+  const wrap = document.getElementById('inv-table-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = `
     <div class="tbl-wrap">
       <table>
         <thead><tr>
@@ -23,15 +32,21 @@ function renderInvTable() {
         </tr></thead>
         <tbody>
           ${dados.map(inv => {
-            const contados = [...new Set(state().contagens.filter(c => c.inventario_id === inv.id && !c._excluida).map(c => c.endereco))];
-            const endsAtivosTotal = state().enderecosLista.filter(e => e.ativo !== false).length;
+            const contagens = Array.isArray(st.contagens) ? st.contagens : [];
+            const contados = [...new Set(contagens.filter(c => c && c.inventario_id === inv.id && !c._excluida).map(c => c.endereco).filter(Boolean))];
+            const selecionados = Array.isArray(inv?.enderecos_selecionados) ? inv.enderecos_selecionados : [];
+            const base = Array.isArray(inv?.base) ? inv.base : [];
+            const endsInv = selecionados.length
+              ? selecionados.map(e => typeof e === 'string' ? e : e?.endereco).filter(Boolean)
+              : base.map(e => e?.endereco).filter(Boolean);
+            const endsAtivosTotal = new Set(endsInv).size || Number(inv?.total_enderecos || 0);
             const pct = endsAtivosTotal > 0 ? Math.round((contados.length / endsAtivosTotal) * 100) : 0;
             return `<tr>
-              <td class="mono">${inv.codigo}</td>
+              <td class="mono">${escapeHTML(inv.codigo || '—')}</td>
               <td style="font-weight:600">${escapeHTML(inv.nome)}${inv.setor ? `<br><span style="font-size:.7rem;color:var(--muted)">${escapeHTML(inv.setor)}</span>` : ''}${inv.loja_principal ? `<br><span style="font-size:.7rem;color:var(--muted)">Loja: ${escapeHTML(inv.loja_principal)}${(inv.lojas_espelho||[]).length ? ` · Espelho: ${escapeHTML((inv.lojas_espelho||[]).join(', '))}` : ''}</span>` : ''}</td>
               <td class="mono" style="color:var(--muted)">${fmtData(inv.data_inicio)}</td>
-              <td style="font-size:.8rem">${inv.responsavel || '—'}</td>
-              <td><span class="badge ${statusBadge(inv.status)}">${inv.status}</span></td>
+              <td style="font-size:.8rem">${escapeHTML(inv.responsavel || '—')}</td>
+              <td><span class="badge ${statusBadge(inv.status)}">${escapeHTML(inv.status || '—')}</span></td>
               <td class="mono">${(inv.total_registros || 0).toLocaleString('pt-BR')}</td>
               <td class="mono">${endsAtivosTotal.toLocaleString('pt-BR')}</td>
               <td style="min-width:120px">
@@ -80,25 +95,25 @@ function renderAcompanhamento() {
   const sel = document.getElementById('acomp-sel-inv');
   if (sel) {
     const ativos = state().inventarios.filter(i => i.status === 'ATIVO');
-    sel.innerHTML = '<option value="">Selecione uma auditoria...</option>' +
+    sel.innerHTML = '<option value="">Selecione um inventário...</option>' +
       ativos.map(i => `<option value="${i.id}" ${i.id === state().ui.acompanhamentoInventarioId ? 'selected' : ''}>${i.codigo} — ${i.nome}</option>`).join('');
   }
 
   const inv = state().ui.acompanhamentoInventarioId ? getInventarioPorId(state().ui.acompanhamentoInventarioId) : (getInventariosAtivos()[0] || null);
   if (!inv) {
-    document.getElementById('acomp-inv-nome').textContent = 'Selecione uma auditoria para monitorar';
+    document.getElementById('acomp-inv-nome').textContent = 'Selecione um inventário para monitorar';
     ['ak-total','ak-contados','ak-pendentes','ak-diverg','ak-recount','ak-pct'].forEach(id => {
       document.getElementById(id).textContent = '—';
     });
     const ruasGrid = document.getElementById('acomp-ruas-grid');
-    if (ruasGrid) ruasGrid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="empty-icon">🎯</div><div class="empty-title">Selecione uma auditoria</div></div>`;
+    if (ruasGrid) ruasGrid.innerHTML = `<div class="empty" style="grid-column:1/-1"><div class="empty-icon">🎯</div><div class="empty-title">Selecione um inventário</div></div>`;
     document.getElementById('acomp-progress-detail').innerHTML = '';
     document.getElementById('acomp-coletores-wrap').innerHTML = '';
     return;
   }
 
   if (!state().ui.acompanhamentoInventarioId) window.AnalistaState.set('ui.acompanhamentoInventarioId', inv.id, { source: 'ui-default-acomp' });
-  document.getElementById('acomp-inv-nome').textContent = `${inv.codigo} — ${inv.nome}`;
+  document.getElementById('acomp-inv-nome').textContent = `${escapeHTML(inv.codigo || '—')} — ${inv.nome}`;
 
   // Banner de inventário fechado
   const closedBanner = document.getElementById('acomp-closed-banner');
