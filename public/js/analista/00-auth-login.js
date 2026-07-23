@@ -56,9 +56,7 @@ function doLoginAnalista() {
 
   _salvarOuLimparLogin(email, senha);
   _loginSolicitadoPeloUsuario = true;
-  AUTH_AN.setPersistence((document.getElementById('an-remember')?.checked === true)
-      ? firebase.auth.Auth.Persistence.LOCAL
-      : firebase.auth.Auth.Persistence.SESSION)
+  AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE)
     .then(() => AUTH_AN.signInWithEmailAndPassword(email, senha))
     .catch(err => { _loginSolicitadoPeloUsuario = false; _setLoginErro(_traduzirErroLoginAnalista(err)); });
 }
@@ -205,6 +203,11 @@ async function _iniciarAuthAnalista() {
 
   AUTH_AN.onAuthStateChanged(async user => {
     if (user) {
+      if (!_loginSolicitadoPeloUsuario) {
+        await AUTH_AN.signOut();
+        _mostrarLogin();
+        return;
+      }
       _loginSolicitadoPeloUsuario = false;
       await _onAnalistaLogado(user);
       return;

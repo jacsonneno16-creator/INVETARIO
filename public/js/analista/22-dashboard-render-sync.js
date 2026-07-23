@@ -13,7 +13,7 @@ function limparFiltrosDash() {
 
 let _dashCache = null;
 
-function renderDashboard() {
+function renderDashboardInventario() {
   // ── Preencher selects de filtro ──
   const fInvEl   = document.getElementById('dash-finv');
   const fRuaEl   = document.getElementById('dash-frua');
@@ -540,3 +540,106 @@ function dashApplyOperadorFilter(operador) {
 }
 
 // ───────────────────────────────────────────────────────────────────
+
+// ══════════════════════════════════════════════════════════════════════
+// DASHBOARD DUPLO — INVENTÁRIO / AUDITORIA (v36)
+// ══════════════════════════════════════════════════════════════════════
+let _dashAudMetas = [];
+let _dashAudItens = [];
+let _dashAudCarregando = false;
+let _dashAudLoja = '';
+
+function _dashModoAtual(){ return document.getElementById('dash-mode')?.value || 'inventario'; }
+function _dashEnderecoPartes(endereco){
+  const p=String(endereco||'').trim().split(/[.\-_/]/).filter(Boolean);
+  return {loja:p[0]||'',local:p[1]||'',area:p[2]||'',rua:p[3]||'SEM RUA',coluna:p[4]||'SEM COLUNA',nivel:p[5]||'SEM NÍVEL',sequencia:p[6]||''};
+}
+function _dashSetKpi(idx,valor,rotulo,icone){
+  const ids=['kd-inventarios','kd-enderecos','kd-end-contados','kd-pendencias','kd-contagens','kd-diverg','kd-recount','kd-pct-geral','kd-operadores'];
+  const el=document.getElementById(ids[idx]); if(!el)return;
+  el.textContent=valor;
+  const card=el.closest('.kpi');
+  const lbl=card?.querySelector('.kpi-lbl'); const ico=card?.querySelector('.kpi-icon');
+  if(lbl)lbl.textContent=rotulo; if(ico)ico.textContent=icone;
+}
+function alterarModoDashboard(modo){
+  document.querySelectorAll('.dash-inv-filter').forEach(e=>e.style.display=modo==='inventario'?'':'none');
+  document.querySelectorAll('.dash-aud-filter').forEach(e=>e.style.display=modo==='auditoria'?'':'none');
+  const novo=document.querySelector('#page-dashboard button[onclick="abrirNovoInventario()"]');
+  if(novo) novo.style.display=modo==='inventario'?'':'none';
+  renderDashboard();
+}
+function renderDashboard(){
+  if(_dashModoAtual()==='auditoria') return carregarDashboardAuditoria(false);
+  document.getElementById('dash-alert-wrap').innerHTML='';
+  const action=document.getElementById('dash-recentes-action'); if(action)action.style.display='';
+  const title=document.getElementById('dash-recentes-title'); if(title)title.textContent='📦 Inventários Recentes';
+  return renderDashboardInventario();
+}
+function limparFiltrosDash(){
+  if(_dashModoAtual()==='auditoria'){
+    ['dash-faud','dash-fastatus','dash-farua','dash-fanivel','dash-faproduto'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+    return carregarDashboardAuditoria(false);
+  }
+  ['dash-finv','dash-frua','dash-flocal'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  renderDashboardInventario();
+}
+async function carregarDashboardAuditoria(forcar){
+  const lojaAtual=window.getDTLojaAtiva?.()||'';
+  if(_dashAudCarregando)return;
+  if(!forcar && _dashAudLoja===lojaAtual && _dashAudMetas.length){ renderDashboardAuditoria(); return; }
+  _dashAudCarregando=true;
+  const wrap=document.getElementById('dash-charts-wrap'); if(wrap)wrap.innerHTML='<div class="tc"><div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando auditorias...</div></div></div>';
+  try{
+    const db=window.FS_AN || window.getDTFirestore?.();
+    const snap=await db.collection('dt_auditorias').get();
+    _dashAudMetas=snap.docs.map(d=>({id:d.id,...d.data()}));
+    const escolhido=document.getElementById('dash-faud')?.value||'';
+    const metas=escolhido?_dashAudMetas.filter(m=>m.id===escolhido):_dashAudMetas;
+    const listas=await Promise.all(metas.map(async m=>{
+      const ss=await db.collection('dt_auditorias').doc(m.id).collection('enderecos').get();
+      return ss.docs.map(d=>({id:d.id,auditoriaId:m.id,auditoriaNome:m.nome||m.auditoria_nome||m.id,...d.data()}));
+    }));
+    _dashAudItens=listas.flat(); _dashAudLoja=lojaAtual;
+    _dashPopularFiltrosAuditoria(); renderDashboardAuditoria();
+  }catch(e){
+    console.error('[Dashboard Auditoria]',e);
+    if(wrap)wrap.innerHTML='<div class="tc"><div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar o dashboard de auditoria</div></div></div>';
+  }finally{_dashAudCarregando=false;}
+}
+function _dashAudStatus(i){
+  const s=String(i.status||'PENDENTE').toUpperCase();
+  if(['APROVADO','CORRETO','CONFERIDO','FINALIZADO','CONFIRMADO_SEM_AJUSTE'].includes(s))return'OK';
+  if(['ERRO','CONFIRMADO_COM_AJUSTE'].includes(s))return'DIVERGENTE';
+  if(s==='VAZIO')return'ENDERECO_VAZIO'; return s;
+}
+function _dashPopularFiltrosAuditoria(){
+  const sel=document.getElementById('dash-faud'); if(sel){const cur=sel.value;sel.innerHTML='<option value="">Todas as auditorias</option>'+_dashAudMetas.map(m=>`<option value="${_dashSafe(m.id)}">${_dashSafe(m.nome||m.auditoria_nome||m.id)}</option>`).join('');sel.value=cur;}
+  const itens=_dashAudItens;
+  const popular=(id,vals,prefix)=>{const e=document.getElementById(id);if(!e)return;const cur=e.value;e.innerHTML=`<option value="">Todos os ${prefix}</option>`+vals.map(v=>`<option value="${_dashSafe(v)}">${prefix==='ruas'?'Rua ':prefix==='níveis'?'Nível ':''}${_dashSafe(v)}</option>`).join('');e.value=cur;};
+  popular('dash-farua',[...new Set(itens.map(i=>_dashEnderecoPartes(i.endereco).rua))].sort((a,b)=>a.localeCompare(b,'pt-BR',{numeric:true})),'ruas');
+  popular('dash-fanivel',[...new Set(itens.map(i=>_dashEnderecoPartes(i.endereco).nivel))].sort((a,b)=>a.localeCompare(b,'pt-BR',{numeric:true})),'níveis');
+}
+function _dashAudFiltrados(){
+  const aud=document.getElementById('dash-faud')?.value||'', st=document.getElementById('dash-fastatus')?.value||'', rua=document.getElementById('dash-farua')?.value||'', nivel=document.getElementById('dash-fanivel')?.value||'', busca=(document.getElementById('dash-faproduto')?.value||'').toLowerCase();
+  return _dashAudItens.filter(i=>{const p=_dashEnderecoPartes(i.endereco);if(aud&&i.auditoriaId!==aud)return false;if(st&&_dashAudStatus(i)!==st)return false;if(rua&&p.rua!==rua)return false;if(nivel&&p.nivel!==nivel)return false;if(busca&&!String([i.produtoEsperado,i.produto_esperado,i.produtoLido,i.produto_lido,i.dunEsperado,i.dun_esperado,i.dun,i.dunLido,i.dun_lido].join(' ')).toLowerCase().includes(busca))return false;return true;});
+}
+function _dashAgrupar(lista,keyFn,pred){const m={};lista.filter(pred||(()=>true)).forEach(i=>{const k=keyFn(i)||'SEM DADO';m[k]=(m[k]||0)+1;});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}
+function _dashAudBarClick(tipo,valor){const map={rua:'dash-farua',nivel:'dash-fanivel',produto:'dash-faproduto'};const e=document.getElementById(map[tipo]);if(e)e.value=valor;renderDashboardAuditoria();}
+function _dashAudBars(arr,tipo,lim=10){if(!arr.length)return'<div class="empty" style="padding:20px"><div class="empty-title">Sem dados</div></div>';const max=Math.max(...arr.map(x=>x[1]),1);return arr.slice(0,lim).map(([l,v])=>`<button class="btn btn-ghost btn-sm" onclick="_dashAudBarClick('${tipo}','${String(l).replace(/'/g,"\\'")}')" style="width:100%;display:block;text-align:left;padding:9px 10px;margin-bottom:7px"><div style="display:flex;justify-content:space-between;gap:8px"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_dashSafe(l)}</b><span class="mono">${v}</span></div><div style="height:9px;background:var(--border);border-radius:99px;margin-top:6px;overflow:hidden"><div style="height:100%;width:${Math.max(4,Math.round(v/max*100))}%;background:linear-gradient(90deg,var(--orange),#ef4444);border-radius:99px"></div></div></button>`).join('');}
+function renderDashboardAuditoria(){
+  const lista=_dashAudFiltrados(), total=lista.length, ok=lista.filter(i=>_dashAudStatus(i)==='OK').length, div=lista.filter(i=>_dashAudStatus(i)==='DIVERGENTE').length, vaz=lista.filter(i=>_dashAudStatus(i)==='ENDERECO_VAZIO').length, pend=lista.filter(i=>_dashAudStatus(i)==='PENDENTE').length, audit=total-pend, taxa=total?Math.round(audit/total*100):0, acur=audit?Math.round(ok/audit*100):0;
+  const ops=new Set(lista.map(i=>i.operadorNome||i.operador_nome||i.operadorId||i.operador_id).filter(Boolean)).size;
+  [_dashAudMetas.length,total,audit,pend,ok,div,vaz,`${taxa}%`,ops].forEach((v,idx)=>_dashSetKpi(idx,v,['Auditorias','Itens previstos','Itens auditados','Pendentes','Itens corretos','Divergências','End. vazios','% executado','Operadores'][idx],['🔎','📍','✅','⏳','🎯','⚠️','📭','📊','👥'][idx]));
+  const diverg=lista.filter(i=>_dashAudStatus(i)==='DIVERGENTE');
+  const prod=_dashAgrupar(diverg,i=>i.produtoEsperado||i.produto_esperado||i.dunEsperado||i.dun_esperado||i.dun||'SEM PRODUTO');
+  const ruas=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).rua), niveis=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).nivel), cols=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).coluna);
+  const operadores=_dashAgrupar(diverg,i=>i.operadorNome||i.operador_nome||i.operadorId||i.operador_id||'SEM OPERADOR');
+  const wrap=document.getElementById('dash-charts-wrap'); if(wrap)wrap.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:16px"><div class="tc"><div class="tc-header"><div class="tc-title">📦 Produtos com mais divergências</div></div><div style="padding:12px">${_dashAudBars(prod,'produto',12)}</div></div><div class="tc"><div class="tc-header"><div class="tc-title">🛣️ Ruas com mais divergências</div></div><div style="padding:12px">${_dashAudBars(ruas,'rua',12)}</div></div><div class="tc"><div class="tc-header"><div class="tc-title">🏗️ Níveis com mais divergências</div></div><div style="padding:12px">${_dashAudBars(niveis,'nivel',10)}</div></div><div class="tc"><div class="tc-header"><div class="tc-title">📐 Colunas com mais divergências</div></div><div style="padding:12px">${_dashAudBars(cols,'coluna',10)}</div></div></div>`;
+  const rwrap=document.getElementById('dash-ruas-wrap');if(rwrap)rwrap.innerHTML=_dashAudBars(operadores,'operador',10);
+  const lwrap=document.getElementById('dash-locais-wrap');if(lwrap)lwrap.innerHTML=`<div style="padding:8px"><div style="font-size:2rem;font-weight:800">${acur}%</div><div style="color:var(--muted);margin-bottom:12px">Acuracidade dos itens auditados</div>${[['Corretos',ok],['Divergentes',div],['Vazios',vaz],['Pendentes',pend]].map(x=>`<div style="display:flex;justify-content:space-between;padding:8px;border-bottom:1px solid var(--border)"><span>${x[0]}</span><b>${x[1]}</b></div>`).join('')}</div>`;
+  const rt=document.getElementById('dash-recentes-title');if(rt)rt.textContent='🔎 Auditorias e resultados recentes';const act=document.getElementById('dash-recentes-action');if(act)act.style.display='none';
+  const tab=document.getElementById('dash-inv-table');if(tab){const rec=[...lista].sort((a,b)=>String(b.lidoEm||b.lido_em||'').localeCompare(String(a.lidoEm||a.lido_em||''))).slice(0,15);tab.innerHTML=rec.length?`<div class="table-wrap"><table><thead><tr><th>Auditoria</th><th>Endereço</th><th>Produto esperado</th><th>Produto lido</th><th>Status</th><th>Operador</th></tr></thead><tbody>${rec.map(i=>`<tr><td>${_dashSafe(i.auditoriaNome)}</td><td class="mono">${_dashSafe(i.endereco)}</td><td>${_dashSafe(i.produtoEsperado||i.produto_esperado||i.dunEsperado||i.dun_esperado||'—')}</td><td>${_dashSafe(i.produtoLido||i.produto_lido||i.dunLido||i.dun_lido||'—')}</td><td><span class="badge ${_dashAudStatus(i)==='OK'?'ok':_dashAudStatus(i)==='DIVERGENTE'?'err':'warn'}">${_dashSafe(_dashAudStatus(i))}</span></td><td>${_dashSafe(i.operadorNome||i.operador_nome||'—')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty"><div class="empty-title">Nenhum resultado para os filtros</div></div>';}
+  const alert=document.getElementById('dash-alert-wrap');if(alert)alert.innerHTML=div?`<div class="alert warn"><b>⚠️ ${div} divergência(s)</b> nos filtros atuais. Clique nos gráficos para aprofundar a análise.</div>`:`<div class="alert ok"><b>✅ Nenhuma divergência</b> nos filtros atuais.</div>`;
+}
+window.alterarModoDashboard=alterarModoDashboard;window.carregarDashboardAuditoria=carregarDashboardAuditoria;window.renderDashboardAuditoria=renderDashboardAuditoria;window._dashAudBarClick=_dashAudBarClick;
