@@ -28,6 +28,18 @@ window.getDTFirebaseApp = function(){
 };
 window.getDTRawFirestore = function(){ return getDTFirebaseApp().firestore(); };
 
+// Administradores mestres autorizados a inicializar e recuperar o ambiente multiloja.
+// Após o primeiro acesso, a permissão também fica persistida em usuarios_acessos.
+window.DT_ADMIN_MESTRE_EMAILS = window.DT_ADMIN_MESTRE_EMAILS || [
+  'jacson@daterrinhaalimentos.com.br',
+  'jacson.souza@daterrinhaalimentos.com.br'
+];
+window.isDTAdminMestre = function(user, acesso){
+  const email = String((user && user.email) || (acesso && acesso.email) || '').trim().toLowerCase();
+  return !!(acesso && (acesso.admin_mestre === true || acesso.administrador_mestre === true)) ||
+    window.DT_ADMIN_MESTRE_EMAILS.indexOf(email) >= 0;
+};
+
 // ── MULTILOJA ───────────────────────────────────────────────────────────────
 // Coleções operacionais são automaticamente direcionadas para
 // lojas/{lojaAtiva}/{colecao}. A coleção raiz "lojas" permanece global.
@@ -62,6 +74,53 @@ window.getDTFirestore = function(){
 window.getDTAuth = function(){ return getDTFirebaseApp().auth(); };
 
 window.DTLoja = {
+  async bootstrapAdministrador(user, acessoExistente){
+    const raw = window.getDTRawFirestore();
+    const acesso = acessoExistente || null;
+    let primeiroSetup = false;
+
+    // Instalação nova: se ainda não há lojas nem permissões, o primeiro usuário
+    // autenticado assume o papel de administrador mestre para destravar o sistema.
+    if (!acesso) {
+      try {
+        const resultados = await Promise.all([
+          raw.collection('lojas').limit(1).get(),
+          raw.collection('usuarios_acessos').limit(1).get()
+        ]);
+        primeiroSetup = resultados[0].empty && resultados[1].empty;
+      } catch (_) {}
+    }
+
+    const adminMestre = window.isDTAdminMestre(user, acesso) || primeiroSetup;
+    if (!adminMestre) return acesso;
+
+    const agora = new Date().toISOString();
+    const lojaRef = raw.collection('lojas').doc('loja_matriz');
+    const lojaDoc = await lojaRef.get();
+    if (!lojaDoc.exists) {
+      await lojaRef.set({
+        nome: 'Loja Matriz', codigo: 'MATRIZ', ativa: true,
+        criada_em: agora, criada_por: user && user.email ? user.email : ''
+      }, { merge: true });
+    }
+
+    const dadosAdmin = {
+      uid: user.uid,
+      email: String(user.email || '').toLowerCase(),
+      nome: user.displayName || String(user.email || '').split('@')[0],
+      perfil: 'administrador',
+      ativo: true,
+      admin_mestre: true,
+      administrador_mestre: true,
+      acesso_todas_lojas: true,
+      lojas_permitidas: [],
+      atualizado_em: agora,
+      atualizado_por: 'BOOTSTRAP_AUTOMATICO'
+    };
+    if (!acesso) dadosAdmin.criado_em = agora;
+    await raw.collection('usuarios_acessos').doc(user.uid).set(dadosAdmin, { merge: true });
+    return Object.assign({}, acesso || {}, dadosAdmin);
+  },
   async listar(apenasAtivas=true){
     const raw = window.getDTRawFirestore();
     const snap = await raw.collection('lojas').get();

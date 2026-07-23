@@ -122,9 +122,19 @@ async function _onAnalistaLogado(user) {
   try {
     const raw = window.getDTRawFirestore();
     const acc = await raw.collection('usuarios_acessos').doc(user.uid).get();
-    // Compatibilidade: usuário antigo sem configuração mantém acesso total até ser configurado.
-    window.DT_USUARIO_ACESSO_ATUAL = acc.exists ? { uid:user.uid, ...acc.data() } : { uid:user.uid, email:user.email, acesso_todas_lojas:true, lojas_permitidas:[] };
-    const permitidas = await window.DTLoja.listar(true);
+    let acesso = acc.exists ? { uid:user.uid, ...acc.data() } : null;
+
+    // Bootstrap e autorrecuperação do administrador mestre.
+    // Em instalação nova cria Loja Matriz e a própria permissão automaticamente.
+    acesso = await window.DTLoja.bootstrapAdministrador(user, acesso);
+
+    // Usuários antigos sem cadastro continuam compatíveis; usuários comuns já
+    // cadastrados continuam obedecendo às lojas definidas pelo administrador.
+    window.DT_USUARIO_ACESSO_ATUAL = acesso || {
+      uid:user.uid, email:user.email, acesso_todas_lojas:true, lojas_permitidas:[]
+    };
+
+    const permitidas = await window.DTLoja.garantirLojaInicial();
     if (!permitidas.length) throw new Error('Este login não possui acesso a nenhuma loja. Solicite a liberação ao administrador.');
     const atual = window.getDTLojaAtiva();
     if (atual && !permitidas.some(l=>l.id===atual)) window.setDTLojaAtiva('');
