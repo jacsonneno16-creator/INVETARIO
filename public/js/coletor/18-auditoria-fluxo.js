@@ -240,6 +240,7 @@
       produtoEsperado: descricaoEsperada(item),
       dunLido: lido,
       produtoLido: nomeLido,
+      produtoNaoCadastrado: status !== STATUS_VAZIO && !(window.DTProdutos && window.DTProdutos.buscarSync && window.DTProdutos.buscarSync(lido).encontrado),
       status,
       operadorId: operadorUsuario(),
       operadorNome: operadorNome(),
@@ -290,13 +291,21 @@
       el.produto?.focus();
       return;
     }
+    if(!/^\d+$/.test(lido)){
+      mostrarResultado('Código inválido. Bipe somente números, sem pontos, barras, espaços ou letras.','erro');
+      tocar('erro');
+      el.produto.select();
+      el.produto.focus();
+      return;
+    }
     const prod=window.DTProdutos&&window.DTProdutos.buscarSync?window.DTProdutos.buscarSync(lido):{encontrado:false};
-    if(!prod.encontrado){mostrarResultado('Produto não cadastrado na Base Geral de Produtos.','erro');tocar('erro');el.produto.select();el.produto.focus();return;}
     const esperado=dunEsperado(estado.item);
     let correto=esperado&&normalizarCodigo(lido)===normalizarCodigo(esperado);
     const meta=(APP.auditoriasMenu||[]).find(function(x){return x.id===auditoriaId();})||{};
     if(meta.tipoAuditoria==='produto'&&meta.familiaId){correto=(prod.familiaCodigo||prod.familiaNome)===meta.familiaId||prod.familiaNome===meta.familiaNome;}
+    if(!prod.encontrado)correto=false;
     if(estado.item.previstoVazio===true||!esperado)correto=false;
+    if(!prod.encontrado) mostrarResultado('Produto não cadastrado. Será registrado como divergente.','erro');
     salvarResultado(correto?STATUS_OK:STATUS_DIVERGENTE,lido);
   }
 

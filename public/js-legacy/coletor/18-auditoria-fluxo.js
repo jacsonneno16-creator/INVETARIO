@@ -346,6 +346,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             produtoEsperado: descricaoEsperada(item),
                             dunLido: lido,
                             produtoLido: nomeLido,
+                            produtoNaoCadastrado: status !== STATUS_VAZIO && !(window.DTProdutos && window.DTProdutos.buscarSync && window.DTProdutos.buscarSync(lido).encontrado),
                             status: status,
                             operadorId: operadorUsuario(),
                             operadorNome: operadorNome(),
@@ -405,22 +406,26 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             (_b = el.produto) === null || _b === void 0 ? void 0 : _b.focus();
             return;
         }
-        var prod = window.DTProdutos && window.DTProdutos.buscarSync ? window.DTProdutos.buscarSync(lido) : { encontrado: false };
-        if (!prod.encontrado) {
-            mostrarResultado('Produto não cadastrado na Base Geral de Produtos.', 'erro');
+        if (!/^\d+$/.test(lido)) {
+            mostrarResultado('Código inválido. Bipe somente números, sem pontos, barras, espaços ou letras.', 'erro');
             tocar('erro');
             el.produto.select();
             el.produto.focus();
             return;
         }
+        var prod = window.DTProdutos && window.DTProdutos.buscarSync ? window.DTProdutos.buscarSync(lido) : { encontrado: false };
         var esperado = dunEsperado(estado.item);
         var correto = esperado && normalizarCodigo(lido) === normalizarCodigo(esperado);
         var meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId(); }) || {};
         if (meta.tipoAuditoria === 'produto' && meta.familiaId) {
             correto = (prod.familiaCodigo || prod.familiaNome) === meta.familiaId || prod.familiaNome === meta.familiaNome;
         }
+        if (!prod.encontrado)
+            correto = false;
         if (estado.item.previstoVazio === true || !esperado)
             correto = false;
+        if (!prod.encontrado)
+            mostrarResultado('Produto não cadastrado. Será registrado como divergente.', 'erro');
         salvarResultado(correto ? STATUS_OK : STATUS_DIVERGENTE, lido);
     }
     function registrarEnderecoVazio() {
