@@ -58,9 +58,11 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
 //  NAVEGAÇÃO
 // ═══════════════════════════════════════════════════
 function goScreen(id) {
+    var aliases = { coleta: 'app', auditoria: 'app' };
+    var destino = aliases[id] || id;
+    var alvo = document.getElementById('screen-' + destino);
+    if (!alvo) { console.error('[Navegacao] Tela inexistente:', id, 'destino:', destino); return false; }
     document.querySelectorAll('.screen').forEach(function (s) { return s.classList.remove('active'); });
-    var alvo = document.getElementById('screen-' + id);
-    if (!alvo) { console.warn('[Navegacao] Tela inexistente:', id); return false; }
     alvo.classList.add('active');
     return true;
 }
@@ -274,7 +276,9 @@ function _confirmarEstorno(docId) {
 function showView(v, el) {
     document.querySelectorAll('.view').forEach(function (e) { return e.classList.remove('on'); });
     document.querySelectorAll('.nav-tab').forEach(function (e) { return e.classList.remove('on'); });
-    document.getElementById('view-' + v).classList.add('on');
+    var viewAlvo = document.getElementById('view-' + v);
+    if (!viewAlvo) { console.error('[Navegacao] View inexistente:', v); return false; }
+    viewAlvo.classList.add('on');
     if (el)
         el.classList.add('on');
     if (v === 'status')

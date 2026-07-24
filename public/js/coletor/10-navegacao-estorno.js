@@ -2,9 +2,11 @@
 //  NAVEGAÇÃO
 // ═══════════════════════════════════════════════════
 function goScreen(id) {
+  const aliases={coleta:'app',auditoria:'app'};
+  const destino=aliases[id]||id;
+  const alvo=document.getElementById('screen-'+destino);
+  if(!alvo){ console.error('[Navegacao] Tela inexistente:',id,'destino:',destino); return false; }
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
-  const alvo=document.getElementById('screen-'+id);
-  if(!alvo){ console.warn('[Navegacao] Tela inexistente:',id); return false; }
   alvo.classList.add('active');
   return true;
 }
@@ -258,7 +260,9 @@ function _confirmarEstorno(docId) {
 function showView(v, el) {
   document.querySelectorAll('.view').forEach(e=>e.classList.remove('on'));
   document.querySelectorAll('.nav-tab').forEach(e=>e.classList.remove('on'));
-  document.getElementById('view-'+v).classList.add('on');
+  const viewAlvo=document.getElementById('view-'+v);
+  if(!viewAlvo){ console.error('[Navegacao] View inexistente:',v); return false; }
+  viewAlvo.classList.add('on');
   if (el) el.classList.add('on');
   if (v==='status')      updateStats();
   if (v==='estorno')     renderEstorno();

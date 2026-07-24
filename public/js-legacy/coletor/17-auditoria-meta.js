@@ -325,7 +325,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         var audTab = document.getElementById('tab-auditoria');
         if (audTab)
             audTab.style.display = '';
-        goScreen('coleta');
+        goScreen('app');
         if (audTab)
             showView('auditoria', audTab);
         renderAuditoriaColetor();
