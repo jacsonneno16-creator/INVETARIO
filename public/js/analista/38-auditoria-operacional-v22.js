@@ -3,6 +3,10 @@
 (function(){
   'use strict';
 
+  // Evita inicialização duplicada caso o arquivo seja carregado mais de uma vez.
+  if (window.__auditoriaOperacionalV22Inicializada) return;
+  window.__auditoriaOperacionalV22Inicializada = true;
+
   const DB = () => window.FS_AN || (window.getDTFirestore && window.getDTFirestore());
   const STATUS = ['PENDENTE','OK','DIVERGENTE','ENDERECO_VAZIO'];
   let auditoriaAtual = '';
@@ -32,7 +36,15 @@
   }
 
   let configuracaoNova = null;
-  function ruaDoEndereco(v){ return (window.DTEnderecos?.partes(v).rua || ''); }
+  function ruaDoEndereco(v){
+    try {
+      if (window.DTEnderecos && typeof window.DTEnderecos.partes === 'function') {
+        return txt(window.DTEnderecos.partes(v).rua);
+      }
+    } catch (e) {}
+    const partes = txt(v).split('.').map(function(parte){ return parte.trim(); }).filter(Boolean);
+    return partes.length >= 4 ? partes[3] : (partes[0] || '');
+  }
   async function enderecosGerais(){
     try{
       const chunks=await DB().collection('dt_locais_chunks').orderBy('parte').get();
@@ -703,15 +715,23 @@
   }
   window.addEventListener('dt-produtos-atualizados',reprocessarItensComProdutos);
 
-  document.addEventListener('DOMContentLoaded', () => {
+  function inicializarEventosAuditoria(){
+    if(window.__auditoriaOperacionalV22Eventos) return;
+    window.__auditoriaOperacionalV22Eventos=true;
     const sel=document.getElementById('aud-op-auditoria');
-    if(sel){ sel.onchange=()=>selecionarAuditoria(sel.value); }
-    ['aud-op-status','aud-op-busca','aud-f-dun-esperado','aud-f-dun-lido','aud-f-operador','aud-f-data'].forEach(id=>{
-      const e=document.getElementById(id); if(e)e.addEventListener(e.tagName==='SELECT'?'change':'input',renderizar);
+    if(sel){ sel.onchange=function(){ selecionarAuditoria(sel.value); }; }
+    ['aud-op-status','aud-op-busca','aud-f-dun-esperado','aud-f-dun-lido','aud-f-operador','aud-f-data'].forEach(function(id){
+      const e=document.getElementById(id);
+      if(e && e.dataset.auditoriaEvento!=='1'){
+        e.dataset.auditoriaEvento='1';
+        e.addEventListener(e.tagName==='SELECT'?'change':'input',renderizar);
+      }
     });
     // Não consultar o Firestore na tela de login. A lista será carregada somente
     // quando a aba Auditoria for aberta após autenticação e seleção da loja.
     renderizar();
-  });
-  window.addEventListener('beforeunload',encerrarListener);
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',inicializarEventosAuditoria,{once:true});
+  else inicializarEventosAuditoria();
+  window.addEventListener('beforeunload',encerrarListener,{once:true});
 })();

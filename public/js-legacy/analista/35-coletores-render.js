@@ -1150,22 +1150,12 @@ function editarNomeColetor(colId) {
             });
         });
     };
-    window.criarNovaAuditoriaStandalone = function () {
-        var nomeAtual = String(window.__auditoriaNomeManual || '').trim();
-        var nome = prompt('Nome da nova auditoria:', nomeAtual || "AUD-".concat(new Date().toLocaleString('pt-BR')));
-        if (nome == null)
-            return;
-        var limpo = String(nome || '').trim();
-        if (!limpo) {
-            showToast('Informe um nome para a auditoria', 'w');
-            return;
-        }
-        window.__auditoriaNomeManual = limpo;
-        window.__ultimaAuditoriaSelecionada = '';
-        var input = document.getElementById('auditoria-file');
-        if (input)
-            input.click();
-    };
+    window.criarNovaAuditoriaStandalone = function(){ 
+ if(typeof window.__criarNovaAuditoriaStandaloneV22==='function'){return window.__criarNovaAuditoriaStandaloneV22();}
+ if(typeof window.criarNovaAuditoriaStandaloneV22==='function'){return window.criarNovaAuditoriaStandaloneV22();}
+ console.error('Fluxo v22 de auditoria não carregado');
+ alert('Erro ao carregar o módulo de auditoria. Recarregue a página.');
+};
     window.exportarAuditoriaOperacional = function () {
         var _a, _b;
         var audId = ((_a = document.getElementById('aud-op-auditoria')) === null || _a === void 0 ? void 0 : _a.value) || window.__ultimaAuditoriaSelecionada || '';
