@@ -112,167 +112,169 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     }
     function abrirCriacaoAuditoria() {
         return __awaiter(this, void 0, void 0, function () {
-            var modalExistente, campo, meuToken, carregando, cancelar;
+            function renderFamilias() {
+                var box = modal.querySelector('#aud72-familias-lista');
+                var q = txt(modal.querySelector('#aud72-busca-prod').value).toLowerCase();
+                var lista = familias.filter(function (f) { return !q || txt(f.nome).toLowerCase().includes(q); });
+                box.innerHTML = lista.length ? lista.map(function (f) { return "<button type=\"button\" class=\"aud72-familia-card\" data-id=\"".concat(esc(f.id), "\" data-nome=\"").concat(esc(f.nome), "\" style=\"width:100%;text-align:left;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--card);cursor:pointer;margin-bottom:6px\">").concat(esc(f.nome), "</button>"); }).join('') : '<div class="empty-sub">Nenhuma família encontrada.</div>';
+                box.querySelectorAll('.aud72-familia-card').forEach(function (card) { return card.onclick = function () {
+                    box.querySelectorAll('.aud72-familia-card').forEach(function (x) { return x.style.outline = ''; });
+                    card.style.outline = '2px solid var(--primary)';
+                    modal.querySelector('#aud72-prod').value = card.dataset.id || '';
+                    modal.querySelector('#aud72-familia-selecionada').textContent = 'Selecionada: ' + (card.dataset.nome || '');
+                }; });
+            }
+            var existente, token, html, modal, arquivoSelecionado, familias, fechar, tipo, inputArquivo;
+            var _this = this;
             var _a;
             return __generator(this, function (_b) {
-                modalExistente = document.getElementById('modal-nova-aud-v39');
-                if (modalExistente) {
-                    modalExistente.classList.add('on');
-                    campo = modalExistente.querySelector('#aud39-nome');
-                    if (campo)
-                        campo.focus();
+                existente = document.getElementById('modal-nova-aud-v72');
+                if (existente) {
+                    existente.classList.add('on');
+                    (_a = existente.querySelector('#aud72-nome')) === null || _a === void 0 ? void 0 : _a.focus();
                     return [2 /*return*/];
                 }
-                if (criacaoAberta && criacaoPromise)
-                    return [2 /*return*/, criacaoPromise];
+                if (!ambienteAuditoriaPronto())
+                    return [2 /*return*/, toast('Aguarde o login e a seleção da loja antes de criar a auditoria.', 'w')];
+                token = ++criacaoToken;
                 criacaoAberta = true;
-                meuToken = ++criacaoToken;
-                (_a = document.getElementById('aud-v52-loading')) === null || _a === void 0 ? void 0 : _a.remove();
-                carregando = document.createElement('div');
-                carregando.id = 'aud-v52-loading';
-                carregando.className = 'modal-bg on';
-                carregando.innerHTML = '<div class="modal" style="max-width:420px;text-align:center;padding:28px"><div style="font-size:2rem">⏳</div><div class="modal-title" style="margin-top:10px">Preparando nova auditoria…</div><div class="sec-sub">Carregando produtos e endereços apenas uma vez.</div><div class="modal-actions" style="justify-content:center"><button type="button" class="btn btn-ghost" id="aud39-cancelar-loading">Cancelar</button></div></div>';
-                document.body.appendChild(carregando);
-                cancelar = function () { if (meuToken === criacaoToken)
-                    ++criacaoToken; criacaoAberta = false; carregando.remove(); };
-                carregando.querySelector('#aud39-cancelar-loading').onclick = cancelar;
-                criacaoPromise = (function () {
-                    return __awaiter(this, void 0, void 0, function () {
-                        var familias_1, ends, ruas, cardsFamilia, html, modal_1, arquivoSelecionado_1, fechar_1, tipo_1, busca, inputArquivo_1;
-                        var _this = this;
-                        var _a, _b, _c, _d;
-                        return __generator(this, function (_e) {
-                            switch (_e.label) {
-                                case 0:
-                                    _e.trys.push([0, , 4, 5]);
-                                    if (!(window.DTProdutos && typeof window.DTProdutos.carregar === 'function')) return [3 /*break*/, 2];
-                                    return [4 /*yield*/, comTimeout(window.DTProdutos.carregar(false), 8000, [])];
-                                case 1:
-                                    _e.sent();
-                                    _e.label = 2;
-                                case 2:
-                                    if (meuToken !== criacaoToken)
-                                        return [2 /*return*/];
-                                    familias_1 = (((_b = (_a = window.DTProdutos) === null || _a === void 0 ? void 0 : _a.familias) === null || _b === void 0 ? void 0 : _b.call(_a)) || []).filter(function (f) { return f && f.produtos && f.produtos.length; });
-                                    return [4 /*yield*/, comTimeout(enderecosGerais(), 8000, [])];
-                                case 3:
-                                    ends = _e.sent();
-                                    if (meuToken !== criacaoToken)
-                                        return [2 /*return*/];
-                                    ruas = __spreadArray([], new Set(ends.map(function (e) { return ruaDoEndereco(e.endereco || e.codigo || e.id); }).filter(Boolean)), true).sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); });
-                                    carregando.remove();
-                                    cardsFamilia = familias_1.map(function (f) { return "<button type=\"button\" class=\"aud39-familia-card\" data-familia-id=\"".concat(esc(f.id), "\" data-familia-nome=\"").concat(esc(f.nome), "\" style=\"width:100%;text-align:left;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--card);cursor:pointer;margin-bottom:6px\">").concat(esc(f.nome), "</button>"); }).join('');
-                                    html = "<div id=\"modal-nova-aud-v39\" class=\"modal-bg on\"><div class=\"modal\" style=\"max-width:760px\"><div class=\"modal-hdr\"><div><div class=\"modal-title\">Criar nova auditoria</div><div class=\"sec-sub\">Informe o nome, escolha o tipo e carregue a base antes de criar.</div></div><button class=\"modal-close\" data-fechar-aud-v39>\u2715</button></div><div class=\"fg\"><div class=\"fi full\"><div class=\"fl\">Nome da auditoria *</div><input id=\"aud39-nome\" placeholder=\"Ex.: Auditoria Rua 14\"></div><div class=\"fi full\"><div class=\"fl\">Como deseja auditar?</div><select id=\"aud39-tipo\"><option value=\"rua\">Por rua</option><option value=\"produto\">Por produto</option></select></div><div class=\"fi full\" id=\"aud39-box-rua\"><div class=\"fl\">Ruas</div><select id=\"aud39-ruas\" multiple size=\"7\">".concat(ruas.map(function (r) { return "<option value=\"".concat(esc(r), "\">Rua ").concat(esc(r), "</option>"); }).join(''), "</select><div class=\"sec-sub\">Use Ctrl para selecionar mais de uma rua.</div></div><div class=\"fi full\" id=\"aud39-box-prod\" style=\"display:none\"><div class=\"fl\">Fam\u00EDlia de produtos</div><input id=\"aud39-busca-prod\" placeholder=\"Pesquisar fam\u00EDlia...\" autocomplete=\"off\"><input type=\"hidden\" id=\"aud39-prod\"><div id=\"aud39-familias-lista\" style=\"max-height:250px;overflow:auto;margin-top:8px\">").concat(cardsFamilia || '<div class="empty-sub">Nenhuma família com produto UND encontrada.</div>', "</div><div id=\"aud39-familia-selecionada\" class=\"sec-sub\" style=\"margin-top:8px\">Nenhuma fam\u00EDlia selecionada.</div></div><div class=\"fi full\"><div class=\"fl\">Base da auditoria *</div><div style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\"><button type=\"button\" class=\"btn btn-ghost\" id=\"aud39-escolher-arquivo\">\u2B06 Selecionar arquivo</button><span id=\"aud39-arquivo-nome\" class=\"sec-sub\">Nenhum arquivo selecionado</span><input id=\"aud39-arquivo\" type=\"file\" accept=\".csv,.xlsx,.xls\" style=\"display:none\"></div><div id=\"aud39-arquivo-status\" style=\"margin-top:10px\"></div></div></div><div class=\"modal-actions\"><button class=\"btn btn-ghost\" data-fechar-aud-v39>Cancelar</button><button class=\"btn btn-primary\" id=\"aud39-criar\">Criar e importar auditoria</button></div></div></div>");
-                                    document.body.insertAdjacentHTML('beforeend', html);
-                                    modal_1 = document.getElementById('modal-nova-aud-v39');
-                                    arquivoSelecionado_1 = null;
-                                    // Bloqueia handlers delegados da página atrás do modal.
-                                    ['click', 'mousedown', 'pointerdown', 'change', 'input'].forEach(function (evt) { return modal_1.addEventListener(evt, function (e) { return e.stopPropagation(); }); });
-                                    fechar_1 = function () { ++criacaoToken; criacaoAberta = false; modal_1.remove(); };
-                                    modal_1.querySelectorAll('[data-fechar-aud-v39]').forEach(function (b) { return b.onclick = fechar_1; });
-                                    tipo_1 = modal_1.querySelector('#aud39-tipo');
-                                    tipo_1.onchange = function () { modal_1.querySelector('#aud39-box-rua').style.display = tipo_1.value === 'rua' ? '' : 'none'; modal_1.querySelector('#aud39-box-prod').style.display = tipo_1.value === 'produto' ? '' : 'none'; };
-                                    busca = modal_1.querySelector('#aud39-busca-prod');
-                                    busca.oninput = function () { var q = txt(this.value).toLowerCase(); modal_1.querySelectorAll('.aud39-familia-card').forEach(function (o) { o.style.display = !q || txt(o.dataset.familiaNome).toLowerCase().includes(q) ? 'block' : 'none'; }); };
-                                    modal_1.querySelectorAll('.aud39-familia-card').forEach(function (card) { return card.onclick = function () {
-                                        modal_1.querySelectorAll('.aud39-familia-card').forEach(function (x) { x.style.outline = ''; x.setAttribute('aria-selected', 'false'); });
-                                        card.style.outline = '2px solid var(--primary)';
-                                        card.setAttribute('aria-selected', 'true');
-                                        modal_1.querySelector('#aud39-prod').value = card.dataset.familiaId || '';
-                                        modal_1.querySelector('#aud39-familia-selecionada').textContent = 'Selecionada: ' + (card.dataset.familiaNome || '');
-                                    }; });
-                                    inputArquivo_1 = modal_1.querySelector('#aud39-arquivo');
-                                    modal_1.querySelector('#aud39-escolher-arquivo').onclick = function () { return inputArquivo_1.click(); };
-                                    inputArquivo_1.onchange = function () {
-                                        arquivoSelecionado_1 = inputArquivo_1.files && inputArquivo_1.files[0] || null;
-                                        modal_1.querySelector('#aud39-arquivo-nome').textContent = arquivoSelecionado_1 ? arquivoSelecionado_1.name : 'Nenhum arquivo selecionado';
-                                        modal_1.querySelector('#aud39-arquivo-status').innerHTML = arquivoSelecionado_1 ? '<div class="alert info"><div>📄</div><div>Arquivo selecionado. A validação será feita ao criar a auditoria.</div></div>' : '';
-                                    };
-                                    modal_1.querySelector('#aud39-criar').onclick = function () { return __awaiter(_this, void 0, void 0, function () {
-                                        var nome, modo, selecao, v, familia, cfg, btn, preparada, id, sel, e_3, status_1;
-                                        return __generator(this, function (_a) {
-                                            switch (_a.label) {
-                                                case 0:
-                                                    nome = txt(modal_1.querySelector('#aud39-nome').value);
-                                                    if (!nome)
-                                                        return [2 /*return*/, toast('Informe o nome da auditoria.', 'w')];
-                                                    if (!arquivoSelecionado_1)
-                                                        return [2 /*return*/, toast('Selecione a base da auditoria.', 'w')];
-                                                    modo = tipo_1.value;
-                                                    selecao = [];
-                                                    if (modo === 'rua')
-                                                        selecao = __spreadArray([], modal_1.querySelector('#aud39-ruas').selectedOptions, true).map(function (o) { return o.value; });
-                                                    else {
-                                                        v = modal_1.querySelector('#aud39-prod').value;
-                                                        if (v)
-                                                            selecao = [v];
-                                                    }
-                                                    if (!selecao.length)
-                                                        return [2 /*return*/, toast(modo === 'rua' ? 'Selecione ao menos uma rua.' : 'Selecione uma família de produtos.', 'w')];
-                                                    familia = modo === 'produto' ? familias_1.find(function (f) { return f.id === selecao[0]; }) : null;
-                                                    cfg = { tipoAuditoria: modo, ruas: modo === 'rua' ? selecao : [], familiaId: (familia === null || familia === void 0 ? void 0 : familia.id) || '', familiaNome: (familia === null || familia === void 0 ? void 0 : familia.nome) || '' };
-                                                    btn = modal_1.querySelector('#aud39-criar');
-                                                    btn.disabled = true;
-                                                    btn.textContent = 'Criando...';
-                                                    _a.label = 1;
-                                                case 1:
-                                                    _a.trys.push([1, 7, , 8]);
-                                                    return [4 /*yield*/, prepararImportacao(arquivoSelecionado_1, cfg)];
-                                                case 2:
-                                                    preparada = _a.sent();
-                                                    if (!preparada.validos.length)
-                                                        throw new Error('Nenhuma linha válida foi encontrada para esta auditoria.');
-                                                    id = "AUD-".concat(Date.now());
-                                                    return [4 /*yield*/, DB().collection('dt_auditorias').doc(id).set(__assign(__assign({ nome: nome, loja: loja() }, cfg), { familiaCodigos: familia ? familia.produtos.map(function (p) { return p.codigoInterno; }) : [], status: 'RASCUNHO', totalItens: 0, totalPendentes: 0, totalOk: 0, totalDivergentes: 0, totalVazios: 0, criadoEm: agora(), criadoPor: usuario() }))];
-                                                case 3:
-                                                    _a.sent();
-                                                    auditoriaAtual = id;
-                                                    metaAtual = __assign(__assign({ id: id, nome: nome }, cfg), { status: 'RASCUNHO' });
-                                                    importacaoPendente = __assign({ file: arquivoSelecionado_1 }, preparada);
-                                                    return [4 /*yield*/, gravarImportacao()];
-                                                case 4:
-                                                    _a.sent();
-                                                    fechar_1();
-                                                    return [4 /*yield*/, popularSelect()];
-                                                case 5:
-                                                    _a.sent();
-                                                    sel = document.getElementById('aud-op-auditoria');
-                                                    if (sel)
-                                                        sel.value = id;
-                                                    return [4 /*yield*/, selecionarAuditoria(id)];
-                                                case 6:
-                                                    _a.sent();
-                                                    toast("Auditoria criada com ".concat(preparada.validos.length, " item(ns). Agora ela pode ser liberada para os coletores."), 's');
-                                                    return [3 /*break*/, 8];
-                                                case 7:
-                                                    e_3 = _a.sent();
-                                                    console.error('[AUDITORIA] criação:', e_3);
-                                                    status_1 = modal_1.querySelector('#aud39-arquivo-status');
-                                                    if (status_1)
-                                                        status_1.innerHTML = "<div class=\"alert error\"><div>\u26A0\uFE0F</div><div>".concat(esc(e_3.message || 'Falha ao criar auditoria.'), "</div></div>");
-                                                    btn.disabled = false;
-                                                    btn.textContent = 'Criar e importar auditoria';
-                                                    return [3 /*break*/, 8];
-                                                case 8: return [2 /*return*/];
-                                            }
-                                        });
-                                    }); };
-                                    (_c = modal_1.querySelector('#aud39-nome')) === null || _c === void 0 ? void 0 : _c.focus();
-                                    return [3 /*break*/, 5];
-                                case 4:
-                                    (_d = document.getElementById('aud-v52-loading')) === null || _d === void 0 ? void 0 : _d.remove();
-                                    if (meuToken === criacaoToken) {
-                                        criacaoPromise = null;
-                                        if (!document.getElementById('modal-nova-aud-v39'))
-                                            criacaoAberta = false;
-                                    }
-                                    return [7 /*endfinally*/];
-                                case 5: return [2 /*return*/];
-                            }
-                        });
+                html = "<div id=\"modal-nova-aud-v72\" class=\"modal-bg on\"><div class=\"modal\" style=\"max-width:760px\">\n      <div class=\"modal-hdr\"><div><div class=\"modal-title\">Criar nova auditoria</div><div class=\"sec-sub\">O nome \u00E9 definido por voc\u00EA e n\u00E3o pelo nome do arquivo.</div></div><button type=\"button\" class=\"modal-close\" data-aud72-fechar>\u2715</button></div>\n      <div class=\"fg\">\n        <div class=\"fi full\"><div class=\"fl\">Nome da auditoria *</div><input id=\"aud72-nome\" maxlength=\"100\" placeholder=\"Ex.: Auditoria Rua 14 \u2014 Julho\"></div>\n        <div class=\"fi full\"><div class=\"fl\">Como deseja auditar?</div><select id=\"aud72-tipo\"><option value=\"rua\">Por rua</option><option value=\"produto\">Por produto/fam\u00EDlia</option></select></div>\n        <div class=\"fi full\" id=\"aud72-box-rua\"><div class=\"fl\">Ruas *</div><div id=\"aud72-ruas-status\" class=\"sec-sub\">Carregando ruas\u2026</div><select id=\"aud72-ruas\" multiple size=\"7\" style=\"display:none\"></select><div class=\"sec-sub\">Use Ctrl para selecionar mais de uma rua.</div></div>\n        <div class=\"fi full\" id=\"aud72-box-prod\" style=\"display:none\"><div class=\"fl\">Fam\u00EDlia de produtos *</div><input id=\"aud72-busca-prod\" placeholder=\"Pesquisar fam\u00EDlia...\" autocomplete=\"off\"><input type=\"hidden\" id=\"aud72-prod\"><div id=\"aud72-familias-lista\" style=\"max-height:250px;overflow:auto;margin-top:8px\"><div class=\"sec-sub\">Carregando fam\u00EDlias\u2026</div></div><div id=\"aud72-familia-selecionada\" class=\"sec-sub\" style=\"margin-top:8px\">Nenhuma fam\u00EDlia selecionada.</div></div>\n        <div class=\"fi full\"><div class=\"fl\">Base da auditoria *</div><div style=\"display:flex;gap:10px;align-items:center;flex-wrap:wrap\"><button type=\"button\" class=\"btn btn-ghost\" id=\"aud72-escolher-arquivo\">\u2B06 Selecionar arquivo</button><span id=\"aud72-arquivo-nome\" class=\"sec-sub\">Nenhum arquivo selecionado</span><input id=\"aud72-arquivo\" type=\"file\" accept=\".csv,.xlsx,.xls\" style=\"display:none\"></div><div id=\"aud72-arquivo-status\" style=\"margin-top:10px\"></div></div>\n      </div>\n      <div class=\"modal-actions\"><button type=\"button\" class=\"btn btn-ghost\" data-aud72-fechar>Cancelar</button><button type=\"button\" class=\"btn btn-primary\" id=\"aud72-criar\">Criar e importar auditoria</button></div>\n    </div></div>";
+                document.body.insertAdjacentHTML('beforeend', html);
+                modal = document.getElementById('modal-nova-aud-v72');
+                if (!modal)
+                    throw new Error('Não foi possível abrir o formulário de criação.');
+                arquivoSelecionado = null;
+                familias = [];
+                fechar = function () { ++criacaoToken; criacaoAberta = false; criacaoPromise = null; modal.remove(); };
+                modal.querySelectorAll('[data-aud72-fechar]').forEach(function (b) { return b.onclick = fechar; });
+                modal.addEventListener('click', function (e) { if (e.target === modal)
+                    fechar(); });
+                ['mousedown', 'pointerdown', 'change', 'input'].forEach(function (evt) { return modal.addEventListener(evt, function (e) { return e.stopPropagation(); }); });
+                tipo = modal.querySelector('#aud72-tipo');
+                tipo.onchange = function () {
+                    modal.querySelector('#aud72-box-rua').style.display = tipo.value === 'rua' ? '' : 'none';
+                    modal.querySelector('#aud72-box-prod').style.display = tipo.value === 'produto' ? '' : 'none';
+                };
+                inputArquivo = modal.querySelector('#aud72-arquivo');
+                modal.querySelector('#aud72-escolher-arquivo').onclick = function () { return inputArquivo.click(); };
+                inputArquivo.onchange = function () {
+                    var _a;
+                    arquivoSelecionado = ((_a = inputArquivo.files) === null || _a === void 0 ? void 0 : _a[0]) || null;
+                    modal.querySelector('#aud72-arquivo-nome').textContent = arquivoSelecionado ? arquivoSelecionado.name : 'Nenhum arquivo selecionado';
+                    modal.querySelector('#aud72-arquivo-status').innerHTML = arquivoSelecionado ? '<div class="alert info"><div>📄</div><div>Arquivo selecionado. O nome da auditoria continuará sendo o nome digitado acima.</div></div>' : '';
+                };
+                modal.querySelector('#aud72-busca-prod').oninput = renderFamilias;
+                criacaoPromise = (function () { return __awaiter(_this, void 0, void 0, function () {
+                    var ends, ruas, sel, status_1, e_3;
+                    var _a, _b, _c;
+                    return __generator(this, function (_d) {
+                        switch (_d.label) {
+                            case 0:
+                                _d.trys.push([0, 4, , 5]);
+                                if (!((_a = window.DTProdutos) === null || _a === void 0 ? void 0 : _a.carregar)) return [3 /*break*/, 2];
+                                return [4 /*yield*/, comTimeout(window.DTProdutos.carregar(false), 8000, [])];
+                            case 1:
+                                _d.sent();
+                                _d.label = 2;
+                            case 2:
+                                if (token !== criacaoToken || !document.body.contains(modal))
+                                    return [2 /*return*/];
+                                familias = (((_c = (_b = window.DTProdutos) === null || _b === void 0 ? void 0 : _b.familias) === null || _c === void 0 ? void 0 : _c.call(_b)) || []).filter(function (f) { return f && f.produtos && f.produtos.length; });
+                                renderFamilias();
+                                return [4 /*yield*/, comTimeout(enderecosGerais(), 8000, [])];
+                            case 3:
+                                ends = _d.sent();
+                                if (token !== criacaoToken || !document.body.contains(modal))
+                                    return [2 /*return*/];
+                                ruas = __spreadArray([], new Set(ends.map(function (e) { return ruaDoEndereco(e.endereco || e.codigo || e.id); }).filter(Boolean)), true).sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); });
+                                sel = modal.querySelector('#aud72-ruas');
+                                status_1 = modal.querySelector('#aud72-ruas-status');
+                                sel.innerHTML = ruas.map(function (r) { return "<option value=\"".concat(esc(r), "\">Rua ").concat(esc(r), "</option>"); }).join('');
+                                sel.style.display = '';
+                                status_1.textContent = ruas.length ? "".concat(ruas.length, " rua(s) dispon\u00EDvel(is).") : 'Nenhuma rua foi encontrada na Base Geral de Endereços.';
+                                return [3 /*break*/, 5];
+                            case 4:
+                                e_3 = _d.sent();
+                                console.warn('[AUDITORIA] opções da criação:', e_3);
+                                return [3 /*break*/, 5];
+                            case 5: return [2 /*return*/];
+                        }
                     });
-                })();
-                return [2 /*return*/, criacaoPromise];
+                }); })();
+                modal.querySelector('#aud72-criar').onclick = function () { return __awaiter(_this, void 0, void 0, function () {
+                    var nome, modo, selecao, v, familia, cfg, btn, preparada, id, db, sel, e_4, status_2;
+                    return __generator(this, function (_a) {
+                        switch (_a.label) {
+                            case 0:
+                                nome = txt(modal.querySelector('#aud72-nome').value);
+                                if (!nome)
+                                    return [2 /*return*/, toast('Digite o nome da auditoria.', 'w')];
+                                if (!arquivoSelecionado)
+                                    return [2 /*return*/, toast('Selecione a base da auditoria.', 'w')];
+                                modo = tipo.value;
+                                selecao = [];
+                                if (modo === 'rua')
+                                    selecao = __spreadArray([], modal.querySelector('#aud72-ruas').selectedOptions, true).map(function (o) { return o.value; });
+                                else {
+                                    v = txt(modal.querySelector('#aud72-prod').value);
+                                    if (v)
+                                        selecao = [v];
+                                }
+                                if (!selecao.length)
+                                    return [2 /*return*/, toast(modo === 'rua' ? 'Selecione ao menos uma rua.' : 'Selecione uma família de produtos.', 'w')];
+                                familia = modo === 'produto' ? familias.find(function (f) { return txt(f.id) === txt(selecao[0]); }) : null;
+                                cfg = { tipoAuditoria: modo, ruas: modo === 'rua' ? selecao : [], familiaId: (familia === null || familia === void 0 ? void 0 : familia.id) || '', familiaNome: (familia === null || familia === void 0 ? void 0 : familia.nome) || '' };
+                                btn = modal.querySelector('#aud72-criar');
+                                btn.disabled = true;
+                                btn.textContent = 'Criando...';
+                                _a.label = 1;
+                            case 1:
+                                _a.trys.push([1, 7, , 8]);
+                                return [4 /*yield*/, prepararImportacao(arquivoSelecionado, cfg)];
+                            case 2:
+                                preparada = _a.sent();
+                                if (!preparada.validos.length)
+                                    throw new Error('Nenhuma linha válida foi encontrada para esta auditoria.');
+                                id = "AUD-".concat(Date.now());
+                                db = DB();
+                                if (!db)
+                                    throw new Error('Firebase indisponível. Aguarde alguns segundos e tente novamente.');
+                                return [4 /*yield*/, db.collection('dt_auditorias').doc(id).set(__assign(__assign({ nome: nome, auditoria_nome: nome, loja: loja() }, cfg), { familiaCodigos: familia ? familia.produtos.map(function (p) { return p.codigoInterno; }) : [], status: 'RASCUNHO', liberada_coletor: false, totalItens: 0, totalPendentes: 0, totalOk: 0, totalDivergentes: 0, totalVazios: 0, arquivo_origem: arquivoSelecionado.name, criadoEm: agora(), criadoPor: usuario() }))];
+                            case 3:
+                                _a.sent();
+                                auditoriaAtual = id;
+                                metaAtual = __assign(__assign({ id: id, nome: nome, auditoria_nome: nome }, cfg), { status: 'RASCUNHO' });
+                                importacaoPendente = __assign({ file: arquivoSelecionado }, preparada);
+                                return [4 /*yield*/, gravarImportacao()];
+                            case 4:
+                                _a.sent();
+                                fechar();
+                                return [4 /*yield*/, popularSelect()];
+                            case 5:
+                                _a.sent();
+                                sel = document.getElementById('aud-op-auditoria');
+                                if (sel)
+                                    sel.value = id;
+                                return [4 /*yield*/, selecionarAuditoria(id)];
+                            case 6:
+                                _a.sent();
+                                toast("Auditoria \u201C".concat(nome, "\u201D criada com ").concat(preparada.validos.length, " item(ns)."), 's');
+                                return [3 /*break*/, 8];
+                            case 7:
+                                e_4 = _a.sent();
+                                console.error('[AUDITORIA] criação:', e_4);
+                                status_2 = modal.querySelector('#aud72-arquivo-status');
+                                if (status_2)
+                                    status_2.innerHTML = "<div class=\"alert error\"><div>\u26A0\uFE0F</div><div>".concat(esc(e_4.message || 'Falha ao criar auditoria.'), "</div></div>");
+                                btn.disabled = false;
+                                btn.textContent = 'Criar e importar auditoria';
+                                return [3 /*break*/, 8];
+                            case 8: return [2 /*return*/];
+                        }
+                    });
+                }); };
+                modal.querySelector('#aud72-nome').focus();
+                return [2 /*return*/];
             });
         });
     }
@@ -360,14 +362,14 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         });
     }
     function resolverAuditoriaSelecionada() {
-        if (auditoriaAtual)
-            return auditoriaAtual;
         var sel = document.getElementById('aud-op-auditoria');
         var valor = txt(sel === null || sel === void 0 ? void 0 : sel.value);
         if (valor) {
             auditoriaAtual = valor;
             return valor;
         }
+        if (auditoriaAtual)
+            return auditoriaAtual;
         var opcoes = sel ? __spreadArray([], sel.options, true).filter(function (o) { return o.value; }) : [];
         if (opcoes.length === 1) {
             sel.value = opcoes[0].value;
@@ -400,7 +402,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     }
     function popularSelect() {
         return __awaiter(this, void 0, void 0, function () {
-            var sel, atual, metas, visiveis, e_4, semLogin;
+            var sel, atual, metas, visiveis, e_5, semLogin;
             var _a;
             return __generator(this, function (_b) {
                 switch (_b.label) {
@@ -435,15 +437,15 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         atualizarAcoesAuditoria();
                         return [2 /*return*/, visiveis];
                     case 3:
-                        e_4 = _b.sent();
-                        console.error('[AUDITORIA] listar auditorias:', e_4);
+                        e_5 = _b.sent();
+                        console.error('[AUDITORIA] listar auditorias:', e_5);
                         semLogin = !((_a = window.AUTH_AN) === null || _a === void 0 ? void 0 : _a.currentUser) && !window._currentAnalistaUser;
                         if (semLogin) {
                             sel.innerHTML = '<option value="">Selecione uma auditoria...</option>';
                         }
                         else {
                             sel.innerHTML = '<option value="">Falha ao carregar auditorias — clique em Atualizar</option>';
-                            toast('Não foi possível carregar a lista de auditorias: ' + (e_4.message || e_4), 'e');
+                            toast('Não foi possível carregar a lista de auditorias: ' + (e_5.message || e_5), 'e');
                         }
                         return [2 /*return*/, []];
                     case 4:
@@ -714,7 +716,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     }
     function processarArquivo(file) {
         return __awaiter(this, void 0, void 0, function () {
-            var preparada, e_5;
+            var preparada, e_6;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -737,9 +739,9 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         toast("Base atualizada com ".concat(preparada.validos.length, " item(ns)."), 's');
                         return [3 /*break*/, 5];
                     case 4:
-                        e_5 = _a.sent();
-                        console.error(e_5);
-                        toast(e_5.message || 'Erro ao ler arquivo.', 'e');
+                        e_6 = _a.sent();
+                        console.error(e_6);
+                        toast(e_6.message || 'Erro ao ler arquivo.', 'e');
                         return [3 /*break*/, 5];
                     case 5: return [2 /*return*/];
                 }
@@ -840,19 +842,19 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         });
     }
     function criarNova() {
-        return __awaiter(this, void 0, void 0, function () { var e_6, l; return __generator(this, function (_a) {
+        return __awaiter(this, void 0, void 0, function () { var e_7, l; return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
                     _a.trys.push([0, 2, , 3]);
                     return [4 /*yield*/, abrirCriacaoAuditoria()];
                 case 1: return [2 /*return*/, _a.sent()];
                 case 2:
-                    e_6 = _a.sent();
+                    e_7 = _a.sent();
                     l = document.getElementById('aud-v52-loading');
                     if (l)
                         l.remove();
-                    console.error('[AUDITORIA] abrir criação:', e_6);
-                    toast('Não foi possível abrir a criação da auditoria: ' + (e_6.message || e_6), 'e');
+                    console.error('[AUDITORIA] abrir criação:', e_7);
+                    toast('Não foi possível abrir a criação da auditoria: ' + (e_7.message || e_7), 'e');
                     return [3 /*break*/, 3];
                 case 3: return [2 /*return*/];
             }
@@ -860,7 +862,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     }
     function confirmarImportacao() {
         return __awaiter(this, void 0, void 0, function () {
-            var e_7;
+            var e_8;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -871,9 +873,9 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         toast('Base importada com sucesso.', 's');
                         return [3 /*break*/, 3];
                     case 2:
-                        e_7 = _a.sent();
-                        console.error(e_7);
-                        toast(e_7.message || 'Falha ao importar a base.', 'e');
+                        e_8 = _a.sent();
+                        console.error(e_8);
+                        toast(e_8.message || 'Falha ao importar a base.', 'e');
                         return [3 /*break*/, 3];
                     case 3: return [2 /*return*/];
                 }
@@ -970,70 +972,100 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     }
     function excluir() {
         return __awaiter(this, void 0, void 0, function () {
-            var id, ref, snap, _loop_4, i, sel, e_8;
-            return __generator(this, function (_a) {
-                switch (_a.label) {
+            var sel, id, meta, ms, e_9, nome, mensagem, btn, ref, snap, _loop_4, i, e_10;
+            var _a, _b;
+            return __generator(this, function (_c) {
+                switch (_c.label) {
                     case 0:
-                        id = resolverAuditoriaSelecionada();
+                        sel = document.getElementById('aud-op-auditoria');
+                        id = txt((sel === null || sel === void 0 ? void 0 : sel.value) || auditoriaAtual);
                         if (!id)
-                            return [2 /*return*/, toast('Selecione uma auditoria na lista acima.', 'w')];
-                        if (!confirm('Excluir esta auditoria e todos os seus resultados? Esta ação não pode ser desfeita.'))
-                            return [2 /*return*/];
-                        ref = DB().collection('dt_auditorias').doc(id);
-                        _a.label = 1;
+                            return [2 /*return*/, toast('Selecione a auditoria que deseja excluir.', 'w')];
+                        meta = metaAtual;
+                        if (!(!meta || txt(meta.id) !== id)) return [3 /*break*/, 4];
+                        _c.label = 1;
                     case 1:
-                        _a.trys.push([1, 9, , 10]);
+                        _c.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, DB().collection('dt_auditorias').doc(id).get()];
+                    case 2:
+                        ms = _c.sent();
+                        meta = ms.exists ? __assign({ id: ms.id }, ms.data()) : null;
+                        return [3 /*break*/, 4];
+                    case 3:
+                        e_9 = _c.sent();
+                        return [3 /*break*/, 4];
+                    case 4:
+                        nome = txt((meta === null || meta === void 0 ? void 0 : meta.nome) || (meta === null || meta === void 0 ? void 0 : meta.auditoria_nome) || (((_b = (_a = sel === null || sel === void 0 ? void 0 : sel.selectedOptions) === null || _a === void 0 ? void 0 : _a[0]) === null || _b === void 0 ? void 0 : _b.textContent) || id).split(' — ')[0] || id);
+                        mensagem = "Excluir definitivamente a auditoria \u201C".concat(nome, "\u201D?\n\nTodos os endere\u00E7os e resultados dessa auditoria ser\u00E3o apagados, e ela deixar\u00E1 de aparecer nos coletores.");
+                        if (!window.confirm(mensagem))
+                            return [2 /*return*/];
+                        btn = document.getElementById('btn-aud-excluir');
+                        if (btn) {
+                            btn.disabled = true;
+                            btn.dataset.textoOriginal = btn.textContent;
+                            btn.textContent = 'Excluindo...';
+                        }
+                        ref = DB().collection('dt_auditorias').doc(id);
+                        _c.label = 5;
+                    case 5:
+                        _c.trys.push([5, 13, 14, 15]);
                         encerrarListener();
                         return [4 /*yield*/, ref.collection('enderecos').get()];
-                    case 2:
-                        snap = _a.sent();
+                    case 6:
+                        snap = _c.sent();
                         _loop_4 = function (i) {
                             var b;
-                            return __generator(this, function (_b) {
-                                switch (_b.label) {
+                            return __generator(this, function (_d) {
+                                switch (_d.label) {
                                     case 0:
                                         b = DB().batch();
                                         snap.docs.slice(i, i + 350).forEach(function (d) { return b.delete(d.ref); });
                                         return [4 /*yield*/, b.commit()];
                                     case 1:
-                                        _b.sent();
+                                        _d.sent();
                                         return [2 /*return*/];
                                 }
                             });
                         };
                         i = 0;
-                        _a.label = 3;
-                    case 3:
-                        if (!(i < snap.docs.length)) return [3 /*break*/, 6];
-                        return [5 /*yield**/, _loop_4(i)];
-                    case 4:
-                        _a.sent();
-                        _a.label = 5;
-                    case 5:
-                        i += 350;
-                        return [3 /*break*/, 3];
-                    case 6: return [4 /*yield*/, ref.delete()];
+                        _c.label = 7;
                     case 7:
-                        _a.sent();
+                        if (!(i < snap.docs.length)) return [3 /*break*/, 10];
+                        return [5 /*yield**/, _loop_4(i)];
+                    case 8:
+                        _c.sent();
+                        _c.label = 9;
+                    case 9:
+                        i += 350;
+                        return [3 /*break*/, 7];
+                    case 10: return [4 /*yield*/, ref.delete()];
+                    case 11:
+                        _c.sent();
                         auditoriaAtual = '';
                         metaAtual = null;
                         itensAtuais = [];
-                        sel = document.getElementById('aud-op-auditoria');
+                        assinaturaAnterior = '';
                         if (sel)
                             sel.value = '';
                         return [4 /*yield*/, popularSelect()];
-                    case 8:
-                        _a.sent();
+                    case 12:
+                        _c.sent();
                         renderizar();
                         atualizarAcoesAuditoria();
-                        toast('Auditoria excluída. Ela não aparecerá mais nos coletores.', 's');
-                        return [3 /*break*/, 10];
-                    case 9:
-                        e_8 = _a.sent();
-                        console.error('[AUDITORIA] excluir:', e_8);
-                        toast('Falha ao excluir a auditoria: ' + (e_8.message || e_8), 'e');
-                        return [3 /*break*/, 10];
-                    case 10: return [2 /*return*/];
+                        toast("Auditoria \u201C".concat(nome, "\u201D exclu\u00EDda com sucesso."), 's');
+                        return [3 /*break*/, 15];
+                    case 13:
+                        e_10 = _c.sent();
+                        console.error('[AUDITORIA] excluir:', e_10);
+                        toast('Falha ao excluir a auditoria: ' + (e_10.message || e_10), 'e');
+                        return [3 /*break*/, 15];
+                    case 14:
+                        if (btn) {
+                            btn.disabled = false;
+                            btn.textContent = btn.dataset.textoOriginal || '🗑 Excluir';
+                        }
+                        return [7 /*endfinally*/];
+                    case 15: return [2 /*return*/];
                 }
             });
         });

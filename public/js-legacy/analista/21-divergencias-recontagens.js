@@ -98,6 +98,55 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     global.fsSalvarRecontagem = fsSalvarRecontagem;
     // ── Helpers de normalização ─────────────────────────────────────────────────
     var _nd = function (v) { return String(v || '').trim().toUpperCase(); };
+    // Identificadores equivalentes do mesmo produto. A contagem pode chegar com
+    // GTIN/EAN/DUN, enquanto a base do inventário normalmente guarda código interno.
+    function _idsProduto(obj) {
+        var _a, _b;
+        var vals = [
+            obj === null || obj === void 0 ? void 0 : obj.codigo_produto,
+            obj === null || obj === void 0 ? void 0 : obj.codigoProduto,
+            obj === null || obj === void 0 ? void 0 : obj.produto,
+            obj === null || obj === void 0 ? void 0 : obj.produto_id,
+            obj === null || obj === void 0 ? void 0 : obj.codigo_interno,
+            obj === null || obj === void 0 ? void 0 : obj.codigoInterno,
+            obj === null || obj === void 0 ? void 0 : obj.sku,
+            obj === null || obj === void 0 ? void 0 : obj.gtin,
+            obj === null || obj === void 0 ? void 0 : obj.ean,
+            obj === null || obj === void 0 ? void 0 : obj.dun,
+            obj === null || obj === void 0 ? void 0 : obj.gtin_bipado,
+            obj === null || obj === void 0 ? void 0 : obj.codigo_lido,
+            obj === null || obj === void 0 ? void 0 : obj.codigoLido
+        ].map(_nd).filter(Boolean);
+        var lido = vals[0] || '';
+        var geral = (_b = (_a = global.DTProdutos) === null || _a === void 0 ? void 0 : _a.buscarSync) === null || _b === void 0 ? void 0 : _b.call(_a, lido);
+        if (geral === null || geral === void 0 ? void 0 : geral.encontrado) {
+            vals.push(_nd(geral.codigoInterno), _nd(geral.gtin), _nd(geral.dun), _nd(geral.produtoId));
+        }
+        return __spreadArray([], new Set(vals.filter(Boolean)), true);
+    }
+    function _produtoGeral(obj) {
+        var _a, _b;
+        for (var _i = 0, _c = _idsProduto(obj); _i < _c.length; _i++) {
+            var id = _c[_i];
+            var ach = (_b = (_a = global.DTProdutos) === null || _a === void 0 ? void 0 : _a.buscarSync) === null || _b === void 0 ? void 0 : _b.call(_a, id);
+            if (ach === null || ach === void 0 ? void 0 : ach.encontrado)
+                return ach;
+        }
+        return null;
+    }
+    function _descricaoProduto(item, cont) {
+        var _a;
+        return String((item === null || item === void 0 ? void 0 : item.descricao_produto) || (item === null || item === void 0 ? void 0 : item.descricaoProduto) || (item === null || item === void 0 ? void 0 : item.descricao) ||
+            (cont === null || cont === void 0 ? void 0 : cont.descricao_produto) || (cont === null || cont === void 0 ? void 0 : cont.descricaoProduto) || (cont === null || cont === void 0 ? void 0 : cont.descricao) ||
+            ((_a = _produtoGeral(cont || item)) === null || _a === void 0 ? void 0 : _a.nomeProduto) || '').trim();
+    }
+    function _idPrincipalBase(item) {
+        return _nd((item === null || item === void 0 ? void 0 : item.codigo_produto) || (item === null || item === void 0 ? void 0 : item.codigoProduto) || (item === null || item === void 0 ? void 0 : item.codigo_interno) || (item === null || item === void 0 ? void 0 : item.codigoInterno) || (item === null || item === void 0 ? void 0 : item.gtin) || (item === null || item === void 0 ? void 0 : item.ean) || (item === null || item === void 0 ? void 0 : item.dun));
+    }
+    function _mesmoProduto(a, b) {
+        var aa = new Set(_idsProduto(a));
+        return _idsProduto(b).some(function (x) { return aa.has(x); });
+    }
     // ─────────────────────────────────────────────────────────────────────────────
     //  9. LÓGICA DE DIVERGÊNCIAS
     // ─────────────────────────────────────────────────────────────────────────────
@@ -236,21 +285,39 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                     c.status !== 'EXCLUIDA' &&
                     !_isVazio(c);
             });
+            var _normKey = function (end, prod) { return "".concat(_nd(end), "||").concat(_nd(prod)); };
+            var basePorEndereco = new Map();
+            var basePorId = new Map();
             var mapaBase = {};
-            inv.base.forEach(function (item) {
-                var key = "".concat(_nd(item.endereco), "||").concat(_nd(item.codigo_produto));
+            inv.base.forEach(function (item, idx) {
+                var end = _nd(item.endereco);
+                var key = "".concat(end, "||BASE_").concat(idx);
+                item.__dtKey = key;
+                item.__dtIds = _idsProduto(item);
+                if (!basePorEndereco.has(end))
+                    basePorEndereco.set(end, []);
+                basePorEndereco.get(end).push(item);
+                item.__dtIds.forEach(function (id) {
+                    if (!basePorId.has(id))
+                        basePorId.set(id, []);
+                    basePorId.get(id).push(item);
+                });
                 mapaBase[key] = item;
             });
-            var produtosNaBase = new Set(inv.base.map(function (r) { return _nd(r.codigo_produto); }).filter(Boolean));
-            var gtinsNaBase = new Set(inv.base.map(function (r) { return _nd(r.gtin); }).filter(Boolean));
-            var _normKey = function (end, prod) { return "".concat(_nd(end), "||").concat(_nd(prod)); };
+            function localizarItemBase(cont, somenteEndereco) {
+                if (somenteEndereco === void 0) { somenteEndereco = true; }
+                var candidatos = somenteEndereco
+                    ? (basePorEndereco.get(_nd(cont.endereco)) || [])
+                    : inv.base;
+                return candidatos.find(function (item) { return _mesmoProduto(item, cont); }) || null;
+            }
             // Deduplicação de contagens
             var _seenConts = new Set();
             var contsUnicas = [];
             conts.forEach(function (c) {
                 var dedupKey = c.uuid
                     ? String(c.uuid).trim()
-                    : [c.inventario_id, _nd(c.endereco), _nd(c.capa), _nd(c.codigo_produto || c.gtin),
+                    : [c.inventario_id, _nd(c.endereco), _nd(c.capa), _idsProduto(c).join(','),
                         Number(c.quantidade || 0), _nd(c.operador), _nd(c.tipo_contagem),
                         String(c.criado_em || c.dataHora || '').slice(0, 16)].join('|');
                 if (_seenConts.has(dedupKey)) {
@@ -261,25 +328,40 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                 contsUnicas.push(c);
             });
             var mapaConts = {};
+            var infoContagem = new Map();
             contsUnicas.forEach(function (c) {
-                var key = _normKey(c.endereco, c.codigo_produto || c.gtin);
+                var itemBase = localizarItemBase(c, true);
+                var geral = _produtoGeral(c);
+                var key = (itemBase === null || itemBase === void 0 ? void 0 : itemBase.__dtKey) || _normKey(c.endereco, _idsProduto(c)[0] || 'SEM_PRODUTO');
                 mapaConts[key] = (mapaConts[key] || 0) + _qtdEmUnidades(c);
+                infoContagem.set(c, { itemBase: itemBase, geral: geral, key: key });
             });
             // ── Atualizar status de contagens normais ──
             contsUnicas.forEach(function (c) {
                 var _a;
-                var key = _normKey(c.endereco, c.codigo_produto || c.gtin);
-                var qtdCont = (_a = mapaConts[key]) !== null && _a !== void 0 ? _a : null;
-                var itemBase = inv.base.find(function (b) { return _normKey(b.endereco, b.codigo_produto) === key; });
+                var info = infoContagem.get(c) || {};
+                var itemBase = info.itemBase || null;
+                var qtdCont = (_a = mapaConts[info.key]) !== null && _a !== void 0 ? _a : null;
                 var novoStatus = !itemBase ? 'DIVERGENTE'
                     : ((qtdCont === (parseFloat(itemBase.quantidade_esperada) || 0)) ? 'PROCESSADO' : 'DIVERGENTE');
-                if (c.status !== novoStatus) {
-                    var updated = Object.assign({}, c, { status: novoStatus });
+                var descricao = _descricaoProduto(itemBase, c);
+                var codigoBase = _idPrincipalBase(itemBase);
+                if (c.status !== novoStatus || (descricao && !c.descricao) || (codigoBase && !c.codigo_produto)) {
+                    var updated = Object.assign({}, c, {
+                        status: novoStatus,
+                        descricao: descricao || c.descricao || '',
+                        descricao_produto: descricao || c.descricao_produto || '',
+                        codigo_produto: codigoBase || c.codigo_produto || c.gtin || ''
+                    });
                     contagensMap.set(c.uuid || c.id, updated);
                     var docId = c.uuid || String(c.id);
-                    var colDest = _isVazio(c) ? 'dt_vazios' : 'dt_contagens';
                     if (navigator.onLine)
-                        FS_AN.collection(colDest).doc(docId).update({ status: novoStatus }).catch(function () { });
+                        FS_AN.collection('dt_contagens').doc(docId).set({
+                            status: novoStatus,
+                            descricao: updated.descricao,
+                            descricao_produto: updated.descricao_produto,
+                            codigo_produto: updated.codigo_produto
+                        }, { merge: true }).catch(function () { });
                 }
             });
             // ── Atualizar status de RECONTAGEMs ──
@@ -304,20 +386,59 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         FS_AN.collection('dt_contagens').doc(docId).update({ status: novoStatus }).catch(function () { });
                 }
             });
+            // Repara divergências antigas criadas como "produto não identificado" quando
+            // o GTIN/DUN pertence a um produto cadastrado e também existe na base do inventário.
+            contsUnicas.forEach(function (c) {
+                var info = infoContagem.get(c) || {};
+                if (!info.itemBase)
+                    return;
+                var antigos = state().divergencias.filter(function (d) {
+                    return String(d.inventario_id || d.inventarioId || '') === String(inv.id) &&
+                        _nd(d.endereco) === _nd(c.endereco) &&
+                        d.tipo_divergencia === 'PRODUTO_NAO_IDENTIFICADO' &&
+                        (!d.contagem_uuid || !c.uuid || String(d.contagem_uuid) === String(c.uuid));
+                });
+                antigos.forEach(function (d) {
+                    var qtdEsp = parseFloat(info.itemBase.quantidade_esperada) || 0;
+                    var qtdCont = mapaConts[info.key] || 0;
+                    var diferenca = qtdCont - qtdEsp;
+                    var atualizado = Object.assign({}, d, {
+                        produto: _idPrincipalBase(info.itemBase),
+                        produto_contado: _idsProduto(c)[0] || d.produto_contado,
+                        descricao: _descricaoProduto(info.itemBase, c),
+                        qtd_esperada: qtdEsp,
+                        qtd_contada: qtdCont,
+                        diferenca: diferenca,
+                        tipo_divergencia: 'QUANTIDADE_DIFERENTE',
+                        motivos_divergencia: ['QUANTIDADE_DIFERENTE'],
+                        status: diferenca === 0 ? 'RESOLVIDA' : 'EM_RECONTAGEM',
+                        precisa_recontagem: diferenca !== 0,
+                        corrigida_em: new Date().toISOString()
+                    });
+                    divsUpdate.push(atualizado);
+                    fsSalvarDivergencia(atualizado);
+                });
+            });
             // ── 1a. Divergências de quantidade ──
             inv.base.forEach(function (item) {
-                var key = _normKey(item.endereco, item.codigo_produto);
+                var key = item.__dtKey;
                 var qtdEsp = parseFloat(item.quantidade_esperada) || 0;
                 var qtdCont = mapaConts[key] !== undefined ? mapaConts[key] : null;
                 if (qtdCont === null)
                     return;
+                var produtoBase = _idPrincipalBase(item);
+                var descricaoBase = _descricaoProduto(item, item);
                 var diferenca = qtdCont - qtdEsp;
                 if (diferenca === 0) {
                     var divExistente = state().divergencias.find(function (d) {
-                        return d.inventario_id === inv.id && _normKey(d.endereco, d.produto) === key && d.status === 'ABERTA';
+                        return String(d.inventario_id || d.inventarioId || '') === String(inv.id) &&
+                            _nd(d.endereco) === _nd(item.endereco) && _mesmoProduto(d, item) &&
+                            ['ABERTA', 'EM_RECONTAGEM'].includes(d.status);
                     });
                     if (divExistente) {
                         var updatedDiv = Object.assign({}, divExistente, {
+                            produto: produtoBase, descricao: descricaoBase,
+                            qtd_esperada: qtdEsp, qtd_contada: qtdCont, diferenca: 0,
                             status: 'RESOLVIDA', resolvida_em: new Date().toISOString(), resolvida_por: 'sistema (correção)'
                         });
                         divsUpdate.push(updatedDiv);
@@ -325,11 +446,27 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                     }
                     return;
                 }
-                if (_divExistente(inv.id, item.endereco, item.codigo_produto, 'QUANTIDADE_DIFERENTE'))
+                var existente = state().divergencias.find(function (d) {
+                    return String(d.inventario_id || d.inventarioId || '') === String(inv.id) &&
+                        _nd(d.endereco) === _nd(item.endereco) && _mesmoProduto(d, item) &&
+                        ['QUANTIDADE_DIFERENTE', 'PRODUTO_NAO_IDENTIFICADO'].includes(d.tipo_divergencia);
+                });
+                if (existente) {
+                    var atualizado = Object.assign({}, existente, {
+                        produto: produtoBase, descricao: descricaoBase,
+                        qtd_esperada: qtdEsp, qtd_contada: qtdCont,
+                        diferenca: diferenca,
+                        tipo_divergencia: 'QUANTIDADE_DIFERENTE', motivos_divergencia: ['QUANTIDADE_DIFERENTE'],
+                        status: existente.status === 'PERSISTENTE' ? 'PERSISTENTE' : 'EM_RECONTAGEM',
+                        precisa_recontagem: true
+                    });
+                    divsUpdate.push(atualizado);
+                    fsSalvarDivergencia(atualizado);
                     return;
+                }
                 var div = {
                     id: gerarId('DIV'), inventario_id: inv.id, inventario_nome: inv.nome,
-                    endereco: item.endereco, produto: item.codigo_produto, descricao: item.descricao_produto,
+                    endereco: item.endereco, produto: produtoBase, descricao: descricaoBase,
                     qtd_esperada: qtdEsp, qtd_contada: qtdCont,
                     diferenca: diferenca,
                     tipo_divergencia: 'QUANTIDADE_DIFERENTE', motivos_divergencia: ['QUANTIDADE_DIFERENTE'],
@@ -342,21 +479,19 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                 if (criarRecontagens)
                     _criarRecontagemParaDivergencia(div, inv, qtdCont, novasRecs);
             });
-            // ── 1b. Produto não identificado na base ──
+            // ── 1b. Produto realmente não identificado ──
             contsUnicas.forEach(function (c) {
-                var prodCod = _nd(c.codigo_produto || c.gtin);
-                var gtin = _nd(c.gtin);
-                var naoIdentificado = c._nao_encontrado === true ||
-                    (!produtosNaBase.has(prodCod) && !gtinsNaBase.has(gtin) && !gtinsNaBase.has(prodCod));
-                if (!naoIdentificado)
+                var info = infoContagem.get(c) || {};
+                if (info.itemBase || info.geral)
                     return;
+                var prodCod = _idsProduto(c)[0] || '';
                 if (_divExistente(inv.id, c.endereco, prodCod, 'PRODUTO_NAO_IDENTIFICADO'))
                     return;
                 var div = {
                     id: gerarId('DIV'), inventario_id: inv.id, inventario_nome: inv.nome,
                     endereco: c.endereco, produto: prodCod, produto_contado: prodCod,
-                    descricao: c.descricao || 'Produto não identificado', gtin_bipado: gtin,
-                    qtd_esperada: null, qtd_contada: parseFloat(c.quantidade) || 0, diferenca: null,
+                    descricao: _descricaoProduto(null, c) || 'Produto não identificado', gtin_bipado: _nd(c.gtin || prodCod),
+                    qtd_esperada: null, qtd_contada: _qtdEmUnidades(c), diferenca: null,
                     tipo_divergencia: 'PRODUTO_NAO_IDENTIFICADO', motivos_divergencia: ['PRODUTO_NAO_IDENTIFICADO'],
                     contagem_uuid: c.uuid, operador: c.operador,
                     status: 'ABERTA', precisa_recontagem: true,
@@ -366,29 +501,26 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                 fsSalvarDivergencia(div);
                 novos++;
                 if (criarRecontagens)
-                    _criarRecontagemParaDivergencia(div, inv, parseFloat(c.quantidade) || 0, novasRecs);
+                    _criarRecontagemParaDivergencia(div, inv, _qtdEmUnidades(c), novasRecs);
             });
-            // ── 1c. Produto fora do endereço correto ──
+            // ── 1c. Produto cadastrado, porém fora do endereço correto ──
             contsUnicas.forEach(function (c) {
-                var _a;
-                var prodCod = _nd(c.codigo_produto || c.gtin);
-                var gtin = _nd(c.gtin);
-                var key = "".concat(_nd(c.endereco), "||").concat(prodCod);
-                var existeNaBase = produtosNaBase.has(prodCod) || gtinsNaBase.has(gtin);
-                var noEnderecoCorreto = !!mapaBase[key];
-                if (!existeNaBase || noEnderecoCorreto)
+                var info = infoContagem.get(c) || {};
+                if (info.itemBase)
                     return;
+                var itemEmOutroEndereco = localizarItemBase(c, false);
+                if (!itemEmOutroEndereco && !info.geral)
+                    return;
+                var prodCod = _idPrincipalBase(itemEmOutroEndereco) || _idsProduto(c)[0] || '';
                 if (_divExistente(inv.id, c.endereco, prodCod, 'PRODUTO_FORA_ENDERECO'))
                     return;
-                var enderecoCorreto = ((_a = inv.base.find(function (r) {
-                    return _nd(r.codigo_produto) === prodCod || _nd(r.gtin) === gtin;
-                })) === null || _a === void 0 ? void 0 : _a.endereco) || null;
+                var qtdEsp = itemEmOutroEndereco ? (parseFloat(itemEmOutroEndereco.quantidade_esperada) || 0) : null;
                 var div = {
                     id: gerarId('DIV'), inventario_id: inv.id, inventario_nome: inv.nome,
-                    endereco: c.endereco, endereco_correto: enderecoCorreto,
-                    produto: prodCod, produto_contado: prodCod,
-                    descricao: c.descricao || '', qtd_esperada: null,
-                    qtd_contada: parseFloat(c.quantidade) || 0, diferenca: null,
+                    endereco: c.endereco, endereco_correto: (itemEmOutroEndereco === null || itemEmOutroEndereco === void 0 ? void 0 : itemEmOutroEndereco.endereco) || null,
+                    produto: prodCod, produto_contado: _idsProduto(c)[0] || prodCod,
+                    descricao: _descricaoProduto(itemEmOutroEndereco, c), qtd_esperada: qtdEsp,
+                    qtd_contada: _qtdEmUnidades(c), diferenca: qtdEsp == null ? null : (_qtdEmUnidades(c) - qtdEsp),
                     tipo_divergencia: 'PRODUTO_FORA_ENDERECO', motivos_divergencia: ['PRODUTO_FORA_ENDERECO'],
                     contagem_uuid: c.uuid, operador: c.operador,
                     status: 'ABERTA', precisa_recontagem: true,
@@ -398,7 +530,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                 fsSalvarDivergencia(div);
                 novos++;
                 if (criarRecontagens)
-                    _criarRecontagemParaDivergencia(div, inv, parseFloat(c.quantidade) || 0, novasRecs);
+                    _criarRecontagemParaDivergencia(div, inv, _qtdEmUnidades(c), novasRecs);
             });
             // ── 1d. Endereço vazio mas base espera produto ──
             state().contagens.filter(function (c) {
@@ -496,16 +628,35 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         ];
         if (contagensMap.size > 0)
             batchActions.push(Actions.replaceSlice('contagens', finalContagens, BIZMETA));
-        if (novasRecs.length > 0) {
-            var recsFinais_1 = __spreadArray([], state().recontagens, true);
-            novasRecs.forEach(function (r) {
-                var idx = recsFinais_1.findIndex(function (x) { return x.id === r.id; });
-                if (idx >= 0)
-                    recsFinais_1[idx] = r;
-                else
-                    recsFinais_1.push(r);
+        // Propagar produto/descrição/quantidade esperada corrigidos para recontagens
+        // já existentes. Assim registros antigos deixam de exibir null e código sem cadastro.
+        var divAtualPorId = new Map(divergenciasDedupe.map(function (d) { return [String(d.id), d]; }));
+        var houveRecAtualizada = false;
+        var recsFinais = state().recontagens.map(function (r) {
+            var d = divAtualPorId.get(String(r.divergencia_id || ''));
+            if (!d)
+                return r;
+            var atualizado = Object.assign({}, r, {
+                produto: d.produto || r.produto || '',
+                descricao: d.descricao || r.descricao || '',
+                qtd_esperada: d.qtd_esperada != null ? d.qtd_esperada : r.qtd_esperada,
+                qtd_primeira: d.qtd_contada != null ? d.qtd_contada : r.qtd_primeira
             });
-            batchActions.push(Actions.replaceSlice('recontagens', recsFinais_1, BIZMETA));
+            if (JSON.stringify(atualizado) !== JSON.stringify(r)) {
+                houveRecAtualizada = true;
+                fsSalvarRecontagem(atualizado);
+            }
+            return atualizado;
+        });
+        novasRecs.forEach(function (r) {
+            var idx = recsFinais.findIndex(function (x) { return x.id === r.id; });
+            if (idx >= 0)
+                recsFinais[idx] = r;
+            else
+                recsFinais.push(r);
+        });
+        if (novasRecs.length > 0 || houveRecAtualizada) {
+            batchActions.push(Actions.replaceSlice('recontagens', recsFinais, BIZMETA));
         }
         Store.dispatch(Actions.batch(batchActions, BIZMETA));
         if (typeof logSistema === 'function')

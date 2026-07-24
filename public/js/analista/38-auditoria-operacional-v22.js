@@ -34,100 +34,117 @@
     try{ const snap=await DB().collection('dt_locais').get(); return snap.docs.map(d=>({id:d.id,...d.data()})); }catch(e){ return []; }
   }
   async function abrirCriacaoAuditoria(){
-    // Impede múltiplas aberturas simultâneas. Cliques repetidos eram responsáveis
-    // por modais sobrepostos, campos piscando e carregamentos que voltavam sozinhos.
-    const modalExistente=document.getElementById('modal-nova-aud-v39');
-    if(modalExistente){
-      modalExistente.classList.add('on');
-      const campo=modalExistente.querySelector('#aud39-nome'); if(campo)campo.focus();
-      return;
-    }
-    if(criacaoAberta && criacaoPromise) return criacaoPromise;
+    const existente=document.getElementById('modal-nova-aud-v72');
+    if(existente){ existente.classList.add('on'); existente.querySelector('#aud72-nome')?.focus(); return; }
+    if(!ambienteAuditoriaPronto()) return toast('Aguarde o login e a seleção da loja antes de criar a auditoria.','w');
+
+    const token=++criacaoToken;
     criacaoAberta=true;
-    const meuToken=++criacaoToken;
-    document.getElementById('aud-v52-loading')?.remove();
-    const carregando=document.createElement('div');
-    carregando.id='aud-v52-loading'; carregando.className='modal-bg on';
-    carregando.innerHTML='<div class="modal" style="max-width:420px;text-align:center;padding:28px"><div style="font-size:2rem">⏳</div><div class="modal-title" style="margin-top:10px">Preparando nova auditoria…</div><div class="sec-sub">Carregando produtos e endereços apenas uma vez.</div><div class="modal-actions" style="justify-content:center"><button type="button" class="btn btn-ghost" id="aud39-cancelar-loading">Cancelar</button></div></div>';
-    document.body.appendChild(carregando);
-    const cancelar=()=>{ if(meuToken===criacaoToken)++criacaoToken; criacaoAberta=false; carregando.remove(); };
-    carregando.querySelector('#aud39-cancelar-loading').onclick=cancelar;
-    criacaoPromise=(async function(){
-    try{
-      // Nunca deixa a criação presa esperando Firebase. Primeiro tenta usar o cache
-      // já carregado e limita cada consulta a poucos segundos.
-      if(window.DTProdutos && typeof window.DTProdutos.carregar==='function'){
-        await comTimeout(window.DTProdutos.carregar(false), 8000, []);
-      }
-      if(meuToken!==criacaoToken) return;
-      const familias=(window.DTProdutos?.familias?.()||[]).filter(function(f){ return f && f.produtos && f.produtos.length; });
-      const ends=await comTimeout(enderecosGerais(), 8000, []);
-      if(meuToken!==criacaoToken) return;
-      const ruas=[...new Set(ends.map(e=>ruaDoEndereco(e.endereco||e.codigo||e.id)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
-      carregando.remove();
-      const cardsFamilia=familias.map(f=>`<button type="button" class="aud39-familia-card" data-familia-id="${esc(f.id)}" data-familia-nome="${esc(f.nome)}" style="width:100%;text-align:left;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--card);cursor:pointer;margin-bottom:6px">${esc(f.nome)}</button>`).join('');
-      const html=`<div id="modal-nova-aud-v39" class="modal-bg on"><div class="modal" style="max-width:760px"><div class="modal-hdr"><div><div class="modal-title">Criar nova auditoria</div><div class="sec-sub">Informe o nome, escolha o tipo e carregue a base antes de criar.</div></div><button class="modal-close" data-fechar-aud-v39>✕</button></div><div class="fg"><div class="fi full"><div class="fl">Nome da auditoria *</div><input id="aud39-nome" placeholder="Ex.: Auditoria Rua 14"></div><div class="fi full"><div class="fl">Como deseja auditar?</div><select id="aud39-tipo"><option value="rua">Por rua</option><option value="produto">Por produto</option></select></div><div class="fi full" id="aud39-box-rua"><div class="fl">Ruas</div><select id="aud39-ruas" multiple size="7">${ruas.map(r=>`<option value="${esc(r)}">Rua ${esc(r)}</option>`).join('')}</select><div class="sec-sub">Use Ctrl para selecionar mais de uma rua.</div></div><div class="fi full" id="aud39-box-prod" style="display:none"><div class="fl">Família de produtos</div><input id="aud39-busca-prod" placeholder="Pesquisar família..." autocomplete="off"><input type="hidden" id="aud39-prod"><div id="aud39-familias-lista" style="max-height:250px;overflow:auto;margin-top:8px">${cardsFamilia||'<div class="empty-sub">Nenhuma família com produto UND encontrada.</div>'}</div><div id="aud39-familia-selecionada" class="sec-sub" style="margin-top:8px">Nenhuma família selecionada.</div></div><div class="fi full"><div class="fl">Base da auditoria *</div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="btn btn-ghost" id="aud39-escolher-arquivo">⬆ Selecionar arquivo</button><span id="aud39-arquivo-nome" class="sec-sub">Nenhum arquivo selecionado</span><input id="aud39-arquivo" type="file" accept=".csv,.xlsx,.xls" style="display:none"></div><div id="aud39-arquivo-status" style="margin-top:10px"></div></div></div><div class="modal-actions"><button class="btn btn-ghost" data-fechar-aud-v39>Cancelar</button><button class="btn btn-primary" id="aud39-criar">Criar e importar auditoria</button></div></div></div>`;
-      document.body.insertAdjacentHTML('beforeend',html);
-      const modal=document.getElementById('modal-nova-aud-v39');
-      let arquivoSelecionado=null;
-      // Bloqueia handlers delegados da página atrás do modal.
-      ['click','mousedown','pointerdown','change','input'].forEach(evt=>modal.addEventListener(evt,e=>e.stopPropagation()));
-      const fechar=()=>{++criacaoToken;criacaoAberta=false;modal.remove();};
-      modal.querySelectorAll('[data-fechar-aud-v39]').forEach(b=>b.onclick=fechar);
-      const tipo=modal.querySelector('#aud39-tipo');
-      tipo.onchange=()=>{modal.querySelector('#aud39-box-rua').style.display=tipo.value==='rua'?'':'none';modal.querySelector('#aud39-box-prod').style.display=tipo.value==='produto'?'':'none';};
-      const busca=modal.querySelector('#aud39-busca-prod');
-      busca.oninput=function(){const q=txt(this.value).toLowerCase();modal.querySelectorAll('.aud39-familia-card').forEach(o=>{o.style.display=!q||txt(o.dataset.familiaNome).toLowerCase().includes(q)?'block':'none';});};
-      modal.querySelectorAll('.aud39-familia-card').forEach(card=>card.onclick=()=>{
-        modal.querySelectorAll('.aud39-familia-card').forEach(x=>{x.style.outline='';x.setAttribute('aria-selected','false');});
-        card.style.outline='2px solid var(--primary)';card.setAttribute('aria-selected','true');
-        modal.querySelector('#aud39-prod').value=card.dataset.familiaId||'';
-        modal.querySelector('#aud39-familia-selecionada').textContent='Selecionada: '+(card.dataset.familiaNome||'');
+    const html=`<div id="modal-nova-aud-v72" class="modal-bg on"><div class="modal" style="max-width:760px">
+      <div class="modal-hdr"><div><div class="modal-title">Criar nova auditoria</div><div class="sec-sub">O nome é definido por você e não pelo nome do arquivo.</div></div><button type="button" class="modal-close" data-aud72-fechar>✕</button></div>
+      <div class="fg">
+        <div class="fi full"><div class="fl">Nome da auditoria *</div><input id="aud72-nome" maxlength="100" placeholder="Ex.: Auditoria Rua 14 — Julho"></div>
+        <div class="fi full"><div class="fl">Como deseja auditar?</div><select id="aud72-tipo"><option value="rua">Por rua</option><option value="produto">Por produto/família</option></select></div>
+        <div class="fi full" id="aud72-box-rua"><div class="fl">Ruas *</div><div id="aud72-ruas-status" class="sec-sub">Carregando ruas…</div><select id="aud72-ruas" multiple size="7" style="display:none"></select><div class="sec-sub">Use Ctrl para selecionar mais de uma rua.</div></div>
+        <div class="fi full" id="aud72-box-prod" style="display:none"><div class="fl">Família de produtos *</div><input id="aud72-busca-prod" placeholder="Pesquisar família..." autocomplete="off"><input type="hidden" id="aud72-prod"><div id="aud72-familias-lista" style="max-height:250px;overflow:auto;margin-top:8px"><div class="sec-sub">Carregando famílias…</div></div><div id="aud72-familia-selecionada" class="sec-sub" style="margin-top:8px">Nenhuma família selecionada.</div></div>
+        <div class="fi full"><div class="fl">Base da auditoria *</div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><button type="button" class="btn btn-ghost" id="aud72-escolher-arquivo">⬆ Selecionar arquivo</button><span id="aud72-arquivo-nome" class="sec-sub">Nenhum arquivo selecionado</span><input id="aud72-arquivo" type="file" accept=".csv,.xlsx,.xls" style="display:none"></div><div id="aud72-arquivo-status" style="margin-top:10px"></div></div>
+      </div>
+      <div class="modal-actions"><button type="button" class="btn btn-ghost" data-aud72-fechar>Cancelar</button><button type="button" class="btn btn-primary" id="aud72-criar">Criar e importar auditoria</button></div>
+    </div></div>`;
+    document.body.insertAdjacentHTML('beforeend',html);
+    const modal=document.getElementById('modal-nova-aud-v72');
+    if(!modal) throw new Error('Não foi possível abrir o formulário de criação.');
+    let arquivoSelecionado=null;
+    let familias=[];
+    const fechar=()=>{ ++criacaoToken; criacaoAberta=false; criacaoPromise=null; modal.remove(); };
+    modal.querySelectorAll('[data-aud72-fechar]').forEach(b=>b.onclick=fechar);
+    modal.addEventListener('click',e=>{ if(e.target===modal) fechar(); });
+    ['mousedown','pointerdown','change','input'].forEach(evt=>modal.addEventListener(evt,e=>e.stopPropagation()));
+
+    const tipo=modal.querySelector('#aud72-tipo');
+    tipo.onchange=()=>{
+      modal.querySelector('#aud72-box-rua').style.display=tipo.value==='rua'?'':'none';
+      modal.querySelector('#aud72-box-prod').style.display=tipo.value==='produto'?'':'none';
+    };
+    const inputArquivo=modal.querySelector('#aud72-arquivo');
+    modal.querySelector('#aud72-escolher-arquivo').onclick=()=>inputArquivo.click();
+    inputArquivo.onchange=()=>{
+      arquivoSelecionado=inputArquivo.files?.[0]||null;
+      modal.querySelector('#aud72-arquivo-nome').textContent=arquivoSelecionado?arquivoSelecionado.name:'Nenhum arquivo selecionado';
+      modal.querySelector('#aud72-arquivo-status').innerHTML=arquivoSelecionado?'<div class="alert info"><div>📄</div><div>Arquivo selecionado. O nome da auditoria continuará sendo o nome digitado acima.</div></div>':'';
+    };
+
+    function renderFamilias(){
+      const box=modal.querySelector('#aud72-familias-lista');
+      const q=txt(modal.querySelector('#aud72-busca-prod').value).toLowerCase();
+      const lista=familias.filter(f=>!q||txt(f.nome).toLowerCase().includes(q));
+      box.innerHTML=lista.length?lista.map(f=>`<button type="button" class="aud72-familia-card" data-id="${esc(f.id)}" data-nome="${esc(f.nome)}" style="width:100%;text-align:left;padding:10px 12px;border:1px solid var(--border);border-radius:9px;background:var(--card);cursor:pointer;margin-bottom:6px">${esc(f.nome)}</button>`).join(''):'<div class="empty-sub">Nenhuma família encontrada.</div>';
+      box.querySelectorAll('.aud72-familia-card').forEach(card=>card.onclick=()=>{
+        box.querySelectorAll('.aud72-familia-card').forEach(x=>x.style.outline='');
+        card.style.outline='2px solid var(--primary)';
+        modal.querySelector('#aud72-prod').value=card.dataset.id||'';
+        modal.querySelector('#aud72-familia-selecionada').textContent='Selecionada: '+(card.dataset.nome||'');
       });
-      const inputArquivo=modal.querySelector('#aud39-arquivo');
-      modal.querySelector('#aud39-escolher-arquivo').onclick=()=>inputArquivo.click();
-      inputArquivo.onchange=()=>{
-        arquivoSelecionado=inputArquivo.files&&inputArquivo.files[0]||null;
-        modal.querySelector('#aud39-arquivo-nome').textContent=arquivoSelecionado?arquivoSelecionado.name:'Nenhum arquivo selecionado';
-        modal.querySelector('#aud39-arquivo-status').innerHTML=arquivoSelecionado?'<div class="alert info"><div>📄</div><div>Arquivo selecionado. A validação será feita ao criar a auditoria.</div></div>':'';
-      };
-      modal.querySelector('#aud39-criar').onclick=async()=>{
-        const nome=txt(modal.querySelector('#aud39-nome').value); if(!nome)return toast('Informe o nome da auditoria.','w');
-        if(!arquivoSelecionado)return toast('Selecione a base da auditoria.','w');
-        const modo=tipo.value; let selecao=[];
-        if(modo==='rua')selecao=[...modal.querySelector('#aud39-ruas').selectedOptions].map(o=>o.value);
-        else {const v=modal.querySelector('#aud39-prod').value;if(v)selecao=[v];}
-        if(!selecao.length)return toast(modo==='rua'?'Selecione ao menos uma rua.':'Selecione uma família de produtos.','w');
-        const familia=modo==='produto'?familias.find(f=>f.id===selecao[0]):null;
-        const cfg={tipoAuditoria:modo,ruas:modo==='rua'?selecao:[],familiaId:familia?.id||'',familiaNome:familia?.nome||''};
-        const btn=modal.querySelector('#aud39-criar'); btn.disabled=true; btn.textContent='Criando...';
-        try{
-          const preparada=await prepararImportacao(arquivoSelecionado,cfg);
-          if(!preparada.validos.length)throw new Error('Nenhuma linha válida foi encontrada para esta auditoria.');
-          const id=`AUD-${Date.now()}`;
-          await DB().collection('dt_auditorias').doc(id).set({nome,loja:loja(),...cfg,familiaCodigos:familia?familia.produtos.map(p=>p.codigoInterno):[],status:'RASCUNHO',totalItens:0,totalPendentes:0,totalOk:0,totalDivergentes:0,totalVazios:0,criadoEm:agora(),criadoPor:usuario()});
-          auditoriaAtual=id; metaAtual={id,nome,...cfg,status:'RASCUNHO'}; importacaoPendente={file:arquivoSelecionado,...preparada};
-          await gravarImportacao();
-          fechar();
-          await popularSelect(); const sel=document.getElementById('aud-op-auditoria');if(sel)sel.value=id;
-          await selecionarAuditoria(id);
-          toast(`Auditoria criada com ${preparada.validos.length} item(ns). Agora ela pode ser liberada para os coletores.`,'s');
-        }catch(e){
-          console.error('[AUDITORIA] criação:',e);
-          const status=modal.querySelector('#aud39-arquivo-status');if(status)status.innerHTML=`<div class="alert error"><div>⚠️</div><div>${esc(e.message||'Falha ao criar auditoria.')}</div></div>`;
-          btn.disabled=false; btn.textContent='Criar e importar auditoria';
-        }
-      };
-      modal.querySelector('#aud39-nome')?.focus();
-    } finally {
-      document.getElementById('aud-v52-loading')?.remove();
-      if(meuToken===criacaoToken){
-        criacaoPromise=null;
-        if(!document.getElementById('modal-nova-aud-v39')) criacaoAberta=false;
-      }
     }
+    modal.querySelector('#aud72-busca-prod').oninput=renderFamilias;
+
+    criacaoPromise=(async()=>{
+      try{
+        if(window.DTProdutos?.carregar) await comTimeout(window.DTProdutos.carregar(false),8000,[]);
+        if(token!==criacaoToken || !document.body.contains(modal)) return;
+        familias=(window.DTProdutos?.familias?.()||[]).filter(f=>f&&f.produtos&&f.produtos.length);
+        renderFamilias();
+        const ends=await comTimeout(enderecosGerais(),8000,[]);
+        if(token!==criacaoToken || !document.body.contains(modal)) return;
+        const ruas=[...new Set(ends.map(e=>ruaDoEndereco(e.endereco||e.codigo||e.id)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
+        const sel=modal.querySelector('#aud72-ruas');
+        const status=modal.querySelector('#aud72-ruas-status');
+        sel.innerHTML=ruas.map(r=>`<option value="${esc(r)}">Rua ${esc(r)}</option>`).join('');
+        sel.style.display='';
+        status.textContent=ruas.length?`${ruas.length} rua(s) disponível(is).`:'Nenhuma rua foi encontrada na Base Geral de Endereços.';
+      }catch(e){ console.warn('[AUDITORIA] opções da criação:',e); }
     })();
-    return criacaoPromise;
+
+    modal.querySelector('#aud72-criar').onclick=async()=>{
+      const nome=txt(modal.querySelector('#aud72-nome').value);
+      if(!nome) return toast('Digite o nome da auditoria.','w');
+      if(!arquivoSelecionado) return toast('Selecione a base da auditoria.','w');
+      const modo=tipo.value;
+      let selecao=[];
+      if(modo==='rua') selecao=[...modal.querySelector('#aud72-ruas').selectedOptions].map(o=>o.value);
+      else { const v=txt(modal.querySelector('#aud72-prod').value); if(v) selecao=[v]; }
+      if(!selecao.length) return toast(modo==='rua'?'Selecione ao menos uma rua.':'Selecione uma família de produtos.','w');
+      const familia=modo==='produto'?familias.find(f=>txt(f.id)===txt(selecao[0])):null;
+      const cfg={tipoAuditoria:modo,ruas:modo==='rua'?selecao:[],familiaId:familia?.id||'',familiaNome:familia?.nome||''};
+      const btn=modal.querySelector('#aud72-criar');
+      btn.disabled=true; btn.textContent='Criando...';
+      try{
+        const preparada=await prepararImportacao(arquivoSelecionado,cfg);
+        if(!preparada.validos.length) throw new Error('Nenhuma linha válida foi encontrada para esta auditoria.');
+        const id=`AUD-${Date.now()}`;
+        const db=DB(); if(!db) throw new Error('Firebase indisponível. Aguarde alguns segundos e tente novamente.');
+        await db.collection('dt_auditorias').doc(id).set({
+          nome:nome,auditoria_nome:nome,loja:loja(),...cfg,
+          familiaCodigos:familia?familia.produtos.map(p=>p.codigoInterno):[],
+          status:'RASCUNHO',liberada_coletor:false,totalItens:0,totalPendentes:0,totalOk:0,totalDivergentes:0,totalVazios:0,
+          arquivo_origem:arquivoSelecionado.name,criadoEm:agora(),criadoPor:usuario()
+        });
+        auditoriaAtual=id; metaAtual={id,nome,auditoria_nome:nome,...cfg,status:'RASCUNHO'};
+        importacaoPendente={file:arquivoSelecionado,...preparada};
+        await gravarImportacao();
+        fechar();
+        await popularSelect();
+        const sel=document.getElementById('aud-op-auditoria'); if(sel) sel.value=id;
+        await selecionarAuditoria(id);
+        toast(`Auditoria “${nome}” criada com ${preparada.validos.length} item(ns).`,'s');
+      }catch(e){
+        console.error('[AUDITORIA] criação:',e);
+        const status=modal.querySelector('#aud72-arquivo-status');
+        if(status) status.innerHTML=`<div class="alert error"><div>⚠️</div><div>${esc(e.message||'Falha ao criar auditoria.')}</div></div>`;
+        btn.disabled=false; btn.textContent='Criar e importar auditoria';
+      }
+    };
+    modal.querySelector('#aud72-nome').focus();
   }
 
 
@@ -198,10 +215,10 @@
   }
 
   function resolverAuditoriaSelecionada(){
-    if (auditoriaAtual) return auditoriaAtual;
     const sel=document.getElementById('aud-op-auditoria');
     const valor=txt(sel?.value);
     if(valor){ auditoriaAtual=valor; return valor; }
+    if (auditoriaAtual) return auditoriaAtual;
     const opcoes=sel?[...sel.options].filter(o=>o.value):[];
     if(opcoes.length===1){ sel.value=opcoes[0].value; auditoriaAtual=opcoes[0].value; return auditoriaAtual; }
     return '';
@@ -510,20 +527,35 @@
   }
 
   async function excluir(){
-    const id=resolverAuditoriaSelecionada();
-    if(!id) return toast('Selecione uma auditoria na lista acima.','w');
-    if(!confirm('Excluir esta auditoria e todos os seus resultados? Esta ação não pode ser desfeita.')) return;
+    const sel=document.getElementById('aud-op-auditoria');
+    const id=txt(sel?.value || auditoriaAtual);
+    if(!id) return toast('Selecione a auditoria que deseja excluir.','w');
+    let meta=metaAtual;
+    if(!meta || txt(meta.id)!==id){
+      try{ const ms=await DB().collection('dt_auditorias').doc(id).get(); meta=ms.exists?{id:ms.id,...ms.data()}:null; }catch(e){}
+    }
+    const nome=txt(meta?.nome || meta?.auditoria_nome || (sel?.selectedOptions?.[0]?.textContent||id).split(' — ')[0] || id);
+    const mensagem=`Excluir definitivamente a auditoria “${nome}”?\n\nTodos os endereços e resultados dessa auditoria serão apagados, e ela deixará de aparecer nos coletores.`;
+    if(!window.confirm(mensagem)) return;
+    const btn=document.getElementById('btn-aud-excluir');
+    if(btn){ btn.disabled=true; btn.dataset.textoOriginal=btn.textContent; btn.textContent='Excluindo...'; }
     const ref=DB().collection('dt_auditorias').doc(id);
     try{
       encerrarListener();
       const snap=await ref.collection('enderecos').get();
       for(let i=0;i<snap.docs.length;i+=350){ const b=DB().batch(); snap.docs.slice(i,i+350).forEach(d=>b.delete(d.ref)); await b.commit(); }
       await ref.delete();
-      auditoriaAtual=''; metaAtual=null; itensAtuais=[];
-      const sel=document.getElementById('aud-op-auditoria'); if(sel)sel.value='';
-      await popularSelect(); renderizar(); atualizarAcoesAuditoria();
-      toast('Auditoria excluída. Ela não aparecerá mais nos coletores.','s');
-    }catch(e){ console.error('[AUDITORIA] excluir:',e); toast('Falha ao excluir a auditoria: '+(e.message||e),'e'); }
+      auditoriaAtual=''; metaAtual=null; itensAtuais=[]; assinaturaAnterior='';
+      if(sel) sel.value='';
+      await popularSelect();
+      renderizar(); atualizarAcoesAuditoria();
+      toast(`Auditoria “${nome}” excluída com sucesso.`,'s');
+    }catch(e){
+      console.error('[AUDITORIA] excluir:',e);
+      toast('Falha ao excluir a auditoria: '+(e.message||e),'e');
+    }finally{
+      if(btn){ btn.disabled=false; btn.textContent=btn.dataset.textoOriginal||'🗑 Excluir'; }
+    }
   }
 
   async function atualizarListaAuditorias(){

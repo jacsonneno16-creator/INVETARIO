@@ -37,6 +37,48 @@
   // ── Helpers de normalização ─────────────────────────────────────────────────
   const _nd = v => String(v || '').trim().toUpperCase();
 
+  // Identificadores equivalentes do mesmo produto. A contagem pode chegar com
+  // GTIN/EAN/DUN, enquanto a base do inventário normalmente guarda código interno.
+  function _idsProduto(obj){
+    const vals = [
+      obj?.codigo_produto, obj?.codigoProduto, obj?.produto, obj?.produto_id,
+      obj?.codigo_interno, obj?.codigoInterno, obj?.sku,
+      obj?.gtin, obj?.ean, obj?.dun, obj?.gtin_bipado,
+      obj?.codigo_lido, obj?.codigoLido
+    ].map(_nd).filter(Boolean);
+    const lido = vals[0] || '';
+    const geral = global.DTProdutos?.buscarSync?.(lido);
+    if (geral?.encontrado){
+      vals.push(_nd(geral.codigoInterno), _nd(geral.gtin), _nd(geral.dun), _nd(geral.produtoId));
+    }
+    return [...new Set(vals.filter(Boolean))];
+  }
+
+  function _produtoGeral(obj){
+    for (const id of _idsProduto(obj)){
+      const ach = global.DTProdutos?.buscarSync?.(id);
+      if (ach?.encontrado) return ach;
+    }
+    return null;
+  }
+
+  function _descricaoProduto(item, cont){
+    return String(
+      item?.descricao_produto || item?.descricaoProduto || item?.descricao ||
+      cont?.descricao_produto || cont?.descricaoProduto || cont?.descricao ||
+      _produtoGeral(cont || item)?.nomeProduto || ''
+    ).trim();
+  }
+
+  function _idPrincipalBase(item){
+    return _nd(item?.codigo_produto || item?.codigoProduto || item?.codigo_interno || item?.codigoInterno || item?.gtin || item?.ean || item?.dun);
+  }
+
+  function _mesmoProduto(a,b){
+    const aa = new Set(_idsProduto(a));
+    return _idsProduto(b).some(x => aa.has(x));
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   //  9. LÓGICA DE DIVERGÊNCIAS
   // ─────────────────────────────────────────────────────────────────────────────
@@ -185,16 +227,30 @@
         !_isVazio(c)
       );
 
+      const _normKey = (end, prod) => `${_nd(end)}||${_nd(prod)}`;
+      const basePorEndereco = new Map();
+      const basePorId = new Map();
       const mapaBase = {};
-      inv.base.forEach(item => {
-        const key = `${_nd(item.endereco)}||${_nd(item.codigo_produto)}`;
+      inv.base.forEach((item, idx) => {
+        const end = _nd(item.endereco);
+        const key = `${end}||BASE_${idx}`;
+        item.__dtKey = key;
+        item.__dtIds = _idsProduto(item);
+        if (!basePorEndereco.has(end)) basePorEndereco.set(end, []);
+        basePorEndereco.get(end).push(item);
+        item.__dtIds.forEach(id => {
+          if (!basePorId.has(id)) basePorId.set(id, []);
+          basePorId.get(id).push(item);
+        });
         mapaBase[key] = item;
       });
 
-      const produtosNaBase = new Set(inv.base.map(r => _nd(r.codigo_produto)).filter(Boolean));
-      const gtinsNaBase    = new Set(inv.base.map(r => _nd(r.gtin)).filter(Boolean));
-
-      const _normKey = (end, prod) => `${_nd(end)}||${_nd(prod)}`;
+      function localizarItemBase(cont, somenteEndereco=true){
+        const candidatos = somenteEndereco
+          ? (basePorEndereco.get(_nd(cont.endereco)) || [])
+          : inv.base;
+        return candidatos.find(item => _mesmoProduto(item, cont)) || null;
+      }
 
       // Deduplicação de contagens
       const _seenConts = new Set();
@@ -202,7 +258,7 @@
       conts.forEach(c => {
         const dedupKey = c.uuid
           ? String(c.uuid).trim()
-          : [c.inventario_id, _nd(c.endereco), _nd(c.capa), _nd(c.codigo_produto || c.gtin),
+          : [c.inventario_id, _nd(c.endereco), _nd(c.capa), _idsProduto(c).join(','),
              Number(c.quantidade || 0), _nd(c.operador), _nd(c.tipo_contagem),
              String(c.criado_em || c.dataHora || '').slice(0, 16)].join('|');
         if (_seenConts.has(dedupKey)){ dbg('[Dedup] Contagem duplicada ignorada:', dedupKey); return; }
@@ -211,24 +267,39 @@
       });
 
       const mapaConts = {};
+      const infoContagem = new Map();
       contsUnicas.forEach(c => {
-        const key = _normKey(c.endereco, c.codigo_produto || c.gtin);
+        const itemBase = localizarItemBase(c, true);
+        const geral = _produtoGeral(c);
+        const key = itemBase?.__dtKey || _normKey(c.endereco, _idsProduto(c)[0] || 'SEM_PRODUTO');
         mapaConts[key] = (mapaConts[key] || 0) + _qtdEmUnidades(c);
+        infoContagem.set(c, { itemBase, geral, key });
       });
 
       // ── Atualizar status de contagens normais ──
       contsUnicas.forEach(c => {
-        const key      = _normKey(c.endereco, c.codigo_produto || c.gtin);
-        const qtdCont  = mapaConts[key] ?? null;
-        const itemBase = inv.base.find(b => _normKey(b.endereco, b.codigo_produto) === key);
+        const info = infoContagem.get(c) || {};
+        const itemBase = info.itemBase || null;
+        const qtdCont = mapaConts[info.key] ?? null;
         const novoStatus = !itemBase ? 'DIVERGENTE'
           : ((qtdCont === (parseFloat(itemBase.quantidade_esperada) || 0)) ? 'PROCESSADO' : 'DIVERGENTE');
-        if (c.status !== novoStatus){
-          const updated = Object.assign({}, c, { status: novoStatus });
+        const descricao = _descricaoProduto(itemBase, c);
+        const codigoBase = _idPrincipalBase(itemBase);
+        if (c.status !== novoStatus || (descricao && !c.descricao) || (codigoBase && !c.codigo_produto)){
+          const updated = Object.assign({}, c, {
+            status: novoStatus,
+            descricao: descricao || c.descricao || '',
+            descricao_produto: descricao || c.descricao_produto || '',
+            codigo_produto: codigoBase || c.codigo_produto || c.gtin || ''
+          });
           contagensMap.set(c.uuid || c.id, updated);
-          const docId   = c.uuid || String(c.id);
-          const colDest = _isVazio(c) ? 'dt_vazios' : 'dt_contagens';
-          if (navigator.onLine) FS_AN.collection(colDest).doc(docId).update({ status: novoStatus }).catch(() => {});
+          const docId = c.uuid || String(c.id);
+          if (navigator.onLine) FS_AN.collection('dt_contagens').doc(docId).set({
+            status: novoStatus,
+            descricao: updated.descricao,
+            descricao_produto: updated.descricao_produto,
+            codigo_produto: updated.codigo_produto
+          }, {merge:true}).catch(() => {});
         }
       });
 
@@ -254,20 +325,59 @@
         }
       });
 
+      // Repara divergências antigas criadas como "produto não identificado" quando
+      // o GTIN/DUN pertence a um produto cadastrado e também existe na base do inventário.
+      contsUnicas.forEach(c => {
+        const info = infoContagem.get(c) || {};
+        if (!info.itemBase) return;
+        const antigos = state().divergencias.filter(d =>
+          String(d.inventario_id || d.inventarioId || '') === String(inv.id) &&
+          _nd(d.endereco) === _nd(c.endereco) &&
+          d.tipo_divergencia === 'PRODUTO_NAO_IDENTIFICADO' &&
+          (!d.contagem_uuid || !c.uuid || String(d.contagem_uuid) === String(c.uuid))
+        );
+        antigos.forEach(d => {
+          const qtdEsp = parseFloat(info.itemBase.quantidade_esperada) || 0;
+          const qtdCont = mapaConts[info.key] || 0;
+          const diferenca = qtdCont - qtdEsp;
+          const atualizado = Object.assign({}, d, {
+            produto: _idPrincipalBase(info.itemBase),
+            produto_contado: _idsProduto(c)[0] || d.produto_contado,
+            descricao: _descricaoProduto(info.itemBase, c),
+            qtd_esperada: qtdEsp,
+            qtd_contada: qtdCont,
+            diferenca,
+            tipo_divergencia: 'QUANTIDADE_DIFERENTE',
+            motivos_divergencia: ['QUANTIDADE_DIFERENTE'],
+            status: diferenca === 0 ? 'RESOLVIDA' : 'EM_RECONTAGEM',
+            precisa_recontagem: diferenca !== 0,
+            corrigida_em: new Date().toISOString()
+          });
+          divsUpdate.push(atualizado);
+          fsSalvarDivergencia(atualizado);
+        });
+      });
+
       // ── 1a. Divergências de quantidade ──
       inv.base.forEach(item => {
-        const key    = _normKey(item.endereco, item.codigo_produto);
+        const key = item.__dtKey;
         const qtdEsp = parseFloat(item.quantidade_esperada) || 0;
         const qtdCont = mapaConts[key] !== undefined ? mapaConts[key] : null;
         if (qtdCont === null) return;
 
+        const produtoBase = _idPrincipalBase(item);
+        const descricaoBase = _descricaoProduto(item, item);
         const diferenca = qtdCont - qtdEsp;
         if (diferenca === 0){
           const divExistente = state().divergencias.find(d =>
-            d.inventario_id === inv.id && _normKey(d.endereco, d.produto) === key && d.status === 'ABERTA'
+            String(d.inventario_id || d.inventarioId || '') === String(inv.id) &&
+            _nd(d.endereco) === _nd(item.endereco) && _mesmoProduto(d, item) &&
+            ['ABERTA','EM_RECONTAGEM'].includes(d.status)
           );
           if (divExistente){
             const updatedDiv = Object.assign({}, divExistente, {
+              produto: produtoBase, descricao: descricaoBase,
+              qtd_esperada: qtdEsp, qtd_contada: qtdCont, diferenca: 0,
               status: 'RESOLVIDA', resolvida_em: new Date().toISOString(), resolvida_por: 'sistema (correção)'
             });
             divsUpdate.push(updatedDiv);
@@ -276,11 +386,27 @@
           return;
         }
 
-        if (_divExistente(inv.id, item.endereco, item.codigo_produto, 'QUANTIDADE_DIFERENTE')) return;
+        const existente = state().divergencias.find(d =>
+          String(d.inventario_id || d.inventarioId || '') === String(inv.id) &&
+          _nd(d.endereco) === _nd(item.endereco) && _mesmoProduto(d, item) &&
+          ['QUANTIDADE_DIFERENTE','PRODUTO_NAO_IDENTIFICADO'].includes(d.tipo_divergencia)
+        );
+        if (existente){
+          const atualizado = Object.assign({}, existente, {
+            produto: produtoBase, descricao: descricaoBase,
+            qtd_esperada: qtdEsp, qtd_contada: qtdCont, diferenca,
+            tipo_divergencia: 'QUANTIDADE_DIFERENTE', motivos_divergencia: ['QUANTIDADE_DIFERENTE'],
+            status: existente.status === 'PERSISTENTE' ? 'PERSISTENTE' : 'EM_RECONTAGEM',
+            precisa_recontagem: true
+          });
+          divsUpdate.push(atualizado);
+          fsSalvarDivergencia(atualizado);
+          return;
+        }
 
         const div = {
           id: gerarId('DIV'), inventario_id: inv.id, inventario_nome: inv.nome,
-          endereco: item.endereco, produto: item.codigo_produto, descricao: item.descricao_produto,
+          endereco: item.endereco, produto: produtoBase, descricao: descricaoBase,
           qtd_esperada: qtdEsp, qtd_contada: qtdCont, diferenca,
           tipo_divergencia: 'QUANTIDADE_DIFERENTE', motivos_divergencia: ['QUANTIDADE_DIFERENTE'],
           status: 'EM_RECONTAGEM', precisa_recontagem: true,
@@ -292,19 +418,17 @@
         if (criarRecontagens) _criarRecontagemParaDivergencia(div, inv, qtdCont, novasRecs);
       });
 
-      // ── 1b. Produto não identificado na base ──
+      // ── 1b. Produto realmente não identificado ──
       contsUnicas.forEach(c => {
-        const prodCod = _nd(c.codigo_produto || c.gtin);
-        const gtin    = _nd(c.gtin);
-        const naoIdentificado = c._nao_encontrado === true ||
-          (!produtosNaBase.has(prodCod) && !gtinsNaBase.has(gtin) && !gtinsNaBase.has(prodCod));
-        if (!naoIdentificado) return;
+        const info = infoContagem.get(c) || {};
+        if (info.itemBase || info.geral) return;
+        const prodCod = _idsProduto(c)[0] || '';
         if (_divExistente(inv.id, c.endereco, prodCod, 'PRODUTO_NAO_IDENTIFICADO')) return;
         const div = {
           id: gerarId('DIV'), inventario_id: inv.id, inventario_nome: inv.nome,
           endereco: c.endereco, produto: prodCod, produto_contado: prodCod,
-          descricao: c.descricao || 'Produto não identificado', gtin_bipado: gtin,
-          qtd_esperada: null, qtd_contada: parseFloat(c.quantidade) || 0, diferenca: null,
+          descricao: _descricaoProduto(null, c) || 'Produto não identificado', gtin_bipado: _nd(c.gtin || prodCod),
+          qtd_esperada: null, qtd_contada: _qtdEmUnidades(c), diferenca: null,
           tipo_divergencia: 'PRODUTO_NAO_IDENTIFICADO', motivos_divergencia: ['PRODUTO_NAO_IDENTIFICADO'],
           contagem_uuid: c.uuid, operador: c.operador,
           status: 'ABERTA', precisa_recontagem: true,
@@ -313,27 +437,24 @@
         novasDivs.push(div);
         fsSalvarDivergencia(div);
         novos++;
-        if (criarRecontagens) _criarRecontagemParaDivergencia(div, inv, parseFloat(c.quantidade) || 0, novasRecs);
+        if (criarRecontagens) _criarRecontagemParaDivergencia(div, inv, _qtdEmUnidades(c), novasRecs);
       });
 
-      // ── 1c. Produto fora do endereço correto ──
+      // ── 1c. Produto cadastrado, porém fora do endereço correto ──
       contsUnicas.forEach(c => {
-        const prodCod = _nd(c.codigo_produto || c.gtin);
-        const gtin    = _nd(c.gtin);
-        const key     = `${_nd(c.endereco)}||${prodCod}`;
-        const existeNaBase      = produtosNaBase.has(prodCod) || gtinsNaBase.has(gtin);
-        const noEnderecoCorreto = !!mapaBase[key];
-        if (!existeNaBase || noEnderecoCorreto) return;
+        const info = infoContagem.get(c) || {};
+        if (info.itemBase) return;
+        const itemEmOutroEndereco = localizarItemBase(c, false);
+        if (!itemEmOutroEndereco && !info.geral) return;
+        const prodCod = _idPrincipalBase(itemEmOutroEndereco) || _idsProduto(c)[0] || '';
         if (_divExistente(inv.id, c.endereco, prodCod, 'PRODUTO_FORA_ENDERECO')) return;
-        const enderecoCorreto = inv.base.find(r =>
-          _nd(r.codigo_produto) === prodCod || _nd(r.gtin) === gtin
-        )?.endereco || null;
+        const qtdEsp = itemEmOutroEndereco ? (parseFloat(itemEmOutroEndereco.quantidade_esperada) || 0) : null;
         const div = {
           id: gerarId('DIV'), inventario_id: inv.id, inventario_nome: inv.nome,
-          endereco: c.endereco, endereco_correto: enderecoCorreto,
-          produto: prodCod, produto_contado: prodCod,
-          descricao: c.descricao || '', qtd_esperada: null,
-          qtd_contada: parseFloat(c.quantidade) || 0, diferenca: null,
+          endereco: c.endereco, endereco_correto: itemEmOutroEndereco?.endereco || null,
+          produto: prodCod, produto_contado: _idsProduto(c)[0] || prodCod,
+          descricao: _descricaoProduto(itemEmOutroEndereco, c), qtd_esperada: qtdEsp,
+          qtd_contada: _qtdEmUnidades(c), diferenca: qtdEsp == null ? null : (_qtdEmUnidades(c) - qtdEsp),
           tipo_divergencia: 'PRODUTO_FORA_ENDERECO', motivos_divergencia: ['PRODUTO_FORA_ENDERECO'],
           contagem_uuid: c.uuid, operador: c.operador,
           status: 'ABERTA', precisa_recontagem: true,
@@ -342,7 +463,7 @@
         novasDivs.push(div);
         fsSalvarDivergencia(div);
         novos++;
-        if (criarRecontagens) _criarRecontagemParaDivergencia(div, inv, parseFloat(c.quantidade) || 0, novasRecs);
+        if (criarRecontagens) _criarRecontagemParaDivergencia(div, inv, _qtdEmUnidades(c), novasRecs);
       });
 
       // ── 1d. Endereço vazio mas base espera produto ──
@@ -433,12 +554,30 @@
       Actions.replaceSlice('divergencias', divergenciasDedupe, BIZMETA),
     ];
     if (contagensMap.size > 0) batchActions.push(Actions.replaceSlice('contagens', finalContagens, BIZMETA));
-    if (novasRecs.length > 0) {
-      const recsFinais = [...state().recontagens];
-      novasRecs.forEach(r => {
-        const idx = recsFinais.findIndex(x => x.id === r.id);
-        if (idx >= 0) recsFinais[idx] = r; else recsFinais.push(r);
+    // Propagar produto/descrição/quantidade esperada corrigidos para recontagens
+    // já existentes. Assim registros antigos deixam de exibir null e código sem cadastro.
+    const divAtualPorId = new Map(divergenciasDedupe.map(d => [String(d.id), d]));
+    let houveRecAtualizada = false;
+    const recsFinais = state().recontagens.map(r => {
+      const d = divAtualPorId.get(String(r.divergencia_id || ''));
+      if (!d) return r;
+      const atualizado = Object.assign({}, r, {
+        produto: d.produto || r.produto || '',
+        descricao: d.descricao || r.descricao || '',
+        qtd_esperada: d.qtd_esperada != null ? d.qtd_esperada : r.qtd_esperada,
+        qtd_primeira: d.qtd_contada != null ? d.qtd_contada : r.qtd_primeira
       });
+      if (JSON.stringify(atualizado) !== JSON.stringify(r)) {
+        houveRecAtualizada = true;
+        fsSalvarRecontagem(atualizado);
+      }
+      return atualizado;
+    });
+    novasRecs.forEach(r => {
+      const idx = recsFinais.findIndex(x => x.id === r.id);
+      if (idx >= 0) recsFinais[idx] = r; else recsFinais.push(r);
+    });
+    if (novasRecs.length > 0 || houveRecAtualizada) {
       batchActions.push(Actions.replaceSlice('recontagens', recsFinais, BIZMETA));
     }
     Store.dispatch(Actions.batch(batchActions, BIZMETA));
