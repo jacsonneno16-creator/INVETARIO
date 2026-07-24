@@ -52,8 +52,10 @@
    * Publica endereços do ENDDB no Firestore (dt_locais).
    * Usa batch para eficiência (max 500 ops por batch).
    */
-  async function fsPublicarEnderecos(listaForcada) {
+  async function fsPublicarEnderecos(listaForcada, lojaForcada) {
     if (!navigator.onLine) throw new Error('Sem conexão com a internet.');
+    const lojaId = String(lojaForcada || (window.getDTLojaAtiva && window.getDTLojaAtiva()) || '').trim();
+    if (!lojaId) throw new Error('Selecione a loja dos endereços antes de publicar.');
     const lista = Array.isArray(listaForcada) ? listaForcada : (state().enderecosLista || []);
     const CHUNK_SIZE = 1000;
     const chunksColl = FS_AN.collection('dt_locais_chunks');
@@ -69,7 +71,7 @@
         setor:              end.setor || end.local || '',
         tipo:               end.tipo || '',
         rua:                end.rua || '',
-        loja:               end.loja || window.getDTLojaAtiva?.() || ''
+        loja:               lojaId
       }));
 
     const totalChunks = Math.ceil(listaNormalizada.length / CHUNK_SIZE);
@@ -88,6 +90,7 @@
           total_registros: listaNormalizada.length,
           quantidade: dados.length,
           dados,
+          loja: lojaId,
           atualizado_em: new Date()
         });
       }
@@ -118,7 +121,7 @@
         total: listaNormalizada.length,
         ativos: listaNormalizada.filter(x => x.ativo !== false).length,
         inativos: listaNormalizada.filter(x => x.ativo === false).length,
-        loja: window.getDTLojaAtiva?.() || '',
+        loja: lojaId,
         origem: 'dt_locais_chunks'
       });
 
@@ -138,9 +141,9 @@
         await delBatch.commit();
       }
 
-      dbg('[fsPublicarEnderecos] ✅', listaNormalizada.length, 'endereços confirmados em', totalChunks, 'chunks; versão', versao);
-      window.dispatchEvent(new CustomEvent('dt-base-enderecos-publicada', { detail: { versao, total: listaNormalizada.length, chunks: totalChunks } }));
-      return { versao, total: listaNormalizada.length, chunks: totalChunks };
+      dbg('[fsPublicarEnderecos] ✅ loja', lojaId, listaNormalizada.length, 'endereços confirmados em', totalChunks, 'chunks; versão', versao);
+      window.dispatchEvent(new CustomEvent('dt-base-enderecos-publicada', { detail: { loja: lojaId, versao, total: listaNormalizada.length, chunks: totalChunks } }));
+      return { loja: lojaId, versao, total: listaNormalizada.length, chunks: totalChunks };
     } catch(e) {
       console.error('[fsPublicarEnderecos] erro:', e);
       // Fundamental: propaga o erro. Antes ele era engolido e a importação mostrava sucesso falso.

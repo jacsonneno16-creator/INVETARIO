@@ -6,8 +6,22 @@
   function esc(v){ return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function arr(v){ return Array.isArray(v)?v:[]; }
 
-  async function verificarBase(metaColecao, chunksColecao, campoTotal){
-    var fs=db();
+  async function obterLojaAtivaConfirmada(){
+    var lojaId=global.getDTLojaAtiva?String(global.getDTLojaAtiva()||'').trim():'';
+    if(!lojaId) return null;
+    try{
+      var raw=global.getDTRawFirestore&&global.getDTRawFirestore();
+      if(!raw) return {id:lojaId,nome:lojaId,codigo:''};
+      var snap=await raw.collection('lojas').doc(lojaId).get();
+      if(!snap.exists) throw new Error('A loja selecionada não existe no Firebase: '+lojaId);
+      return Object.assign({id:lojaId},snap.data()||{});
+    }catch(e){
+      throw new Error('Não foi possível confirmar a loja ativa: '+(e.message||e));
+    }
+  }
+
+  async function verificarBase(metaColecao, chunksColecao, campoTotal, globalBase){
+    var fs=globalBase && global.getDTRawFirestore ? global.getDTRawFirestore() : db();
     if(!fs) return {ok:false,resumo:'Firebase indisponível'};
     try{
       var metaSnap=await fs.collection(metaColecao).doc('versao').get();
@@ -33,18 +47,19 @@
   async function diagnosticarSync(){
     try{
       var user=(global.AUTH_AN&&global.AUTH_AN.currentUser)||global._currentAnalistaUser||null;
-      var loja=global.getDTLojaAtiva?global.getDTLojaAtiva():'';
+      var lojaInfo=await obterLojaAtivaConfirmada().catch(function(){return null;});
+      var loja=lojaInfo?lojaInfo.id:'';
       var st=state();
       var endLocal=arr(st.enderecosLista).length;
       var prodLocal=(global.DTProdutos&&global.DTProdutos.cache&&arr(global.DTProdutos.cache.lista).length)||0;
       var bases=await Promise.all([
         verificarBase('dt_locais_meta','dt_locais_chunks','total'),
-        verificarBase('dt_produtos_meta','dt_produtos_chunks','totalProdutos')
+        verificarBase('dt_produtos_meta','dt_produtos_chunks','totalProdutos',true)
       ]);
       var linhas=[
         ['Internet',navigator.onLine?'Online':'Offline',navigator.onLine],
         ['Usuário',user&&user.email?user.email:'Não autenticado',!!user],
-        ['Loja ativa',loja||'Não selecionada',!!loja],
+        ['Loja ativa',lojaInfo?(String(lojaInfo.nome||lojaInfo.id)+' · ID '+lojaInfo.id+' · código '+String(lojaInfo.codigo||'—')):'Não selecionada',!!lojaInfo],
         ['Endereços na tela/local',String(endLocal),true],
         ['Endereços publicados',bases[0].resumo,bases[0].ok],
         ['Produtos na tela/cache',String(prodLocal),true],
@@ -68,6 +83,10 @@
     if(btn){btn.disabled=true;btn.innerHTML='⏳ Sincronizando...';}
     try{
       var st=state(), inventarios=arr(st.inventarios), publicados=0;
+      var lojaInfo=await obterLojaAtivaConfirmada();
+      if(!lojaInfo) throw new Error('Selecione a loja dos endereços antes de sincronizar. A base de produtos é global, mas os endereços são separados por loja.');
+      var lojaAtiva=lojaInfo.id;
+      console.log('[SYNC] Loja dos endereços:',lojaAtiva,'|',lojaInfo.nome||'', '| código',lojaInfo.codigo||'');
       var listaEstado=arr(st.enderecosLista);
       var listaStorage=[];
       try{ if(global.storageLoad&&global.KEYS) listaStorage=arr(global.storageLoad(global.KEYS.enderecos)); }catch(_e){}
@@ -85,18 +104,18 @@
       var endResultado=null;
       if(typeof global.fsPublicarEnderecos!=='function') throw new Error('Função de publicação de endereços não carregada.');
       console.log('[SYNC] Publicando Base Geral de Endereços...');
-      endResultado=await global.fsPublicarEnderecos(listaEnderecos);
+      endResultado=await global.fsPublicarEnderecos(listaEnderecos,lojaAtiva);
       console.log('[SYNC] Endereços publicados:',endResultado&&endResultado.chunks,'chunks /',endResultado&&endResultado.total,'endereços / versão',endResultado&&endResultado.versao);
       if(typeof global.publicarChunksProdutos==='function') await global.publicarChunksProdutos();
       var checks=await Promise.all([
         verificarBase('dt_locais_meta','dt_locais_chunks','total'),
-        verificarBase('dt_produtos_meta','dt_produtos_chunks','totalProdutos')
+        verificarBase('dt_produtos_meta','dt_produtos_chunks','totalProdutos',true)
       ]);
       if(!checks[0].ok) throw new Error('Endereços não foram confirmados: '+checks[0].resumo);
       if(!checks[1].ok) throw new Error('Produtos não foram confirmados: '+checks[1].resumo);
       if(global.AnalistaFirebaseService&&global.AnalistaFirebaseService.stop) await global.AnalistaFirebaseService.stop();
       if(global.AnalistaFirebaseService&&global.AnalistaFirebaseService.start) await global.AnalistaFirebaseService.start();
-      toast('Sync confirmado: '+checks[0].total+' endereços em '+checks[0].chunks+' chunks; '+checks[1].total+' produtos em '+checks[1].chunks+' chunks. '+publicados+' inventário(s) republicado(s).','s');
+      toast('Sync confirmado para '+(lojaInfo.nome||lojaAtiva)+': '+checks[0].total+' endereços em '+checks[0].chunks+' chunks; base global com '+checks[1].total+' produtos em '+checks[1].chunks+' chunks. '+publicados+' inventário(s) republicado(s).','s');
       return {enderecos:endResultado,produtos:checks[1],inventarios:publicados};
     }catch(e){ console.error('[SYNC FIREBASE]',e); toast('Falha na sincronização: '+(e.message||e),'e'); }
     finally{if(btn){btn.disabled=false;btn.innerHTML=original||'🔥 Sync Firebase';}}

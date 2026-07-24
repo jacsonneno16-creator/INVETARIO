@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v90-sync-diagnostico';
+var CACHE='dt-inventario-v95-multiloja-bases';
 var PRECACHE=[
   '/',
   '/coletor.html',

@@ -115,17 +115,17 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         cache.porTodos.forEach(function (arr, k) { if (arr.length > 1)
             cache.ambiguos.set(k, arr.slice()); });
         cache.carregado = true;
-        cache.loja = ((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) || '';
+        cache.loja = 'GLOBAL';
         try {
-            localStorage.setItem('dt_produtos_cache__' + cache.loja, JSON.stringify(cache.lista));
+            localStorage.setItem('dt_produtos_cache__GLOBAL', JSON.stringify(cache.lista));
         }
         catch (e) { }
         atualizarContadorNav(cache.lista.length);
         global.dispatchEvent(new CustomEvent('dt-produtos-atualizados', { detail: { total: cache.lista.length, ambiguos: cache.ambiguos.size } }));
         return cache.lista;
     }
-    function carregarLocal() { var _a; var loja = ((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) || ''; try {
-        var raw = localStorage.getItem('dt_produtos_cache__' + loja);
+    function carregarLocal() { try {
+        var raw = localStorage.getItem('dt_produtos_cache__GLOBAL');
         if (raw)
             indexar(JSON.parse(raw));
     }
@@ -137,7 +137,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             var _a;
             if (force === void 0) { force = false; }
             return __generator(this, function (_b) {
-                loja = ((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) || '';
+                loja = 'GLOBAL';
                 if (cache.carregando)
                     return [2 /*return*/, cache.carregando];
                 if (!navigator.onLine) {
@@ -151,7 +151,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         switch (_a.label) {
                             case 0:
                                 _a.trys.push([0, 6, 7, 8]);
-                                fs = global.getDTFirestore();
+                                fs = global.getDTRawFirestore();
                                 versaoKey = 'dt_produtos_versao__' + loja;
                                 versaoServidor = '';
                                 _a.label = 1;
@@ -254,10 +254,8 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     if (!global.__dtProdutosPreloadLoja) {
         global.__dtProdutosPreloadLoja = true;
         global.addEventListener('dt-loja-alterada', function () {
-            limparCache();
-            atualizarContadorNav(0);
-            setTimeout(function () { var _a; if (((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) && global.getDTFirestore)
-                carregar(true).catch(function (e) { console.warn('[Produtos] Pré-carga após troca de loja:', e); }); }, 250);
+            // Produtos são globais e permanecem iguais em todas as lojas.
+            atualizarContadorNav(cache.lista.length);
         });
     }
     function familias() { var mapa = {}; cache.lista.forEach(function (p) { if (!p.ativo)

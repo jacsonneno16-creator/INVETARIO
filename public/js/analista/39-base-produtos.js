@@ -1,6 +1,6 @@
 (function(global){
 'use strict';
-const COL=()=>global.getDTFirestore().collection(global.DT_FCOL.produtos||'dt_produtos');let lista=[],listener=null,familiaAtiva='TODAS',sincronizandoChunks=false,mutacaoEmAndamento=false;
+const COL=()=>global.getDTRawFirestore().collection(global.DT_FCOL.produtos||'dt_produtos');let lista=[],listener=null,familiaAtiva='TODAS',sincronizandoChunks=false,mutacaoEmAndamento=false;
 const txt=v=>String(v==null?'':v).trim();const esc=v=>txt(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cab=v=>txt(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[_\-]+/g,' ').replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
 const cod=v=>global.DTProdutos.normalizarCodigo(v);
@@ -21,7 +21,7 @@ function render(){
 async function publicarChunksProdutos(){
  if(sincronizandoChunks)return;sincronizandoChunks=true;
  try{
-  const fs=global.getDTFirestore(),raw=global.getDTRawFirestore();
+  const fs=global.getDTRawFirestore(),raw=global.getDTRawFirestore();
   const snap=await COL().get();
   const todos=snap.docs.map(d=>({id:d.id,...d.data()}));
   const tamanho=1000,totalChunks=Math.ceil(todos.length/tamanho),versao=Date.now().toString();

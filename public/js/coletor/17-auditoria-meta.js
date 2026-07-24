@@ -216,7 +216,7 @@
     if(!APP._auditoriaPronta){ toast('Aguarde o carregamento completo da auditoria.','e'); return; }
     const audTab=document.getElementById('tab-auditoria');
     if(audTab) audTab.style.display='';
-    goScreen('coleta');
+    goScreen('app');
     if(audTab) showView('auditoria',audTab);
     renderAuditoriaColetor();
   };
@@ -230,6 +230,16 @@
     }
     const meta = (APP.auditoriasMenu || []).find(x => x.id === auditoriaId);
     if (!meta) { toast('Auditoria não encontrada', 'e'); return; }
+    const lojasAuditoria = _extrairLojasDaAuditoria(meta);
+    if (lojasAuditoria.length) {
+      const lojaAuditoria = String(lojasAuditoria[0] || '').trim();
+      if (lojaAuditoria && window.getDTLojaAtiva && window.getDTLojaAtiva() !== lojaAuditoria) {
+        window.setDTLojaAtiva(lojaAuditoria);
+        APP.locaisAtivos = new Set();
+        APP._locaisDoFirebase = false;
+        console.log('[AUDITORIA] Loja alterada para a loja da auditoria:', lojaAuditoria);
+      }
+    }
     APP._auditoriaCarregando=true;
     APP._auditoriaPronta=false;
     const token=(APP._auditoriaCargaToken||0)+1;

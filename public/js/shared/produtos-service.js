@@ -1,6 +1,6 @@
 (function(global){
   'use strict';
-  const cache={lista:[],porDun:new Map(),porGtin:new Map(),porCodigo:new Map(),porTodos:new Map(),ambiguos:new Map(),carregado:false,carregando:null,loja:'',versao:'',ultimaVerificacao:0};
+  const cache={lista:[],porDun:new Map(),porGtin:new Map(),porCodigo:new Map(),porTodos:new Map(),ambiguos:new Map(),carregado:false,carregando:null,loja:'GLOBAL',versao:'',ultimaVerificacao:0};
   function texto(v){return String(v==null?'':v).trim();}
   function codigo(v){return texto(v).replace(/[\s.\-\/()]/g,'').toUpperCase();}
   function inferirFamilia(nome,unidade){
@@ -45,13 +45,13 @@
       (p.codigosExtras||[]).forEach(function(x){addCodigo(x,p,'extra');});
     });
     cache.porTodos.forEach(function(arr,k){if(arr.length>1)cache.ambiguos.set(k,arr.slice());});
-    cache.carregado=true;cache.loja=global.getDTLojaAtiva?.()||'';try{localStorage.setItem('dt_produtos_cache__'+cache.loja,JSON.stringify(cache.lista));}catch(e){}
+    cache.carregado=true;cache.loja='GLOBAL';try{localStorage.setItem('dt_produtos_cache__GLOBAL',JSON.stringify(cache.lista));}catch(e){}
     atualizarContadorNav(cache.lista.length);
     global.dispatchEvent(new CustomEvent('dt-produtos-atualizados',{detail:{total:cache.lista.length,ambiguos:cache.ambiguos.size}})); return cache.lista;
   }
-  function carregarLocal(){const loja=global.getDTLojaAtiva?.()||'';try{const raw=localStorage.getItem('dt_produtos_cache__'+loja);if(raw)indexar(JSON.parse(raw));}catch(e){} }
+  function carregarLocal(){try{const raw=localStorage.getItem('dt_produtos_cache__GLOBAL');if(raw)indexar(JSON.parse(raw));}catch(e){} }
   async function carregar(force=false){
-    const loja=global.getDTLojaAtiva?.()||'';
+    const loja='GLOBAL';
     if(cache.carregando)return cache.carregando;
     if(!navigator.onLine){
       if(!cache.carregado||cache.loja!==loja)carregarLocal();
@@ -59,7 +59,7 @@
     }
     cache.carregando=(async()=>{
       try{
-        const fs=global.getDTFirestore();
+        const fs=global.getDTRawFirestore();
         const versaoKey='dt_produtos_versao__'+loja;
         let versaoServidor='';
         try{
@@ -104,7 +104,7 @@
     if(arr.length>1)return {encontrado:false,ambiguo:true,codigoLido:texto(valor),candidatos:arr.map(function(p){return {produtoId:p.produtoId,codigoInterno:p.codigoInterno,nomeProduto:p.nomeProduto,gtin:p.gtin,dun:p.dun};})};
     return {encontrado:true,...arr[0]};
   }
-  async function buscar(valor){if(!cache.carregado||cache.loja!==(global.getDTLojaAtiva?.()||''))await carregar();return buscarSync(valor);}
+  async function buscar(valor){if(!cache.carregado||cache.loja!=='GLOBAL')await carregar();return buscarSync(valor);}
   function enriquecer(reg){const r={...reg};const atual=texto(r.produtoLidoNome||r.produtoLido);const placeholder=!atual||/^(PRODUTO NAO IDENTIFICADO|PRODUTO NÃO IDENTIFICADO|PRODUTO NAO CADASTRADO|PRODUTO NÃO CADASTRADO|CODIGO SEM CADASTRO|CÓDIGO SEM CADASTRO)$/i.test(atual);if(!placeholder)return r;const cod=r.dunLido||r.gtinLido||r.codigoLido||r.gtin_bipado||r.gtin;const ach=buscarSync(cod);if(ach.encontrado){r.produtoLidoNome=ach.nomeProduto;r.produtoLido=ach.nomeProduto;r.produtoLidoId=ach.produtoId;}return r;}
   carregarLocal();
   if(global.document){
@@ -114,8 +114,8 @@
   if(!global.__dtProdutosPreloadLoja){
     global.__dtProdutosPreloadLoja=true;
     global.addEventListener('dt-loja-alterada',function(){
-      limparCache();atualizarContadorNav(0);
-      setTimeout(function(){if(global.getDTLojaAtiva?.()&&global.getDTFirestore)carregar(true).catch(function(e){console.warn('[Produtos] Pré-carga após troca de loja:',e);});},250);
+      // Produtos são globais e não mudam quando a loja é trocada.
+      atualizarContadorNav(cache.lista.length);
     });
   }
   function familias(){var mapa={};cache.lista.forEach(function(p){if(!p.ativo)return;var k=p.familiaCodigo||p.familiaNome;if(!k)return;if(!mapa[k])mapa[k]={id:k,nome:p.familiaNome||p.produtoPrincipal||p.nomeProduto,codigo:p.familiaCodigo,produtos:[],unidade:null};mapa[k].produtos.push(p);if(p.embalagem==='UND')mapa[k].unidade=p;});return Object.keys(mapa).map(function(k){return mapa[k];}).sort(function(a,b){return a.nome.localeCompare(b.nome);});}
