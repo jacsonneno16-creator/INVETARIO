@@ -57,8 +57,11 @@
       let publicados=0;
       for(const inv of inventarios){ if(inv&&inv.id&&typeof global.fsPublicarInventario==='function'){ await global.fsPublicarInventario(inv); publicados++; } }
       if(typeof global.fsPublicarEnderecos==='function') await global.fsPublicarEnderecos();
-      const produtos=global.DTProdutos?.listar?.() || global.DTProdutos?.todos?.() || [];
-      if(Array.isArray(produtos)&&produtos.length&&typeof global.fsPublicarProdutos==='function') await global.fsPublicarProdutos(produtos);
+      if(typeof global.publicarChunksProdutos==='function') await global.publicarChunksProdutos();
+      else if(typeof global.fsPublicarProdutos==='function'){
+        const produtos=global.DTProdutos?.cache?.lista||[];
+        if(produtos.length) await global.fsPublicarProdutos(produtos);
+      }
       await global.AnalistaFirebaseService?.stop?.();
       await global.AnalistaFirebaseService?.start?.();
       await global.atualizarListaAuditorias?.();
