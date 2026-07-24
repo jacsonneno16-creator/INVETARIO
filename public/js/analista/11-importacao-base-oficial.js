@@ -45,10 +45,10 @@ const ALIAS_BASE = {
   ],
   // ── Quantidade esperada ───────────────────────────────────────────
   quantidade_esperada: [
+    'quantidade_enderecada','qtd_enderecada','quantidade_esperada','qtd_esperada',
+    'saldo','saldo_estoque','qtd_sistema',
     'estoque_total_unidades','estoque_unidades','total_unidades_estoque',
-    'quantidade_esperada','saldo','saldo_estoque',
-    'qtd_esperada','expected_qty','saldo_erp','qtd_sistema',
-    'estoque_total','qtd_estoque','quantidade_enderecada','qtd_enderecada',
+    'expected_qty','saldo_erp','estoque_total','qtd_estoque',
     'total_unidades','quantidade','qtd','qty','estoque','qtde','qtd_estoque',
     // Genéricos
     'quantidade','qtd','qty','estoque','qtde','fator_estoque',
@@ -210,7 +210,7 @@ const INV_MAP_CAMPOS = [
   { key:'endereco',          label:'Endereço',              obrig:true,  icon:'📍', hint:'Código do endereço (ex: 01.02.A.01.01)' },
   { key:'codigo_produto',    label:'Código do Produto',     obrig:true,  icon:'🔑', hint:'SKU, código ou chave do produto' },
   { key:'descricao_produto', label:'Descrição do Produto',  obrig:false, icon:'📝', hint:'Nome ou descrição do produto' },
-  { key:'quantidade_esperada',label:'Quantidade Esperada (Unidades)', obrig:true, icon:'🔢', hint:'Quantidade total esperada já em unidades. Não informe caixas neste campo: a importação não multiplica esta quantidade pelo fator.' },
+  { key:'quantidade_esperada',label:'Quantidade Esperada (Caixas)', obrig:true, icon:'🔢', hint:'Quantidade esperada em caixas/paletes para o endereço. Ex.: se o endereço possui 50 caixas, informe 50. O fator e o total em unidades ficam apenas como referência e não alteram esta quantidade.' },
   { key:'custo_bruto',       label:'Custo Unitário (R$)',   obrig:false, icon:'💰', hint:'Custo unitário do produto — usado para calcular Valor Ganho/Perda na Análise por Produto' },
   { key:'setor',             label:'Setor / Área',          obrig:false, icon:'🏭', hint:'Setor de armazenagem' },
   { key:'rua',               label:'Rua / Corredor',        obrig:false, icon:'🛤️', hint:'Rua ou corredor do endereço' },
@@ -218,7 +218,7 @@ const INV_MAP_CAMPOS = [
   { key:'gtin',              label:'GTIN / EAN',            obrig:false, icon:'📊', hint:'Código de barras unitário' },
   { key:'dun',               label:'DUN / EAN-14',          obrig:false, icon:'📦', hint:'Código de barras de caixa' },
   { key:'observacao',        label:'Observação',            obrig:false, icon:'💬', hint:'Lote, validade, curva ou observação extra' },
-  { key:'fator_caixa',      label:'Fator Caixa (Und/Cx)',  obrig:false, icon:'📦', hint:'Quantidade de unidades por caixa. Este fator é enviado ao coletor e usado somente quando o operador bipar um código de caixa (DUN); ele não altera a quantidade esperada durante a importação.' },
+  { key:'fator_caixa',      label:'Fator Caixa (Referência)',  obrig:false, icon:'📦', hint:'Informação de referência da embalagem. Não multiplica a quantidade esperada e não altera a contagem operacional em caixas.' },
 ];
 
 function renderInvMapper() {
@@ -370,8 +370,8 @@ function confirmarInvMapper() {
     });
     const fatorCx = Math.max(1, parseFloat(String(obj.fator_caixa || '').replace(',','.')) || 1);
     obj.fator_caixa        = fatorCx;
-    // quantidade_esperada já está em UNIDADES no arquivo — NÃO multiplicar pelo fator
-    // O fator é enviado ao coletor para que ele converta DUN(caixas)→unidades na hora de contar
+    // quantidade_esperada representa CAIXAS/PALetes conforme a contagem operacional.
+    // Não multiplicar pelo fator: o comparativo de divergência usa a mesma unidade informada pelo operador.
     obj.quantidade_esperada = Math.max(0, parseFloat(obj.quantidade_esperada) || 0);
     obj.custo_bruto         = Math.max(0, parseFloat(String(obj.custo_bruto).replace(',','.')) || 0);
     return obj;

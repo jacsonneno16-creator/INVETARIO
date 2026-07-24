@@ -47,7 +47,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
 };
 (function (global) {
     'use strict';
-    var cache = { lista: [], porDun: new Map(), porGtin: new Map(), porCodigo: new Map(), carregado: false, carregando: null, loja: '' };
+    var cache = { lista: [], porDun: new Map(), porGtin: new Map(), porCodigo: new Map(), carregado: false, carregando: null, loja: '', versao: '', ultimaVerificacao: 0 };
     function texto(v) { return String(v == null ? '' : v).trim(); }
     function codigo(v) { return texto(v).replace(/[\s.\-\/()]/g, '').toUpperCase(); }
     function inferirFamilia(nome, unidade) {
@@ -70,7 +70,11 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         var nome = texto(raw.nomeProduto || raw.nome_produto || raw.produto || raw.descricao);
         var unidade = texto(raw.unidade || raw.un || raw.embalagem);
         var fam = inferirFamilia(nome, unidade);
-        return { id: id || raw.id || '', produtoId: id || raw.produtoId || raw.id || '', codigoInterno: texto(raw.codigoInterno || raw.codigo_interno || raw.codigo || raw.sku), nomeProduto: nome, dun: texto(raw.dun), gtin: texto(raw.gtin || raw.ean), unidade: unidade, embalagem: texto(raw.embalagem) || fam.embalagem, familiaCodigo: texto(raw.familiaCodigo || raw.familia_codigo) || fam.familiaCodigo, familiaNome: texto(raw.familiaNome || raw.familia_nome || raw.produtoPrincipal) || fam.familiaNome, produtoPrincipal: texto(raw.produtoPrincipal) || texto(raw.familiaNome) || fam.familiaNome, ativo: raw.ativo !== false, criadoEm: raw.criadoEm || raw.criado_em || null, atualizadoEm: raw.atualizadoEm || raw.atualizado_em || null };
+        var gtin = texto(raw.gtin || raw.ean || raw.gtin_principal || raw.gtinPrincipal || raw.gtin_ean || raw.ean_gtin || raw.codigo_barras || raw.codigo_de_barras || raw.codigoBarras || raw.barcode);
+        var dun = texto(raw.dun || raw.dun14 || raw.dun_14 || raw.codigo_dun || raw.codigoDun);
+        var interno = texto(raw.codigoInterno || raw.codigo_interno || raw.codigo_produto || raw.codigoProduto || raw.codigo || raw.sku || raw.cod_interno);
+        var extras = [raw.gtin, raw.ean, raw.gtin_principal, raw.gtinPrincipal, raw.gtin_ean, raw.ean_gtin, raw.codigo_barras, raw.codigo_de_barras, raw.codigoBarras, raw.barcode, raw.dun, raw.dun14, raw.dun_14, raw.codigo_dun, raw.codigoDun, raw.codigoInterno, raw.codigo_interno, raw.codigo_produto, raw.codigoProduto, raw.codigo, raw.sku, raw.cod_interno].map(texto).filter(Boolean);
+        return { id: id || raw.id || '', produtoId: id || raw.produtoId || raw.produto_id || raw.id || '', codigoInterno: interno, nomeProduto: nome, dun: dun, gtin: gtin, codigosExtras: extras, unidade: unidade, embalagem: texto(raw.embalagem) || fam.embalagem, familiaCodigo: texto(raw.familiaCodigo || raw.familia_codigo) || fam.familiaCodigo, familiaNome: texto(raw.familiaNome || raw.familia_nome || raw.produtoPrincipal) || fam.familiaNome, produtoPrincipal: texto(raw.produtoPrincipal) || texto(raw.familiaNome) || fam.familiaNome, ativo: raw.ativo !== false, criadoEm: raw.criadoEm || raw.criado_em || null, atualizadoEm: raw.atualizadoEm || raw.atualizado_em || null };
     }
     function indexar(lista) {
         var _a;
@@ -82,7 +86,11 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             return; var d = codigo(p.dun), g = codigo(p.gtin), c = codigo(p.codigoInterno); if (d)
             cache.porDun.set(d, p); if (g)
             cache.porGtin.set(g, p); if (c)
-            cache.porCodigo.set(c, p); });
+            cache.porCodigo.set(c, p); (p.codigosExtras || []).forEach(function (x) { var k = codigo(x); if (k) {
+            cache.porGtin.set(k, p);
+            cache.porDun.set(k, p);
+            cache.porCodigo.set(k, p);
+        } }); });
         cache.carregado = true;
         cache.loja = ((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) || '';
         try {
@@ -106,19 +114,22 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             if (force === void 0) { force = false; }
             return __generator(this, function (_b) {
                 loja = ((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) || '';
-                if (!force && cache.carregado && cache.loja === loja)
-                    return [2 /*return*/, cache.lista];
                 if (cache.carregando)
                     return [2 /*return*/, cache.carregando];
+                if (!navigator.onLine) {
+                    if (!cache.carregado || cache.loja !== loja)
+                        carregarLocal();
+                    return [2 /*return*/, cache.lista];
+                }
                 cache.carregando = (function () { return __awaiter(_this, void 0, void 0, function () {
-                    var fs, versaoKey, versaoServidor, meta, _e_1, versaoLocal, chunks, rows_1, snap, result, e_1;
+                    var fs, versaoKey, versaoServidor_1, meta, _e_1, versaoLocal, chunks, docs, daVersao, rows_1, snap, result, e_1;
                     return __generator(this, function (_a) {
                         switch (_a.label) {
                             case 0:
                                 _a.trys.push([0, 9, 10, 11]);
                                 fs = global.getDTFirestore();
                                 versaoKey = 'dt_produtos_versao__' + loja;
-                                versaoServidor = '';
+                                versaoServidor_1 = '';
                                 _a.label = 1;
                             case 1:
                                 _a.trys.push([1, 3, , 4]);
@@ -126,25 +137,34 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             case 2:
                                 meta = _a.sent();
                                 if (meta.exists)
-                                    versaoServidor = texto(meta.data().versao || meta.data().atualizadoEm || '');
+                                    versaoServidor_1 = texto(meta.data().versao || meta.data().atualizadoEm || '');
                                 return [3 /*break*/, 4];
                             case 3:
                                 _e_1 = _a.sent();
                                 return [3 /*break*/, 4];
                             case 4:
-                                versaoLocal = localStorage.getItem(versaoKey) || '';
-                                if (!force && versaoServidor && versaoLocal === versaoServidor) {
-                                    carregarLocal();
-                                    if (cache.carregado && cache.loja === loja)
-                                        return [2 /*return*/, cache.lista];
+                                versaoLocal = localStorage.getItem(versaoKey) || cache.versao || '';
+                                cache.ultimaVerificacao = Date.now();
+                                if (!force && cache.carregado && cache.loja === loja && versaoServidor_1 && versaoLocal === versaoServidor_1) {
+                                    cache.versao = versaoServidor_1;
+                                    return [2 /*return*/, cache.lista];
                                 }
-                                return [4 /*yield*/, fs.collection('dt_produtos_chunks').orderBy('parte').get()];
+                                return [4 /*yield*/, Promise.race([
+                                        fs.collection('dt_produtos_chunks').orderBy('parte').get(),
+                                        new Promise(function (_, reject) { setTimeout(function () { reject(new Error('Tempo excedido ao carregar chunks de produtos')); }, 12000); })
+                                    ])];
                             case 5:
                                 chunks = _a.sent();
+                                docs = chunks.docs || [];
+                                if (versaoServidor_1) {
+                                    daVersao = docs.filter(function (d) { return texto((d.data() || {}).versao) === versaoServidor_1; });
+                                    if (daVersao.length)
+                                        docs = daVersao;
+                                }
                                 rows_1 = [];
-                                if (!!chunks.empty) return [3 /*break*/, 6];
-                                chunks.docs.forEach(function (d) { var x = d.data() || {}; var itens = x.itens || x.dados || x.registros || []; rows_1 = rows_1.concat(itens); });
-                                console.log('[Produtos] Base carregada em chunks:', chunks.docs.length, 'documentos /', rows_1.length, 'produtos');
+                                if (!docs.length) return [3 /*break*/, 6];
+                                docs.forEach(function (d) { var x = d.data() || {}; var itens = x.itens || x.dados || x.registros || []; rows_1 = rows_1.concat(itens); });
+                                console.log('[Produtos] Base atualizada em chunks:', docs.length, 'documentos /', rows_1.length, 'produtos / versão', versaoServidor_1 || 'legada');
                                 return [3 /*break*/, 8];
                             case 6: return [4 /*yield*/, fs.collection((global.DT_FCOL && global.DT_FCOL.produtos) || 'dt_produtos').get()];
                             case 7:
@@ -154,16 +174,18 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                                 _a.label = 8;
                             case 8:
                                 result = indexar(rows_1);
-                                if (versaoServidor)
+                                cache.versao = versaoServidor_1;
+                                if (versaoServidor_1)
                                     try {
-                                        localStorage.setItem(versaoKey, versaoServidor);
+                                        localStorage.setItem(versaoKey, versaoServidor_1);
                                     }
                                     catch (_e) { }
                                 return [2 /*return*/, result];
                             case 9:
                                 e_1 = _a.sent();
-                                console.warn('[Produtos] Falha ao carregar base:', e_1);
-                                carregarLocal();
+                                console.warn('[Produtos] Falha ao atualizar base:', e_1);
+                                if (!cache.carregado || cache.loja !== loja)
+                                    carregarLocal();
                                 return [2 /*return*/, cache.lista];
                             case 10:
                                 cache.carregando = null;
@@ -191,7 +213,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             }
         }); });
     }
-    function enriquecer(reg) { var r = __assign({}, reg); if (r.produtoLidoNome || r.produtoLido)
+    function enriquecer(reg) { var r = __assign({}, reg); var atual = texto(r.produtoLidoNome || r.produtoLido); var placeholder = !atual || /^(PRODUTO NAO IDENTIFICADO|PRODUTO NÃO IDENTIFICADO|PRODUTO NAO CADASTRADO|PRODUTO NÃO CADASTRADO|CODIGO SEM CADASTRO|CÓDIGO SEM CADASTRO)$/i.test(atual); if (!placeholder)
         return r; var cod = r.dunLido || r.gtinLido || r.codigoLido || r.gtin_bipado || r.gtin; var ach = buscarSync(cod); if (ach.encontrado) {
         r.produtoLidoNome = ach.nomeProduto;
         r.produtoLido = ach.nomeProduto;
@@ -203,7 +225,8 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         return; if (!mapa[k])
         mapa[k] = { id: k, nome: p.familiaNome || p.produtoPrincipal || p.nomeProduto, codigo: p.familiaCodigo, produtos: [], unidade: null }; mapa[k].produtos.push(p); if (p.embalagem === 'UND')
         mapa[k].unidade = p; }); return Object.keys(mapa).map(function (k) { return mapa[k]; }).sort(function (a, b) { return a.nome.localeCompare(b.nome); }); }
-    global.DTProdutos = { cache: cache, normalizarCodigo: codigo, normalizarProduto: produto, indexar: indexar, carregar: carregar, buscar: buscar, buscarSync: buscarSync, enriquecer: enriquecer, familias: familias, inferirFamilia: inferirFamilia, inferirEmbalagem: inferirEmbalagem };
+    function limparCache() { cache.lista = []; cache.porDun.clear(); cache.porGtin.clear(); cache.porCodigo.clear(); cache.carregado = false; cache.carregando = null; cache.loja = ''; cache.versao = ''; cache.ultimaVerificacao = 0; }
+    global.DTProdutos = { cache: cache, normalizarCodigo: codigo, normalizarProduto: produto, indexar: indexar, carregar: carregar, buscar: buscar, buscarSync: buscarSync, enriquecer: enriquecer, familias: familias, inferirFamilia: inferirFamilia, inferirEmbalagem: inferirEmbalagem, limparCache: limparCache };
     global.buscarProdutoPorCodigo = buscar;
     global.enriquecerProdutoLido = enriquecer;
 })(window);

@@ -243,8 +243,22 @@
       });
   }
 
-  async function _carregarBaseInventario(inv){
-    if (!inv || !inv.id || (Array.isArray(inv.base) && inv.base.length)) return inv;
+  function _normalizarItemBase(item){
+    const x=Object.assign({},item||{});
+    const qtd=x.quantidade_esperada ?? x.quantidadeEsperada ?? x.qtd_esperada ?? x.qtdEsperada ?? x.quantidade_sistema ?? x.quantidadeSistema ?? x.quantidade;
+    const cod=x.codigo_produto ?? x.codigoProduto ?? x.codigo_interno ?? x.codigoInterno ?? x.sku ?? x.gtin ?? x.ean ?? x.dun ?? '';
+    const desc=x.descricao_produto ?? x.descricaoProduto ?? x.descricao ?? x.produto_nome ?? x.nomeProduto ?? x.produto ?? '';
+    return Object.assign({},x,{
+      endereco:String(x.endereco ?? x.localizacao ?? x.posicao ?? '').trim(),
+      codigo_produto:String(cod??'').trim(),
+      descricao_produto:String(desc??'').trim(),
+      quantidade_esperada:Number.isFinite(Number(qtd))?Number(qtd):0
+    });
+  }
+
+  async function _carregarBaseInventario(inv, force=false){
+    if (!inv || !inv.id) return inv;
+    if (!force && Array.isArray(inv.base) && inv.base.length) return inv;
     try{
       const snap = await global.FS_AN.collection('dt_inventarios').doc(String(inv.id))
         .collection('base_chunks').orderBy('parte').get();
@@ -252,9 +266,9 @@
       snap.docs.forEach(d=>{
         const x=d.data()||{};
         const itens=Array.isArray(x.itens)?x.itens:(Array.isArray(x.dados)?x.dados:[]);
-        base=base.concat(itens);
+        base=base.concat(itens.map(_normalizarItemBase));
       });
-      return Object.assign({},inv,{base,base_carregada_em:new Date().toISOString()});
+      return Object.assign({},inv,{base,base_carregada_em:new Date().toISOString(),base_total:base.length});
     }catch(e){
       console.warn('[FirebaseService] Falha ao carregar base do inventário',inv.id,e.message);
       return inv;
@@ -278,15 +292,39 @@
         if(id!=null&&String(id))idsNecessarios.add(String(id));
       }));
       docs = await Promise.all(docs.map(inv=>{
-        const precisa=statusAtivos.has(String(inv.status||'').toUpperCase())||idsNecessarios.has(String(inv.id));
-        return precisa?_carregarBaseInventario(inv):inv;
+        const aliases=[inv.id,inv.codigo,inv.nome,inv.inventario_id,inv.inventarioId].filter(v=>v!=null).map(v=>String(v));
+        const precisa=statusAtivos.has(String(inv.status||'').toUpperCase())||aliases.some(a=>idsNecessarios.has(a));
+        return precisa?_carregarBaseInventario(inv,true):inv;
       }));
       global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init-bases' }));
       const Storage = global.AnalistaStorage;
-      if (Storage?.storageSave && Storage?.KEYS?.inventarios) Storage.storageSave(Storage.KEYS.inventarios, docs);
+      if (Storage?.storageSave && Storage?.KEYS?.inventarios) {
+        const metadados=docs.map(inv=>{const c=Object.assign({},inv);delete c.base;return c;});
+        Storage.storageSave(Storage.KEYS.inventarios, metadados);
+      }
+      global.dispatchEvent(new CustomEvent('dt-inventarios-bases-atualizadas',{detail:{total:docs.length}}));
     } catch(e) {
       console.warn('[FirebaseService] Falha ao carregar inventários:', e.message);
     }
+  }
+
+  async function refreshBasesRelacionadas(){
+    await _carregarInventariosSeNecessario();
+    try{ await global.DTProdutos?.carregar?.(true); }catch(e){ console.warn('[FirebaseService] Atualização de produtos:',e.message); }
+    try{ global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'bases-refresh',force:true}); }catch(e){ console.warn('[FirebaseService] Reprocessamento de bases:',e.message); }
+    return true;
+  }
+
+  if(!global.__dtBasesProdutoListener){
+    global.__dtBasesProdutoListener=true;
+    global.addEventListener('dt-produtos-atualizados',function(){
+      clearTimeout(global.__dtBasesProdutoTid);
+      global.__dtBasesProdutoTid=setTimeout(function(){
+        _carregarInventariosSeNecessario().then(function(){
+          try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'produtos-atualizados',force:true});}catch(e){console.warn('[FirebaseService] Reprocessar produtos:',e.message);}
+        });
+      },120);
+    });
   }
 
   function _pararColetores(){
@@ -335,7 +373,7 @@
     // de produtos estiverem disponíveis. Isso corrige automaticamente registros
     // que antes apareciam como "Código sem cadastro" e qtd sistema null.
     try{
-      global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'bases-carregadas'});
+      global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'bases-carregadas',force:true});
     }catch(e){ console.warn('[FirebaseService] Reprocessamento após carregar bases:',e.message); }
     if (!state.unsubscribers.enderecos) state.unsubscribers.enderecos = _listenEnderecos();
 
@@ -395,5 +433,5 @@
     _emitSync(true, 'Cache local recarregado', { started: false, source: 'cache' });
   }
 
-  global.AnalistaFirebaseService = { start, stop, refreshFromCache, refreshColetores, state };
+  global.AnalistaFirebaseService = { start, stop, refreshFromCache, refreshColetores, refreshBasesRelacionadas, state };
 })(window);

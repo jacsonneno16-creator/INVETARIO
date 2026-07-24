@@ -1,5 +1,13 @@
 function state(){ return window.AnalistaStore.getState(); }
 
+function _produtoContagemExibicao(c){
+  const codigo=c?.codigo_produto||c?.codigoProduto||c?.gtin||c?.ean||c?.dun||c?.codigo_lido||c?.codigoLido||'';
+  const atual=String(c?.descricao_produto||c?.descricaoProduto||c?.descricao||'').trim();
+  const placeholder=!atual||/^(PRODUTO NAO IDENTIFICADO|PRODUTO NÃO IDENTIFICADO|PRODUTO NAO CADASTRADO|PRODUTO NÃO CADASTRADO|CODIGO SEM CADASTRO|CÓDIGO SEM CADASTRO)$/i.test(atual);
+  const ach=window.DTProdutos?.buscarSync?.(codigo);
+  return {codigo:codigo||ach?.codigoInterno||ach?.gtin||ach?.dun||'',descricao:(!placeholder?atual:'')||(ach?.encontrado?ach.nomeProduto:'Código sem cadastro')};
+}
+
 function contStatusBadge(status){
   const st = String(status || 'PENDENTE').toUpperCase();
   if (st === 'PROCESSADO' || st === 'OK' || st === 'CONCLUIDA') return 'b-green';
@@ -117,6 +125,7 @@ function renderContagens() {
             ? `<span style="font-size:.65rem;color:var(--muted)"> · cap:${end.capacidade_paletes}</span>` : '';
           const ruaInfo  = end?.rua ? `<div style="font-size:.65rem;color:var(--muted)">Rua: ${end.rua}</div>` : '';
 
+          const prodExib=_produtoContagemExibicao(c);
           return `<tr style="${rowStyle}">
             <td class="mono" style="white-space:nowrap;font-size:.75rem">${fmtTs(c.timestamp)}</td>
             <td>
@@ -128,8 +137,8 @@ function renderContagens() {
             <td style="font-size:.75rem;color:var(--muted)">${inv?.codigo || c.inventario_id}</td>
             <td class="mono">${c.endereco || '—'}${capInfo}${ruaInfo}</td>
             <td>
-              <div style="font-weight:600;font-size:.82rem">${c.codigo_produto || '—'}</div>
-              <div style="font-size:.72rem;color:var(--muted)">${c.descricao_produto || ''}</div>
+              <div style="font-weight:600;font-size:.82rem">${prodExib.codigo || '—'}</div>
+              <div style="font-size:.72rem;color:var(--muted)">${prodExib.descricao || ''}</div>
             </td>
             <td class="mono" style="font-weight:700;font-size:.9rem">${
               (c.qtd_caixas != null && c.fator_caixa > 1)

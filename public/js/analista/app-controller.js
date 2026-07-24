@@ -45,7 +45,7 @@
       const metaSource = action?.meta?.source;
       if (metaSource !== 'ui-render') scheduleRender();
       if (DivergenciaService.deveReprocessar(action?.type) && DivergenciaService.afetaFluxoDeContagem(action)) {
-        const changed = prevState.contagens !== state.contagens || prevState.recontagens !== state.recontagens;
+        const changed = prevState.contagens !== state.contagens;
         if (changed && metaSource !== 'business-reprocess') scheduleBusinessReprocess();
       }
     });

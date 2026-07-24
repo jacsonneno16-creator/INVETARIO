@@ -124,6 +124,42 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         }
         return __spreadArray([], new Set(vals.filter(Boolean)), true);
     }
+    function _inventarioAliases(inv) {
+        return [inv === null || inv === void 0 ? void 0 : inv.id, inv === null || inv === void 0 ? void 0 : inv.codigo, inv === null || inv === void 0 ? void 0 : inv.nome, inv === null || inv === void 0 ? void 0 : inv.inventario_id, inv === null || inv === void 0 ? void 0 : inv.inventarioId].filter(function (v) { return v != null && String(v).trim(); }).map(function (v) { return String(v).trim(); });
+    }
+    function _idInventarioRegistro(obj) {
+        var _a, _b, _c, _d;
+        return String((_d = (_c = (_b = (_a = obj === null || obj === void 0 ? void 0 : obj.inventario_id) !== null && _a !== void 0 ? _a : obj === null || obj === void 0 ? void 0 : obj.inventarioId) !== null && _b !== void 0 ? _b : obj === null || obj === void 0 ? void 0 : obj.inventario) !== null && _c !== void 0 ? _c : obj === null || obj === void 0 ? void 0 : obj.inv_id) !== null && _d !== void 0 ? _d : '').trim();
+    }
+    function _pertenceInventario(obj, inv) {
+        var id = _idInventarioRegistro(obj);
+        return !!id && _inventarioAliases(inv).includes(id);
+    }
+    function _inventarioPorAlias(id) {
+        var x = String(id !== null && id !== void 0 ? id : '').trim();
+        return state().inventarios.find(function (inv) { return _inventarioAliases(inv).includes(x); }) || null;
+    }
+    function _mesmoIdInventario(a, b) {
+        var aa = String(a !== null && a !== void 0 ? a : '').trim(), bb = String(b !== null && b !== void 0 ? b : '').trim();
+        if (!aa || !bb)
+            return false;
+        if (aa === bb)
+            return true;
+        var invA = _inventarioPorAlias(aa), invB = _inventarioPorAlias(bb);
+        if (invA && invB)
+            return String(invA.id) === String(invB.id);
+        if (invA)
+            return _inventarioAliases(invA).includes(bb);
+        if (invB)
+            return _inventarioAliases(invB).includes(aa);
+        return false;
+    }
+    function _qtdEsperadaItem(item) {
+        var _a, _b, _c, _d, _e, _f;
+        var v = (_f = (_e = (_d = (_c = (_b = (_a = item === null || item === void 0 ? void 0 : item.quantidade_esperada) !== null && _a !== void 0 ? _a : item === null || item === void 0 ? void 0 : item.quantidadeEsperada) !== null && _b !== void 0 ? _b : item === null || item === void 0 ? void 0 : item.qtd_esperada) !== null && _c !== void 0 ? _c : item === null || item === void 0 ? void 0 : item.qtdEsperada) !== null && _d !== void 0 ? _d : item === null || item === void 0 ? void 0 : item.quantidade_sistema) !== null && _e !== void 0 ? _e : item === null || item === void 0 ? void 0 : item.quantidadeSistema) !== null && _f !== void 0 ? _f : item === null || item === void 0 ? void 0 : item.quantidade;
+        var n = parseFloat(String(v !== null && v !== void 0 ? v : '').replace(',', '.'));
+        return Number.isFinite(n) ? n : 0;
+    }
     function _produtoGeral(obj) {
         var _a, _b;
         for (var _i = 0, _c = _idsProduto(obj); _i < _c.length; _i++) {
@@ -136,12 +172,13 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     }
     function _descricaoProduto(item, cont) {
         var _a;
-        return String((item === null || item === void 0 ? void 0 : item.descricao_produto) || (item === null || item === void 0 ? void 0 : item.descricaoProduto) || (item === null || item === void 0 ? void 0 : item.descricao) ||
-            (cont === null || cont === void 0 ? void 0 : cont.descricao_produto) || (cont === null || cont === void 0 ? void 0 : cont.descricaoProduto) || (cont === null || cont === void 0 ? void 0 : cont.descricao) ||
-            ((_a = _produtoGeral(cont || item)) === null || _a === void 0 ? void 0 : _a.nomeProduto) || '').trim();
+        var atual = String((cont === null || cont === void 0 ? void 0 : cont.descricao_produto) || (cont === null || cont === void 0 ? void 0 : cont.descricaoProduto) || (cont === null || cont === void 0 ? void 0 : cont.descricao) || '').trim();
+        var placeholder = /^(PRODUTO NAO IDENTIFICADO|PRODUTO NÃO IDENTIFICADO|PRODUTO NAO CADASTRADO|PRODUTO NÃO CADASTRADO|CODIGO SEM CADASTRO|CÓDIGO SEM CADASTRO)$/i.test(atual);
+        return String((item === null || item === void 0 ? void 0 : item.descricao_produto) || (item === null || item === void 0 ? void 0 : item.descricaoProduto) || (item === null || item === void 0 ? void 0 : item.descricao) || (item === null || item === void 0 ? void 0 : item.nomeProduto) || (item === null || item === void 0 ? void 0 : item.produto_nome) ||
+            (!placeholder ? atual : '') || ((_a = _produtoGeral(cont || item)) === null || _a === void 0 ? void 0 : _a.nomeProduto) || '').trim();
     }
     function _idPrincipalBase(item) {
-        return _nd((item === null || item === void 0 ? void 0 : item.codigo_produto) || (item === null || item === void 0 ? void 0 : item.codigoProduto) || (item === null || item === void 0 ? void 0 : item.codigo_interno) || (item === null || item === void 0 ? void 0 : item.codigoInterno) || (item === null || item === void 0 ? void 0 : item.gtin) || (item === null || item === void 0 ? void 0 : item.ean) || (item === null || item === void 0 ? void 0 : item.dun));
+        return _nd((item === null || item === void 0 ? void 0 : item.codigo_produto) || (item === null || item === void 0 ? void 0 : item.codigoProduto) || (item === null || item === void 0 ? void 0 : item.codigo_interno) || (item === null || item === void 0 ? void 0 : item.codigoInterno) || (item === null || item === void 0 ? void 0 : item.sku) || (item === null || item === void 0 ? void 0 : item.gtin) || (item === null || item === void 0 ? void 0 : item.ean) || (item === null || item === void 0 ? void 0 : item.dun));
     }
     function _mesmoProduto(a, b) {
         var aa = new Set(_idsProduto(a));
@@ -154,13 +191,13 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         var endN = _nd(endereco);
         if (tipo === 'VAZIO_COM_PRODUTO_NA_BASE') {
             return state().divergencias.find(function (d) {
-                return String(d.inventario_id || d.inventarioId || d.inventario || d.inv_id || '') === String(invId) && _nd(d.endereco) === endN &&
+                return _mesmoIdInventario(_idInventarioRegistro(d), invId) && _nd(d.endereco) === endN &&
                     d.tipo_divergencia === 'VAZIO_COM_PRODUTO_NA_BASE';
             }) || null;
         }
         var prodN = _nd(produto);
         return state().divergencias.find(function (d) {
-            return String(d.inventario_id || d.inventarioId || d.inventario || d.inv_id || '') === String(invId) && _nd(d.endereco) === endN &&
+            return _mesmoIdInventario(_idInventarioRegistro(d), invId) && _nd(d.endereco) === endN &&
                 _nd(d.produto) === prodN && d.tipo_divergencia === tipo;
         }) || null;
     }
@@ -173,7 +210,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             return;
         var houve = false;
         var updated = state().contagens.map(function (c) {
-            if (String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') !== String(div.inventario_id || div.inventarioId || div.inventario || div.inv_id || ''))
+            if (!_mesmoIdInventario(_idInventarioRegistro(c), _idInventarioRegistro(div)))
                 return c;
             if (_nd(c.endereco) !== _nd(div.endereco))
                 return c;
@@ -245,12 +282,14 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         _atualizarStatusContagensRec(rec.divergencia_id, 'DIVERGENTE');
     }
     // ── Helpers de quantidade ────────────────────────────────────────────────────
-    function _qtdEmUnidades(c) {
-        var fator = parseFloat(c.fator_caixa) || 1;
-        var qtdCx = parseFloat(c.qtd_caixas);
-        if (!isNaN(qtdCx) && qtdCx > 0 && fator > 1)
-            return qtdCx * fator;
-        return parseFloat(c.quantidade) || 0;
+    function _qtdComparavel(c) {
+        // A operação conta caixas/paletes. Comparar exatamente a quantidade digitada
+        // pelo operador com a quantidade esperada importada, sem multiplicar pelo fator.
+        var qtd = parseFloat(c && c.quantidade);
+        if (!isNaN(qtd))
+            return qtd;
+        var qtdCx = parseFloat(c && c.qtd_caixas);
+        return !isNaN(qtdCx) ? qtdCx : 0;
     }
     function _isVazio(c) {
         return c.tipo_contagem === 'VAZIO' || c.tipo === 'VAZIO_CONFIRMADO';
@@ -258,9 +297,24 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     // ─────────────────────────────────────────────────────────────────────────────
     //  processarDivergencias — lógica de cruzamento com dispatch imutável
     // ─────────────────────────────────────────────────────────────────────────────
+    var _ultimaAssinaturaProcessada = '';
+    function _assinaturaDivergencias() {
+        var st = state();
+        var conts = (st.contagens || []).map(function (c) { return [
+            c.uuid || c.id || '', c.inventario_id || c.inventarioId || '', c.endereco || '',
+            c.gtin || c.codigo_produto || c.codigoLido || '', c.quantidade != null ? c.quantidade : (c.qtd_caixas != null ? c.qtd_caixas : ''),
+            c.tipo_contagem || '', c._excluida ? 1 : 0, c.status === 'ESTORNADA' ? 1 : 0
+        ].join('|'); }).sort().join('~');
+        var bases = (st.inventarios || []).map(function (i) { return [i.id || '', i.atualizado_em || i.updated_at || '', Array.isArray(i.base) ? i.base.length : 0].join('|'); }).sort().join('~');
+        return conts + '##' + bases;
+    }
     function processarDivergencias(_a) {
         var _b;
-        var _c = _a === void 0 ? {} : _a, _d = _c.criarRecontagens, criarRecontagens = _d === void 0 ? true : _d;
+        var _c = _a === void 0 ? {} : _a, _d = _c.criarRecontagens, criarRecontagens = _d === void 0 ? true : _d, _e = _c.source, source = _e === void 0 ? 'manual' : _e, _f = _c.force, force = _f === void 0 ? false : _f;
+        var assinatura = _assinaturaDivergencias();
+        if (!force && source !== 'manual' && assinatura === _ultimaAssinaturaProcessada)
+            return 0;
+        _ultimaAssinaturaProcessada = assinatura;
         var invId = ((_b = document.getElementById('div-sel-inv')) === null || _b === void 0 ? void 0 : _b.value) || '';
         var statusAtivos = new Set(['ATIVO', 'ABERTO', 'PUBLICADO', 'LIBERADO', 'EM_ANDAMENTO', 'PAUSADO']);
         var inventarios = invId
@@ -278,7 +332,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             if (!((_a = inv.base) === null || _a === void 0 ? void 0 : _a.length))
                 return;
             var conts = state().contagens.filter(function (c) {
-                return String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) &&
+                return _pertenceInventario(c, inv) &&
                     c.tipo_contagem !== 'RECONTAGEM' &&
                     !c._excluida &&
                     c.status !== 'ESTORNADA' &&
@@ -333,7 +387,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                 var itemBase = localizarItemBase(c, true);
                 var geral = _produtoGeral(c);
                 var key = (itemBase === null || itemBase === void 0 ? void 0 : itemBase.__dtKey) || _normKey(c.endereco, _idsProduto(c)[0] || 'SEM_PRODUTO');
-                mapaConts[key] = (mapaConts[key] || 0) + _qtdEmUnidades(c);
+                mapaConts[key] = (mapaConts[key] || 0) + _qtdComparavel(c);
                 infoContagem.set(c, { itemBase: itemBase, geral: geral, key: key });
             });
             // ── Atualizar status de contagens normais ──
@@ -343,7 +397,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                 var itemBase = info.itemBase || null;
                 var qtdCont = (_a = mapaConts[info.key]) !== null && _a !== void 0 ? _a : null;
                 var novoStatus = !itemBase ? 'DIVERGENTE'
-                    : ((qtdCont === (parseFloat(itemBase.quantidade_esperada) || 0)) ? 'PROCESSADO' : 'DIVERGENTE');
+                    : ((qtdCont === (_qtdEsperadaItem(itemBase))) ? 'PROCESSADO' : 'DIVERGENTE');
                 var descricao = _descricaoProduto(itemBase, c);
                 var codigoBase = _idPrincipalBase(itemBase);
                 if (c.status !== novoStatus || (descricao && !c.descricao) || (codigoBase && !c.codigo_produto)) {
@@ -366,7 +420,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             });
             // ── Atualizar status de RECONTAGEMs ──
             state().contagens.filter(function (c) {
-                return String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) && c.tipo_contagem === 'RECONTAGEM' &&
+                return _pertenceInventario(c, inv) && c.tipo_contagem === 'RECONTAGEM' &&
                     !c._excluida && c.status !== 'ESTORNADA';
             }).forEach(function (c) {
                 var divRef = c.divergencia_id
@@ -393,13 +447,13 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                 if (!info.itemBase)
                     return;
                 var antigos = state().divergencias.filter(function (d) {
-                    return String(d.inventario_id || d.inventarioId || '') === String(inv.id) &&
+                    return _pertenceInventario(d, inv) &&
                         _nd(d.endereco) === _nd(c.endereco) &&
                         d.tipo_divergencia === 'PRODUTO_NAO_IDENTIFICADO' &&
                         (!d.contagem_uuid || !c.uuid || String(d.contagem_uuid) === String(c.uuid));
                 });
                 antigos.forEach(function (d) {
-                    var qtdEsp = parseFloat(info.itemBase.quantidade_esperada) || 0;
+                    var qtdEsp = _qtdEsperadaItem(info.itemBase);
                     var qtdCont = mapaConts[info.key] || 0;
                     var diferenca = qtdCont - qtdEsp;
                     var atualizado = Object.assign({}, d, {
@@ -422,7 +476,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             // ── 1a. Divergências de quantidade ──
             inv.base.forEach(function (item) {
                 var key = item.__dtKey;
-                var qtdEsp = parseFloat(item.quantidade_esperada) || 0;
+                var qtdEsp = _qtdEsperadaItem(item);
                 var qtdCont = mapaConts[key] !== undefined ? mapaConts[key] : null;
                 if (qtdCont === null)
                     return;
@@ -431,7 +485,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                 var diferenca = qtdCont - qtdEsp;
                 if (diferenca === 0) {
                     var divExistente = state().divergencias.find(function (d) {
-                        return String(d.inventario_id || d.inventarioId || '') === String(inv.id) &&
+                        return _pertenceInventario(d, inv) &&
                             _nd(d.endereco) === _nd(item.endereco) && _mesmoProduto(d, item) &&
                             ['ABERTA', 'EM_RECONTAGEM'].includes(d.status);
                     });
@@ -447,7 +501,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                     return;
                 }
                 var existente = state().divergencias.find(function (d) {
-                    return String(d.inventario_id || d.inventarioId || '') === String(inv.id) &&
+                    return _pertenceInventario(d, inv) &&
                         _nd(d.endereco) === _nd(item.endereco) && _mesmoProduto(d, item) &&
                         ['QUANTIDADE_DIFERENTE', 'PRODUTO_NAO_IDENTIFICADO'].includes(d.tipo_divergencia);
                 });
@@ -491,7 +545,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                     id: gerarId('DIV'), inventario_id: inv.id, inventario_nome: inv.nome,
                     endereco: c.endereco, produto: prodCod, produto_contado: prodCod,
                     descricao: _descricaoProduto(null, c) || 'Produto não identificado', gtin_bipado: _nd(c.gtin || prodCod),
-                    qtd_esperada: null, qtd_contada: _qtdEmUnidades(c), diferenca: null,
+                    qtd_esperada: null, qtd_contada: _qtdComparavel(c), diferenca: null,
                     tipo_divergencia: 'PRODUTO_NAO_IDENTIFICADO', motivos_divergencia: ['PRODUTO_NAO_IDENTIFICADO'],
                     contagem_uuid: c.uuid, operador: c.operador,
                     status: 'ABERTA', precisa_recontagem: true,
@@ -501,7 +555,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                 fsSalvarDivergencia(div);
                 novos++;
                 if (criarRecontagens)
-                    _criarRecontagemParaDivergencia(div, inv, _qtdEmUnidades(c), novasRecs);
+                    _criarRecontagemParaDivergencia(div, inv, _qtdComparavel(c), novasRecs);
             });
             // ── 1c. Produto cadastrado, porém fora do endereço correto ──
             contsUnicas.forEach(function (c) {
@@ -514,13 +568,13 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                 var prodCod = _idPrincipalBase(itemEmOutroEndereco) || _idsProduto(c)[0] || '';
                 if (_divExistente(inv.id, c.endereco, prodCod, 'PRODUTO_FORA_ENDERECO'))
                     return;
-                var qtdEsp = itemEmOutroEndereco ? (parseFloat(itemEmOutroEndereco.quantidade_esperada) || 0) : null;
+                var qtdEsp = itemEmOutroEndereco ? (_qtdEsperadaItem(itemEmOutroEndereco)) : null;
                 var div = {
                     id: gerarId('DIV'), inventario_id: inv.id, inventario_nome: inv.nome,
                     endereco: c.endereco, endereco_correto: (itemEmOutroEndereco === null || itemEmOutroEndereco === void 0 ? void 0 : itemEmOutroEndereco.endereco) || null,
                     produto: prodCod, produto_contado: _idsProduto(c)[0] || prodCod,
                     descricao: _descricaoProduto(itemEmOutroEndereco, c), qtd_esperada: qtdEsp,
-                    qtd_contada: _qtdEmUnidades(c), diferenca: qtdEsp == null ? null : (_qtdEmUnidades(c) - qtdEsp),
+                    qtd_contada: _qtdComparavel(c), diferenca: qtdEsp == null ? null : (_qtdComparavel(c) - qtdEsp),
                     tipo_divergencia: 'PRODUTO_FORA_ENDERECO', motivos_divergencia: ['PRODUTO_FORA_ENDERECO'],
                     contagem_uuid: c.uuid, operador: c.operador,
                     status: 'ABERTA', precisa_recontagem: true,
@@ -530,11 +584,11 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                 fsSalvarDivergencia(div);
                 novos++;
                 if (criarRecontagens)
-                    _criarRecontagemParaDivergencia(div, inv, _qtdEmUnidades(c), novasRecs);
+                    _criarRecontagemParaDivergencia(div, inv, _qtdComparavel(c), novasRecs);
             });
             // ── 1d. Endereço vazio mas base espera produto ──
             state().contagens.filter(function (c) {
-                return String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) && _isVazio(c) && !c._excluida &&
+                return _pertenceInventario(c, inv) && _isVazio(c) && !c._excluida &&
                     c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA';
             }).forEach(function (vazio) {
                 var _a;
@@ -552,7 +606,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                     id: gerarId('DIV'), inventario_id: inv.id, inventario_nome: inv.nome,
                     endereco: vazio.endereco, produto: ((_a = itensEsperados[0]) === null || _a === void 0 ? void 0 : _a.codigo_produto) || '',
                     descricao: "Endere\u00E7o vazio, mas base esperava: ".concat(produtosEsperados),
-                    qtd_esperada: itensEsperados.reduce(function (s, i) { return s + (parseFloat(i.quantidade_esperada) || 0); }, 0),
+                    qtd_esperada: itensEsperados.reduce(function (s, i) { return s + (_qtdEsperadaItem(i)); }, 0),
                     qtd_contada: 0, diferenca: null,
                     tipo_divergencia: 'VAZIO_COM_PRODUTO_NA_BASE', motivos_divergencia: ['VAZIO_COM_PRODUTO_NA_BASE'],
                     contagem_uuid: vazio.uuid, operador: vazio.operador,
@@ -711,7 +765,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         };
         // Vincular contagem original
         var contOriginal = state().contagens.find(function (c) {
-            return String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) &&
+            return _pertenceInventario(c, inv) &&
                 _nd(c.endereco) === _nd(div.endereco) &&
                 (_nd(c.codigo_produto) === _nd(div.produto) || _nd(c.gtin) === _nd(div.produto)) &&
                 !c._excluida && c.status !== 'ESTORNADA';

@@ -19,6 +19,27 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     return to.concat(ar || Array.prototype.slice.call(from));
 };
 function state() { return window.AnalistaStore.getState(); }
+function _produtoContagemExibicao(c) {
+    var _a, _b;
+    var codigo = (c === null || c === void 0 ? void 0 : c.codigo_produto) || (c === null || c === void 0 ? void 0 : c.codigoProduto) || (c === null || c === void 0 ? void 0 : c.gtin) || (c === null || c === void 0 ? void 0 : c.ean) || (c === null || c === void 0 ? void 0 : c.dun) || (c === null || c === void 0 ? void 0 : c.codigo_lido) || (c === null || c === void 0 ? void 0 : c.codigoLido) || '';
+    var atual = String((c === null || c === void 0 ? void 0 : c.descricao_produto) || (c === null || c === void 0 ? void 0 : c.descricaoProduto) || (c === null || c === void 0 ? void 0 : c.descricao) || '').trim();
+    var placeholder = !atual || /^(PRODUTO NAO IDENTIFICADO|PRODUTO NÃO IDENTIFICADO|PRODUTO NAO CADASTRADO|PRODUTO NÃO CADASTRADO|CODIGO SEM CADASTRO|CÓDIGO SEM CADASTRO)$/i.test(atual);
+    var ach = (_b = (_a = window.DTProdutos) === null || _a === void 0 ? void 0 : _a.buscarSync) === null || _b === void 0 ? void 0 : _b.call(_a, codigo);
+    return { codigo: codigo || (ach === null || ach === void 0 ? void 0 : ach.codigoInterno) || (ach === null || ach === void 0 ? void 0 : ach.gtin) || (ach === null || ach === void 0 ? void 0 : ach.dun) || '', descricao: (!placeholder ? atual : '') || ((ach === null || ach === void 0 ? void 0 : ach.encontrado) ? ach.nomeProduto : 'Código sem cadastro') };
+}
+function contStatusBadge(status) {
+    var st = String(status || 'PENDENTE').toUpperCase();
+    if (st === 'PROCESSADO' || st === 'OK' || st === 'CONCLUIDA')
+        return 'b-green';
+    if (st === 'DIVERGENTE' || st === 'CONFLITO' || st === 'PERSISTENTE')
+        return 'b-red';
+    if (st === 'ESTORNADA' || st === 'EXCLUIDA')
+        return 'b-gray';
+    if (st === 'EM_RECONTAGEM' || st === 'RECONTAGEM')
+        return 'b-purple';
+    return 'b-orange';
+}
+window.contStatusBadge = window.contStatusBadge || contStatusBadge;
 // ───────────────────────────────────────────────────────────────────
 //  14. RENDERIZAÇÃO — CONTAGENS
 // ───────────────────────────────────────────────────────────────────
@@ -40,9 +61,9 @@ function renderContagens() {
         if (cur_1)
             selInv.value = cur_1;
     }
-    var dados = state().contagens;
+    var dados = state().contagens || [];
     if (fInv)
-        dados = dados.filter(function (c) { return c.inventario_id === fInv; });
+        dados = dados.filter(function (c) { return String(c.inventario_id || c.inventarioId || '') === String(fInv); });
     if (fTipo)
         dados = dados.filter(function (c) { return c.tipo_contagem === fTipo; });
     if (fStatus) {
@@ -124,7 +145,8 @@ function renderContagens() {
         var capInfo = end && end.capacidade_paletes !== null
             ? "<span style=\"font-size:.65rem;color:var(--muted)\"> \u00B7 cap:".concat(end.capacidade_paletes, "</span>") : '';
         var ruaInfo = (end === null || end === void 0 ? void 0 : end.rua) ? "<div style=\"font-size:.65rem;color:var(--muted)\">Rua: ".concat(end.rua, "</div>") : '';
-        return "<tr style=\"".concat(rowStyle, "\">\n            <td class=\"mono\" style=\"white-space:nowrap;font-size:.75rem\">").concat(fmtTs(c.timestamp), "</td>\n            <td>\n              <div style=\"display:flex;align-items:center;gap:6px\">\n                <div class=\"u-avatar\" style=\"width:24px;height:24px;font-size:.65rem;flex-shrink:0\">").concat((c.operador || '?')[0].toUpperCase(), "</div>\n                <span style=\"font-weight:600;font-size:.82rem\">").concat(c.operador || '—', "</span>\n              </div>\n            </td>\n            <td style=\"font-size:.75rem;color:var(--muted)\">").concat((inv === null || inv === void 0 ? void 0 : inv.codigo) || c.inventario_id, "</td>\n            <td class=\"mono\">").concat(c.endereco || '—').concat(capInfo).concat(ruaInfo, "</td>\n            <td>\n              <div style=\"font-weight:600;font-size:.82rem\">").concat(c.codigo_produto || '—', "</div>\n              <div style=\"font-size:.72rem;color:var(--muted)\">").concat(c.descricao_produto || '', "</div>\n            </td>\n            <td class=\"mono\" style=\"font-weight:700;font-size:.9rem\">").concat((c.qtd_caixas != null && c.fator_caixa > 1)
+        var prodExib = _produtoContagemExibicao(c);
+        return "<tr style=\"".concat(rowStyle, "\">\n            <td class=\"mono\" style=\"white-space:nowrap;font-size:.75rem\">").concat(fmtTs(c.timestamp), "</td>\n            <td>\n              <div style=\"display:flex;align-items:center;gap:6px\">\n                <div class=\"u-avatar\" style=\"width:24px;height:24px;font-size:.65rem;flex-shrink:0\">").concat((c.operador || '?')[0].toUpperCase(), "</div>\n                <span style=\"font-weight:600;font-size:.82rem\">").concat(c.operador || '—', "</span>\n              </div>\n            </td>\n            <td style=\"font-size:.75rem;color:var(--muted)\">").concat((inv === null || inv === void 0 ? void 0 : inv.codigo) || c.inventario_id, "</td>\n            <td class=\"mono\">").concat(c.endereco || '—').concat(capInfo).concat(ruaInfo, "</td>\n            <td>\n              <div style=\"font-weight:600;font-size:.82rem\">").concat(prodExib.codigo || '—', "</div>\n              <div style=\"font-size:.72rem;color:var(--muted)\">").concat(prodExib.descricao || '', "</div>\n            </td>\n            <td class=\"mono\" style=\"font-weight:700;font-size:.9rem\">").concat((c.qtd_caixas != null && c.fator_caixa > 1)
             ? "".concat(c.qtd_caixas, " CX")
             : ((_a = c.quantidade) !== null && _a !== void 0 ? _a : '—'), "</td>\n            <td><span class=\"badge ").concat(c.tipo_contagem === 'RECONTAGEM' ? 'b-purple' : 'b-blue', "\">").concat(c.tipo_contagem || 'PRIMEIRA', "</span></td>\n            <td>\n              ").concat(excluida
             ? "<span class=\"badge b-gray\">\uD83D\uDDD1 Exclu\u00EDda</span>"
@@ -147,15 +169,15 @@ function renderPendencias() {
     // Preencher select de inventários
     if (selInv) {
         var cur_2 = selInv.value;
-        selInv.innerHTML = '<option value="">Selecione uma auditoria...</option>' +
-            state().inventarios.filter(function (i) { var _a; return i.status === 'ATIVO' || ((_a = i.enderecos_selecionados) === null || _a === void 0 ? void 0 : _a.length); }).map(function (i) {
+        selInv.innerHTML = '<option value="">Selecione um inventário...</option>' +
+            state().inventarios.filter(function (i) { var _a; return ['ATIVO', 'ABERTO', 'PUBLICADO', 'LIBERADO', 'EM_ANDAMENTO', 'PAUSADO'].includes(String(i.status || '').toUpperCase()) || ((_a = i.enderecos_selecionados) === null || _a === void 0 ? void 0 : _a.length); }).map(function (i) {
                 return "<option value=\"".concat(i.id, "\" ").concat(i.id === cur_2 ? 'selected' : '', ">").concat(i.codigo, " \u2014 ").concat(i.nome, "</option>");
             }).join('');
         if (cur_2)
             selInv.value = cur_2;
     }
     if (!invId) {
-        document.getElementById('pend-table-wrap').innerHTML = "<div class=\"empty\"><div class=\"empty-icon\">\u23F3</div><div class=\"empty-title\">Selecione uma auditoria</div></div>";
+        document.getElementById('pend-table-wrap').innerHTML = "<div class=\"empty\"><div class=\"empty-icon\">\u23F3</div><div class=\"empty-title\">Selecione um invent\u00E1rio</div></div>";
         ['pk-total', 'pk-contados', 'pk-pendentes', 'pk-pct'].forEach(function (id) { return document.getElementById(id).textContent = '—'; });
         return;
     }
@@ -163,11 +185,17 @@ function renderPendencias() {
     if (!inv)
         return;
     // Usar state().enderecosLista como base oficial de endereços
-    var conts = state().contagens.filter(function (c) { return c.inventario_id === invId && !c._excluida; });
+    var conts = (state().contagens || []).filter(function (c) { return String(c.inventario_id || c.inventarioId || '') === String(invId) && !c._excluida && c.status !== 'ESTORNADA'; });
     var endsContadosSet = new Set(conts.filter(function (c) { return !_isVazio(c); }).map(function (c) { return c.endereco; }));
     var endsVaziosConfSet = new Set(conts.filter(function (c) { return _isVazio(c) && c.status !== 'ESTORNADA'; }).map(function (c) { return c.endereco; }));
-    // Enriquecer state().enderecosLista com status de contagem
-    var lista = state().enderecosLista.map(function (e) {
+    // Usar somente os endereços pertencentes ao inventário selecionado.
+    var selecionados = Array.isArray(inv.enderecos_selecionados) ? inv.enderecos_selecionados : [];
+    var selecionadosSet = new Set(selecionados.map(function (x) { return String(typeof x === 'string' ? x : (x.endereco || x.id || '')); }).filter(Boolean));
+    var baseInventario = selecionadosSet.size
+        ? (state().enderecosLista || []).filter(function (e) { return selecionadosSet.has(String(e.endereco || e.id || '')); })
+        : (Array.isArray(inv.base) && inv.base.length ? inv.base : (state().enderecosLista || []));
+    // Enriquecer a base do inventário com status de contagem
+    var lista = baseInventario.map(function (e) {
         var _a;
         var endInfo = e; // já é o objeto completo do ENDDB
         var contado = endsContadosSet.has(e.endereco);
@@ -251,7 +279,7 @@ function renderPendencias() {
     if (endCountEl)
         endCountEl.textContent = "".concat(pendentes, " endere\u00E7o(s) aguardando de ").concat(total, " total");
     // ── SEÇÃO: Recontagens pendentes ──────────────────────────────────
-    var recPend = state().recontagens.filter(function (r) { return r.inventario_id === invId && r.status === 'PENDENTE'; });
+    var recPend = (state().recontagens || []).filter(function (r) { return String(r.inventario_id || r.inventarioId || '') === String(invId) && String(r.status || '').toUpperCase() === 'PENDENTE'; });
     var recSec = document.getElementById('pend-rec-section');
     var pkRecPend = document.getElementById('pk-rec-pend');
     if (pkRecPend)
@@ -270,7 +298,7 @@ function renderPendencias() {
         }
     }
     // ── SEÇÃO: Divergências abertas ──────────────────────────────────
-    var divAbertas = state().divergencias.filter(function (d) { return d.inventario_id === invId && d.status === 'ABERTA'; });
+    var divAbertas = (state().divergencias || []).filter(function (d) { return String(d.inventario_id || d.inventarioId || '') === String(invId) && ['ABERTA', 'DIVERGENTE', 'PENDENTE', 'PERSISTENTE'].includes(String(d.status || '').toUpperCase()); });
     var divSec = document.getElementById('pend-div-section');
     var pkDivAbertas = document.getElementById('pk-div-abertas');
     if (pkDivAbertas)

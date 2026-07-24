@@ -8,6 +8,7 @@
   let auditoriaAtual = '';
   let metaAtual = null;
   let itensAtuais = [];
+  let itensBrutosAtuais = [];
   let unsubscribeItens = null;
   let unsubscribeMetas = null;
   let assinaturaAnterior = '';
@@ -43,7 +44,7 @@
   async function abrirCriacaoAuditoria(){
     const existente=document.getElementById('modal-nova-aud-v72');
     if(existente){ existente.classList.add('on'); existente.querySelector('#aud72-nome')?.focus(); return; }
-    if(!ambienteAuditoriaPronto()) return toast('Aguarde o login e a seleção da loja antes de criar a auditoria.','w');
+    if(!await aguardarAmbienteAuditoria()) return toast('Não foi possível identificar a loja ou a sessão do analista. Atualize a página e tente novamente.','w');
 
     const token=++criacaoToken;
     criacaoAberta=true;
@@ -172,19 +173,38 @@
   };
   const toast = (m,t='i') => typeof window.showToast === 'function' ? window.showToast(m,t) : alert(m);
 
+  function produtoPlaceholder(v){
+    const n=semAcento(txt(v)).toUpperCase();
+    return !n || ['PRODUTO NAO IDENTIFICADO','PRODUTO NAO CADASTRADO','CODIGO SEM CADASTRO','NAO IDENTIFICADO','SEM CADASTRO'].includes(n);
+  }
+
+  function buscarProdutoPorCodigo(codigo){
+    const cod=txt(codigo);
+    if(!cod || !window.DTProdutos?.buscarSync) return null;
+    const ach=window.DTProdutos.buscarSync(cod);
+    return ach?.encontrado ? ach : null;
+  }
+
   function normalizarItem(raw, id){
     const statusRaw = txt(raw.status || 'PENDENTE').toUpperCase();
     const compatStatus = statusRaw === 'VAZIO' ? 'ENDERECO_VAZIO' :
       ['CONFIRMADO_SEM_AJUSTE','APROVADO','CORRETO','CONFERIDO','FINALIZADO'].includes(statusRaw) ? 'OK' :
       ['CONFIRMADO_COM_AJUSTE','ERRO'].includes(statusRaw) ? 'DIVERGENTE' : statusRaw;
+    const dunEsperado=txt(raw.dunEsperado || raw.dun_esperado || raw.dun || raw.codigoProduto || raw.codigo_produto || raw.gtin || raw.ean || raw.gtin_principal || raw.codigo_barras || raw.codigo_de_barras);
+    const dunLido=raw.dunLido == null ? txt(raw.dun_lido || raw.produtoEncontrado || raw.produto_encontrado || raw.codigoLido || raw.codigo_lido || raw.gtinLido || raw.gtin_lido || raw.eanLido || raw.ean_lido) || null : txt(raw.dunLido) || null;
+    const esperadoCadastro=buscarProdutoPorCodigo(dunEsperado);
+    const lidoCadastro=buscarProdutoPorCodigo(dunLido);
+    const produtoEsperadoRaw=txt(raw.produtoEsperado || raw.produto_esperado || raw.descricaoProdutoEsperado || raw.produto_nome || raw.descricao || raw.produto);
+    const produtoLidoRaw=txt(raw.produtoLido || raw.produto_lido || raw.descricaoProdutoLido || raw.produtoLidoNome || raw.produto_lido_nome);
     return {
       id,
       auditoriaId: txt(raw.auditoriaId || raw.auditoria_id || auditoriaAtual),
       endereco: txt(raw.endereco || raw.local || raw.posicao),
-      dunEsperado: txt(raw.dunEsperado || raw.dun_esperado || raw.dun || raw.codigoProduto || raw.codigo_produto || raw.gtin),
-      produtoEsperado: txt(raw.produtoEsperado || raw.produto_esperado || raw.descricaoProdutoEsperado || raw.produto_nome || raw.descricao || raw.produto),
-      dunLido: raw.dunLido == null ? txt(raw.dun_lido || raw.produtoEncontrado || raw.produto_encontrado || raw.codigoLido) || null : txt(raw.dunLido) || null,
-      produtoLido: raw.produtoLido == null ? (txt(raw.produto_lido || raw.descricaoProdutoLido) || (window.DTProdutos?.buscarSync(raw.dunLido || raw.dun_lido || raw.codigoLido)?.nomeProduto) || null) : txt(raw.produtoLido) || null,
+      dunEsperado,
+      produtoEsperado: produtoPlaceholder(produtoEsperadoRaw) ? (esperadoCadastro?.nomeProduto || produtoEsperadoRaw) : produtoEsperadoRaw,
+      dunLido,
+      produtoLido: produtoPlaceholder(produtoLidoRaw) ? (lidoCadastro?.nomeProduto || produtoLidoRaw || null) : produtoLidoRaw,
+      produtoLidoId: lidoCadastro?.produtoId || txt(raw.produtoLidoId || raw.produto_lido_id) || null,
       status: STATUS.includes(compatStatus) ? compatStatus : 'PENDENTE',
       operadorId: txt(raw.operadorId || raw.operador_id || raw.usuario) || null,
       operadorNome: txt(raw.operadorNome || raw.operador_nome || raw.operador || raw.confirmado_por) || null,
@@ -207,14 +227,23 @@
   }
 
   function ambienteAuditoriaPronto(){
-    const user=window.AUTH_AN?.currentUser || window._currentAnalistaUser;
     const db=DB();
-    const app=document.getElementById('app-main');
-    return !!(user && db && (!app || app.style.display!=='none'));
+    const lojaAtiva=loja();
+    const identificacao=window.AUTH_AN?.currentUser || window._currentAnalistaUser || localStorage.getItem('dt_analista_email');
+    return !!(db && typeof db.collection==='function' && lojaAtiva && identificacao);
+  }
+
+  async function aguardarAmbienteAuditoria(ms=6000){
+    const inicio=Date.now();
+    while(Date.now()-inicio<ms){
+      if(ambienteAuditoriaPronto()) return true;
+      await new Promise(resolve=>setTimeout(resolve,120));
+    }
+    return ambienteAuditoriaPronto();
   }
 
   async function listarMetas(){
-    if(!ambienteAuditoriaPronto()) return [];
+    if(!await aguardarAmbienteAuditoria()) return [];
     const db=DB();
     if(!db || typeof db.collection!=='function') return [];
     origemAuditoria.clear();
@@ -225,16 +254,21 @@
       docs=snap.docs.map(function(d){ origemAuditoria.set(d.id,'loja'); return {id:d.id,...d.data(),_origemAuditoria:'loja'}; });
     }catch(e){ erroLoja=e; console.warn('[AUDITORIA] coleção da loja:',e); }
 
-    // Compatibilidade com auditorias antigas gravadas na raiz antes do multiloja.
-    // Só consultar a raiz para a Loja Matriz e somente quando a coleção da loja
-    // estiver vazia ou indisponível.
-    if((!docs.length || erroLoja) && loja()==='loja_matriz' && window.getDTRawFirestore){
+    // Compatibilidade com auditorias antigas gravadas fora do proxy multiloja.
+    // Mescla somente documentos da loja atual, documentos sem loja quando não há
+    // equivalente na coleção atual e nunca duplica o mesmo ID.
+    if(window.getDTRawFirestore){
       try{
+        const atualLoja=txt(loja());
         const raiz=await window.getDTRawFirestore().collection('dt_auditorias').get();
         raiz.docs.forEach(function(d){
-          if(!docs.some(function(x){return x.id===d.id;})){ origemAuditoria.set(d.id,'raiz'); docs.push({id:d.id,...d.data(),_origemAuditoria:'raiz'}); }
+          if(docs.some(function(x){return x.id===d.id;})) return;
+          const data=d.data()||{};
+          const docLoja=txt(data.loja || data.loja_id || data.lojaId);
+          const compativel=!docLoja || !atualLoja || docLoja===atualLoja;
+          if(compativel){ origemAuditoria.set(d.id,'raiz'); docs.push({id:d.id,...data,_origemAuditoria:'raiz'}); }
         });
-      }catch(e){ console.warn('[AUDITORIA] coleção legada da raiz:',e); if(erroLoja) throw erroLoja; }
+      }catch(e){ console.warn('[AUDITORIA] coleção legada da raiz:',e); if(erroLoja && !docs.length) throw erroLoja; }
     }
     if(erroLoja && !docs.length) throw erroLoja;
     return docs.sort(function(a,b){
@@ -317,6 +351,7 @@
     encerrarListener();
     auditoriaAtual = txt(id);
     itensAtuais = [];
+    itensBrutosAtuais = [];
     metaAtual = null;
     atualizarAcoesAuditoria();
     renderizar();
@@ -338,7 +373,8 @@
     });
     atualizarAcoesAuditoria();
     unsubscribeItens = ref.collection('enderecos').onSnapshot(snap => {
-      const nova = snap.docs.map(d => normalizarItem(d.data(), d.id));
+      itensBrutosAtuais = snap.docs.map(d => ({id:d.id,raw:d.data()}));
+      const nova = itensBrutosAtuais.map(x => normalizarItem(x.raw, x.id));
       const sig = assinatura(nova);
       if (sig === assinaturaAnterior) return;
       assinaturaAnterior = sig;
@@ -575,7 +611,7 @@
       const snap=await ref.collection('enderecos').get();
       for(let i=0;i<snap.docs.length;i+=350){ const b=DB().batch(); snap.docs.slice(i,i+350).forEach(d=>b.delete(d.ref)); await b.commit(); }
       await ref.delete();
-      auditoriaAtual=''; metaAtual=null; itensAtuais=[]; assinaturaAnterior='';
+      auditoriaAtual=''; metaAtual=null; itensAtuais=[]; itensBrutosAtuais=[]; assinaturaAnterior='';
       if(sel) sel.value='';
       await popularSelect();
       renderizar(); atualizarAcoesAuditoria();
@@ -633,6 +669,7 @@
     auditoriaAtual='';
     metaAtual=null;
     itensAtuais=[];
+    itensBrutosAtuais=[];
     atualizarAcoesAuditoria();
   };
   window.recarregarAuditoriaAposTrocaLoja=async function(){
@@ -640,12 +677,24 @@
     auditoriaAtual='';
     metaAtual=null;
     itensAtuais=[];
+    itensBrutosAtuais=[];
     atualizarAcoesAuditoria();
     await popularSelect();
     const sel=document.getElementById('aud-op-auditoria');
     const first=(sel&&sel.value)||'';
     if(first) await selecionarAuditoria(first); else renderizar();
   };
+
+
+  function reprocessarItensComProdutos(){
+    if(!itensBrutosAtuais.length) return;
+    const nova=itensBrutosAtuais.map(x=>normalizarItem(x.raw,x.id));
+    const sig=assinatura(nova);
+    itensAtuais=nova;
+    assinaturaAnterior=sig;
+    renderizar();
+  }
+  window.addEventListener('dt-produtos-atualizados',reprocessarItensComProdutos);
 
   document.addEventListener('DOMContentLoaded', () => {
     const sel=document.getElementById('aud-op-auditoria');

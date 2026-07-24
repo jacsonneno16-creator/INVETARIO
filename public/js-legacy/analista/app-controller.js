@@ -44,7 +44,7 @@
             if (metaSource !== 'ui-render')
                 scheduleRender();
             if (DivergenciaService.deveReprocessar(action === null || action === void 0 ? void 0 : action.type) && DivergenciaService.afetaFluxoDeContagem(action)) {
-                var changed = prevState.contagens !== state.contagens || prevState.recontagens !== state.recontagens;
+                var changed = prevState.contagens !== state.contagens;
                 if (changed && metaSource !== 'business-reprocess')
                     scheduleBusinessReprocess();
             }
