@@ -55,6 +55,9 @@
       return locais;
     } catch (erro) {
       console.warn('[AUDITORIA] Falha ao carregar Base Geral de Endereços:', erro);
+      if((erro && (erro.code==='permission-denied' || /permission/i.test(erro.message||''))) || !AUTH.currentUser){
+        throw new Error('Sessão expirada ou sem permissão no Firebase. Volte ao login e entre novamente.');
+      }
       try {
         const cache = JSON.parse(localStorage.getItem(cacheKey) || '[]');
         APP.locaisAtivos = new Set(cache);
@@ -220,6 +223,11 @@
 
   window.selecionarAuditoriaMenu = async function(auditoriaId){
     if(APP._auditoriaCarregando) return;
+    if(!window.AUTH || !AUTH.currentUser){
+      APP._auditoriaPronta=false; APP._auditoriaCarregando=false; APP.operador=null;
+      try{ toast('Sua sessão expirou. Entre novamente para baixar a auditoria.','e'); }catch(_){ }
+      goScreen('login'); return;
+    }
     const meta = (APP.auditoriasMenu || []).find(x => x.id === auditoriaId);
     if (!meta) { toast('Auditoria não encontrada', 'e'); return; }
     APP._auditoriaCarregando=true;

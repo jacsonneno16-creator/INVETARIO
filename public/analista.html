@@ -3245,41 +3245,9 @@ table td{padding:8px 10px!important;vertical-align:middle}
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 <!-- ══════════ JAVASCRIPT ══════════ -->
-<script id="dt-login-bridge">
-(function(){
-  if(typeof window.doLoginAnalista==='function') return;
-  function bridgeLogin(){
-    var btn=document.getElementById('btn-login-analista');
-    var err=document.getElementById('an-login-erro');
-    if(btn){ btn.disabled=true; btn.textContent='CARREGANDO...'; }
-    function fail(){
-      if(btn){ btn.disabled=false; btn.textContent='ENTRAR'; }
-      if(err){ err.textContent='Falha ao carregar o módulo de login. Atualize a página e tente novamente.'; err.style.display='block'; }
-    }
-    var existing=document.querySelector('script[data-auth-fallback="1"]');
-    if(existing){
-      setTimeout(function(){
-        if(typeof window.doLoginAnalista==='function' && window.doLoginAnalista!==bridgeLogin) window.doLoginAnalista();
-        else fail();
-      },800);
-      return;
-    }
-    var sc=document.createElement('script');
-    sc.src='js/analista/00-auth-login.js?v=20260724-73';
-    sc.dataset.authFallback='1';
-    sc.onload=function(){
-      if(btn){ btn.disabled=false; btn.textContent='ENTRAR'; }
-      if(typeof window.doLoginAnalista==='function' && window.doLoginAnalista!==bridgeLogin) window.doLoginAnalista();
-      else fail();
-    };
-    sc.onerror=fail;
-    document.head.appendChild(sc);
-  }
-  window.doLoginAnalista=bridgeLogin;
-})();
-</script>
 
-</div><script src="js/shared/common-utils.js?v=20260723-52"></script><script src="js/shared/firebase-shared.js?v=20260722-18"></script><script src="js/shared/enderecos-service.js?v=20260724-88"></script><script src="js/shared/produtos-service.js?v=20260724-88"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/01-core-base-storage.js?v=20260724-74"></script><script src="js/analista/services/inventarioService.js?v=20260723-57"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260724-70"></script><script src="js/analista/firebaseService.js?v=20260724-88"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260723-51"></script><script src="js/analista/03-core-navigation.js?v=20260722-20"></script><script src="js/analista/04-compat-pages.js?v=20260724-73"></script><script src="js/analista/09-fs-publicar.js?v=20260724-88"></script><script src="js/analista/10-inventarios-negocio.js?v=20260723-51"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260724-79"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260724-88"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260724-88"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260724-61"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260724-61"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260724-78"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260724-70"></script><script src="js/analista/33-render-enderecos.js?v=20260724-88"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-20"></script><script src="js/analista/35-coletores-render.js?v=20260724-61"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260724-88"></script><script src="js/analista/39-base-produtos.js?v=20260724-88"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260724-65"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260724-88"></script>
+
+</div><script src="js/shared/common-utils.js?v=20260723-52"></script><script src="js/shared/firebase-shared.js?v=20260722-18"></script><script src="js/shared/enderecos-service.js?v=20260724-93"></script><script src="js/shared/produtos-service.js?v=20260724-93"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/01-core-base-storage.js?v=20260724-74"></script><script src="js/analista/services/inventarioService.js?v=20260723-57"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260724-70"></script><script src="js/analista/firebaseService.js?v=20260724-93"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260723-51"></script><script src="js/analista/03-core-navigation.js?v=20260722-20"></script><script src="js/analista/04-compat-pages.js?v=20260724-73"></script><script src="js/analista/09-fs-publicar.js?v=20260724-93"></script><script src="js/analista/10-inventarios-negocio.js?v=20260723-51"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260724-79"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260724-93"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260724-93"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260724-61"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260724-61"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260724-78"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260724-70"></script><script src="js/analista/33-render-enderecos.js?v=20260724-93"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-20"></script><script src="js/analista/35-coletores-render.js?v=20260724-61"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260724-93"></script><script src="js/analista/39-base-produtos.js?v=20260724-93"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260724-65"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260724-93"></script>
 <div class="modal-bg" id="modal-loja-cadastro"><div class="modal" style="max-width:480px">
   <div class="modal-title">🏪 <span id="ml-title">Cadastrar loja</span></div>
   <input type="hidden" id="ml-id"/>
@@ -3288,7 +3256,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260722-19"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260724-61"></script><script src="js/analista/42-topbar-tools.js?v=20260724-90"></script><script src="js/analista/app-controller.js?v=20260724-79"></script><script src="js/analista/00-auth-login.js?v=20260724-73"></script>
+<script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260722-19"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260724-61"></script><script src="js/analista/42-topbar-tools.js?v=20260724-93"></script><script src="js/analista/app-controller.js?v=20260724-79"></script><script src="js/analista/00-auth-login.js?v=20260724-93"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}.dash-compare-row{border:0;background:transparent;width:100%;display:grid;grid-template-columns:minmax(150px,260px) 1fr;gap:16px;align-items:center;text-align:left;padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border);border-radius:12px;transition:background .16s ease,transform .16s ease}.dash-compare-row:hover{background:var(--surface-2);transform:translateX(3px)}.dash-compare-label{font-weight:750;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dash-compare-bars{display:grid;gap:8px}.dash-compare-line{display:grid;grid-template-columns:72px 1fr 46px;gap:8px;align-items:center;height:26px}.dash-compare-line i{font-style:normal;font-size:.62rem;color:var(--muted)}.dash-compare-line b{display:block;height:18px;border-radius:999px;min-width:0;transition:width .35s ease;position:relative;box-shadow:0 2px 6px rgba(15,23,42,.18)}.dash-compare-line b::after{content:'';position:absolute;inset:0;border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.32),rgba(255,255,255,0) 55%)}.dash-compare-line em{font-style:normal;text-align:right;font-size:.72rem;font-weight:800}
 /* Card com rolagem interna — evita gráficos gigantes quando há muitas ruas/produtos */

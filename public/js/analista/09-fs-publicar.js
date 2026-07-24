@@ -52,9 +52,9 @@
    * Publica endereços do ENDDB no Firestore (dt_locais).
    * Usa batch para eficiência (max 500 ops por batch).
    */
-  async function fsPublicarEnderecos() {
+  async function fsPublicarEnderecos(listaForcada) {
     if (!navigator.onLine) throw new Error('Sem conexão com a internet.');
-    const lista = state().enderecosLista || [];
+    const lista = Array.isArray(listaForcada) ? listaForcada : (state().enderecosLista || []);
     const CHUNK_SIZE = 1000;
     const chunksColl = FS_AN.collection('dt_locais_chunks');
     const metaRef = FS_AN.collection('dt_locais_meta').doc('versao');

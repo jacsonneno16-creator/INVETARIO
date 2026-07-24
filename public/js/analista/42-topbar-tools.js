@@ -68,12 +68,25 @@
     if(btn){btn.disabled=true;btn.innerHTML='⏳ Sincronizando...';}
     try{
       var st=state(), inventarios=arr(st.inventarios), publicados=0;
+      var listaEstado=arr(st.enderecosLista);
+      var listaStorage=[];
+      try{ if(global.storageLoad&&global.KEYS) listaStorage=arr(global.storageLoad(global.KEYS.enderecos)); }catch(_e){}
+      var listaEnddb=[];
+      try{ listaEnddb=global.ENDDB&&Array.isArray(global.ENDDB.lista)?global.ENDDB.lista:[]; }catch(_e2){}
+      var listaEnderecos=listaEstado;
+      if(listaStorage.length>listaEnderecos.length) listaEnderecos=listaStorage;
+      if(listaEnddb.length>listaEnderecos.length) listaEnderecos=listaEnddb;
+      console.log('[SYNC] Endereços disponíveis — estado:',listaEstado.length,'storage:',listaStorage.length,'ENDDB:',listaEnddb.length,'selecionados:',listaEnderecos.length);
+      if(!listaEnderecos.length) throw new Error('Nenhum endereço disponível para publicar. Abra a aba Endereços e confirme a base importada.');
       for(var i=0;i<inventarios.length;i++){
         var inv=inventarios[i];
         if(inv&&inv.id&&typeof global.fsPublicarInventario==='function'){await global.fsPublicarInventario(inv);publicados++;}
       }
       var endResultado=null;
-      if(typeof global.fsPublicarEnderecos==='function') endResultado=await global.fsPublicarEnderecos();
+      if(typeof global.fsPublicarEnderecos!=='function') throw new Error('Função de publicação de endereços não carregada.');
+      console.log('[SYNC] Publicando Base Geral de Endereços...');
+      endResultado=await global.fsPublicarEnderecos(listaEnderecos);
+      console.log('[SYNC] Endereços publicados:',endResultado&&endResultado.chunks,'chunks /',endResultado&&endResultado.total,'endereços / versão',endResultado&&endResultado.versao);
       if(typeof global.publicarChunksProdutos==='function') await global.publicarChunksProdutos();
       var checks=await Promise.all([
         verificarBase('dt_locais_meta','dt_locais_chunks','total'),

@@ -5,16 +5,19 @@
 function state(){ return window.AnalistaStore.getState(); }
 
 // ── FIREBASE ─────────────────────────────────────────────────────────
-getDTFirebaseApp();
-const FS_AN   = getDTFirestore();
-const AUTH_AN = getDTAuth();
+if (typeof window.getDTFirebaseApp !== 'function' || typeof window.getDTFirestore !== 'function' || typeof window.getDTAuth !== 'function') {
+  throw new Error('Firebase compartilhado não carregou antes do módulo de login.');
+}
+window.getDTFirebaseApp();
+var FS_AN   = window.getDTFirestore();
+var AUTH_AN = window.getDTAuth();
 // Exposto explicitamente em window pois firebaseService.js acessa via global.FS_AN
 window.FS_AN   = FS_AN;
 window.AUTH_AN = AUTH_AN;
 
 window._currentAnalistaUser = null;
-let _loginSolicitadoPeloUsuario = false;
-const DT_LOGIN_MEM_KEY = 'dt_analista_login_lembrado_v1';
+var _loginSolicitadoPeloUsuario = false;
+var DT_LOGIN_MEM_KEY = 'dt_analista_login_lembrado_v1';
 
 function _normalizarEmailAnalista(valor) {
   // Mantém exatamente o e-mail cadastrado no Firebase Authentication.

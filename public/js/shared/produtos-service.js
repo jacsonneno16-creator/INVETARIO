@@ -16,7 +16,7 @@
     return u||'OUTRO';
   }
   function produto(raw,id){
-    var nome=texto(raw.nomeProduto||raw.nome_produto||raw.produto||raw.descricao);
+    var nome=texto(raw.nomeProduto||raw.nome_produto||raw.produto||raw.descricao_produto||raw.descricaoProduto||raw.descricao);
     var unidade=texto(raw.unidade||raw.un||raw.embalagem);
     var fam=inferirFamilia(nome,unidade);
     var gtin=texto(raw.gtin||raw.ean||raw.gtin_principal||raw.gtinPrincipal||raw.gtin_ean||raw.ean_gtin||raw.codigo_barras||raw.codigo_de_barras||raw.codigoBarras||raw.barcode);

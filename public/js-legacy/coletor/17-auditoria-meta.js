@@ -487,3 +487,6 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             subt.textContent = 'Selecione a auditoria liberada para conferência';
     });
 })();
+
+// v91: bloqueia download quando a sessão Firebase expirou.
+(function(){var original=window.selecionarAuditoriaMenu;window.selecionarAuditoriaMenu=function(auditoriaId){if(!window.AUTH||!AUTH.currentUser){try{APP._auditoriaPronta=false;APP._auditoriaCarregando=false;APP.operador=null;}catch(e){}try{toast('Sua sessão expirou. Entre novamente para baixar a auditoria.','e');}catch(e){}try{goScreen('login');}catch(e){}return Promise.resolve();}return original.apply(this,arguments);};})();

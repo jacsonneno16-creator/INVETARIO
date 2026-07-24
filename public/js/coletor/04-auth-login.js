@@ -404,3 +404,6 @@ function _doLogoutConfirmado() {
 }
 
 
+
+// v91: não mantém telas operacionais abertas sem autenticação válida.
+(function(){try{AUTH.onAuthStateChanged(function(user){if(user)return;try{APP._auditoriaPronta=false;APP._auditoriaCarregando=false;APP.operador=null;}catch(e){}var ativa=document.querySelector('.screen.active');if(ativa&&ativa.id&&ativa.id!=='screen-login'){try{goScreen('login');}catch(e){}}});}catch(e){}})();

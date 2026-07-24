@@ -3,7 +3,10 @@
 // ═══════════════════════════════════════════════════
 function goScreen(id) {
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
-  document.getElementById('screen-'+id).classList.add('active');
+  const alvo=document.getElementById('screen-'+id);
+  if(!alvo){ console.warn('[Navegacao] Tela inexistente:',id); return false; }
+  alvo.classList.add('active');
+  return true;
 }
 // ═══════════════════════════════════════════════════
 //  ↩️  ESTORNO DE CONTAGENS
