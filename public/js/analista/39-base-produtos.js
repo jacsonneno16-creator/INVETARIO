@@ -31,7 +31,7 @@ async function publicarChunksProdutos(){
   const idsNovos=new Set();
   const opsNovas=[];
   for(let i=0;i<totalChunks;i++){
-   const ref=fs.collection('dt_produtos_chunks').doc('parte_'+String(i+1).padStart(4,'0'));
+   const ref=fs.collection('dt_produtos_chunks').doc('v'+versao+'_'+String(i+1).padStart(4,'0'));
    idsNovos.add(ref.id);
    opsNovas.push({tipo:'set',ref,data:{parte:i+1,totalPartes:totalChunks,totalProdutos:todos.length,versao,itens:todos.slice(i*tamanho,(i+1)*tamanho)}});
   }

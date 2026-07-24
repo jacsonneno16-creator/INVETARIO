@@ -47,11 +47,20 @@
   }
   async function enderecosGerais(){
     try{
-      const chunks=await DB().collection('dt_locais_chunks').orderBy('parte').get();
-      let out=[]; chunks.docs.forEach(d=>{ const x=d.data(); out=out.concat(x.itens||x.enderecos||x.lista||[]); });
-      if(out.length) return out.map(x=>typeof x==='string'?{endereco:x}:x);
-    }catch(e){}
-    try{ const snap=await DB().collection('dt_locais').get(); return snap.docs.map(d=>({id:d.id,...d.data()})); }catch(e){ return []; }
+      const metaSnap=await DB().collection('dt_locais_meta').doc('versao').get();
+      if(!metaSnap.exists) return [];
+      const meta=metaSnap.data()||{};
+      const versao=txt(meta.versao);
+      if(!versao || Number(meta.total||0)===0) return [];
+      const chunks=await DB().collection('dt_locais_chunks').where('versao','==',versao).get();
+      const docs=(chunks.docs||[]).slice().sort((a,b)=>Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0));
+      let out=[];
+      docs.forEach(d=>{ const x=d.data()||{}; out=out.concat(x.dados||x.itens||x.enderecos||x.lista||[]); });
+      return out.map(x=>typeof x==='string'?{endereco:x}:x);
+    }catch(e){
+      console.warn('[AUDITORIA] Falha ao baixar chunks de endereços:',e.message);
+      return [];
+    }
   }
   async function abrirCriacaoAuditoria(){
     // Impede múltiplas aberturas simultâneas. Cliques repetidos eram responsáveis

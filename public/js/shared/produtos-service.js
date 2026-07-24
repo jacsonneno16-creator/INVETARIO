@@ -72,24 +72,19 @@
           cache.versao=versaoServidor;
           return cache.lista;
         }
+        if(!versaoServidor){
+          console.warn('[Produtos] Metadado de versão ausente; mantendo cache local.');
+          if(!cache.carregado||cache.loja!==loja)carregarLocal();
+          return cache.lista;
+        }
         const chunks=await Promise.race([
-          fs.collection('dt_produtos_chunks').orderBy('parte').get(),
+          fs.collection('dt_produtos_chunks').where('versao','==',versaoServidor).get(),
           new Promise(function(_,reject){setTimeout(function(){reject(new Error('Tempo excedido ao carregar chunks de produtos'));},30000);})
         ]);
-        let docs=chunks.docs||[];
-        if(versaoServidor){
-          const daVersao=docs.filter(function(d){return texto((d.data()||{}).versao)===versaoServidor;});
-          if(daVersao.length)docs=daVersao;
-        }
+        const docs=(chunks.docs||[]).slice().sort(function(a,b){return Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0);});
         let rows=[];
-        if(docs.length){
-          docs.forEach(function(d){const x=d.data()||{};const itens=x.itens||x.dados||x.registros||[];rows=rows.concat(itens);});
-          console.log('[Produtos] Base atualizada em chunks:',docs.length,'documentos /',rows.length,'produtos / versão',versaoServidor||'legada');
-        }else{
-          const snap=await fs.collection((global.DT_FCOL&&global.DT_FCOL.produtos)||'dt_produtos').get();
-          rows=snap.docs.map(d=>({id:d.id,...d.data()}));
-          console.warn('[Produtos] Chunks ausentes; usando coleção individual:',rows.length);
-        }
+        docs.forEach(function(d){const x=d.data()||{};const itens=x.itens||x.dados||x.registros||[];rows=rows.concat(itens);});
+        console.log('[Produtos] Base atualizada somente por chunks:',docs.length,'documentos /',rows.length,'produtos / versão',versaoServidor);
         const result=indexar(rows);
         cache.versao=versaoServidor;
         if(versaoServidor)try{localStorage.setItem(versaoKey,versaoServidor);}catch(_e){}

@@ -78,7 +78,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     }
     function _carregarBaseGeralEnderecosAuditoria(forcar) {
         return __awaiter(this, void 0, void 0, function () {
-            var lojaId, cacheKey, locais, chunks, snap, erro_1, cache;
+            var lojaId, cacheKey, locais, versaoServidor, meta, e_1, chunks, docsUsar, erro_1, cache;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -91,17 +91,28 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         _a.label = 1;
                     case 1:
                         _a.trys.push([1, 7, , 8]);
-                        return [4 /*yield*/, FS.collection('dt_locais_meta').doc('versao').get().catch(function () { return null; })];
+                        versaoServidor = '';
+                        _a.label = 2;
                     case 2:
-                        var meta = _a.sent();
-                        var versaoServidor = meta && meta.exists ? String((meta.data() || {}).versao || '') : '';
-                        return [4 /*yield*/, FS.collection('dt_locais_chunks').orderBy('parte').get()];
+                        _a.trys.push([2, 4, , 5]);
+                        return [4 /*yield*/, FS.collection('dt_locais_meta').doc('versao').get()];
                     case 3:
+                        meta = _a.sent();
+                        if (meta.exists)
+                            versaoServidor = String((meta.data() || {}).versao || '');
+                        return [3 /*break*/, 5];
+                    case 4:
+                        e_1 = _a.sent();
+                        return [3 /*break*/, 5];
+                    case 5:
+                        if (!versaoServidor)
+                            throw new Error('Versão da Base Geral de Endereços não encontrada.');
+                        return [4 /*yield*/, FS.collection('dt_locais_chunks').where('versao', '==', versaoServidor).get()];
+                    case 6:
                         chunks = _a.sent();
-                        if (!!chunks.empty) return [3 /*break*/, 4];
-                        var todosDocs = chunks.docs;
-                        var docsDaVersao = versaoServidor ? todosDocs.filter(function (d) { return String((d.data() || {}).versao || '') === versaoServidor; }) : [];
-                        var docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(function (d) { return !(d.data() || {}).versao; });
+                        if (chunks.empty)
+                            throw new Error('Base Geral de Endereços em chunks não publicada para a versão atual.');
+                        docsUsar = chunks.docs.slice().sort(function (a, b) { return Number((a.data() || {}).parte || 0) - Number((b.data() || {}).parte || 0); });
                         docsUsar.forEach(function (doc) {
                             var dados = doc.data() || {};
                             var itens = dados.dados || dados.itens || dados.registros || [];
@@ -113,20 +124,6 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                                     locais.add(endereco);
                             });
                         });
-                        return [3 /*break*/, 6];
-                    case 4: return [4 /*yield*/, FS.collection(FCOL.locais).get()];
-                    case 5:
-                        snap = _a.sent();
-                        snap.docs.forEach(function (doc) {
-                            var item = doc.data() || {};
-                            if (item.ativo === false)
-                                return;
-                            var endereco = _normalizarEnderecoGeral(item.endereco || item.endereco_norm || item.codigo_endereco || doc.id);
-                            if (endereco)
-                                locais.add(endereco);
-                        });
-                        _a.label = 6;
-                    case 6:
                         APP.locaisAtivos = locais;
                         APP._locaisDoFirebase = true;
                         try {
@@ -334,104 +331,148 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         renderAuditoriaColetor();
     };
     window.selecionarAuditoriaMenu = function (auditoriaId) {
-        if (APP._auditoriaCarregando)
-            return;
-        var meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId; });
-        if (!meta) {
-            toast('Auditoria não encontrada', 'e');
-            return;
-        }
-        APP._auditoriaCarregando = true;
-        APP._auditoriaPronta = false;
-        var token = (APP._auditoriaCargaToken || 0) + 1;
-        APP._auditoriaCargaToken = token;
-        APP.modoPendente = 'auditoria';
-        APP.modoAcesso = 'auditoria';
-        APP.inventario = { id: auditoriaId, nome: meta.auditoria_nome || auditoriaId, status: 'ATIVO', auditoria_id: auditoriaId };
-        APP.base = [];
-        APP.auditoriaBase = [];
-        APP.contagens = [];
-        _prepararTelaDownloadAuditoria(meta);
-        var produtosLista = [];
-        if (typeof _dlStep === 'function')
-            _dlStep('aud-prod', '📦', 'Base Geral de Produtos', 'Baixando produtos, GTIN, EAN e DUN…', 'run');
-        if (typeof _dlProg === 'function')
-            _dlProg(10, 'Baixando Base Geral de Produtos…');
-        var p = Promise.resolve().then(function () {
-            if (!window.DTProdutos || typeof window.DTProdutos.carregar !== 'function')
-                throw new Error('Serviço da Base Geral de Produtos não foi carregado.');
-            return window.DTProdutos.carregar(false);
-        }).then(function (produtos) {
-            if (token !== APP._auditoriaCargaToken)
-                throw { cancelado: true };
-            produtosLista = produtos || [];
-            var totalProdutos = produtosLista.filter(function (p) { return p && p.ativo !== false; }).length;
-            if (!totalProdutos)
-                throw new Error('A Base Geral de Produtos está vazia ou não pôde ser baixada. Atualize a base antes de iniciar a auditoria.');
-            if (typeof _dlStep === 'function')
-                _dlStep('aud-prod', '📦', 'Base Geral de Produtos', totalProdutos + ' produtos carregados', 'ok');
-            if (typeof _dlStep === 'function')
-                _dlStep('aud-end', '📍', 'Base Geral de Endereços', 'Baixando endereços da loja…', 'run');
-            if (typeof _dlProg === 'function')
-                _dlProg(45, 'Baixando Base Geral de Endereços…');
-            return _carregarBaseGeralEnderecosAuditoria(false);
-        }).then(function (locais) {
-            if (token !== APP._auditoriaCargaToken)
-                throw { cancelado: true };
-            var totalLocais = locais && typeof locais.size === 'number' ? locais.size : 0;
-            if (!totalLocais)
-                throw new Error('A Base Geral de Endereços está vazia ou não pôde ser baixada. Atualize a base antes de iniciar a auditoria.');
-            if (typeof _dlStep === 'function')
-                _dlStep('aud-end', '📍', 'Base Geral de Endereços', totalLocais + ' endereços carregados', 'ok');
-            if (typeof _dlStep === 'function')
-                _dlStep('aud-base', '📝', 'Base da Auditoria', 'Baixando endereços pendentes…', 'run');
-            if (typeof _dlProg === 'function')
-                _dlProg(75, 'Baixando Base da Auditoria…');
-            return _carregarEnderecoAuditoria(auditoriaId);
-        }).then(function (lista) {
-            if (token !== APP._auditoriaCargaToken)
-                throw { cancelado: true };
-            APP.auditorias = lista || [];
-            if (typeof _dlStep === 'function')
-                _dlStep('aud-base', '📝', 'Base da Auditoria', APP.auditorias.length + ' endereços pendentes', 'ok');
-            if (typeof _dlProg === 'function')
-                _dlProg(100, 'Todas as informações foram carregadas.');
-            APP._auditoriaPronta = true;
-            var entrar = document.getElementById('dl-btn-entrar');
-            if (entrar) {
-                entrar.style.display = '';
-                entrar.textContent = 'OK — iniciar auditoria';
-                entrar.onclick = window.entrarAuditoriaCarregada;
-            }
-            var cancelar = document.getElementById('dl-btn-cancel');
-            if (cancelar)
-                cancelar.style.display = 'none';
-            var status = document.getElementById('dl-status-txt');
-            if (status)
-                status.textContent = 'Carregamento concluído. Toque em OK para continuar.';
-        }).catch(function (err) {
-            if (err && err.cancelado)
-                return;
-            console.error('[AUDITORIA] Falha ao preparar auditoria:', err);
-            APP._auditoriaPronta = false;
-            if (typeof _dlSetErro === 'function')
-                _dlSetErro((err && err.message) || String(err));
-            else
-                toast('Erro ao abrir auditoria: ' + ((err && err.message) || err), 'e');
-            var cancelar = document.getElementById('dl-btn-cancel');
-            if (cancelar) {
-                cancelar.style.display = '';
-                cancelar.textContent = 'Voltar';
-                cancelar.onclick = window.cancelarDownloadAuditoria;
-            }
-            var entrar = document.getElementById('dl-btn-entrar');
-            if (entrar)
-                entrar.style.display = 'none';
-        }).then(function () {
-            if (token === APP._auditoriaCargaToken)
-                APP._auditoriaCarregando = false;
+        return __awaiter(this, void 0, void 0, function () {
+            var meta, token, produtos, totalProdutos, locais, totalLocais, _a, totalAud, entrar, cancelar, status_1, err_1, cancelar, entrar;
+            return __generator(this, function (_b) {
+                switch (_b.label) {
+                    case 0:
+                        if (APP._auditoriaCarregando)
+                            return [2 /*return*/];
+                        meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId; });
+                        if (!meta) {
+                            toast('Auditoria não encontrada', 'e');
+                            return [2 /*return*/];
+                        }
+                        APP._auditoriaCarregando = true;
+                        APP._auditoriaPronta = false;
+                        token = (APP._auditoriaCargaToken || 0) + 1;
+                        APP._auditoriaCargaToken = token;
+                        APP.modoPendente = 'auditoria';
+                        APP.modoAcesso = 'auditoria';
+                        APP.inventario = { id: auditoriaId, nome: meta.auditoria_nome || auditoriaId, status: 'ATIVO', auditoria_id: auditoriaId };
+                        APP.base = [];
+                        APP.auditoriaBase = [];
+                        APP.contagens = [];
+                        _prepararTelaDownloadAuditoria(meta);
+                        _b.label = 1;
+                    case 1:
+                        _b.trys.push([1, 11, 12, 13]);
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-prod', '📦', 'Base Geral de Produtos', 'Baixando produtos, GTIN, EAN e DUN…', 'run');
+                        if (typeof _dlProg === 'function')
+                            _dlProg(10, 'Baixando Base Geral de Produtos…');
+                        if (!window.DTProdutos || typeof window.DTProdutos.carregar !== 'function')
+                            throw new Error('Serviço da Base Geral de Produtos não foi carregado.');
+                        return [4 /*yield*/, window.DTProdutos.carregar(false)];
+                    case 2:
+                        produtos = _b.sent();
+                        if (token !== APP._auditoriaCargaToken)
+                            return [2 /*return*/];
+                        totalProdutos = (produtos || []).filter(function (p) { return p && p.ativo !== false; }).length;
+                        if (!!totalProdutos) return [3 /*break*/, 5];
+                        // Uma falha passageira de rede pode ter derrubado o download antes da hora —
+                        // tenta mais uma vez forçando atualização antes de dizer que está vazia.
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-prod', '📦', 'Base Geral de Produtos', 'Nova tentativa…', 'run');
+                        return [4 /*yield*/, new Promise(function (r) { return setTimeout(r, 1500); })];
+                    case 3:
+                        _b.sent();
+                        return [4 /*yield*/, window.DTProdutos.carregar(true)];
+                    case 4:
+                        produtos = _b.sent();
+                        if (token !== APP._auditoriaCargaToken)
+                            return [2 /*return*/];
+                        totalProdutos = (produtos || []).filter(function (p) { return p && p.ativo !== false; }).length;
+                        _b.label = 5;
+                    case 5:
+                        if (!totalProdutos)
+                            throw new Error('Não foi possível baixar a Base Geral de Produtos (verifique a conexão com a internet e tente novamente). Se o problema continuar, confirme com o analista se a base de produtos foi publicada.');
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-prod', '📦', 'Base Geral de Produtos', totalProdutos + ' produtos carregados', 'ok');
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-end', '📍', 'Base Geral de Endereços', 'Baixando endereços da loja…', 'run');
+                        if (typeof _dlProg === 'function')
+                            _dlProg(45, 'Baixando Base Geral de Endereços…');
+                        return [4 /*yield*/, _carregarBaseGeralEnderecosAuditoria(false)];
+                    case 6:
+                        locais = _b.sent();
+                        if (token !== APP._auditoriaCargaToken)
+                            return [2 /*return*/];
+                        totalLocais = locais && typeof locais.size === 'number' ? locais.size : 0;
+                        if (!!totalLocais) return [3 /*break*/, 9];
+                        // Idem: pode ser uma falha passageira de rede — tenta mais uma vez antes de desistir.
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-end', '📍', 'Base Geral de Endereços', 'Nova tentativa…', 'run');
+                        return [4 /*yield*/, new Promise(function (r) { return setTimeout(r, 1500); })];
+                    case 7:
+                        _b.sent();
+                        return [4 /*yield*/, _carregarBaseGeralEnderecosAuditoria(true)];
+                    case 8:
+                        locais = _b.sent();
+                        if (token !== APP._auditoriaCargaToken)
+                            return [2 /*return*/];
+                        totalLocais = locais && typeof locais.size === 'number' ? locais.size : 0;
+                        _b.label = 9;
+                    case 9:
+                        if (!totalLocais)
+                            throw new Error('Não foi possível baixar a Base Geral de Endereços (verifique a conexão com a internet e tente novamente). Se o problema continuar, confirme com o analista se os endereços foram publicados.');
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-end', '📍', 'Base Geral de Endereços', totalLocais + ' endereços carregados', 'ok');
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-base', '📝', 'Base da Auditoria', 'Baixando endereços pendentes…', 'run');
+                        if (typeof _dlProg === 'function')
+                            _dlProg(75, 'Baixando Base da Auditoria…');
+                        _a = APP;
+                        return [4 /*yield*/, _carregarEnderecoAuditoria(auditoriaId)];
+                    case 10:
+                        _a.auditorias = _b.sent();
+                        if (token !== APP._auditoriaCargaToken)
+                            return [2 /*return*/];
+                        totalAud = (APP.auditorias || []).length;
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-base', '📝', 'Base da Auditoria', totalAud + ' endereços pendentes', 'ok');
+                        if (typeof _dlProg === 'function')
+                            _dlProg(100, 'Todas as informações foram carregadas.');
+                        APP._auditoriaPronta = true;
+                        entrar = document.getElementById('dl-btn-entrar');
+                        if (entrar) {
+                            entrar.style.display = '';
+                            entrar.textContent = 'OK — iniciar auditoria';
+                            entrar.onclick = window.entrarAuditoriaCarregada;
+                        }
+                        cancelar = document.getElementById('dl-btn-cancel');
+                        if (cancelar)
+                            cancelar.style.display = 'none';
+                        status_1 = document.getElementById('dl-status-txt');
+                        if (status_1)
+                            status_1.textContent = 'Carregamento concluído. Toque em OK para continuar.';
+                        return [3 /*break*/, 13];
+                    case 11:
+                        err_1 = _b.sent();
+                        console.error('[AUDITORIA] Falha ao preparar auditoria:', err_1);
+                        APP._auditoriaPronta = false;
+                        if (typeof _dlSetErro === 'function')
+                            _dlSetErro(err_1.message || String(err_1));
+                        else
+                            toast('Erro ao abrir auditoria: ' + (err_1.message || err_1), 'e');
+                        cancelar = document.getElementById('dl-btn-cancel');
+                        if (cancelar) {
+                            cancelar.style.display = '';
+                            cancelar.textContent = 'Voltar';
+                            cancelar.onclick = window.cancelarDownloadAuditoria;
+                        }
+                        entrar = document.getElementById('dl-btn-entrar');
+                        if (entrar)
+                            entrar.style.display = 'none';
+                        return [3 /*break*/, 13];
+                    case 12:
+                        if (token === APP._auditoriaCargaToken)
+                            APP._auditoriaCarregando = false;
+                        return [7 /*endfinally*/];
+                    case 13: return [2 /*return*/];
+                }
+            });
         });
-        return p;
     };
     var _oldVoltar = window._voltarInventarioConfirmado;
     window._voltarInventarioConfirmado = function () {

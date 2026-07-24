@@ -512,7 +512,7 @@ function entrarInventario() {
 // ─── Motor de download ────────────────────────────────────────
 function _executarDownload(inv) {
     return __awaiter(this, void 0, void 0, function () {
-        var invId, baseLocal, docData, snap, e_2, nChunks, baseRaw, cSnap, total, i, itens, pct, e_3, baseNorm, endCapMapa, _forceLocaisRefresh, versaoServidor, metaDoc, e_4, versaoLocal, _cacheValido, raw, rawSet, motivo, locaisSet_1, chunksSnap, locSnap, e_5, raw, rawSet, comLimite;
+        var invId, baseLocal, docData, snap, e_2, nChunks, baseRaw, cSnap, total, i, itens, pct, e_3, baseNorm, endCapMapa, _forceLocaisRefresh, versaoServidor, metaDoc, e_4, versaoLocal, _cacheValido, raw, rawSet, motivo, locaisSet_1, chunksSnap, docsUsar, e_5, raw, rawSet, comLimite;
         var _a, _b;
         return __generator(this, function (_c) {
             switch (_c.label) {
@@ -682,7 +682,7 @@ function _executarDownload(inv) {
                     catch (e) {
                         APP.locaisAtivos = new Set(baseNorm.map(function (r) { return r._end; }).filter(Boolean));
                     }
-                    return [3 /*break*/, 22];
+                    return [3 /*break*/, 19];
                 case 15:
                     motivo = _forceLocaisRefresh ? 'atualização manual' : ('local=' + versaoLocal + ' servidor=' + versaoServidor);
                     dbg('[dt_locais] download necessário —', motivo);
@@ -690,14 +690,17 @@ function _executarDownload(inv) {
                     locaisSet_1 = new Set();
                     _c.label = 16;
                 case 16:
-                    _c.trys.push([16, 21, , 22]);
-                    return [4 /*yield*/, FS.collection('dt_locais_chunks').orderBy('parte').get()];
+                    _c.trys.push([16, 18, , 19]);
+                    // v15: leitura principal por chunks de 1000 endereços.
+                    // Reduz leituras de N endereços para aproximadamente N/1000 documentos.
+                    if (!versaoServidor)
+                        throw new Error('Versão da Base Geral de Endereços não encontrada.');
+                    return [4 /*yield*/, FS.collection('dt_locais_chunks').where('versao', '==', versaoServidor).get()];
                 case 17:
                     chunksSnap = _c.sent();
-                    if (!!chunksSnap.empty) return [3 /*break*/, 18];
-                    var todosDocs = chunksSnap.docs;
-                    var docsDaVersao = versaoServidor ? todosDocs.filter(function (d) { return String((d.data() || {}).versao || '') === versaoServidor; }) : [];
-                    var docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(function (d) { return !(d.data() || {}).versao; });
+                    if (chunksSnap.empty)
+                        throw new Error('Base de endereços em chunks não publicada para a versão atual.');
+                    docsUsar = chunksSnap.docs.slice().sort(function (a, b) { return Number((a.data() || {}).parte || 0) - Number((b.data() || {}).parte || 0); });
                     docsUsar.forEach(function (chunkDoc) {
                         var dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
                         dados.forEach(function (d) {
@@ -713,25 +716,6 @@ function _executarDownload(inv) {
                                 endCapMapa[end] = cap;
                         });
                     });
-                    return [3 /*break*/, 20];
-                case 18: return [4 /*yield*/, FS.collection(FCOL.locais).get()];
-                case 19:
-                    locSnap = _c.sent();
-                    locSnap.docs.forEach(function (doc) {
-                        var _a, _b, _c, _d, _e, _f;
-                        var d = doc.data();
-                        if (d.ativo === false)
-                            return;
-                        var end = _normStr(d.endereco || doc.id);
-                        if (!end)
-                            return;
-                        locaisSet_1.add(end);
-                        var cap = parseInt((_f = (_e = (_d = (_c = (_b = (_a = d.capacidade_paletes) !== null && _a !== void 0 ? _a : d.capacidade_pallets) !== null && _b !== void 0 ? _b : d.capacidade_palete) !== null && _c !== void 0 ? _c : d.capacidade_pallet) !== null && _d !== void 0 ? _d : d.capacidade) !== null && _e !== void 0 ? _e : d.max_pallets) !== null && _f !== void 0 ? _f : 0);
-                        if (cap > 0)
-                            endCapMapa[end] = cap;
-                    });
-                    _c.label = 20;
-                case 20:
                     // Persistir cache + versão
                     try {
                         localStorage.setItem(LS_LOCAIS, JSON.stringify(endCapMapa));
@@ -743,8 +727,8 @@ function _executarDownload(inv) {
                     APP.locaisAtivos = locaisSet_1;
                     APP._locaisDoFirebase = true;
                     dbg('[dt_locais] baixado:', locaisSet_1.size, 'endereços | cap:', Object.keys(endCapMapa).length, '| ver:', versaoServidor);
-                    return [3 /*break*/, 22];
-                case 21:
+                    return [3 /*break*/, 19];
+                case 18:
                     e_5 = _c.sent();
                     console.warn('[dt_locais] falha no download — restaurando cache:', e_5.message);
                     try {
@@ -764,8 +748,8 @@ function _executarDownload(inv) {
                     }
                     if (!Object.keys(endCapMapa).length)
                         endCapMapa = _recalcularEndCap(baseNorm);
-                    return [3 /*break*/, 22];
-                case 22:
+                    return [3 /*break*/, 19];
+                case 19:
                     comLimite = Object.values(endCapMapa).filter(function (v) { return v > 0; }).length;
                     _dlStep('cap', '🏷️', 'Capacidade de pallets', Object.keys(endCapMapa).length + ' endereços · ' + comLimite + ' c/ limite', 'ok');
                     _dlProg(95);
@@ -845,7 +829,6 @@ function voltarInventarios() {
     }
     _voltarInventarioConfirmado();
 }
-
 function _voltarInventarioConfirmado() {
     if (_recListener) {
         try {
@@ -871,6 +854,5 @@ function _voltarInventarioConfirmado() {
     resetContagem();
     goScreen('inventarios');
 }
-
 // Funções específicas de Auditoria são definidas somente em 17-auditoria-meta.js.
 // Este arquivo permanece responsável apenas por Inventário.

@@ -599,41 +599,21 @@ async function _executarDownload(inv) {
     try {
       // v15: leitura principal por chunks de 1000 endereços.
       // Reduz leituras de N endereços para aproximadamente N/1000 documentos.
-      const chunksSnap = await FS.collection('dt_locais_chunks').orderBy('parte').get();
-      if (!chunksSnap.empty) {
-        const todosDocs = chunksSnap.docs;
-        const docsDaVersao = versaoServidor ? todosDocs.filter(d => String((d.data() || {}).versao || '') === versaoServidor) : [];
-        const docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(d => !(d.data() || {}).versao);
-        docsUsar.forEach(chunkDoc => {
-          const dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
-          dados.forEach(d => {
-            if (d.ativo === false) return;
-            const end = _normStr(d.endereco || '');
-            if (!end) return;
-            locaisSet.add(end);
-            const cap = parseInt(
-              d.capacidade_paletes ?? d.capacidade_pallets ?? d.capacidade_palete ??
-              d.capacidade_pallet  ?? d.capacidade         ?? d.max_pallets        ?? 0
-            );
-            if (cap > 0) endCapMapa[end] = cap;
-          });
-        });
-      } else {
-        // Fallback para instalações antigas ainda sem dt_locais_chunks.
-        const locSnap = await FS.collection(FCOL.locais).get();
-        locSnap.docs.forEach(doc => {
-          const d   = doc.data();
+      if (!versaoServidor) throw new Error('Versão da Base Geral de Endereços não encontrada.');
+      const chunksSnap = await FS.collection('dt_locais_chunks').where('versao','==',versaoServidor).get();
+      if (chunksSnap.empty) throw new Error('Base de endereços em chunks não publicada para a versão atual.');
+      const docsUsar = chunksSnap.docs.slice().sort((a,b)=>Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0));
+      docsUsar.forEach(chunkDoc => {
+        const dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
+        dados.forEach(d => {
           if (d.ativo === false) return;
-          const end = _normStr(d.endereco || doc.id);
+          const end = _normStr(d.endereco || '');
           if (!end) return;
           locaisSet.add(end);
-          const cap = parseInt(
-            d.capacidade_paletes ?? d.capacidade_pallets ?? d.capacidade_palete ??
-            d.capacidade_pallet  ?? d.capacidade         ?? d.max_pallets        ?? 0
-          );
+          const cap = parseInt(d.capacidade_paletes ?? d.capacidade_pallets ?? d.capacidade_palete ?? d.capacidade_pallet ?? d.capacidade ?? d.max_pallets ?? 0);
           if (cap > 0) endCapMapa[end] = cap;
         });
-      }
+      });
       // Persistir cache + versão
       try {
         localStorage.setItem(LS_LOCAIS,     JSON.stringify(endCapMapa));

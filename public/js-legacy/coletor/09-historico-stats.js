@@ -133,7 +133,7 @@ function updateStats() {
 // faça um download fresco do dt_locais — sem precisar relogar.
 function atualizarCacheLocais() {
     return __awaiter(this, void 0, void 0, function () {
-        var btn, versaoServidor, metaDoc, e_1, versaoLocal, locaisSet_1, endCapMapa_1, chunksSnap, locSnap, verStr, el, e_2;
+        var btn, versaoServidor, metaDoc, e_1, versaoLocal, locaisSet_1, endCapMapa_1, chunksSnap, docsUsar, verStr, el, e_2;
         var _a, _b;
         return __generator(this, function (_c) {
             switch (_c.label) {
@@ -145,7 +145,7 @@ function atualizarCacheLocais() {
                     }
                     _c.label = 1;
                 case 1:
-                    _c.trys.push([1, 10, 11, 12]);
+                    _c.trys.push([1, 7, 8, 9]);
                     // Verificar conexão
                     if (!navigator.onLine) {
                         toast('Sem conexão — impossível atualizar endereços', 'e');
@@ -173,13 +173,14 @@ function atualizarCacheLocais() {
                     }
                     locaisSet_1 = new Set();
                     endCapMapa_1 = {};
-                    return [4 /*yield*/, FS.collection('dt_locais_chunks').orderBy('parte').get()];
+                    if (!versaoServidor)
+                        throw new Error('Versão da Base Geral de Endereços não encontrada.');
+                    return [4 /*yield*/, FS.collection('dt_locais_chunks').where('versao', '==', versaoServidor).get()];
                 case 6:
                     chunksSnap = _c.sent();
-                    if (!!chunksSnap.empty) return [3 /*break*/, 7];
-                    var todosDocs = chunksSnap.docs;
-                    var docsDaVersao = versaoServidor ? todosDocs.filter(function (d) { return String((d.data() || {}).versao || '') === versaoServidor; }) : [];
-                    var docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(function (d) { return !(d.data() || {}).versao; });
+                    if (chunksSnap.empty)
+                        throw new Error('Base de endereços em chunks não publicada para a versão atual.');
+                    docsUsar = chunksSnap.docs.slice().sort(function (a, b) { return Number((a.data() || {}).parte || 0) - Number((b.data() || {}).parte || 0); });
                     docsUsar.forEach(function (chunkDoc) {
                         var dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
                         dados.forEach(function (d) {
@@ -195,25 +196,6 @@ function atualizarCacheLocais() {
                                 endCapMapa_1[end] = cap;
                         });
                     });
-                    return [3 /*break*/, 9];
-                case 7: return [4 /*yield*/, FS.collection(FCOL.locais).get()];
-                case 8:
-                    locSnap = _c.sent();
-                    locSnap.docs.forEach(function (doc) {
-                        var _a, _b, _c, _d, _e, _f;
-                        var d = doc.data();
-                        if (d.ativo === false)
-                            return;
-                        var end = _normStr ? _normStr(d.endereco || doc.id) : String(d.endereco || doc.id).trim().toUpperCase().replace(/\s+/g, ' ');
-                        if (!end)
-                            return;
-                        locaisSet_1.add(end);
-                        var cap = parseInt((_f = (_e = (_d = (_c = (_b = (_a = d.capacidade_paletes) !== null && _a !== void 0 ? _a : d.capacidade_pallets) !== null && _b !== void 0 ? _b : d.capacidade_palete) !== null && _c !== void 0 ? _c : d.capacidade_pallet) !== null && _d !== void 0 ? _d : d.capacidade) !== null && _e !== void 0 ? _e : d.max_pallets) !== null && _f !== void 0 ? _f : 0);
-                        if (cap > 0)
-                            endCapMapa_1[end] = cap;
-                    });
-                    _c.label = 9;
-                case 9:
                     // Salvar cache
                     try {
                         localStorage.setItem('col_locais', JSON.stringify(endCapMapa_1));
@@ -233,19 +215,19 @@ function atualizarCacheLocais() {
                         el.textContent = verStr;
                     toast('✅ ' + locaisSet_1.size + ' endereços atualizados (' + verStr + ')', 's');
                     dbg('[dt_locais] atualização manual: ' + locaisSet_1.size + ' ends | ver:', versaoServidor);
-                    return [3 /*break*/, 12];
-                case 10:
+                    return [3 /*break*/, 9];
+                case 7:
                     e_2 = _c.sent();
                     toast('Erro ao atualizar endereços: ' + e_2.message, 'e');
                     console.warn('[dt_locais] atualizarCacheLocais erro:', e_2);
-                    return [3 /*break*/, 12];
-                case 11:
+                    return [3 /*break*/, 9];
+                case 8:
                     if (btn) {
                         btn.disabled = false;
                         btn.textContent = '🔄 Atualizar endereços';
                     }
                     return [7 /*endfinally*/];
-                case 12: return [2 /*return*/];
+                case 9: return [2 /*return*/];
             }
         });
     });

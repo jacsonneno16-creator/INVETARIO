@@ -104,43 +104,31 @@
       _emitSync(true, `${docs.length} endereços carregados do Firebase`);
     };
 
-    // A publicação atual grava os endereços em dt_locais_chunks.
-    return global.FS_AN.collection('dt_locais_chunks')
-      .orderBy('parte')
-      .onSnapshot(async snapshot => {
-        const docs = [];
-        snapshot.docs.forEach(doc => {
-          const data = doc.data() || {};
-          const itens = Array.isArray(data.dados) ? data.dados
-                     : Array.isArray(data.itens) ? data.itens : [];
-          itens.forEach((item, index) => docs.push({
-            id: item.id || `${doc.id}_${index}`,
-            ...item
-          }));
-        });
-
-        // Se dt_locais_chunks não existir ou estiver vazio, ler a coleção real
-        // mostrada no Firebase Console: dt_locais.
-        if (!docs.length) {
-          try {
-            const snap = await global.FS_AN.collection('dt_locais').get();
-            aplicar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-            return;
-          } catch (fallbackErr) {
-            console.warn('[FirebaseService] dt_locais fallback vazio:', fallbackErr.message);
-          }
-        }
-        aplicar(docs);
-      }, async err => {
-        console.warn('[FirebaseService] dt_locais_chunks:', err.message);
-        // Compatibilidade com bases antigas publicadas documento a documento.
+    // Escuta somente o metadado (1 leitura). Quando a versão muda, baixa os
+    // chunks correspondentes, com no máximo 1.000 endereços por documento.
+    return global.FS_AN.collection('dt_locais_meta').doc('versao')
+      .onSnapshot(async metaSnap => {
         try {
-          const snap = await global.FS_AN.collection('dt_locais').get();
-          aplicar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        } catch (fallbackErr) {
-          console.warn('[FirebaseService] dt_locais fallback:', fallbackErr.message);
-          _emitSync(false, 'Falha ao carregar endereços do Firebase');
+          if (!metaSnap.exists) { aplicar([]); return; }
+          const meta = metaSnap.data() || {};
+          const versao = String(meta.versao || '');
+          if (!versao || Number(meta.total || 0) === 0) { aplicar([]); return; }
+          const snapshot = await global.FS_AN.collection('dt_locais_chunks').where('versao', '==', versao).get();
+          const ordenados = (snapshot.docs || []).slice().sort((a,b) => Number((a.data()||{}).parte||0) - Number((b.data()||{}).parte||0));
+          const docs = [];
+          ordenados.forEach(doc => {
+            const data = doc.data() || {};
+            const itens = Array.isArray(data.dados) ? data.dados : Array.isArray(data.itens) ? data.itens : [];
+            itens.forEach((item, index) => docs.push({ id: item.id || `${doc.id}_${index}`, ...item }));
+          });
+          aplicar(docs);
+        } catch (err) {
+          console.warn('[FirebaseService] Falha ao carregar chunks de endereços:', err.message);
+          _emitSync(false, 'Falha ao carregar endereços em chunks');
         }
+      }, err => {
+        console.warn('[FirebaseService] dt_locais_meta:', err.message);
+        _emitSync(false, 'Falha ao acompanhar versão dos endereços');
       });
   }
 

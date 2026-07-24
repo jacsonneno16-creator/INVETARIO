@@ -146,14 +146,14 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                     return [2 /*return*/, cache.lista];
                 }
                 cache.carregando = (function () { return __awaiter(_this, void 0, void 0, function () {
-                    var fs, versaoKey, versaoServidor_1, meta, _e_1, versaoLocal, chunks, docs, daVersao, rows_1, snap, result, e_1;
+                    var fs, versaoKey, versaoServidor, meta, _e_1, versaoLocal, chunks, docs, rows_1, result, e_1;
                     return __generator(this, function (_a) {
                         switch (_a.label) {
                             case 0:
-                                _a.trys.push([0, 9, 10, 11]);
+                                _a.trys.push([0, 6, 7, 8]);
                                 fs = global.getDTFirestore();
                                 versaoKey = 'dt_produtos_versao__' + loja;
-                                versaoServidor_1 = '';
+                                versaoServidor = '';
                                 _a.label = 1;
                             case 1:
                                 _a.trys.push([1, 3, , 4]);
@@ -161,7 +161,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             case 2:
                                 meta = _a.sent();
                                 if (meta.exists)
-                                    versaoServidor_1 = texto(meta.data().versao || meta.data().atualizadoEm || '');
+                                    versaoServidor = texto(meta.data().versao || meta.data().atualizadoEm || '');
                                 return [3 /*break*/, 4];
                             case 3:
                                 _e_1 = _a.sent();
@@ -169,52 +169,44 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             case 4:
                                 versaoLocal = localStorage.getItem(versaoKey) || cache.versao || '';
                                 cache.ultimaVerificacao = Date.now();
-                                if (!force && cache.carregado && cache.loja === loja && versaoServidor_1 && versaoLocal === versaoServidor_1) {
-                                    cache.versao = versaoServidor_1;
+                                if (!force && cache.carregado && cache.loja === loja && versaoServidor && versaoLocal === versaoServidor) {
+                                    cache.versao = versaoServidor;
+                                    return [2 /*return*/, cache.lista];
+                                }
+                                if (!versaoServidor) {
+                                    console.warn('[Produtos] Metadado de versão ausente; mantendo cache local.');
+                                    if (!cache.carregado || cache.loja !== loja)
+                                        carregarLocal();
                                     return [2 /*return*/, cache.lista];
                                 }
                                 return [4 /*yield*/, Promise.race([
-                                        fs.collection('dt_produtos_chunks').orderBy('parte').get(),
-                                        new Promise(function (_, reject) { setTimeout(function () { reject(new Error('Tempo excedido ao carregar chunks de produtos')); }, 12000); })
+                                        fs.collection('dt_produtos_chunks').where('versao', '==', versaoServidor).get(),
+                                        new Promise(function (_, reject) { setTimeout(function () { reject(new Error('Tempo excedido ao carregar chunks de produtos')); }, 30000); })
                                     ])];
                             case 5:
                                 chunks = _a.sent();
-                                docs = chunks.docs || [];
-                                if (versaoServidor_1) {
-                                    daVersao = docs.filter(function (d) { return texto((d.data() || {}).versao) === versaoServidor_1; });
-                                    if (daVersao.length)
-                                        docs = daVersao;
-                                }
+                                docs = (chunks.docs || []).slice().sort(function (a, b) { return Number((a.data() || {}).parte || 0) - Number((b.data() || {}).parte || 0); });
                                 rows_1 = [];
-                                if (!docs.length) return [3 /*break*/, 6];
                                 docs.forEach(function (d) { var x = d.data() || {}; var itens = x.itens || x.dados || x.registros || []; rows_1 = rows_1.concat(itens); });
-                                console.log('[Produtos] Base atualizada em chunks:', docs.length, 'documentos /', rows_1.length, 'produtos / versão', versaoServidor_1 || 'legada');
-                                return [3 /*break*/, 8];
-                            case 6: return [4 /*yield*/, fs.collection((global.DT_FCOL && global.DT_FCOL.produtos) || 'dt_produtos').get()];
-                            case 7:
-                                snap = _a.sent();
-                                rows_1 = snap.docs.map(function (d) { return (__assign({ id: d.id }, d.data())); });
-                                console.warn('[Produtos] Chunks ausentes; usando coleção individual:', rows_1.length);
-                                _a.label = 8;
-                            case 8:
+                                console.log('[Produtos] Base atualizada somente por chunks:', docs.length, 'documentos /', rows_1.length, 'produtos / versão', versaoServidor);
                                 result = indexar(rows_1);
-                                cache.versao = versaoServidor_1;
-                                if (versaoServidor_1)
+                                cache.versao = versaoServidor;
+                                if (versaoServidor)
                                     try {
-                                        localStorage.setItem(versaoKey, versaoServidor_1);
+                                        localStorage.setItem(versaoKey, versaoServidor);
                                     }
                                     catch (_e) { }
                                 return [2 /*return*/, result];
-                            case 9:
+                            case 6:
                                 e_1 = _a.sent();
                                 console.warn('[Produtos] Falha ao atualizar base:', e_1);
                                 if (!cache.carregado || cache.loja !== loja)
                                     carregarLocal();
                                 return [2 /*return*/, cache.lista];
-                            case 10:
+                            case 7:
                                 cache.carregando = null;
                                 return [7 /*endfinally*/];
-                            case 11: return [2 /*return*/];
+                            case 8: return [2 /*return*/];
                         }
                     });
                 }); })();
@@ -264,11 +256,8 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         global.addEventListener('dt-loja-alterada', function () {
             limparCache();
             atualizarContadorNav(0);
-            setTimeout(function () {
-                var loja = global.getDTLojaAtiva ? global.getDTLojaAtiva() : '';
-                if (loja && global.getDTFirestore)
-                    carregar(true).catch(function (e) { if (global.console) console.warn('[Produtos] Pré-carga após troca de loja:', e); });
-            }, 250);
+            setTimeout(function () { var _a; if (((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) && global.getDTFirestore)
+                carregar(true).catch(function (e) { console.warn('[Produtos] Pré-carga após troca de loja:', e); }); }, 250);
         });
     }
     function familias() { var mapa = {}; cache.lista.forEach(function (p) { if (!p.ativo)

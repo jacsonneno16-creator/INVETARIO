@@ -35,33 +35,19 @@
         const meta = await FS.collection('dt_locais_meta').doc('versao').get();
         if (meta.exists) versaoServidor = String((meta.data() || {}).versao || '');
       } catch(e) {}
-      const chunks = await FS.collection('dt_locais_chunks').orderBy('parte').get();
-      if (!chunks.empty) {
-        const todosDocs = chunks.docs;
-        const docsDaVersao = versaoServidor ? todosDocs.filter(function(d){ return String((d.data() || {}).versao || '') === versaoServidor; }) : [];
-        const docsSemVersao = todosDocs.filter(function(d){ return !(d.data() || {}).versao; });
-        // Se nenhum chunk bater com a versão do meta (pode acontecer por latência entre a
-        // escrita do meta e a leitura dos chunks) e não houver chunks legados sem versão,
-        // usa todos os chunks existentes em vez de tratar a base como vazia.
-        const docsUsar = docsDaVersao.length ? docsDaVersao : (docsSemVersao.length ? docsSemVersao : todosDocs);
-        docsUsar.forEach(function(doc){
-          const dados = doc.data() || {};
-          const itens = dados.dados || dados.itens || dados.registros || [];
-          itens.forEach(function(item){
-            if (item && item.ativo === false) return;
-            const endereco = _normalizarEnderecoGeral(item && (item.endereco || item.endereco_norm || item.codigo_endereco));
-            if (endereco) locais.add(endereco);
-          });
-        });
-      } else {
-        const snap = await FS.collection(FCOL.locais).get();
-        snap.docs.forEach(function(doc){
-          const item = doc.data() || {};
-          if (item.ativo === false) return;
-          const endereco = _normalizarEnderecoGeral(item.endereco || item.endereco_norm || item.codigo_endereco || doc.id);
+      if (!versaoServidor) throw new Error('Versão da Base Geral de Endereços não encontrada.');
+      const chunks = await FS.collection('dt_locais_chunks').where('versao','==',versaoServidor).get();
+      if (chunks.empty) throw new Error('Base Geral de Endereços em chunks não publicada para a versão atual.');
+      const docsUsar = chunks.docs.slice().sort(function(a,b){ return Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0); });
+      docsUsar.forEach(function(doc){
+        const dados = doc.data() || {};
+        const itens = dados.dados || dados.itens || dados.registros || [];
+        itens.forEach(function(item){
+          if (item && item.ativo === false) return;
+          const endereco = _normalizarEnderecoGeral(item && (item.endereco || item.endereco_norm || item.codigo_endereco));
           if (endereco) locais.add(endereco);
         });
-      }
+      });
       APP.locaisAtivos = locais;
       APP._locaisDoFirebase = true;
       try { localStorage.setItem(cacheKey, JSON.stringify(Array.from(locais))); } catch(e) {}

@@ -55,7 +55,6 @@
   async function fsPublicarEnderecos() {
     if (!navigator.onLine) return;
     const lista = state().enderecosLista || [];
-    if (!lista.length) return;
     try {
       const CHUNK_SIZE = 1000;
       const chunksColl = FS_AN.collection('dt_locais_chunks');
@@ -88,19 +87,8 @@
         });
       }
 
-      // Mantém dt_locais individual como compatibilidade/fallback de consulta pontual.
-      const BATCH_SIZE = 400;
-      for (let i = 0; i < listaNormalizada.length; i += BATCH_SIZE) {
-        const lote = listaNormalizada.slice(i, i + BATCH_SIZE);
-        const batch = FS_AN.batch();
-        lote.forEach(end => {
-          const ref = FS_AN.collection('dt_locais').doc(
-            String(end.endereco).trim().toUpperCase().replace(/[^A-Z0-9._-]/g, '_')
-          );
-          batch.set(ref, end, { merge: true });
-        });
-        await batch.commit();
-      }
+      // A Base Geral é publicada somente em chunks de até 1.000 registros.
+      // Não gravar documento por endereço: isso aumenta leituras e deixa bases antigas residuais.
 
       // Só agora o coletor passa a enxergar a nova versão completa.
       await FS_AN.collection('dt_locais_meta').doc('versao').set({
@@ -122,7 +110,18 @@
           await delBatch.commit();
         }
       }
-      dbg('[fsPublicarEnderecos] ✅', listaNormalizada.length, 'endereços publicados na versão', versao);
+
+      // Limpa a coleção antiga documento a documento. Ela não é mais usada para download.
+      // Isso ocorre somente ao publicar/substituir a base, nunca no carregamento do coletor.
+      const legacy = await FS_AN.collection('dt_locais').get().catch(() => null);
+      if (legacy && !legacy.empty) {
+        for (let i = 0; i < legacy.docs.length; i += 400) {
+          const delBatch = FS_AN.batch();
+          legacy.docs.slice(i, i + 400).forEach(doc => delBatch.delete(doc.ref));
+          await delBatch.commit();
+        }
+      }
+      dbg('[fsPublicarEnderecos] ✅', listaNormalizada.length, 'endereços publicados em chunks na versão', versao);
     } catch(e) {
       console.error('[fsPublicarEnderecos] erro:', e.message);
     }
