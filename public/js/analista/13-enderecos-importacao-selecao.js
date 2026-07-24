@@ -40,6 +40,20 @@ const END_FIELDS = [
 // Estado da importação em andamento
 let _endImport = { headers: [], rows: [], filename: '' };
 
+// Sequência interna de IDs dos endereços.
+// A variável antiga `_idSeq` deixou de existir após a reestruturação e fazia a importação falhar.
+let _enderecoIdSeq = null;
+function _nextEnderecoId() {
+  if (_enderecoIdSeq === null) {
+    const ids = (state().enderecosLista || [])
+      .map(e => parseInt(e && e.id, 10))
+      .filter(n => Number.isFinite(n));
+    _enderecoIdSeq = (ids.length ? Math.max.apply(null, ids) : 0) + 1;
+  }
+  return _enderecoIdSeq++;
+}
+
+
 // ── Helpers de drag/drop para endereços ──────────────────────────────────────
 function endDover(e) { e.preventDefault(); document.getElementById('end-drop-zone').classList.add('drag'); }
 function endDleave()  { document.getElementById('end-drop-zone').classList.remove('drag'); }
@@ -360,7 +374,7 @@ function confirmarImportEnderecos() {
     }
 
     built.push({
-      id:                 _idSeq++,
+      id:                 _nextEnderecoId(),
       endereco,
       loja, local, area, rua, coluna, nivel, sequencia,
       local_area:         local || area || '',
@@ -385,7 +399,7 @@ function confirmarImportEnderecos() {
   _finalizarImportacaoEnderecos(built);
 }
 
-function _finalizarImportacaoEnderecos(built) {
+async function _finalizarImportacaoEnderecos(built) {
   built.forEach(e => _addEndDB(e));
 
   const totalImport = built.length;
@@ -403,7 +417,21 @@ function _finalizarImportacaoEnderecos(built) {
   if (btn) btn.disabled = true;
 
   logSistema('ENDERECO', `${totalImport} endereços importados (${inativos} inativos, ${capZero} cap=0, ${semCap} sem cap)`, {});
-  showToast(`✅ ${totalImport.toLocaleString('pt-BR')} endereços importados${capZero ? ` · ${capZero} inativos (cap=0)` : ''}${semCap ? ` · ${semCap} sem cap` : ''}`, 's');
+
+  // Publicar imediatamente para o coletor. Antes, a importação ficava apenas no navegador
+  // do analista e o coletor continuava enxergando a base vazia até uma sincronização manual.
+  if (typeof window.fsPublicarEnderecos === 'function' && navigator.onLine) {
+    try {
+      showToast(`⏳ ${totalImport.toLocaleString('pt-BR')} endereços importados. Publicando para os coletores...`, 'w');
+      await window.fsPublicarEnderecos();
+      showToast(`✅ ${totalImport.toLocaleString('pt-BR')} endereços importados e publicados para os coletores`, 's');
+    } catch (pubErr) {
+      console.error('[Importação Endereços] Falha ao publicar:', pubErr);
+      showToast(`⚠️ Endereços importados no analista, mas a publicação para o coletor falhou: ${pubErr.message || pubErr}`, 'w');
+    }
+  } else {
+    showToast(`✅ ${totalImport.toLocaleString('pt-BR')} endereços importados${capZero ? ` · ${capZero} inativos (cap=0)` : ''}${semCap ? ` · ${semCap} sem cap` : ''}`, 's');
+  }
 }
 
 /**
@@ -442,7 +470,7 @@ function _addEndDB(e) {
 
   const obj = {
     ...e,
-    id:                 e.id || (_idSeq++),
+    id:                 e.id || _nextEnderecoId(),
     setor,
     rua:                ruaFinal,
     nome_local:         nomLocalFinal,
@@ -504,7 +532,7 @@ function salvarEnderecoManual() {
 
   const nomeLocal = document.getElementById('nem-nome-local')?.value.trim() || '';
   const obj = {
-    id: _idSeq++, endereco,
+    id: _nextEnderecoId(), endereco,
     loja, local, area,
     local_area: local || area || '',   // campo legado
     nome_local: nomeLocal,
@@ -589,3 +617,55 @@ function confirmarSelecaoEnderecos() {
 }
 
 // ───────────────────────────────────────────────────────────────────
+
+// Exportação da Base Geral de Endereços.
+// O botão já existia no HTML, mas a função não estava definida.
+function exportarEnderecos() {
+  const lista = (state().enderecosLista || []).slice();
+  if (!lista.length) {
+    showToast('Nenhum endereço para exportar', 'w');
+    return;
+  }
+
+  const dados = lista.map(e => ({
+    'Endereço': e.endereco || '',
+    'Loja': e.loja || '',
+    'Local': e.local || '',
+    'Nome do Local': e.nome_local || '',
+    'Área': e.area || '',
+    'Rua': e.rua || '',
+    'Coluna': e.coluna || '',
+    'Nível': e.nivel || '',
+    'Sequência': e.sequencia || '',
+    'Tipo': e.tipo || '',
+    'Capacidade Paletes': e.capacidade_paletes === null || e.capacidade_paletes === undefined ? '' : e.capacidade_paletes,
+    'Ativo': e.ativo === false ? 'NÃO' : 'SIM',
+    'Observação': e.observacao || ''
+  }));
+
+  try {
+    if (window.XLSX && XLSX.utils && XLSX.writeFile) {
+      const ws = XLSX.utils.json_to_sheet(dados);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Endereços');
+      XLSX.writeFile(wb, 'base_geral_enderecos.xlsx');
+    } else {
+      const headers = Object.keys(dados[0]);
+      const csv = [headers.join(';')].concat(dados.map(row => headers.map(h => {
+        const v = String(row[h] ?? '').replace(/"/g, '""');
+        return `"${v}"`;
+      }).join(';'))).join('\r\n');
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'base_geral_enderecos.csv';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 0);
+    }
+    showToast(`⬇ ${lista.length.toLocaleString('pt-BR')} endereços exportados`, 's');
+  } catch (err) {
+    console.error('[exportarEnderecos]', err);
+    showToast('Erro ao exportar endereços: ' + (err.message || err), 'e');
+  }
+}
