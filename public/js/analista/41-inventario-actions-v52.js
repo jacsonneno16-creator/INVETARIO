@@ -26,6 +26,29 @@
     return total;
   }
 
+  function aliasesInventario(inv){
+    return [inv&&inv.id,inv&&inv.codigo,inv&&inv.nome,inv&&inv.inventario_id,inv&&inv.inventarioId]
+      .filter(function(v){return v!=null&&String(v).trim();}).map(function(v){return String(v).trim();});
+  }
+
+  async function apagarDocumentosRelacionados(inv){
+    var raw=db(), aliases=aliasesInventario(inv), refs=new Map();
+    var colecoes=['dt_contagens','dt_vazios','dt_divergencias','dt_recontagens'];
+    var campos=['inventario_id','inventarioId'];
+    var consultas=[];
+    colecoes.forEach(function(nome){campos.forEach(function(campo){aliases.forEach(function(alias){
+      consultas.push(raw.collection(nome).where(campo,'==',alias).get().then(function(s){
+        (s.docs||[]).forEach(function(d){refs.set(d.ref.path,d.ref);});
+      }).catch(function(e){console.warn('[Excluir inventário] consulta',nome,campo,alias,e.message);}));
+    });});});
+    await Promise.all(consultas);
+    var lista=Array.from(refs.values());
+    for(var i=0;i<lista.length;i+=400){
+      var b=raw.batch();lista.slice(i,i+400).forEach(function(r){b.delete(r);});await b.commit();
+    }
+    return lista.length;
+  }
+
   async function republicarBaseInventario(id){
     var inv=invById(id);
     if(!inv){ toast('Inventário não encontrado. Atualize a página e tente novamente.','e'); return false; }
@@ -68,44 +91,49 @@
     var inv=invById(id);
     if(!inv){ toast('Inventário não encontrado.','e'); return false; }
     var executar=async function(){
+      var stAntes=state();
       try{
-        var raw=db();
-        if(raw && navigator.onLine){
-          var ref=raw.collection(coll()).doc(id);
-          // Apaga subcoleções conhecidas antes do documento principal.
-          await apagarColecaoEmLotes(ref.collection('base_chunks'));
-          await apagarColecaoEmLotes(ref.collection('contagens'));
-          await apagarColecaoEmLotes(ref.collection('resultados'));
-          await ref.delete().catch(function(e){
-            // Se o documento já não existe, a exclusão local ainda deve continuar.
-            if(e && e.code!=='not-found') throw e;
+        // Remove imediatamente da interface. A limpeza remota continua em seguida,
+        // evitando que a tela pareça travada em bases grandes.
+        var aliases=aliasesInventario(inv);
+        var novo=(stAntes.inventarios||[]).filter(function(x){return String(x.id)!==String(id);});
+        if(global.AnalistaState&&global.AnalistaState.replaceSlice)global.AnalistaState.replaceSlice('inventarios',novo,{source:'excluirInventario-v80'});
+        ['contagens','vazios','divergencias','recontagens'].forEach(function(chave){
+          var arr=(state()[chave]||[]).filter(function(x){
+            var xids=[x.inventario_id,x.inventarioId,x.inventario,x.inv_id].filter(function(v){return v!=null;}).map(String);
+            return !xids.some(function(v){return aliases.includes(v);});
           });
-        }
-        var novo=(state().inventarios||[]).filter(function(x){return x.id!==id;});
-        if(global.AnalistaState && global.AnalistaState.replaceSlice){
-          global.AnalistaState.replaceSlice('inventarios',novo,{source:'excluirInventario-v52'});
-        }
-        // Limpa dados locais relacionados para não reaparecer no acompanhamento.
-        ['contagens','divergencias','recontagens'].forEach(function(chave){
-          var arr=(state()[chave]||[]).filter(function(x){return x.inventario_id!==id && x.inventarioId!==id;});
-          if(global.AnalistaState && global.AnalistaState.replaceSlice) global.AnalistaState.replaceSlice(chave,arr,{source:'excluirInventario-v52'});
+          if(global.AnalistaState&&global.AnalistaState.replaceSlice)global.AnalistaState.replaceSlice(chave,arr,{source:'excluirInventario-v80'});
         });
-        refresh();
-        toast('🗑 Inventário excluído do Analista e do Firebase.','s');
+        refresh();toast('Removendo inventário e dados relacionados…','i');
+        var raw=db();
+        if(raw&&navigator.onLine){
+          var ref=raw.collection(coll()).doc(id);
+          // Excluir o documento principal primeiro tira o inventário dos coletores.
+          await ref.delete().catch(function(e){if(e&&e.code!=='not-found')throw e;});
+          await Promise.all([
+            apagarColecaoEmLotes(ref.collection('base_chunks')),
+            apagarColecaoEmLotes(ref.collection('contagens')),
+            apagarColecaoEmLotes(ref.collection('resultados')),
+            apagarDocumentosRelacionados(inv)
+          ]);
+        }
+        try{global.AnalistaFirebaseService&&global.AnalistaFirebaseService.restart&&await global.AnalistaFirebaseService.restart();}catch(_e){}
+        refresh();toast('🗑 Inventário e registros relacionados excluídos.','s');
         return true;
       }catch(e){
-        console.error('[v52 excluirInventario]',e);
-        toast('Não foi possível excluir: '+(e.message||e),'e');
+        console.error('[v80 excluirInventario]',e);
+        // Recarrega do Firebase para restaurar a verdade do servidor se algo falhar.
+        try{global.AnalistaFirebaseService&&global.AnalistaFirebaseService.restart&&await global.AnalistaFirebaseService.restart();}catch(_e){}
+        toast('Não foi possível concluir a exclusão: '+(e.message||e),'e');
         return false;
       }
     };
-    var msg='Excluir permanentemente o inventário “'+(inv.nome||inv.codigo||id)+'”? Esta ação remove também a base publicada no Firebase.';
+    var msg='Excluir permanentemente o inventário “'+(inv.nome||inv.codigo||id)+'”? Esta ação remove também contagens, pendências, conflitos e recontagens relacionadas.';
     if(typeof global.showConfirm==='function'){
-      global.showConfirm(msg,executar,{title:'Excluir inventário',icon:'🗑️',okLabel:'Excluir',okClass:'btn-danger'});
-      return true;
+      global.showConfirm(msg,executar,{title:'Excluir inventário',icon:'🗑️',okLabel:'Excluir',okClass:'btn-danger'});return true;
     }
-    if(confirm(msg)) return executar();
-    return false;
+    if(confirm(msg))return executar();return false;
   }
 
   // Corrige a visibilidade usando a coleção certa (FS_COL antigo podia não existir).

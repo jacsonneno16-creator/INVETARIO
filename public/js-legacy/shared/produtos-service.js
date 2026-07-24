@@ -47,7 +47,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
 };
 (function (global) {
     'use strict';
-    var cache = { lista: [], porDun: new Map(), porGtin: new Map(), porCodigo: new Map(), carregado: false, carregando: null, loja: '', versao: '', ultimaVerificacao: 0 };
+    var cache = { lista: [], porDun: new Map(), porGtin: new Map(), porCodigo: new Map(), porTodos: new Map(), ambiguos: new Map(), carregado: false, carregando: null, loja: '', versao: '', ultimaVerificacao: 0 };
     function texto(v) { return String(v == null ? '' : v).trim(); }
     function codigo(v) { return texto(v).replace(/[\s.\-\/()]/g, '').toUpperCase(); }
     function inferirFamilia(nome, unidade) {
@@ -76,28 +76,52 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         var extras = [raw.gtin, raw.ean, raw.gtin_principal, raw.gtinPrincipal, raw.gtin_ean, raw.ean_gtin, raw.codigo_barras, raw.codigo_de_barras, raw.codigoBarras, raw.barcode, raw.dun, raw.dun14, raw.dun_14, raw.codigo_dun, raw.codigoDun, raw.codigoInterno, raw.codigo_interno, raw.codigo_produto, raw.codigoProduto, raw.codigo, raw.sku, raw.cod_interno].map(texto).filter(Boolean);
         return { id: id || raw.id || '', produtoId: id || raw.produtoId || raw.produto_id || raw.id || '', codigoInterno: interno, nomeProduto: nome, dun: dun, gtin: gtin, codigosExtras: extras, unidade: unidade, embalagem: texto(raw.embalagem) || fam.embalagem, familiaCodigo: texto(raw.familiaCodigo || raw.familia_codigo) || fam.familiaCodigo, familiaNome: texto(raw.familiaNome || raw.familia_nome || raw.produtoPrincipal) || fam.familiaNome, produtoPrincipal: texto(raw.produtoPrincipal) || texto(raw.familiaNome) || fam.familiaNome, ativo: raw.ativo !== false, criadoEm: raw.criadoEm || raw.criado_em || null, atualizadoEm: raw.atualizadoEm || raw.atualizado_em || null };
     }
+    function atualizarContadorNav(total) {
+        var el = global.document && global.document.getElementById('nb-produtos');
+        if (el)
+            el.textContent = Number(total || 0).toLocaleString('pt-BR');
+    }
     function indexar(lista) {
         var _a;
         cache.lista = (lista || []).map(function (x) { return produto(x, x.id); });
         cache.porDun.clear();
         cache.porGtin.clear();
         cache.porCodigo.clear();
-        cache.lista.forEach(function (p) { if (!p.ativo)
-            return; var d = codigo(p.dun), g = codigo(p.gtin), c = codigo(p.codigoInterno); if (d)
-            cache.porDun.set(d, p); if (g)
-            cache.porGtin.set(g, p); if (c)
-            cache.porCodigo.set(c, p); (p.codigosExtras || []).forEach(function (x) { var k = codigo(x); if (k) {
-            cache.porGtin.set(k, p);
-            cache.porDun.set(k, p);
-            cache.porCodigo.set(k, p);
-        } }); });
+        cache.porTodos.clear();
+        cache.ambiguos.clear();
+        function addCodigo(valor, p, tipo) {
+            var k = codigo(valor);
+            if (!k)
+                return;
+            var arr = cache.porTodos.get(k) || [];
+            if (!arr.some(function (x) { return String(x.produtoId || x.id || '') === String(p.produtoId || p.id || '') && x.nomeProduto === p.nomeProduto; }))
+                arr.push(p);
+            cache.porTodos.set(k, arr);
+            if (tipo === 'dun')
+                cache.porDun.set(k, p);
+            else if (tipo === 'gtin')
+                cache.porGtin.set(k, p);
+            else
+                cache.porCodigo.set(k, p);
+        }
+        cache.lista.forEach(function (p) {
+            if (!p.ativo)
+                return;
+            addCodigo(p.dun, p, 'dun');
+            addCodigo(p.gtin, p, 'gtin');
+            addCodigo(p.codigoInterno, p, 'interno');
+            (p.codigosExtras || []).forEach(function (x) { addCodigo(x, p, 'extra'); });
+        });
+        cache.porTodos.forEach(function (arr, k) { if (arr.length > 1)
+            cache.ambiguos.set(k, arr.slice()); });
         cache.carregado = true;
         cache.loja = ((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) || '';
         try {
             localStorage.setItem('dt_produtos_cache__' + cache.loja, JSON.stringify(cache.lista));
         }
         catch (e) { }
-        global.dispatchEvent(new CustomEvent('dt-produtos-atualizados', { detail: { total: cache.lista.length } }));
+        atualizarContadorNav(cache.lista.length);
+        global.dispatchEvent(new CustomEvent('dt-produtos-atualizados', { detail: { total: cache.lista.length, ambiguos: cache.ambiguos.size } }));
         return cache.lista;
     }
     function carregarLocal() { var _a; var loja = ((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) || ''; try {
@@ -198,8 +222,17 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             });
         });
     }
-    function buscarSync(valor) { var c = codigo(valor); if (!c)
-        return { encontrado: false, codigoLido: texto(valor) }; var p = cache.porDun.get(c) || cache.porGtin.get(c) || cache.porCodigo.get(c); return p ? __assign({ encontrado: true }, p) : { encontrado: false, codigoLido: texto(valor) }; }
+    function buscarSync(valor) {
+        var c = codigo(valor);
+        if (!c)
+            return { encontrado: false, codigoLido: texto(valor) };
+        var arr = (cache.porTodos.get(c) || []).slice();
+        if (!arr.length)
+            return { encontrado: false, codigoLido: texto(valor) };
+        if (arr.length > 1)
+            return { encontrado: false, ambiguo: true, codigoLido: texto(valor), candidatos: arr.map(function (p) { return { produtoId: p.produtoId, codigoInterno: p.codigoInterno, nomeProduto: p.nomeProduto, gtin: p.gtin, dun: p.dun }; }) };
+        return __assign({ encontrado: true }, arr[0]);
+    }
     function buscar(valor) {
         return __awaiter(this, void 0, void 0, function () { var _a; return __generator(this, function (_b) {
             switch (_b.label) {
@@ -220,13 +253,31 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         r.produtoLidoId = ach.produtoId;
     } return r; }
     carregarLocal();
+    if (global.document) {
+        if (global.document.readyState === 'loading')
+            global.document.addEventListener('DOMContentLoaded', function () { atualizarContadorNav(cache.lista.length); });
+        else
+            atualizarContadorNav(cache.lista.length);
+    }
+    if (!global.__dtProdutosPreloadLoja) {
+        global.__dtProdutosPreloadLoja = true;
+        global.addEventListener('dt-loja-alterada', function () {
+            limparCache();
+            atualizarContadorNav(0);
+            setTimeout(function () {
+                var loja = global.getDTLojaAtiva ? global.getDTLojaAtiva() : '';
+                if (loja && global.getDTFirestore)
+                    carregar(true).catch(function (e) { if (global.console) console.warn('[Produtos] Pré-carga após troca de loja:', e); });
+            }, 250);
+        });
+    }
     function familias() { var mapa = {}; cache.lista.forEach(function (p) { if (!p.ativo)
         return; var k = p.familiaCodigo || p.familiaNome; if (!k)
         return; if (!mapa[k])
         mapa[k] = { id: k, nome: p.familiaNome || p.produtoPrincipal || p.nomeProduto, codigo: p.familiaCodigo, produtos: [], unidade: null }; mapa[k].produtos.push(p); if (p.embalagem === 'UND')
         mapa[k].unidade = p; }); return Object.keys(mapa).map(function (k) { return mapa[k]; }).sort(function (a, b) { return a.nome.localeCompare(b.nome); }); }
-    function limparCache() { cache.lista = []; cache.porDun.clear(); cache.porGtin.clear(); cache.porCodigo.clear(); cache.carregado = false; cache.carregando = null; cache.loja = ''; cache.versao = ''; cache.ultimaVerificacao = 0; }
-    global.DTProdutos = { cache: cache, normalizarCodigo: codigo, normalizarProduto: produto, indexar: indexar, carregar: carregar, buscar: buscar, buscarSync: buscarSync, enriquecer: enriquecer, familias: familias, inferirFamilia: inferirFamilia, inferirEmbalagem: inferirEmbalagem, limparCache: limparCache };
+    function limparCache() { cache.lista = []; cache.porDun.clear(); cache.porGtin.clear(); cache.porCodigo.clear(); cache.porTodos.clear(); cache.ambiguos.clear(); cache.carregado = false; cache.carregando = null; cache.loja = ''; cache.versao = ''; cache.ultimaVerificacao = 0; }
+    global.DTProdutos = { cache: cache, normalizarCodigo: codigo, normalizarProduto: produto, indexar: indexar, carregar: carregar, buscar: buscar, buscarSync: buscarSync, enriquecer: enriquecer, familias: familias, inferirFamilia: inferirFamilia, inferirEmbalagem: inferirEmbalagem, limparCache: limparCache, atualizarContador: atualizarContadorNav };
     global.buscarProdutoPorCodigo = buscar;
     global.enriquecerProdutoLido = enriquecer;
 })(window);

@@ -608,14 +608,21 @@
     const ref=referenciaAuditoria(id);
     try{
       encerrarListener();
-      const snap=await ref.collection('enderecos').get();
-      for(let i=0;i<snap.docs.length;i+=350){ const b=DB().batch(); snap.docs.slice(i,i+350).forEach(d=>b.delete(d.ref)); await b.commit(); }
+      // Excluir o documento principal primeiro remove a auditoria dos coletores e
+      // libera a interface imediatamente. A subcoleção é limpa em seguida.
       await ref.delete();
       auditoriaAtual=''; metaAtual=null; itensAtuais=[]; itensBrutosAtuais=[]; assinaturaAnterior='';
       if(sel) sel.value='';
-      await popularSelect();
-      renderizar(); atualizarAcoesAuditoria();
-      toast(`Auditoria “${nome}” excluída com sucesso.`,'s');
+      await popularSelect();renderizar();atualizarAcoesAuditoria();
+      toast(`Auditoria “${nome}” removida. Limpando os itens em segundo plano…`,'s');
+      (async function(){
+        try{
+          const snap=await ref.collection('enderecos').get();
+          const commits=[];
+          for(let i=0;i<snap.docs.length;i+=350){const b=DB().batch();snap.docs.slice(i,i+350).forEach(d=>b.delete(d.ref));commits.push(b.commit());if(commits.length===3){await Promise.all(commits.splice(0));}}
+          if(commits.length)await Promise.all(commits);
+        }catch(cleanErr){console.warn('[AUDITORIA] limpeza posterior:',cleanErr.message);}
+      })();
     }catch(e){
       console.error('[AUDITORIA] excluir:',e);
       toast('Falha ao excluir a auditoria: '+(e.message||e),'e');

@@ -100,29 +100,31 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     var _nd = function (v) { return String(v || '').trim().toUpperCase(); };
     // Identificadores equivalentes do mesmo produto. A contagem pode chegar com
     // GTIN/EAN/DUN, enquanto a base do inventário normalmente guarda código interno.
+    function _codigoValido(v) {
+        var x = _nd(v);
+        return x && !/\s/.test(x) && x.length <= 32 ? x : '';
+    }
+    function _codigosLidosPrioritarios(obj) {
+        var primarios = [obj === null || obj === void 0 ? void 0 : obj.gtin_bipado, obj === null || obj === void 0 ? void 0 : obj.gtinLido, obj === null || obj === void 0 ? void 0 : obj.gtin_lido, obj === null || obj === void 0 ? void 0 : obj.gtin, obj === null || obj === void 0 ? void 0 : obj.ean, obj === null || obj === void 0 ? void 0 : obj.dunLido, obj === null || obj === void 0 ? void 0 : obj.dun_lido, obj === null || obj === void 0 ? void 0 : obj.dun, obj === null || obj === void 0 ? void 0 : obj.codigo_lido, obj === null || obj === void 0 ? void 0 : obj.codigoLido];
+        var p = __spreadArray([], new Set(primarios.map(_codigoValido).filter(Boolean)), true);
+        if (p.length)
+            return p;
+        return __spreadArray([], new Set([obj === null || obj === void 0 ? void 0 : obj.codigo_produto, obj === null || obj === void 0 ? void 0 : obj.codigoProduto, obj === null || obj === void 0 ? void 0 : obj.codigo_interno, obj === null || obj === void 0 ? void 0 : obj.codigoInterno, obj === null || obj === void 0 ? void 0 : obj.sku].map(_codigoValido).filter(Boolean)), true);
+    }
+    // Usa primeiro o código realmente bipado. Campos derivados de processamentos
+    // antigos só entram quando não existe GTIN/EAN/DUN lido, evitando casar um GTIN
+    // com outro produto por causa de um codigo_produto preenchido incorretamente.
     function _idsProduto(obj) {
-        var _a, _b;
-        var vals = [
-            obj === null || obj === void 0 ? void 0 : obj.codigo_produto,
-            obj === null || obj === void 0 ? void 0 : obj.codigoProduto,
-            obj === null || obj === void 0 ? void 0 : obj.produto,
-            obj === null || obj === void 0 ? void 0 : obj.produto_id,
-            obj === null || obj === void 0 ? void 0 : obj.codigo_interno,
-            obj === null || obj === void 0 ? void 0 : obj.codigoInterno,
-            obj === null || obj === void 0 ? void 0 : obj.sku,
-            obj === null || obj === void 0 ? void 0 : obj.gtin,
-            obj === null || obj === void 0 ? void 0 : obj.ean,
-            obj === null || obj === void 0 ? void 0 : obj.dun,
-            obj === null || obj === void 0 ? void 0 : obj.gtin_bipado,
-            obj === null || obj === void 0 ? void 0 : obj.codigo_lido,
-            obj === null || obj === void 0 ? void 0 : obj.codigoLido
-        ].map(_nd).filter(Boolean);
-        var lido = vals[0] || '';
-        var geral = (_b = (_a = global.DTProdutos) === null || _a === void 0 ? void 0 : _a.buscarSync) === null || _b === void 0 ? void 0 : _b.call(_a, lido);
-        if (geral === null || geral === void 0 ? void 0 : geral.encontrado) {
-            vals.push(_nd(geral.codigoInterno), _nd(geral.gtin), _nd(geral.dun), _nd(geral.produtoId));
-        }
-        return __spreadArray([], new Set(vals.filter(Boolean)), true);
+        var vals = _codigosLidosPrioritarios(obj);
+        var expandidos = vals.slice();
+        vals.forEach(function (id) {
+            var _a, _b;
+            var geral = (_b = (_a = global.DTProdutos) === null || _a === void 0 ? void 0 : _a.buscarSync) === null || _b === void 0 ? void 0 : _b.call(_a, id);
+            if (geral === null || geral === void 0 ? void 0 : geral.encontrado) {
+                [geral.codigoInterno, geral.gtin, geral.dun, geral.produtoId].map(_codigoValido).filter(Boolean).forEach(function (x) { expandidos.push(x); });
+            }
+        });
+        return __spreadArray([], new Set(expandidos.filter(Boolean)), true);
     }
     function _inventarioAliases(inv) {
         return [inv === null || inv === void 0 ? void 0 : inv.id, inv === null || inv === void 0 ? void 0 : inv.codigo, inv === null || inv === void 0 ? void 0 : inv.nome, inv === null || inv === void 0 ? void 0 : inv.inventario_id, inv === null || inv === void 0 ? void 0 : inv.inventarioId].filter(function (v) { return v != null && String(v).trim(); }).map(function (v) { return String(v).trim(); });
@@ -285,10 +287,10 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     function _qtdComparavel(c) {
         // A operação conta caixas/paletes. Comparar exatamente a quantidade digitada
         // pelo operador com a quantidade esperada importada, sem multiplicar pelo fator.
-        var qtd = parseFloat(c && c.quantidade);
+        var qtd = parseFloat(c === null || c === void 0 ? void 0 : c.quantidade);
         if (!isNaN(qtd))
             return qtd;
-        var qtdCx = parseFloat(c && c.qtd_caixas);
+        var qtdCx = parseFloat(c === null || c === void 0 ? void 0 : c.qtd_caixas);
         return !isNaN(qtdCx) ? qtdCx : 0;
     }
     function _isVazio(c) {
@@ -300,11 +302,15 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     var _ultimaAssinaturaProcessada = '';
     function _assinaturaDivergencias() {
         var st = state();
-        var conts = (st.contagens || []).map(function (c) { return [
-            c.uuid || c.id || '', c.inventario_id || c.inventarioId || '', c.endereco || '',
-            c.gtin || c.codigo_produto || c.codigoLido || '', c.quantidade != null ? c.quantidade : (c.qtd_caixas != null ? c.qtd_caixas : ''),
-            c.tipo_contagem || '', c._excluida ? 1 : 0, c.status === 'ESTORNADA' ? 1 : 0
-        ].join('|'); }).sort().join('~');
+        var conts = (st.contagens || []).map(function (c) {
+            var _a, _b;
+            return [
+                c.uuid || c.id || '', c.inventario_id || c.inventarioId || '', c.endereco || '',
+                c.gtin || c.codigo_produto || c.codigoLido || '',
+                (_b = (_a = c.quantidade) !== null && _a !== void 0 ? _a : c.qtd_caixas) !== null && _b !== void 0 ? _b : '',
+                c.tipo_contagem || '', c._excluida ? 1 : 0, c.status === 'ESTORNADA' ? 1 : 0
+            ].join('|');
+        }).sort().join('~');
         var bases = (st.inventarios || []).map(function (i) { return [i.id || '', i.atualizado_em || i.updated_at || '', Array.isArray(i.base) ? i.base.length : 0].join('|'); }).sort().join('~');
         return conts + '##' + bases;
     }
@@ -713,9 +719,9 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             batchActions.push(Actions.replaceSlice('recontagens', recsFinais, BIZMETA));
         }
         Store.dispatch(Actions.batch(batchActions, BIZMETA));
-        if (typeof logSistema === 'function')
+        if (novos > 0 && typeof logSistema === 'function')
             logSistema('DIVERGENCIA', "".concat(novos, " diverg\u00EAncias processadas"), { inventario_id: invId });
-        if (typeof showToast === 'function')
+        if (typeof showToast === 'function' && (novos > 0 || source === 'manual'))
             showToast(novos > 0 ? "\u26A0\uFE0F ".concat(novos, " diverg\u00EAncias encontradas!") : '✅ Nenhuma nova divergência encontrada', novos > 0 ? 'w' : 's');
         return novos;
     }

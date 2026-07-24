@@ -39,19 +39,30 @@
 
   // Identificadores equivalentes do mesmo produto. A contagem pode chegar com
   // GTIN/EAN/DUN, enquanto a base do inventário normalmente guarda código interno.
+  function _codigoValido(v){
+    const x=_nd(v); return x && !/\s/.test(x) && x.length<=32 ? x : '';
+  }
+
+  function _codigosLidosPrioritarios(obj){
+    const primarios=[obj?.gtin_bipado,obj?.gtinLido,obj?.gtin_lido,obj?.gtin,obj?.ean,obj?.dunLido,obj?.dun_lido,obj?.dun,obj?.codigo_lido,obj?.codigoLido];
+    const p=[...new Set(primarios.map(_codigoValido).filter(Boolean))];
+    if(p.length)return p;
+    return [...new Set([obj?.codigo_produto,obj?.codigoProduto,obj?.codigo_interno,obj?.codigoInterno,obj?.sku].map(_codigoValido).filter(Boolean))];
+  }
+
+  // Usa primeiro o código realmente bipado. Campos derivados de processamentos
+  // antigos só entram quando não existe GTIN/EAN/DUN lido, evitando casar um GTIN
+  // com outro produto por causa de um codigo_produto preenchido incorretamente.
   function _idsProduto(obj){
-    const vals = [
-      obj?.codigo_produto, obj?.codigoProduto, obj?.produto, obj?.produto_id,
-      obj?.codigo_interno, obj?.codigoInterno, obj?.sku,
-      obj?.gtin, obj?.ean, obj?.dun, obj?.gtin_bipado,
-      obj?.codigo_lido, obj?.codigoLido
-    ].map(_nd).filter(Boolean);
-    const lido = vals[0] || '';
-    const geral = global.DTProdutos?.buscarSync?.(lido);
-    if (geral?.encontrado){
-      vals.push(_nd(geral.codigoInterno), _nd(geral.gtin), _nd(geral.dun), _nd(geral.produtoId));
-    }
-    return [...new Set(vals.filter(Boolean))];
+    const vals=_codigosLidosPrioritarios(obj);
+    const expandidos=vals.slice();
+    vals.forEach(function(id){
+      const geral=global.DTProdutos?.buscarSync?.(id);
+      if(geral?.encontrado){
+        [geral.codigoInterno,geral.gtin,geral.dun,geral.produtoId].map(_codigoValido).filter(Boolean).forEach(function(x){expandidos.push(x);});
+      }
+    });
+    return [...new Set(expandidos.filter(Boolean))];
   }
 
   function _inventarioAliases(inv){

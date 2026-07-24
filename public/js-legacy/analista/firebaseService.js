@@ -315,13 +315,13 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         });
     }
     function _normalizarItemBase(item) {
-        var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y;
+        var _a, _b, _c, _d, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z;
         var x = Object.assign({}, item || {});
-        var qtd = (_f = (_e = (_d = (_c = (_b = (_a = x.quantidade_esperada) !== null && _a !== void 0 ? _a : x.quantidadeEsperada) !== null && _b !== void 0 ? _b : x.qtd_esperada) !== null && _c !== void 0 ? _c : x.qtdEsperada) !== null && _d !== void 0 ? _d : x.quantidade_sistema) !== null && _e !== void 0 ? _e : x.quantidadeSistema) !== null && _f !== void 0 ? _f : x.quantidade;
-        var cod = (_p = (_o = (_m = (_l = (_k = (_j = (_h = (_g = x.codigo_produto) !== null && _g !== void 0 ? _g : x.codigoProduto) !== null && _h !== void 0 ? _h : x.codigo_interno) !== null && _j !== void 0 ? _j : x.codigoInterno) !== null && _k !== void 0 ? _k : x.sku) !== null && _l !== void 0 ? _l : x.gtin) !== null && _m !== void 0 ? _m : x.ean) !== null && _o !== void 0 ? _o : x.dun) !== null && _p !== void 0 ? _p : '';
-        var desc = (_v = (_u = (_t = (_s = (_r = (_q = x.descricao_produto) !== null && _q !== void 0 ? _q : x.descricaoProduto) !== null && _r !== void 0 ? _r : x.descricao) !== null && _s !== void 0 ? _s : x.produto_nome) !== null && _t !== void 0 ? _t : x.nomeProduto) !== null && _u !== void 0 ? _u : x.produto) !== null && _v !== void 0 ? _v : '';
+        var qtd = (_g = (_f = (_d = (_c = (_b = (_a = x.quantidade_esperada) !== null && _a !== void 0 ? _a : x.quantidadeEsperada) !== null && _b !== void 0 ? _b : x.qtd_esperada) !== null && _c !== void 0 ? _c : x.qtdEsperada) !== null && _d !== void 0 ? _d : x.quantidade_sistema) !== null && _f !== void 0 ? _f : x.quantidadeSistema) !== null && _g !== void 0 ? _g : x.quantidade;
+        var cod = (_q = (_p = (_o = (_m = (_l = (_k = (_j = (_h = x.codigo_produto) !== null && _h !== void 0 ? _h : x.codigoProduto) !== null && _j !== void 0 ? _j : x.codigo_interno) !== null && _k !== void 0 ? _k : x.codigoInterno) !== null && _l !== void 0 ? _l : x.sku) !== null && _m !== void 0 ? _m : x.gtin) !== null && _o !== void 0 ? _o : x.ean) !== null && _p !== void 0 ? _p : x.dun) !== null && _q !== void 0 ? _q : '';
+        var desc = (_w = (_v = (_u = (_t = (_s = (_r = x.descricao_produto) !== null && _r !== void 0 ? _r : x.descricaoProduto) !== null && _s !== void 0 ? _s : x.descricao) !== null && _t !== void 0 ? _t : x.produto_nome) !== null && _u !== void 0 ? _u : x.nomeProduto) !== null && _v !== void 0 ? _v : x.produto) !== null && _w !== void 0 ? _w : '';
         return Object.assign({}, x, {
-            endereco: String((_y = (_x = (_w = x.endereco) !== null && _w !== void 0 ? _w : x.localizacao) !== null && _x !== void 0 ? _x : x.posicao) !== null && _y !== void 0 ? _y : '').trim(),
+            endereco: String((_z = (_y = (_x = x.endereco) !== null && _x !== void 0 ? _x : x.localizacao) !== null && _y !== void 0 ? _y : x.posicao) !== null && _z !== void 0 ? _z : '').trim(),
             codigo_produto: String(cod !== null && cod !== void 0 ? cod : '').trim(),
             descricao_produto: String(desc !== null && desc !== void 0 ? desc : '').trim(),
             quantidade_esperada: Number.isFinite(Number(qtd)) ? Number(qtd) : 0
@@ -365,7 +365,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     // Isso não depende mais do localStorage, que possui quota pequena.
     function _carregarInventariosSeNecessario() {
         return __awaiter(this, void 0, void 0, function () {
-            var snap, atuais, atuaisPorId_1, docs, statusAtivos_1, idsNecessarios_1, st_1, Storage_2, metadados, e_2;
+            var snap, Storage_2, atuais, atuaisPorId_1, docs, statusAtivos_1, idsNecessarios_1, st_1, aliasesValidos_1, Storage_3, metadados, e_2;
             var _a;
             return __generator(this, function (_b) {
                 switch (_b.label) {
@@ -374,8 +374,22 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         return [4 /*yield*/, global.FS_AN.collection('dt_inventarios').get()];
                     case 1:
                         snap = _b.sent();
-                        if (snap.empty)
-                            return [2 /*return*/];
+                        if (snap.empty) {
+                            global.AnalistaStore.dispatch(Actions.batch([
+                                Actions.replaceSlice('inventarios', [], { source: 'firebase-no-inventories' }),
+                                Actions.replaceSlice('contagens', [], { source: 'firebase-no-inventories' }),
+                                Actions.replaceSlice('vazios', [], { source: 'firebase-no-inventories' }),
+                                Actions.replaceSlice('divergencias', [], { source: 'firebase-no-inventories' }),
+                                Actions.replaceSlice('recontagens', [], { source: 'firebase-no-inventories' })
+                            ], { source: 'firebase-no-inventories' }));
+                            Storage_2 = global.AnalistaStorage;
+                            ['inventarios', 'contagens', 'divergencias', 'recontagens'].forEach(function (k) {
+                                var _a;
+                                if ((Storage_2 === null || Storage_2 === void 0 ? void 0 : Storage_2.storageSave) && ((_a = Storage_2 === null || Storage_2 === void 0 ? void 0 : Storage_2.KEYS) === null || _a === void 0 ? void 0 : _a[k]))
+                                    Storage_2.storageSave(Storage_2.KEYS[k], []);
+                            });
+                            return [2 /*return*/, []];
+                        }
                         atuais = global.AnalistaStore.getState().inventarios || [];
                         atuaisPorId_1 = new Map(atuais.map(function (i) { return [String(i.id), i]; }));
                         docs = snap.docs.map(function (d) { return Object.assign({}, atuaisPorId_1.get(String(d.id)) || {}, d.data(), { id: d.id }); });
@@ -395,10 +409,18 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                     case 2:
                         docs = _b.sent();
                         global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init-bases' }));
-                        Storage_2 = global.AnalistaStorage;
-                        if ((Storage_2 === null || Storage_2 === void 0 ? void 0 : Storage_2.storageSave) && ((_a = Storage_2 === null || Storage_2 === void 0 ? void 0 : Storage_2.KEYS) === null || _a === void 0 ? void 0 : _a.inventarios)) {
+                        aliasesValidos_1 = new Set();
+                        docs.forEach(function (inv) { [inv.id, inv.codigo, inv.nome, inv.inventario_id, inv.inventarioId].filter(function (v) { return v != null && String(v).trim(); }).forEach(function (v) { aliasesValidos_1.add(String(v).trim()); }); });
+                        ['contagens', 'vazios', 'divergencias', 'recontagens'].forEach(function (slice) {
+                            var atual = global.AnalistaStore.getState()[slice] || [];
+                            var limpo = atual.filter(function (x) { var _a, _b, _c; var id = (_c = (_b = (_a = x.inventario_id) !== null && _a !== void 0 ? _a : x.inventarioId) !== null && _b !== void 0 ? _b : x.inventario) !== null && _c !== void 0 ? _c : x.inv_id; return id != null && aliasesValidos_1.has(String(id).trim()); });
+                            if (limpo.length !== atual.length)
+                                global.AnalistaStore.dispatch(Actions.replaceSlice(slice, limpo, { source: 'firebase-prune-orfaos' }));
+                        });
+                        Storage_3 = global.AnalistaStorage;
+                        if ((Storage_3 === null || Storage_3 === void 0 ? void 0 : Storage_3.storageSave) && ((_a = Storage_3 === null || Storage_3 === void 0 ? void 0 : Storage_3.KEYS) === null || _a === void 0 ? void 0 : _a.inventarios)) {
                             metadados = docs.map(function (inv) { var c = Object.assign({}, inv); delete c.base; return c; });
-                            Storage_2.storageSave(Storage_2.KEYS.inventarios, metadados);
+                            Storage_3.storageSave(Storage_3.KEYS.inventarios, metadados);
                         }
                         global.dispatchEvent(new CustomEvent('dt-inventarios-bases-atualizadas', { detail: { total: docs.length } }));
                         return [3 /*break*/, 4];
@@ -415,25 +437,25 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         return __awaiter(this, void 0, void 0, function () {
             var e_3;
             var _a, _b, _c, _d;
-            return __generator(this, function (_e) {
-                switch (_e.label) {
+            return __generator(this, function (_f) {
+                switch (_f.label) {
                     case 0: return [4 /*yield*/, _carregarInventariosSeNecessario()];
                     case 1:
-                        _e.sent();
-                        _e.label = 2;
+                        _f.sent();
+                        _f.label = 2;
                     case 2:
-                        _e.trys.push([2, 4, , 5]);
+                        _f.trys.push([2, 4, , 5]);
                         return [4 /*yield*/, ((_b = (_a = global.DTProdutos) === null || _a === void 0 ? void 0 : _a.carregar) === null || _b === void 0 ? void 0 : _b.call(_a, true))];
                     case 3:
-                        _e.sent();
+                        _f.sent();
                         return [3 /*break*/, 5];
                     case 4:
-                        e_3 = _e.sent();
+                        e_3 = _f.sent();
                         console.warn('[FirebaseService] Atualização de produtos:', e_3.message);
                         return [3 /*break*/, 5];
                     case 5:
                         try {
-                            (_d = (_c = global.AnalistaDivergenciaService) === null || _c === void 0 ? void 0 : _c.processarDivergencias) === null || _d === void 0 ? void 0 : _d.call(_c, { criarRecontagens: true, source: 'bases-refresh' });
+                            (_d = (_c = global.AnalistaDivergenciaService) === null || _c === void 0 ? void 0 : _c.processarDivergencias) === null || _d === void 0 ? void 0 : _d.call(_c, { criarRecontagens: true, source: 'bases-refresh', force: true });
                         }
                         catch (e) {
                             console.warn('[FirebaseService] Reprocessamento de bases:', e.message);
@@ -451,7 +473,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                 _carregarInventariosSeNecessario().then(function () {
                     var _a, _b;
                     try {
-                        (_b = (_a = global.AnalistaDivergenciaService) === null || _a === void 0 ? void 0 : _a.processarDivergencias) === null || _b === void 0 ? void 0 : _b.call(_a, { criarRecontagens: true, source: 'produtos-atualizados' });
+                        (_b = (_a = global.AnalistaDivergenciaService) === null || _a === void 0 ? void 0 : _a.processarDivergencias) === null || _b === void 0 ? void 0 : _b.call(_a, { criarRecontagens: true, source: 'produtos-atualizados', force: true });
                     }
                     catch (e) {
                         console.warn('[FirebaseService] Reprocessar produtos:', e.message);
@@ -532,7 +554,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         // de produtos estiverem disponíveis. Isso corrige automaticamente registros
                         // que antes apareciam como "Código sem cadastro" e qtd sistema null.
                         try {
-                            (_c = (_b = global.AnalistaDivergenciaService) === null || _b === void 0 ? void 0 : _b.processarDivergencias) === null || _c === void 0 ? void 0 : _c.call(_b, { criarRecontagens: true, source: 'bases-carregadas' });
+                            (_c = (_b = global.AnalistaDivergenciaService) === null || _b === void 0 ? void 0 : _b.processarDivergencias) === null || _c === void 0 ? void 0 : _c.call(_b, { criarRecontagens: true, source: 'bases-carregadas', force: true });
                         }
                         catch (e) {
                             console.warn('[FirebaseService] Reprocessamento após carregar bases:', e.message);
@@ -541,16 +563,16 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             state.unsubscribers.enderecos = _listenEnderecos();
                         ids = _getActiveInventoryIds();
                         if (!ids.length) {
-                            // Sem inventários ativos no cache — criar listener sem filtro para capturar contagens recentes
-                            if (!state.started) {
-                                state.unsubscribers.contagens = _listenCollectionAll('contagens', 'dt_contagens');
-                                state.unsubscribers.vazios = _listenCollectionAll('vazios', 'dt_vazios');
-                                state.unsubscribers.divergencias = _listenCollectionAll('divergencias', 'dt_divergencias');
-                                state.unsubscribers.recontagens = _listenCollectionAll('recontagens', 'dt_recontagens');
-                                state.started = true;
-                                state.currentInventoryIds = [];
-                            }
-                            _emitSync(true, 'Coletores em tempo real. Aguardando inventário ativo.', { started: true, source: 'firebase' });
+                            ['contagens', 'vazios', 'divergencias', 'recontagens'].forEach(function (collection) {
+                                (state.unsubscribers[collection] || []).forEach(function (unsub) { try {
+                                    unsub();
+                                }
+                                catch (_e) { } });
+                                state.unsubscribers[collection] = [];
+                            });
+                            state.started = false;
+                            state.currentInventoryIds = [];
+                            _emitSync(true, 'Sem inventário ativo — dados operacionais limpos.', { started: false, source: 'firebase' });
                             return [2 /*return*/, true];
                         }
                         fingerprint = ids.join('|');

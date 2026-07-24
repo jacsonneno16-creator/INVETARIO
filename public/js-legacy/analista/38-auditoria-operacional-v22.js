@@ -1077,7 +1077,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     }
     function excluir() {
         return __awaiter(this, void 0, void 0, function () {
-            var sel, id, meta, ms, e_11, nome, mensagem, btn, ref, snap, _loop_4, i, e_12;
+            var sel, id, meta, ms, e_11, nome, mensagem, btn, ref, e_12;
             var _a, _b;
             return __generator(this, function (_c) {
                 switch (_c.label) {
@@ -1113,38 +1113,14 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         ref = referenciaAuditoria(id);
                         _c.label = 5;
                     case 5:
-                        _c.trys.push([5, 13, 14, 15]);
+                        _c.trys.push([5, 8, 9, 10]);
                         encerrarListener();
-                        return [4 /*yield*/, ref.collection('enderecos').get()];
+                        // Excluir o documento principal primeiro remove a auditoria dos coletores e
+                        // libera a interface imediatamente. A subcoleção é limpa em seguida.
+                        return [4 /*yield*/, ref.delete()];
                     case 6:
-                        snap = _c.sent();
-                        _loop_4 = function (i) {
-                            var b;
-                            return __generator(this, function (_d) {
-                                switch (_d.label) {
-                                    case 0:
-                                        b = DB().batch();
-                                        snap.docs.slice(i, i + 350).forEach(function (d) { return b.delete(d.ref); });
-                                        return [4 /*yield*/, b.commit()];
-                                    case 1:
-                                        _d.sent();
-                                        return [2 /*return*/];
-                                }
-                            });
-                        };
-                        i = 0;
-                        _c.label = 7;
-                    case 7:
-                        if (!(i < snap.docs.length)) return [3 /*break*/, 10];
-                        return [5 /*yield**/, _loop_4(i)];
-                    case 8:
-                        _c.sent();
-                        _c.label = 9;
-                    case 9:
-                        i += 350;
-                        return [3 /*break*/, 7];
-                    case 10: return [4 /*yield*/, ref.delete()];
-                    case 11:
+                        // Excluir o documento principal primeiro remove a auditoria dos coletores e
+                        // libera a interface imediatamente. A subcoleção é limpa em seguida.
                         _c.sent();
                         auditoriaAtual = '';
                         metaAtual = null;
@@ -1154,24 +1130,79 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         if (sel)
                             sel.value = '';
                         return [4 /*yield*/, popularSelect()];
-                    case 12:
+                    case 7:
                         _c.sent();
                         renderizar();
                         atualizarAcoesAuditoria();
-                        toast("Auditoria \u201C".concat(nome, "\u201D exclu\u00EDda com sucesso."), 's');
-                        return [3 /*break*/, 15];
-                    case 13:
+                        toast("Auditoria \u201C".concat(nome, "\u201D removida. Limpando os itens em segundo plano\u2026"), 's');
+                        (function () {
+                            return __awaiter(this, void 0, void 0, function () {
+                                var snap, commits, _loop_4, i, cleanErr_1;
+                                return __generator(this, function (_a) {
+                                    switch (_a.label) {
+                                        case 0:
+                                            _a.trys.push([0, 8, , 9]);
+                                            return [4 /*yield*/, ref.collection('enderecos').get()];
+                                        case 1:
+                                            snap = _a.sent();
+                                            commits = [];
+                                            _loop_4 = function (i) {
+                                                var b;
+                                                return __generator(this, function (_b) {
+                                                    switch (_b.label) {
+                                                        case 0:
+                                                            b = DB().batch();
+                                                            snap.docs.slice(i, i + 350).forEach(function (d) { return b.delete(d.ref); });
+                                                            commits.push(b.commit());
+                                                            if (!(commits.length === 3)) return [3 /*break*/, 2];
+                                                            return [4 /*yield*/, Promise.all(commits.splice(0))];
+                                                        case 1:
+                                                            _b.sent();
+                                                            _b.label = 2;
+                                                        case 2: return [2 /*return*/];
+                                                    }
+                                                });
+                                            };
+                                            i = 0;
+                                            _a.label = 2;
+                                        case 2:
+                                            if (!(i < snap.docs.length)) return [3 /*break*/, 5];
+                                            return [5 /*yield**/, _loop_4(i)];
+                                        case 3:
+                                            _a.sent();
+                                            _a.label = 4;
+                                        case 4:
+                                            i += 350;
+                                            return [3 /*break*/, 2];
+                                        case 5:
+                                            if (!commits.length) return [3 /*break*/, 7];
+                                            return [4 /*yield*/, Promise.all(commits)];
+                                        case 6:
+                                            _a.sent();
+                                            _a.label = 7;
+                                        case 7: return [3 /*break*/, 9];
+                                        case 8:
+                                            cleanErr_1 = _a.sent();
+                                            console.warn('[AUDITORIA] limpeza posterior:', cleanErr_1.message);
+                                            return [3 /*break*/, 9];
+                                        case 9: return [2 /*return*/];
+                                    }
+                                });
+                            });
+                        })();
+                        return [3 /*break*/, 10];
+                    case 8:
                         e_12 = _c.sent();
                         console.error('[AUDITORIA] excluir:', e_12);
                         toast('Falha ao excluir a auditoria: ' + (e_12.message || e_12), 'e');
-                        return [3 /*break*/, 15];
-                    case 14:
+                        return [3 /*break*/, 10];
+                    case 9:
                         if (btn) {
                             btn.disabled = false;
                             btn.textContent = btn.dataset.textoOriginal || '🗑 Excluir';
                         }
                         return [7 /*endfinally*/];
-                    case 15: return [2 /*return*/];
+                    case 10: return [2 /*return*/];
                 }
             });
         });

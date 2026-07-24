@@ -280,7 +280,20 @@
   async function _carregarInventariosSeNecessario(){
     try {
       const snap = await global.FS_AN.collection('dt_inventarios').get();
-      if (snap.empty) return;
+      if (snap.empty) {
+        global.AnalistaStore.dispatch(Actions.batch([
+          Actions.replaceSlice('inventarios', [], {source:'firebase-no-inventories'}),
+          Actions.replaceSlice('contagens', [], {source:'firebase-no-inventories'}),
+          Actions.replaceSlice('vazios', [], {source:'firebase-no-inventories'}),
+          Actions.replaceSlice('divergencias', [], {source:'firebase-no-inventories'}),
+          Actions.replaceSlice('recontagens', [], {source:'firebase-no-inventories'})
+        ], {source:'firebase-no-inventories'}));
+        const Storage=global.AnalistaStorage;
+        ['inventarios','contagens','divergencias','recontagens'].forEach(function(k){
+          if(Storage?.storageSave&&Storage?.KEYS?.[k])Storage.storageSave(Storage.KEYS[k],[]);
+        });
+        return [];
+      }
       const atuais = global.AnalistaStore.getState().inventarios || [];
       const atuaisPorId = new Map(atuais.map(i=>[String(i.id),i]));
       let docs = snap.docs.map(d => Object.assign({},atuaisPorId.get(String(d.id))||{},d.data(),{id:d.id}));
@@ -297,6 +310,13 @@
         return precisa?_carregarBaseInventario(inv,true):inv;
       }));
       global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init-bases' }));
+      const aliasesValidos=new Set();
+      docs.forEach(function(inv){[inv.id,inv.codigo,inv.nome,inv.inventario_id,inv.inventarioId].filter(function(v){return v!=null&&String(v).trim();}).forEach(function(v){aliasesValidos.add(String(v).trim());});});
+      ['contagens','vazios','divergencias','recontagens'].forEach(function(slice){
+        const atual=global.AnalistaStore.getState()[slice]||[];
+        const limpo=atual.filter(function(x){const id=x.inventario_id??x.inventarioId??x.inventario??x.inv_id;return id!=null&&aliasesValidos.has(String(id).trim());});
+        if(limpo.length!==atual.length)global.AnalistaStore.dispatch(Actions.replaceSlice(slice,limpo,{source:'firebase-prune-orfaos'}));
+      });
       const Storage = global.AnalistaStorage;
       if (Storage?.storageSave && Storage?.KEYS?.inventarios) {
         const metadados=docs.map(inv=>{const c=Object.assign({},inv);delete c.base;return c;});
@@ -379,16 +399,12 @@
 
     const ids = _getActiveInventoryIds();
     if (!ids.length) {
-      // Sem inventários ativos no cache — criar listener sem filtro para capturar contagens recentes
-      if (!state.started) {
-        state.unsubscribers.contagens    = _listenCollectionAll('contagens',    'dt_contagens');
-        state.unsubscribers.vazios       = _listenCollectionAll('vazios',       'dt_vazios');
-        state.unsubscribers.divergencias = _listenCollectionAll('divergencias', 'dt_divergencias');
-        state.unsubscribers.recontagens  = _listenCollectionAll('recontagens',  'dt_recontagens');
-        state.started = true;
-        state.currentInventoryIds = [];
-      }
-      _emitSync(true, 'Coletores em tempo real. Aguardando inventário ativo.', { started: true, source: 'firebase' });
+      ['contagens','vazios','divergencias','recontagens'].forEach(function(collection){
+        (state.unsubscribers[collection]||[]).forEach(function(unsub){try{unsub();}catch(_e){}});
+        state.unsubscribers[collection]=[];
+      });
+      state.started=false;state.currentInventoryIds=[];
+      _emitSync(true, 'Sem inventário ativo — dados operacionais limpos.', { started: false, source: 'firebase' });
       return true;
     }
 
