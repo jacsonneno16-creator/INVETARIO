@@ -105,11 +105,13 @@ function renderEnderecos() {
   const PTXT    = ['#1d4ed8','#16a34a','#a16207','#be185d','#6d28d9','#c2410c','#0369a1'];
 
   function partsHtml(endereco) {
-    return endereco.split('.').map((p, i) =>
+    const parsed = window.DTEnderecos?.partes(endereco) || {};
+    const parts = [parsed.loja, parsed.local, parsed.area, parsed.rua, parsed.coluna, parsed.nivel, parsed.sequencia];
+    return parts.map((parte, i) => parte ?
       `<span style="display:inline-flex;flex-direction:column;align-items:center;background:${PCOLORS[i]||'#f1f5f9'};border-radius:5px;padding:1px 5px;min-width:28px;margin-right:2px">
         <span style="font-size:.5rem;font-weight:700;text-transform:uppercase;color:${PTXT[i]||'#64748b'}">${PLABELS[i]||'P'+(i+1)}</span>
-        <span style="font-family:var(--mono);font-size:.71rem;font-weight:700;color:${PTXT[i]||'#1e293b'}">${p}</span>
-      </span>`
+        <span style="font-family:var(--mono);font-size:.71rem;font-weight:700;color:${PTXT[i]||'#1e293b'}">${escHTML(parte)}</span>
+      </span>` : ''
     ).join('');
   }
 

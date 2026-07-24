@@ -623,7 +623,7 @@ function renderDivergencias() {
         document.getElementById('div-table-wrap').innerHTML = "<div class=\"empty\"><div class=\"empty-icon\">\u2705</div><div class=\"empty-title\">Nenhum conflito encontrado</div><div class=\"empty-sub\">Clique em \"Processar Contagens\" para cruzar a base com as contagens recebidas</div></div>";
         return;
     }
-    document.getElementById('div-table-wrap').innerHTML = "\n    <div class=\"tbl-wrap\"><table>\n      <thead><tr>\n        <th style=\"width:36px;padding:8px 10px\">\n          <input type=\"checkbox\" id=\"div-chk-all\" title=\"Selecionar todos\"\n            style=\"width:15px;height:15px;cursor:pointer;accent-color:var(--orange)\"\n            onchange=\"divToggleTodos(this.checked)\">\n        </th>\n        <th>Invent\u00E1rio</th><th>Rua</th><th>Endere\u00E7o</th><th>Produto</th>\n        <th>Operador Contagem</th><th>Data</th><th>Tipo</th>\n        <th>Sistema</th><th>1\u00AA Contagem</th><th>Resultado</th>\n        <th>Status</th><th>Status Recontagem</th><th>Atribu\u00EDdo para</th><th>A\u00E7\u00F5es</th>\n      </tr></thead>\n      <tbody>\n        ".concat(dados.map(function (d) {
+    document.getElementById('div-table-wrap').innerHTML = "\n    <div class=\"tbl-wrap\"><table>\n      <thead><tr>\n        <th style=\"width:36px;padding:8px 10px\">\n          <input type=\"checkbox\" id=\"div-chk-all\" title=\"Selecionar todos\"\n            style=\"width:15px;height:15px;cursor:pointer;accent-color:var(--orange)\"\n            onchange=\"divToggleTodos(this.checked)\">\n        </th>\n        <th>Invent\u00E1rio</th><th>Rua</th><th>Endere\u00E7o</th><th>Produto</th>\n        <th>Operador Contagem</th><th>Data</th><th>Tipo</th>\n        <th>Sistema</th><th>1\u00AA Contagem</th><th>Resultado</th>\n        <th>Status</th><th>Status Recontagem</th><th>Atribu\u00EDdo para</th><th>Executado por</th><th>A\u00E7\u00F5es</th>\n      </tr></thead>\n      <tbody>\n        ".concat(dados.map(function (d) {
         var difColor = d.diferenca > 0 ? 'var(--warn)' : d.diferenca < 0 ? 'var(--danger)' : 'var(--success)';
         var rec = state().recontagens
             .filter(function (r) { return r.divergencia_id === d.id; })
@@ -658,6 +658,7 @@ function renderDivergencias() {
         // Status recontagem
         var statusRec = d.status_recontagem || (rec ? (rec.status === 'CONCLUIDA' ? 'concluida' : 'pendente') : '');
         var atribPara = d.operador_responsavel || (rec === null || rec === void 0 ? void 0 : rec.operador) || '';
+        var executadoPor = (rec === null || rec === void 0 ? void 0 : rec.operador_recontagem) || d.operador_recontagem || '';
         return "<tr style=\"".concat(selecionado ? 'background:rgba(232,117,26,.06)' : '', "\">\n            <td style=\"padding:8px 10px\">\n              <input type=\"checkbox\" class=\"div-row-chk\" data-id=\"").concat(d.id, "\"\n                style=\"width:15px;height:15px;cursor:pointer;accent-color:var(--orange)\"\n                ").concat(selecionado ? 'checked' : '', "\n                onchange=\"divToggleSel('").concat(d.id, "', this.checked)\">\n            </td>\n            <td style=\"font-size:.75rem;color:var(--muted)\">").concat(d.inventario_nome || d.inventario_id, "</td>\n            <td class=\"mono\" style=\"font-weight:600\">").concat(rua, "</td>\n            <td class=\"mono\">").concat(escHTML(d.endereco)).concat(d.endereco_correto ? "<br><span style=\"font-size:.65rem;color:var(--muted)\">\u2192 ".concat(escHTML(d.endereco_correto), "</span>") : '', "</td>\n            <td>\n              <div style=\"font-weight:600;font-size:.82rem\">").concat(escHTML(d.produto), "</div>\n              <div style=\"font-size:.7rem;color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\">").concat(escHTML(d.descricao || ''), "</div>\n              ").concat(d.gtin_bipado ? "<div style=\"font-size:.65rem;color:var(--muted)\">GTIN: ".concat(d.gtin_bipado, "</div>") : '', "\n            </td>\n            <td style=\"font-size:.8rem\">").concat(operador, "</td>\n            <td class=\"mono\" style=\"font-size:.72rem;color:var(--muted);white-space:nowrap\">").concat(fmtTs(d.criada_em), "</td>\n            <td><span class=\"badge ").concat(tipoCls, "\">").concat(tipoTxt, "</span></td>\n            <td class=\"mono\" style=\"font-weight:700\">").concat(qtdEspTxt).concat(d.produto ? "<div style=\"font-size:.6rem;color:var(--muted);font-family:var(--mono)\">".concat(escHTML(d.produto), "</div>") : '', "</td>\n            ").concat((function () {
             // Reutilizável: renderiza célula de contagem com produto e cor
             var _ndpD = function (v) { return String(v || '').trim().toUpperCase(); };
@@ -696,8 +697,10 @@ function renderDivergencias() {
         })(), "\n                        <td><span class=\"badge ").concat(divStatusBadge(d.status), "\">").concat(d.status, "</span></td>\n            <td>\n              ").concat(statusRec
             ? "<span class=\"badge ".concat(recStatusBadge(statusRec), "\" style=\"font-size:.68rem\">").concat(recStatusLabel(statusRec), "</span>")
             : "<span style=\"font-size:.72rem;color:var(--muted-2)\">\u2014</span>", "\n            </td>\n            <td>\n              ").concat(atribPara
-            ? "<div style=\"font-size:.78rem;font-weight:600;color:var(--text)\">".concat(atribPara, "</div>\n                   ").concat(d.atribuido_em ? "<div style=\"font-size:.65rem;color:var(--muted)\">".concat(fmtTs(d.atribuido_em), "</div>") : '')
-            : "<span style=\"font-size:.72rem;color:var(--muted-2)\">N\u00E3o atribu\u00EDdo</span>", "\n            </td>\n            <td style=\"white-space:nowrap\">\n              <div style=\"display:flex;gap:4px;flex-wrap:wrap\">\n                ").concat(d.status === 'PERSISTENTE'
+            ? "<div style=\"font-size:.78rem;font-weight:600;color:var(--text)\">".concat(escHTML(atribPara), "</div>\n                   ").concat(d.atribuido_em ? "<div style=\"font-size:.65rem;color:var(--muted)\">".concat(fmtTs(d.atribuido_em), "</div>") : '')
+            : "<span style=\"font-size:.72rem;color:var(--muted-2)\">N\u00E3o atribu\u00EDdo</span>", "\n            </td>\n            <td>\n              ").concat(executadoPor
+            ? "<div style=\"font-size:.78rem;font-weight:700;color:var(--success)\">".concat(escHTML(executadoPor), "</div>\n                   ").concat((rec === null || rec === void 0 ? void 0 : rec.recontagem_concluida_em) ? "<div style=\"font-size:.65rem;color:var(--muted)\">".concat(fmtTs(rec.recontagem_concluida_em), "</div>") : '')
+            : "<span style=\"font-size:.72rem;color:var(--muted-2)\">\u2014</span>", "\n            </td>\n            <td style=\"white-space:nowrap\">\n              <div style=\"display:flex;gap:4px;flex-wrap:wrap\">\n                ").concat(d.status === 'PERSISTENTE'
             ? "<span style=\"font-size:.68rem;color:var(--danger);font-weight:700;padding:3px 8px;background:rgba(217,32,32,.10);border-radius:6px;border:1px solid rgba(217,32,32,.25)\">\uD83D\uDD12 Encerrado</span>"
             : d.status !== 'RESOLVIDA'
                 ? "<button class=\"btn btn-success btn-sm\" onclick=\"marcarDivergenciaResolvida('".concat(d.id, "')\" title=\"Marcar como resolvida\" style=\"font-size:.7rem\">\u2713 Resolver</button>")
@@ -740,7 +743,7 @@ function renderRecontagens() {
     });
     var dados = Object.values(_recPorDiv);
     if (fInv)
-        dados = dados.filter(function (r) { return r.inventario_id === fInv; });
+        dados = dados.filter(function (r) { return String(r.inventario_id || r.inventarioId || '') === String(fInv); });
     if (fStatus)
         dados = dados.filter(function (r) { return r.status === fStatus; });
     if (fRua)
@@ -760,7 +763,7 @@ function renderRecontagens() {
     if (fOperador) {
         dados = dados.filter(function (r) {
             var div = state().divergencias.find(function (d) { return d.id === r.divergencia_id; });
-            return (r.operador || (div === null || div === void 0 ? void 0 : div.operador_responsavel) || '') === fOperador;
+            return (r.operador || (div === null || div === void 0 ? void 0 : div.operador_responsavel) || '') === fOperador || (r.operador_recontagem || (div === null || div === void 0 ? void 0 : div.operador_recontagem) || '') === fOperador;
         });
     }
     if (busca)
@@ -769,7 +772,8 @@ function renderRecontagens() {
                 (r.produto || '').toLowerCase().includes(busca) ||
                 (r.descricao || '').toLowerCase().includes(busca) ||
                 (r.inventario_nome || '').toLowerCase().includes(busca) ||
-                (r.operador || '').toLowerCase().includes(busca);
+                (r.operador || '').toLowerCase().includes(busca) ||
+                (r.operador_recontagem || '').toLowerCase().includes(busca);
         });
     // Ordenação
     if (ford === 'maior_diff')
@@ -793,9 +797,9 @@ function renderRecontagens() {
     var selOp = document.getElementById('rec-foperador');
     if (selOp) {
         var cur_3 = selOp.value;
-        var ops = __spreadArray([], new Set(state().recontagens.map(function (r) {
+        var ops = __spreadArray([], new Set(state().recontagens.flatMap(function (r) {
             var div = state().divergencias.find(function (d) { return d.id === r.divergencia_id; });
-            return r.operador || (div === null || div === void 0 ? void 0 : div.operador_responsavel) || '';
+            return [r.operador || (div === null || div === void 0 ? void 0 : div.operador_responsavel) || '', r.operador_recontagem || (div === null || div === void 0 ? void 0 : div.operador_recontagem) || ''];
         }).filter(Boolean)), true).sort();
         selOp.innerHTML = '<option value="">Todos os operadores</option>' + ops.map(function (o) { return "<option value=\"".concat(o, "\" ").concat(o === cur_3 ? 'selected' : '', ">").concat(o, "</option>"); }).join('');
         if (cur_3)
@@ -833,7 +837,7 @@ function renderRecontagens() {
         document.getElementById('rec-table-wrap').innerHTML = "<div class=\"empty\"><div class=\"empty-icon\">\uD83D\uDD04</div><div class=\"empty-title\">Nenhuma recontagem encontrada</div><div class=\"empty-sub\">Recontagens s\u00E3o criadas ao processar diverg\u00EAncias. Use \"Atribuir Recontagem\" nas diverg\u00EAncias para distribuir para operadores.</div></div>";
         return;
     }
-    document.getElementById('rec-table-wrap').innerHTML = "\n    <div class=\"tbl-wrap\"><table>\n      <thead><tr>\n        <th>Invent\u00E1rio</th><th>Rua</th><th>Endere\u00E7o</th><th>Produto</th>\n        <th>Qtd Sistema</th>\n        <th>Contagem 1</th><th>Contagem 2</th><th>Contagem 3</th>\n        <th>Atribu\u00EDdo para</th>\n        <th>Status</th><th>A\u00E7\u00F5es</th>\n      </tr></thead>\n      <tbody>\n        ".concat(dados.map(function (r) {
+    document.getElementById('rec-table-wrap').innerHTML = "\n    <div class=\"tbl-wrap\"><table>\n      <thead><tr>\n        <th>Invent\u00E1rio</th><th>Rua</th><th>Endere\u00E7o</th><th>Produto</th>\n        <th>Qtd Sistema</th>\n        <th>Contagem 1</th><th>Contagem 2</th><th>Contagem 3</th>\n        <th>Atribu\u00EDdo para</th><th>Executado por</th>\n        <th>Status</th><th>A\u00E7\u00F5es</th>\n      </tr></thead>\n      <tbody>\n        ".concat(dados.map(function (r) {
         var _a;
         var endInfo = getEnderecoInfo(r.endereco);
         var rua = (endInfo === null || endInfo === void 0 ? void 0 : endInfo.rua) || '—';
@@ -845,6 +849,7 @@ function renderRecontagens() {
         var statusRec = r.status_recontagem || (div === null || div === void 0 ? void 0 : div.status_recontagem) || (r.status === 'CONCLUIDA' ? 'concluida' : 'pendente');
         var obsAtrib = r.observacao_atribuicao || (div === null || div === void 0 ? void 0 : div.observacao_atribuicao) || '';
         var naoAtribuido = atribPara === '—' || !atribPara;
+        var executadoPor = r.operador_recontagem || (div === null || div === void 0 ? void 0 : div.operador_recontagem) || '';
         // ── Células das 3 contagens — exibe produto E quantidade ──
         var _ndp = function (v) { return String(v || '').trim().toUpperCase(); };
         var prodEsp = _ndp(r.produto);
@@ -864,7 +869,9 @@ function renderRecontagens() {
         };
         return "<tr>\n            <td style=\"font-size:.75rem;color:var(--muted)\">".concat(r.inventario_nome || r.inventario_id, "</td>\n            <td class=\"mono\" style=\"font-weight:600\">").concat(rua, "</td>\n            <td class=\"mono\">").concat(r.endereco, "</td>\n            <td>\n              <div style=\"font-weight:600;font-size:.82rem\">").concat(r.produto, "</div>\n              <div style=\"font-size:.7rem;color:var(--muted)\">").concat(r.descricao || '', "</div>\n            </td>\n            <td class=\"mono\" style=\"font-weight:700\">").concat((_a = r.qtd_esperada) !== null && _a !== void 0 ? _a : '—', "</td>\n            ").concat(_cellCont(r.qtd_primeira, r.operador_primeira, r.data_primeira, r.produto_primeira || r.produto), "\n            ").concat(_cellCont(r.qtd_segunda, r.operador_segunda, r.data_segunda, r.produto_segunda), "\n            ").concat(_cellCont(r.qtd_terceira, r.operador_terceira, r.data_terceira, r.produto_terceira), "\n            <td>\n              ").concat(naoAtribuido
             ? "<span style=\"font-size:.75rem;color:var(--muted-2)\">N\u00E3o atribu\u00EDdo</span>"
-            : "<div style=\"font-weight:600;font-size:.82rem;color:var(--text)\">".concat(atribPara, "</div>\n                   ").concat(atribPor ? "<div style=\"font-size:.65rem;color:var(--muted)\">por ".concat(atribPor, "</div>") : '', "\n                   ").concat(obsAtrib ? "<div style=\"font-size:.68rem;color:var(--text-2);font-style:italic;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\" title=\"".concat(obsAtrib, "\">\uD83D\uDCAC ").concat(obsAtrib, "</div>") : ''), "\n            </td>\n            <td>\n              ").concat(statusRec
+            : "<div style=\"font-weight:600;font-size:.82rem;color:var(--text)\">".concat(atribPara, "</div>\n                   ").concat(atribPor ? "<div style=\"font-size:.65rem;color:var(--muted)\">por ".concat(atribPor, "</div>") : '', "\n                   ").concat(obsAtrib ? "<div style=\"font-size:.68rem;color:var(--text-2);font-style:italic;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap\" title=\"".concat(obsAtrib, "\">\uD83D\uDCAC ").concat(obsAtrib, "</div>") : ''), "\n            </td>\n            <td>\n              ").concat(executadoPor
+            ? "<div style=\"font-weight:700;font-size:.82rem;color:var(--success)\">".concat(escHTML(executadoPor), "</div>\n                   ").concat(r.recontagem_concluida_em ? "<div style=\"font-size:.65rem;color:var(--muted)\">".concat(fmtTs(r.recontagem_concluida_em), "</div>") : '')
+            : "<span style=\"font-size:.75rem;color:var(--muted-2)\">\u2014</span>", "\n            </td>\n            <td>\n              ").concat(statusRec
             ? "<span class=\"badge ".concat(recStatusBadge(statusRec), "\" style=\"font-size:.7rem\">").concat(recStatusLabel(statusRec), "</span>")
             : "<span class=\"badge b-yellow\" style=\"font-size:.7rem\">\u23F3 Pendente</span>", "\n            </td>\n            <td style=\"white-space:nowrap\">\n              <div style=\"display:flex;gap:4px;flex-wrap:wrap\">\n                ").concat(_isFluxoEncerrado(r)
             ? "<span style=\"font-size:.68rem;color:var(--danger);font-weight:700;padding:3px 8px;background:rgba(217,32,32,.10);border-radius:6px;border:1px solid rgba(217,32,32,.25)\">\uD83D\uDD12 Encerrado</span>"

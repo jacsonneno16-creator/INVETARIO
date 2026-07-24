@@ -73,7 +73,8 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     }
     window._extrairLojasDaAuditoria = function (aud) { return Array.isArray(aud === null || aud === void 0 ? void 0 : aud.lojas) ? aud.lojas : []; };
     function _normalizarEnderecoGeral(valor) {
-        return String(valor == null ? '' : valor).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+        var _a;
+        return ((_a = window.DTEnderecos) === null || _a === void 0 ? void 0 : _a.chave(valor)) || String(valor == null ? '' : valor).trim().toUpperCase();
     }
     function _carregarBaseGeralEnderecosAuditoria(forcar) {
         return __awaiter(this, void 0, void 0, function () {
@@ -89,12 +90,19 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         locais = new Set();
                         _a.label = 1;
                     case 1:
-                        _a.trys.push([1, 6, , 7]);
-                        return [4 /*yield*/, FS.collection('dt_locais_chunks').orderBy('parte').get()];
+                        _a.trys.push([1, 7, , 8]);
+                        return [4 /*yield*/, FS.collection('dt_locais_meta').doc('versao').get().catch(function () { return null; })];
                     case 2:
+                        var meta = _a.sent();
+                        var versaoServidor = meta && meta.exists ? String((meta.data() || {}).versao || '') : '';
+                        return [4 /*yield*/, FS.collection('dt_locais_chunks').orderBy('parte').get()];
+                    case 3:
                         chunks = _a.sent();
-                        if (!!chunks.empty) return [3 /*break*/, 3];
-                        chunks.docs.forEach(function (doc) {
+                        if (!!chunks.empty) return [3 /*break*/, 4];
+                        var todosDocs = chunks.docs;
+                        var docsDaVersao = versaoServidor ? todosDocs.filter(function (d) { return String((d.data() || {}).versao || '') === versaoServidor; }) : [];
+                        var docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(function (d) { return !(d.data() || {}).versao; });
+                        docsUsar.forEach(function (doc) {
                             var dados = doc.data() || {};
                             var itens = dados.dados || dados.itens || dados.registros || [];
                             itens.forEach(function (item) {
@@ -105,9 +113,9 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                                     locais.add(endereco);
                             });
                         });
-                        return [3 /*break*/, 5];
-                    case 3: return [4 /*yield*/, FS.collection(FCOL.locais).get()];
-                    case 4:
+                        return [3 /*break*/, 6];
+                    case 4: return [4 /*yield*/, FS.collection(FCOL.locais).get()];
+                    case 5:
                         snap = _a.sent();
                         snap.docs.forEach(function (doc) {
                             var item = doc.data() || {};
@@ -117,8 +125,8 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                             if (endereco)
                                 locais.add(endereco);
                         });
-                        _a.label = 5;
-                    case 5:
+                        _a.label = 6;
+                    case 6:
                         APP.locaisAtivos = locais;
                         APP._locaisDoFirebase = true;
                         try {
@@ -127,7 +135,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         catch (e) { }
                         console.log('[AUDITORIA] Base Geral de Endereços carregada:', locais.size, 'loja:', lojaId);
                         return [2 /*return*/, locais];
-                    case 6:
+                    case 7:
                         erro_1 = _a.sent();
                         console.warn('[AUDITORIA] Falha ao carregar Base Geral de Endereços:', erro_1);
                         try {
@@ -139,7 +147,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         }
                         APP._locaisDoFirebase = false;
                         return [2 /*return*/, APP.locaisAtivos];
-                    case 7: return [2 /*return*/];
+                    case 8: return [2 /*return*/];
                 }
             });
         });
@@ -173,17 +181,19 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         resultadosSnap = _a.sent();
                         finalizados_1 = new Set();
                         resultadosSnap.docs.forEach(function (doc) {
+                            var _a;
                             var d = doc.data() || {};
                             var status = String(d.status || '').toUpperCase();
                             if (['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(status) || d.disponivel_coletor === false) {
                                 finalizados_1.add(String(doc.id));
-                                finalizados_1.add(String(d.endereco || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, ''));
+                                finalizados_1.add((((_a = window.DTEnderecos) === null || _a === void 0 ? void 0 : _a.chave(d.endereco)) || String(d.endereco || '').trim().toUpperCase()));
                             }
                         });
                         pendentes = rows_1.filter(function (a) {
+                            var _a;
                             var status = String(a.status || '').toUpperCase();
                             var id = String(a.id || '');
-                            var endereco = String(a.endereco || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+                            var endereco = (((_a = window.DTEnderecos) === null || _a === void 0 ? void 0 : _a.chave(a.endereco)) || String(a.endereco || '').trim().toUpperCase());
                             return a.disponivel_coletor !== false &&
                                 !['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(status) &&
                                 !finalizados_1.has(id) && !finalizados_1.has(endereco);

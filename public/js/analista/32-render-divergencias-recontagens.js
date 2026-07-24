@@ -528,7 +528,7 @@ function renderDivergencias() {
         <th>Inventário</th><th>Rua</th><th>Endereço</th><th>Produto</th>
         <th>Operador Contagem</th><th>Data</th><th>Tipo</th>
         <th>Sistema</th><th>1ª Contagem</th><th>Resultado</th>
-        <th>Status</th><th>Status Recontagem</th><th>Atribuído para</th><th>Ações</th>
+        <th>Status</th><th>Status Recontagem</th><th>Atribuído para</th><th>Executado por</th><th>Ações</th>
       </tr></thead>
       <tbody>
         ${dados.map(d => {
@@ -560,6 +560,7 @@ function renderDivergencias() {
           // Status recontagem
           const statusRec = d.status_recontagem || (rec ? (rec.status==='CONCLUIDA' ? 'concluida' : 'pendente') : '');
           const atribPara = d.operador_responsavel || rec?.operador || '';
+          const executadoPor = rec?.operador_recontagem || d.operador_recontagem || '';
 
           return `<tr style="${selecionado ? 'background:rgba(232,117,26,.06)' : ''}">
             <td style="padding:8px 10px">
@@ -621,9 +622,15 @@ function renderDivergencias() {
             </td>
             <td>
               ${atribPara
-                ? `<div style="font-size:.78rem;font-weight:600;color:var(--text)">${atribPara}</div>
+                ? `<div style="font-size:.78rem;font-weight:600;color:var(--text)">${escHTML(atribPara)}</div>
                    ${d.atribuido_em ? `<div style="font-size:.65rem;color:var(--muted)">${fmtTs(d.atribuido_em)}</div>` : ''}`
                 : `<span style="font-size:.72rem;color:var(--muted-2)">Não atribuído</span>`}
+            </td>
+            <td>
+              ${executadoPor
+                ? `<div style="font-size:.78rem;font-weight:700;color:var(--success)">${escHTML(executadoPor)}</div>
+                   ${rec?.recontagem_concluida_em ? `<div style="font-size:.65rem;color:var(--muted)">${fmtTs(rec.recontagem_concluida_em)}</div>` : ''}`
+                : `<span style="font-size:.72rem;color:var(--muted-2)">—</span>`}
             </td>
             <td style="white-space:nowrap">
               <div style="display:flex;gap:4px;flex-wrap:wrap">
@@ -696,7 +703,7 @@ function renderRecontagens() {
   if (fOperador) {
     dados = dados.filter(r => {
       const div = state().divergencias.find(d => d.id === r.divergencia_id);
-      return (r.operador || div?.operador_responsavel || '') === fOperador;
+      return (r.operador || div?.operador_responsavel || '') === fOperador || (r.operador_recontagem || div?.operador_recontagem || '') === fOperador;
     });
   }
 
@@ -705,7 +712,8 @@ function renderRecontagens() {
     (r.produto||'').toLowerCase().includes(busca) ||
     (r.descricao||'').toLowerCase().includes(busca) ||
     (r.inventario_nome||'').toLowerCase().includes(busca) ||
-    (r.operador||'').toLowerCase().includes(busca)
+    (r.operador||'').toLowerCase().includes(busca) ||
+    (r.operador_recontagem||'').toLowerCase().includes(busca)
   );
 
   // Ordenação
@@ -727,9 +735,9 @@ function renderRecontagens() {
   const selOp = document.getElementById('rec-foperador');
   if (selOp) {
     const cur = selOp.value;
-    const ops = [...new Set(state().recontagens.map(r => {
+    const ops = [...new Set(state().recontagens.flatMap(r => {
       const div = state().divergencias.find(d => d.id === r.divergencia_id);
-      return r.operador || div?.operador_responsavel || '';
+      return [r.operador || div?.operador_responsavel || '', r.operador_recontagem || div?.operador_recontagem || ''];
     }).filter(Boolean))].sort();
     selOp.innerHTML = '<option value="">Todos os operadores</option>' + ops.map(o => `<option value="${o}" ${o===cur?'selected':''}>${o}</option>`).join('');
     if (cur) selOp.value = cur;
@@ -772,7 +780,7 @@ function renderRecontagens() {
         <th>Inventário</th><th>Rua</th><th>Endereço</th><th>Produto</th>
         <th>Qtd Sistema</th>
         <th>Contagem 1</th><th>Contagem 2</th><th>Contagem 3</th>
-        <th>Atribuído para</th>
+        <th>Atribuído para</th><th>Executado por</th>
         <th>Status</th><th>Ações</th>
       </tr></thead>
       <tbody>
@@ -788,6 +796,7 @@ function renderRecontagens() {
           const statusRec   = r.status_recontagem || div?.status_recontagem || (r.status === 'CONCLUIDA' ? 'concluida' : 'pendente');
           const obsAtrib    = r.observacao_atribuicao || div?.observacao_atribuicao || '';
           const naoAtribuido = atribPara === '—' || !atribPara;
+          const executadoPor = r.operador_recontagem || div?.operador_recontagem || '';
 
           // ── Células das 3 contagens — exibe produto E quantidade ──
           const _ndp = v => String(v || '').trim().toUpperCase();
@@ -831,6 +840,12 @@ function renderRecontagens() {
                    ${atribPor ? `<div style="font-size:.65rem;color:var(--muted)">por ${atribPor}</div>` : ''}
                    ${obsAtrib ? `<div style="font-size:.68rem;color:var(--text-2);font-style:italic;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${obsAtrib}">💬 ${obsAtrib}</div>` : ''}`
               }
+            </td>
+            <td>
+              ${executadoPor
+                ? `<div style="font-weight:700;font-size:.82rem;color:var(--success)">${escHTML(executadoPor)}</div>
+                   ${r.recontagem_concluida_em ? `<div style="font-size:.65rem;color:var(--muted)">${fmtTs(r.recontagem_concluida_em)}</div>` : ''}`
+                : `<span style="font-size:.75rem;color:var(--muted-2)">—</span>`}
             </td>
             <td>
               ${statusRec

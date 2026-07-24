@@ -19,10 +19,12 @@
   const local = function(x){ return norm(x.local || x.setor || x.nome_local || x.local_estoque || 'SEM LOCAL'); };
   const rua = function(x){ return norm(x.rua || global.extrairRua(x.endereco) || 'SEM RUA'); };
 
+  // Estrutura do endereço: loja.local.area.rua.coluna.nivel.sequencia (separado por ponto).
+  // A rua é sempre a 4ª parte (índice 3). Antes esta função pegava o 1º token (código da
+  // loja) e por isso todos os endereços apareciam agrupados como se fossem da mesma rua.
   global.extrairRua = global.extrairRua || function(endereco){
-    const s=norm(endereco); if(!s) return '';
-    const m=s.match(/(?:RUA\s*)?([A-Za-z0-9]+)(?:[.\-\/\s]|$)/i);
-    return m ? m[1].toUpperCase() : s;
+    const p=global.DTEnderecos?.partes(endereco);
+    return p?.rua ? String(p.rua).toUpperCase() : '';
   };
 
   function fillSelect(id, items, first){

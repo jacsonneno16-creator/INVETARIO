@@ -177,7 +177,10 @@ function atualizarCacheLocais() {
                 case 6:
                     chunksSnap = _c.sent();
                     if (!!chunksSnap.empty) return [3 /*break*/, 7];
-                    chunksSnap.docs.forEach(function (chunkDoc) {
+                    var todosDocs = chunksSnap.docs;
+                    var docsDaVersao = versaoServidor ? todosDocs.filter(function (d) { return String((d.data() || {}).versao || '') === versaoServidor; }) : [];
+                    var docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(function (d) { return !(d.data() || {}).versao; });
+                    docsUsar.forEach(function (chunkDoc) {
                         var dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
                         dados.forEach(function (d) {
                             var _a, _b, _c, _d, _e, _f;

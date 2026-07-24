@@ -618,7 +618,8 @@
     // Campos comuns da rodada
     let updatedRec = Object.assign({}, recCtx, {
       qtd_recontagem: qtd, produto_recontagem: produto, operador,
-      status: 'CONCLUIDA', concluida_em: agora, status_recontagem: 'concluida'
+      status: 'CONCLUIDA', concluida_em: agora, status_recontagem: 'concluida',
+      operador_recontagem: operador || recCtx.operador_recontagem || ''
     });
     if (numeroAtual === 1){
       updatedRec = Object.assign({}, updatedRec, { qtd_segunda: qtd, produto_segunda: produto, operador_segunda: operador, data_segunda: agora });

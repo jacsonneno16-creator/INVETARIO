@@ -32,16 +32,24 @@ function _validarCapaInformada(val) {
     var n = _capaNumero(texto);
     if (!texto || isNaN(n) || n < 1)
         return { ok: false, msg: 'Capa Palete inválida' };
+    // Capas físicas/padrão com exatamente 7 dígitos são sempre permitidas.
+    // Elas não usam o range reservado do operador.
     if (texto.length === 7) {
         return { ok: true, existente: _capaExisteNaBase(texto), manualSeteDigitos: true, n: n, valor: texto };
     }
+    // Uma capa curta já cadastrada na base é válida fora do range atual.
+    var existenteNaBase = _capaExisteNaBase(texto);
+    if (texto.length < 7 && existenteNaBase) {
+        return { ok: true, existente: true, nova: false, n: n, valor: String(n).padStart(3, '0') };
+    }
+    // Capa curta inexistente só pode ser criada dentro do range reservado.
     if (texto.length < 7) {
         var range = APP.capaRange;
         if (!range || !range.min || !range.max)
             return { ok: false, msg: 'Range do operador ainda não foi reservado. Atualize a base e tente novamente.' };
         if (n < range.min || n > range.max)
-            return { ok: false, msg: 'Capas com menos de 7 dígitos só podem ser usadas dentro do seu range (' + String(range.min).padStart(3, '0') + '–' + String(range.max).padStart(3, '0') + ')' };
-        return { ok: true, existente: _capaExisteNaBase(texto), nova: !_capaExisteNaBase(texto), n: n, valor: String(n).padStart(3, '0') };
+            return { ok: false, msg: "Capas com menos de 7 d\u00EDgitos que ainda n\u00E3o existem na base s\u00F3 podem ser criadas dentro do seu range (".concat(String(range.min).padStart(3, '0'), "\u2013").concat(String(range.max).padStart(3, '0'), ")") };
+        return { ok: true, existente: false, nova: true, n: n, valor: String(n).padStart(3, '0') };
     }
     return { ok: false, msg: 'A capa deve ter exatamente 7 dígitos ou estar dentro do range reservado.' };
 }
@@ -503,7 +511,7 @@ function salvarContagem() {
         modal.remove(); });
 }
 function _executarSalvar(qty) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _v, _w;
     // ── Trava anti-duplo: bloquear re-execução dentro de 1500ms com mesma assinatura ──
     if (_salvandoContagem)
         return;
@@ -578,12 +586,14 @@ function _executarSalvar(qty) {
         quantidade_esperada: qtdEsp || '',
         divergente: divergente,
         operador: ((_k = APP.operador) === null || _k === void 0 ? void 0 : _k.name) || '',
-        operador_email: ((_l = APP.operador) === null || _l === void 0 ? void 0 : _l.email) || '',
+        operador_id: ((_l = APP.operador) === null || _l === void 0 ? void 0 : _l.email) || ((_m = APP.operador) === null || _m === void 0 ? void 0 : _m.usuario) || ((_o = APP.operador) === null || _o === void 0 ? void 0 : _o.login) || '',
+        operador_nome: ((_p = APP.operador) === null || _p === void 0 ? void 0 : _p.name) || ((_q = APP.operador) === null || _q === void 0 ? void 0 : _q.nome) || '',
+        operador_email: ((_r = APP.operador) === null || _r === void 0 ? void 0 : _r.email) || '',
         coletor_id: localStorage.getItem('dt_device_id') || '',
         origem: 'COLETOR',
         tipo_contagem: APP.modoRecontagem ? 'RECONTAGEM' : 'PRIMEIRA',
-        recontagem_id: ((_m = APP.modoRecontagem) === null || _m === void 0 ? void 0 : _m.id) || null,
-        divergencia_id: ((_o = APP.modoRecontagem) === null || _o === void 0 ? void 0 : _o.divergencia_id) || null,
+        recontagem_id: ((_s = APP.modoRecontagem) === null || _s === void 0 ? void 0 : _s.id) || null,
+        divergencia_id: ((_t = APP.modoRecontagem) === null || _t === void 0 ? void 0 : _t.divergencia_id) || null,
         dataHora: new Date(),
         criado_em: new Date().toISOString(),
         numero: APP.contagens.filter(function (c) { return c.endereco === a.endereco && c.gtin === a.gtin; }).length + 1,
@@ -620,7 +630,7 @@ function _executarSalvar(qty) {
     }
     // ── Verificar capacidade após salvar ─────────────────────────────────
     // Re-ler capacidade diretamente do mapa (mais confiável que APP.atual.capacidadeEnd)
-    var _capMapa = (_r = (_q = (_p = APP.endCapacidade) === null || _p === void 0 ? void 0 : _p[a._endNorm]) !== null && _q !== void 0 ? _q : a.capacidadeEnd) !== null && _r !== void 0 ? _r : 0;
+    var _capMapa = (_w = (_v = (_u = APP.endCapacidade) === null || _u === void 0 ? void 0 : _u[a._endNorm]) !== null && _v !== void 0 ? _v : a.capacidadeEnd) !== null && _w !== void 0 ? _w : 0;
     var _cap = _capMapa;
     var _usados = _palletsNoEnderecoAtual(a._endNorm);
     // Regra explícita: capacidade 1 → encerrar após o primeiro pallet

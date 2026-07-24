@@ -313,12 +313,12 @@
     .rank-stat strong { color: var(--text); font-family: var(--mono); }
 
     /* ── Progress bar in-table ── */
-    .mini-prog { background: var(--border); border-radius: 10px; height: 6px; overflow: hidden; flex: 1; }
+    .mini-prog { background: rgba(148,163,184,.18); border-radius: 999px; height: 12px; overflow: hidden; flex: 1; box-shadow: inset 0 1px 3px rgba(15,23,42,.12); }
     .hidden { display: none !important; }
-    .mini-prog-fill { height: 100%; border-radius: 10px; transition: width .4s ease; }
-    .mini-prog-fill.green  { background: var(--success); }
-    .mini-prog-fill.orange { background: var(--orange); }
-    .mini-prog-fill.red    { background: var(--danger); }
+    .mini-prog-fill { height: 100%; border-radius: 999px; transition: width .4s ease; box-shadow: 0 1px 4px rgba(15,23,42,.15); }
+    .mini-prog-fill.green  { background: linear-gradient(90deg, #10b981, #34d399); }
+    .mini-prog-fill.orange { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+    .mini-prog-fill.red    { background: linear-gradient(90deg, #ef4444, #fb7185); }
     .kpi-icon { font-size: 1.28rem; margin-bottom: 10px; display: block; opacity: .75; }
     .kpi-val { font-family: var(--mono); font-size: 1.85rem; font-weight: 700; letter-spacing: -.03em; line-height: 1; color: var(--text); }
     .kpi-lbl { font-size: .61rem; color: var(--muted); margin-top: 7px; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; }
@@ -514,13 +514,18 @@
        PROGRESS BARS
     ════════════════════════════════════════ */
     .prog-wrap { display: flex; align-items: center; gap: 10px; }
-    .prog { flex: 1; height: 7px; background: var(--border); border-radius: 4px; overflow: hidden; min-width: 60px; }
-    .prog-fill { height: 100%; border-radius: 4px; transition: width .75s cubic-bezier(.4,0,.2,1); }
-    .prog-fill.green  { background: linear-gradient(90deg, var(--green-light) 0%, #4FD98C 100%); }
-    .prog-fill.blue   { background: linear-gradient(90deg, var(--orange) 0%, var(--orange-h) 100%); }
-    .prog-fill.yellow { background: linear-gradient(90deg, var(--warn) 0%, #F5C236 100%); }
-    .prog-fill.red    { background: linear-gradient(90deg, var(--danger) 0%, #F06060 100%); }
-    .prog-label { font-family: var(--mono); font-size: .7rem; font-weight: 700; color: var(--text-2); min-width: 38px; text-align: right; }
+    .prog { flex: 1; height: 14px; background: rgba(148,163,184,.18); border-radius: 999px; overflow: hidden; min-width: 60px; box-shadow: inset 0 1px 3px rgba(15,23,42,.12); }
+    .prog-fill { height: 100%; border-radius: 999px; transition: width .75s cubic-bezier(.4,0,.2,1); position: relative; box-shadow: 0 1px 4px rgba(15,23,42,.18); }
+    .prog-fill::after { content:''; position:absolute; inset:0; border-radius:999px; background:linear-gradient(180deg,rgba(255,255,255,.35),rgba(255,255,255,0) 55%); }
+    .prog-fill.green  { background: linear-gradient(90deg, #10b981 0%, #34d399 100%); }
+    .prog-fill.blue   { background: linear-gradient(90deg, #2563eb 0%, #38bdf8 100%); }
+    .prog-fill.yellow { background: linear-gradient(90deg, #f59e0b 0%, #fbbf24 100%); }
+    .prog-fill.red    { background: linear-gradient(90deg, #ef4444 0%, #fb7185 100%); }
+    .prog-label { font-family: var(--mono); font-size: .72rem; font-weight: 800; color: var(--text-2); min-width: 38px; text-align: right; }
+    .dash-scroll-card { scrollbar-width: thin; }
+    .dash-scroll-card::-webkit-scrollbar { width: 8px; }
+    .dash-scroll-card::-webkit-scrollbar-thumb { background: rgba(148,163,184,.45); border-radius: 99px; }
+    .dash-scroll-card::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.7); }
 
     /* ════════════════════════════════════════
        MODAL
@@ -814,8 +819,8 @@
 .dash-stat-list{display:grid;gap:9px;flex:1}.dash-stat-row{display:flex;align-items:center;justify-content:space-between;font-size:.75rem}.dash-stat-row b{font-family:var(--mono);font-size:.86rem}.dash-dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:7px}
 .dash-ranking{grid-column:span 8}.dash-ranking-body{padding:10px 18px 18px;display:grid;gap:10px}
 .dash-rank-row{border:0;background:transparent;width:100%;display:grid;grid-template-columns:minmax(120px,220px) 1fr 42px;gap:12px;align-items:center;text-align:left;cursor:pointer;padding:5px;border-radius:10px;transition:.18s}.dash-rank-row:hover{background:var(--surface-2);transform:translateX(3px)}
-.dash-rank-label{font-size:.72rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dash-rank-track{height:13px;background:rgba(148,163,184,.16);border-radius:999px;overflow:hidden}.dash-rank-fill{height:100%;border-radius:999px;box-shadow:0 2px 8px rgba(15,23,42,.12);transition:width .6s ease}.dash-rank-value{font-family:var(--mono);font-size:.75rem;font-weight:800;text-align:right}
-.dash-mini{grid-column:span 4}.dash-mini-body{padding:10px 18px 18px;display:grid;gap:9px}.dash-mini-row{display:grid;grid-template-columns:58px 1fr 34px;gap:10px;align-items:center;font-size:.7rem}.dash-mini-track{height:8px;background:rgba(148,163,184,.15);border-radius:99px;overflow:hidden}.dash-mini-fill{height:100%;border-radius:99px}
+.dash-rank-label{font-size:.72rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dash-rank-track{height:20px;background:rgba(148,163,184,.16);border-radius:999px;overflow:hidden;box-shadow:inset 0 1px 3px rgba(15,23,42,.1)}.dash-rank-fill{height:100%;border-radius:999px;box-shadow:0 2px 8px rgba(15,23,42,.16);transition:width .6s ease;position:relative}.dash-rank-fill::after{content:'';position:absolute;inset:0;border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.32),rgba(255,255,255,0) 55%)}.dash-rank-value{font-family:var(--mono);font-size:.75rem;font-weight:800;text-align:right}
+.dash-mini{grid-column:span 4}.dash-mini-body{padding:10px 18px 18px;display:grid;gap:9px}.dash-mini-row{display:grid;grid-template-columns:58px 1fr 34px;gap:10px;align-items:center;font-size:.7rem}.dash-mini-track{height:14px;background:rgba(148,163,184,.15);border-radius:99px;overflow:hidden;box-shadow:inset 0 1px 3px rgba(15,23,42,.1)}.dash-mini-fill{height:100%;border-radius:99px;box-shadow:0 1px 4px rgba(15,23,42,.15)}
 .dash-insights{grid-column:span 12;padding:18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.dash-insight{padding:13px 14px;border-radius:14px;background:var(--surface-2);border:1px solid var(--border)}.dash-insight strong{display:block;font-size:1.15rem;font-family:var(--mono)}.dash-insight span{font-size:.66rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 #acomp-live-hero{margin:12px 0 16px;padding:20px;border-radius:18px;background:linear-gradient(135deg,#0f5132,#1e7a50);color:#fff;display:grid;grid-template-columns:auto 1fr;gap:20px;align-items:center;box-shadow:0 14px 35px rgba(15,81,50,.22)}
 #acomp-live-ring{width:112px;height:112px;border-radius:50%;display:grid;place-items:center;position:relative}#acomp-live-ring:after{content:'';position:absolute;inset:13px;border-radius:50%;background:#145f3d}#acomp-live-value{position:relative;z-index:1;font:900 1.5rem var(--mono)}
@@ -1138,17 +1143,17 @@
 </div>
 </div>
 <div id="acomp-alertas" style="padding:0 20px"></div>
-<div id="acomp-ruas-grid" style="padding:12px 20px;display:flex;flex-direction:column;gap:8px"></div>
+<div id="acomp-ruas-grid" class="dash-scroll-card" style="padding:12px 20px;display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto"></div>
 </div>
 <!-- Progresso por Local (legacy) -->
 <div class="tc">
 <div class="tc-header"><div class="tc-title">🗂️ Progresso por Local de Estoque</div></div>
-<div id="acomp-progress-detail" style="padding:20px"></div>
+<div id="acomp-progress-detail" class="dash-scroll-card" style="padding:20px;max-height:380px;overflow-y:auto"></div>
 </div>
 <!-- Produtividade por Operador -->
 <div class="tc">
 <div class="tc-header"><div class="tc-title">👤 Produtividade por Operador</div></div>
-<div id="acomp-coletores-wrap"></div>
+<div id="acomp-coletores-wrap" class="dash-scroll-card" style="max-height:380px;overflow-y:auto"></div>
 </div>
 </div>
 <!-- ══ CONTAGENS ══ -->
@@ -3218,7 +3223,7 @@
 <div class="toast" id="toast"></div>
 <!-- ══════════ JAVASCRIPT ══════════ -->
 
-</div><script src="js/shared/common-utils.js?v=20260723-52"></script><script src="js/shared/firebase-shared.js?v=20260722-18"></script><script src="js/shared/produtos-service.js?v=20260723-54"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/00-auth-login.js?v=20260723-57"></script><script src="js/analista/01-core-base-storage.js?v=20260722-16"></script><script src="js/analista/services/inventarioService.js?v=20260723-57"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260722-16"></script><script src="js/analista/firebaseService.js?v=20260723-58"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260723-51"></script><script src="js/analista/03-core-navigation.js?v=20260722-20"></script><script src="js/analista/04-compat-pages.js?v=20260722-16"></script><script src="js/analista/09-fs-publicar.js?v=20260722-16"></script><script src="js/analista/10-inventarios-negocio.js?v=20260723-51"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260722-16"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260722-16"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260723-58"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260723-36"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260723-51"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260723-58"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260723-58"></script><script src="js/analista/33-render-enderecos.js?v=20260722-16"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-20"></script><script src="js/analista/35-coletores-render.js?v=20260722-20"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260723-54"></script><script src="js/analista/39-base-produtos.js?v=20260723-56"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260723-43"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260723-52"></script><script src="js/analista/app-controller.js?v=20260723-58"></script>
+</div><script src="js/shared/common-utils.js?v=20260723-52"></script><script src="js/shared/firebase-shared.js?v=20260722-18"></script><script src="js/shared/enderecos-service.js?v=20260724-64"></script><script src="js/shared/produtos-service.js?v=20260723-54"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/01-core-base-storage.js?v=20260722-16"></script><script src="js/analista/services/inventarioService.js?v=20260723-57"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260722-16"></script><script src="js/analista/firebaseService.js?v=20260724-61"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260723-51"></script><script src="js/analista/03-core-navigation.js?v=20260722-20"></script><script src="js/analista/04-compat-pages.js?v=20260722-16"></script><script src="js/analista/09-fs-publicar.js?v=20260724-64"></script><script src="js/analista/10-inventarios-negocio.js?v=20260723-51"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260724-64"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260724-60"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260723-58"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260724-61"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260724-61"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260723-58"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260723-58"></script><script src="js/analista/33-render-enderecos.js?v=20260724-64"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-20"></script><script src="js/analista/35-coletores-render.js?v=20260724-61"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260724-64"></script><script src="js/analista/39-base-produtos.js?v=20260723-56"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260724-64"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260723-52"></script>
 <div class="modal-bg" id="modal-loja-cadastro"><div class="modal" style="max-width:480px">
   <div class="modal-title">🏪 <span id="ml-title">Cadastrar loja</span></div>
   <input type="hidden" id="ml-id"/>
@@ -3227,7 +3232,15 @@
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260722-19"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260723-38"></script></body>
-</html><style id="dashboard-v38-css">
-.dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}.dash-compare-row{border:0;background:transparent;width:100%;display:grid;grid-template-columns:minmax(150px,260px) 1fr;gap:16px;align-items:center;text-align:left;padding:10px 4px;cursor:pointer;border-bottom:1px solid var(--border)}.dash-compare-row:hover{background:rgba(37,99,235,.04)}.dash-compare-label{font-weight:750;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dash-compare-bars{display:grid;gap:5px}.dash-compare-line{display:grid;grid-template-columns:72px 1fr 46px;gap:8px;align-items:center;height:18px}.dash-compare-line i{font-style:normal;font-size:.62rem;color:var(--muted)}.dash-compare-line b{display:block;height:10px;border-radius:999px;min-width:0;transition:width .35s ease}.dash-compare-line em{font-style:normal;text-align:right;font-size:.7rem;font-weight:800}.dash-ranking-body{padding-bottom:18px}@media(max-width:980px){.dash-pie{grid-column:span 12}.dash-compare-row{grid-template-columns:1fr}.dash-pie-body{flex-wrap:wrap}}
+<script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260722-19"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260724-61"></script><script src="js/analista/app-controller.js?v=20260724-61"></script><script src="js/analista/00-auth-login.js?v=20260724-61"></script>
+<style id="dashboard-v38-css">
+.dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}.dash-compare-row{border:0;background:transparent;width:100%;display:grid;grid-template-columns:minmax(150px,260px) 1fr;gap:16px;align-items:center;text-align:left;padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border);border-radius:12px;transition:background .16s ease,transform .16s ease}.dash-compare-row:hover{background:var(--surface-2);transform:translateX(3px)}.dash-compare-label{font-weight:750;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dash-compare-bars{display:grid;gap:8px}.dash-compare-line{display:grid;grid-template-columns:72px 1fr 46px;gap:8px;align-items:center;height:26px}.dash-compare-line i{font-style:normal;font-size:.62rem;color:var(--muted)}.dash-compare-line b{display:block;height:18px;border-radius:999px;min-width:0;transition:width .35s ease;position:relative;box-shadow:0 2px 6px rgba(15,23,42,.18)}.dash-compare-line b::after{content:'';position:absolute;inset:0;border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.32),rgba(255,255,255,0) 55%)}.dash-compare-line em{font-style:normal;text-align:right;font-size:.72rem;font-weight:800}
+/* Card com rolagem interna — evita gráficos gigantes quando há muitas ruas/produtos */
+.dash-ranking-body{padding:6px 14px 16px;max-height:380px;overflow-y:auto;scrollbar-width:thin}
+.dash-ranking-body::-webkit-scrollbar{width:8px}
+.dash-ranking-body::-webkit-scrollbar-thumb{background:rgba(148,163,184,.45);border-radius:99px}
+.dash-ranking-body::-webkit-scrollbar-thumb:hover{background:rgba(148,163,184,.7)}
+@media(max-width:980px){.dash-pie{grid-column:span 12}.dash-compare-row{grid-template-columns:1fr}.dash-pie-body{flex-wrap:wrap}}
 </style>
+</body>
+</html>

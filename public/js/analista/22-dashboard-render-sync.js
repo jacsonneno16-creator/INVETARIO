@@ -551,8 +551,8 @@ let _dashAudLoja = '';
 
 function _dashModoAtual(){ return document.getElementById('dash-mode')?.value || 'inventario'; }
 function _dashEnderecoPartes(endereco){
-  const p=String(endereco||'').trim().split(/[.\-_/]/).filter(Boolean);
-  return {loja:p[0]||'',local:p[1]||'',area:p[2]||'',rua:p[3]||'SEM RUA',coluna:p[4]||'SEM COLUNA',nivel:p[5]||'SEM NÍVEL',sequencia:p[6]||''};
+  const p=window.DTEnderecos?.partes(endereco)||{};
+  return {loja:p.loja||'',local:p.local||'',area:p.area||'',rua:p.rua||'SEM RUA',coluna:p.coluna||'SEM COLUNA',nivel:p.nivel||'SEM NÍVEL',sequencia:p.sequencia||''};
 }
 function _dashSetKpi(idx,valor,rotulo,icone){
   const ids=['kd-inventarios','kd-enderecos','kd-end-contados','kd-pendencias','kd-contagens','kd-diverg','kd-recount','kd-pct-geral','kd-operadores'];
@@ -642,4 +642,4 @@ function renderDashboardAuditoria(){
   const tab=document.getElementById('dash-inv-table');if(tab){const rec=[...lista].sort((a,b)=>String(b.lidoEm||b.lido_em||'').localeCompare(String(a.lidoEm||a.lido_em||''))).slice(0,15);tab.innerHTML=rec.length?`<div class="table-wrap"><table><thead><tr><th>Auditoria</th><th>Endereço</th><th>Produto esperado</th><th>Produto lido</th><th>Status</th><th>Operador</th></tr></thead><tbody>${rec.map(i=>`<tr><td>${_dashSafe(i.auditoriaNome)}</td><td class="mono">${_dashSafe(i.endereco)}</td><td>${_dashSafe(i.produtoEsperado||i.produto_esperado||i.dunEsperado||i.dun_esperado||'—')}</td><td>${_dashSafe(i.produtoLido||i.produto_lido||i.dunLido||i.dun_lido||'—')}</td><td><span class="badge ${_dashAudStatus(i)==='OK'?'ok':_dashAudStatus(i)==='DIVERGENTE'?'err':'warn'}">${_dashSafe(_dashAudStatus(i))}</span></td><td>${_dashSafe(i.operadorNome||i.operador_nome||'—')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty"><div class="empty-title">Nenhum resultado para os filtros</div></div>';}
   const alert=document.getElementById('dash-alert-wrap');if(alert)alert.innerHTML=div?`<div class="alert warn"><b>⚠️ ${div} divergência(s)</b> nos filtros atuais. Clique nos gráficos para aprofundar a análise.</div>`:`<div class="alert ok"><b>✅ Nenhuma divergência</b> nos filtros atuais.</div>`;
 }
-window.alterarModoDashboard=alterarModoDashboard;window.carregarDashboardAuditoria=carregarDashboardAuditoria;window.renderDashboardAuditoria=renderDashboardAuditoria;window._dashAudBarClick=_dashAudBarClick;
+window.alterarModoDashboard=alterarModoDashboard;window.carregarDashboardAuditoria=carregarDashboardAuditoria;window.renderDashboardAuditoriaBase=renderDashboardAuditoria;window.renderDashboardAuditoria=renderDashboardAuditoria;window._dashAudBarClick=_dashAudBarClick;

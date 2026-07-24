@@ -146,15 +146,8 @@ function renderAcompanhamento() {
 
   // Helper: extrai a rua do endereço (parte [3] de loja.local.area.rua.col.niv.seq)
   function _getRua(e) {
-    // Prioridade 1: campo rua explícito no cadastro
     if (e.rua && e.rua !== '') return e.rua;
-    // Prioridade 2: decompor pelo ponto
-    if (e.endereco) {
-      const parts = String(e.endereco).split('.');
-      if (parts.length >= 4 && parts[3]) return parts[3];
-      if (parts.length >= 1 && parts[0]) return parts[0]; // fallback p/ endereços curtos
-    }
-    return 'SEM RUA';
+    return window.DTEnderecos?.partes(e.endereco).rua || 'SEM RUA';
   }
 
   // Helper: extrai o local de estoque do cadastro
@@ -349,3 +342,6 @@ function renderAcompanhamento() {
     `<div class="empty"><div class="empty-icon">👤</div><div class="empty-title">Nenhum operador com contagens neste inventário</div></div>`;
 }
 
+
+// Contrato explícito usado pelo roteador de acompanhamento.
+window.renderAcompanhamentoInventarioBase = renderAcompanhamento;

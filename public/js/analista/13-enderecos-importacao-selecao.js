@@ -147,7 +147,7 @@ function _getMapVal(row, fieldKey) {
 /** Monta o endereço a partir de uma linha raw usando os selects atuais do mapper */
 function _buildAddrFromRow(row) {
   const end = _getMapVal(row, 'endereco');
-  if (end) return { endereco: end, fromDirect: true, parts: end.split('.') };
+  if (end) return { endereco: end, fromDirect: true, parts: (window.DTEnderecos?.partes(end).lista || []) };
   const parts = ['loja','local','area','rua','coluna','nivel','sequencia'].map(k => _getMapVal(row, k));
   const endereco = parts.filter(Boolean).join('.');
   return { endereco, fromDirect: false, parts };
@@ -262,7 +262,7 @@ function updateMapperPreview() {
   const rowsHtml = preview.map(row => {
     const { endereco } = _buildAddrFromRow(row);
     if (!endereco) return '';
-    const parts = endereco.split('.');
+    const parts = (window.DTEnderecos?.partes(endereco).lista || []);
     const capVal  = _getMapVal(row, 'capacidade_paletes');
     const ativoVal= _getMapVal(row, 'ativo');
 
@@ -311,14 +311,14 @@ function confirmarImportEnderecos() {
     if (!endereco) return;
 
     // Decompor automaticamente pelo separador "."
-    const parts = endereco.split('.');
-    const loja      = parts[0] || '';
-    const local     = parts[1] || '';
-    const area      = parts[2] || '';
-    const rua       = parts[3] || '';
-    const coluna    = parts[4] || '';
-    const nivel     = parts[5] || '';
-    const sequencia = parts[6] || '';
+    const ep = window.DTEnderecos?.partes(endereco) || {};
+    const loja      = ep.loja || '';
+    const local     = ep.local || '';
+    const area      = ep.area || '';
+    const rua       = ep.rua || '';
+    const coluna    = ep.coluna || '';
+    const nivel     = ep.nivel || '';
+    const sequencia = ep.sequencia || '';
 
     // ── Capacidade de paletes ─────────────────────────────────────────
     // Ler diretamente do índice mapeado (não via _getMapVal que usa o select pelo id key)
@@ -420,19 +420,12 @@ function _addEndDB(e) {
 
   // Auto-extrair rua do código do endereço se não vier explicitamente
   // Estrutura: loja.local.area.rua.col.niv.seq → rua = partes[3]
-  let ruaFinal = e.rua || '';
-  if (!ruaFinal && e.endereco) {
-    const parts = String(e.endereco).split('.');
-    ruaFinal = parts.length >= 4 ? (parts[3] || '') : (parts[0] || '');
-  }
+  const ep = window.DTEnderecos?.partes(e.endereco) || {};
+  let ruaFinal = e.rua || ep.rua || '';
 
   // Auto-extrair nome_local do código se não vier explicitamente
   // local = partes[1] (posição 1: loja.LOCAL.area.rua...)
-  let nomLocalFinal = e.nome_local || e.local_area || e.local || '';
-  if (!nomLocalFinal && e.endereco) {
-    const parts = String(e.endereco).split('.');
-    nomLocalFinal = parts.length >= 2 ? (parts[1] || '') : '';
-  }
+  let nomLocalFinal = e.nome_local || e.local_area || e.local || ep.local || '';
 
   // Normalizar capacidade_paletes
   let cap = e.capacidade_paletes;

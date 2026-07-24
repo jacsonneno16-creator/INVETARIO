@@ -57,12 +57,9 @@
     const lista = state().enderecosLista || [];
     if (!lista.length) return;
     try {
-      // v15: catálogo de endereços publicado em chunks de 1000 para reduzir
-      // drasticamente leituras no coletor/inventário/auditoria/recontagem.
-      // O coletor passa a ler dt_locais_chunks (1 leitura por até 1000 endereços),
-      // em vez de ler 1 documento por endereço em dt_locais.
       const CHUNK_SIZE = 1000;
       const chunksColl = FS_AN.collection('dt_locais_chunks');
+      const versao = String(Date.now());
       const listaNormalizada = lista
         .filter(end => end && end.endereco)
         .map(end => ({
@@ -75,28 +72,23 @@
           rua:                end.rua || '',
         }));
 
-      const oldLocalChunks = await chunksColl.get().catch(() => null);
-      if (oldLocalChunks && !oldLocalChunks.empty) {
-        for (let i = 0; i < oldLocalChunks.docs.length; i += 400) {
-          const delBatch = FS_AN.batch();
-          oldLocalChunks.docs.slice(i, i + 400).forEach(doc => delBatch.delete(doc.ref));
-          await delBatch.commit();
-        }
-      }
-
+      // Publicação atômica por versão: escreve toda a versão nova antes de torná-la ativa.
+      const idsAtuais = new Set();
       for (let i = 0; i < listaNormalizada.length; i += CHUNK_SIZE) {
         const parte = Math.floor(i / CHUNK_SIZE);
-        await chunksColl.doc(String(parte).padStart(4, '0')).set({
+        const id = `v${versao}_${String(parte).padStart(4, '0')}`;
+        idsAtuais.add(id);
+        await chunksColl.doc(id).set({
+          versao,
           parte,
           chunk_size: CHUNK_SIZE,
           total_registros: listaNormalizada.length,
           dados: listaNormalizada.slice(i, i + CHUNK_SIZE),
           atualizado_em: new Date()
-        }, { merge: true });
+        });
       }
 
-      // Mantém dt_locais individual somente como compatibilidade/fallback de consulta pontual.
-      // A leitura principal não usa mais esta coleção completa.
+      // Mantém dt_locais individual como compatibilidade/fallback de consulta pontual.
       const BATCH_SIZE = 400;
       for (let i = 0; i < listaNormalizada.length; i += BATCH_SIZE) {
         const lote = listaNormalizada.slice(i, i + BATCH_SIZE);
@@ -110,7 +102,7 @@
         await batch.commit();
       }
 
-      const versao = String(Date.now());
+      // Só agora o coletor passa a enxergar a nova versão completa.
       await FS_AN.collection('dt_locais_meta').doc('versao').set({
         versao,
         atualizado_em: new Date(),
@@ -119,7 +111,18 @@
         total: listaNormalizada.length,
         origem: 'dt_locais_chunks'
       });
-      dbg('[fsPublicarEnderecos] ✅', listaNormalizada.length, 'endereços publicados em chunks de', CHUNK_SIZE, 'ver:', versao);
+
+      // Limpeza posterior: nunca existe uma janela sem uma versão completa publicada.
+      const todos = await chunksColl.get().catch(() => null);
+      if (todos && !todos.empty) {
+        const antigos = todos.docs.filter(doc => !idsAtuais.has(doc.id));
+        for (let i = 0; i < antigos.length; i += 400) {
+          const delBatch = FS_AN.batch();
+          antigos.slice(i, i + 400).forEach(doc => delBatch.delete(doc.ref));
+          await delBatch.commit();
+        }
+      }
+      dbg('[fsPublicarEnderecos] ✅', listaNormalizada.length, 'endereços publicados na versão', versao);
     } catch(e) {
       console.error('[fsPublicarEnderecos] erro:', e.message);
     }

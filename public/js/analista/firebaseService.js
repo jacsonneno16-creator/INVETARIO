@@ -27,32 +27,55 @@
     return InventarioService.getInventariosAtivosIds(global.AnalistaStore.getState().inventarios);
   }
 
-  function _handleCollectionChange(collection, docChange){
-    const raw        = { id: docChange.doc.id, ...docChange.doc.data() };
+  function _normalizarMudanca(collection, change){
+    const raw = { id: change.doc.id, ...change.doc.data() };
     const normalized = (collection === 'recontagens' || collection === 'divergencias')
       ? raw
       : InventarioService.normalizarContagem(raw);
-    const slice = collection === 'vazios' ? 'contagens' : collection;
-    if (docChange.type === 'removed') {
-      global.AnalistaStore.dispatch(Actions.removeEntity(slice, normalized, { source: 'firebase', collection }));
-    } else {
-      global.AnalistaStore.dispatch(Actions.upsertEntity(slice, normalized, { source: 'firebase', collection }));
-    }
+    return { type: change.type, entity: normalized };
+  }
+
+  function _persistirSlice(slice){
     try {
       const Storage = global.AnalistaStorage;
       const st = global.AnalistaStore.getState();
-      if (Storage?.storageSave) {
-        if (slice === 'contagens') Storage.storageSave(Storage.KEYS.contagens, st.contagens || []);
-        if (slice === 'recontagens') Storage.storageSave(Storage.KEYS.recontagens, st.recontagens || []);
-        if (slice === 'divergencias') Storage.storageSave(Storage.KEYS.divergencias, st.divergencias || []);
-      }
-      if (typeof global.atualizarBadgesNav === 'function') global.atualizarBadgesNav();
-      const page = global.AnalistaStore.getState()?.ui?.currentPage;
-      if (['contagens','pendencias','divergencias','recontagens','acompanhamento'].includes(page)) {
-        global.AnalistaNavigation?.renderCurrentPage?.();
-      }
-    } catch (_) {}
+      if (!Storage?.storageSave) return;
+      if (slice === 'contagens') Storage.storageSave(Storage.KEYS.contagens, st.contagens || []);
+      if (slice === 'recontagens') Storage.storageSave(Storage.KEYS.recontagens, st.recontagens || []);
+      if (slice === 'divergencias') Storage.storageSave(Storage.KEYS.divergencias, st.divergencias || []);
+    } catch (err) {
+      console.warn('[FirebaseService] cache da coleção:', err?.message || err);
+    }
   }
+
+  // Aplica todo o snapshot em uma única ação. O subscriber do AppController é o
+  // único responsável por solicitar renderização e atualização dos badges.
+  function _applyCollectionChanges(collection, docChanges){
+    const changes = (docChanges || []).map(change => _normalizarMudanca(collection, change));
+    if (!changes.length) return false;
+
+    const slice = collection === 'vazios' ? 'contagens' : collection;
+    const atual = Array.isArray(global.AnalistaStore.getState()[slice])
+      ? global.AnalistaStore.getState()[slice]
+      : [];
+    const byId = new Map(atual.map(item => [String(item?.id || ''), item]));
+
+    changes.forEach(({ type, entity }) => {
+      const id = String(entity?.id || '');
+      if (!id) return;
+      if (type === 'removed') byId.delete(id);
+      else byId.set(id, entity);
+    });
+
+    global.AnalistaStore.dispatch(Actions.replaceSlice(slice, Array.from(byId.values()), {
+      source: 'firebase-batch',
+      collection,
+      changes: changes.length
+    }));
+    _persistirSlice(slice);
+    return true;
+  }
+
 
   
   function _listenEnderecos(){
@@ -130,11 +153,7 @@
       global.FS_AN.collection(path)
         .where('inventario_id', 'in', chunk)
         .onSnapshot(snapshot => {
-          let changed = false;
-          snapshot.docChanges().forEach(change => {
-            _handleCollectionChange(collection, change);
-            changed = true;
-          });
+          const changed = _applyCollectionChanges(collection, snapshot.docChanges());
           if (changed) _emitSync(true, 'Tempo real ativo');
         }, err => {
           console.warn(`[FirebaseService] ${collection}:`, err.message);
@@ -150,11 +169,7 @@
       .orderBy('criado_em', 'desc')
       .limit(500)
       .onSnapshot(snapshot => {
-        let changed = false;
-        snapshot.docChanges().forEach(change => {
-          _handleCollectionChange(collection, change);
-          changed = true;
-        });
+        const changed = _applyCollectionChanges(collection, snapshot.docChanges());
         if (changed) _emitSync(true, 'Tempo real ativo');
       }, err => {
         console.warn(`[FirebaseService] ${collection} (all):`, err.message);

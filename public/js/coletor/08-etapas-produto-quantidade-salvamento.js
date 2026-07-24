@@ -26,13 +26,20 @@ function _validarCapaInformada(val) {
     return { ok:true, existente:_capaExisteNaBase(texto), manualSeteDigitos:true, n, valor:texto };
   }
 
-  // Qualquer capa com menos de 7 dígitos representa uma capa criada pelo sistema
-  // e precisa obrigatoriamente pertencer ao range reservado do operador.
+  // Uma capa curta já cadastrada na base do inventário é física/válida e pode
+  // ser usada independentemente do range atual do operador.
+  const existenteNaBase = _capaExisteNaBase(texto);
+  if (texto.length < 7 && existenteNaBase) {
+    return { ok:true, existente:true, nova:false, n, valor:String(n).padStart(3,'0') };
+  }
+
+  // Capa curta ainda inexistente representa uma capa criada pelo sistema e precisa
+  // obrigatoriamente pertencer ao range reservado do operador.
   if (texto.length < 7) {
     const range = APP.capaRange;
     if (!range || !range.min || !range.max) return { ok:false, msg:'Range do operador ainda não foi reservado. Atualize a base e tente novamente.' };
-    if (n < range.min || n > range.max) return { ok:false, msg:`Capas com menos de 7 dígitos só podem ser usadas dentro do seu range (${String(range.min).padStart(3,'0')}–${String(range.max).padStart(3,'0')})` };
-    return { ok:true, existente:_capaExisteNaBase(texto), nova:!_capaExisteNaBase(texto), n, valor:String(n).padStart(3,'0') };
+    if (n < range.min || n > range.max) return { ok:false, msg:`Capas com menos de 7 dígitos que ainda não existem na base só podem ser criadas dentro do seu range (${String(range.min).padStart(3,'0')}–${String(range.max).padStart(3,'0')})` };
+    return { ok:true, existente:false, nova:true, n, valor:String(n).padStart(3,'0') };
   }
 
   return { ok:false, msg:'A capa deve ter exatamente 7 dígitos ou estar dentro do range reservado.' };
@@ -597,6 +604,8 @@ function _executarSalvar(qty) {
     quantidade_esperada: qtdEsp || '',
     divergente,
     operador:       APP.operador?.name  || '',
+    operador_id:    APP.operador?.email || APP.operador?.usuario || APP.operador?.login || '',
+    operador_nome:  APP.operador?.name  || APP.operador?.nome || '',
     operador_email: APP.operador?.email || '',
     coletor_id:     localStorage.getItem('dt_device_id') || '',
     origem:         'COLETOR',

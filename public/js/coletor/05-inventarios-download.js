@@ -59,10 +59,6 @@ function aplicarFiltroLojaInventario(loja) {
   APP.lojaFiltroInventario = String(loja || '').trim();
   renderListaInventarios(APP.inventariosDisponiveis || []);
 }
-function aplicarFiltroLojaAuditoria(loja) {
-  APP.lojaFiltroAuditoria = String(loja || '').trim();
-  renderListaAuditorias(APP.inventariosDisponiveis || []);
-}
 function _ajustarVisibilidadeFiltroLoja(cardId, lista) {
   const card = document.getElementById(cardId);
   if (!card) return;
@@ -71,53 +67,6 @@ function _ajustarVisibilidadeFiltroLoja(cardId, lista) {
   card.style.display = lojas.length > 1 ? '' : 'none';
 }
 
-function carregarAuditoriasMenu() {
-  const el = document.getElementById('aud-list-menu');
-  if (!el) return;
-  el.innerHTML = '<div class="empty-inv"><div class="empty-inv-icon" style="font-size:1.5rem">⏳</div><div>Carregando auditorias…</div></div>';
-  const fromCache = () => {
-    const lista = invCacheLoad().filter(i => {
-      const s = String(i.status || '').toUpperCase();
-      return s === 'ATIVO' || s === 'PAUSADO';
-    });
-    APP.inventariosDisponiveis = lista;
-    renderListaAuditorias(lista);
-  };
-  if (!navigator.onLine) { fromCache(); return; }
-  FS.collection(FCOL.inventarios)
-    .where('status', 'in', ['ATIVO', 'PAUSADO', 'Ativo', 'Pausado'])
-    .get()
-    .then(snap => {
-      const lista = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(i => !i.oculto_coletor);
-      APP.inventariosDisponiveis = lista;
-      invCacheSave(lista);
-      renderListaAuditorias(lista);
-    })
-    .catch(() => fromCache());
-}
-function renderListaAuditorias(lista) {
-  const el = document.getElementById('aud-list-menu');
-  if (!el) return;
-  _ajustarVisibilidadeFiltroLoja('aud-loja-card', lista);
-  _popularSelectLojasColetor(lista, 'aud-loja-select', APP.lojaFiltroAuditoria);
-  lista = _filtrarInventariosPorAcessoOperador(lista);
-  lista = _filtrarInventariosPorLoja(lista, APP.lojaFiltroAuditoria);
-  if (!lista.length) {
-    el.innerHTML = '<div class="empty-inv"><div class="empty-inv-icon">📝</div><div style="font-size:.9rem;font-weight:600">Nenhuma auditoria disponível</div><div style="font-size:.78rem;margin-top:6px">Aguarde o analista liberar a auditoria</div></div>';
-    return;
-  }
-  el.innerHTML = lista.map(inv => `
-    <div class="inv-card" onclick="selecionarInventario('${inv.id}','auditoria')">
-      <div class="inv-card-code">AUD-${escHTML(inv.codigo || inv.id)}</div>
-      <div class="inv-card-name">Auditoria — ${escHTML(inv.nome || '')}</div>
-      <div class="inv-card-meta">
-        <span class="badge badge-info">📝 Auditoria</span>
-        <span class="badge badge-muted">${inv.total_registros || 0} registros</span>
-        <span class="badge badge-muted">${inv.data_inicio || ''}</span>
-      </div>
-    </div>
-  `).join('');
-}
 function carregarInventarios() {
   const el = document.getElementById('inv-list');
   el.innerHTML = '<div class="empty-inv"><div class="empty-inv-icon" style="font-size:1.5rem">⏳</div><div>Carregando inventários…</div></div>';
@@ -652,7 +601,10 @@ async function _executarDownload(inv) {
       // Reduz leituras de N endereços para aproximadamente N/1000 documentos.
       const chunksSnap = await FS.collection('dt_locais_chunks').orderBy('parte').get();
       if (!chunksSnap.empty) {
-        chunksSnap.docs.forEach(chunkDoc => {
+        const todosDocs = chunksSnap.docs;
+        const docsDaVersao = versaoServidor ? todosDocs.filter(d => String((d.data() || {}).versao || '') === versaoServidor) : [];
+        const docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(d => !(d.data() || {}).versao);
+        docsUsar.forEach(chunkDoc => {
           const dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
           dados.forEach(d => {
             if (d.ativo === false) return;
@@ -787,6 +739,7 @@ function voltarInventarios() {
   if (APP.contagens.length > 0) { showConfirm(msg, _voltarInventarioConfirmado, { title: 'Voltar ao menu', icon: '↩️', okLabel: 'Voltar mesmo assim', okColor: '#ffb300' }); return; }
   _voltarInventarioConfirmado();
 }
+
 function _voltarInventarioConfirmado() {
   if (_recListener) { try { _recListener(); } catch(e){} _recListener = null; }
   if (_auditoriaListener) { try { _auditoriaListener(); } catch(e){} _auditoriaListener = null; }
@@ -801,4 +754,5 @@ function _voltarInventarioConfirmado() {
   goScreen('inventarios');
 }
 
-
+// Funções específicas de Auditoria são definidas somente em 17-auditoria-meta.js.
+// Este arquivo permanece responsável apenas por Inventário.

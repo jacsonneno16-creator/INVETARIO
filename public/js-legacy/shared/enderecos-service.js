@@ -37,3 +37,17 @@ function dtSalvarCapacidadeEndereco(endCod, novaCap, opts) {
     return { ok: true, cap: cap };
 }
 window.dtSalvarCapacidadeEndereco = window.dtSalvarCapacidadeEndereco || dtSalvarCapacidadeEndereco;
+
+(function(global){
+  'use strict';
+  function texto(v){ return String(v == null ? '' : v).trim(); }
+  function partes(endereco){
+    var bruto=texto(endereco);
+    var p=bruto.split('.').map(function(x){return x.trim();}).filter(Boolean);
+    return {bruto:bruto,loja:p[0]||'',local:p[1]||'',area:p[2]||'',rua:p[3]||p[0]||'',coluna:p[4]||'',nivel:p[5]||'',sequencia:p[6]||'',lista:p};
+  }
+  function chave(endereco){ return texto(endereco).toUpperCase().split('.').map(function(x){return x.trim();}).filter(Boolean).join('.'); }
+  global.DTEnderecos=global.DTEnderecos||{};
+  global.DTEnderecos.partes=partes;
+  global.DTEnderecos.chave=chave;
+})(window);

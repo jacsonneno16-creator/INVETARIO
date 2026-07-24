@@ -62,13 +62,13 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         var endN = _nd(endereco);
         if (tipo === 'VAZIO_COM_PRODUTO_NA_BASE') {
             return state().divergencias.find(function (d) {
-                return d.inventario_id === invId && _nd(d.endereco) === endN &&
+                return String(d.inventario_id || d.inventarioId || d.inventario || d.inv_id || '') === String(invId) && _nd(d.endereco) === endN &&
                     d.tipo_divergencia === 'VAZIO_COM_PRODUTO_NA_BASE';
             }) || null;
         }
         var prodN = _nd(produto);
         return state().divergencias.find(function (d) {
-            return d.inventario_id === invId && _nd(d.endereco) === endN &&
+            return String(d.inventario_id || d.inventarioId || d.inventario || d.inv_id || '') === String(invId) && _nd(d.endereco) === endN &&
                 _nd(d.produto) === prodN && d.tipo_divergencia === tipo;
         }) || null;
     }
@@ -81,7 +81,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             return;
         var houve = false;
         var updated = state().contagens.map(function (c) {
-            if (c.inventario_id !== div.inventario_id)
+            if (String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') !== String(div.inventario_id || div.inventarioId || div.inventario || div.inv_id || ''))
                 return c;
             if (_nd(c.endereco) !== _nd(div.endereco))
                 return c;
@@ -170,9 +170,10 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         var _b;
         var _c = _a === void 0 ? {} : _a, _d = _c.criarRecontagens, criarRecontagens = _d === void 0 ? true : _d;
         var invId = ((_b = document.getElementById('div-sel-inv')) === null || _b === void 0 ? void 0 : _b.value) || '';
+        var statusAtivos = new Set(['ATIVO', 'ABERTO', 'PUBLICADO', 'LIBERADO', 'EM_ANDAMENTO', 'PAUSADO']);
         var inventarios = invId
-            ? [state().inventarios.find(function (i) { return i.id === invId; })].filter(Boolean)
-            : state().inventarios.filter(function (i) { return i && i.status === 'ATIVO'; });
+            ? [state().inventarios.find(function (i) { return String(i.id) === String(invId); })].filter(Boolean)
+            : state().inventarios.filter(function (i) { return i && (statusAtivos.has(String(i.status || '').toUpperCase()) || (Array.isArray(i.base) && i.base.length)); });
         var novos = 0;
         // Acumuladores para batch final
         var novasDivs = []; // divergências novas a upsert
@@ -185,7 +186,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             if (!((_a = inv.base) === null || _a === void 0 ? void 0 : _a.length))
                 return;
             var conts = state().contagens.filter(function (c) {
-                return c.inventario_id === inv.id &&
+                return String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) &&
                     c.tipo_contagem !== 'RECONTAGEM' &&
                     !c._excluida &&
                     c.status !== 'ESTORNADA' &&
@@ -240,7 +241,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             });
             // ── Atualizar status de RECONTAGEMs ──
             state().contagens.filter(function (c) {
-                return c.inventario_id === inv.id && c.tipo_contagem === 'RECONTAGEM' &&
+                return String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) && c.tipo_contagem === 'RECONTAGEM' &&
                     !c._excluida && c.status !== 'ESTORNADA';
             }).forEach(function (c) {
                 var divRef = c.divergencia_id
@@ -358,7 +359,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             });
             // ── 1d. Endereço vazio mas base espera produto ──
             state().contagens.filter(function (c) {
-                return c.inventario_id === inv.id && _isVazio(c) && !c._excluida &&
+                return String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) && _isVazio(c) && !c._excluida &&
                     c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA';
             }).forEach(function (vazio) {
                 var _a;
@@ -394,6 +395,29 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                     _criarRecontagemParaDivergencia(div, inv, 0, novasRecs);
             });
         });
+        // ── Garantia: toda divergência aberta deve possuir recontagem pendente ──
+        if (criarRecontagens) {
+            var candidatas = __spreadArray(__spreadArray(__spreadArray([], state().divergencias, true), novasDivs, true), divsUpdate, true);
+            var vistos_1 = new Set();
+            candidatas.forEach(function (div) {
+                if (!div || vistos_1.has(div.id))
+                    return;
+                vistos_1.add(div.id);
+                var st = String(div.status || 'ABERTA').toUpperCase();
+                if (st === 'RESOLVIDA' || st === 'PERSISTENTE' || div.precisa_recontagem === false)
+                    return;
+                var jaExiste = __spreadArray(__spreadArray([], state().recontagens, true), novasRecs, true).some(function (r) {
+                    return String(r.divergencia_id || '') === String(div.id) &&
+                        !['CONCLUIDA', 'CANCELADA'].includes(String(r.status || '').toUpperCase());
+                });
+                if (jaExiste)
+                    return;
+                var inv = inventarios.find(function (i) { return String(i.id) === String(div.inventario_id || div.inventarioId || ''); });
+                if (!inv)
+                    return;
+                _criarRecontagemParaDivergencia(div, inv, Number(div.qtd_contada || 0), novasRecs);
+            });
+        }
         // ── Deduplicação final de divergências ──
         var _seenDiv = new Set();
         var todasDivs = __spreadArray(__spreadArray(__spreadArray([], state().divergencias, true), novasDivs, true), divsUpdate.map(function (d) {
@@ -493,7 +517,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         };
         // Vincular contagem original
         var contOriginal = state().contagens.find(function (c) {
-            return c.inventario_id === inv.id &&
+            return String(c.inventario_id || c.inventarioId || c.inventario || c.inv_id || '') === String(inv.id) &&
                 _nd(c.endereco) === _nd(div.endereco) &&
                 (_nd(c.codigo_produto) === _nd(div.produto) || _nd(c.gtin) === _nd(div.produto)) &&
                 !c._excluida && c.status !== 'ESTORNADA';
@@ -614,7 +638,8 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         var updatedRec = Object.assign({}, recCtx, {
             qtd_recontagem: qtd, produto_recontagem: produto,
             operador: operador,
-            status: 'CONCLUIDA', concluida_em: agora, status_recontagem: 'concluida'
+            status: 'CONCLUIDA', concluida_em: agora, status_recontagem: 'concluida',
+            operador_recontagem: operador || recCtx.operador_recontagem || ''
         });
         if (numeroAtual === 1) {
             updatedRec = Object.assign({}, updatedRec, { qtd_segunda: qtd, produto_segunda: produto, operador_segunda: operador, data_segunda: agora });

@@ -737,15 +737,41 @@ const LOTE_CAP_MINIMA = 10; // capacidade mínima para oferecer o modo lote
  * da 1ª contagem para não bloquear o fluxo nem poluir contadores.
  */
 function _palletsNoEnderecoAtual(endNorm) {
-  return APP.contagens.filter(c =>
-    c.endereco === (endNorm || '') &&
+  const endereco = endNorm || '';
+  const locais = (APP.contagens || []).filter(c =>
+    c.endereco === endereco &&
     c.tipo_contagem !== 'VAZIO' &&
     !c._excluida &&
     c.status !== 'ESTORNADA' &&
     c.status !== 'EXCLUIDA' &&
     // Em recontagem: ignorar registros de contagem anterior (PRIMEIRA)
     (!APP.modoRecontagem || c.tipo_contagem === 'RECONTAGEM')
-  ).length;
+  );
+
+  // _verificarEnderecoFirebase() consulta as contagens existentes no Firestore antes
+  // de confirmar o endereço. Reaproveitar esses documentos evita que um reload do app
+  // zere artificialmente a capacidade já ocupada no endereço.
+  const remotos = (_endVerif && _endVerif.endereco === endereco ? (_endVerif.docs || []) : []).filter(c =>
+    c.tipo_contagem !== 'VAZIO' &&
+    !c._excluida &&
+    c.status !== 'ESTORNADA' &&
+    c.status !== 'EXCLUIDA' &&
+    (!APP.modoRecontagem || c.tipo_contagem === 'RECONTAGEM')
+  );
+
+  // União idempotente: a mesma contagem pode existir no array local e no snapshot.
+  const unicos = new Map();
+  const chave = (c, i, origem) => String(
+    c.uuid || c._docId || c.id ||
+    [origem, c.inventario_id || '', c.endereco || '', c.capa_palete || c.capa || '', c.criada_em || c.data_hora || '', i].join('|')
+  );
+  remotos.forEach((c, i) => unicos.set(chave(c, i, 'fs'), c));
+  locais.forEach((c, i) => {
+    const id = String(c.uuid || c._docId || c.id || '');
+    if (id) unicos.set(id, c);
+    else unicos.set(chave(c, i, 'local'), c);
+  });
+  return unicos.size;
 }
 
 /** Alias para uso interno do módulo lote */
@@ -1106,6 +1132,8 @@ function _loteSalvarTudo() {
         quantidade_esperada: '',
         divergente:        false,
         operador:          APP.operador?.name  || '',
+        operador_id:       APP.operador?.email || APP.operador?.usuario || APP.operador?.login || '',
+        operador_nome:     APP.operador?.name  || APP.operador?.nome || '',
         operador_email:    APP.operador?.email || '',
         coletor_id:        localStorage.getItem('dt_device_id') || '',
         origem:            'COLETOR',

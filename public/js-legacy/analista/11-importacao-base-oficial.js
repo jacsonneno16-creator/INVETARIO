@@ -19,7 +19,7 @@ var ALIAS_BASE = {
         'endereco_logistico_descritivo',
         // Demais colunas Da Terrinha
         'endereco_logistico_key',
-        'end_logistico', 'localizacao', 'localizacao_estoque',
+        'end_logistico', 'localizacao', 'localizacao_estoque', 'posicao',
         // Padrão interno / genérico
         'endereco', 'endereço', 'end', 'address', 'cod_end', 'cod_endereco', 'codigo_endereco',
     ],
@@ -45,7 +45,7 @@ var ALIAS_BASE = {
     ],
     // ── GTIN ──────────────────────────────────────────────────────────
     gtin: [
-        'gtin', 'ean', 'ean13', 'barcode', 'codigo_barras', 'cod_barras',
+        'gtin', 'ean', 'ean13', 'barcode', 'codigo_barras', 'codigo_de_barras', 'cod_barras', 'gtin_ean', 'gtinean', 'ean_gtin', 'eangtin', 'gtin_principal',
     ],
     // ── DUN ───────────────────────────────────────────────────────────
     dun: [
@@ -103,7 +103,7 @@ function autoMapBase(headers) {
     // Normaliza: lowercase, espaços→_, remove acentos e chars especiais
     var normalize = function (x) { return String(x).toLowerCase().trim()
         .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove acentos
-        .replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, ''); };
+        .replace(/[\s\/\-]+/g, '_').replace(/[^a-z0-9_]/g, '').replace(/^_+|_+$/g, ''); };
     var h = headers.map(normalize);
     var mapa = {};
     CAMPOS_BASE.forEach(function (campo) {
@@ -242,7 +242,7 @@ var INV_MAP_CAMPOS = [
     { key: 'endereco', label: 'Endereço', obrig: true, icon: '📍', hint: 'Código do endereço (ex: 01.02.A.01.01)' },
     { key: 'codigo_produto', label: 'Código do Produto', obrig: true, icon: '🔑', hint: 'SKU, código ou chave do produto' },
     { key: 'descricao_produto', label: 'Descrição do Produto', obrig: false, icon: '📝', hint: 'Nome ou descrição do produto' },
-    { key: 'quantidade_esperada', label: 'Quantidade Esperada (Cx)', obrig: true, icon: '🔢', hint: 'Quantidade em caixas do sistema ERP. Se tiver coluna de fator, selecione abaixo para converter automaticamente para unidades.' },
+    { key: 'quantidade_esperada', label: 'Quantidade Esperada (Unidades)', obrig: true, icon: '🔢', hint: 'Quantidade total esperada já em unidades. Não informe caixas neste campo: a importação não multiplica esta quantidade pelo fator.' },
     { key: 'custo_bruto', label: 'Custo Unitário (R$)', obrig: false, icon: '💰', hint: 'Custo unitário do produto — usado para calcular Valor Ganho/Perda na Análise por Produto' },
     { key: 'setor', label: 'Setor / Área', obrig: false, icon: '🏭', hint: 'Setor de armazenagem' },
     { key: 'rua', label: 'Rua / Corredor', obrig: false, icon: '🛤️', hint: 'Rua ou corredor do endereço' },
@@ -250,7 +250,7 @@ var INV_MAP_CAMPOS = [
     { key: 'gtin', label: 'GTIN / EAN', obrig: false, icon: '📊', hint: 'Código de barras unitário' },
     { key: 'dun', label: 'DUN / EAN-14', obrig: false, icon: '📦', hint: 'Código de barras de caixa' },
     { key: 'observacao', label: 'Observação', obrig: false, icon: '💬', hint: 'Lote, validade, curva ou observação extra' },
-    { key: 'fator_caixa', label: 'Fator Caixa (Und/Cx)', obrig: false, icon: '📦', hint: 'Multiplicador: quantidades em caixas × fator = unidades. Ex: se o arquivo tem 10 cx e o fator é 6, o sistema usa 60 unidades.' },
+    { key: 'fator_caixa', label: 'Fator Caixa (Und/Cx)', obrig: false, icon: '📦', hint: 'Quantidade de unidades por caixa. Este fator é enviado ao coletor e usado somente quando o operador bipar um código de caixa (DUN); ele não altera a quantidade esperada durante a importação.' },
 ];
 function renderInvMapper() {
     var headers = _invRawCtx.headers, rows = _invRawCtx.rows, arquivo = _invRawCtx.arquivo;

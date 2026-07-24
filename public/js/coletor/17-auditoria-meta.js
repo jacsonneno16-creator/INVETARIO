@@ -19,7 +19,7 @@
   window._extrairLojasDaAuditoria = function(aud){ return Array.isArray(aud?.lojas) ? aud.lojas : []; };
 
   function _normalizarEnderecoGeral(valor){
-    return String(valor == null ? '' : valor).trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+    return window.DTEnderecos?.chave(valor) || String(valor == null ? '' : valor).trim().toUpperCase();
   }
 
   async function _carregarBaseGeralEnderecosAuditoria(forcar){
@@ -30,9 +30,17 @@
     }
     const locais = new Set();
     try {
+      let versaoServidor = '';
+      try {
+        const meta = await FS.collection('dt_locais_meta').doc('versao').get();
+        if (meta.exists) versaoServidor = String((meta.data() || {}).versao || '');
+      } catch(e) {}
       const chunks = await FS.collection('dt_locais_chunks').orderBy('parte').get();
       if (!chunks.empty) {
-        chunks.docs.forEach(function(doc){
+        const todosDocs = chunks.docs;
+        const docsDaVersao = versaoServidor ? todosDocs.filter(function(d){ return String((d.data() || {}).versao || '') === versaoServidor; }) : [];
+        const docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(function(d){ return !(d.data() || {}).versao; });
+        docsUsar.forEach(function(doc){
           const dados = doc.data() || {};
           const itens = dados.dados || dados.itens || dados.registros || [];
           itens.forEach(function(item){
@@ -92,13 +100,13 @@
         const status = String(d.status || '').toUpperCase();
         if (['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(status) || d.disponivel_coletor === false) {
           finalizados.add(String(doc.id));
-          finalizados.add(String(d.endereco || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,''));
+          finalizados.add((window.DTEnderecos?.chave(d.endereco) || String(d.endereco || '').trim().toUpperCase()));
         }
       });
       const pendentes = rows.filter(a => {
         const status = String(a.status || '').toUpperCase();
         const id = String(a.id || '');
-        const endereco = String(a.endereco || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
+        const endereco = (window.DTEnderecos?.chave(a.endereco) || String(a.endereco || '').trim().toUpperCase());
         return a.disponivel_coletor !== false &&
           !['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(status) &&
           !finalizados.has(id) && !finalizados.has(endereco);

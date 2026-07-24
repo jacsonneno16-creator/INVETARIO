@@ -773,15 +773,39 @@ var LOTE_CAP_MINIMA = 10; // capacidade mínima para oferecer o modo lote
  * da 1ª contagem para não bloquear o fluxo nem poluir contadores.
  */
 function _palletsNoEnderecoAtual(endNorm) {
-    return APP.contagens.filter(function (c) {
-        return c.endereco === (endNorm || '') &&
+    var endereco = endNorm || '';
+    var locais = (APP.contagens || []).filter(function (c) {
+        return c.endereco === endereco &&
             c.tipo_contagem !== 'VAZIO' &&
             !c._excluida &&
             c.status !== 'ESTORNADA' &&
             c.status !== 'EXCLUIDA' &&
             // Em recontagem: ignorar registros de contagem anterior (PRIMEIRA)
             (!APP.modoRecontagem || c.tipo_contagem === 'RECONTAGEM');
-    }).length;
+    });
+    // _verificarEnderecoFirebase() consulta as contagens existentes no Firestore antes
+    // de confirmar o endereço. Reaproveitar esses documentos evita que um reload do app
+    // zere artificialmente a capacidade já ocupada no endereço.
+    var remotos = (_endVerif && _endVerif.endereco === endereco ? (_endVerif.docs || []) : []).filter(function (c) {
+        return c.tipo_contagem !== 'VAZIO' &&
+            !c._excluida &&
+            c.status !== 'ESTORNADA' &&
+            c.status !== 'EXCLUIDA' &&
+            (!APP.modoRecontagem || c.tipo_contagem === 'RECONTAGEM');
+    });
+    // União idempotente: a mesma contagem pode existir no array local e no snapshot.
+    var unicos = new Map();
+    var chave = function (c, i, origem) { return String(c.uuid || c._docId || c.id ||
+        [origem, c.inventario_id || '', c.endereco || '', c.capa_palete || c.capa || '', c.criada_em || c.data_hora || '', i].join('|')); };
+    remotos.forEach(function (c, i) { return unicos.set(chave(c, i, 'fs'), c); });
+    locais.forEach(function (c, i) {
+        var id = String(c.uuid || c._docId || c.id || '');
+        if (id)
+            unicos.set(id, c);
+        else
+            unicos.set(chave(c, i, 'local'), c);
+    });
+    return unicos.size;
 }
 /** Alias para uso interno do módulo lote */
 function _lotePalletsJaUsados(endNorm) {
@@ -1202,7 +1226,7 @@ function _loteSalvarTudo() {
     // Para cada grupo de validade, salvar cada capa individualmente
     l.grupos.forEach(function (grupo) {
         grupo.capas.forEach(function (capa) {
-            var _a, _b, _c, _d, _e;
+            var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
             var contagem = {
                 id: Date.now() + Math.random(), // garante uniqueness em loop síncrono
                 uuid: gerarUUID(),
@@ -1221,7 +1245,9 @@ function _loteSalvarTudo() {
                 quantidade_esperada: '',
                 divergente: false,
                 operador: ((_d = APP.operador) === null || _d === void 0 ? void 0 : _d.name) || '',
-                operador_email: ((_e = APP.operador) === null || _e === void 0 ? void 0 : _e.email) || '',
+                operador_id: ((_e = APP.operador) === null || _e === void 0 ? void 0 : _e.email) || ((_f = APP.operador) === null || _f === void 0 ? void 0 : _f.usuario) || ((_g = APP.operador) === null || _g === void 0 ? void 0 : _g.login) || '',
+                operador_nome: ((_h = APP.operador) === null || _h === void 0 ? void 0 : _h.name) || ((_j = APP.operador) === null || _j === void 0 ? void 0 : _j.nome) || '',
+                operador_email: ((_k = APP.operador) === null || _k === void 0 ? void 0 : _k.email) || '',
                 coletor_id: localStorage.getItem('dt_device_id') || '',
                 origem: 'COLETOR',
                 tipo_contagem: 'PRIMEIRA',

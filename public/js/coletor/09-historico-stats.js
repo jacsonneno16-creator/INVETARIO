@@ -146,7 +146,10 @@ async function atualizarCacheLocais() {
     const endCapMapa = {};
     const chunksSnap = await FS.collection('dt_locais_chunks').orderBy('parte').get();
     if (!chunksSnap.empty) {
-      chunksSnap.docs.forEach(chunkDoc => {
+      const todosDocs = chunksSnap.docs;
+      const docsDaVersao = versaoServidor ? todosDocs.filter(d => String((d.data() || {}).versao || '') === versaoServidor) : [];
+      const docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(d => !(d.data() || {}).versao);
+      docsUsar.forEach(chunkDoc => {
         const dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
         dados.forEach(d => {
           if (d.ativo === false) return;

@@ -25,8 +25,11 @@
         var s = norm(endereco);
         if (!s)
             return '';
-        var m = s.match(/(?:RUA\s*)?([A-Za-z0-9]+)(?:[.\-\/\s]|$)/i);
-        return m ? m[1].toUpperCase() : s;
+        if (global.DTEnderecos && typeof global.DTEnderecos.partes === 'function') {
+            return norm(global.DTEnderecos.partes(s).rua).toUpperCase();
+        }
+        var p = s.split('.').map(function (x) { return x.trim(); }).filter(Boolean);
+        return String((p.length >= 4 && p[3]) ? p[3] : (p[0] || '')).toUpperCase();
     };
     function fillSelect(id, items, first) {
         var el = document.getElementById(id);

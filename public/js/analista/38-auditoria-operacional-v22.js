@@ -23,7 +23,7 @@
   }
 
   let configuracaoNova = null;
-  function ruaDoEndereco(v){ const p=txt(v).split(/[.\-_/]/).filter(Boolean); return p[0] || ''; }
+  function ruaDoEndereco(v){ return (window.DTEnderecos?.partes(v).rua || ''); }
   async function enderecosGerais(){
     try{
       const chunks=await DB().collection('dt_locais_chunks').orderBy('parte').get();

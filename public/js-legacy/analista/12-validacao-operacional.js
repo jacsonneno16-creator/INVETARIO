@@ -97,6 +97,16 @@ function validarContagem(inventarioId, endCod, tipoContagem, recontagemAutorizad
     }
     return { ok: true };
 }
+// Esta validação não deve rejeitar documentos recebidos do coletor: o coletor é quem
+// executa a validação operacional ao vivo e também suporta modo offline. Mantemos esta
+// camada como contrato reutilizável para futuros lançamentos manuais no Analista e para
+// diagnósticos, sem apagar código nem criar uma segunda fonte de bloqueio.
+window.DTValidacaoOperacional = Object.assign(window.DTValidacaoOperacional || {}, {
+    getEnderecoInfo: getEnderecoInfo,
+    getContagensAtivas: getContagensAtivas,
+    getPaletesUsados: getPaletesUsados,
+    validarContagem: validarContagem,
+});
 /**
  * Exclui uma contagem (marca como _excluida=true para preservar histórico).
  * Libera a vaga de palete correspondente.

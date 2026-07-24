@@ -351,3 +351,92 @@ var __rest = (this && this.__rest) || function (s, e) {
     global.fsPublicarEnderecos = fsPublicarEnderecos;
     global.fsPublicarProdutos = fsPublicarProdutos;
 })(window);
+
+// v63: publicação versionada dos chunks de endereços.
+// Sobrescreve somente fsPublicarEnderecos para evitar janela com coleção vazia/parcial.
+(function (global) {
+    'use strict';
+    global.fsPublicarEnderecos = function () {
+        if (!navigator.onLine || !global.AnalistaStore || !global.AnalistaStore.getState)
+            return Promise.resolve();
+        var lista = global.AnalistaStore.getState().enderecosLista || [];
+        if (!lista.length)
+            return Promise.resolve();
+        var CHUNK_SIZE = 1000;
+        var chunksColl = FS_AN.collection('dt_locais_chunks');
+        var versao = String(Date.now());
+        var listaNormalizada = lista.filter(function (end) { return end && end.endereco; }).map(function (end) {
+            return {
+                endereco: end.endereco,
+                ativo: end.ativo !== false,
+                capacidade_paletes: end.capacidade_paletes != null ? end.capacidade_paletes : null,
+                nome_local: end.nome_local || end.local || '',
+                setor: end.setor || end.local || '',
+                tipo: end.tipo || '',
+                rua: end.rua || ''
+            };
+        });
+        var idsAtuais = {};
+        var sequencia = Promise.resolve();
+        for (var i = 0; i < listaNormalizada.length; i += CHUNK_SIZE) {
+            (function (inicio) {
+                var parte = Math.floor(inicio / CHUNK_SIZE);
+                var id = 'v' + versao + '_' + String(parte).padStart(4, '0');
+                idsAtuais[id] = true;
+                sequencia = sequencia.then(function () {
+                    return chunksColl.doc(id).set({
+                        versao: versao,
+                        parte: parte,
+                        chunk_size: CHUNK_SIZE,
+                        total_registros: listaNormalizada.length,
+                        dados: listaNormalizada.slice(inicio, inicio + CHUNK_SIZE),
+                        atualizado_em: new Date()
+                    });
+                });
+            })(i);
+        }
+        return sequencia.then(function () {
+            var BATCH_SIZE = 400;
+            var seqLocais = Promise.resolve();
+            for (var j = 0; j < listaNormalizada.length; j += BATCH_SIZE) {
+                (function (inicio) {
+                    seqLocais = seqLocais.then(function () {
+                        var batch = FS_AN.batch();
+                        listaNormalizada.slice(inicio, inicio + BATCH_SIZE).forEach(function (end) {
+                            var id = String(end.endereco).trim().toUpperCase().replace(/[^A-Z0-9._-]/g, '_');
+                            batch.set(FS_AN.collection('dt_locais').doc(id), end, { merge: true });
+                        });
+                        return batch.commit();
+                    });
+                })(j);
+            }
+            return seqLocais;
+        }).then(function () {
+            return FS_AN.collection('dt_locais_meta').doc('versao').set({
+                versao: versao,
+                atualizado_em: new Date(),
+                chunk_size: CHUNK_SIZE,
+                chunks: Math.ceil(listaNormalizada.length / CHUNK_SIZE),
+                total: listaNormalizada.length,
+                origem: 'dt_locais_chunks'
+            });
+        }).then(function () {
+            return chunksColl.get();
+        }).then(function (snap) {
+            var antigos = snap.docs.filter(function (doc) { return !idsAtuais[doc.id]; });
+            var seqDel = Promise.resolve();
+            for (var k = 0; k < antigos.length; k += 400) {
+                (function (inicio) {
+                    seqDel = seqDel.then(function () {
+                        var batch = FS_AN.batch();
+                        antigos.slice(inicio, inicio + 400).forEach(function (doc) { return batch.delete(doc.ref); });
+                        return batch.commit();
+                    });
+                })(k);
+            }
+            return seqDel;
+        }).catch(function (e) {
+            console.error('[fsPublicarEnderecos/v63] erro:', e && e.message ? e.message : e);
+        });
+    };
+})(window);

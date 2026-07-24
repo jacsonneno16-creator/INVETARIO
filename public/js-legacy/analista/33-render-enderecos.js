@@ -122,10 +122,15 @@ function renderEnderecos() {
     var PCOLORS = ['#dbeafe', '#dcfce7', '#fef9c3', '#fce7f3', '#ede9fe', '#ffedd5', '#e0f2fe'];
     var PTXT = ['#1d4ed8', '#16a34a', '#a16207', '#be185d', '#6d28d9', '#c2410c', '#0369a1'];
     function partsHtml(endereco) {
-        return endereco.split('.').map(function (p, i) {
-            return "<span style=\"display:inline-flex;flex-direction:column;align-items:center;background:".concat(PCOLORS[i] || '#f1f5f9', ";border-radius:5px;padding:1px 5px;min-width:28px;margin-right:2px\">\n        <span style=\"font-size:.5rem;font-weight:700;text-transform:uppercase;color:").concat(PTXT[i] || '#64748b', "\">").concat(PLABELS[i] || 'P' + (i + 1), "</span>\n        <span style=\"font-family:var(--mono);font-size:.71rem;font-weight:700;color:").concat(PTXT[i] || '#1e293b', "\">").concat(p, "</span>\n      </span>");
+        var parsed = (window.DTEnderecos && window.DTEnderecos.partes) ? window.DTEnderecos.partes(endereco) : {};
+        var parts = [parsed.loja, parsed.local, parsed.area, parsed.rua, parsed.coluna, parsed.nivel, parsed.sequencia];
+        return parts.map(function (parte, i) {
+            if (!parte)
+                return '';
+            return '<span style="display:inline-flex;flex-direction:column;align-items:center;background:' + (PCOLORS[i] || '#f1f5f9') + ';border-radius:5px;padding:1px 5px;min-width:28px;margin-right:2px"><span style="font-size:.5rem;font-weight:700;text-transform:uppercase;color:' + (PTXT[i] || '#64748b') + '">' + (PLABELS[i] || 'P' + (i + 1)) + '</span><span style="font-family:var(--mono);font-size:.71rem;font-weight:700;color:' + (PTXT[i] || '#1e293b') + '">' + escHTML(parte) + '</span></span>';
         }).join('');
     }
+
     function lojaTagHtml(e) {
         if (!e.loja)
             return "<span style=\"font-size:.68rem;color:var(--muted-2,#94a3b8);font-style:italic\">Sem loja</span>";

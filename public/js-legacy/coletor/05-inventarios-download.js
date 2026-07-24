@@ -121,10 +121,6 @@ function aplicarFiltroLojaInventario(loja) {
     APP.lojaFiltroInventario = String(loja || '').trim();
     renderListaInventarios(APP.inventariosDisponiveis || []);
 }
-function aplicarFiltroLojaAuditoria(loja) {
-    APP.lojaFiltroAuditoria = String(loja || '').trim();
-    renderListaAuditorias(APP.inventariosDisponiveis || []);
-}
 function _ajustarVisibilidadeFiltroLoja(cardId, lista) {
     var card = document.getElementById(cardId);
     if (!card)
@@ -132,48 +128,6 @@ function _ajustarVisibilidadeFiltroLoja(cardId, lista) {
     var acessiveis = _filtrarInventariosPorAcessoOperador(lista || []);
     var lojas = __spreadArray([], new Set(acessiveis.flatMap(_extrairLojasDoInventario).filter(Boolean)), true);
     card.style.display = lojas.length > 1 ? '' : 'none';
-}
-function carregarAuditoriasMenu() {
-    var el = document.getElementById('aud-list-menu');
-    if (!el)
-        return;
-    el.innerHTML = '<div class="empty-inv"><div class="empty-inv-icon" style="font-size:1.5rem">⏳</div><div>Carregando auditorias…</div></div>';
-    var fromCache = function () {
-        var lista = invCacheLoad().filter(function (i) {
-            var s = String(i.status || '').toUpperCase();
-            return s === 'ATIVO' || s === 'PAUSADO';
-        });
-        APP.inventariosDisponiveis = lista;
-        renderListaAuditorias(lista);
-    };
-    if (!navigator.onLine) {
-        fromCache();
-        return;
-    }
-    FS.collection(FCOL.inventarios)
-        .where('status', 'in', ['ATIVO', 'PAUSADO', 'Ativo', 'Pausado'])
-        .get()
-        .then(function (snap) {
-        var lista = snap.docs.map(function (d) { return (__assign({ id: d.id }, d.data())); }).filter(function (i) { return !i.oculto_coletor; });
-        APP.inventariosDisponiveis = lista;
-        invCacheSave(lista);
-        renderListaAuditorias(lista);
-    })
-        .catch(function () { return fromCache(); });
-}
-function renderListaAuditorias(lista) {
-    var el = document.getElementById('aud-list-menu');
-    if (!el)
-        return;
-    _ajustarVisibilidadeFiltroLoja('aud-loja-card', lista);
-    _popularSelectLojasColetor(lista, 'aud-loja-select', APP.lojaFiltroAuditoria);
-    lista = _filtrarInventariosPorAcessoOperador(lista);
-    lista = _filtrarInventariosPorLoja(lista, APP.lojaFiltroAuditoria);
-    if (!lista.length) {
-        el.innerHTML = '<div class="empty-inv"><div class="empty-inv-icon">📝</div><div style="font-size:.9rem;font-weight:600">Nenhuma auditoria disponível</div><div style="font-size:.78rem;margin-top:6px">Aguarde o analista liberar a auditoria</div></div>';
-        return;
-    }
-    el.innerHTML = lista.map(function (inv) { return "\n    <div class=\"inv-card\" onclick=\"selecionarInventario('".concat(inv.id, "','auditoria')\">\n      <div class=\"inv-card-code\">AUD-").concat(escHTML(inv.codigo || inv.id), "</div>\n      <div class=\"inv-card-name\">Auditoria \u2014 ").concat(escHTML(inv.nome || ''), "</div>\n      <div class=\"inv-card-meta\">\n        <span class=\"badge badge-info\">\uD83D\uDCDD Auditoria</span>\n        <span class=\"badge badge-muted\">").concat(inv.total_registros || 0, " registros</span>\n        <span class=\"badge badge-muted\">").concat(inv.data_inicio || '', "</span>\n      </div>\n    </div>\n  "); }).join('');
 }
 function carregarInventarios() {
     var el = document.getElementById('inv-list');
@@ -741,7 +695,10 @@ function _executarDownload(inv) {
                 case 17:
                     chunksSnap = _c.sent();
                     if (!!chunksSnap.empty) return [3 /*break*/, 18];
-                    chunksSnap.docs.forEach(function (chunkDoc) {
+                    var todosDocs = chunksSnap.docs;
+                    var docsDaVersao = versaoServidor ? todosDocs.filter(function (d) { return String((d.data() || {}).versao || '') === versaoServidor; }) : [];
+                    var docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(function (d) { return !(d.data() || {}).versao; });
+                    docsUsar.forEach(function (chunkDoc) {
                         var dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
                         dados.forEach(function (d) {
                             var _a, _b, _c, _d, _e, _f;
@@ -888,6 +845,7 @@ function voltarInventarios() {
     }
     _voltarInventarioConfirmado();
 }
+
 function _voltarInventarioConfirmado() {
     if (_recListener) {
         try {
@@ -913,3 +871,6 @@ function _voltarInventarioConfirmado() {
     resetContagem();
     goScreen('inventarios');
 }
+
+// Funções específicas de Auditoria são definidas somente em 17-auditoria-meta.js.
+// Este arquivo permanece responsável apenas por Inventário.

@@ -1273,52 +1273,7 @@ function editarNomeColetor(colId) {
             });
         });
     };
-    window.liberarAuditoriaColetores = function () {
-        return __awaiter(this, void 0, void 0, function () {
-            var lista, auditoriaId, itens;
-            var _a, _b;
-            return __generator(this, function (_c) {
-                switch (_c.label) {
-                    case 0:
-                        lista = availableAudits();
-                        auditoriaId = ((_a = document.getElementById('aud-op-auditoria')) === null || _a === void 0 ? void 0 : _a.value) || window.__ultimaAuditoriaSelecionada || window.__ultimaAuditoriaImportada || '';
-                        if (!auditoriaId && lista.length === 1)
-                            auditoriaId = lista[0].id;
-                        if (!auditoriaId) {
-                            showToast('Selecione uma auditoria', 'w');
-                            return [2 /*return*/];
-                        }
-                        itens = (state().auditorias || []).filter(function (a) { return String(a.auditoria_id || '') === String(auditoriaId); }).map(function (a) {
-                            var disp = !['CONFIRMADO_SEM_AJUSTE', 'CONFIRMADO_COM_AJUSTE'].includes(String(a.status || '').toUpperCase());
-                            return __assign(__assign({}, a), { liberada_coletor: true, disponivel_coletor: disp });
-                        });
-                        if (!itens.length) {
-                            showToast('Essa auditoria não possui endereços para liberação', 'w');
-                            return [2 /*return*/];
-                        }
-                        window.AnalistaState.replaceSlice('auditorias', (state().auditorias || []).map(function (a) { return String(a.auditoria_id || '') === String(auditoriaId) ? (itens.find(function (x) { return x.id === a.id; }) || a) : a; }), { source: 'liberarAuditoriaColetores' });
-                        window.__ultimaAuditoriaSelecionada = auditoriaId;
-                        window.__ultimaAuditoriaImportada = auditoriaId;
-                        saveAuditoriaUiState({ auditoria_id: auditoriaId, auditoria_nome: (((_b = itens[0]) === null || _b === void 0 ? void 0 : _b.auditoria_nome) || ''), ultima_liberacao_em: new Date().toISOString() });
-                        return [4 /*yield*/, publishAuditoriaToFirestore(itens, null)];
-                    case 1:
-                        _c.sent();
-                        return [4 /*yield*/, reloadAuditoriaFromFirestore(auditoriaId).catch(function () { return false; })];
-                    case 2:
-                        _c.sent();
-                        try {
-                            if (typeof logSistema === 'function')
-                                logSistema('LIBERACAO', 'Auditoria liberada para os coletores', { auditoria_id: auditoriaId, registros: itens.length });
-                        }
-                        catch (e) { }
-                        if (typeof renderAuditoriaOperacional === 'function')
-                            renderAuditoriaOperacional();
-                        showToast('📲 Auditoria liberada para os coletores', 's');
-                        return [2 /*return*/];
-                }
-            });
-        });
-    };
+    // v64: liberarAuditoriaColetores é fornecida exclusivamente pelo módulo 38-auditoria-operacional-v22.js.
     window.renderAuditoriaOperacional = function () {
         var _a, _b, _c;
         updateStaticTexts();
