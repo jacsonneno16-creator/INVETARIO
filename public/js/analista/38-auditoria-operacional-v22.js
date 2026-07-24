@@ -182,8 +182,18 @@
     return JSON.stringify(lista.map(i => [i.id,i.status,i.dunLido,i.produtoLido,i.operadorNome,i.lidoEm?.seconds || i.lidoEm || '']));
   }
 
+  function ambienteAuditoriaPronto(){
+    const user=window.AUTH_AN?.currentUser || window._currentAnalistaUser;
+    const db=DB();
+    const app=document.getElementById('app-main');
+    return !!(user && db && (!app || app.style.display!=='none'));
+  }
+
   async function listarMetas(){
-    const snap = await DB().collection('dt_auditorias').get();
+    if(!ambienteAuditoriaPronto()) return [];
+    const db=DB();
+    if(!db || typeof db.collection!=='function') return [];
+    const snap = await db.collection('dt_auditorias').get();
     return snap.docs.map(d => ({id:d.id,...d.data()})).sort((a,b)=>txt(b.criadoEm||b.importado_em).localeCompare(txt(a.criadoEm||a.importado_em)));
   }
 
@@ -215,6 +225,11 @@
     const sel = document.getElementById('aud-op-auditoria');
     if (!sel) return [];
     const atual = auditoriaAtual || sel.value;
+    if(!ambienteAuditoriaPronto()){
+      sel.disabled=false;
+      sel.innerHTML='<option value="">Selecione uma auditoria...</option>';
+      return [];
+    }
     sel.disabled=true;
     try{
       const metas = await listarMetas();
@@ -232,8 +247,13 @@
       return visiveis;
     }catch(e){
       console.error('[AUDITORIA] listar auditorias:',e);
-      sel.innerHTML='<option value="">Falha ao carregar auditorias — clique em Atualizar</option>';
-      toast('Não foi possível carregar a lista de auditorias.','e');
+      const semLogin=!window.AUTH_AN?.currentUser && !window._currentAnalistaUser;
+      if(semLogin){
+        sel.innerHTML='<option value="">Selecione uma auditoria...</option>';
+      }else{
+        sel.innerHTML='<option value="">Falha ao carregar auditorias — clique em Atualizar</option>';
+        toast('Não foi possível carregar a lista de auditorias: '+(e.message||e),'e');
+      }
       return [];
     }finally{ sel.disabled=false; }
   }
@@ -565,15 +585,15 @@
     if(first) await selecionarAuditoria(first); else renderizar();
   };
 
-  document.addEventListener('DOMContentLoaded', async () => {
+  document.addEventListener('DOMContentLoaded', () => {
     const sel=document.getElementById('aud-op-auditoria');
     if(sel){ sel.onchange=()=>selecionarAuditoria(sel.value); }
     ['aud-op-status','aud-op-busca','aud-f-dun-esperado','aud-f-dun-lido','aud-f-operador','aud-f-data'].forEach(id=>{
       const e=document.getElementById(id); if(e)e.addEventListener(e.tagName==='SELECT'?'change':'input',renderizar);
     });
-    await popularSelect();
-    const first=sel?.value || '';
-    if(first) await selecionarAuditoria(first); else renderizar();
+    // Não consultar o Firestore na tela de login. A lista será carregada somente
+    // quando a aba Auditoria for aberta após autenticação e seleção da loja.
+    renderizar();
   });
   window.addEventListener('beforeunload',encerrarListener);
 })();

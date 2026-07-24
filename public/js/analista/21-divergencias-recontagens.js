@@ -12,6 +12,28 @@
   // Meta padrão para dispatches de lógica de negócio — impede re-trigger do AppController
   const BIZMETA = { source: 'business-reprocess' };
 
+  // Persistência canônica. Estas funções eram chamadas em todo o fluxo, mas não
+  // possuíam implementação carregada, fazendo o processamento parar justamente
+  // quando encontrava a primeira divergência real.
+  async function fsSalvarDivergencia(div){
+    if(!div || !div.id) return false;
+    if(!navigator.onLine || !global.FS_AN) return false;
+    const payload=Object.assign({},div,{ atualizado_em:new Date().toISOString() });
+    await global.FS_AN.collection('dt_divergencias').doc(String(div.id)).set(payload,{merge:true});
+    return true;
+  }
+
+  async function fsSalvarRecontagem(rec){
+    if(!rec || !rec.id) return false;
+    if(!navigator.onLine || !global.FS_AN) return false;
+    const payload=Object.assign({},rec,{ atualizado_em:new Date().toISOString() });
+    await global.FS_AN.collection('dt_recontagens').doc(String(rec.id)).set(payload,{merge:true});
+    return true;
+  }
+
+  global.fsSalvarDivergencia=fsSalvarDivergencia;
+  global.fsSalvarRecontagem=fsSalvarRecontagem;
+
   // ── Helpers de normalização ─────────────────────────────────────────────────
   const _nd = v => String(v || '').trim().toUpperCase();
 

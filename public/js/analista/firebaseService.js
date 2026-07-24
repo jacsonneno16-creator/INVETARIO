@@ -165,9 +165,10 @@
   // Listener sem filtro de inventário — usado quando nenhum inventário está ativo no cache
   function _listenCollectionAll(collection, path){
     if (!navigator.onLine) return [];
+    // Nem todas as coleções usam o mesmo campo de data (criado_em/criada_em).
+    // Evitar orderBy aqui impede que a escuta falhe por campo ausente ou índice.
     const unsub = global.FS_AN.collection(path)
-      .orderBy('criado_em', 'desc')
-      .limit(500)
+      .limit(1000)
       .onSnapshot(snapshot => {
         const changed = _applyCollectionChanges(collection, snapshot.docChanges());
         if (changed) _emitSync(true, 'Tempo real ativo');
@@ -305,8 +306,10 @@
     if (!ids.length) {
       // Sem inventários ativos no cache — criar listener sem filtro para capturar contagens recentes
       if (!state.started) {
-        state.unsubscribers.contagens = _listenCollectionAll('contagens', 'dt_contagens');
-        state.unsubscribers.vazios    = _listenCollectionAll('vazios',    'dt_vazios');
+        state.unsubscribers.contagens    = _listenCollectionAll('contagens',    'dt_contagens');
+        state.unsubscribers.vazios       = _listenCollectionAll('vazios',       'dt_vazios');
+        state.unsubscribers.divergencias = _listenCollectionAll('divergencias', 'dt_divergencias');
+        state.unsubscribers.recontagens  = _listenCollectionAll('recontagens',  'dt_recontagens');
         state.started = true;
         state.currentInventoryIds = [];
       }

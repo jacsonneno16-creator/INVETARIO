@@ -51,7 +51,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     var state = {
         started: false,
         currentInventoryIds: [],
-        unsubscribers: { contagens: [], vazios: [], recontagens: [], coletores: null, enderecos: null }
+        unsubscribers: { contagens: [], vazios: [], divergencias: [], recontagens: [], coletores: null, enderecos: null }
     };
     function _emitSync(ok, message, extra) {
         var _a;
@@ -70,18 +70,58 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     function _getActiveInventoryIds() {
         return InventarioService.getInventariosAtivosIds(global.AnalistaStore.getState().inventarios);
     }
-    function _handleCollectionChange(collection, docChange) {
-        var raw = __assign({ id: docChange.doc.id }, docChange.doc.data());
-        var normalized = collection === 'recontagens'
+    function _normalizarMudanca(collection, change) {
+        var raw = __assign({ id: change.doc.id }, change.doc.data());
+        var normalized = (collection === 'recontagens' || collection === 'divergencias')
             ? raw
             : InventarioService.normalizarContagem(raw);
+        return { type: change.type, entity: normalized };
+    }
+    function _persistirSlice(slice) {
+        try {
+            var Storage_1 = global.AnalistaStorage;
+            var st = global.AnalistaStore.getState();
+            if (!(Storage_1 === null || Storage_1 === void 0 ? void 0 : Storage_1.storageSave))
+                return;
+            if (slice === 'contagens')
+                Storage_1.storageSave(Storage_1.KEYS.contagens, st.contagens || []);
+            if (slice === 'recontagens')
+                Storage_1.storageSave(Storage_1.KEYS.recontagens, st.recontagens || []);
+            if (slice === 'divergencias')
+                Storage_1.storageSave(Storage_1.KEYS.divergencias, st.divergencias || []);
+        }
+        catch (err) {
+            console.warn('[FirebaseService] cache da coleção:', (err === null || err === void 0 ? void 0 : err.message) || err);
+        }
+    }
+    // Aplica todo o snapshot em uma única ação. O subscriber do AppController é o
+    // único responsável por solicitar renderização e atualização dos badges.
+    function _applyCollectionChanges(collection, docChanges) {
+        var changes = (docChanges || []).map(function (change) { return _normalizarMudanca(collection, change); });
+        if (!changes.length)
+            return false;
         var slice = collection === 'vazios' ? 'contagens' : collection;
-        if (docChange.type === 'removed') {
-            global.AnalistaStore.dispatch(Actions.removeEntity(slice, normalized, { source: 'firebase', collection: collection }));
-        }
-        else {
-            global.AnalistaStore.dispatch(Actions.upsertEntity(slice, normalized, { source: 'firebase', collection: collection }));
-        }
+        var atual = Array.isArray(global.AnalistaStore.getState()[slice])
+            ? global.AnalistaStore.getState()[slice]
+            : [];
+        var byId = new Map(atual.map(function (item) { return [String((item === null || item === void 0 ? void 0 : item.id) || ''), item]; }));
+        changes.forEach(function (_a) {
+            var type = _a.type, entity = _a.entity;
+            var id = String((entity === null || entity === void 0 ? void 0 : entity.id) || '');
+            if (!id)
+                return;
+            if (type === 'removed')
+                byId.delete(id);
+            else
+                byId.set(id, entity);
+        });
+        global.AnalistaStore.dispatch(Actions.replaceSlice(slice, Array.from(byId.values()), {
+            source: 'firebase-batch',
+            collection: collection,
+            changes: changes.length
+        }));
+        _persistirSlice(slice);
+        return true;
     }
     function _listenEnderecos() {
         var _this = this;
@@ -174,11 +214,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             return global.FS_AN.collection(path)
                 .where('inventario_id', 'in', chunk)
                 .onSnapshot(function (snapshot) {
-                var changed = false;
-                snapshot.docChanges().forEach(function (change) {
-                    _handleCollectionChange(collection, change);
-                    changed = true;
-                });
+                var changed = _applyCollectionChanges(collection, snapshot.docChanges());
                 if (changed)
                     _emitSync(true, 'Tempo real ativo');
             }, function (err) {
@@ -191,15 +227,12 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     function _listenCollectionAll(collection, path) {
         if (!navigator.onLine)
             return [];
+        // Nem todas as coleções usam o mesmo campo de data (criado_em/criada_em).
+        // Evitar orderBy aqui impede que a escuta falhe por campo ausente ou índice.
         var unsub = global.FS_AN.collection(path)
-            .orderBy('criado_em', 'desc')
-            .limit(500)
+            .limit(1000)
             .onSnapshot(function (snapshot) {
-            var changed = false;
-            snapshot.docChanges().forEach(function (change) {
-                _handleCollectionChange(collection, change);
-                changed = true;
-            });
+            var changed = _applyCollectionChanges(collection, snapshot.docChanges());
             if (changed)
                 _emitSync(true, 'Tempo real ativo');
         }, function (err) {
@@ -284,7 +317,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     // ── Carrega inventários do Firestore se o cache estiver vazio ────────────────
     function _carregarInventariosSeNecessario() {
         return __awaiter(this, void 0, void 0, function () {
-            var ids, snap, docs, Storage_1, e_1;
+            var ids, snap, docs, Storage_2, e_1;
             var _a;
             return __generator(this, function (_b) {
                 switch (_b.label) {
@@ -302,9 +335,9 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             return [2 /*return*/];
                         docs = snap.docs.map(function (d) { return (__assign({ id: d.id }, d.data())); });
                         global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init' }));
-                        Storage_1 = global.AnalistaStorage;
-                        if ((Storage_1 === null || Storage_1 === void 0 ? void 0 : Storage_1.storageSave) && ((_a = Storage_1 === null || Storage_1 === void 0 ? void 0 : Storage_1.KEYS) === null || _a === void 0 ? void 0 : _a.inventarios)) {
-                            Storage_1.storageSave(Storage_1.KEYS.inventarios, docs);
+                        Storage_2 = global.AnalistaStorage;
+                        if ((Storage_2 === null || Storage_2 === void 0 ? void 0 : Storage_2.storageSave) && ((_a = Storage_2 === null || Storage_2 === void 0 ? void 0 : Storage_2.KEYS) === null || _a === void 0 ? void 0 : _a.inventarios)) {
+                            Storage_2.storageSave(Storage_2.KEYS.inventarios, docs);
                         }
                         return [3 /*break*/, 4];
                     case 3:
@@ -377,6 +410,8 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             if (!state.started) {
                                 state.unsubscribers.contagens = _listenCollectionAll('contagens', 'dt_contagens');
                                 state.unsubscribers.vazios = _listenCollectionAll('vazios', 'dt_vazios');
+                                state.unsubscribers.divergencias = _listenCollectionAll('divergencias', 'dt_divergencias');
+                                state.unsubscribers.recontagens = _listenCollectionAll('recontagens', 'dt_recontagens');
                                 state.started = true;
                                 state.currentInventoryIds = [];
                             }
@@ -389,7 +424,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             return [2 /*return*/, true];
                         }
                         // Parar listeners de contagens antes de reiniciar
-                        ['contagens', 'vazios', 'recontagens'].forEach(function (collection) {
+                        ['contagens', 'vazios', 'divergencias', 'recontagens'].forEach(function (collection) {
                             (state.unsubscribers[collection] || []).forEach(function (unsub) { try {
                                 unsub();
                             }
@@ -398,6 +433,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         });
                         state.unsubscribers.contagens = _listenCollection('contagens', 'dt_contagens');
                         state.unsubscribers.vazios = _listenCollection('vazios', 'dt_vazios');
+                        state.unsubscribers.divergencias = _listenCollection('divergencias', 'dt_divergencias');
                         state.unsubscribers.recontagens = _listenCollection('recontagens', 'dt_recontagens');
                         state.started = true;
                         state.currentInventoryIds = ids.slice();

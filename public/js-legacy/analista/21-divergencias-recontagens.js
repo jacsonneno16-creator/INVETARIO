@@ -53,6 +53,49 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     var MAX_CONTAGENS = DivSvc.MAX_CONTAGENS;
     // Meta padrão para dispatches de lógica de negócio — impede re-trigger do AppController
     var BIZMETA = { source: 'business-reprocess' };
+    // Persistência canônica. Estas funções eram chamadas em todo o fluxo, mas não
+    // possuíam implementação carregada, fazendo o processamento parar justamente
+    // quando encontrava a primeira divergência real.
+    function fsSalvarDivergencia(div) {
+        return __awaiter(this, void 0, void 0, function () {
+            var payload;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        if (!div || !div.id)
+                            return [2 /*return*/, false];
+                        if (!navigator.onLine || !global.FS_AN)
+                            return [2 /*return*/, false];
+                        payload = Object.assign({}, div, { atualizado_em: new Date().toISOString() });
+                        return [4 /*yield*/, global.FS_AN.collection('dt_divergencias').doc(String(div.id)).set(payload, { merge: true })];
+                    case 1:
+                        _a.sent();
+                        return [2 /*return*/, true];
+                }
+            });
+        });
+    }
+    function fsSalvarRecontagem(rec) {
+        return __awaiter(this, void 0, void 0, function () {
+            var payload;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        if (!rec || !rec.id)
+                            return [2 /*return*/, false];
+                        if (!navigator.onLine || !global.FS_AN)
+                            return [2 /*return*/, false];
+                        payload = Object.assign({}, rec, { atualizado_em: new Date().toISOString() });
+                        return [4 /*yield*/, global.FS_AN.collection('dt_recontagens').doc(String(rec.id)).set(payload, { merge: true })];
+                    case 1:
+                        _a.sent();
+                        return [2 /*return*/, true];
+                }
+            });
+        });
+    }
+    global.fsSalvarDivergencia = fsSalvarDivergencia;
+    global.fsSalvarRecontagem = fsSalvarRecontagem;
     // ── Helpers de normalização ─────────────────────────────────────────────────
     var _nd = function (v) { return String(v || '').trim().toUpperCase(); };
     // ─────────────────────────────────────────────────────────────────────────────
