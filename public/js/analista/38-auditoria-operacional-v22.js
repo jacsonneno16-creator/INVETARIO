@@ -15,6 +15,13 @@
   let criacaoToken = 0;
   let criacaoAberta = false;
   let criacaoPromise = null;
+  const origemAuditoria = new Map();
+
+  function colecaoAuditorias(){ return DB().collection('dt_auditorias'); }
+  function referenciaAuditoria(id){
+    if(origemAuditoria.get(String(id))==='raiz' && window.getDTRawFirestore) return window.getDTRawFirestore().collection('dt_auditorias').doc(String(id));
+    return colecaoAuditorias().doc(String(id));
+  }
 
   function comTimeout(promise, ms, fallback){
     return Promise.race([
@@ -129,7 +136,7 @@
           status:'RASCUNHO',liberada_coletor:false,totalItens:0,totalPendentes:0,totalOk:0,totalDivergentes:0,totalVazios:0,
           arquivo_origem:arquivoSelecionado.name,criadoEm:agora(),criadoPor:usuario()
         });
-        auditoriaAtual=id; metaAtual={id,nome,auditoria_nome:nome,...cfg,status:'RASCUNHO'};
+        origemAuditoria.set(id,'loja'); auditoriaAtual=id; metaAtual={id,nome,auditoria_nome:nome,...cfg,status:'RASCUNHO'};
         importacaoPendente={file:arquivoSelecionado,...preparada};
         await gravarImportacao();
         fechar();
@@ -156,7 +163,7 @@
   const endNorm = v => txt(v).toUpperCase().replace(/\s+/g,'').replace(/[^A-Z0-9.\-_/]/g,'');
   const agora = () => new Date().toISOString();
   const usuario = () => window._currentAnalistaUser?.email || localStorage.getItem('dt_analista_email') || 'analista';
-  const loja = () => window.DTMultiStore?.getLojaAtual?.()?.id || window.getLojaAtual?.()?.id || localStorage.getItem('dt_loja_atual') || '';
+  const loja = () => window.getDTLojaAtiva?.() || window.DTMultiStore?.getLojaAtual?.()?.id || window.getLojaAtual?.()?.id || localStorage.getItem('dt_loja_atual') || '';
   const docId = (auditoriaId, endereco, codigo='', sequencia='') => `${auditoriaId}__${endNorm(endereco).replace(/[^A-Z0-9]/g,'_')}__${dun(codigo)||'VAZIO'}__${txt(sequencia)||'0'}`;
   const fmt = v => {
     if (!v) return '—';
@@ -210,8 +217,31 @@
     if(!ambienteAuditoriaPronto()) return [];
     const db=DB();
     if(!db || typeof db.collection!=='function') return [];
-    const snap = await db.collection('dt_auditorias').get();
-    return snap.docs.map(d => ({id:d.id,...d.data()})).sort((a,b)=>txt(b.criadoEm||b.importado_em).localeCompare(txt(a.criadoEm||a.importado_em)));
+    origemAuditoria.clear();
+    let docs=[];
+    let erroLoja=null;
+    try{
+      const snap=await colecaoAuditorias().get();
+      docs=snap.docs.map(function(d){ origemAuditoria.set(d.id,'loja'); return {id:d.id,...d.data(),_origemAuditoria:'loja'}; });
+    }catch(e){ erroLoja=e; console.warn('[AUDITORIA] coleção da loja:',e); }
+
+    // Compatibilidade com auditorias antigas gravadas na raiz antes do multiloja.
+    // Só consultar a raiz para a Loja Matriz e somente quando a coleção da loja
+    // estiver vazia ou indisponível.
+    if((!docs.length || erroLoja) && loja()==='loja_matriz' && window.getDTRawFirestore){
+      try{
+        const raiz=await window.getDTRawFirestore().collection('dt_auditorias').get();
+        raiz.docs.forEach(function(d){
+          if(!docs.some(function(x){return x.id===d.id;})){ origemAuditoria.set(d.id,'raiz'); docs.push({id:d.id,...d.data(),_origemAuditoria:'raiz'}); }
+        });
+      }catch(e){ console.warn('[AUDITORIA] coleção legada da raiz:',e); if(erroLoja) throw erroLoja; }
+    }
+    if(erroLoja && !docs.length) throw erroLoja;
+    return docs.sort(function(a,b){
+      const av=a.criadoEm?.toMillis?.()||a.criadoEm?.seconds*1000||Date.parse(a.criadoEm||a.importado_em||0)||0;
+      const bv=b.criadoEm?.toMillis?.()||b.criadoEm?.seconds*1000||Date.parse(b.criadoEm||b.importado_em||0)||0;
+      return bv-av;
+    });
   }
 
   function resolverAuditoriaSelecionada(){
@@ -269,7 +299,7 @@
         sel.innerHTML='<option value="">Selecione uma auditoria...</option>';
       }else{
         sel.innerHTML='<option value="">Falha ao carregar auditorias — clique em Atualizar</option>';
-        toast('Não foi possível carregar a lista de auditorias: '+(e.message||e),'e');
+        toast('Não foi possível carregar as auditorias da loja atual: '+(e.message||e),'e');
       }
       return [];
     }finally{ sel.disabled=false; }
@@ -291,7 +321,7 @@
     atualizarAcoesAuditoria();
     renderizar();
     if (!auditoriaAtual) return;
-    const ref = DB().collection('dt_auditorias').doc(auditoriaAtual);
+    const ref = referenciaAuditoria(auditoriaAtual);
     const metaSnap = await ref.get();
     metaAtual = metaSnap.exists ? {id:metaSnap.id,...metaSnap.data()} : null;
     if(!metaAtual){
@@ -326,7 +356,7 @@
     const r = resumo();
     const statusAtual = txt(metaAtual?.status || 'RASCUNHO').toUpperCase();
     const status = statusAtual === 'FINALIZADA' ? 'FINALIZADA' : (r.auditados ? 'EM_ANDAMENTO' : statusAtual);
-    await DB().collection('dt_auditorias').doc(auditoriaAtual).set({
+    await referenciaAuditoria(auditoriaAtual).set({
       totalItens:r.total,totalPendentes:r.PENDENTE,totalOk:r.OK,totalDivergentes:r.DIVERGENTE,totalVazios:r.ENDERECO_VAZIO,status,atualizadoEm:agora()
     },{merge:true});
     metaAtual = {...metaAtual,totalItens:r.total,totalPendentes:r.PENDENTE,totalOk:r.OK,totalDivergentes:r.DIVERGENTE,totalVazios:r.ENDERECO_VAZIO,status};
@@ -470,7 +500,7 @@
   async function gravarImportacao(){
     if(!importacaoPendente || !importacaoPendente.validos.length) return;
     if(!auditoriaAtual) throw new Error('Nenhuma auditoria selecionada.');
-    const ref=DB().collection('dt_auditorias').doc(auditoriaAtual);
+    const ref=referenciaAuditoria(auditoriaAtual);
     const itensRef=ref.collection('enderecos');
     const old=await itensRef.get();
     for(let i=0;i<old.docs.length;i+=350){const b=DB().batch();old.docs.slice(i,i+350).forEach(d=>b.delete(d.ref));await b.commit();}
@@ -505,7 +535,7 @@
     if(!id) return toast('Selecione uma auditoria na lista acima.','w');
     if(id!==auditoriaAtual || !metaAtual) await selecionarAuditoria(id);
     if(!itensAtuais.length) return toast('Importe uma base válida antes de liberar.','w');
-    const ref=DB().collection('dt_auditorias').doc(auditoriaAtual);
+    const ref=referenciaAuditoria(auditoriaAtual);
     const snap=await ref.collection('enderecos').get();
     for(let i=0;i<snap.docs.length;i+=350){const b=DB().batch();snap.docs.slice(i,i+350).forEach(d=>b.set(d.ref,{disponivel_coletor:true},{merge:true}));await b.commit();}
     await ref.set({status:'LIBERADA',liberada_coletor:true,liberadaEm:agora(),liberadaPor:usuario()},{merge:true});
@@ -521,7 +551,7 @@
     if(r.PENDENTE>0) return toast(`Não é possível finalizar. Ainda faltam ${r.PENDENTE} item(ns).`,'w');
     if(!r.total) return toast('A auditoria não possui itens.','w');
     if(!confirm(`Finalizar auditoria?\nTotal: ${r.total}\nOK: ${r.OK}\nDivergentes: ${r.DIVERGENTE}\nVazios: ${r.ENDERECO_VAZIO}`)) return;
-    await DB().collection('dt_auditorias').doc(auditoriaAtual).set({status:'FINALIZADA',finalizadaEm:agora(),finalizadaPor:usuario(),liberada_coletor:false},{merge:true});
+    await referenciaAuditoria(auditoriaAtual).set({status:'FINALIZADA',finalizadaEm:agora(),finalizadaPor:usuario(),liberada_coletor:false},{merge:true});
     metaAtual={...metaAtual,status:'FINALIZADA'};
     toast('Auditoria finalizada.','s');
   }
@@ -532,14 +562,14 @@
     if(!id) return toast('Selecione a auditoria que deseja excluir.','w');
     let meta=metaAtual;
     if(!meta || txt(meta.id)!==id){
-      try{ const ms=await DB().collection('dt_auditorias').doc(id).get(); meta=ms.exists?{id:ms.id,...ms.data()}:null; }catch(e){}
+      try{ const ms=await referenciaAuditoria(id).get(); meta=ms.exists?{id:ms.id,...ms.data()}:null; }catch(e){}
     }
     const nome=txt(meta?.nome || meta?.auditoria_nome || (sel?.selectedOptions?.[0]?.textContent||id).split(' — ')[0] || id);
     const mensagem=`Excluir definitivamente a auditoria “${nome}”?\n\nTodos os endereços e resultados dessa auditoria serão apagados, e ela deixará de aparecer nos coletores.`;
     if(!window.confirm(mensagem)) return;
     const btn=document.getElementById('btn-aud-excluir');
     if(btn){ btn.disabled=true; btn.dataset.textoOriginal=btn.textContent; btn.textContent='Excluindo...'; }
-    const ref=DB().collection('dt_auditorias').doc(id);
+    const ref=referenciaAuditoria(id);
     try{
       encerrarListener();
       const snap=await ref.collection('enderecos').get();

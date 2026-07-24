@@ -243,19 +243,47 @@
       });
   }
 
-  // ── Carrega inventários do Firestore se o cache estiver vazio ────────────────
+  async function _carregarBaseInventario(inv){
+    if (!inv || !inv.id || (Array.isArray(inv.base) && inv.base.length)) return inv;
+    try{
+      const snap = await global.FS_AN.collection('dt_inventarios').doc(String(inv.id))
+        .collection('base_chunks').orderBy('parte').get();
+      let base=[];
+      snap.docs.forEach(d=>{
+        const x=d.data()||{};
+        const itens=Array.isArray(x.itens)?x.itens:(Array.isArray(x.dados)?x.dados:[]);
+        base=base.concat(itens);
+      });
+      return Object.assign({},inv,{base,base_carregada_em:new Date().toISOString()});
+    }catch(e){
+      console.warn('[FirebaseService] Falha ao carregar base do inventário',inv.id,e.message);
+      return inv;
+    }
+  }
+
+  // Carrega os metadados e enriquece os inventários com os base_chunks reais.
+  // Isso não depende mais do localStorage, que possui quota pequena.
   async function _carregarInventariosSeNecessario(){
-    const ids = _getActiveInventoryIds();
-    if (ids.length) return; // cache já tem dados, não precisa buscar
     try {
       const snap = await global.FS_AN.collection('dt_inventarios').get();
       if (snap.empty) return;
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init' }));
+      const atuais = global.AnalistaStore.getState().inventarios || [];
+      const atuaisPorId = new Map(atuais.map(i=>[String(i.id),i]));
+      let docs = snap.docs.map(d => Object.assign({},atuaisPorId.get(String(d.id))||{},d.data(),{id:d.id}));
+      const statusAtivos=new Set(['ATIVO','ABERTO','PUBLICADO','LIBERADO','EM_ANDAMENTO','PAUSADO']);
+      const idsNecessarios=new Set();
+      const st=global.AnalistaStore.getState();
+      ['contagens','divergencias','recontagens'].forEach(slice=>(st[slice]||[]).forEach(x=>{
+        const id=x.inventario_id||x.inventarioId||x.inventario||x.inv_id;
+        if(id!=null&&String(id))idsNecessarios.add(String(id));
+      }));
+      docs = await Promise.all(docs.map(inv=>{
+        const precisa=statusAtivos.has(String(inv.status||'').toUpperCase())||idsNecessarios.has(String(inv.id));
+        return precisa?_carregarBaseInventario(inv):inv;
+      }));
+      global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init-bases' }));
       const Storage = global.AnalistaStorage;
-      if (Storage?.storageSave && Storage?.KEYS?.inventarios) {
-        Storage.storageSave(Storage.KEYS.inventarios, docs);
-      }
+      if (Storage?.storageSave && Storage?.KEYS?.inventarios) Storage.storageSave(Storage.KEYS.inventarios, docs);
     } catch(e) {
       console.warn('[FirebaseService] Falha ao carregar inventários:', e.message);
     }
@@ -300,6 +328,15 @@
 
     // Carregar inventários e catálogo de endereços do Firebase.
     await _carregarInventariosSeNecessario();
+    try{
+      if(global.DTProdutos?.carregar) await global.DTProdutos.carregar(false);
+    }catch(e){ console.warn('[FirebaseService] Falha ao carregar Base de Produtos:',e.message); }
+    // Reprocessar registros antigos depois que a base do inventário e o catálogo
+    // de produtos estiverem disponíveis. Isso corrige automaticamente registros
+    // que antes apareciam como "Código sem cadastro" e qtd sistema null.
+    try{
+      global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'bases-carregadas'});
+    }catch(e){ console.warn('[FirebaseService] Reprocessamento após carregar bases:',e.message); }
     if (!state.unsubscribers.enderecos) state.unsubscribers.enderecos = _listenEnderecos();
 
     const ids = _getActiveInventoryIds();

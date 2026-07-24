@@ -59,25 +59,40 @@ var __rest = (this && this.__rest) || function (s, e) {
                 return;
             }
             if (key === KEYS.inventarios && Array.isArray(data)) {
-                data.forEach(function (inv) {
-                    var _a;
-                    if ((_a = inv.base) === null || _a === void 0 ? void 0 : _a.length) {
-                        try {
-                            localStorage.setItem("invcount_base_".concat((window.getDTLojaAtiva && window.getDTLojaAtiva()) || 'sem_loja', "_").concat(inv.id), JSON.stringify({ v: inv.base, ts: Date.now() }));
-                        }
-                        catch (e) {
-                            console.warn('[Storage] Falha ao salvar base do inventário', inv.id, e);
-                        }
-                    }
-                });
+                var loja = (window.getDTLojaAtiva && window.getDTLojaAtiva()) || 'sem_loja';
                 var semBase = data.map(function (inv) { var base = inv.base, rest = __rest(inv, ["base"]); return rest; });
                 localStorage.setItem(scopedKey(key), JSON.stringify({ v: semBase, ts: Date.now() }));
+                try {
+                    var prefix_1 = 'invcount_base_' + loja + '_';
+                    var apagar_1 = [];
+                    for (var i = 0; i < localStorage.length; i++) {
+                        var k = localStorage.key(i);
+                        if (k && k.indexOf(prefix_1) === 0)
+                            apagar_1.push(k);
+                    }
+                    apagar_1.forEach(function (k) { return localStorage.removeItem(k); });
+                }
+                catch (_e) { }
                 return;
             }
             localStorage.setItem(scopedKey(key), JSON.stringify({ v: data, ts: Date.now() }));
         }
         catch (e) {
-            console.error('[Storage] Erro ao salvar', key, e);
+            if (e && (e.name === 'QuotaExceededError' || e.code === 22)) {
+                console.warn('[Storage] Limite local atingido; mantendo dados no Firebase e limpando caches grandes.');
+                try {
+                    var apagar = [];
+                    for (var i = 0; i < localStorage.length; i++) {
+                        var k = localStorage.key(i);
+                        if (k && k.indexOf('invcount_base_') === 0)
+                            apagar.push(k);
+                    }
+                    apagar.forEach(function (k) { return localStorage.removeItem(k); });
+                }
+                catch (_e) { }
+            }
+            else
+                console.error('[Storage] Erro ao salvar', key, e);
         }
     }
     /** Carrega dado; retorna null se não existir */
@@ -88,21 +103,7 @@ var __rest = (this && this.__rest) || function (s, e) {
                 return null;
             var parsed = JSON.parse(raw);
             var data = parsed && 'v' in parsed ? parsed.v : parsed;
-            if (key === KEYS.inventarios && Array.isArray(data)) {
-                data.forEach(function (inv) {
-                    var _a;
-                    if (!((_a = inv.base) === null || _a === void 0 ? void 0 : _a.length)) {
-                        try {
-                            var rawBase = localStorage.getItem("invcount_base_".concat((window.getDTLojaAtiva && window.getDTLojaAtiva()) || 'sem_loja', "_").concat(inv.id));
-                            if (rawBase) {
-                                var parsedBase = JSON.parse(rawBase);
-                                inv.base = parsedBase && 'v' in parsedBase ? parsedBase.v : parsedBase;
-                            }
-                        }
-                        catch (e) { /* base não disponível */ }
-                    }
-                });
-            }
+
             return data;
         }
         catch (e) {

@@ -314,41 +314,69 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             console.warn('[FirebaseService] coletores:', err.message);
         });
     }
-    // ── Carrega inventários do Firestore se o cache estiver vazio ────────────────
-    function _carregarInventariosSeNecessario() {
+    function _carregarBaseInventario(inv) {
         return __awaiter(this, void 0, void 0, function () {
-            var ids, snap, docs, Storage_2, e_1;
-            var _a;
-            return __generator(this, function (_b) {
-                switch (_b.label) {
+            var snap, base, e_1;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
                     case 0:
-                        ids = _getActiveInventoryIds();
-                        if (ids.length)
-                            return [2 /*return*/]; // cache já tem dados, não precisa buscar
-                        _b.label = 1;
+                        if (!inv || !inv.id || (Array.isArray(inv.base) && inv.base.length))
+                            return [2 /*return*/, inv];
+                        _a.label = 1;
                     case 1:
-                        _b.trys.push([1, 3, , 4]);
-                        return [4 /*yield*/, global.FS_AN.collection('dt_inventarios').get()];
+                        _a.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, global.FS_AN.collection('dt_inventarios').doc(String(inv.id)).collection('base_chunks').orderBy('parte').get()];
                     case 2:
-                        snap = _b.sent();
-                        if (snap.empty)
-                            return [2 /*return*/];
-                        docs = snap.docs.map(function (d) { return (__assign({ id: d.id }, d.data())); });
-                        global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init' }));
-                        Storage_2 = global.AnalistaStorage;
-                        if ((Storage_2 === null || Storage_2 === void 0 ? void 0 : Storage_2.storageSave) && ((_a = Storage_2 === null || Storage_2 === void 0 ? void 0 : Storage_2.KEYS) === null || _a === void 0 ? void 0 : _a.inventarios)) {
-                            Storage_2.storageSave(Storage_2.KEYS.inventarios, docs);
-                        }
-                        return [3 /*break*/, 4];
+                        snap = _a.sent();
+                        base = [];
+                        snap.docs.forEach(function (d) {
+                            var x = d.data() || {};
+                            var itens = Array.isArray(x.itens) ? x.itens : (Array.isArray(x.dados) ? x.dados : []);
+                            base = base.concat(itens);
+                        });
+                        return [2 /*return*/, Object.assign({}, inv, { base: base, base_carregada_em: new Date().toISOString() })];
                     case 3:
-                        e_1 = _b.sent();
-                        console.warn('[FirebaseService] Falha ao carregar inventários:', e_1.message);
-                        return [3 /*break*/, 4];
+                        e_1 = _a.sent();
+                        console.warn('[FirebaseService] Falha ao carregar base do inventário', inv.id, e_1.message);
+                        return [2 /*return*/, inv];
                     case 4: return [2 /*return*/];
                 }
             });
         });
     }
+    function _carregarInventariosSeNecessario() {
+        return __awaiter(this, void 0, void 0, function () {
+            var snap, atuais, atuaisPorId, docs, Storage, e_2;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        _a.trys.push([0, 4, , 5]);
+                        return [4 /*yield*/, global.FS_AN.collection('dt_inventarios').get()];
+                    case 1:
+                        snap = _a.sent();
+                        if (snap.empty)
+                            return [2 /*return*/];
+                        atuais = global.AnalistaStore.getState().inventarios || [];
+                        atuaisPorId = new Map(atuais.map(function (i) { return [String(i.id), i]; }));
+                        docs = snap.docs.map(function (d) { return Object.assign({}, atuaisPorId.get(String(d.id)) || {}, d.data(), { id: d.id }); });
+                        return [4 /*yield*/, Promise.all(docs.map(_carregarBaseInventario))];
+                    case 2:
+                        docs = _a.sent();
+                        global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init-bases' }));
+                        Storage = global.AnalistaStorage;
+                        if ((Storage === null || Storage === void 0 ? void 0 : Storage.storageSave) && (Storage === null || Storage === void 0 ? void 0 : Storage.KEYS.inventarios))
+                            Storage.storageSave(Storage.KEYS.inventarios, docs);
+                        return [3 /*break*/, 5];
+                    case 4:
+                        e_2 = _a.sent();
+                        console.warn('[FirebaseService] Falha ao carregar inventários:', e_2.message);
+                        return [3 /*break*/, 5];
+                    case 5: return [2 /*return*/];
+                }
+            });
+        });
+    }
+
     function _pararColetores() {
         if (state.unsubscribers.coletores) {
             try {
