@@ -38,6 +38,19 @@ function _marcarDivResolvida(divId) {
 
 // ── Estado de seleção de divergências ──────────────────────────────────────
 let _divSelecionadas = new Set();
+let _divDadosFiltradosExport = [];
+let _recDadosFiltradosExport = [];
+
+function divStatusBadge(status) {
+  switch (String(status || '').toUpperCase()) {
+    case 'ABERTA':        return 'b-red';
+    case 'EM_RECONTAGEM': return 'b-orange';
+    case 'RESOLVIDA':     return 'b-green';
+    case 'PERSISTENTE':   return 'b-gray';
+    default:              return 'b-gray';
+  }
+}
+
 
 function divAtualizarBarraSel() {
   const bar = document.getElementById('div-sel-bar');
@@ -472,6 +485,8 @@ function renderDivergencias() {
   else if (ford === 'endereco') dados = [...dados].sort((a,b) => (a.endereco||'').localeCompare(b.endereco||''));
   else dados = [...dados].sort((a,b) => (b.criada_em||'').localeCompare(a.criada_em||''));
 
+  _divDadosFiltradosExport = dados.slice();
+
   // Populat filtros dinâmicos (rua, nível, setor, produto, operador)
   const _popSel = (id, valores, cur, emptyLabel) => {
     const el = document.getElementById(id);
@@ -726,6 +741,8 @@ function renderRecontagens() {
   });
   else dados = [...dados].sort((a,b) => (b.criada_em||'').localeCompare(a.criada_em||''));
 
+  _recDadosFiltradosExport = dados.slice();
+
   // Popular filtros dinâmicos
   const selRua = document.getElementById('rec-frua');
   if (selRua) {
@@ -871,3 +888,72 @@ function renderRecontagens() {
     </table></div>`;
 }
 
+
+
+function _exportarXlsxAnalista(nomeArquivo, nomeAba, linhas) {
+  if (!window.XLSX) {
+    showToast('Biblioteca Excel não carregada. Atualize a página e tente novamente.', 'e');
+    return;
+  }
+  if (!linhas || !linhas.length) {
+    showToast('Não há dados nos filtros atuais para exportar.', 'w');
+    return;
+  }
+  const ws = XLSX.utils.json_to_sheet(linhas);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, nomeAba.substring(0, 31));
+  XLSX.writeFile(wb, nomeArquivo);
+}
+
+function exportarDivergencias() {
+  renderDivergencias();
+  const linhas = _divDadosFiltradosExport.map(d => {
+    const info = getEnderecoInfo(d.endereco) || {};
+    const rec = state().recontagens.find(r => r.divergencia_id === d.id) || {};
+    return {
+      'Inventário': d.inventario_nome || d.inventario_id || '',
+      'Rua': info.rua || '',
+      'Endereço': d.endereco || '',
+      'Produto': d.produto || d.descricao || '',
+      'GTIN bipado': d.gtin_bipado || '',
+      'Tipo': d.tipo_divergencia || d.tipo || '',
+      'Quantidade esperada': d.qtd_esperada ?? '',
+      'Quantidade contada': d.qtd_contada ?? '',
+      'Diferença': d.diferenca ?? '',
+      'Status': d.status || '',
+      'Status recontagem': d.status_recontagem || rec.status_recontagem || rec.status || '',
+      'Operador da contagem': d.operador || '',
+      'Atribuído para': d.operador_responsavel || rec.operador || '',
+      'Executado por': rec.operador_recontagem || d.operador_recontagem || '',
+      'Criada em': d.criada_em ? fmtTs(d.criada_em) : ''
+    };
+  });
+  _exportarXlsxAnalista('divergencias-filtradas.xlsx', 'Divergências', linhas);
+}
+
+function exportarRecontagens() {
+  renderRecontagens();
+  const linhas = _recDadosFiltradosExport.map(r => {
+    const info = getEnderecoInfo(r.endereco) || {};
+    const div = state().divergencias.find(d => d.id === r.divergencia_id) || {};
+    return {
+      'Inventário': r.inventario_nome || r.inventario_id || '',
+      'Rua': info.rua || '',
+      'Endereço': r.endereco || '',
+      'Produto': r.produto || r.descricao || '',
+      'Quantidade esperada': r.qtd_esperada ?? '',
+      '1ª contagem': r.qtd_primeira ?? '',
+      'Operador 1ª': r.operador_primeira || '',
+      '2ª contagem': r.qtd_segunda ?? '',
+      'Operador 2ª': r.operador_segunda || '',
+      '3ª contagem': r.qtd_terceira ?? '',
+      'Operador 3ª': r.operador_terceira || '',
+      'Status': r.status_recontagem || div.status_recontagem || r.status || '',
+      'Atribuído para': r.operador || div.operador_responsavel || '',
+      'Executado por': r.operador_recontagem || div.operador_recontagem || '',
+      'Atribuída em': r.atribuido_em ? fmtTs(r.atribuido_em) : '',
+      'Concluída em': r.recontagem_concluida_em ? fmtTs(r.recontagem_concluida_em) : (r.concluida_em ? fmtTs(r.concluida_em) : '')
+    };
+  });
+  _exportarXlsxAnalista('recontagens-filtradas.xlsx', 'Recontagens', linhas);
+}

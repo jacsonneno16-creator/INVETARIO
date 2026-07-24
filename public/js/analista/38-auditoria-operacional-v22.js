@@ -9,6 +9,7 @@
   let metaAtual = null;
   let itensAtuais = [];
   let unsubscribeItens = null;
+  let unsubscribeMetas = null;
   let assinaturaAnterior = '';
   let importacaoPendente = null;
   let criacaoToken = 0;
@@ -186,9 +187,22 @@
     return snap.docs.map(d => ({id:d.id,...d.data()})).sort((a,b)=>txt(b.criadoEm||b.importado_em).localeCompare(txt(a.criadoEm||a.importado_em)));
   }
 
+  function resolverAuditoriaSelecionada(){
+    if (auditoriaAtual) return auditoriaAtual;
+    const sel=document.getElementById('aud-op-auditoria');
+    const valor=txt(sel?.value);
+    if(valor){ auditoriaAtual=valor; return valor; }
+    const opcoes=sel?[...sel.options].filter(o=>o.value):[];
+    if(opcoes.length===1){ sel.value=opcoes[0].value; auditoriaAtual=opcoes[0].value; return auditoriaAtual; }
+    return '';
+  }
+
   function atualizarAcoesAuditoria(){
+    const tem=!!resolverAuditoriaSelecionada();
     const btn=document.getElementById('btn-aud-atualizar-base');
-    if(btn) btn.style.display=auditoriaAtual?'':'none';
+    const excluir=document.getElementById('btn-aud-excluir');
+    if(btn) btn.style.display=tem?'':'none';
+    if(excluir) excluir.style.display=tem?'':'none';
   }
 
   async function importarBaseSelecionada(){
@@ -199,15 +213,34 @@
 
   async function popularSelect(){
     const sel = document.getElementById('aud-op-auditoria');
-    if (!sel) return;
+    if (!sel) return [];
     const atual = auditoriaAtual || sel.value;
-    const metas = await listarMetas().catch(() => []);
-    sel.innerHTML = '<option value="">Selecione uma auditoria...</option>' + metas.map(m => `<option value="${esc(m.id)}">${esc(m.nome || m.auditoria_nome || m.id)}</option>`).join('');
-    if (atual && [...sel.options].some(o=>o.value===atual)) sel.value = atual;
-    atualizarAcoesAuditoria();
+    sel.disabled=true;
+    try{
+      const metas = await listarMetas();
+      // O proxy multiloja já direciona a coleção correta. Não esconder auditorias
+      // por comparação textual de loja, pois documentos antigos podem ter loja vazia
+      // ou nome/código em formato diferente.
+      const visiveis=metas;
+      sel.innerHTML = '<option value="">Selecione uma auditoria...</option>' + visiveis.map(m => {
+        const st=txt(m.status||'RASCUNHO').toUpperCase();
+        return `<option value="${esc(m.id)}">${esc(m.nome || m.auditoria_nome || m.id)} — ${esc(st)}</option>`;
+      }).join('');
+      if (atual && [...sel.options].some(o=>o.value===atual)) sel.value = atual;
+      else if(visiveis.length===1){ sel.value=visiveis[0].id; auditoriaAtual=visiveis[0].id; }
+      atualizarAcoesAuditoria();
+      return visiveis;
+    }catch(e){
+      console.error('[AUDITORIA] listar auditorias:',e);
+      sel.innerHTML='<option value="">Falha ao carregar auditorias — clique em Atualizar</option>';
+      toast('Não foi possível carregar a lista de auditorias.','e');
+      return [];
+    }finally{ sel.disabled=false; }
   }
 
   function encerrarListener(){
+    if (unsubscribeMetas) { try { unsubscribeMetas(); } catch(e){} }
+    unsubscribeMetas=null;
     if (unsubscribeItens) { try { unsubscribeItens(); } catch(e){} }
     unsubscribeItens = null;
     assinaturaAnterior = '';
@@ -224,6 +257,18 @@
     const ref = DB().collection('dt_auditorias').doc(auditoriaAtual);
     const metaSnap = await ref.get();
     metaAtual = metaSnap.exists ? {id:metaSnap.id,...metaSnap.data()} : null;
+    if(!metaAtual){
+      toast('A auditoria selecionada não existe mais. Atualizando a lista.','w');
+      auditoriaAtual='';
+      await popularSelect();
+      renderizar();
+      return;
+    }
+    unsubscribeMetas=ref.onSnapshot(function(ms){
+      if(!ms.exists){ auditoriaAtual=''; metaAtual=null; itensAtuais=[]; popularSelect(); renderizar(); return; }
+      metaAtual={id:ms.id,...ms.data()};
+      atualizarAcoesAuditoria();
+    });
     atualizarAcoesAuditoria();
     unsubscribeItens = ref.collection('enderecos').onSnapshot(snap => {
       const nova = snap.docs.map(d => normalizarItem(d.data(), d.id));
@@ -419,7 +464,9 @@
   }
 
   async function liberar(){
-    if(!auditoriaAtual) return toast('Selecione uma auditoria.','w');
+    const id=resolverAuditoriaSelecionada();
+    if(!id) return toast('Selecione uma auditoria na lista acima.','w');
+    if(id!==auditoriaAtual || !metaAtual) await selecionarAuditoria(id);
     if(!itensAtuais.length) return toast('Importe uma base válida antes de liberar.','w');
     const ref=DB().collection('dt_auditorias').doc(auditoriaAtual);
     const snap=await ref.collection('enderecos').get();
@@ -430,7 +477,9 @@
   }
 
   async function finalizar(){
-    if(!auditoriaAtual) return toast('Selecione uma auditoria.','w');
+    const id=resolverAuditoriaSelecionada();
+    if(!id) return toast('Selecione uma auditoria na lista acima.','w');
+    if(id!==auditoriaAtual || !metaAtual) await selecionarAuditoria(id);
     const r=resumo();
     if(r.PENDENTE>0) return toast(`Não é possível finalizar. Ainda faltam ${r.PENDENTE} item(ns).`,'w');
     if(!r.total) return toast('A auditoria não possui itens.','w');
@@ -440,8 +489,33 @@
     toast('Auditoria finalizada.','s');
   }
 
+  async function excluir(){
+    const id=resolverAuditoriaSelecionada();
+    if(!id) return toast('Selecione uma auditoria na lista acima.','w');
+    if(!confirm('Excluir esta auditoria e todos os seus resultados? Esta ação não pode ser desfeita.')) return;
+    const ref=DB().collection('dt_auditorias').doc(id);
+    try{
+      encerrarListener();
+      const snap=await ref.collection('enderecos').get();
+      for(let i=0;i<snap.docs.length;i+=350){ const b=DB().batch(); snap.docs.slice(i,i+350).forEach(d=>b.delete(d.ref)); await b.commit(); }
+      await ref.delete();
+      auditoriaAtual=''; metaAtual=null; itensAtuais=[];
+      const sel=document.getElementById('aud-op-auditoria'); if(sel)sel.value='';
+      await popularSelect(); renderizar(); atualizarAcoesAuditoria();
+      toast('Auditoria excluída. Ela não aparecerá mais nos coletores.','s');
+    }catch(e){ console.error('[AUDITORIA] excluir:',e); toast('Falha ao excluir a auditoria: '+(e.message||e),'e'); }
+  }
+
+  async function atualizarListaAuditorias(){
+    const metas=await popularSelect();
+    const sel=document.getElementById('aud-op-auditoria');
+    if(sel?.value) await selecionarAuditoria(sel.value);
+    else if(!metas.length) renderizar();
+  }
+
   function exportar(){
-    if(!auditoriaAtual || !itensAtuais.length) return toast('Selecione uma auditoria com dados.','w');
+    const id=resolverAuditoriaSelecionada();
+    if(!id || !itensAtuais.length) return toast('Selecione uma auditoria com dados.','w');
     const rows=aplicarFiltros(itensAtuais).map(i=>({
       Auditoria:metaAtual?.nome||metaAtual?.auditoria_nome||auditoriaAtual,Loja:i.loja||metaAtual?.loja||loja(),Endereço:i.endereco,
       'GTIN/EAN esperado':i.dunEsperado,'Produto esperado':i.produtoEsperado,'GTIN/EAN lido':i.dunLido||'','Produto lido':i.produtoLido||'',
@@ -459,8 +533,19 @@
   window.criarNovaAuditoriaStandalone=criarNova;
   window.liberarAuditoriaColetores=liberar;
   window.finalizarAuditoriaOperacional=finalizar;
+  window.excluirAuditoriaOperacional=excluir;
+  window.atualizarListaAuditorias=atualizarListaAuditorias;
   window.exportarAuditoriaOperacional=exportar;
-  window.renderAuditoriaOperacional=renderizar;
+  window.renderAuditoriaOperacional=function(){
+    renderizar();
+    if(!window.__auditoriaRefreshTimer){
+      window.__auditoriaRefreshTimer=setTimeout(async function(){
+        window.__auditoriaRefreshTimer=null;
+        const page=document.getElementById('page-auditoria');
+        if(page && page.classList.contains('active')) await popularSelect();
+      },120);
+    }
+  };
   window.encerrarListenerAuditoriaPorTrocaLoja=function(){
     encerrarListener();
     auditoriaAtual='';

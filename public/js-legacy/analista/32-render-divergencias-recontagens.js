@@ -93,6 +93,17 @@ function _marcarDivResolvida(divId) {
 }
 // ── Estado de seleção de divergências ──────────────────────────────────────
 var _divSelecionadas = new Set();
+var _divDadosFiltradosExport = [];
+var _recDadosFiltradosExport = [];
+function divStatusBadge(status) {
+    switch (String(status || '').toUpperCase()) {
+        case 'ABERTA': return 'b-red';
+        case 'EM_RECONTAGEM': return 'b-orange';
+        case 'RESOLVIDA': return 'b-green';
+        case 'PERSISTENTE': return 'b-gray';
+        default: return 'b-gray';
+    }
+}
 function divAtualizarBarraSel() {
     var bar = document.getElementById('div-sel-bar');
     var cnt = document.getElementById('div-sel-count');
@@ -573,6 +584,7 @@ function renderDivergencias() {
         dados = __spreadArray([], dados, true).sort(function (a, b) { return (a.endereco || '').localeCompare(b.endereco || ''); });
     else
         dados = __spreadArray([], dados, true).sort(function (a, b) { return (b.criada_em || '').localeCompare(a.criada_em || ''); });
+    _divDadosFiltradosExport = dados.slice();
     // Populat filtros dinâmicos (rua, nível, setor, produto, operador)
     var _popSel = function (id, valores, cur, emptyLabel) {
         var el = document.getElementById(id);
@@ -788,6 +800,7 @@ function renderRecontagens() {
         });
     else
         dados = __spreadArray([], dados, true).sort(function (a, b) { return (b.criada_em || '').localeCompare(a.criada_em || ''); });
+    _recDadosFiltradosExport = dados.slice();
     // Popular filtros dinâmicos
     var selRua = document.getElementById('rec-frua');
     if (selRua) {
@@ -881,4 +894,71 @@ function renderRecontagens() {
             ? "<button class=\"btn btn-ghost btn-sm\" onclick=\"divAtribuirPorRec('".concat(r.id, "')\" style=\"font-size:.72rem\" title=\"Atribuir a um operador\">\uD83D\uDC64 Atribuir</button>")
             : '', "\n              </div>\n            </td>\n          </tr>");
     }).join(''), "\n      </tbody>\n    </table></div>");
+}
+function _exportarXlsxAnalista(nomeArquivo, nomeAba, linhas) {
+    if (!window.XLSX) {
+        showToast('Biblioteca Excel não carregada. Atualize a página e tente novamente.', 'e');
+        return;
+    }
+    if (!linhas || !linhas.length) {
+        showToast('Não há dados nos filtros atuais para exportar.', 'w');
+        return;
+    }
+    var ws = XLSX.utils.json_to_sheet(linhas);
+    var wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, nomeAba.substring(0, 31));
+    XLSX.writeFile(wb, nomeArquivo);
+}
+function exportarDivergencias() {
+    renderDivergencias();
+    var linhas = _divDadosFiltradosExport.map(function (d) {
+        var _a, _b, _c;
+        var info = getEnderecoInfo(d.endereco) || {};
+        var rec = state().recontagens.find(function (r) { return r.divergencia_id === d.id; }) || {};
+        return {
+            'Inventário': d.inventario_nome || d.inventario_id || '',
+            'Rua': info.rua || '',
+            'Endereço': d.endereco || '',
+            'Produto': d.produto || d.descricao || '',
+            'GTIN bipado': d.gtin_bipado || '',
+            'Tipo': d.tipo_divergencia || d.tipo || '',
+            'Quantidade esperada': (_a = d.qtd_esperada) !== null && _a !== void 0 ? _a : '',
+            'Quantidade contada': (_b = d.qtd_contada) !== null && _b !== void 0 ? _b : '',
+            'Diferença': (_c = d.diferenca) !== null && _c !== void 0 ? _c : '',
+            'Status': d.status || '',
+            'Status recontagem': d.status_recontagem || rec.status_recontagem || rec.status || '',
+            'Operador da contagem': d.operador || '',
+            'Atribuído para': d.operador_responsavel || rec.operador || '',
+            'Executado por': rec.operador_recontagem || d.operador_recontagem || '',
+            'Criada em': d.criada_em ? fmtTs(d.criada_em) : ''
+        };
+    });
+    _exportarXlsxAnalista('divergencias-filtradas.xlsx', 'Divergências', linhas);
+}
+function exportarRecontagens() {
+    renderRecontagens();
+    var linhas = _recDadosFiltradosExport.map(function (r) {
+        var _a, _b, _c, _d;
+        var info = getEnderecoInfo(r.endereco) || {};
+        var div = state().divergencias.find(function (d) { return d.id === r.divergencia_id; }) || {};
+        return {
+            'Inventário': r.inventario_nome || r.inventario_id || '',
+            'Rua': info.rua || '',
+            'Endereço': r.endereco || '',
+            'Produto': r.produto || r.descricao || '',
+            'Quantidade esperada': (_a = r.qtd_esperada) !== null && _a !== void 0 ? _a : '',
+            '1ª contagem': (_b = r.qtd_primeira) !== null && _b !== void 0 ? _b : '',
+            'Operador 1ª': r.operador_primeira || '',
+            '2ª contagem': (_c = r.qtd_segunda) !== null && _c !== void 0 ? _c : '',
+            'Operador 2ª': r.operador_segunda || '',
+            '3ª contagem': (_d = r.qtd_terceira) !== null && _d !== void 0 ? _d : '',
+            'Operador 3ª': r.operador_terceira || '',
+            'Status': r.status_recontagem || div.status_recontagem || r.status || '',
+            'Atribuído para': r.operador || div.operador_responsavel || '',
+            'Executado por': r.operador_recontagem || div.operador_recontagem || '',
+            'Atribuída em': r.atribuido_em ? fmtTs(r.atribuido_em) : '',
+            'Concluída em': r.recontagem_concluida_em ? fmtTs(r.recontagem_concluida_em) : (r.concluida_em ? fmtTs(r.concluida_em) : '')
+        };
+    });
+    _exportarXlsxAnalista('recontagens-filtradas.xlsx', 'Recontagens', linhas);
 }

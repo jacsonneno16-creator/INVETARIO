@@ -687,94 +687,9 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     window.registrarEnderecoVazioAuditoria = registrarEnderecoVazio;
     // Substitui somente a abertura de Auditoria. Não chama resetContagem(),
     // Não chama nenhuma rotina de confirmação ou gravação do Inventário.
-    window.selecionarAuditoriaMenu = function (auditoriaSelecionadaId) {
-        return __awaiter(this, void 0, void 0, function () {
-            var meta, lojaId, cacheAuditoria, _a, tabs, error_2;
-            return __generator(this, function (_b) {
-                switch (_b.label) {
-                    case 0:
-                        meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaSelecionadaId; });
-                        if (!meta) {
-                            toast('Auditoria não encontrada', 'e');
-                            return [2 /*return*/];
-                        }
-                        APP.modoPendente = 'auditoria';
-                        APP.modoAcesso = 'auditoria';
-                        APP.inventario = {
-                            id: auditoriaSelecionadaId,
-                            nome: meta.auditoria_nome || auditoriaSelecionadaId,
-                            auditoria_nome: meta.auditoria_nome || auditoriaSelecionadaId,
-                            status: 'ATIVO',
-                            auditoria_id: auditoriaSelecionadaId,
-                            tipoAuditoria: meta.tipoAuditoria || '', familiaId: meta.familiaId || '', familiaNome: meta.familiaNome || '', ruas: meta.ruas || []
-                        };
-                        APP.base = [];
-                        APP.auditoriaBase = [];
-                        APP.contagens = [];
-                        _b.label = 1;
-                    case 1:
-                        _b.trys.push([1, 5, , 6]);
-                        goScreen('app');
-                        sincronizarFilaAuditoria().catch(function () { });
-                        if (window._carregarBaseGeralEnderecosAuditoria)
-                            window._carregarBaseGeralEnderecosAuditoria(false).catch(function () { });
-                        lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
-                        cacheAuditoria = [];
-                        try {
-                            cacheAuditoria = JSON.parse(localStorage.getItem('dt_auditoria_cache_' + lojaId + '_' + auditoriaSelecionadaId) || '[]');
-                        }
-                        catch (e) { }
-                        if (!cacheAuditoria.length) return [3 /*break*/, 2];
-                        APP.auditorias = cacheAuditoria;
-                        return [3 /*break*/, 4];
-                    case 2:
-                        _a = APP;
-                        return [4 /*yield*/, window._carregarEnderecoAuditoria(auditoriaSelecionadaId)];
-                    case 3:
-                        _a.auditorias = _b.sent();
-                        _b.label = 4;
-                    case 4:
-                        tabs = {
-                            contar: document.getElementById('tab-contar'),
-                            historico: document.getElementById('tab-historico'),
-                            recontagens: document.getElementById('tab-recontagens'),
-                            estorno: document.getElementById('tab-estorno'),
-                            auditoria: document.getElementById('tab-auditoria'),
-                            status: document.getElementById('tab-status')
-                        };
-                        if (tabs.contar)
-                            tabs.contar.style.display = 'none';
-                        if (tabs.historico)
-                            tabs.historico.style.display = 'none';
-                        if (tabs.recontagens)
-                            tabs.recontagens.style.display = 'none';
-                        if (tabs.estorno)
-                            tabs.estorno.style.display = 'none';
-                        if (tabs.auditoria)
-                            tabs.auditoria.style.display = '';
-                        if (tabs.status)
-                            tabs.status.style.display = '';
-                        showView('auditoria', tabs.auditoria);
-                        renderAuditoriaColetor();
-                        if (cacheAuditoria.length) {
-                            window._carregarEnderecoAuditoria(auditoriaSelecionadaId).then(function (lista) {
-                                if (APP.modoAcesso === 'auditoria' && auditoriaId() === auditoriaSelecionadaId) {
-                                    APP.auditorias = lista;
-                                    atualizarContadorTitulo();
-                                }
-                            }).catch(function (erro) { console.warn('[AUDITORIA] Atualização em segundo plano falhou:', erro); });
-                        }
-                        return [3 /*break*/, 6];
-                    case 5:
-                        error_2 = _b.sent();
-                        console.error('[AUDITORIA] Erro ao abrir auditoria:', error_2);
-                        toast('Erro ao abrir auditoria: ' + error_2.message, 'e');
-                        return [3 /*break*/, 6];
-                    case 6: return [2 /*return*/];
-                }
-            });
-        });
-    };
+    // A seleção e o carregamento obrigatório da Auditoria pertencem exclusivamente
+    // ao módulo 17-auditoria-meta.js. Não sobrescrever selecionarAuditoriaMenu aqui.
+
     function registrarEventosUmaVez() {
         if (window.__auditoriaFluxoEventosRegistrados)
             return;

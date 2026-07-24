@@ -18,6 +18,8 @@
   const produto = function(x){ return norm(x.produto_nome || x.produto || x.descricao || x.gtin || x.dun || x.codigo_produto || '—'); };
   const local = function(x){ return norm(x.local || x.setor || x.nome_local || x.local_estoque || 'SEM LOCAL'); };
   const rua = function(x){ return norm(x.rua || global.extrairRua(x.endereco) || 'SEM RUA'); };
+  let relDivRowsFiltradas=[];
+  let produtividadeRowsFiltradas=[];
 
   // Estrutura do endereço: loja.local.area.rua.coluna.nivel.sequencia (separado por ponto).
   // A rua é sempre a 4ª parte (índice 3). Antes esta função pegava o 1º token (código da
@@ -46,6 +48,7 @@
       const tipo=norm(d.tipo||d.tipo_divergencia).toUpperCase();
       return (!fi||d.inventario_id===fi)&&(!fs||norm(d.status).toUpperCase()===fs)&&(!ft||tipo===ft)&&(!fl||local(d)===fl)&&(!fr||rua(d)===fr)&&(!fo||operador(d)===fo)&&(!q||[d.endereco,produto(d),operador(d),tipo,d.status].join(' ').toLowerCase().indexOf(q)>=0);
     });
+    relDivRowsFiltradas=rows.slice();
     const all=s.divergencias||[];
     setText('rdk-total',all.length); setText('rdk-abertas',all.filter(function(x){return norm(x.status).toUpperCase()==='ABERTA';}).length);
     setText('rdk-em-rec',all.filter(function(x){return norm(x.status).toUpperCase()==='EM_RECONTAGEM';}).length);
@@ -67,6 +70,7 @@
     const map={}; cont.forEach(function(c){ const op=operador(c); if(!map[op]) map[op]={nome:op,contagens:0,enderecos:new Set(),produtos:new Set(),recontagens:0,divs:0}; const x=map[op]; x.contagens++; if(c.endereco)x.enderecos.add(c.endereco); x.produtos.add(produto(c)); if(c.rodada>1||c.tipo_contagem==='RECONTAGEM')x.recontagens++; });
     (s.divergencias||[]).forEach(function(d){ const op=operador(d); if(map[op]) map[op].divs++; });
     const rows=Object.keys(map).map(function(k){return map[k];}).sort(function(a,b){return b.enderecos.size-a.enderecos.size||b.contagens-a.contagens;});
+    produtividadeRowsFiltradas=rows.slice();
     setText('pk-prod-operadores',rows.length); setText('pk-prod-ends',new Set(cont.map(function(c){return c.endereco;}).filter(Boolean)).size); setText('pk-prod-conts',cont.length); setText('pk-prod-prods',new Set(cont.map(produto)).size); setText('pk-prod-divs',rows.reduce(function(a,x){return a+x.divs;},0)); setText('pk-prod-recs',rows.reduce(function(a,x){return a+x.recontagens;},0));
     const cards=document.getElementById('prod-ranking-cards'); if(cards) cards.innerHTML=rows.slice(0,10).map(function(x,i){return '<div class="card" style="min-width:180px;flex:1;padding:14px"><div style="font-size:1.2rem">'+(['🥇','🥈','🥉'][i]||(i+1)+'º')+'</div><strong>'+esc(x.nome)+'</strong><div style="font-size:.76rem;color:var(--muted);margin-top:5px">'+x.enderecos.size+' endereços · '+x.contagens+' contagens</div></div>';}).join('')||'<div class="empty" style="width:100%"><div class="empty-title">Nenhuma contagem registrada</div></div>';
     const wrap=document.getElementById('produtividade-table-wrap'); if(!wrap)return;
@@ -91,7 +95,20 @@
     const csv='\ufeff'+[headers].concat(rows).map(function(r){return r.map(function(v){return '"'+String(v==null?'':v).replace(/"/g,'""')+'"';}).join(';');}).join('\n');
     const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})); a.download=filename; a.click(); setTimeout(function(){URL.revokeObjectURL(a.href);},500);
   }
-  global.exportarRelDivergencias=global.exportarRelDivergencias||function(){const s=st();exportSimple('relatorio-conflitos.csv',['Inventário','Endereço','Produto','Tipo','Status','Operador'],(s.divergencias||[]).map(function(d){return [invName(d.inventario_id),d.endereco,produto(d),d.tipo||d.tipo_divergencia,d.status,operador(d)];}));};
-  global.exportarProdutividade=global.exportarProdutividade||function(){global.renderProdutividade(); const rows=[]; document.querySelectorAll('#produtividade-table-wrap tbody tr').forEach(function(tr){rows.push(Array.from(tr.cells).map(function(td){return td.textContent.trim();}));});exportSimple('produtividade-operadores.csv',['Posição','Operador','Endereços','Contagens','Produtos','Conflitos','Recontagens'],rows);};
+  function exportXlsx(filename, sheet, rows){
+    if(!global.XLSX){ if(global.showToast) global.showToast('Biblioteca Excel não carregada.','e'); return; }
+    if(!rows.length){ if(global.showToast) global.showToast('Não há dados nos filtros atuais para exportar.','w'); return; }
+    const ws=global.XLSX.utils.json_to_sheet(rows), wb=global.XLSX.utils.book_new();
+    global.XLSX.utils.book_append_sheet(wb,ws,sheet.substring(0,31));
+    global.XLSX.writeFile(wb,filename);
+  }
+  global.exportarRelDivergencias=function(){
+    global.renderRelDivergencias();
+    exportXlsx('relatorio-conflitos-filtrado.xlsx','Conflitos',relDivRowsFiltradas.map(function(d){const dt=when(d);return {'Inventário':invName(d.inventario_id),'Endereço':d.endereco||'','Rua':rua(d),'Local':local(d),'Produto':produto(d),'Tipo':d.tipo||d.tipo_divergencia||'','Status':d.status||'','Operador':operador(d),'Data':dt?dt.toLocaleString('pt-BR'):''};}));
+  };
+  global.exportarProdutividade=function(){
+    global.renderProdutividade();
+    exportXlsx('produtividade-operadores-filtrada.xlsx','Produtividade',produtividadeRowsFiltradas.map(function(x,i){return {'Posição':i+1,'Operador':x.nome,'Endereços':x.enderecos.size,'Contagens':x.contagens,'Produtos':x.produtos.size,'Conflitos':x.divs,'Recontagens':x.recontagens};}));
+  };
   global.exportarCapasDuplicadas=global.exportarCapasDuplicadas||function(){const s=st(),groups={};(s.contagens||[]).forEach(function(c){const cp=norm(c.capa||c.capa_palete||c.capaPalete);if(cp)(groups[cp]||(groups[cp]=[])).push(c);});const rows=[];Object.keys(groups).forEach(function(cp){if(new Set(groups[cp].map(function(x){return x.inventario_id+'|'+x.endereco;})).size>1)groups[cp].forEach(function(x){rows.push([cp,invName(x.inventario_id),x.endereco,operador(x)]);});});exportSimple('capas-duplicadas.csv',['Capa','Inventário','Endereço','Operador'],rows);};
 })(window);

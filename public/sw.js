@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v64';
+var CACHE='dt-inventario-v68';
 var PRECACHE=[
   '/',
   '/coletor.html',

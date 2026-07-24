@@ -192,32 +192,101 @@
     renderListaAuditorias(APP.auditoriasMenu || []);
   };
 
+  function _prepararTelaDownloadAuditoria(meta){
+    const nome=document.getElementById('dl-inv-nome');
+    const icon=document.getElementById('dl-icon');
+    const steps=document.getElementById('dl-steps');
+    const erro=document.getElementById('dl-erro');
+    const entrar=document.getElementById('dl-btn-entrar');
+    const cancelar=document.getElementById('dl-btn-cancel');
+    if(nome) nome.textContent='Auditoria — '+(meta.auditoria_nome||meta.id||'');
+    if(icon) icon.textContent='📝';
+    if(steps) steps.innerHTML='';
+    if(erro){ erro.style.display='none'; erro.textContent=''; }
+    if(entrar){ entrar.style.display='none'; entrar.textContent='OK — iniciar auditoria'; entrar.onclick=window.entrarAuditoriaCarregada; }
+    if(cancelar){ cancelar.style.display=''; cancelar.textContent='Cancelar'; cancelar.onclick=window.cancelarDownloadAuditoria; }
+    if(typeof _dlProg==='function') _dlProg(2,'Preparando download da auditoria…');
+    goScreen('download');
+  }
+
+  window.cancelarDownloadAuditoria=function(){
+    APP._auditoriaCargaToken=(APP._auditoriaCargaToken||0)+1;
+    APP._auditoriaCarregando=false;
+    APP.modoAcesso=null;
+    APP.modoPendente=null;
+    APP.inventario=null;
+    APP.auditorias=[];
+    goScreen('auditorias');
+  };
+
+  window.entrarAuditoriaCarregada=function(){
+    if(!APP._auditoriaPronta){ toast('Aguarde o carregamento completo da auditoria.','e'); return; }
+    const audTab=document.getElementById('tab-auditoria');
+    if(audTab) audTab.style.display='';
+    goScreen('coleta');
+    if(audTab) showView('auditoria',audTab);
+    renderAuditoriaColetor();
+  };
+
   window.selecionarAuditoriaMenu = async function(auditoriaId){
+    if(APP._auditoriaCarregando) return;
     const meta = (APP.auditoriasMenu || []).find(x => x.id === auditoriaId);
     if (!meta) { toast('Auditoria não encontrada', 'e'); return; }
+    APP._auditoriaCarregando=true;
+    APP._auditoriaPronta=false;
+    const token=(APP._auditoriaCargaToken||0)+1;
+    APP._auditoriaCargaToken=token;
     APP.modoPendente = 'auditoria';
     APP.modoAcesso = 'auditoria';
     APP.inventario = { id: auditoriaId, nome: meta.auditoria_nome || auditoriaId, status: 'ATIVO', auditoria_id: auditoriaId };
     APP.base = [];
     APP.auditoriaBase = [];
     APP.contagens = [];
+    _prepararTelaDownloadAuditoria(meta);
     try {
-      _carregarBaseGeralEnderecosAuditoria(false).catch(function(){});
-      const lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
-      let cacheAuditoria = [];
-      try { cacheAuditoria = JSON.parse(localStorage.getItem('dt_auditoria_cache_' + lojaId + '_' + auditoriaId) || '[]'); } catch(e) {}
-      if (cacheAuditoria.length) APP.auditorias = cacheAuditoria;
-      else APP.auditorias = await _carregarEnderecoAuditoria(auditoriaId);
-      if (cacheAuditoria.length) {
-        _carregarEnderecoAuditoria(auditoriaId).then(function(lista){ APP.auditorias = lista; if (APP.modoAcesso === 'auditoria') renderAuditoriaColetor(); }).catch(function(){});
-      }
-      const audTab = document.getElementById('tab-auditoria');
-      if (audTab) audTab.style.display = '';
-      goScreen('coleta');
-      if (audTab) showView('auditoria', audTab);
-      renderAuditoriaColetor();
+      if(typeof _dlStep==='function') _dlStep('aud-prod','📦','Base Geral de Produtos','Baixando produtos, GTIN, EAN e DUN…','run');
+      if(typeof _dlProg==='function') _dlProg(10,'Baixando Base Geral de Produtos…');
+      if(!window.DTProdutos || typeof window.DTProdutos.carregar!=='function') throw new Error('Serviço da Base Geral de Produtos não foi carregado.');
+      const produtos=await window.DTProdutos.carregar(false);
+      if(token!==APP._auditoriaCargaToken) return;
+      const totalProdutos=(produtos||[]).filter(p=>p&&p.ativo!==false).length;
+      if(!totalProdutos) throw new Error('A Base Geral de Produtos está vazia ou não pôde ser baixada. Atualize a base antes de iniciar a auditoria.');
+      if(typeof _dlStep==='function') _dlStep('aud-prod','📦','Base Geral de Produtos',totalProdutos+' produtos carregados','ok');
+
+      if(typeof _dlStep==='function') _dlStep('aud-end','📍','Base Geral de Endereços','Baixando endereços da loja…','run');
+      if(typeof _dlProg==='function') _dlProg(45,'Baixando Base Geral de Endereços…');
+      const locais=await _carregarBaseGeralEnderecosAuditoria(false);
+      if(token!==APP._auditoriaCargaToken) return;
+      const totalLocais=locais&&typeof locais.size==='number'?locais.size:0;
+      if(!totalLocais) throw new Error('A Base Geral de Endereços está vazia ou não pôde ser baixada. Atualize a base antes de iniciar a auditoria.');
+      if(typeof _dlStep==='function') _dlStep('aud-end','📍','Base Geral de Endereços',totalLocais+' endereços carregados','ok');
+
+      if(typeof _dlStep==='function') _dlStep('aud-base','📝','Base da Auditoria','Baixando endereços pendentes…','run');
+      if(typeof _dlProg==='function') _dlProg(75,'Baixando Base da Auditoria…');
+      APP.auditorias=await _carregarEnderecoAuditoria(auditoriaId);
+      if(token!==APP._auditoriaCargaToken) return;
+      const totalAud=(APP.auditorias||[]).length;
+      if(typeof _dlStep==='function') _dlStep('aud-base','📝','Base da Auditoria',totalAud+' endereços pendentes','ok');
+      if(typeof _dlProg==='function') _dlProg(100,'Todas as informações foram carregadas.');
+
+      APP._auditoriaPronta=true;
+      const entrar=document.getElementById('dl-btn-entrar');
+      if(entrar){ entrar.style.display=''; entrar.textContent='OK — iniciar auditoria'; entrar.onclick=window.entrarAuditoriaCarregada; }
+      const cancelar=document.getElementById('dl-btn-cancel');
+      if(cancelar) cancelar.style.display='none';
+      const status=document.getElementById('dl-status-txt');
+      if(status) status.textContent='Carregamento concluído. Toque em OK para continuar.';
     } catch (err) {
-      toast('Erro ao abrir auditoria: ' + err.message, 'e');
+      console.error('[AUDITORIA] Falha ao preparar auditoria:',err);
+      APP._auditoriaPronta=false;
+      if(typeof _dlSetErro==='function') _dlSetErro(err.message||String(err));
+      else toast('Erro ao abrir auditoria: '+(err.message||err),'e');
+      const cancelar=document.getElementById('dl-btn-cancel');
+      if(cancelar){ cancelar.style.display=''; cancelar.textContent='Voltar'; cancelar.onclick=window.cancelarDownloadAuditoria; }
+      const entrar=document.getElementById('dl-btn-entrar');
+      if(entrar) entrar.style.display='none';
+    } finally {
+      if(token===APP._auditoriaCargaToken) APP._auditoriaCarregando=false;
     }
   };
 

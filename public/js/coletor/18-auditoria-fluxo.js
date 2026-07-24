@@ -465,62 +465,8 @@
 
   // Substitui somente a abertura de Auditoria. Não chama resetContagem(),
   // Não chama nenhuma rotina de confirmação ou gravação do Inventário.
-  window.selecionarAuditoriaMenu = async function(auditoriaSelecionadaId){
-    const meta = (APP.auditoriasMenu || []).find(x => x.id === auditoriaSelecionadaId);
-    if (!meta) { toast('Auditoria não encontrada', 'e'); return; }
-
-    APP.modoPendente = 'auditoria';
-    APP.modoAcesso = 'auditoria';
-    APP.inventario = {
-      id: auditoriaSelecionadaId,
-      nome: meta.auditoria_nome || auditoriaSelecionadaId,
-      auditoria_nome: meta.auditoria_nome || auditoriaSelecionadaId,
-      status: 'ATIVO',
-      auditoria_id: auditoriaSelecionadaId,
-      tipoAuditoria: meta.tipoAuditoria||'',familiaId:meta.familiaId||'',familiaNome:meta.familiaNome||'',ruas:meta.ruas||[]
-    };
-    APP.base = [];
-    APP.auditoriaBase = [];
-    APP.contagens = [];
-
-    try {
-      goScreen('app');
-      sincronizarFilaAuditoria().catch(function(){});
-      if (window._carregarBaseGeralEnderecosAuditoria) window._carregarBaseGeralEnderecosAuditoria(false).catch(function(){});
-      const lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
-      let cacheAuditoria = [];
-      try { cacheAuditoria = JSON.parse(localStorage.getItem('dt_auditoria_cache_' + lojaId + '_' + auditoriaSelecionadaId) || '[]'); } catch(e) {}
-      if (cacheAuditoria.length) APP.auditorias = cacheAuditoria;
-      else APP.auditorias = await window._carregarEnderecoAuditoria(auditoriaSelecionadaId);
-      const tabs = {
-        contar: document.getElementById('tab-contar'),
-        historico: document.getElementById('tab-historico'),
-        recontagens: document.getElementById('tab-recontagens'),
-        estorno: document.getElementById('tab-estorno'),
-        auditoria: document.getElementById('tab-auditoria'),
-        status: document.getElementById('tab-status')
-      };
-      if (tabs.contar) tabs.contar.style.display = 'none';
-      if (tabs.historico) tabs.historico.style.display = 'none';
-      if (tabs.recontagens) tabs.recontagens.style.display = 'none';
-      if (tabs.estorno) tabs.estorno.style.display = 'none';
-      if (tabs.auditoria) tabs.auditoria.style.display = '';
-      if (tabs.status) tabs.status.style.display = '';
-      showView('auditoria', tabs.auditoria);
-      renderAuditoriaColetor();
-      if (cacheAuditoria.length) {
-        window._carregarEnderecoAuditoria(auditoriaSelecionadaId).then(function(lista){
-          if (APP.modoAcesso === 'auditoria' && auditoriaId() === auditoriaSelecionadaId) {
-            APP.auditorias = lista;
-            atualizarContadorTitulo();
-          }
-        }).catch(function(erro){ console.warn('[AUDITORIA] Atualização em segundo plano falhou:', erro); });
-      }
-    } catch(error) {
-      console.error('[AUDITORIA] Erro ao abrir auditoria:', error);
-      toast('Erro ao abrir auditoria: ' + error.message, 'e');
-    }
-  };
+  // A seleção e o carregamento obrigatório da Auditoria pertencem exclusivamente
+  // ao módulo 17-auditoria-meta.js. Não sobrescrever selecionarAuditoriaMenu aqui.
 
   function registrarEventosUmaVez(){
     if (window.__auditoriaFluxoEventosRegistrados) return;
