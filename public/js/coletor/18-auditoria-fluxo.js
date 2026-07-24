@@ -15,7 +15,8 @@
     etapa: 'endereco',
     item: null,
     processando: false,
-    timerRetorno: null
+    timerRetorno: null,
+    foraAuditoria: false
   };
 
   function texto(v){ return String(v == null ? '' : v).trim(); }
@@ -210,7 +211,7 @@
     if (estado.timerRetorno) clearTimeout(estado.timerRetorno);
     const itemAnterior = estado.etapa === 'produto' ? estado.item : null;
     if (itemAnterior) liberarLockAuditoria(itemAnterior).catch(function(){});
-    estado = { etapa: 'endereco', item: null, processando: false, timerRetorno: null };
+    estado = { etapa: 'endereco', item: null, processando: false, timerRetorno: null, foraAuditoria: false };
     const el = elementos();
     if (el.etapaEndereco) el.etapaEndereco.style.display = '';
     if (el.etapaProduto) el.etapaProduto.style.display = 'none';
@@ -272,24 +273,49 @@
       return;
     }
     let item = encontrarEndereco(valor);
+    let foraAuditoria = false;
     if (!item) {
       mostrarFeedbackEndereco('Consultando a Base Geral de Endereços…', false);
       const existeNaBaseGeral = await consultarEnderecoNaBaseGeral(valor);
       if (existeNaBaseGeral) {
-        item = encontrarEndereco(valor) || {
-          id: auditoriaId() + '__' + normalizarEndereco(valor),
-          endereco: valor,
-          dunEsperado: '',
-          produtoEsperado: 'ENDEREÇO PREVISTO VAZIO',
-          previstoVazio: true,
-          disponivel_coletor: true
-        };
+        const meta = (APP.auditoriasMenu || []).find(function(x){ return x.id === auditoriaId(); }) || {};
+        const tipoProduto = texto(meta.tipoAuditoria || meta.tipo_auditoria).toLowerCase() === 'produto';
+        if (tipoProduto) {
+          const confirmar = window.confirm('Este endereço não faz parte da auditoria por produto. Deseja registrar uma ocorrência de produto encontrado fora dos endereços previstos?');
+          if (!confirmar) {
+            mostrarFeedbackEndereco('Endereço fora da auditoria. Ocorrência não registrada.', true);
+            tocar('erro');
+            if (el.endereco) { el.endereco.select(); el.endereco.focus(); }
+            return;
+          }
+          foraAuditoria = true;
+          item = {
+            id: 'OCORRENCIA__' + auditoriaId() + '__' + normalizarEndereco(valor) + '__' + Date.now(),
+            endereco: valor,
+            dunEsperado: texto(meta.produtoCodigo || meta.produto_codigo || meta.gtin || meta.dun || meta.familiaId || ''),
+            produtoEsperado: texto(meta.produtoNome || meta.produto_nome || meta.familiaNome || meta.nomeProduto || 'PRODUTO DA AUDITORIA'),
+            foraAuditoria: true,
+            disponivel_coletor: true
+          };
+        } else {
+          mostrarFeedbackEndereco('Este endereço existe na base, mas não faz parte desta auditoria.', true);
+          tocar('erro');
+          if (el.endereco) { el.endereco.select(); el.endereco.focus(); }
+          return;
+        }
       }
     }
     if (!item) {
       mostrarFeedbackEndereco('Endereço não cadastrado na Base Geral de Endereços desta loja.', true);
       tocar('erro');
       if (el.endereco) { el.endereco.select(); el.endereco.focus(); }
+      return;
+    }
+    estado.foraAuditoria = foraAuditoria || item.foraAuditoria === true;
+    if (estado.foraAuditoria) {
+      mostrarFeedbackEndereco('Endereço fora da auditoria confirmado. Bipe o produto encontrado.', false);
+      tocar('ok');
+      irParaProduto(item);
       return;
     }
     mostrarFeedbackEndereco('Reservando endereço para este coletor…', false);
@@ -319,13 +345,75 @@
     const restantes=[];
     for(let i=0;i<fila.length;i++){
       const x=fila[i];
-      try { await FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection('enderecos').doc(x.docId).set(x.payload,{merge:true}); }
+      try { await FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload,{merge:true}); }
       catch(e){ restantes.push(x); }
     }
     gravarFilaAuditoria(restantes);
   }
   window.sincronizarFilaAuditoria=sincronizarFilaAuditoria;
   window.addEventListener('online',function(){ sincronizarFilaAuditoria(); });
+
+  async function salvarOcorrenciaForaAuditoria(produtoLido){
+    if (estado.processando || !estado.item) return;
+    const item = estado.item;
+    const momento = agoraISO();
+    const lido = texto(produtoLido);
+    const prod = window.DTProdutos && window.DTProdutos.buscarSync ? window.DTProdutos.buscarSync(lido) : {encontrado:false};
+    const meta = (APP.auditoriasMenu || []).find(function(x){ return x.id === auditoriaId(); }) || {};
+    let produtoCorreto = false;
+    if (prod.encontrado) {
+      const famProd = normalizarCodigo(prod.familiaCodigo || prod.familiaNome || prod.produtoPrincipal);
+      const famMeta = normalizarCodigo(meta.familiaId || meta.familiaNome || meta.produtoCodigo || meta.produtoNome || '');
+      produtoCorreto = !!(famProd && famMeta && famProd === famMeta);
+      if (!produtoCorreto) {
+        const alvo = normalizarCodigo(meta.produtoCodigo || meta.gtin || meta.dun || '');
+        produtoCorreto = !!(alvo && (normalizarCodigo(lido) === alvo || normalizarCodigo(prod.id) === alvo));
+      }
+    }
+    if (!produtoCorreto) {
+      mostrarResultado('O produto bipado não é o produto selecionado nesta auditoria. Bipe o produto correto.', 'erro');
+      tocar('erro');
+      const el = elementos(); if (el.produto) { el.produto.select(); el.produto.focus(); }
+      return;
+    }
+    setProcessando(true);
+    const docId = 'fora__' + normalizarEndereco(item.endereco) + '__' + Date.now();
+    const payload = {
+      auditoriaId: auditoriaId(),
+      tipo: 'PRODUTO_FORA_AUDITORIA',
+      status: 'PRODUTO_FORA_AUDITORIA',
+      endereco: texto(item.endereco),
+      produtoLido: localizarProdutoLido(lido),
+      produto_lido: localizarProdutoLido(lido),
+      codigoLido: lido,
+      dunLido: lido,
+      gtinLido: lido,
+      produtoEsperado: texto(meta.produtoNome || meta.produto_nome || meta.familiaNome || 'PRODUTO DA AUDITORIA'),
+      operador_id: operadorUsuario(),
+      operador_nome: operadorNome(),
+      dispositivo_id: dispositivoId(),
+      loja: lojaAtual(),
+      encontradoForaAuditoria: true,
+      encontrado_em: momento,
+      criadoEm: momento,
+      atualizadoEm: momento
+    };
+    try {
+      await FS.collection(FCOL.auditorias).doc(auditoriaId()).collection('ocorrencias').doc(docId).set(payload,{merge:true});
+      mostrarResultado('Ocorrência registrada: produto encontrado fora dos endereços previstos.', 'vazio');
+      tocar('vazio');
+      try { window.dispatchEvent(new CustomEvent('dt-auditoria-ocorrencia',{detail:{id:docId,payload:payload}})); } catch(e) {}
+      estado.timerRetorno = setTimeout(irParaEndereco, 1100);
+    } catch(error) {
+      console.error('[AUDITORIA] Erro ao salvar ocorrência:', error);
+      const fila = lerFilaAuditoria();
+      fila.push({docId:docId,auditoriaId:auditoriaId(),subcolecao:'ocorrencias',payload:payload});
+      gravarFilaAuditoria(fila);
+      mostrarResultado('Ocorrência salva no coletor. Será enviada quando houver conexão.', 'vazio');
+      tocar('vazio');
+      estado.timerRetorno = setTimeout(irParaEndereco, 1100);
+    }
+  }
 
   async function salvarResultado(status, produtoLido){
     if (estado.processando || !estado.item) return;
@@ -444,6 +532,10 @@
     if(meta.tipoAuditoria==='produto'&&meta.familiaId&&prod.encontrado){const famProd=normalizarCodigo(prod.familiaCodigo||prod.familiaNome);correto=famProd===normalizarCodigo(meta.familiaId)||famProd===normalizarCodigo(meta.familiaNome);}
     if(!prod.encontrado&&esperados.indexOf(normalizarCodigo(lido))<0)correto=false;
     if(estado.item.previstoVazio===true||!esperados.length)correto=false;
+    if (estado.foraAuditoria || estado.item.foraAuditoria === true) {
+      salvarOcorrenciaForaAuditoria(lido);
+      return;
+    }
     if(!prod.encontrado) mostrarResultado('Produto não cadastrado. Será registrado como divergente.','erro');
     salvarResultado(correto?STATUS_OK:STATUS_DIVERGENTE,lido);
   }

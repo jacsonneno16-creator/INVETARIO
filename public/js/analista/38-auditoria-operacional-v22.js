@@ -24,7 +24,12 @@
 
   function colecaoAuditorias(){ return DB().collection('dt_auditorias'); }
   function referenciaAuditoria(id){
-    if(origemAuditoria.get(String(id))==='raiz' && window.getDTRawFirestore) return window.getDTRawFirestore().collection('dt_auditorias').doc(String(id));
+    const origem=origemAuditoria.get(String(id));
+    if(window.getDTRawFirestore){
+      const raw=window.getDTRawFirestore();
+      if(origem==='raiz') return raw.collection('dt_auditorias').doc(String(id));
+      if(origem && origem.indexOf('loja:')===0) return raw.collection('lojas').doc(origem.slice(5)).collection('dt_auditorias').doc(String(id));
+    }
     return colecaoAuditorias().doc(String(id));
   }
 
@@ -251,36 +256,42 @@
 
   async function listarMetas(){
     if(!await aguardarAmbienteAuditoria()) return [];
-    const db=DB();
-    if(!db || typeof db.collection!=='function') return [];
+    const raw=window.getDTRawFirestore?.();
+    const atual=txt(loja());
     origemAuditoria.clear();
-    let docs=[];
-    let erroLoja=null;
-    try{
-      const snap=await colecaoAuditorias().get();
-      docs=snap.docs.map(function(d){ origemAuditoria.set(d.id,'loja'); return {id:d.id,...d.data(),_origemAuditoria:'loja'}; });
-    }catch(e){ erroLoja=e; console.warn('[AUDITORIA] coleção da loja:',e); }
-
-    // Compatibilidade com auditorias antigas gravadas fora do proxy multiloja.
-    // Mescla somente documentos da loja atual, documentos sem loja quando não há
-    // equivalente na coleção atual e nunca duplica o mesmo ID.
-    if(window.getDTRawFirestore){
+    const docs=[];
+    const vistos=new Set();
+    async function adicionarColecao(ref, origem){
       try{
-        const atualLoja=txt(loja());
-        const raiz=await window.getDTRawFirestore().collection('dt_auditorias').get();
-        raiz.docs.forEach(function(d){
-          if(docs.some(function(x){return x.id===d.id;})) return;
+        const snap=await ref.get();
+        snap.docs.forEach(function(d){
+          if(vistos.has(d.id)) return;
           const data=d.data()||{};
-          const docLoja=txt(data.loja || data.loja_id || data.lojaId);
-          const compativel=!docLoja || !atualLoja || docLoja===atualLoja;
-          if(compativel){ origemAuditoria.set(d.id,'raiz'); docs.push({id:d.id,...data,_origemAuditoria:'raiz'}); }
+          vistos.add(d.id);
+          origemAuditoria.set(d.id,origem);
+          docs.push({id:d.id,...data,_origemAuditoria:origem});
         });
-      }catch(e){ console.warn('[AUDITORIA] coleção legada da raiz:',e); if(erroLoja && !docs.length) throw erroLoja; }
+      }catch(e){ console.warn('[AUDITORIA] falha ao listar '+origem+':',e); }
     }
-    if(erroLoja && !docs.length) throw erroLoja;
+    // 1) Loja atualmente selecionada.
+    await adicionarColecao(colecaoAuditorias(),'loja:'+atual);
+    if(raw){
+      // 2) Procura também em todas as lojas cadastradas. Isso recupera auditorias
+      // criadas antes da padronização de IDs (ex.: matriz x loja_matriz).
+      try{
+        const lojasSnap=await raw.collection('lojas').get();
+        for(const ld of lojasSnap.docs){
+          const lid=ld.id;
+          if(lid===atual) continue;
+          await adicionarColecao(raw.collection('lojas').doc(lid).collection('dt_auditorias'),'loja:'+lid);
+        }
+      }catch(e){ console.warn('[AUDITORIA] falha ao procurar nas lojas:',e); }
+      // 3) Auditorias antigas salvas na raiz.
+      await adicionarColecao(raw.collection('dt_auditorias'),'raiz');
+    }
     return docs.sort(function(a,b){
-      const av=a.criadoEm?.toMillis?.()||a.criadoEm?.seconds*1000||Date.parse(a.criadoEm||a.importado_em||0)||0;
-      const bv=b.criadoEm?.toMillis?.()||b.criadoEm?.seconds*1000||Date.parse(b.criadoEm||b.importado_em||0)||0;
+      const av=a.criadoEm?.toMillis?.()||a.criadoEm?.seconds*1000||Date.parse(a.criadoEm||a.criado_em||a.importado_em||0)||0;
+      const bv=b.criadoEm?.toMillis?.()||b.criadoEm?.seconds*1000||Date.parse(b.criadoEm||b.criado_em||b.importado_em||0)||0;
       return bv-av;
     });
   }

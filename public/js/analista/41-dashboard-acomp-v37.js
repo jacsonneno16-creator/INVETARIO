@@ -3,7 +3,7 @@
   const COLORS=['#f97316','#2563eb','#10b981','#8b5cf6','#ef4444','#06b6d4','#eab308','#ec4899','#14b8a6','#6366f1'];
   const oldRenderAcompanhamento=window.renderAcompanhamentoInventarioBase || window.renderAcompanhamento;
   const oldTrocarInventarioAcomp=window.trocarInventarioAcomp;
-  let acompAudItens=[], acompAudMetas=[], acompAudLoja='', acompAudTimer=null;
+  let acompAudItens=[], acompAudOcorrencias=[], acompAudMetas=[], acompAudLoja='', acompAudTimer=null;
   function safe(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   function tipoAcomp(){return document.getElementById('acomp-tipo')?.value||'inventario';}
   // Estrutura: loja.local.area.rua.coluna.nivel.sequencia — rua=índice3, coluna=índice4, nível=índice5.
@@ -12,7 +12,7 @@
   function setText(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
   function ensureHero(){let h=document.getElementById('acomp-live-hero');if(h)return h;h=document.createElement('div');h.id='acomp-live-hero';h.innerHTML='<div id="acomp-live-ring"><div id="acomp-live-value">0%</div></div><div><div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.12em;opacity:.72">Progresso em tempo real</div><div id="acomp-live-title" style="font-size:1.15rem;font-weight:800;margin:5px 0">—</div><div id="acomp-live-detail" style="font-size:.75rem;opacity:.75">Aguardando seleção</div></div>';document.getElementById('acomp-kpis')?.before(h);return h;}
   function setHero(pct,title,detail,color2){ensureHero();const ring=document.getElementById('acomp-live-ring');if(ring)ring.style.background=`conic-gradient(${color2||'#f59e0b'} ${pct*3.6}deg,rgba(255,255,255,.16) 0)`;setText('acomp-live-value',pct+'%');setText('acomp-live-title',title);setText('acomp-live-detail',detail);}
-  let acompAudUnsub=null;
+  let acompAudUnsub=null, acompAudOcorrUnsub=null;
   function rawDb(){return window.getDTRawFirestore?.()||null;}
   function lojaAtiva(){return String(window.getDTLojaAtiva?.()||'').trim();}
   function auditoriasRef(origem){
@@ -21,8 +21,12 @@
   }
   function audDocRef(metaOuId){
     const meta=typeof metaOuId==='object'?metaOuId:acompAudMetas.find(x=>x.id===metaOuId);
-    const origem=meta?meta._origem:'loja';
-    const col=auditoriasRef(origem); return col?col.doc(typeof metaOuId==='object'?metaOuId.id:metaOuId):null;
+    const id=typeof metaOuId==='object'?metaOuId.id:metaOuId;
+    const raw=rawDb(); if(!raw)return null;
+    const origem=meta?meta._origem:'loja:'+lojaAtiva();
+    if(origem==='raiz') return raw.collection('dt_auditorias').doc(id);
+    if(String(origem).indexOf('loja:')===0) return raw.collection('lojas').doc(String(origem).slice(5)).collection('dt_auditorias').doc(id);
+    return raw.collection('lojas').doc(lojaAtiva()).collection('dt_auditorias').doc(id);
   }
   function chaveAudItem(x){
     const id=String(x?.id||'').trim(); if(id)return 'ID:'+id;
@@ -33,14 +37,27 @@
   async function loadAuditoriasAcomp(force){
     const loja=lojaAtiva();
     if(!force&&loja===acompAudLoja&&acompAudMetas.length)return;
-    if(!loja){acompAudMetas=[];acompAudLoja='';return;}
-    const itens=[];
-    try{const snap=await auditoriasRef('loja').get();snap.docs.forEach(d=>itens.push({id:d.id,...d.data(),_origem:'loja'}));}catch(e){console.warn('[ACOMP AUD] Falha ao listar auditorias da loja:',e);}
-    // Compatibilidade com auditorias antigas na raiz, sem duplicar IDs já existentes na loja.
-    try{const snap=await auditoriasRef('raiz').get();const ids=new Set(itens.map(x=>x.id));snap.docs.forEach(d=>{if(!ids.has(d.id))itens.push({id:d.id,...d.data(),_origem:'raiz'});});}catch(e){console.warn('[ACOMP AUD] Falha ao listar auditorias legadas:',e);}
-    acompAudMetas=itens.sort((a,b)=>String(b.criadoEm||b.criado_em||'').localeCompare(String(a.criadoEm||a.criado_em||'')));
+    const raw=rawDb();
+    if(!raw){acompAudMetas=[];acompAudLoja='';return;}
+    const itens=[],vistos=new Set();
+    async function add(ref,origem){
+      try{const snap=await ref.get();snap.docs.forEach(d=>{if(vistos.has(d.id))return;vistos.add(d.id);itens.push({id:d.id,...d.data(),_origem:origem});});}
+      catch(e){console.warn('[ACOMP AUD] Falha ao listar '+origem+':',e);}
+    }
+    if(loja) await add(raw.collection('lojas').doc(loja).collection('dt_auditorias'),'loja:'+loja);
+    try{
+      const ls=await raw.collection('lojas').get();
+      for(const ld of ls.docs){if(ld.id!==loja)await add(raw.collection('lojas').doc(ld.id).collection('dt_auditorias'),'loja:'+ld.id);}
+    }catch(e){console.warn('[ACOMP AUD] Falha ao procurar auditorias nas lojas:',e);}
+    await add(raw.collection('dt_auditorias'),'raiz');
+    acompAudMetas=itens.sort((a,b)=>{
+      const av=a.criadoEm?.toMillis?.()||a.criadoEm?.seconds*1000||Date.parse(a.criadoEm||a.criado_em||0)||0;
+      const bv=b.criadoEm?.toMillis?.()||b.criadoEm?.seconds*1000||Date.parse(b.criadoEm||b.criado_em||0)||0;
+      return bv-av;
+    });
     acompAudLoja=loja;
   }
+
   async function popularAcompAuditorias(){await loadAuditoriasAcomp(false);const sel=document.getElementById('acomp-sel-inv');if(!sel)return;const atual=sel.value;sel.innerHTML='<option value="">Escolha uma auditoria</option>'+acompAudMetas.map(m=>`<option value="${safe(m.id)}">${safe(m.nome||m.auditoria_nome||m.id)}</option>`).join('');if(acompAudMetas.some(m=>m.id===atual))sel.value=atual;}
   async function montarItensAuditoria(ref,resultadosSnap){
     const base=[];
@@ -64,23 +81,26 @@
   }
   async function carregarAuditoriaSelecionada(){
     const id=document.getElementById('acomp-sel-inv')?.value||'';
-    if(acompAudUnsub){try{acompAudUnsub();}catch(_){}acompAudUnsub=null;}
-    if(!id){acompAudItens=[];renderAcompAuditoria();return;}
+    if(acompAudUnsub){try{acompAudUnsub();}catch(_){}acompAudUnsub=null;}if(acompAudOcorrUnsub){try{acompAudOcorrUnsub();}catch(_){}acompAudOcorrUnsub=null;}
+    if(!id){acompAudItens=[];acompAudOcorrencias=[];renderAcompAuditoria();return;}
     const meta=acompAudMetas.find(m=>m.id===id);const ref=audDocRef(meta||id);if(!ref)return;
     const aplicar=async snap=>{acompAudItens=await montarItensAuditoria(ref,snap);renderAcompAuditoria();};
     try{
       const inicial=await ref.collection('enderecos').get();await aplicar(inicial);
+      try{const oc=await ref.collection('ocorrencias').get();acompAudOcorrencias=oc.docs.map(d=>({id:d.id,...d.data()}));renderAcompAuditoria();}catch(e){acompAudOcorrencias=[];}
       acompAudUnsub=ref.collection('enderecos').onSnapshot(s=>{aplicar(s).catch(console.error);},e=>console.warn('[ACOMP AUD] Listener indisponível:',e));
+      acompAudOcorrUnsub=ref.collection('ocorrencias').onSnapshot(s=>{acompAudOcorrencias=s.docs.map(d=>({id:d.id,...d.data()}));renderAcompAuditoria();},e=>console.warn('[ACOMP AUD] Listener de ocorrências indisponível:',e));
     }catch(e){console.error('[ACOMP AUD] Falha ao carregar acompanhamento:',e);acompAudItens=[];renderAcompAuditoria();}
   }
   function agrupar(lista,fn){const m={};lista.forEach(x=>{const k=fn(x)||'SEM DADO';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}
   const GRAD=['linear-gradient(90deg,#f97316,#fb923c)','linear-gradient(90deg,#2563eb,#38bdf8)','linear-gradient(90deg,#10b981,#34d399)','linear-gradient(90deg,#8b5cf6,#a78bfa)','linear-gradient(90deg,#ef4444,#fb7185)','linear-gradient(90deg,#06b6d4,#67e8f9)','linear-gradient(90deg,#eab308,#fde047)','linear-gradient(90deg,#ec4899,#f9a8d4)','linear-gradient(90deg,#14b8a6,#5eead4)','linear-gradient(90deg,#6366f1,#a5b4fc)'];
   function progressRows(arr,total){if(!arr.length)return '<div class="empty"><div class="empty-title">Sem dados para exibir</div></div>';return arr.map(([l,v],idx)=>{const pct=total?Math.round(v/total*100):0;return `<div style="display:grid;grid-template-columns:100px 1fr 55px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><b style="font-size:.75rem">${safe(l)}</b><div class="prog"><div class="prog-fill" style="width:${pct}%;background:${GRAD[idx%GRAD.length]}"></div></div><span class="mono" style="font-size:.7rem;text-align:right">${v} · ${pct}%</span></div>`}).join('');}
   function renderAcompAuditoria(){const id=document.getElementById('acomp-sel-inv')?.value||'';const meta=acompAudMetas.find(m=>m.id===id);const total=acompAudItens.length;const ok=acompAudItens.filter(i=>audStatus(i)==='OK').length;const div=acompAudItens.filter(i=>audStatus(i)==='DIVERGENTE').length;const vaz=acompAudItens.filter(i=>audStatus(i)==='ENDERECO_VAZIO').length;const pend=acompAudItens.filter(i=>audStatus(i)==='PENDENTE').length;const concl=total-pend;const pct=total?Math.round(concl/total*100):0;setText('acomp-inv-nome',meta?(meta.nome||meta.auditoria_nome||meta.id):'Selecione uma auditoria para monitorar');setText('ak-total',total.toLocaleString('pt-BR'));setText('ak-contados',concl.toLocaleString('pt-BR'));setText('ak-pendentes',pend.toLocaleString('pt-BR'));setText('ak-diverg',div.toLocaleString('pt-BR'));setText('ak-recount',vaz.toLocaleString('pt-BR'));setText('ak-pct',pct+'%');
-    const labels=['Total Endereços','Auditados','Pendentes','Divergentes','Vazios','% Concluído'];document.querySelectorAll('#acomp-kpis .kpi-lbl').forEach((e,i)=>e.textContent=labels[i]||e.textContent);setHero(pct,meta?(meta.nome||meta.auditoria_nome||meta.id):'Auditoria não selecionada',`${concl.toLocaleString('pt-BR')} de ${total.toLocaleString('pt-BR')} endereços auditados · ${ok} corretos · ${div} divergentes`,'#fb923c');
+    const labels=['Total Endereços','Auditados','Pendentes','Divergentes','Vazios','% Concluído'];document.querySelectorAll('#acomp-kpis .kpi-lbl').forEach((e,i)=>e.textContent=labels[i]||e.textContent);setHero(pct,meta?(meta.nome||meta.auditoria_nome||meta.id):'Auditoria não selecionada',`${concl.toLocaleString('pt-BR')} de ${total.toLocaleString('pt-BR')} endereços auditados · ${ok} corretos · ${div} divergentes · ${acompAudOcorrencias.length} fora da auditoria`,'#fb923c');
+    let ocorrBox=document.getElementById('acomp-aud-ocorrencias');if(!ocorrBox){ocorrBox=document.createElement('div');ocorrBox.id='acomp-aud-ocorrencias';document.getElementById('acomp-kpis')?.after(ocorrBox);}if(ocorrBox){ocorrBox.innerHTML=acompAudOcorrencias.length?`<div class="alert warn" style="margin:12px 0"><b>📍 ${acompAudOcorrencias.length} produto(s) encontrado(s) fora dos endereços previstos</b><div style="margin-top:8px;overflow:auto"><table><thead><tr><th>Endereço encontrado</th><th>Produto</th><th>Operador</th><th>Data</th></tr></thead><tbody>${acompAudOcorrencias.slice().reverse().slice(0,20).map(o=>`<tr><td class="mono">${safe(o.endereco)}</td><td>${safe(o.produtoLido||o.produto_lido||o.codigoLido||'—')}</td><td>${safe(o.operador_nome||o.operadorNome||'—')}</td><td>${safe(o.encontrado_em||o.criadoEm||'—')}</td></tr>`).join('')}</tbody></table></div></div>`:'';}
     const ruas=agrupar(acompAudItens,i=>enderecoPartes(i.endereco).rua);document.getElementById('acomp-ruas-grid').innerHTML=progressRows(ruas,total);document.getElementById('acomp-progress-detail').innerHTML=progressRows([['Corretos',ok],['Divergentes',div],['Vazios',vaz],['Pendentes',pend]],total);const ops=agrupar(acompAudItens.filter(i=>audStatus(i)!=='PENDENTE'),i=>i.operadorNome||i.operador_nome||i.operadorId||i.operador_id||'SEM OPERADOR');document.getElementById('acomp-coletores-wrap').innerHTML=`<div style="padding:16px 20px">${progressRows(ops,Math.max(concl,1))}</div>`;setText('acomp-ultima-sync','Última sync: '+new Date().toLocaleTimeString('pt-BR'));
   }
-  window.trocarTipoAcompanhamento=async function(){clearInterval(acompAudTimer);if(acompAudUnsub){try{acompAudUnsub();}catch(_){}acompAudUnsub=null;}const sel=document.getElementById('acomp-sel-inv');if(tipoAcomp()==='auditoria'){window.AnalistaState?.set('ui.acompanhamentoInventarioId',null,{source:'acomp-tipo'});await popularAcompAuditorias();await carregarAuditoriaSelecionada();acompAudTimer=setInterval(()=>carregarAuditoriaSelecionada().catch(console.error),15000);}else{if(sel){sel.innerHTML='<option value="">Escolha um inventário</option>';sel.value='';}ensureHero().style.display='';oldRenderAcompanhamento?.();const inv=window.AnalistaStore?.getState()?.ui?.acompanhamentoInventarioId;setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);}};
+  window.trocarTipoAcompanhamento=async function(){clearInterval(acompAudTimer);if(acompAudUnsub){try{acompAudUnsub();}catch(_){}acompAudUnsub=null;}if(acompAudOcorrUnsub){try{acompAudOcorrUnsub();}catch(_){}acompAudOcorrUnsub=null;}const sel=document.getElementById('acomp-sel-inv');if(tipoAcomp()==='auditoria'){window.AnalistaState?.set('ui.acompanhamentoInventarioId',null,{source:'acomp-tipo'});await popularAcompAuditorias();await carregarAuditoriaSelecionada();acompAudTimer=setInterval(()=>carregarAuditoriaSelecionada().catch(console.error),15000);}else{if(sel){sel.innerHTML='<option value="">Escolha um inventário</option>';sel.value='';}ensureHero().style.display='';oldRenderAcompanhamento?.();const inv=window.AnalistaStore?.getState()?.ui?.acompanhamentoInventarioId;setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);}};
   window.trocarInventarioAcomp=async function(){if(tipoAcomp()==='auditoria')return carregarAuditoriaSelecionada();return oldTrocarInventarioAcomp?.();};
   window.renderAcompanhamento=function(){if(tipoAcomp()==='auditoria')return renderAcompAuditoria();oldRenderAcompanhamento?.();setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);};
 

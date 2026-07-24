@@ -596,14 +596,28 @@ async function carregarDashboardAuditoria(forcar){
   _dashAudCarregando=true;
   const wrap=document.getElementById('dash-charts-wrap'); if(wrap)wrap.innerHTML='<div class="tc"><div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando auditorias...</div></div></div>';
   try{
-    const db=window.FS_AN || window.getDTFirestore?.();
-    const snap=await db.collection('dt_auditorias').get();
-    _dashAudMetas=snap.docs.map(d=>({id:d.id,...d.data()}));
+    const raw=window.getDTRawFirestore?.() || window.FS_AN || window.getDTFirestore?.();
+    const metas=[],vistos=new Set();
+    async function add(ref,origem){try{const snap=await ref.get();snap.docs.forEach(d=>{if(vistos.has(d.id))return;vistos.add(d.id);metas.push({id:d.id,...d.data(),_origem:origem,_ref:d.ref});});}catch(e){console.warn('[Dashboard Auditoria] '+origem,e);}}
+    if(window.getDTRawFirestore){
+      if(lojaAtual)await add(raw.collection('lojas').doc(lojaAtual).collection('dt_auditorias'),'loja:'+lojaAtual);
+      try{const ls=await raw.collection('lojas').get();for(const ld of ls.docs){if(ld.id!==lojaAtual)await add(raw.collection('lojas').doc(ld.id).collection('dt_auditorias'),'loja:'+ld.id);}}catch(e){}
+      await add(raw.collection('dt_auditorias'),'raiz');
+    }else await add(raw.collection('dt_auditorias'),'loja');
+    _dashAudMetas=metas;
     const escolhido=document.getElementById('dash-faud')?.value||'';
-    const metas=escolhido?_dashAudMetas.filter(m=>m.id===escolhido):_dashAudMetas;
-    const listas=await Promise.all(metas.map(async m=>{
-      const ss=await db.collection('dt_auditorias').doc(m.id).collection('enderecos').get();
-      return ss.docs.map(d=>({id:d.id,auditoriaId:m.id,auditoriaNome:m.nome||m.auditoria_nome||m.id,...d.data()}));
+    const selecionadas=escolhido?_dashAudMetas.filter(m=>m.id===escolhido):_dashAudMetas;
+    const listas=await Promise.all(selecionadas.map(async m=>{
+      const ref=m._ref || raw.collection('dt_auditorias').doc(m.id);
+      const [res,baseChunks]=await Promise.all([ref.collection('enderecos').get(),ref.collection('base_chunks').get().catch(()=>({docs:[]}))]);
+      const resultados=res.docs.map(d=>({id:d.id,...d.data()}));
+      const base=[];baseChunks.docs.forEach(d=>{const x=d.data()||{};(x.dados||x.itens||x.registros||[]).forEach((r,idx)=>base.push({id:String(r.id||r.docId||d.id+'_'+idx),...r}));});
+      const porId=new Map(resultados.map(r=>[String(r.id),r]));
+      const porEnd=new Map(resultados.map(r=>[String(r.endereco||'').trim().toUpperCase(),r]));
+      const usados=new Set();
+      const unidos=base.length?base.map(b=>{const r=porId.get(String(b.id))||porEnd.get(String(b.endereco||'').trim().toUpperCase());if(r)usados.add(String(r.id));return r?{...b,...r,id:r.id||b.id}:{...b,status:b.status||'PENDENTE'};}):resultados.slice();
+      resultados.forEach(r=>{if(!usados.has(String(r.id))&&!unidos.some(x=>String(x.id)===String(r.id)))unidos.push(r);});
+      return unidos.map(x=>({auditoriaId:m.id,auditoriaNome:m.nome||m.auditoria_nome||m.id,...x}));
     }));
     _dashAudItens=listas.flat(); _dashAudLoja=lojaAtual;
     _dashPopularFiltrosAuditoria(); renderDashboardAuditoria();
@@ -612,6 +626,7 @@ async function carregarDashboardAuditoria(forcar){
     if(wrap)wrap.innerHTML='<div class="tc"><div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar o dashboard de auditoria</div></div></div>';
   }finally{_dashAudCarregando=false;}
 }
+
 function _dashAudStatus(i){
   const s=String(i.status||'PENDENTE').toUpperCase();
   if(['APROVADO','CORRETO','CONFERIDO','FINALIZADO','CONFIRMADO_SEM_AJUSTE'].includes(s))return'OK';
