@@ -54,12 +54,15 @@
       if(!versao || Number(meta.total||0)===0) return [];
       const chunks=await DB().collection('dt_locais_chunks').where('versao','==',versao).get();
       const docs=(chunks.docs||[]).slice().sort((a,b)=>Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0));
+      const esperados=Number(meta.chunks||0);
+      if(esperados && docs.length!==esperados) throw new Error('Base incompleta: '+docs.length+' de '+esperados+' chunks baixados.');
       let out=[];
-      docs.forEach(d=>{ const x=d.data()||{}; out=out.concat(x.dados||x.itens||x.enderecos||x.lista||[]); });
+      docs.forEach(d=>{ const x=d.data()||{}; const itens=x.dados||x.itens||x.enderecos||x.lista||[]; if(itens.length>1000) throw new Error('Chunk '+d.id+' excede 1.000 registros.'); out=out.concat(itens); });
+      if(Number(meta.total||0)!==out.length) throw new Error('Base incompleta: metadado informa '+Number(meta.total||0)+' e foram baixados '+out.length+' endereços.');
       return out.map(x=>typeof x==='string'?{endereco:x}:x);
     }catch(e){
-      console.warn('[AUDITORIA] Falha ao baixar chunks de endereços:',e.message);
-      return [];
+      console.error('[AUDITORIA] Falha ao baixar chunks de endereços:',e);
+      throw e;
     }
   }
   async function abrirCriacaoAuditoria(){

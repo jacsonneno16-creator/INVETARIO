@@ -423,8 +423,10 @@ async function _finalizarImportacaoEnderecos(built) {
   if (typeof window.fsPublicarEnderecos === 'function' && navigator.onLine) {
     try {
       showToast(`⏳ ${totalImport.toLocaleString('pt-BR')} endereços importados. Publicando para os coletores...`, 'w');
-      await window.fsPublicarEnderecos();
-      showToast(`✅ ${totalImport.toLocaleString('pt-BR')} endereços importados e publicados para os coletores`, 's');
+      const pub = await window.fsPublicarEnderecos();
+      if (typeof window.renderDashboard === 'function') window.renderDashboard();
+      if (typeof window.renderDashboardInventario === 'function') window.renderDashboardInventario();
+      showToast(`✅ Base confirmada no Firebase: ${Number(pub.total || 0).toLocaleString('pt-BR')} endereços em ${pub.chunks || 0} chunks`, 's');
     } catch (pubErr) {
       console.error('[Importação Endereços] Falha ao publicar:', pubErr);
       showToast(`⚠️ Endereços importados no analista, mas a publicação para o coletor falhou: ${pubErr.message || pubErr}`, 'w');

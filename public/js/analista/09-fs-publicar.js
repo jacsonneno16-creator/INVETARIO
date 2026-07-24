@@ -53,77 +53,98 @@
    * Usa batch para eficiência (max 500 ops por batch).
    */
   async function fsPublicarEnderecos() {
-    if (!navigator.onLine) return;
+    if (!navigator.onLine) throw new Error('Sem conexão com a internet.');
     const lista = state().enderecosLista || [];
-    try {
-      const CHUNK_SIZE = 1000;
-      const chunksColl = FS_AN.collection('dt_locais_chunks');
-      const versao = String(Date.now());
-      const listaNormalizada = lista
-        .filter(end => end && end.endereco)
-        .map(end => ({
-          endereco:           end.endereco,
-          ativo:              end.ativo !== false,
-          capacidade_paletes: end.capacidade_paletes ?? null,
-          nome_local:         end.nome_local || end.local || '',
-          setor:              end.setor || end.local || '',
-          tipo:               end.tipo || '',
-          rua:                end.rua || '',
-        }));
+    const CHUNK_SIZE = 1000;
+    const chunksColl = FS_AN.collection('dt_locais_chunks');
+    const metaRef = FS_AN.collection('dt_locais_meta').doc('versao');
+    const versao = String(Date.now());
+    const listaNormalizada = lista
+      .filter(end => end && end.endereco)
+      .map(end => ({
+        endereco:           String(end.endereco || '').trim(),
+        ativo:              end.ativo !== false,
+        capacidade_paletes: end.capacidade_paletes ?? null,
+        nome_local:         end.nome_local || end.local || '',
+        setor:              end.setor || end.local || '',
+        tipo:               end.tipo || '',
+        rua:                end.rua || '',
+        loja:               end.loja || window.getDTLojaAtiva?.() || ''
+      }));
 
-      // Publicação atômica por versão: escreve toda a versão nova antes de torná-la ativa.
-      const idsAtuais = new Set();
-      for (let i = 0; i < listaNormalizada.length; i += CHUNK_SIZE) {
-        const parte = Math.floor(i / CHUNK_SIZE);
+    const totalChunks = Math.ceil(listaNormalizada.length / CHUNK_SIZE);
+    const idsAtuais = new Set();
+
+    try {
+      // 1) Grava toda a nova versão em chunks de no máximo 1.000.
+      for (let parte = 0; parte < totalChunks; parte++) {
         const id = `v${versao}_${String(parte).padStart(4, '0')}`;
         idsAtuais.add(id);
+        const dados = listaNormalizada.slice(parte * CHUNK_SIZE, (parte + 1) * CHUNK_SIZE);
         await chunksColl.doc(id).set({
           versao,
           parte,
           chunk_size: CHUNK_SIZE,
           total_registros: listaNormalizada.length,
-          dados: listaNormalizada.slice(i, i + CHUNK_SIZE),
+          quantidade: dados.length,
+          dados,
           atualizado_em: new Date()
         });
       }
 
-      // A Base Geral é publicada somente em chunks de até 1.000 registros.
-      // Não gravar documento por endereço: isso aumenta leituras e deixa bases antigas residuais.
+      // 2) Confere a versão recém-gravada ANTES de ativá-la no metadado.
+      let totalVerificado = 0;
+      let chunksVerificados = 0;
+      if (totalChunks > 0) {
+        const verif = await chunksColl.where('versao', '==', versao).get();
+        chunksVerificados = verif.size;
+        verif.docs.forEach(doc => {
+          const data = doc.data() || {};
+          const itens = Array.isArray(data.dados) ? data.dados : [];
+          if (itens.length > CHUNK_SIZE) throw new Error(`Chunk ${doc.id} excedeu 1.000 registros.`);
+          totalVerificado += itens.length;
+        });
+      }
+      if (chunksVerificados !== totalChunks || totalVerificado !== listaNormalizada.length) {
+        throw new Error(`Publicação incompleta: esperado ${listaNormalizada.length} em ${totalChunks} chunks; confirmado ${totalVerificado} em ${chunksVerificados}.`);
+      }
 
-      // Só agora o coletor passa a enxergar a nova versão completa.
-      await FS_AN.collection('dt_locais_meta').doc('versao').set({
+      // 3) Só depois da conferência troca a versão ativa usada por cards, Auditoria e coletores.
+      await metaRef.set({
         versao,
         atualizado_em: new Date(),
         chunk_size: CHUNK_SIZE,
-        chunks: Math.ceil(listaNormalizada.length / CHUNK_SIZE),
+        chunks: totalChunks,
         total: listaNormalizada.length,
+        ativos: listaNormalizada.filter(x => x.ativo !== false).length,
+        inativos: listaNormalizada.filter(x => x.ativo === false).length,
+        loja: window.getDTLojaAtiva?.() || '',
         origem: 'dt_locais_chunks'
       });
 
-      // Limpeza posterior: nunca existe uma janela sem uma versão completa publicada.
-      const todos = await chunksColl.get().catch(() => null);
-      if (todos && !todos.empty) {
-        const antigos = todos.docs.filter(doc => !idsAtuais.has(doc.id));
-        for (let i = 0; i < antigos.length; i += 400) {
-          const delBatch = FS_AN.batch();
-          antigos.slice(i, i + 400).forEach(doc => delBatch.delete(doc.ref));
-          await delBatch.commit();
-        }
+      // 4) Lê o metadado de volta. Sem isso, a tela não pode anunciar sucesso.
+      const metaConfirmado = await metaRef.get();
+      const meta = metaConfirmado.exists ? (metaConfirmado.data() || {}) : {};
+      if (String(meta.versao || '') !== versao || Number(meta.total || -1) !== listaNormalizada.length) {
+        throw new Error('O Firebase não confirmou a nova versão da Base Geral de Endereços.');
       }
 
-      // Limpa a coleção antiga documento a documento. Ela não é mais usada para download.
-      // Isso ocorre somente ao publicar/substituir a base, nunca no carregamento do coletor.
-      const legacy = await FS_AN.collection('dt_locais').get().catch(() => null);
-      if (legacy && !legacy.empty) {
-        for (let i = 0; i < legacy.docs.length; i += 400) {
-          const delBatch = FS_AN.batch();
-          legacy.docs.slice(i, i + 400).forEach(doc => delBatch.delete(doc.ref));
-          await delBatch.commit();
-        }
+      // 5) Limpa versões antigas somente após a nova estar ativa e confirmada.
+      const todos = await chunksColl.get();
+      const antigos = todos.docs.filter(doc => !idsAtuais.has(doc.id));
+      for (let i = 0; i < antigos.length; i += 400) {
+        const delBatch = FS_AN.batch();
+        antigos.slice(i, i + 400).forEach(doc => delBatch.delete(doc.ref));
+        await delBatch.commit();
       }
-      dbg('[fsPublicarEnderecos] ✅', listaNormalizada.length, 'endereços publicados em chunks na versão', versao);
+
+      dbg('[fsPublicarEnderecos] ✅', listaNormalizada.length, 'endereços confirmados em', totalChunks, 'chunks; versão', versao);
+      window.dispatchEvent(new CustomEvent('dt-base-enderecos-publicada', { detail: { versao, total: listaNormalizada.length, chunks: totalChunks } }));
+      return { versao, total: listaNormalizada.length, chunks: totalChunks };
     } catch(e) {
-      console.error('[fsPublicarEnderecos] erro:', e.message);
+      console.error('[fsPublicarEnderecos] erro:', e);
+      // Fundamental: propaga o erro. Antes ele era engolido e a importação mostrava sucesso falso.
+      throw e;
     }
   }
 

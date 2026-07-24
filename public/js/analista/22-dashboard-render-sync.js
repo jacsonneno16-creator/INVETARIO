@@ -31,8 +31,10 @@ function renderDashboardInventario() {
     if (cur) fInvEl.value = cur;
   }
 
-  // Endereços base (ativos)
-  const endsBaseAtivos = state().enderecosLista.filter(e => e.ativo !== false);
+  // Endereços cadastrados e endereços operacionais ativos.
+  // O card 'End. cadastrados' deve mostrar a mesma quantidade da aba Endereços.
+  const endsBaseTodos = state().enderecosLista || [];
+  const endsBaseAtivos = endsBaseTodos.filter(e => e.ativo !== false);
 
   // Preencher selects de rua e local
   if (fRuaEl) {
@@ -107,7 +109,10 @@ function renderDashboardInventario() {
   });
 
   document.getElementById('kd-inventarios').textContent  = invsConsiderados.length;
-  document.getElementById('kd-enderecos').textContent    = endsFiltered.length.toLocaleString('pt-BR');
+  const totalCadastradosCard = (fRua || fLocal)
+    ? endsBaseTodos.filter(e => (!fRua || (e.rua || extrairRua(e.endereco) || 'SEM RUA') === fRua) && (!fLocal || (e.setor || 'SEM LOCAL') === fLocal)).length
+    : endsBaseTodos.length;
+  document.getElementById('kd-enderecos').textContent    = totalCadastradosCard.toLocaleString('pt-BR');
   document.getElementById('kd-end-contados').textContent = endContadosTotal.toLocaleString('pt-BR');
   document.getElementById('kd-contagens').textContent    = totalConts.toLocaleString('pt-BR');
   document.getElementById('kd-pendencias').textContent   = pendentesTotal.toLocaleString('pt-BR');
