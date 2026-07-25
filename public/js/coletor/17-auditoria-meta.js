@@ -1,5 +1,66 @@
 
 (function(){
+  // Armazenamento próprio da auditoria. Bases e fila podem ultrapassar com
+  // facilidade a pequena cota do localStorage em coletores Android.
+  const AUD_DB = 'dt_auditoria_offline_db';
+  const AUD_DB_VERSION = 1;
+  let _audDb = null;
+  function _audDbOpen(){
+    if (_audDb) return Promise.resolve(_audDb);
+    return new Promise((resolve,reject)=>{
+      const req=indexedDB.open(AUD_DB,AUD_DB_VERSION);
+      req.onupgradeneeded=e=>{
+        const db=e.target.result;
+        if(!db.objectStoreNames.contains('cache')) db.createObjectStore('cache',{keyPath:'chave'});
+        if(!db.objectStoreNames.contains('fila')) db.createObjectStore('fila',{keyPath:'chave'});
+      };
+      req.onsuccess=e=>{ _audDb=e.target.result; resolve(_audDb); };
+      req.onerror=e=>reject(e.target.error);
+    });
+  }
+  async function _audStorePut(store,registro){
+    const db=await _audDbOpen();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(store,'readwrite');
+      tx.objectStore(store).put(registro);
+      tx.oncomplete=()=>resolve(registro);
+      tx.onerror=e=>reject(e.target.error||tx.error);
+      tx.onabort=e=>reject(e.target.error||tx.error);
+    });
+  }
+  async function _audStoreGet(store,chave){
+    const db=await _audDbOpen();
+    return new Promise((resolve,reject)=>{
+      const req=db.transaction(store,'readonly').objectStore(store).get(chave);
+      req.onsuccess=e=>resolve(e.target.result||null);
+      req.onerror=e=>reject(e.target.error);
+    });
+  }
+  async function _audStoreAll(store){
+    const db=await _audDbOpen();
+    return new Promise((resolve,reject)=>{
+      const req=db.transaction(store,'readonly').objectStore(store).getAll();
+      req.onsuccess=e=>resolve(e.target.result||[]);
+      req.onerror=e=>reject(e.target.error);
+    });
+  }
+  async function _audStoreDelete(store,chave){
+    const db=await _audDbOpen();
+    return new Promise((resolve,reject)=>{
+      const tx=db.transaction(store,'readwrite');
+      tx.objectStore(store).delete(chave);
+      tx.oncomplete=()=>resolve();
+      tx.onerror=e=>reject(e.target.error||tx.error);
+    });
+  }
+  window.DTAuditoriaStorage={
+    cacheSet:(chave,valor)=>_audStorePut('cache',{chave,valor,atualizadoEm:new Date().toISOString()}),
+    cacheGet:async chave=>{ const r=await _audStoreGet('cache',chave); return r?r.valor:null; },
+    filaPut:registro=>_audStorePut('fila',registro),
+    filaAll:()=>_audStoreAll('fila'),
+    filaDelete:chave=>_audStoreDelete('fila',chave)
+  };
+
   function _auditoriaMeta(lista){
     return (lista || []).map(a => ({
       id: String(a.auditoria_id || a.id || '').trim(),
@@ -28,6 +89,18 @@
     if (!forcar && APP._locaisDoFirebase && APP.locaisAtivos && APP.locaisAtivos.size) {
       return APP.locaisAtivos;
     }
+    if(!navigator.onLine){
+      try{
+        let cache=await window.DTAuditoriaStorage.cacheGet(cacheKey);
+        if(!Array.isArray(cache)) cache=JSON.parse(localStorage.getItem(cacheKey)||'[]');
+        APP.locaisAtivos=new Set(cache);
+        APP._locaisDoFirebase=false;
+        return APP.locaisAtivos;
+      }catch(e){
+        APP.locaisAtivos=APP.locaisAtivos||new Set();
+        return APP.locaisAtivos;
+      }
+    }
     const locais = new Set();
     try {
       let versaoServidor = '';
@@ -50,7 +123,12 @@
       });
       APP.locaisAtivos = locais;
       APP._locaisDoFirebase = true;
-      try { localStorage.setItem(cacheKey, JSON.stringify(Array.from(locais))); } catch(e) {}
+      try {
+        await window.DTAuditoriaStorage.cacheSet(cacheKey, Array.from(locais));
+        localStorage.removeItem(cacheKey);
+      } catch(e) {
+        console.warn('[AUDITORIA] Não foi possível persistir a base de endereços no IndexedDB:',e);
+      }
       console.log('[AUDITORIA] Base Geral de Endereços carregada:', locais.size, 'loja:', lojaId);
       return locais;
     } catch (erro) {
@@ -59,7 +137,8 @@
         throw new Error('Sessão expirada ou sem permissão no Firebase. Volte ao login e entre novamente.');
       }
       try {
-        const cache = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+        let cache = await window.DTAuditoriaStorage.cacheGet(cacheKey);
+        if(!Array.isArray(cache)) cache = JSON.parse(localStorage.getItem(cacheKey) || '[]');
         APP.locaisAtivos = new Set(cache);
       } catch(e) {
         APP.locaisAtivos = APP.locaisAtivos || new Set();
@@ -71,6 +150,12 @@
   window._carregarBaseGeralEnderecosAuditoria = _carregarBaseGeralEnderecosAuditoria;
 
   async function _carregarEnderecoAuditoria(auditoriaId){
+    const lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+    const cacheKey = 'dt_auditoria_cache_' + lojaId + '_' + auditoriaId;
+    if(!navigator.onLine){
+      const cache = await window.DTAuditoriaStorage.cacheGet(cacheKey);
+      if(Array.isArray(cache) && cache.length) return cache;
+    }
     const audRef = FS.collection(FCOL.auditorias).doc(auditoriaId);
     // v15: auditoria também lê por chunks de 1000 para reduzir leituras.
     const chunkSnap = await audRef.collection('base_chunks').orderBy('parte').get();
@@ -105,9 +190,11 @@
           !finalizados.has(id) && !finalizados.has(endereco);
       });
       try {
-        const lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
-        localStorage.setItem('dt_auditoria_cache_' + lojaId + '_' + auditoriaId, JSON.stringify(pendentes));
-      } catch(e) {}
+        await window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes);
+        localStorage.removeItem(cacheKey);
+      } catch(e) {
+        console.warn('[AUDITORIA] Não foi possível persistir a base da auditoria:',e);
+      }
       return pendentes;
     }
     // Fallback para auditorias antigas sem chunks.
@@ -119,10 +206,12 @@
       const nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
       if (codigo && nome) APP.auditoriaProdutosMap[codigo] = nome;
     });
-    return todos.filter(a => {
+    const pendentes = todos.filter(a => {
       const status = String(a.status || '').toUpperCase();
       return a.disponivel_coletor !== false && !['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(status);
     });
+    try { await window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes); } catch(e) {}
+    return pendentes;
   }
   window._carregarEnderecoAuditoria = _carregarEnderecoAuditoria;
 

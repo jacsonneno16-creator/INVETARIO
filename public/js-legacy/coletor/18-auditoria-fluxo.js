@@ -520,59 +520,141 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     function documentoId(item) {
         return texto((item === null || item === void 0 ? void 0 : item.id) || "".concat(auditoriaId(), "__").concat(normalizarEndereco(item === null || item === void 0 ? void 0 : item.endereco)));
     }
-    function chaveFilaAuditoria() { return 'dt_auditoria_fila_' + lojaAtual(); }
-    function lerFilaAuditoria() { try {
-        return JSON.parse(localStorage.getItem(chaveFilaAuditoria()) || '[]');
-    }
-    catch (e) {
-        return [];
-    } }
-    function gravarFilaAuditoria(fila) { try {
-        localStorage.setItem(chaveFilaAuditoria(), JSON.stringify(fila || []));
-    }
-    catch (e) { } }
-    function enfileirarAuditoria(docId, payload) { var fila = lerFilaAuditoria().filter(function (x) { return x.docId !== docId; }); fila.push({ docId: docId, auditoriaId: auditoriaId(), payload: payload }); gravarFilaAuditoria(fila); }
-    function sincronizarFilaAuditoria() {
+    function chaveRegistroAuditoria(audId, subcolecao, docId) { return [audId, subcolecao || 'enderecos', docId].join('::'); }
+    function enfileirarAuditoria(docId, payload, subcolecao) {
         return __awaiter(this, void 0, void 0, function () {
-            var fila, restantes, i, x, e_3;
+            var audId, registro;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
-                        fila = lerFilaAuditoria();
-                        if (!fila.length)
-                            return [2 /*return*/];
-                        restantes = [];
+                        audId = auditoriaId();
+                        registro = {
+                            chave: chaveRegistroAuditoria(audId, subcolecao, docId),
+                            docId: docId,
+                            auditoriaId: audId,
+                            subcolecao: subcolecao || 'enderecos',
+                            payload: payload,
+                            criadoEm: agoraISO()
+                        };
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaPut(registro)];
+                    case 1:
+                        _a.sent();
+                        return [2 /*return*/, registro];
+                }
+            });
+        });
+    }
+    var _sincronizandoAuditoria = false;
+    function migrarFilaAuditoriaLegada() {
+        return __awaiter(this, void 0, void 0, function () {
+            var chaves, i, chave, i, chaveLS, fila, j, x;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        chaves = [];
+                        for (i = 0; i < localStorage.length; i++) {
+                            chave = localStorage.key(i);
+                            if (chave && chave.indexOf('dt_auditoria_fila_') === 0)
+                                chaves.push(chave);
+                        }
                         i = 0;
                         _a.label = 1;
                     case 1:
-                        if (!(i < fila.length)) return [3 /*break*/, 6];
-                        x = fila[i];
+                        if (!(i < chaves.length)) return [3 /*break*/, 7];
+                        chaveLS = chaves[i];
+                        fila = [];
+                        try {
+                            fila = JSON.parse(localStorage.getItem(chaveLS) || '[]');
+                        }
+                        catch (e) { }
+                        j = 0;
                         _a.label = 2;
                     case 2:
-                        _a.trys.push([2, 4, , 5]);
-                        return [4 /*yield*/, FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload, { merge: true })];
+                        if (!(j < fila.length)) return [3 /*break*/, 5];
+                        x = fila[j] || {};
+                        if (!x.docId || !x.auditoriaId)
+                            return [3 /*break*/, 4];
+                        x.subcolecao = x.subcolecao || 'enderecos';
+                        x.chave = chaveRegistroAuditoria(x.auditoriaId, x.subcolecao, x.docId);
+                        x.criadoEm = x.criadoEm || agoraISO();
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaPut(x)];
                     case 3:
                         _a.sent();
-                        return [3 /*break*/, 5];
+                        _a.label = 4;
                     case 4:
-                        e_3 = _a.sent();
-                        restantes.push(x);
-                        return [3 /*break*/, 5];
+                        j++;
+                        return [3 /*break*/, 2];
                     case 5:
+                        try {
+                            localStorage.removeItem(chaveLS);
+                        }
+                        catch (e) { }
+                        _a.label = 6;
+                    case 6:
                         i++;
                         return [3 /*break*/, 1];
+                    case 7: return [2 /*return*/];
+                }
+            });
+        });
+    }
+    function sincronizarFilaAuditoria() {
+        return __awaiter(this, void 0, void 0, function () {
+            var fila, i, x, e_3;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        if (_sincronizandoAuditoria || !navigator.onLine)
+                            return [2 /*return*/];
+                        _sincronizandoAuditoria = true;
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, , 10, 11]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaAll()];
+                    case 2:
+                        fila = _a.sent();
+                        i = 0;
+                        _a.label = 3;
+                    case 3:
+                        if (!(i < fila.length)) return [3 /*break*/, 9];
+                        x = fila[i];
+                        _a.label = 4;
+                    case 4:
+                        _a.trys.push([4, 7, , 8]);
+                        return [4 /*yield*/, FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload, { merge: true })];
+                    case 5:
+                        _a.sent();
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaDelete(x.chave)];
                     case 6:
-                        gravarFilaAuditoria(restantes);
-                        return [2 /*return*/];
+                        _a.sent();
+                        return [3 /*break*/, 8];
+                    case 7:
+                        e_3 = _a.sent();
+                        console.warn('[AUDITORIA] Item permanece na fila offline:', x.docId, e_3);
+                        if (!navigator.onLine)
+                            return [3 /*break*/, 9];
+                        return [3 /*break*/, 8];
+                    case 8:
+                        i++;
+                        return [3 /*break*/, 3];
+                    case 9: return [3 /*break*/, 11];
+                    case 10:
+                        _sincronizandoAuditoria = false;
+                        return [7 /*endfinally*/];
+                    case 11: return [2 /*return*/];
                 }
             });
         });
     }
     window.sincronizarFilaAuditoria = sincronizarFilaAuditoria;
     window.addEventListener('online', function () { sincronizarFilaAuditoria(); });
+    migrarFilaAuditoriaLegada().then(function () {
+        if (navigator.onLine)
+            sincronizarFilaAuditoria();
+    }).catch(function (e) { console.warn('[AUDITORIA] Falha ao migrar fila antiga:', e); });
     function salvarOcorrenciaForaAuditoria(produtoLido) {
         return __awaiter(this, void 0, void 0, function () {
-            var item, momento, lido, prod, meta, produtoCorreto, famProd, famMeta, alvo, el, docId, payload, error_1, fila;
+            var item, momento, lido, prod, meta, produtoCorreto, famProd, famMeta, alvo, el, docId, payload, error_1;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -628,35 +710,35 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         _a.label = 1;
                     case 1:
                         _a.trys.push([1, 3, , 4]);
-                        return [4 /*yield*/, FS.collection(FCOL.auditorias).doc(auditoriaId()).collection('ocorrencias').doc(docId).set(payload, { merge: true })];
+                        return [4 /*yield*/, enfileirarAuditoria(docId, payload, 'ocorrencias')];
                     case 2:
                         _a.sent();
-                        mostrarResultado('Ocorrência registrada: produto encontrado fora dos endereços previstos.', 'vazio');
+                        return [3 /*break*/, 4];
+                    case 3:
+                        error_1 = _a.sent();
+                        console.error('[AUDITORIA] Falha ao persistir ocorrência no aparelho:', error_1);
+                        mostrarResultado('Não foi possível salvar no aparelho. Não prossiga e tente novamente.', 'erro');
+                        tocar('erro');
+                        setProcessando(false);
+                        return [2 /*return*/];
+                    case 4:
+                        mostrarResultado(navigator.onLine ? 'Ocorrência registrada no aparelho e aguardando sincronização.' : 'Ocorrência salva no coletor. Será enviada quando houver conexão.', 'vazio');
                         tocar('vazio');
                         try {
                             window.dispatchEvent(new CustomEvent('dt-auditoria-ocorrencia', { detail: { id: docId, payload: payload } }));
                         }
                         catch (e) { }
+                        if (navigator.onLine)
+                            sincronizarFilaAuditoria().catch(function () { });
                         estado.timerRetorno = setTimeout(irParaEndereco, 1100);
-                        return [3 /*break*/, 4];
-                    case 3:
-                        error_1 = _a.sent();
-                        console.error('[AUDITORIA] Erro ao salvar ocorrência:', error_1);
-                        fila = lerFilaAuditoria();
-                        fila.push({ docId: docId, auditoriaId: auditoriaId(), subcolecao: 'ocorrencias', payload: payload });
-                        gravarFilaAuditoria(fila);
-                        mostrarResultado('Ocorrência salva no coletor. Será enviada quando houver conexão.', 'vazio');
-                        tocar('vazio');
-                        estado.timerRetorno = setTimeout(irParaEndereco, 1100);
-                        return [3 /*break*/, 4];
-                    case 4: return [2 /*return*/];
+                        return [2 /*return*/];
                 }
             });
         });
     }
     function salvarResultado(status, produtoLido) {
         return __awaiter(this, void 0, void 0, function () {
-            var item, docId, momento, esperado, lido, nomeLido, payload, ref_1, error_2;
+            var item, docId, momento, esperado, lido, nomeLido, payload, error_2;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -705,38 +787,16 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         _a.label = 1;
                     case 1:
                         _a.trys.push([1, 3, , 4]);
-                        ref_1 = FS.collection(FCOL.auditorias).doc(auditoriaId()).collection('enderecos').doc(docId);
-                        return [4 /*yield*/, FS.runTransaction(function (tx) {
-                                return __awaiter(this, void 0, void 0, function () {
-                                    var snap, atual, statusAtual;
-                                    return __generator(this, function (_a) {
-                                        switch (_a.label) {
-                                            case 0: return [4 /*yield*/, tx.get(ref_1)];
-                                            case 1:
-                                                snap = _a.sent();
-                                                atual = snap.exists ? (snap.data() || {}) : {};
-                                                statusAtual = texto(atual.status).toUpperCase();
-                                                if (STATUS_FINAIS.has(statusAtual) && atual.dispositivo_id && atual.dispositivo_id !== dispositivoId()) {
-                                                    throw new Error('Este endereço já foi finalizado por outro coletor.');
-                                                }
-                                                if (atual.em_andamento === true && atual.dispositivo_id && atual.dispositivo_id !== dispositivoId() && !lockExpirado(atual)) {
-                                                    throw new Error('Este endereço está em uso por outro coletor.');
-                                                }
-                                                tx.set(ref_1, payload, { merge: true });
-                                                return [2 /*return*/];
-                                        }
-                                    });
-                                });
-                            })];
+                        // Confirma primeiro no armazenamento durável do aparelho. A operação nunca
+                        // fica esperando o timeout da internet; a sincronização ocorre em paralelo.
+                        return [4 /*yield*/, enfileirarAuditoria(docId, payload, 'enderecos')];
                     case 2:
+                        // Confirma primeiro no armazenamento durável do aparelho. A operação nunca
+                        // fica esperando o timeout da internet; a sincronização ocorre em paralelo.
                         _a.sent();
                         APP.auditorias = (APP.auditorias || []).filter(function (a) { return documentoId(a) !== docId; });
                         APP.contagens = (APP.contagens || []).filter(function (a) { return texto(a.id) !== docId; });
                         APP.contagens.unshift(__assign({ id: docId }, payload));
-                        try {
-                            localStorage.setItem('dt_auditoria_resultados_' + lojaAtual() + '_' + auditoriaId(), JSON.stringify(APP.contagens.slice(0, 500)));
-                        }
-                        catch (e) { }
                         atualizarContadorTitulo();
                         try {
                             window.dispatchEvent(new CustomEvent('dt-auditoria-salva', { detail: { id: docId, payload: payload } }));
@@ -754,27 +814,16 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             mostrarResultado('Endereço registrado como vazio.', 'vazio');
                             tocar('vazio');
                         }
+                        if (navigator.onLine)
+                            sincronizarFilaAuditoria().catch(function () { });
                         estado.timerRetorno = setTimeout(irParaEndereco, 900);
                         return [3 /*break*/, 4];
                     case 3:
                         error_2 = _a.sent();
-                        console.error('[AUDITORIA] Erro ao salvar resultado:', error_2);
-                        enfileirarAuditoria(docId, payload);
-                        APP.auditorias = (APP.auditorias || []).filter(function (a) { return documentoId(a) !== docId; });
-                        APP.contagens = (APP.contagens || []).filter(function (a) { return texto(a.id) !== docId; });
-                        APP.contagens.unshift(__assign({ id: docId }, payload));
-                        try {
-                            localStorage.setItem('dt_auditoria_resultados_' + lojaAtual() + '_' + auditoriaId(), JSON.stringify(APP.contagens.slice(0, 500)));
-                        }
-                        catch (e) { }
-                        atualizarContadorTitulo();
-                        try {
-                            window.dispatchEvent(new CustomEvent('dt-auditoria-salva', { detail: { id: docId, payload: payload } }));
-                        }
-                        catch (e) { }
-                        mostrarResultado('Auditoria salva no coletor. Será enviada quando houver conexão.', 'vazio');
-                        tocar('vazio');
-                        estado.timerRetorno = setTimeout(irParaEndereco, 900);
+                        console.error('[AUDITORIA] Falha ao persistir resultado no aparelho:', error_2);
+                        mostrarResultado('Não foi possível salvar no aparelho. Não prossiga e tente novamente.', 'erro');
+                        tocar('erro');
+                        setProcessando(false);
                         return [3 /*break*/, 4];
                     case 4: return [2 /*return*/];
                 }

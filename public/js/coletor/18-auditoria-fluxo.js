@@ -336,22 +336,66 @@
   }
 
 
-  function chaveFilaAuditoria(){ return 'dt_auditoria_fila_' + lojaAtual(); }
-  function lerFilaAuditoria(){ try { return JSON.parse(localStorage.getItem(chaveFilaAuditoria()) || '[]'); } catch(e) { return []; } }
-  function gravarFilaAuditoria(fila){ try { localStorage.setItem(chaveFilaAuditoria(), JSON.stringify(fila || [])); } catch(e) {} }
-  function enfileirarAuditoria(docId,payload){ const fila=lerFilaAuditoria().filter(x=>x.docId!==docId); fila.push({docId:docId,auditoriaId:auditoriaId(),payload:payload}); gravarFilaAuditoria(fila); }
-  async function sincronizarFilaAuditoria(){
-    const fila=lerFilaAuditoria(); if(!fila.length) return;
-    const restantes=[];
-    for(let i=0;i<fila.length;i++){
-      const x=fila[i];
-      try { await FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload,{merge:true}); }
-      catch(e){ restantes.push(x); }
+  function chaveRegistroAuditoria(audId,subcolecao,docId){ return [audId,subcolecao||'enderecos',docId].join('::'); }
+  async function enfileirarAuditoria(docId,payload,subcolecao){
+    const audId=auditoriaId();
+    const registro={
+      chave:chaveRegistroAuditoria(audId,subcolecao,docId),
+      docId:docId,
+      auditoriaId:audId,
+      subcolecao:subcolecao||'enderecos',
+      payload:payload,
+      criadoEm:agoraISO()
+    };
+    await window.DTAuditoriaStorage.filaPut(registro);
+    return registro;
+  }
+  let _sincronizandoAuditoria=false;
+  async function migrarFilaAuditoriaLegada(){
+    const chaves=[];
+    for(let i=0;i<localStorage.length;i++){
+      const chave=localStorage.key(i);
+      if(chave && chave.indexOf('dt_auditoria_fila_')===0) chaves.push(chave);
     }
-    gravarFilaAuditoria(restantes);
+    for(let i=0;i<chaves.length;i++){
+      const chaveLS=chaves[i];
+      let fila=[];
+      try{ fila=JSON.parse(localStorage.getItem(chaveLS)||'[]'); }catch(e){}
+      for(let j=0;j<fila.length;j++){
+        const x=fila[j]||{};
+        if(!x.docId||!x.auditoriaId) continue;
+        x.subcolecao=x.subcolecao||'enderecos';
+        x.chave=chaveRegistroAuditoria(x.auditoriaId,x.subcolecao,x.docId);
+        x.criadoEm=x.criadoEm||agoraISO();
+        await window.DTAuditoriaStorage.filaPut(x);
+      }
+      try{localStorage.removeItem(chaveLS);}catch(e){}
+    }
+  }
+  async function sincronizarFilaAuditoria(){
+    if(_sincronizandoAuditoria || !navigator.onLine) return;
+    _sincronizandoAuditoria=true;
+    try{
+      const fila=await window.DTAuditoriaStorage.filaAll();
+      for(let i=0;i<fila.length;i++){
+        const x=fila[i];
+        try {
+          await FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload,{merge:true});
+          await window.DTAuditoriaStorage.filaDelete(x.chave);
+        } catch(e) {
+          console.warn('[AUDITORIA] Item permanece na fila offline:',x.docId,e);
+          if(!navigator.onLine) break;
+        }
+      }
+    } finally {
+      _sincronizandoAuditoria=false;
+    }
   }
   window.sincronizarFilaAuditoria=sincronizarFilaAuditoria;
   window.addEventListener('online',function(){ sincronizarFilaAuditoria(); });
+  migrarFilaAuditoriaLegada().then(function(){
+    if(navigator.onLine) sincronizarFilaAuditoria();
+  }).catch(function(e){console.warn('[AUDITORIA] Falha ao migrar fila antiga:',e);});
 
   async function salvarOcorrenciaForaAuditoria(produtoLido){
     if (estado.processando || !estado.item) return;
@@ -398,21 +442,17 @@
       criadoEm: momento,
       atualizadoEm: momento
     };
-    try {
-      await FS.collection(FCOL.auditorias).doc(auditoriaId()).collection('ocorrencias').doc(docId).set(payload,{merge:true});
-      mostrarResultado('Ocorrência registrada: produto encontrado fora dos endereços previstos.', 'vazio');
-      tocar('vazio');
-      try { window.dispatchEvent(new CustomEvent('dt-auditoria-ocorrencia',{detail:{id:docId,payload:payload}})); } catch(e) {}
-      estado.timerRetorno = setTimeout(irParaEndereco, 1100);
-    } catch(error) {
-      console.error('[AUDITORIA] Erro ao salvar ocorrência:', error);
-      const fila = lerFilaAuditoria();
-      fila.push({docId:docId,auditoriaId:auditoriaId(),subcolecao:'ocorrencias',payload:payload});
-      gravarFilaAuditoria(fila);
-      mostrarResultado('Ocorrência salva no coletor. Será enviada quando houver conexão.', 'vazio');
-      tocar('vazio');
-      estado.timerRetorno = setTimeout(irParaEndereco, 1100);
+    try { await enfileirarAuditoria(docId,payload,'ocorrencias'); }
+    catch(error){
+      console.error('[AUDITORIA] Falha ao persistir ocorrência no aparelho:',error);
+      mostrarResultado('Não foi possível salvar no aparelho. Não prossiga e tente novamente.','erro');
+      tocar('erro'); setProcessando(false); return;
     }
+    mostrarResultado(navigator.onLine?'Ocorrência registrada no aparelho e aguardando sincronização.':'Ocorrência salva no coletor. Será enviada quando houver conexão.','vazio');
+    tocar('vazio');
+    try { window.dispatchEvent(new CustomEvent('dt-auditoria-ocorrencia',{detail:{id:docId,payload:payload}})); } catch(e) {}
+    if(navigator.onLine) sincronizarFilaAuditoria().catch(function(){});
+    estado.timerRetorno=setTimeout(irParaEndereco,1100);
   }
 
   async function salvarResultado(status, produtoLido){
@@ -460,24 +500,12 @@
     };
 
     try {
-      const ref=FS.collection(FCOL.auditorias).doc(auditoriaId()).collection('enderecos').doc(docId);
-      await FS.runTransaction(async function(tx){
-        const snap=await tx.get(ref);
-        const atual=snap.exists?(snap.data()||{}):{};
-        const statusAtual=texto(atual.status).toUpperCase();
-        if(STATUS_FINAIS.has(statusAtual) && atual.dispositivo_id && atual.dispositivo_id!==dispositivoId()){
-          throw new Error('Este endereço já foi finalizado por outro coletor.');
-        }
-        if(atual.em_andamento===true && atual.dispositivo_id && atual.dispositivo_id!==dispositivoId() && !lockExpirado(atual)){
-          throw new Error('Este endereço está em uso por outro coletor.');
-        }
-        tx.set(ref,payload,{merge:true});
-      });
-
+      // Confirma primeiro no armazenamento durável do aparelho. A operação nunca
+      // fica esperando o timeout da internet; a sincronização ocorre em paralelo.
+      await enfileirarAuditoria(docId,payload,'enderecos');
       APP.auditorias = (APP.auditorias || []).filter(a => documentoId(a) !== docId);
       APP.contagens = (APP.contagens || []).filter(a => texto(a.id) !== docId);
       APP.contagens.unshift({id:docId,...payload});
-      try { localStorage.setItem('dt_auditoria_resultados_' + lojaAtual() + '_' + auditoriaId(), JSON.stringify(APP.contagens.slice(0,500))); } catch(e) {}
       atualizarContadorTitulo();
       try { window.dispatchEvent(new CustomEvent('dt-auditoria-salva',{detail:{id:docId,payload:payload}})); } catch(e) {}
 
@@ -492,19 +520,13 @@
         tocar('vazio');
       }
 
+      if(navigator.onLine) sincronizarFilaAuditoria().catch(function(){});
       estado.timerRetorno = setTimeout(irParaEndereco, 900);
     } catch(error) {
-      console.error('[AUDITORIA] Erro ao salvar resultado:', error);
-      enfileirarAuditoria(docId,payload);
-      APP.auditorias = (APP.auditorias || []).filter(a => documentoId(a) !== docId);
-      APP.contagens = (APP.contagens || []).filter(a => texto(a.id) !== docId);
-      APP.contagens.unshift({id:docId,...payload});
-      try { localStorage.setItem('dt_auditoria_resultados_' + lojaAtual() + '_' + auditoriaId(), JSON.stringify(APP.contagens.slice(0,500))); } catch(e) {}
-      atualizarContadorTitulo();
-      try { window.dispatchEvent(new CustomEvent('dt-auditoria-salva',{detail:{id:docId,payload:payload}})); } catch(e) {}
-      mostrarResultado('Auditoria salva no coletor. Será enviada quando houver conexão.', 'vazio');
-      tocar('vazio');
-      estado.timerRetorno = setTimeout(irParaEndereco, 900);
+      console.error('[AUDITORIA] Falha ao persistir resultado no aparelho:', error);
+      mostrarResultado('Não foi possível salvar no aparelho. Não prossiga e tente novamente.', 'erro');
+      tocar('erro');
+      setProcessando(false);
     }
   }
 

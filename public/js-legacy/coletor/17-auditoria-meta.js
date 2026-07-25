@@ -55,6 +55,113 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     return to.concat(ar || Array.prototype.slice.call(from));
 };
 (function () {
+    var _this = this;
+    // Armazenamento próprio da auditoria. Bases e fila podem ultrapassar com
+    // facilidade a pequena cota do localStorage em coletores Android.
+    var AUD_DB = 'dt_auditoria_offline_db';
+    var AUD_DB_VERSION = 1;
+    var _audDb = null;
+    function _audDbOpen() {
+        if (_audDb)
+            return Promise.resolve(_audDb);
+        return new Promise(function (resolve, reject) {
+            var req = indexedDB.open(AUD_DB, AUD_DB_VERSION);
+            req.onupgradeneeded = function (e) {
+                var db = e.target.result;
+                if (!db.objectStoreNames.contains('cache'))
+                    db.createObjectStore('cache', { keyPath: 'chave' });
+                if (!db.objectStoreNames.contains('fila'))
+                    db.createObjectStore('fila', { keyPath: 'chave' });
+            };
+            req.onsuccess = function (e) { _audDb = e.target.result; resolve(_audDb); };
+            req.onerror = function (e) { return reject(e.target.error); };
+        });
+    }
+    function _audStorePut(store, registro) {
+        return __awaiter(this, void 0, void 0, function () {
+            var db;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0: return [4 /*yield*/, _audDbOpen()];
+                    case 1:
+                        db = _a.sent();
+                        return [2 /*return*/, new Promise(function (resolve, reject) {
+                                var tx = db.transaction(store, 'readwrite');
+                                tx.objectStore(store).put(registro);
+                                tx.oncomplete = function () { return resolve(registro); };
+                                tx.onerror = function (e) { return reject(e.target.error || tx.error); };
+                                tx.onabort = function (e) { return reject(e.target.error || tx.error); };
+                            })];
+                }
+            });
+        });
+    }
+    function _audStoreGet(store, chave) {
+        return __awaiter(this, void 0, void 0, function () {
+            var db;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0: return [4 /*yield*/, _audDbOpen()];
+                    case 1:
+                        db = _a.sent();
+                        return [2 /*return*/, new Promise(function (resolve, reject) {
+                                var req = db.transaction(store, 'readonly').objectStore(store).get(chave);
+                                req.onsuccess = function (e) { return resolve(e.target.result || null); };
+                                req.onerror = function (e) { return reject(e.target.error); };
+                            })];
+                }
+            });
+        });
+    }
+    function _audStoreAll(store) {
+        return __awaiter(this, void 0, void 0, function () {
+            var db;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0: return [4 /*yield*/, _audDbOpen()];
+                    case 1:
+                        db = _a.sent();
+                        return [2 /*return*/, new Promise(function (resolve, reject) {
+                                var req = db.transaction(store, 'readonly').objectStore(store).getAll();
+                                req.onsuccess = function (e) { return resolve(e.target.result || []); };
+                                req.onerror = function (e) { return reject(e.target.error); };
+                            })];
+                }
+            });
+        });
+    }
+    function _audStoreDelete(store, chave) {
+        return __awaiter(this, void 0, void 0, function () {
+            var db;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0: return [4 /*yield*/, _audDbOpen()];
+                    case 1:
+                        db = _a.sent();
+                        return [2 /*return*/, new Promise(function (resolve, reject) {
+                                var tx = db.transaction(store, 'readwrite');
+                                tx.objectStore(store).delete(chave);
+                                tx.oncomplete = function () { return resolve(); };
+                                tx.onerror = function (e) { return reject(e.target.error || tx.error); };
+                            })];
+                }
+            });
+        });
+    }
+    window.DTAuditoriaStorage = {
+        cacheSet: function (chave, valor) { return _audStorePut('cache', { chave: chave, valor: valor, atualizadoEm: new Date().toISOString() }); },
+        cacheGet: function (chave) { return __awaiter(_this, void 0, void 0, function () { var r; return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, _audStoreGet('cache', chave)];
+                case 1:
+                    r = _a.sent();
+                    return [2 /*return*/, r ? r.valor : null];
+            }
+        }); }); },
+        filaPut: function (registro) { return _audStorePut('fila', registro); },
+        filaAll: function () { return _audStoreAll('fila'); },
+        filaDelete: function (chave) { return _audStoreDelete('fila', chave); }
+    };
     function _auditoriaMeta(lista) {
         return (lista || []).map(function (a) { return ({
             id: String(a.auditoria_id || a.id || '').trim(),
@@ -78,7 +185,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     }
     function _carregarBaseGeralEnderecosAuditoria(forcar) {
         return __awaiter(this, void 0, void 0, function () {
-            var lojaId, cacheKey, locais, versaoServidor, meta, e_1, chunks, docsUsar, erro_1, cache;
+            var lojaId, cacheKey, cache, e_1, locais, versaoServidor, meta, e_2, chunks, docsUsar, e_3, erro_1, cache, e_4;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -87,28 +194,45 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         if (!forcar && APP._locaisDoFirebase && APP.locaisAtivos && APP.locaisAtivos.size) {
                             return [2 /*return*/, APP.locaisAtivos];
                         }
-                        locais = new Set();
+                        if (!!navigator.onLine) return [3 /*break*/, 4];
                         _a.label = 1;
                     case 1:
-                        _a.trys.push([1, 7, , 8]);
-                        versaoServidor = '';
-                        _a.label = 2;
+                        _a.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet(cacheKey)];
                     case 2:
-                        _a.trys.push([2, 4, , 5]);
-                        return [4 /*yield*/, FS.collection('dt_locais_meta').doc('versao').get()];
+                        cache = _a.sent();
+                        if (!Array.isArray(cache))
+                            cache = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+                        APP.locaisAtivos = new Set(cache);
+                        APP._locaisDoFirebase = false;
+                        return [2 /*return*/, APP.locaisAtivos];
                     case 3:
+                        e_1 = _a.sent();
+                        APP.locaisAtivos = APP.locaisAtivos || new Set();
+                        return [2 /*return*/, APP.locaisAtivos];
+                    case 4:
+                        locais = new Set();
+                        _a.label = 5;
+                    case 5:
+                        _a.trys.push([5, 15, , 20]);
+                        versaoServidor = '';
+                        _a.label = 6;
+                    case 6:
+                        _a.trys.push([6, 8, , 9]);
+                        return [4 /*yield*/, FS.collection('dt_locais_meta').doc('versao').get()];
+                    case 7:
                         meta = _a.sent();
                         if (meta.exists)
                             versaoServidor = String((meta.data() || {}).versao || '');
-                        return [3 /*break*/, 5];
-                    case 4:
-                        e_1 = _a.sent();
-                        return [3 /*break*/, 5];
-                    case 5:
+                        return [3 /*break*/, 9];
+                    case 8:
+                        e_2 = _a.sent();
+                        return [3 /*break*/, 9];
+                    case 9:
                         if (!versaoServidor)
                             throw new Error('Versão da Base Geral de Endereços não encontrada.');
                         return [4 /*yield*/, FS.collection('dt_locais_chunks').where('versao', '==', versaoServidor).get()];
-                    case 6:
+                    case 10:
                         chunks = _a.sent();
                         if (chunks.empty)
                             throw new Error('Base Geral de Endereços em chunks não publicada para a versão atual.');
@@ -126,25 +250,45 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         });
                         APP.locaisAtivos = locais;
                         APP._locaisDoFirebase = true;
-                        try {
-                            localStorage.setItem(cacheKey, JSON.stringify(Array.from(locais)));
-                        }
-                        catch (e) { }
+                        _a.label = 11;
+                    case 11:
+                        _a.trys.push([11, 13, , 14]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheSet(cacheKey, Array.from(locais))];
+                    case 12:
+                        _a.sent();
+                        localStorage.removeItem(cacheKey);
+                        return [3 /*break*/, 14];
+                    case 13:
+                        e_3 = _a.sent();
+                        console.warn('[AUDITORIA] Não foi possível persistir a base de endereços no IndexedDB:', e_3);
+                        return [3 /*break*/, 14];
+                    case 14:
                         console.log('[AUDITORIA] Base Geral de Endereços carregada:', locais.size, 'loja:', lojaId);
                         return [2 /*return*/, locais];
-                    case 7:
+                    case 15:
                         erro_1 = _a.sent();
                         console.warn('[AUDITORIA] Falha ao carregar Base Geral de Endereços:', erro_1);
-                        try {
+                        if ((erro_1 && (erro_1.code === 'permission-denied' || /permission/i.test(erro_1.message || ''))) || !AUTH.currentUser) {
+                            throw new Error('Sessão expirada ou sem permissão no Firebase. Volte ao login e entre novamente.');
+                        }
+                        _a.label = 16;
+                    case 16:
+                        _a.trys.push([16, 18, , 19]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet(cacheKey)];
+                    case 17:
+                        cache = _a.sent();
+                        if (!Array.isArray(cache))
                             cache = JSON.parse(localStorage.getItem(cacheKey) || '[]');
-                            APP.locaisAtivos = new Set(cache);
-                        }
-                        catch (e) {
-                            APP.locaisAtivos = APP.locaisAtivos || new Set();
-                        }
+                        APP.locaisAtivos = new Set(cache);
+                        return [3 /*break*/, 19];
+                    case 18:
+                        e_4 = _a.sent();
+                        APP.locaisAtivos = APP.locaisAtivos || new Set();
+                        return [3 /*break*/, 19];
+                    case 19:
                         APP._locaisDoFirebase = false;
                         return [2 /*return*/, APP.locaisAtivos];
-                    case 8: return [2 /*return*/];
+                    case 20: return [2 /*return*/];
                 }
             });
         });
@@ -152,15 +296,25 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     window._carregarBaseGeralEnderecosAuditoria = _carregarBaseGeralEnderecosAuditoria;
     function _carregarEnderecoAuditoria(auditoriaId) {
         return __awaiter(this, void 0, void 0, function () {
-            var audRef, chunkSnap, rows_1, resultadosSnap, finalizados_1, pendentes, lojaId, snap, todos;
+            var lojaId, cacheKey, cache, audRef, chunkSnap, rows_1, resultadosSnap, finalizados_1, pendentes_1, e_5, snap, todos, pendentes, e_6;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
+                        lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+                        cacheKey = 'dt_auditoria_cache_' + lojaId + '_' + auditoriaId;
+                        if (!!navigator.onLine) return [3 /*break*/, 2];
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet(cacheKey)];
+                    case 1:
+                        cache = _a.sent();
+                        if (Array.isArray(cache) && cache.length)
+                            return [2 /*return*/, cache];
+                        _a.label = 2;
+                    case 2:
                         audRef = FS.collection(FCOL.auditorias).doc(auditoriaId);
                         return [4 /*yield*/, audRef.collection('base_chunks').orderBy('parte').get()];
-                    case 1:
+                    case 3:
                         chunkSnap = _a.sent();
-                        if (!!chunkSnap.empty) return [3 /*break*/, 3];
+                        if (!!chunkSnap.empty) return [3 /*break*/, 9];
                         rows_1 = [];
                         chunkSnap.docs.forEach(function (doc) {
                             var d = doc.data();
@@ -174,7 +328,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                                 APP.auditoriaProdutosMap[codigo] = nome;
                         });
                         return [4 /*yield*/, audRef.collection('enderecos').where('disponivel_coletor', '==', false).get()];
-                    case 2:
+                    case 4:
                         resultadosSnap = _a.sent();
                         finalizados_1 = new Set();
                         resultadosSnap.docs.forEach(function (doc) {
@@ -186,7 +340,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                                 finalizados_1.add((((_a = window.DTEnderecos) === null || _a === void 0 ? void 0 : _a.chave(d.endereco)) || String(d.endereco || '').trim().toUpperCase()));
                             }
                         });
-                        pendentes = rows_1.filter(function (a) {
+                        pendentes_1 = rows_1.filter(function (a) {
                             var _a;
                             var status = String(a.status || '').toUpperCase();
                             var id = String(a.id || '');
@@ -195,14 +349,21 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                                 !['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(status) &&
                                 !finalizados_1.has(id) && !finalizados_1.has(endereco);
                         });
-                        try {
-                            lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
-                            localStorage.setItem('dt_auditoria_cache_' + lojaId + '_' + auditoriaId, JSON.stringify(pendentes));
-                        }
-                        catch (e) { }
-                        return [2 /*return*/, pendentes];
-                    case 3: return [4 /*yield*/, audRef.collection('enderecos').get()];
-                    case 4:
+                        _a.label = 5;
+                    case 5:
+                        _a.trys.push([5, 7, , 8]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes_1)];
+                    case 6:
+                        _a.sent();
+                        localStorage.removeItem(cacheKey);
+                        return [3 /*break*/, 8];
+                    case 7:
+                        e_5 = _a.sent();
+                        console.warn('[AUDITORIA] Não foi possível persistir a base da auditoria:', e_5);
+                        return [3 /*break*/, 8];
+                    case 8: return [2 /*return*/, pendentes_1];
+                    case 9: return [4 /*yield*/, audRef.collection('enderecos').get()];
+                    case 10:
                         snap = _a.sent();
                         todos = snap.docs.map(function (d) { return (__assign({ id: d.id }, d.data())); });
                         APP.auditoriaProdutosMap = {};
@@ -212,10 +373,21 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                             if (codigo && nome)
                                 APP.auditoriaProdutosMap[codigo] = nome;
                         });
-                        return [2 /*return*/, todos.filter(function (a) {
-                                var status = String(a.status || '').toUpperCase();
-                                return a.disponivel_coletor !== false && !['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(status);
-                            })];
+                        pendentes = todos.filter(function (a) {
+                            var status = String(a.status || '').toUpperCase();
+                            return a.disponivel_coletor !== false && !['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(status);
+                        });
+                        _a.label = 11;
+                    case 11:
+                        _a.trys.push([11, 13, , 14]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes)];
+                    case 12:
+                        _a.sent();
+                        return [3 /*break*/, 14];
+                    case 13:
+                        e_6 = _a.sent();
+                        return [3 /*break*/, 14];
+                    case 14: return [2 /*return*/, pendentes];
                 }
             });
         });
@@ -332,16 +504,37 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     };
     window.selecionarAuditoriaMenu = function (auditoriaId) {
         return __awaiter(this, void 0, void 0, function () {
-            var meta, token, produtos, totalProdutos, locais, totalLocais, _a, totalAud, entrar, cancelar, status_1, err_1, cancelar, entrar;
+            var meta, lojasAuditoria, lojaAuditoria, token, produtos, totalProdutos, locais, totalLocais, _a, totalAud, entrar, cancelar, status_1, err_1, cancelar, entrar;
             return __generator(this, function (_b) {
                 switch (_b.label) {
                     case 0:
                         if (APP._auditoriaCarregando)
                             return [2 /*return*/];
+                        if (!window.AUTH || !AUTH.currentUser) {
+                            APP._auditoriaPronta = false;
+                            APP._auditoriaCarregando = false;
+                            APP.operador = null;
+                            try {
+                                toast('Sua sessão expirou. Entre novamente para baixar a auditoria.', 'e');
+                            }
+                            catch (_) { }
+                            goScreen('login');
+                            return [2 /*return*/];
+                        }
                         meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId; });
                         if (!meta) {
                             toast('Auditoria não encontrada', 'e');
                             return [2 /*return*/];
+                        }
+                        lojasAuditoria = _extrairLojasDaAuditoria(meta);
+                        if (lojasAuditoria.length) {
+                            lojaAuditoria = String(lojasAuditoria[0] || '').trim();
+                            if (lojaAuditoria && window.getDTLojaAtiva && window.getDTLojaAtiva() !== lojaAuditoria) {
+                                window.setDTLojaAtiva(lojaAuditoria);
+                                APP.locaisAtivos = new Set();
+                                APP._locaisDoFirebase = false;
+                                console.log('[AUDITORIA] Loja alterada para a loja da auditoria:', lojaAuditoria);
+                            }
                         }
                         APP._auditoriaCarregando = true;
                         APP._auditoriaPronta = false;
@@ -487,6 +680,3 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             subt.textContent = 'Selecione a auditoria liberada para conferência';
     });
 })();
-
-// v91: bloqueia download quando a sessão Firebase expirou.
-(function(){var original=window.selecionarAuditoriaMenu;window.selecionarAuditoriaMenu=function(auditoriaId){if(!window.AUTH||!AUTH.currentUser){try{APP._auditoriaPronta=false;APP._auditoriaCarregando=false;APP.operador=null;}catch(e){}try{toast('Sua sessão expirou. Entre novamente para baixar a auditoria.','e');}catch(e){}try{goScreen('login');}catch(e){}return Promise.resolve();}return original.apply(this,arguments);};})();

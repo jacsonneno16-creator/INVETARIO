@@ -45,16 +45,36 @@
       (p.codigosExtras||[]).forEach(function(x){addCodigo(x,p,'extra');});
     });
     cache.porTodos.forEach(function(arr,k){if(arr.length>1)cache.ambiguos.set(k,arr.slice());});
-    cache.carregado=true;cache.loja='GLOBAL';try{localStorage.setItem('dt_produtos_cache__GLOBAL',JSON.stringify(cache.lista));}catch(e){}
+    cache.carregado=true;cache.loja='GLOBAL';
+    // Em coletores, a base completa pode ocupar quase toda a cota do
+    // localStorage. Quando o armazenamento da auditoria estiver disponível,
+    // persiste a base no IndexedDB sem bloquear a leitura em memória.
+    if(global.DTAuditoriaStorage){
+      global.DTAuditoriaStorage.cacheSet('dt_produtos_cache__GLOBAL',cache.lista).then(function(){
+        try{localStorage.removeItem('dt_produtos_cache__GLOBAL');}catch(_e){}
+      }).catch(function(e){console.warn('[Produtos] Falha ao persistir no IndexedDB:',e);});
+    }else{
+      try{localStorage.setItem('dt_produtos_cache__GLOBAL',JSON.stringify(cache.lista));}catch(e){}
+    }
     atualizarContadorNav(cache.lista.length);
     global.dispatchEvent(new CustomEvent('dt-produtos-atualizados',{detail:{total:cache.lista.length,ambiguos:cache.ambiguos.size}})); return cache.lista;
   }
-  function carregarLocal(){try{const raw=localStorage.getItem('dt_produtos_cache__GLOBAL');if(raw)indexar(JSON.parse(raw));}catch(e){} }
+  async function carregarLocal(){
+    try{
+      let lista=null;
+      if(global.DTAuditoriaStorage) lista=await global.DTAuditoriaStorage.cacheGet('dt_produtos_cache__GLOBAL');
+      if(!Array.isArray(lista)){
+        const raw=localStorage.getItem('dt_produtos_cache__GLOBAL');
+        if(raw)lista=JSON.parse(raw);
+      }
+      if(Array.isArray(lista))indexar(lista);
+    }catch(e){console.warn('[Produtos] Falha ao carregar cache local:',e);}
+  }
   async function carregar(force=false){
     const loja='GLOBAL';
     if(cache.carregando)return cache.carregando;
     if(!navigator.onLine){
-      if(!cache.carregado||cache.loja!==loja)carregarLocal();
+      if(!cache.carregado||cache.loja!==loja)await carregarLocal();
       return cache.lista;
     }
     cache.carregando=(async()=>{
@@ -74,7 +94,7 @@
         }
         if(!versaoServidor){
           console.warn('[Produtos] Metadado de versão ausente; mantendo cache local.');
-          if(!cache.carregado||cache.loja!==loja)carregarLocal();
+          if(!cache.carregado||cache.loja!==loja)await carregarLocal();
           return cache.lista;
         }
         const chunks=await Promise.race([
@@ -91,7 +111,7 @@
         return result;
       }catch(e){
         console.warn('[Produtos] Falha ao atualizar base:',e);
-        if(!cache.carregado||cache.loja!==loja)carregarLocal();
+        if(!cache.carregado||cache.loja!==loja)await carregarLocal();
         return cache.lista;
       }finally{cache.carregando=null;}
     })();

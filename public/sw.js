@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v97-multiloja-bases';
+var CACHE='dt-inventario-v105-auditoria-offline';
 var PRECACHE=[
   '/',
   '/coletor.html',
