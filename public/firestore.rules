@@ -15,6 +15,10 @@ service cloud.firestore {
     match /dt_produtos/{document=**} { allow read, write: if signedIn(); }
     match /dt_produtos_chunks/{document=**} { allow read, write: if signedIn(); }
     match /dt_produtos_meta/{document=**} { allow read, write: if signedIn(); }
+    // Coletores (aparelhos): cadastro global também fora de lojas/{lojaId},
+    // pois um mesmo aparelho pode ser usado em mais de uma loja. Sem escrita
+    // aqui o app nem consegue registrar o aparelho no primeiro login.
+    match /dt_coletores/{document=**} { allow read, write: if signedIn(); }
     // Coleções antigas: somente leitura para permitir migração para lojas/{lojaId}.
     match /{legacyCollection}/{document=**} {
       allow read: if signedIn() && legacyCollection != 'lojas';
