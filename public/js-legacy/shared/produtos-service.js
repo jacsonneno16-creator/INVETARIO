@@ -81,6 +81,20 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (el)
             el.textContent = Number(total || 0).toLocaleString('pt-BR');
     }
+    function persistirBaseLocal(lista, tentativa) {
+        tentativa = Number(tentativa || 0);
+        if (global.DTAuditoriaStorage) {
+            global.DTAuditoriaStorage.cacheSet('dt_produtos_cache__GLOBAL', lista).then(function () {
+                try {
+                    localStorage.removeItem('dt_produtos_cache__GLOBAL');
+                }
+                catch (_e) { }
+            }).catch(function (e) { console.warn('[Produtos] Falha ao persistir no IndexedDB:', e); });
+            return;
+        }
+        if (tentativa < 50)
+            setTimeout(function () { persistirBaseLocal(lista, tentativa + 1); }, 100);
+    }
     function indexar(lista) {
         cache.lista = (lista || []).map(function (x) { return produto(x, x.id); });
         cache.porDun.clear();
@@ -118,20 +132,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         // Em coletores, a base completa pode ocupar quase toda a cota do
         // localStorage. Quando o armazenamento da auditoria estiver disponível,
         // persiste a base no IndexedDB sem bloquear a leitura em memória.
-        if (global.DTAuditoriaStorage) {
-            global.DTAuditoriaStorage.cacheSet('dt_produtos_cache__GLOBAL', cache.lista).then(function () {
-                try {
-                    localStorage.removeItem('dt_produtos_cache__GLOBAL');
-                }
-                catch (_e) { }
-            }).catch(function (e) { console.warn('[Produtos] Falha ao persistir no IndexedDB:', e); });
-        }
-        else {
-            try {
-                localStorage.setItem('dt_produtos_cache__GLOBAL', JSON.stringify(cache.lista));
-            }
-            catch (e) { }
-        }
+        persistirBaseLocal(cache.lista, 0);
         atualizarContadorNav(cache.lista.length);
         global.dispatchEvent(new CustomEvent('dt-produtos-atualizados', { detail: { total: cache.lista.length, ambiguos: cache.ambiguos.size } }));
         return cache.lista;

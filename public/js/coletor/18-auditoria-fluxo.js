@@ -45,55 +45,15 @@
     return !data.getTime() || (Date.now()-data.getTime())>LOCK_TTL_MS;
   }
   async function reservarEnderecoAuditoria(item){
-    if(!navigator.onLine) return true;
-    const ref=FS.collection(FCOL.auditorias).doc(auditoriaId()).collection('enderecos').doc(documentoId(item));
-    const meuDispositivo=dispositivoId();
-    try{
-      await FS.runTransaction(async function(tx){
-        const snap=await tx.get(ref);
-        const atual=snap.exists?(snap.data()||{}):{};
-        const status=texto(atual.status).toUpperCase();
-        if(STATUS_FINAIS.has(status)||atual.disponivel_coletor===false) throw new Error('ENDERECO_FINALIZADO');
-        if(atual.em_andamento===true && atual.dispositivo_id && atual.dispositivo_id!==meuDispositivo && !lockExpirado(atual)){
-          throw new Error('ENDERECO_EM_USO');
-        }
-        tx.set(ref,{
-          auditoriaId:auditoriaId(),
-          endereco:texto(item.endereco),
-          em_andamento:true,
-          dispositivo_id:meuDispositivo,
-          operador_id:operadorUsuario(),
-          operador_nome:operadorNome(),
-          iniciado_em:agoraISO(),
-          lock_iniciado_em:agoraISO(),
-          disponivel_coletor:true
-        },{merge:true});
-      });
-      return true;
-    }catch(e){
-      if(e && e.message==='ENDERECO_EM_USO') return false;
-      if(e && e.message==='ENDERECO_FINALIZADO') return false;
-      console.warn('[AUDITORIA] Não foi possível criar lock; mantendo suporte offline:',e);
-      return true;
-    }
+    // A operação do coletor não pode depender de uma transação de rede.
+    // navigator.onLine também permanece true em vários Androids quando o Wi-Fi
+    // perdeu acesso, fazendo a transação ficar pendurada por tempo indefinido.
+    // A lista baixada e a fila local são a fonte de verdade durante a leitura.
+    return !!item;
   }
 
   async function liberarLockAuditoria(item){
-    if (!item || !navigator.onLine || !auditoriaId()) return;
-    const ref=FS.collection(FCOL.auditorias).doc(auditoriaId()).collection('enderecos').doc(documentoId(item));
-    const meuDispositivo=dispositivoId();
-    try{
-      await FS.runTransaction(async function(tx){
-        const snap=await tx.get(ref);
-        if(!snap.exists) return;
-        const atual=snap.data()||{};
-        const status=texto(atual.status).toUpperCase();
-        if(STATUS_FINAIS.has(status)) return;
-        if(atual.em_andamento===true && (!atual.dispositivo_id || atual.dispositivo_id===meuDispositivo)){
-          tx.set(ref,{em_andamento:false,dispositivo_id:null,lock_liberado_em:agoraISO()},{merge:true});
-        }
-      });
-    }catch(e){ console.warn('[AUDITORIA] Falha ao liberar lock:',e); }
+    return;
   }
   window.liberarLockAuditoriaAtual=function(){ return liberarLockAuditoria(estado.item); };
 
@@ -241,25 +201,10 @@
     const alvo = normalizarEndereco(valor);
     if (!alvo) return false;
     if (APP.locaisAtivos && APP.locaisAtivos.has(alvo)) return true;
-    try {
-      let snap = await FS.collection(FCOL.locais).doc(alvo).get();
-      let existe = snap.exists && (!snap.data() || snap.data().ativo !== false);
-      if (!existe) {
-        const consultas = ['endereco', 'endereco_norm', 'codigo_endereco'];
-        for (let i = 0; i < consultas.length && !existe; i++) {
-          const q = await FS.collection(FCOL.locais).where(consultas[i], '==', valor).limit(1).get();
-          if (!q.empty && q.docs[0].data().ativo !== false) existe = true;
-        }
-      }
-      if (existe) {
-        if (!APP.locaisAtivos) APP.locaisAtivos = new Set();
-        APP.locaisAtivos.add(alvo);
-      }
-      return existe;
-    } catch (erro) {
-      console.warn('[AUDITORIA] Falha na consulta direta do endereço:', erro);
-      return false;
-    }
+    // A Base Geral já foi baixada antes de entrar na auditoria. Não consultar
+    // Firebase durante o bip: isso mantém a etapa instantânea mesmo quando o
+    // Android ainda reporta conexão após a queda do sinal.
+    return false;
   }
 
   async function confirmarEnderecoAuditoria(){
@@ -275,7 +220,7 @@
     let item = encontrarEndereco(valor);
     let foraAuditoria = false;
     if (!item) {
-      mostrarFeedbackEndereco('Consultando a Base Geral de Endereços…', false);
+      mostrarFeedbackEndereco('Verificando a Base Geral de Endereços baixada…', false);
       const existeNaBaseGeral = await consultarEnderecoNaBaseGeral(valor);
       if (existeNaBaseGeral) {
         const meta = (APP.auditoriasMenu || []).find(function(x){ return x.id === auditoriaId(); }) || {};
