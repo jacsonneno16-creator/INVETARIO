@@ -567,15 +567,34 @@ function _dashSetKpi(idx,valor,rotulo,icone){
   const lbl=card?.querySelector('.kpi-lbl'); const ico=card?.querySelector('.kpi-icon');
   if(lbl)lbl.textContent=rotulo; if(ico)ico.textContent=icone;
 }
+let _dashAudAutoTimer=null;
+function _dashAudPararAutoAtualizacao(){ if(_dashAudAutoTimer){ clearInterval(_dashAudAutoTimer); _dashAudAutoTimer=null; } }
+function _dashAudIniciarAutoAtualizacao(){
+  _dashAudPararAutoAtualizacao();
+  _dashAudAutoTimer=setInterval(()=>{
+    if(_dashModoAtual()==='auditoria' && document.getElementById('page-dashboard')?.classList.contains('on')){
+      carregarDashboardAuditoria(true).catch(console.error);
+    } else {
+      _dashAudPararAutoAtualizacao();
+    }
+  }, 15000);
+}
 function alterarModoDashboard(modo){
   document.querySelectorAll('.dash-inv-filter').forEach(e=>e.style.display=modo==='inventario'?'':'none');
   document.querySelectorAll('.dash-aud-filter').forEach(e=>e.style.display=modo==='auditoria'?'':'none');
   const novo=document.querySelector('#page-dashboard button[onclick="abrirNovoInventario()"]');
   if(novo) novo.style.display=modo==='inventario'?'':'none';
+  if(modo==='auditoria') _dashAudIniciarAutoAtualizacao(); else _dashAudPararAutoAtualizacao();
   renderDashboard();
 }
 function renderDashboard(){
-  if(_dashModoAtual()==='auditoria') return carregarDashboardAuditoria(false);
+  // Sempre que o Dashboard é aberto (navegação para a página ou troca de modo),
+  // busca os dados da auditoria de novo. O cache por loja fazia o relatório
+  // ficar "travado" no instantâneo da primeira vez que foi aberto, mostrando
+  // tudo pendente/zerado mesmo com divergências já registradas pelos coletores
+  // (inclusive em auditorias "por produto").
+  if(_dashModoAtual()==='auditoria'){ _dashAudIniciarAutoAtualizacao(); return carregarDashboardAuditoria(true); }
+  _dashAudPararAutoAtualizacao();
   document.getElementById('dash-alert-wrap').innerHTML='';
   const action=document.getElementById('dash-recentes-action'); if(action)action.style.display='';
   const title=document.getElementById('dash-recentes-title'); if(title)title.textContent='📦 Inventários Recentes';
@@ -650,7 +669,7 @@ function _dashAudBars(arr,tipo,lim=10){if(!arr.length)return'<div class="empty" 
 function renderDashboardAuditoria(){
   const lista=_dashAudFiltrados(), total=lista.length, ok=lista.filter(i=>_dashAudStatus(i)==='OK').length, div=lista.filter(i=>_dashAudStatus(i)==='DIVERGENTE').length, vaz=lista.filter(i=>_dashAudStatus(i)==='ENDERECO_VAZIO').length, pend=lista.filter(i=>_dashAudStatus(i)==='PENDENTE').length, audit=total-pend, taxa=total?Math.round(audit/total*100):0, acur=audit?Math.round(ok/audit*100):0;
   const ops=new Set(lista.map(i=>i.operadorNome||i.operador_nome||i.operadorId||i.operador_id).filter(Boolean)).size;
-  [_dashAudMetas.length,total,audit,pend,ok,div,vaz,`${taxa}%`,ops].forEach((v,idx)=>_dashSetKpi(idx,v,['Auditorias','Itens previstos','Itens auditados','Pendentes','Itens corretos','Divergências','End. vazios','% executado','Operadores'][idx],['🔎','📍','✅','⏳','🎯','⚠️','📭','📊','👥'][idx]));
+  [_dashAudMetas.length,total,audit,pend,ok,div,vaz,`${taxa}%`,ops].forEach((v,idx)=>_dashSetKpi(idx,v,['Auditorias','Endereços previstos','Endereços auditados','Endereços pendentes','Endereços corretos','Divergências','End. vazios','% executado','Operadores'][idx],['🔎','📍','✅','⏳','🎯','⚠️','📭','📊','👥'][idx]));
   const diverg=lista.filter(i=>_dashAudStatus(i)==='DIVERGENTE');
   const prod=_dashAgrupar(diverg,i=>i.produtoEsperado||i.produto_esperado||i.dunEsperado||i.dun_esperado||i.dun||'SEM PRODUTO');
   const ruas=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).rua), niveis=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).nivel), cols=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).coluna);
