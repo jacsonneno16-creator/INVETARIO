@@ -79,11 +79,24 @@ async function importar(file){
  }catch(e){console.error('[Produtos] Falha na importação',e);const msg=e?.message||String(e);if(global.showToast)global.showToast(msg,'error');else alert(msg);}
  finally{global.__produtoImportando=false;mutacaoEmAndamento=false;if(!listener)iniciar();}
 }
+async function atualizarBase(){
+ if(global.__produtoImportando){if(global.showToast)global.showToast('Já existe uma operação em andamento.','info');return;}
+ global.__produtoImportando=true;mutacaoEmAndamento=true;
+ const aviso=global.showToast?global.showToast('Atualizando base de produtos…','info'):null;
+ try{
+  const snap=await COL().get();
+  lista=snap.docs.map(d=>{const p=global.DTProdutos.normalizarProduto(d.data(),d.id);p.categoriaFamilia=txt(d.data().categoriaFamilia||d.data().familiaCategoria)||inferirCategoria(p.nomeProduto,p.familiaNome);return p;});
+  global.DTProdutos.indexar(lista);render();
+  await publicarChunksProdutos();
+  if(global.showToast)global.showToast(`Base atualizada: ${lista.length} produto(s) publicado(s) para os coletores.`,'success');
+ }catch(e){console.error('[Produtos] Falha ao atualizar base',e);const msg=e?.message||String(e);if(global.showToast)global.showToast(msg,'error');else alert(msg);}
+ finally{global.__produtoImportando=false;mutacaoEmAndamento=false;}
+}
 function exportar(){const dados=lista.map(p=>({'Código interno':p.codigoInterno,'Produto':p.nomeProduto,'Família':p.categoriaFamilia||inferirCategoria(p.nomeProduto,p.familiaNome),'GTIN/EAN':p.gtin,'Unidade':p.unidade,'Embalagem':p.embalagem,'Produto principal':p.familiaNome||p.produtoPrincipal,'Status':p.ativo?'ATIVO':'INATIVO'}));const ws=XLSX.utils.json_to_sheet(dados);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Produtos');XLSX.writeFile(wb,'base_produtos.xlsx');}
 async function excluirTodos(){const total=lista.length;if(!total){if(global.showToast)global.showToast('Não há produtos para excluir.','error');return;}const executar=async()=>{let excluidos=0;mutacaoEmAndamento=true;if(listener){try{listener();}catch(_){}listener=null;}try{const snap=await COL().get();const docs=snap.docs||[];for(let i=0;i<docs.length;i+=300){const batch=global.getDTRawFirestore().batch();docs.slice(i,i+300).forEach(d=>batch.delete(d.ref));await batch.commit();excluidos+=Math.min(300,docs.length-i);}lista=[];global.DTProdutos.indexar([]);await publicarChunksProdutos();render();if(global.showToast)global.showToast(excluidos+' produto(s) excluído(s).','success');}catch(e){console.error(e);if(global.showToast)global.showToast('Erro ao excluir todos: '+e.message,'error');}finally{mutacaoEmAndamento=false;await iniciar();}};if(global.showConfirm)global.showConfirm('Excluir TODOS os '+total.toLocaleString('pt-BR')+' produtos desta loja?',executar,{title:'Excluir todos os produtos',icon:'🗑️',okLabel:'Excluir tudo',okClass:'btn-danger'});else if(confirm('Excluir TODOS os '+total+' produtos desta loja?'))await executar();}
 function reiniciarAoTrocarLoja(){if(listener){try{listener();}catch(_){}listener=null;}lista=[];familiaAtiva='TODAS';global.DTProdutos.indexar([]);render();iniciar();}
 function modelo(){const ws=XLSX.utils.json_to_sheet([{'CÓDIGO INTERNO':'000123','PRODUTO':'00001 TAPIOCA DA TERRINHA 1 KG - CX 12','FAMÍLIA':'TAPIOCA','GTIN':'0789000000001','UNIDADE':'CX'}]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Modelo');XLSX.writeFile(wb,'modelo_base_produtos.xlsx');}
 document.addEventListener('click',async e=>{if(!e.target.closest('.prod-familia-dropdown')){const m=document.getElementById('prod-familia-menu');if(m)m.style.display='none';}const fb=e.target.closest('[data-prod-familia]');if(fb){familiaAtiva=fb.dataset.prodFamilia||'TODAS';render();return;}const b=e.target.closest('[data-prod-acao]');if(!b)return;const p=lista.find(x=>x.id===b.dataset.id);if(!p)return;if(b.dataset.prodAcao==='editar')abrirModal(p);if(b.dataset.prodAcao==='toggle')await salvarProduto({...p,ativo:!p.ativo},p.id);if(b.dataset.prodAcao==='excluir'&&confirm(`Excluir ${p.nomeProduto}?`)){mutacaoEmAndamento=true;try{await COL().doc(p.id).delete();lista=lista.filter(x=>x.id!==p.id);global.DTProdutos.indexar(lista);render();await publicarChunksProdutos();}finally{mutacaoEmAndamento=false;}}});
 if(!global.__baseProdutosListenerLoja){global.__baseProdutosListenerLoja=true;global.addEventListener('dt-loja-alterada',reiniciarAoTrocarLoja);}
-global.renderBaseProdutos=()=>{render();if(!listener)iniciar();};global.produtoNovo=()=>abrirModal();global.produtoImportar=importar;global.produtoExportar=exportar;global.produtoBaixarModelo=modelo;global.produtoExcluirTodos=excluirTodos;global.publicarChunksProdutos=publicarChunksProdutos;
+global.renderBaseProdutos=()=>{render();if(!listener)iniciar();};global.produtoNovo=()=>abrirModal();global.produtoImportar=importar;global.produtoAtualizarBase=atualizarBase;global.produtoExportar=exportar;global.produtoBaixarModelo=modelo;global.produtoExcluirTodos=excluirTodos;global.publicarChunksProdutos=publicarChunksProdutos;
 })(window);
