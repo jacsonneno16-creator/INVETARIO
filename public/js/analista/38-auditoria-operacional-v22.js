@@ -387,25 +387,17 @@
       renderizar();
       return;
     }
-    unsubscribeMetas=ref.onSnapshot(function(ms){
-      if(!ms.exists){ auditoriaAtual=''; metaAtual=null; itensAtuais=[]; popularSelect(); renderizar(); return; }
-      metaAtual={id:ms.id,...ms.data()};
-      atualizarAcoesAuditoria();
-    });
     atualizarAcoesAuditoria();
-    unsubscribeItens = ref.collection('enderecos').onSnapshot(snap => {
-      itensBrutosAtuais = snap.docs.map(d => ({id:d.id,raw:d.data()}));
-      const nova = itensBrutosAtuais.map(x => normalizarItem(x.raw, x.id));
-      const sig = assinatura(nova);
-      if (sig === assinaturaAnterior) return;
-      assinaturaAnterior = sig;
-      itensAtuais = nova;
+    try{
+      const snap=await ref.collection('enderecos').get();
+      itensBrutosAtuais=snap.docs.map(d=>({id:d.id,raw:d.data()}));
+      itensAtuais=itensBrutosAtuais.map(x=>normalizarItem(x.raw,x.id));
+      assinaturaAnterior=assinatura(itensAtuais);
       renderizar();
-      sincronizarResumoMeta().catch(e => console.warn('[AUDITORIA] resumo:',e));
-    }, error => {
-      console.error('[AUDITORIA] listener:', error);
-      toast('Não foi possível acompanhar os resultados da auditoria.','e');
-    });
+    }catch(error){
+      console.error('[AUDITORIA] leitura manual:',error);
+      toast('Não foi possível atualizar os resultados da auditoria.','e');
+    }
   }
 
   async function sincronizarResumoMeta(){
@@ -682,16 +674,10 @@
   window.finalizarAuditoriaOperacional=finalizar;
   window.excluirAuditoriaOperacional=excluir;
   window.atualizarListaAuditorias=atualizarListaAuditorias;
+  window.atualizarAuditoriaOperacionalManual=atualizarListaAuditorias;
   window.exportarAuditoriaOperacional=exportar;
   window.renderAuditoriaOperacional=function(){
     renderizar();
-    if(!window.__auditoriaRefreshTimer){
-      window.__auditoriaRefreshTimer=setTimeout(async function(){
-        window.__auditoriaRefreshTimer=null;
-        const page=document.getElementById('page-auditoria');
-        if(page && page.classList.contains('active')) await popularSelect();
-      },120);
-    }
   };
   window.encerrarListenerAuditoriaPorTrocaLoja=function(){
     encerrarListener();
@@ -729,7 +715,16 @@
     if(window.__auditoriaOperacionalV22Eventos) return;
     window.__auditoriaOperacionalV22Eventos=true;
     const sel=document.getElementById('aud-op-auditoria');
-    if(sel){ sel.onchange=function(){ selecionarAuditoria(sel.value); }; }
+    if(sel){ sel.onchange=function(){
+      encerrarListener();
+      auditoriaAtual=txt(sel.value);
+      metaAtual=null;
+      itensAtuais=[];
+      itensBrutosAtuais=[];
+      assinaturaAnterior='';
+      atualizarAcoesAuditoria();
+      renderizar();
+    }; }
     ['aud-op-status','aud-op-busca','aud-f-dun-esperado','aud-f-dun-lido','aud-f-operador','aud-f-data'].forEach(function(id){
       const e=document.getElementById(id);
       if(e && e.dataset.auditoriaEvento!=='1'){

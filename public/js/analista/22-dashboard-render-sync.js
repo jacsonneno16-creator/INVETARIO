@@ -520,14 +520,14 @@ function _renderDashboardCharts() {
 function dashApplyRuaFilter(rua) {
   const el = document.getElementById('dash-frua');
   if (!el) return;
-  el.value = rua || '';
+  el.value = String(el.value || '') === String(rua || '') ? '' : (rua || '');
   renderDashboard();
 }
 
 function dashApplyLocalFilter(local) {
   const el = document.getElementById('dash-flocal');
   if (!el) return;
-  el.value = local || '';
+  el.value = String(el.value || '') === String(local || '') ? '' : (local || '');
   renderDashboard();
 }
 
@@ -553,6 +553,8 @@ let _dashAudMetas = [];
 let _dashAudItens = [];
 let _dashAudCarregando = false;
 let _dashAudLoja = '';
+let _dashAudFiltroColuna = '';
+let _dashAudFiltroOperador = '';
 
 function _dashModoAtual(){ return document.getElementById('dash-mode')?.value || 'inventario'; }
 function _dashEnderecoPartes(endereco){
@@ -567,39 +569,23 @@ function _dashSetKpi(idx,valor,rotulo,icone){
   const lbl=card?.querySelector('.kpi-lbl'); const ico=card?.querySelector('.kpi-icon');
   if(lbl)lbl.textContent=rotulo; if(ico)ico.textContent=icone;
 }
-let _dashAudAutoTimer=null;
-function _dashAudPararAutoAtualizacao(){ if(_dashAudAutoTimer){ clearInterval(_dashAudAutoTimer); _dashAudAutoTimer=null; } }
-function _dashAudIniciarAutoAtualizacao(){
-  _dashAudPararAutoAtualizacao();
-  _dashAudAutoTimer=setInterval(()=>{
-    if(_dashModoAtual()==='auditoria' && document.getElementById('page-dashboard')?.classList.contains('on')){
-      carregarDashboardAuditoria(true).catch(console.error);
-    } else {
-      _dashAudPararAutoAtualizacao();
-    }
-  }, 15000);
-}
 function alterarModoDashboard(modo){
   document.querySelectorAll('.dash-inv-filter').forEach(e=>e.style.display=modo==='inventario'?'':'none');
   document.querySelectorAll('.dash-aud-filter').forEach(e=>e.style.display=modo==='auditoria'?'':'none');
   const novo=document.querySelector('#page-dashboard button[onclick="abrirNovoInventario()"]');
   if(novo) novo.style.display=modo==='inventario'?'':'none';
-  if(modo==='auditoria') _dashAudIniciarAutoAtualizacao(); else _dashAudPararAutoAtualizacao();
   renderDashboard();
 }
 function renderDashboard(){
-  // Sempre que o Dashboard é aberto (navegação para a página ou troca de modo),
-  // busca os dados da auditoria de novo. O cache por loja fazia o relatório
-  // ficar "travado" no instantâneo da primeira vez que foi aberto, mostrando
-  // tudo pendente/zerado mesmo com divergências já registradas pelos coletores
-  // (inclusive em auditorias "por produto").
-  if(_dashModoAtual()==='auditoria'){ _dashAudIniciarAutoAtualizacao(); return carregarDashboardAuditoria(true); }
-  _dashAudPararAutoAtualizacao();
+  // A auditoria só consulta o Firebase quando o analista clica em Atualizar.
+  // Navegação, filtros e troca de modo apenas redesenham o instantâneo carregado.
+  if(_dashModoAtual()==='auditoria'){ return renderDashboardAuditoria(); }
   document.getElementById('dash-alert-wrap').innerHTML='';
   const action=document.getElementById('dash-recentes-action'); if(action)action.style.display='';
   const title=document.getElementById('dash-recentes-title'); if(title)title.textContent='📦 Inventários Recentes';
   return renderDashboardInventario();
 }
+window.atualizarDashboardAuditoriaManual=function(){ return carregarDashboardAuditoria(true); };
 function limparFiltrosDash(){
   if(_dashModoAtual()==='auditoria'){
     ['dash-faud','dash-fastatus','dash-farua','dash-fanivel','dash-faproduto'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
@@ -661,10 +647,17 @@ function _dashPopularFiltrosAuditoria(){
 }
 function _dashAudFiltrados(){
   const aud=document.getElementById('dash-faud')?.value||'', st=document.getElementById('dash-fastatus')?.value||'', rua=document.getElementById('dash-farua')?.value||'', nivel=document.getElementById('dash-fanivel')?.value||'', busca=(document.getElementById('dash-faproduto')?.value||'').toLowerCase();
-  return _dashAudItens.filter(i=>{const p=_dashEnderecoPartes(i.endereco);if(aud&&i.auditoriaId!==aud)return false;if(st&&_dashAudStatus(i)!==st)return false;if(rua&&p.rua!==rua)return false;if(nivel&&p.nivel!==nivel)return false;if(busca&&!String([i.produtoEsperado,i.produto_esperado,i.produtoLido,i.produto_lido,i.dunEsperado,i.dun_esperado,i.dun,i.dunLido,i.dun_lido].join(' ')).toLowerCase().includes(busca))return false;return true;});
+  return _dashAudItens.filter(i=>{const p=_dashEnderecoPartes(i.endereco),op=String(i.operadorNome||i.operador_nome||i.operadorId||i.operador_id||'SEM OPERADOR');if(aud&&i.auditoriaId!==aud)return false;if(st&&_dashAudStatus(i)!==st)return false;if(rua&&p.rua!==rua)return false;if(nivel&&p.nivel!==nivel)return false;if(_dashAudFiltroColuna&&p.coluna!==_dashAudFiltroColuna)return false;if(_dashAudFiltroOperador&&op!==_dashAudFiltroOperador)return false;if(busca&&!String([i.produtoEsperado,i.produto_esperado,i.produtoLido,i.produto_lido,i.dunEsperado,i.dun_esperado,i.dun,i.dunLido,i.dun_lido].join(' ')).toLowerCase().includes(busca))return false;return true;});
 }
 function _dashAgrupar(lista,keyFn,pred){const m={};lista.filter(pred||(()=>true)).forEach(i=>{const k=keyFn(i)||'SEM DADO';m[k]=(m[k]||0)+1;});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}
-function _dashAudBarClick(tipo,valor){const map={rua:'dash-farua',nivel:'dash-fanivel',produto:'dash-faproduto'};const e=document.getElementById(map[tipo]);if(e)e.value=valor;renderDashboardAuditoria();}
+function _dashAudBarClick(tipo,valor){
+  const map={rua:'dash-farua',nivel:'dash-fanivel',produto:'dash-faproduto',status:'dash-fastatus'};
+  const e=document.getElementById(map[tipo]);
+  if(e)e.value=String(e.value||'')===String(valor||'')?'':valor;
+  else if(tipo==='coluna')_dashAudFiltroColuna=_dashAudFiltroColuna===valor?'':valor;
+  else if(tipo==='operador')_dashAudFiltroOperador=_dashAudFiltroOperador===valor?'':valor;
+  renderDashboardAuditoria();
+}
 function _dashAudBars(arr,tipo,lim=10){if(!arr.length)return'<div class="empty" style="padding:20px"><div class="empty-title">Sem dados</div></div>';const max=Math.max(...arr.map(x=>x[1]),1);return arr.slice(0,lim).map(([l,v])=>`<button class="btn btn-ghost btn-sm" onclick="_dashAudBarClick('${tipo}','${String(l).replace(/'/g,"\\'")}')" style="width:100%;display:block;text-align:left;padding:9px 10px;margin-bottom:7px"><div style="display:flex;justify-content:space-between;gap:8px"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_dashSafe(l)}</b><span class="mono">${v}</span></div><div style="height:9px;background:var(--border);border-radius:99px;margin-top:6px;overflow:hidden"><div style="height:100%;width:${Math.max(4,Math.round(v/max*100))}%;background:linear-gradient(90deg,var(--orange),#ef4444);border-radius:99px"></div></div></button>`).join('');}
 function renderDashboardAuditoria(){
   const lista=_dashAudFiltrados(), total=lista.length, ok=lista.filter(i=>_dashAudStatus(i)==='OK').length, div=lista.filter(i=>_dashAudStatus(i)==='DIVERGENTE').length, vaz=lista.filter(i=>_dashAudStatus(i)==='ENDERECO_VAZIO').length, pend=lista.filter(i=>_dashAudStatus(i)==='PENDENTE').length, audit=total-pend, taxa=total?Math.round(audit/total*100):0, acur=audit?Math.round(ok/audit*100):0;

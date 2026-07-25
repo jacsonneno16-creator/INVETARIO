@@ -3,7 +3,7 @@
   const COLORS=['#f97316','#2563eb','#10b981','#8b5cf6','#ef4444','#06b6d4','#eab308','#ec4899','#14b8a6','#6366f1'];
   const oldRenderAcompanhamento=window.renderAcompanhamentoInventarioBase || window.renderAcompanhamento;
   const oldTrocarInventarioAcomp=window.trocarInventarioAcomp;
-  let acompAudItens=[], acompAudOcorrencias=[], acompAudMetas=[], acompAudLoja='', acompAudTimer=null;
+  let acompAudItens=[], acompAudOcorrencias=[], acompAudMetas=[], acompAudLoja='';
   function safe(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   function tipoAcomp(){return document.getElementById('acomp-tipo')?.value||'inventario';}
   // Estrutura: loja.local.area.rua.coluna.nivel.sequencia — rua=índice3, coluna=índice4, nível=índice5.
@@ -12,7 +12,6 @@
   function setText(id,v){const e=document.getElementById(id);if(e)e.textContent=v;}
   function ensureHero(){let h=document.getElementById('acomp-live-hero');if(h)return h;h=document.createElement('div');h.id='acomp-live-hero';h.innerHTML='<div id="acomp-live-ring"><div id="acomp-live-value">0%</div></div><div><div style="font-size:.68rem;text-transform:uppercase;letter-spacing:.12em;opacity:.72">Progresso em tempo real</div><div id="acomp-live-title" style="font-size:1.15rem;font-weight:800;margin:5px 0">—</div><div id="acomp-live-detail" style="font-size:.75rem;opacity:.75">Aguardando seleção</div></div>';document.getElementById('acomp-kpis')?.before(h);return h;}
   function setHero(pct,title,detail,color2){ensureHero();const ring=document.getElementById('acomp-live-ring');if(ring)ring.style.background=`conic-gradient(${color2||'#f59e0b'} ${pct*3.6}deg,rgba(255,255,255,.16) 0)`;setText('acomp-live-value',pct+'%');setText('acomp-live-title',title);setText('acomp-live-detail',detail);}
-  let acompAudUnsub=null, acompAudOcorrUnsub=null;
   function rawDb(){return window.getDTRawFirestore?.()||null;}
   function lojaAtiva(){return String(window.getDTLojaAtiva?.()||'').trim();}
   function auditoriasRef(origem){
@@ -81,15 +80,12 @@
   }
   async function carregarAuditoriaSelecionada(){
     const id=document.getElementById('acomp-sel-inv')?.value||'';
-    if(acompAudUnsub){try{acompAudUnsub();}catch(_){}acompAudUnsub=null;}if(acompAudOcorrUnsub){try{acompAudOcorrUnsub();}catch(_){}acompAudOcorrUnsub=null;}
     if(!id){acompAudItens=[];acompAudOcorrencias=[];renderAcompAuditoria();return;}
     const meta=acompAudMetas.find(m=>m.id===id);const ref=audDocRef(meta||id);if(!ref)return;
     const aplicar=async snap=>{acompAudItens=await montarItensAuditoria(ref,snap);renderAcompAuditoria();};
     try{
       const inicial=await ref.collection('enderecos').get();await aplicar(inicial);
       try{const oc=await ref.collection('ocorrencias').get();acompAudOcorrencias=oc.docs.map(d=>({id:d.id,...d.data()}));renderAcompAuditoria();}catch(e){acompAudOcorrencias=[];}
-      acompAudUnsub=ref.collection('enderecos').onSnapshot(s=>{aplicar(s).catch(console.error);},e=>console.warn('[ACOMP AUD] Listener indisponível:',e));
-      acompAudOcorrUnsub=ref.collection('ocorrencias').onSnapshot(s=>{acompAudOcorrencias=s.docs.map(d=>({id:d.id,...d.data()}));renderAcompAuditoria();},e=>console.warn('[ACOMP AUD] Listener de ocorrências indisponível:',e));
     }catch(e){console.error('[ACOMP AUD] Falha ao carregar acompanhamento:',e);acompAudItens=[];renderAcompAuditoria();}
   }
   function agrupar(lista,fn){const m={};lista.forEach(x=>{const k=fn(x)||'SEM DADO';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}
@@ -100,27 +96,74 @@
     let ocorrBox=document.getElementById('acomp-aud-ocorrencias');if(!ocorrBox){ocorrBox=document.createElement('div');ocorrBox.id='acomp-aud-ocorrencias';document.getElementById('acomp-kpis')?.after(ocorrBox);}if(ocorrBox){ocorrBox.innerHTML=acompAudOcorrencias.length?`<div class="alert warn" style="margin:12px 0"><b>📍 ${acompAudOcorrencias.length} produto(s) encontrado(s) fora dos endereços previstos</b><div style="margin-top:8px;overflow:auto"><table><thead><tr><th>Endereço encontrado</th><th>Produto</th><th>Operador</th><th>Data</th></tr></thead><tbody>${acompAudOcorrencias.slice().reverse().slice(0,20).map(o=>`<tr><td class="mono">${safe(o.endereco)}</td><td>${safe(o.produtoLido||o.produto_lido||o.codigoLido||'—')}</td><td>${safe(o.operador_nome||o.operadorNome||'—')}</td><td>${safe(o.encontrado_em||o.criadoEm||'—')}</td></tr>`).join('')}</tbody></table></div></div>`:'';}
     const ruas=agrupar(acompAudItens,i=>enderecoPartes(i.endereco).rua);document.getElementById('acomp-ruas-grid').innerHTML=progressRows(ruas,total);document.getElementById('acomp-progress-detail').innerHTML=progressRows([['Corretos',ok],['Divergentes',div],['Vazios',vaz],['Pendentes',pend]],total);const ops=agrupar(acompAudItens.filter(i=>audStatus(i)!=='PENDENTE'),i=>i.operadorNome||i.operador_nome||i.operadorId||i.operador_id||'SEM OPERADOR');document.getElementById('acomp-coletores-wrap').innerHTML=`<div style="padding:16px 20px">${progressRows(ops,Math.max(concl,1))}</div>`;setText('acomp-ultima-sync','Última sync: '+new Date().toLocaleTimeString('pt-BR'));
   }
-  window.trocarTipoAcompanhamento=async function(){clearInterval(acompAudTimer);if(acompAudUnsub){try{acompAudUnsub();}catch(_){}acompAudUnsub=null;}if(acompAudOcorrUnsub){try{acompAudOcorrUnsub();}catch(_){}acompAudOcorrUnsub=null;}const sel=document.getElementById('acomp-sel-inv');if(tipoAcomp()==='auditoria'){window.AnalistaState?.set('ui.acompanhamentoInventarioId',null,{source:'acomp-tipo'});await popularAcompAuditorias();await carregarAuditoriaSelecionada();acompAudTimer=setInterval(()=>carregarAuditoriaSelecionada().catch(console.error),15000);}else{if(sel){sel.innerHTML='<option value="">Escolha um inventário</option>';sel.value='';}ensureHero().style.display='';oldRenderAcompanhamento?.();const inv=window.AnalistaStore?.getState()?.ui?.acompanhamentoInventarioId;setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);}};
-  window.trocarInventarioAcomp=async function(){if(tipoAcomp()==='auditoria')return carregarAuditoriaSelecionada();return oldTrocarInventarioAcomp?.();};
+  window.trocarTipoAcompanhamento=async function(){const sel=document.getElementById('acomp-sel-inv');if(tipoAcomp()==='auditoria'){window.AnalistaState?.set('ui.acompanhamentoInventarioId',null,{source:'acomp-tipo'});renderAcompAuditoria();}else{if(sel){sel.innerHTML='<option value="">Escolha um inventário</option>';sel.value='';}ensureHero().style.display='';oldRenderAcompanhamento?.();const inv=window.AnalistaStore?.getState()?.ui?.acompanhamentoInventarioId;setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);}};
+  window.trocarInventarioAcomp=async function(){if(tipoAcomp()==='auditoria'){acompAudItens=[];acompAudOcorrencias=[];return renderAcompAuditoria();}return oldTrocarInventarioAcomp?.();};
   window.renderAcompanhamento=function(){if(tipoAcomp()==='auditoria')return renderAcompAuditoria();oldRenderAcompanhamento?.();setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);};
+  window.atualizarAcompanhamentoAuditoriaManual=async function(){
+    await loadAuditoriasAcomp(true);
+    const sel=document.getElementById('acomp-sel-inv');
+    const atual=sel?.value||'';
+    await popularAcompAuditorias();
+    if(sel&&atual&&acompAudMetas.some(m=>m.id===atual))sel.value=atual;
+    await carregarAuditoriaSelecionada();
+  };
 
   function groupStats(lista,keyFn){const m={};lista.forEach(i=>{const k=keyFn(i)||'SEM DADO';if(!m[k])m[k]={label:k,total:0,auditados:0,divergencias:0,ok:0,vazios:0};const x=m[k];x.total++;const st=audStatus(i);if(st!=='PENDENTE')x.auditados++;if(st==='DIVERGENTE')x.divergencias++;if(st==='OK')x.ok++;if(st==='ENDERECO_VAZIO')x.vazios++;});return Object.values(m).sort((a,b)=>b.divergencias-a.divergencias||b.auditados-a.auditados);}
-  function compareRows(arr,tipo,limit=10){if(!arr.length)return '<div class="empty"><div class="empty-title">Sem dados nos filtros atuais</div></div>';const max=Math.max(...arr.map(x=>Math.max(x.auditados,x.divergencias)),1);return arr.slice(0,limit).map((x,idx)=>`<button class="dash-compare-row" onclick="_dashAudBarClick('${tipo}','${String(x.label).replace(/'/g,"\\'")}')"><span class="dash-compare-label" title="${safe(x.label)}">${idx+1}. ${safe(x.label)}</span><span class="dash-compare-bars"><span class="dash-compare-line"><i>Auditados</i><b style="width:${Math.max(2,x.auditados/max*100)}%;background:linear-gradient(90deg,#2563eb,#38bdf8)"></b><em>${x.auditados}</em></span><span class="dash-compare-line"><i>Divergências</i><b style="width:${Math.max(x.divergencias?2:0,x.divergencias/max*100)}%;background:linear-gradient(90deg,#ef4444,#fb7185)"></b><em>${x.divergencias}</em></span></span></button>`).join('');}
-  function donut(title,items){const total=items.reduce((a,x)=>a+x.value,0)||1;let deg=0;const stops=items.map((x,i)=>{const ini=deg;deg+=x.value/total*360;return `${x.color} ${ini}deg ${deg}deg`;}).join(',');return `<section class="dash-modern-card dash-pie"><div class="dm-head"><div><div class="dm-title">${title}</div><div class="dm-sub">Distribuição dos registros filtrados</div></div></div><div class="dash-pie-body"><div class="dash-donut" style="background:conic-gradient(${stops})"><div class="dash-donut-value">${total.toLocaleString('pt-BR')}<small>Total</small></div></div><div class="dash-stat-list">${items.map(x=>`<div class="dash-stat-row"><span><i class="dash-dot" style="background:${x.color}"></i>${safe(x.label)}</span><b>${x.value.toLocaleString('pt-BR')}</b></div>`).join('')}</div></div></section>`;}
+  function compareColumns(arr,tipo,limit=10){
+    if(!arr.length)return '<div class="empty"><div class="empty-title">Sem dados nos filtros atuais</div></div>';
+    const dados=arr.slice(0,limit),max=Math.max(...dados.map(x=>Math.max(x.auditados,x.divergencias)),1);
+    const teto=Math.max(1,Math.ceil(max/4)*4);
+    const linhas=[0,1,2,3,4].map(n=>Math.round(teto*n/4));
+    return `<div class="dash-column-legend"><span><i class="auditados"></i>Auditados</span><span><i class="divergencias"></i>Divergências</span><small>Clique em uma coluna para ver os detalhes</small></div>
+      <div class="dash-column-scroll"><div class="dash-column-chart" style="--chart-count:${dados.length}">
+        <div class="dash-y-axis">${linhas.map((v,i)=>`<span style="bottom:${i*25}%">${v}</span>`).join('')}</div>
+        <div class="dash-grid-lines">${linhas.map((_,i)=>`<i style="bottom:${i*25}%"></i>`).join('')}</div>
+        <div class="dash-column-groups">${dados.map((x,idx)=>{
+          const label=String(x.label),clickLabel=label.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+          const ha=x.auditados?Math.max(4,x.auditados/teto*100):0;
+          const hd=x.divergencias?Math.max(4,x.divergencias/teto*100):0;
+          return `<button class="dash-column-group" onclick="_dashAudBarClick('${tipo}','${clickLabel}')" title="${safe(label)} — ${x.auditados} auditados, ${x.divergencias} divergências">
+            <span class="dash-columns"><i class="dash-column auditados" style="height:${ha}%"><b>${x.auditados}</b></i><i class="dash-column divergencias" style="height:${hd}%"><b>${x.divergencias}</b></i></span>
+            <span class="dash-column-label"><em>${idx+1}.</em> ${safe(label)}</span>
+          </button>`;
+        }).join('')}</div>
+      </div></div>`;
+  }
+  function donut(title,items,tipo){const total=items.reduce((a,x)=>a+x.value,0)||1;let deg=0;const stops=items.map((x,i)=>{const ini=deg;deg+=x.value/total*360;return `${x.color} ${ini}deg ${deg}deg`;}).join(',');return `<section class="dash-modern-card dash-pie"><div class="dm-head"><div><div class="dm-title">${title}</div><div class="dm-sub">Clique uma vez para filtrar; clique novamente para remover</div></div></div><div class="dash-pie-body"><div class="dash-donut" style="background:conic-gradient(${stops})"><div class="dash-donut-value">${total.toLocaleString('pt-BR')}<small>Total</small></div></div><div class="dash-stat-list">${items.map(x=>{const clickLabel=String(x.filter??x.label).replace(/\\/g,'\\\\').replace(/'/g,"\\'");return `<button type="button" class="dash-stat-row" onclick="_dashAudBarClick('${tipo}','${clickLabel}')" title="Clique para filtrar ou remover o filtro"><span><i class="dash-dot" style="background:${x.color}"></i>${safe(x.label)}</span><b>${x.value.toLocaleString('pt-BR')}</b></button>`;}).join('')}</div></div></section>`;}
   window.renderDashboardAuditoria=function(){const lista=window._dashAudFiltrados?window._dashAudFiltrados():[];const total=lista.length,ok=lista.filter(i=>audStatus(i)==='OK').length,div=lista.filter(i=>audStatus(i)==='DIVERGENTE').length,vaz=lista.filter(i=>audStatus(i)==='ENDERECO_VAZIO').length,pend=lista.filter(i=>audStatus(i)==='PENDENTE').length,audit=total-pend,pct=total?Math.round(audit/total*100):0,acur=audit?Math.round(ok/audit*100):0;
     const prod=groupStats(lista,i=>i.produtoEsperado||i.produto_esperado||i.dunEsperado||i.dun_esperado||i.dun||'SEM PRODUTO');
     const ruas=groupStats(lista,i=>i.rua||enderecoPartes(i.endereco).rua);
     const niveis=groupStats(lista,i=>i.nivel||enderecoPartes(i.endereco).nivel);
     const cols=groupStats(lista,i=>i.coluna||enderecoPartes(i.endereco).coluna);
     const kpi=document.getElementById('kpi-grid');if(kpi)kpi.style.display='none';const breakdown=document.getElementById('dash-breakdown-grid');if(breakdown)breakdown.style.display='none';const wrap=document.getElementById('dash-charts-wrap');if(wrap)wrap.innerHTML=`<div class="dash-modern-grid">
-      <section class="dash-modern-card dash-summary"><div class="dash-donut" style="background:conic-gradient(#10b981 ${acur*3.6}deg,#ef4444 0)"><div class="dash-donut-value">${acur}%<small>Acuracidade</small></div></div><div class="dash-stat-list"><div class="dash-stat-row"><span><i class="dash-dot" style="background:#10b981"></i>Corretos</span><b>${ok}</b></div><div class="dash-stat-row"><span><i class="dash-dot" style="background:#ef4444"></i>Divergentes</span><b>${div}</b></div><div class="dash-stat-row"><span><i class="dash-dot" style="background:#f59e0b"></i>Pendentes</span><b>${pend}</b></div><div class="dash-stat-row"><span><i class="dash-dot" style="background:#64748b"></i>Vazios</span><b>${vaz}</b></div></div></section>
-      <section class="dash-modern-card dash-ranking"><div class="dm-head"><div><div class="dm-title">Top 10 produtos com maior divergência</div><div class="dm-sub">Azul: auditados · Vermelho: divergências · clique para filtrar</div></div></div><div class="dash-ranking-body">${compareRows(prod,'produto')}</div></section>
-      <section class="dash-modern-card dash-wide"><div class="dm-head"><div><div class="dm-title">Ruas com maiores divergências</div><div class="dm-sub">Comparação entre endereços auditados e divergentes por rua</div></div></div><div class="dash-ranking-body">${compareRows(ruas,'rua',20)}</div></section>
-      ${donut('Resultado da auditoria',[{label:'Corretos',value:ok,color:'#10b981'},{label:'Divergentes',value:div,color:'#ef4444'},{label:'Pendentes',value:pend,color:'#f59e0b'},{label:'Vazios',value:vaz,color:'#64748b'}])}
-      ${donut('Divergências por nível',niveis.slice(0,6).map((x,i)=>({label:x.label,value:x.divergencias,color:COLORS[i%COLORS.length]})).filter(x=>x.value))}
-      ${donut('Divergências por coluna',cols.slice(0,6).map((x,i)=>({label:x.label,value:x.divergencias,color:COLORS[(i+3)%COLORS.length]})).filter(x=>x.value))}
+      <section class="dash-modern-card dash-summary"><div class="dash-donut" style="background:conic-gradient(#10b981 ${acur*3.6}deg,#ef4444 0)"><div class="dash-donut-value">${acur}%<small>Acuracidade</small></div></div><div class="dash-stat-list">${[{label:'Corretos',status:'OK',value:ok,color:'#10b981'},{label:'Divergentes',status:'DIVERGENTE',value:div,color:'#ef4444'},{label:'Pendentes',status:'PENDENTE',value:pend,color:'#f59e0b'},{label:'Vazios',status:'ENDERECO_VAZIO',value:vaz,color:'#64748b'}].map(x=>`<button type="button" class="dash-stat-row" onclick="_dashAudBarClick('status','${x.status}')" title="Clique para filtrar ou remover o filtro"><span><i class="dash-dot" style="background:${x.color}"></i>${x.label}</span><b>${x.value}</b></button>`).join('')}</div></section>
+      <section class="dash-modern-card dash-ranking"><div class="dm-head"><div><div class="dm-title">Top 10 produtos com maior divergência</div><div class="dm-sub">Quantidade auditada comparada às divergências encontradas</div></div></div><div class="dash-ranking-body">${compareColumns(prod,'produto')}</div></section>
+      <section class="dash-modern-card dash-wide"><div class="dm-head"><div><div class="dm-title">Ruas com maiores divergências</div><div class="dm-sub">Quantidade auditada comparada às divergências em cada rua</div></div></div><div class="dash-ranking-body">${compareColumns(ruas,'rua',12)}</div></section>
+      ${donut('Resultado da auditoria',[{label:'Corretos',filter:'OK',value:ok,color:'#10b981'},{label:'Divergentes',filter:'DIVERGENTE',value:div,color:'#ef4444'},{label:'Pendentes',filter:'PENDENTE',value:pend,color:'#f59e0b'},{label:'Vazios',filter:'ENDERECO_VAZIO',value:vaz,color:'#64748b'}],'status')}
+      ${donut('Divergências por nível',niveis.slice(0,6).map((x,i)=>({label:x.label,value:x.divergencias,color:COLORS[i%COLORS.length]})).filter(x=>x.value),'nivel')}
+      ${donut('Divergências por coluna',cols.slice(0,6).map((x,i)=>({label:x.label,value:x.divergencias,color:COLORS[(i+3)%COLORS.length]})).filter(x=>x.value),'coluna')}
       <section class="dash-modern-card dash-insights"><div class="dash-insight"><strong>${total.toLocaleString('pt-BR')}</strong><span>Endereços previstos</span></div><div class="dash-insight"><strong>${audit.toLocaleString('pt-BR')}</strong><span>Auditados</span></div><div class="dash-insight"><strong>${pct}%</strong><span>Execução</span></div><div class="dash-insight"><strong>${new Set(lista.map(i=>i.operadorNome||i.operador_nome||i.operadorId||i.operador_id).filter(Boolean)).size}</strong><span>Operadores</span></div><div class="dash-insight"><strong>${prod.filter(x=>x.divergencias).length}</strong><span>Produtos divergentes</span></div></section></div>`;
     const rt=document.getElementById('dash-recentes-title');if(rt)rt.textContent='🔎 Resultados recentes da auditoria';const act=document.getElementById('dash-recentes-action');if(act)act.style.display='none';const tab=document.getElementById('dash-inv-table');if(tab){const rec=[...lista].filter(i=>audStatus(i)!=='PENDENTE').slice(-15).reverse();tab.innerHTML=rec.length?`<div class="tbl-wrap"><table><thead><tr><th>Endereço</th><th>Produto esperado</th><th>Produto lido</th><th>Resultado</th><th>Operador</th></tr></thead><tbody>${rec.map(i=>`<tr><td class="mono">${safe(i.endereco)}</td><td>${safe(i.produtoEsperado||i.produto_esperado||i.dunEsperado||i.dun_esperado||'—')}</td><td>${safe(i.produtoLido||i.produto_lido||i.dunLido||i.dun_lido||'—')}</td><td><span class="badge ${audStatus(i)==='OK'?'ok':audStatus(i)==='DIVERGENTE'?'err':'warn'}">${audStatus(i)}</span></td><td>${safe(i.operadorNome||i.operador_nome||'—')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty"><div class="empty-title">Nenhum resultado</div></div>';}const alert=document.getElementById('dash-alert-wrap');if(alert)alert.innerHTML=div?`<div class="alert warn"><b>⚠️ ${div} divergência(s)</b> identificadas. Clique nos gráficos para detalhar.</div>`:`<div class="alert ok"><b>✅ Nenhuma divergência</b> nos filtros atuais.</div>`;};
   const oldAlterar=window.alterarModoDashboard;window.alterarModoDashboard=function(m){if(m==='inventario'){const k=document.getElementById('kpi-grid');if(k)k.style.display='';const b=document.getElementById('dash-breakdown-grid');if(b)b.style.display='';}return oldAlterar?.(m);};
+  let atualizacaoManualEmAndamento=null;
+  window.atualizarTresAbasAuditoria=function(botao){
+    if(atualizacaoManualEmAndamento)return atualizacaoManualEmAndamento;
+    const botoes=[...document.querySelectorAll('[onclick^="atualizarTresAbasAuditoria"]')];
+    botoes.forEach(b=>{b.disabled=true;b.dataset.textoAtualizar=b.innerHTML;b.innerHTML='⏳ Atualizando...';});
+    atualizacaoManualEmAndamento=Promise.all([
+      Promise.resolve(window.atualizarDashboardAuditoriaManual?.()),
+      Promise.resolve(window.atualizarAcompanhamentoAuditoriaManual?.()),
+      Promise.resolve(window.atualizarAuditoriaOperacionalManual?.())
+    ]).then(()=>{
+      window.showToast?.('Dashboard, Acompanhamento e Auditoria atualizados.','s');
+    }).catch(e=>{
+      console.error('[ATUALIZAÇÃO MANUAL AUDITORIA]',e);
+      window.showToast?.('Não foi possível atualizar todas as telas: '+(e?.message||e),'e');
+    }).finally(()=>{
+      botoes.forEach(b=>{b.disabled=false;b.innerHTML=b.dataset.textoAtualizar||'🔄 Atualizar';delete b.dataset.textoAtualizar;});
+      atualizacaoManualEmAndamento=null;
+    });
+    return atualizacaoManualEmAndamento;
+  };
   document.addEventListener('DOMContentLoaded',()=>{ensureHero();const tipo=document.getElementById('acomp-tipo');if(tipo)tipo.value='inventario';});
 })();

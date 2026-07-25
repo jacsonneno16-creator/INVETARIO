@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v106-coletor-offline-real';
+var CACHE='dt-inventario-v109-atualizacao-manual';
 var PRECACHE=[
   '/',
   '/coletor.html',
