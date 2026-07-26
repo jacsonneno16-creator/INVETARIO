@@ -14,8 +14,7 @@
     {id:'auditoria',nome:'Auditoria',acoes:['visualizar','criar','editar','excluir','importar','exportar','publicar','finalizar']},
     {id:'contagens',nome:'Contagens',acoes:['visualizar','editar','excluir','exportar']},
     {id:'pendencias',nome:'Pendências',acoes:['visualizar','editar','exportar']},
-    {id:'divergencias',nome:'Em Conflito',acoes:['visualizar','editar','excluir','exportar']},
-    {id:'recontagens',nome:'Rodadas',acoes:['visualizar','criar','editar','excluir','exportar']},
+    {id:'recontagens',nome:'Recontagem',acoes:['visualizar','criar','editar','excluir','exportar']},
     {id:'rel-divergencias',nome:'Relatório de Conflitos',acoes:['visualizar','exportar']},
     {id:'capas-duplicadas',nome:'Capas Duplicadas',acoes:['visualizar','editar','excluir','exportar']},
     {id:'produtividade',nome:'Produtividade',acoes:['visualizar','exportar']},
@@ -92,7 +91,11 @@
     }
   }
 
-  function temPermissao(modulo,acao='visualizar'){const a=global.DT_USUARIO_ACESSO_ATUAL;if(!a||!a.permissoes)return true;return a.permissoes?.[modulo]?.[acao]===true;}
+  function temPermissao(modulo,acao='visualizar'){
+    const a=global.DT_USUARIO_ACESSO_ATUAL;if(!a||!a.permissoes)return true;
+    if(modulo==='recontagens') return a.permissoes?.recontagens?.[acao]===true || a.permissoes?.divergencias?.[acao]===true;
+    return a.permissoes?.[modulo]?.[acao]===true;
+  }
   function aplicarPermissoesAnalista(){
     const a=global.DT_USUARIO_ACESSO_ATUAL;if(!a)return;
     const legado=!a.permissoes; if(legado)return;

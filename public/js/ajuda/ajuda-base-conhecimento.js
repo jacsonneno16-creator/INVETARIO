@@ -67,14 +67,14 @@ const AJUDA_ITENS = [
   topico('a09','⚠️','Conflitos e divergências','Analista',
     'Analise diferenças, selecione itens, atribua recontagens e acompanhe a decisão do analista.',
     ['conflito','divergência','diferença','faltas','sobras','atribuir','aguardando analista','persistente'],
-    'A aba <strong>Em Conflito</strong> concentra resultados incompatíveis que exigem recontagem ou decisão.',
+    'A aba <strong>Recontagem</strong> concentra, em uma única tela, a comparação entre o esperado e o bipado, a atribuição do operador, a execução e o resultado.',
     ['Selecione o inventário e use os filtros rápidos ou detalhados.','Abra o item para comparar endereço, produto, operadores e quantidades.','Selecione uma ou várias linhas quando quiser uma ação em lote.','Atribua a recontagem ao operador adequado ou deixe disponível, conforme o processo.','Depois do retorno, confira se o conflito foi resolvido ou ficou persistente.'],
     [dica('warn','Confirme o inventário e os itens selecionados antes de executar uma ação em lote.')],['a10','a11','a19']),
 
   topico('a10','🔄','Recontagens e rodadas','Analista',
     'Crie, atribua, reatribua, acompanhe e encerre recontagens.',
     ['recontagem','rodadas','atribuir operador','reatribuir','não atribuída','concluída','persistente'],
-    'A aba <strong>Rodadas</strong> mostra recontagens pendentes, atribuídas, não atribuídas, concluídas e persistentes.',
+    'Na aba <strong>Recontagem</strong>, use os filtros para localizar itens pendentes, atribuídos, concluídos ou persistentes sem trocar de tela.',
     ['Escolha o inventário.','Filtre por status da divergência, status da recontagem, operador ou rua.','Crie ou atribua a rodada para um operador quando necessário.','Acompanhe a execução pelo Coletor.','Depois do envio, confira a diferença e o status final.','Exporte a lista para conferência quando necessário.'],
     [dica('info','A seção de recontagens atribuídas foi removida de Usuários/Lojas; a gestão fica centralizada nesta aba.')],['a09','c08','a11']),
 

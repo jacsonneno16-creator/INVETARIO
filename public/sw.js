@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v121-produtividade-filtros-colunas-fixas';
+var CACHE='dt-inventario-v123-ajustes-graficos-vazios-compactos';
 var PRECACHE=[
   '/',
   '/coletor.html',

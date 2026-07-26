@@ -177,11 +177,11 @@
   }
   function restaurarLayoutInventario(){
     const ruas=document.getElementById('acomp-ruas-grid');
-    if(ruas){ruas.className='dash-scroll-card';ruas.style.cssText='padding:12px 20px;display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto';}
+    if(ruas){ruas.className='dash-scroll-card acomp-inventario-compacto';ruas.style.cssText='padding:10px 16px;display:flex;flex-direction:column;gap:7px;max-height:270px;overflow-y:auto';}
     const detalhe=document.getElementById('acomp-progress-detail');
-    if(detalhe){detalhe.className='dash-scroll-card';detalhe.style.cssText='padding:20px;max-height:380px;overflow-y:auto';}
+    if(detalhe){detalhe.className='dash-scroll-card acomp-inventario-compacto';detalhe.style.cssText='padding:14px 16px;max-height:250px;overflow-y:auto';}
     const coletores=document.getElementById('acomp-coletores-wrap');
-    if(coletores){coletores.className='dash-scroll-card';coletores.style.cssText='max-height:380px;overflow-y:auto';}
+    if(coletores){coletores.className='dash-scroll-card acomp-inventario-compacto';coletores.style.cssText='max-height:260px;overflow-y:auto';}
     const titulos=document.querySelectorAll('#page-acompanhamento .tc-title');
     if(titulos[0])titulos[0].textContent='🛣️ Progresso por Rua';
     if(titulos[1])titulos[1].textContent='🗂️ Progresso por Local de Estoque';

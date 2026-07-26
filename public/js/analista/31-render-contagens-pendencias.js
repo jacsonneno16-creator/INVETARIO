@@ -337,7 +337,7 @@ function renderPendencias() {
             }).join('')}
           </tbody>
         </table></div>
-        ${recPend.length > 10 ? `<div style="padding:8px 16px;font-size:.75rem;color:var(--muted)">... e mais ${recPend.length-10}. Veja a aba Rodadas.</div>` : ''}`;
+        ${recPend.length > 10 ? `<div style="padding:8px 16px;font-size:.75rem;color:var(--muted)">... e mais ${recPend.length-10}. Veja a aba Recontagem.</div>` : ''}`;
     } else {
       recSec.style.display = 'none';
     }
@@ -369,10 +369,9 @@ function renderPendencias() {
             }).join('')}
           </tbody>
         </table></div>
-        ${divAbertas.length > 10 ? `<div style="padding:8px 16px;font-size:.75rem;color:var(--muted)">... e mais ${divAbertas.length-10}. Veja a aba Em Conflito.</div>` : ''}`;
+        ${divAbertas.length > 10 ? `<div style="padding:8px 16px;font-size:.75rem;color:var(--muted)">... e mais ${divAbertas.length-10}. Veja a aba Recontagem.</div>` : ''}`;
     } else {
       divSec.style.display = 'none';
     }
   }
 }
-

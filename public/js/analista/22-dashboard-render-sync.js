@@ -146,7 +146,7 @@ function renderDashboardInventario() {
     alertas += `<div class="alert warn" style="margin-bottom:8px">⏸️ ${pausados.length} inventário(s) <strong>PAUSADO(s)</strong>: ${pausados.map(i=>i.nome).join(', ')} — verifique se deve ser retomado.</div>`;
   }
   if (divAbertos > 5) {
-    alertas += `<div class="alert warn" style="margin-bottom:8px">⚠️ <strong>${divAbertos}</strong> contagens em conflito aguardando resolução. <a href="#" onclick="goPage('divergencias',document.getElementById('nav-divergencias'))" style="color:var(--accent)">Ver conflitos →</a></div>`;
+    alertas += `<div class="alert warn" style="margin-bottom:8px">⚠️ <strong>${divAbertos}</strong> contagens em conflito aguardando resolução. <a href="#" onclick="goPage('recontagens',document.getElementById('nav-recontagens'))" style="color:var(--accent)">Ver recontagens →</a></div>`;
   }
   if (recPend > 0) {
     alertas += `<div class="alert warn" style="margin-bottom:8px">🔄 <strong>${recPend}</strong> rodada(s) pendente(s) aguardando execução. <a href="#" onclick="goPage('recontagens',document.getElementById('nav-recontagens'))" style="color:var(--accent)">Ver rodadas →</a></div>`;
@@ -412,19 +412,19 @@ function _dashMiniBars(items, opts={}) {
 }
 
 function _dashInventoryColumns(items, onclickFn) {
-  if (!items.length) return `<div class="empty" style="padding:20px"><div class="empty-icon">📊</div><div class="empty-title">Sem dados para o gráfico</div></div>`;
+  if (!items.length) return `<div class="empty" style="padding:24px 16px;min-height:150px;display:flex;flex-direction:column;justify-content:center"><div class="empty-icon">📊</div><div class="empty-title">Sem dados para o filtro selecionado</div><div class="empty-sub">Altere os filtros ou clique em Atualizar.</div></div>`;
   const max = Math.max(...items.map(i => Math.max(i.contados, i.pendentes)), 1);
-  return `<div class="dash-ranking-body"><div class="dash-column-legend"><span><i style="background:#2563eb"></i>Contados</span><span><i style="background:#ef4444"></i>Pendentes</span></div><div class="dash-column-scroll"><div class="dash-column-chart" style="--chart-count:${items.length};min-width:max(520px,calc(${items.length} * 82px))">${items.map(item => {
-    const hc=Math.max(item.contados?8:2,Math.round(item.contados/max*100));
-    const hp=Math.max(item.pendentes?8:2,Math.round(item.pendentes/max*100));
+  const teto=Math.max(1,Math.ceil(max/4)*4);
+  const linhas=[0,1,2,3,4].map(n=>Math.round(teto*n/4));
+  return `<div class="dash-ranking-body"><div class="dash-column-legend"><span><i style="background:#2563eb"></i>Contados</span><span><i style="background:#ef4444"></i>Pendentes</span></div><div class="dash-column-scroll"><div class="dash-column-chart" style="--chart-count:${items.length};min-width:max(520px,calc(${items.length} * 82px))"><div class="dash-y-axis">${linhas.map((v,i)=>`<span style="bottom:${i*25}%">${v}</span>`).join('')}</div><div class="dash-grid-lines">${linhas.map((_,i)=>`<i style="bottom:${i*25}%"></i>`).join('')}</div><div class="dash-column-groups">${items.map(item => {
+    const hc=item.contados?Math.max(4,Math.round(item.contados/teto*100)):0;
+    const hp=item.pendentes?Math.max(4,Math.round(item.pendentes/teto*100)):0;
     const arg=String(item.filterValue??item.label).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
     return `<button type="button" class="dash-column-group" onclick="${onclickFn}('${arg}')" title="${_dashSafe(item.label)}: ${item.contados} contados e ${item.pendentes} pendentes">
-      <div class="dash-column-value-row"><span>${item.contados}</span><span>${item.pendentes}</span></div>
-      <div class="dash-column-bars"><i class="dash-column-bar audited" style="height:${hc}%"></i><i class="dash-column-bar divergent" style="height:${hp}%"></i></div>
-      <strong class="dash-column-label">${_dashSafe(item.label)}</strong>
-      <small>${item.pct}% concluído</small>
+      <span class="dash-columns"><i class="dash-column auditados" style="height:${hc}%"><b>${item.contados}</b></i><i class="dash-column divergencias" style="height:${hp}%"><b>${item.pendentes}</b></i></span>
+      <span class="dash-column-label">${_dashSafe(item.label)}<small style="display:block;margin-top:3px;color:var(--muted)">${item.pct}% concluído</small></span>
     </button>`;
-  }).join('')}</div></div></div>`;
+  }).join('')}</div></div></div></div>`;
 }
 
 function _renderDashboardCharts() {

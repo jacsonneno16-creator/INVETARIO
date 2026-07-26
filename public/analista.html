@@ -842,7 +842,6 @@
 @media(max-width:980px){.dash-summary,.dash-ranking,.dash-mini{grid-column:span 12}}
   /* v121 — grades operacionais com estrutura fixa, como na Auditoria */
   #page-contagens table,
-  #page-divergencias table,
   #page-recontagens table,
   #page-rel-divergencias table,
   .operacao-grade-fixa table {
@@ -851,7 +850,6 @@
     table-layout: fixed;
   }
   #page-contagens th, #page-contagens td,
-  #page-divergencias th, #page-divergencias td,
   #page-recontagens th, #page-recontagens td,
   #page-rel-divergencias th, #page-rel-divergencias td,
   .operacao-grade-fixa th, .operacao-grade-fixa td {
@@ -860,7 +858,6 @@
     vertical-align: top;
   }
   #page-contagens thead th,
-  #page-divergencias thead th,
   #page-recontagens thead th,
   #page-rel-divergencias thead th,
   .operacao-grade-fixa thead th {
@@ -871,11 +868,9 @@
     white-space: normal;
   }
   #page-contagens .table-wrap,
-  #page-divergencias .table-wrap,
   #page-recontagens .table-wrap,
   #page-rel-divergencias .table-wrap,
   #page-contagens [style*="overflow:auto"],
-  #page-divergencias [style*="overflow:auto"],
   #page-recontagens [style*="overflow:auto"],
   #page-rel-divergencias [style*="overflow:auto"],
   .operacao-grade-fixa {
@@ -901,10 +896,33 @@ input,select,.btn{min-height:34px}
 table{font-size:.76rem;line-height:1.22}
 table th{padding:8px 10px!important;font-size:.64rem!important;white-space:nowrap}
 table td{padding:8px 10px!important;vertical-align:middle}
-#page-contagens table,#page-divergencias table,#page-recontagens table,#page-pendencias table{min-width:1280px}
-#page-contagens table td:nth-child(5),#page-divergencias table td:nth-child(4),#page-recontagens table td:nth-child(4),#page-pendencias table td:nth-child(2){white-space:nowrap!important;min-width:230px;max-width:none!important}
-#page-contagens table td:nth-child(5) *,#page-divergencias table td:nth-child(4) *,#page-recontagens table td:nth-child(4) *,#page-pendencias table td:nth-child(2) *{white-space:nowrap!important;max-width:none!important}
-#page-contagens table td,#page-divergencias table td,#page-recontagens table td{height:54px}
+#page-contagens table,#page-recontagens table,#page-pendencias table{min-width:1480px}
+#page-contagens table td,#page-recontagens table td{height:58px}
+/* v122 — células isoladas: no máximo duas linhas, sem invadir a coluna vizinha */
+#page-recontagens table{table-layout:fixed!important;width:100%!important}
+#page-recontagens th,#page-recontagens td{
+  min-width:0!important;max-width:none!important;overflow:hidden!important;
+  overflow-wrap:anywhere!important;word-break:break-word!important;white-space:normal!important;
+}
+#page-recontagens td>*,#page-recontagens td>*>*{max-width:100%!important}
+#page-recontagens td:not(:first-child):not(:last-child)>div,
+#page-recontagens td:not(:first-child):not(:last-child)>span{
+  display:-webkit-box!important;-webkit-box-orient:vertical!important;-webkit-line-clamp:2!important;
+  line-clamp:2!important;overflow:hidden!important;text-overflow:ellipsis!important;
+  line-height:1.25!important;max-height:2.5em!important;
+}
+#page-recontagens th:nth-child(1){width:42px}
+#page-recontagens th:nth-child(2){width:120px}
+#page-recontagens th:nth-child(3){width:72px}
+#page-recontagens th:nth-child(4){width:105px}
+#page-recontagens th:nth-child(5){width:105px}
+#page-recontagens th:nth-child(6){width:100px}
+#page-recontagens th:nth-child(7){width:105px}
+#page-recontagens th:nth-child(8),#page-recontagens th:nth-child(9){width:190px}
+#page-recontagens th:nth-child(10){width:110px}
+#page-recontagens th:nth-child(11),#page-recontagens th:nth-child(12){width:105px}
+#page-recontagens th:nth-child(13),#page-recontagens th:nth-child(14){width:120px}
+#page-recontagens th:nth-child(15){width:170px}
 .sidebar{font-size:.9rem}.nav-item{min-height:42px;padding:8px 14px}.nav-badge{font-size:.66rem}
 @media(max-width:1200px){:root{font-size:13px}.page{padding:10px 12px 20px}.kpi-card{min-height:82px;padding:13px 15px}}
 </style>
@@ -974,13 +992,10 @@ table td{padding:8px 10px!important;vertical-align:middle}
 <span class="nav-icon">⏳</span>Pendências
     <span class="nav-badge yellow" id="nb-pendencias">0</span>
 </div>
-<div class="nav-item" id="nav-divergencias" onclick="goPage('divergencias',this)">
-<span class="nav-icon">⚠️</span>Em Conflito
-    <span class="nav-badge" id="nb-divergencias">0</span>
-</div>
 <div class="nav-item" id="nav-recontagens" onclick="goPage('recontagens',this)">
 <span class="nav-icon">🔄</span>Recontagem
-    <span class="nav-badge" id="nb-recontagens">0</span>
+    <span class="nav-badge" id="nb-divergencias">0</span>
+    <span class="nav-badge" id="nb-recontagens" style="display:none">0</span>
 </div>
 <div class="sb-sec">Relatórios</div>
 <div class="nav-item" id="nav-rel-divergencias" onclick="goPage('rel-divergencias',this)">
@@ -1362,12 +1377,12 @@ table td{padding:8px 10px!important;vertical-align:middle}
 </div>
 </div>
 <!-- ══ DIVERGÊNCIAS ══ -->
-<div class="page" id="page-divergencias">
+<div class="page" id="page-recontagens">
 <div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="atualizarDadosAnalista(this)">🔄 Atualizar</button></div>
 <div class="sec-hdr">
 <div>
-<div class="sec-title">⚠️ Contagens em Conflito</div>
-<div class="sec-sub">Contagens que divergiram da base — selecione e atribua operadores para recontar</div>
+<div class="sec-title">🔄 Recontagem</div>
+<div class="sec-sub">Comparação do esperado com o bipado, atribuição, execução e resultado em uma única tela</div>
 </div>
 <div style="display:flex;gap:8px;flex-wrap:wrap">
 <button class="btn btn-warn btn-sm" onclick="processarDivergencias({source:'manual',force:true})">⚙️ Processar Contagens</button>
@@ -1583,7 +1598,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
 </div>
 </div>
 <!-- ══ RECONTAGENS ══ -->
-<div class="page" id="page-recontagens">
+<div class="page" id="page-recontagens-historico" style="display:none!important">
 <div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="atualizarDadosAnalista(this)">🔄 Atualizar</button></div>
 <div class="sec-hdr">
 <div>
@@ -3298,7 +3313,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
 <!-- ══════════ JAVASCRIPT ══════════ -->
 
 
-</div><script src="js/shared/common-utils.js?v=20260723-52"></script><script src="js/shared/firebase-shared.js?v=20260722-18"></script><script src="js/shared/enderecos-service.js?v=20260724-95"></script><script src="js/shared/produtos-service.js?v=20260724-95"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/01-core-base-storage.js?v=20260724-74"></script><script src="js/analista/services/inventarioService.js?v=20260723-57"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260724-70"></script><script src="js/analista/firebaseService.js?v=20260726-120"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260723-51"></script><script src="js/analista/03-core-navigation.js?v=20260722-20"></script><script src="js/analista/04-compat-pages.js?v=20260724-73"></script><script src="js/analista/09-fs-publicar.js?v=20260724-95"></script><script src="js/analista/10-inventarios-negocio.js?v=20260723-51"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260724-79"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260724-95"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260726-120"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260725-109"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260724-61"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260724-78"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260726-120"></script><script src="js/analista/33-render-enderecos.js?v=20260724-95"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-20"></script><script src="js/analista/35-coletores-render.js?v=20260726-117"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260725-109"></script><script src="js/analista/39-base-produtos.js?v=20260724-95"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260726-117"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260724-95"></script>
+</div><script src="js/shared/common-utils.js?v=20260723-52"></script><script src="js/shared/firebase-shared.js?v=20260722-18"></script><script src="js/shared/enderecos-service.js?v=20260724-95"></script><script src="js/shared/produtos-service.js?v=20260724-95"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/01-core-base-storage.js?v=20260724-74"></script><script src="js/analista/services/inventarioService.js?v=20260723-57"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260724-70"></script><script src="js/analista/firebaseService.js?v=20260726-120"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260723-51"></script><script src="js/analista/03-core-navigation.js?v=20260726-122"></script><script src="js/analista/04-compat-pages.js?v=20260724-73"></script><script src="js/analista/09-fs-publicar.js?v=20260724-95"></script><script src="js/analista/10-inventarios-negocio.js?v=20260723-51"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260724-79"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260724-95"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260726-120"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260726-123"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260724-61"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260726-122"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260726-120"></script><script src="js/analista/33-render-enderecos.js?v=20260724-95"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-20"></script><script src="js/analista/35-coletores-render.js?v=20260726-117"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260725-109"></script><script src="js/analista/39-base-produtos.js?v=20260724-95"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260726-123"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260724-95"></script>
 <div class="modal-bg" id="modal-loja-cadastro"><div class="modal" style="max-width:480px">
   <div class="modal-title">🏪 <span id="ml-title">Cadastrar loja</span></div>
   <input type="hidden" id="ml-id"/>
@@ -3307,7 +3322,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260726-116"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260726-114"></script><script src="js/analista/42-topbar-tools.js?v=20260724-95"></script><script src="js/analista/43-importar-exportar-api.js?v=20260725-110"></script><script src="js/analista/app-controller.js?v=20260724-79"></script><script src="js/analista/00-auth-login.js?v=20260726-115"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260726-122"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260726-123"></script><script src="js/analista/42-topbar-tools.js?v=20260724-95"></script><script src="js/analista/43-importar-exportar-api.js?v=20260725-110"></script><script src="js/analista/app-controller.js?v=20260724-79"></script><script src="js/analista/00-auth-login.js?v=20260726-115"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}
@@ -3329,6 +3344,9 @@ table td{padding:8px 10px!important;vertical-align:middle}
 .acomp-chart-selected{outline:2px solid rgba(37,137,237,.5)!important;outline-offset:-2px;border-radius:9px;background:rgba(37,137,237,.07)!important}
 .acomp-aud-chart-host .dash-column-chart{min-width:max(620px,calc(var(--chart-count) * 86px))}
 .acomp-aud-chart-host .dash-pie-body{min-height:270px}
+.acomp-inventario-compacto .empty{min-height:110px;padding:18px!important}
+.acomp-inventario-compacto .tbl-wrap table{margin:0}
+@media(min-width:1200px){#page-acompanhamento>.tc{margin-bottom:12px}}
 </style>
 </body>
 </html>
