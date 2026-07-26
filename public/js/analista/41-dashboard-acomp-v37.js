@@ -16,10 +16,6 @@
   function setHero(pct,title,detail,color2){ensureHero();const ring=document.getElementById('acomp-live-ring');if(ring)ring.style.background=`conic-gradient(${color2||'#f59e0b'} ${pct*3.6}deg,rgba(255,255,255,.16) 0)`;setText('acomp-live-value',pct+'%');setText('acomp-live-title',title);setText('acomp-live-detail',detail);}
   function rawDb(){return window.getDTRawFirestore?.()||null;}
   function lojaAtiva(){return String(window.getDTLojaAtiva?.()||'').trim();}
-  function auditoriasRef(origem){
-    const raw=rawDb(); if(!raw)return null;
-    return origem==='raiz' ? raw.collection('dt_auditorias') : raw.collection('lojas').doc(lojaAtiva()).collection('dt_auditorias');
-  }
   function audDocRef(metaOuId){
     const meta=typeof metaOuId==='object'?metaOuId:acompAudMetas.find(x=>x.id===metaOuId);
     const id=typeof metaOuId==='object'?metaOuId.id:metaOuId;
@@ -40,18 +36,28 @@
     if(!force&&loja===acompAudLoja&&acompAudMetas.length)return;
     const raw=rawDb();
     if(!raw){acompAudMetas=[];acompAudLoja='';return;}
-    const itens=[],vistos=new Set();
+    const porId=new Map();
     async function add(ref,origem){
-      try{const snap=await ref.get();snap.docs.forEach(d=>{if(vistos.has(d.id))return;vistos.add(d.id);itens.push({id:d.id,...d.data(),_origem:origem});});}
+      try{const snap=await ref.get();snap.docs.forEach(d=>{
+        const dados={id:d.id,...d.data(),_origem:origem};
+        const atual=porId.get(d.id);
+        if(!atual){
+          porId.set(d.id,{...dados,_candidatos:[dados]});
+          return;
+        }
+        atual._candidatos.push(dados);
+        // A coleção principal é a origem usada pelos coletores. Quando houver
+        // uma cópia de metadados na loja, preserve o nome mais recente, mas
+        // nunca perca a referência principal que contém os resultados.
+        if(origem==='raiz')Object.assign(atual,dados,{_candidatos:atual._candidatos});
+      });}
       catch(e){console.warn('[ACOMP AUD] Falha ao listar '+origem+':',e);}
     }
-    if(loja) await add(raw.collection('lojas').doc(loja).collection('dt_auditorias'),'loja:'+loja);
-    try{
-      const ls=await raw.collection('lojas').get();
-      for(const ld of ls.docs){if(ld.id!==loja)await add(raw.collection('lojas').doc(ld.id).collection('dt_auditorias'),'loja:'+ld.id);}
-    }catch(e){console.warn('[ACOMP AUD] Falha ao procurar auditorias nas lojas:',e);}
+    // O coletor grava em dt_auditorias na raiz. Leia essa origem primeiro e
+    // consulte apenas a loja ativa como compatibilidade com instalações novas.
     await add(raw.collection('dt_auditorias'),'raiz');
-    acompAudMetas=itens.sort((a,b)=>{
+    if(loja) await add(raw.collection('lojas').doc(loja).collection('dt_auditorias'),'loja:'+loja);
+    acompAudMetas=[...porId.values()].sort((a,b)=>{
       const av=a.criadoEm?.toMillis?.()||a.criadoEm?.seconds*1000||Date.parse(a.criadoEm||a.criado_em||0)||0;
       const bv=b.criadoEm?.toMillis?.()||b.criadoEm?.seconds*1000||Date.parse(b.criadoEm||b.criado_em||0)||0;
       return bv-av;
@@ -83,11 +89,40 @@
   async function carregarAuditoriaSelecionada(){
     const id=document.getElementById('acomp-sel-inv')?.value||'';
     if(!id){acompAudItens=[];acompAudOcorrencias=[];renderAcompAuditoria();return;}
-    const meta=acompAudMetas.find(m=>m.id===id);const ref=audDocRef(meta||id);if(!ref)return;
-    const aplicar=async snap=>{acompAudItens=await montarItensAuditoria(ref,snap);renderAcompAuditoria();};
+    const meta=acompAudMetas.find(m=>m.id===id);
+    const candidatos=(meta?._candidatos?.length?meta._candidatos:[meta||id])
+      .map(x=>({meta:x,ref:audDocRef(x)})).filter(x=>x.ref);
+    if(!candidatos.length)return;
     try{
-      const inicial=await ref.collection('enderecos').get();await aplicar(inicial);
-      try{const oc=await ref.collection('ocorrencias').get();acompAudOcorrencias=oc.docs.map(d=>({id:d.id,...d.data()}));renderAcompAuditoria();}catch(e){acompAudOcorrencias=[];}
+      const leituras=await Promise.all(candidatos.map(async candidato=>{
+        try{
+          const [enderecos,ocorrencias]=await Promise.all([
+            candidato.ref.collection('enderecos').get(),
+            candidato.ref.collection('ocorrencias').get().catch(()=>({docs:[]}))
+          ]);
+          const itens=await montarItensAuditoria(candidato.ref,enderecos);
+          return {candidato,itens,ocorrencias:ocorrencias.docs.map(d=>({id:d.id,...d.data()}))};
+        }catch(error){
+          console.warn('[ACOMP AUD] Origem indisponível '+(candidato.meta?._origem||'desconhecida')+':',error);
+          return null;
+        }
+      }));
+      const validas=leituras.filter(Boolean);
+      if(!validas.length)throw new Error('Nenhuma origem da auditoria pôde ser consultada.');
+      // Escolha a origem que efetivamente possui a base/resultados. Em empate,
+      // a raiz vence porque é o destino oficial das gravações do coletor.
+      validas.sort((a,b)=>b.itens.length-a.itens.length||
+        Number(b.candidato.meta?._origem==='raiz')-Number(a.candidato.meta?._origem==='raiz'));
+      const escolhida=validas[0];
+      acompAudItens=escolhida.itens;
+      const ocorrencias=new Map();
+      validas.flatMap(x=>x.ocorrencias).forEach(x=>ocorrencias.set(chaveAudItem(x),x));
+      acompAudOcorrencias=[...ocorrencias.values()];
+      if(meta){
+        meta._origem=escolhida.candidato.meta?._origem||meta._origem;
+        meta._origemDados=meta._origem;
+      }
+      renderAcompAuditoria();
     }catch(e){console.error('[ACOMP AUD] Falha ao carregar acompanhamento:',e);acompAudItens=[];renderAcompAuditoria();}
   }
   function agrupar(lista,fn){const m={};lista.forEach(x=>{const k=fn(x)||'SEM DADO';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}

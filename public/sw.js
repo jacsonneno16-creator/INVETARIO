@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v112-atualizacao-manual-inventario';
+var CACHE='dt-inventario-v114-acompanhamento-auditoria';
 var PRECACHE=[
   '/',
   '/coletor.html',
