@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v123-ajustes-graficos-vazios-compactos';
+var CACHE='dt-inventario-v125-recontagem-rodadas-analista';
 var PRECACHE=[
   '/',
   '/coletor.html',

@@ -367,9 +367,10 @@ function _concluirRecontagem() {
         if (idEhRecontagem) {
             FS.collection('dt_recontagens').doc(item.id).update(upd).catch(function (e) { return console.warn('[Rec]', e.message); });
         }
-        else if (item.divergencia_id || item._col === 'divergencia') {
-            // Sem rec criada pelo analista: atualizar a divergência diretamente
-            var divFsId = item.divergencia_id || item.id;
+        // Sempre devolver o conflito ao Analista imediatamente. Assim ele não
+        // reaparece para o operador antes de uma nova atribuição explícita.
+        var divFsId = item.divergencia_id || (item._col === 'divergencia' ? item.id : null);
+        if (divFsId) {
             FS.collection('dt_divergencias').doc(divFsId).update({ status_recontagem: 'aguardando_analista', operador_responsavel: null }).catch(function (e) { return console.warn('[Div]', e.message); });
         }
     }

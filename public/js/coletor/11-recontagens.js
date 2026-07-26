@@ -290,10 +290,16 @@ function _concluirRecontagem() {
     const idEhRecontagem = item._col === 'recontagem' || (item._col === 'divergencia' && item.divergencia_id && item.id !== item.divergencia_id);
     if (idEhRecontagem) {
       FS.collection('dt_recontagens').doc(item.id).update(upd).catch(e=>console.warn('[Rec]',e.message));
-    } else if (item.divergencia_id || item._col === 'divergencia') {
-      // Sem rec criada pelo analista: atualizar a divergência diretamente
-      const divFsId = item.divergencia_id || item.id;
-      FS.collection('dt_divergencias').doc(divFsId).update({ status_recontagem:'aguardando_analista', operador_responsavel:null }).catch(e=>console.warn('[Div]',e.message));
+    }
+    // Sempre devolver o conflito ao Analista imediatamente. Assim, mesmo se o
+    // coletor for reaberto antes do próximo "Atualizar", a rodada concluída não
+    // reaparece para o operador e não fica atribuída por engano.
+    const divFsId = item.divergencia_id || (item._col === 'divergencia' ? item.id : null);
+    if (divFsId) {
+      FS.collection('dt_divergencias').doc(divFsId).update({
+        status_recontagem:'aguardando_analista',
+        operador_responsavel:null
+      }).catch(e=>console.warn('[Div]',e.message));
     }
   }
   // Marcar recontagem como concluída e encerrada na lista local
@@ -453,4 +459,3 @@ function renderRecontagensAtribuidas() {
   }
   el.innerHTML = html;
 }
-

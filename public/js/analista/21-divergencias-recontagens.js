@@ -95,9 +95,21 @@
   }
 
   function _qtdEsperadaItem(item){
-    const v=item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ?? item?.quantidade_sistema ?? item?.quantidadeSistema ?? item?.quantidade;
-    const n=parseFloat(String(v??'').replace(',','.'));
+    const v=item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ??
+      item?.quantidade_sistema ?? item?.quantidadeSistema ?? item?.quantidade_enderecada ?? item?.qtd_enderecada ??
+      item?.saldo_estoque ?? item?.saldo ?? item?.saldo_erp ?? item?.qtd_sistema ?? item?.qtd_estoque ??
+      item?.estoque_total ?? item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde;
+    const texto=String(v??'').trim().replace(/\s/g,'');
+    const n=Number(texto.includes(',')?texto.replace(/\./g,'').replace(',','.'):texto);
     return Number.isFinite(n)?n:0;
+  }
+
+  function _snapshotEsperadoEndereco(inv,endereco){
+    return (inv?.base||[]).filter(item=>_nd(item.endereco)===_nd(endereco)).map(item=>({
+      codigo_produto:_idPrincipalBase(item),
+      descricao_produto:_descricaoProduto(item,item),
+      quantidade_esperada:_qtdEsperadaItem(item)
+    }));
   }
 
   function _produtoGeral(obj){
@@ -279,8 +291,101 @@
     // Map de contagens a atualizar: uuid/id → objeto atualizado
     const contagensMap = new Map();
 
+    // Incorporar no registro da rodada o resultado enviado pelo Coletor.
+    // A contagem fica em dt_contagens; sem esta consolidação a tarefa podia ser
+    // marcada como concluída, mas quantidade/produto não apareciam na Recontagem.
+    const recsComResultado = state().recontagens.map(rec => {
+      const recebidas = state().contagens.filter(c =>
+        c.tipo_contagem === 'RECONTAGEM' &&
+        !_isVazio(c) &&
+        !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA' &&
+        String(c.recontagem_id || '') === String(rec.id || '')
+      );
+      if (!recebidas.length) return rec;
+
+      const qtd = recebidas.reduce((total, c) => total + _qtdComparavel(c), 0);
+      const produtos = [...new Set(recebidas.flatMap(c => _codigosLidosPrioritarios(c)).filter(Boolean))];
+      const produto = produtos.join(', ') || rec.produto_recontagem || rec.produto || '';
+      const ultima = [...recebidas].sort((a,b) =>
+        String(b.criado_em || b.dataHora || '').localeCompare(String(a.criado_em || a.dataHora || ''))
+      )[0];
+      const operador = ultima?.operador || ultima?.operador_nome || rec.operador_recontagem || rec.operador || '';
+      const data = ultima?.criado_em || ultima?.dataHora || rec.recontagem_concluida_em || new Date().toISOString();
+      const numero = Number(rec.numero_recontagem || 1);
+
+      const atualizado = Object.assign({}, rec, {
+        qtd_recontagem: qtd,
+        produto_recontagem: produto,
+        operador_recontagem: operador,
+        recontagem_concluida_em: data,
+        concluida_em: data,
+        status: 'CONCLUIDA',
+        status_recontagem: 'aguardando_analista',
+        operador_atribuido_anterior: rec.operador || rec.operador_atribuido_anterior || null,
+        operador: null
+      });
+      if (numero === 1) Object.assign(atualizado, {
+        qtd_segunda: qtd, produto_segunda: produto,
+        operador_segunda: operador, data_segunda: data
+      });
+      else Object.assign(atualizado, {
+        qtd_terceira: qtd, produto_terceira: produto,
+        operador_terceira: operador, data_terceira: data
+      });
+      if (JSON.stringify(atualizado) !== JSON.stringify(rec)) fsSalvarRecontagem(atualizado);
+      return atualizado;
+    });
+
+    if (JSON.stringify(recsComResultado) !== JSON.stringify(state().recontagens)) {
+      const divsComResultado = state().divergencias.map(div => {
+        const rec = [...recsComResultado]
+          .filter(r => String(r.divergencia_id || '') === String(div.id || '') && r.qtd_recontagem != null)
+          .sort((a,b) => Number(b.numero_recontagem || 1) - Number(a.numero_recontagem || 1))[0];
+        if (!rec) return div;
+        const numero = Number(rec.numero_recontagem || 1);
+        const atualizado = Object.assign({}, div, {
+          qtd_recontagem: rec.qtd_recontagem,
+          produto_recontagem: rec.produto_recontagem,
+          operador_recontagem: rec.operador_recontagem,
+          status: 'EM_RECONTAGEM',
+          status_recontagem: 'aguardando_analista',
+          operador_responsavel: null
+        });
+        if (numero === 1) Object.assign(atualizado, {
+          qtd_segunda: rec.qtd_segunda, produto_segunda: rec.produto_segunda,
+          operador_segunda: rec.operador_segunda, data_segunda: rec.data_segunda
+        });
+        else Object.assign(atualizado, {
+          qtd_terceira: rec.qtd_terceira, produto_terceira: rec.produto_terceira,
+          operador_terceira: rec.operador_terceira, data_terceira: rec.data_terceira
+        });
+        fsSalvarDivergencia(atualizado);
+        return atualizado;
+      });
+      Store.dispatch(Actions.batch([
+        Actions.replaceSlice('recontagens', recsComResultado, BIZMETA),
+        Actions.replaceSlice('divergencias', divsComResultado, BIZMETA)
+      ], BIZMETA));
+    }
+
     inventarios.forEach(inv => {
       if (!inv.base?.length) return;
+
+      // Mantém em cada divergência um retrato da base oficial do endereço.
+      // Assim a tela continua exibindo produto e quantidade mesmo depois de
+      // recarregar os metadados do inventário ou consultar registros antigos.
+      state().divergencias.filter(d=>_pertenceInventario(d,inv)).forEach(d=>{
+        const itens=_snapshotEsperadoEndereco(inv,d.endereco);
+        if(!itens.length)return;
+        const atual=Array.isArray(d.itens_esperados)?d.itens_esperados:[];
+        const assinatura=a=>JSON.stringify((a||[]).map(x=>[
+          _nd(x.codigo_produto||x.codigoProduto),_qtdEsperadaItem(x),String(x.descricao_produto||x.descricaoProduto||'')
+        ]));
+        if(assinatura(atual)===assinatura(itens))return;
+        const atualizado=Object.assign({},d,{itens_esperados:itens});
+        divsUpdate.push(atualizado);
+        fsSalvarDivergencia(atualizado);
+      });
 
       const conts = state().contagens.filter(c =>
         _pertenceInventario(c, inv) &&
@@ -485,6 +590,7 @@
           qtd_esperada: qtdEsp, qtd_contada: qtdCont, diferenca,
           tipo_divergencia: 'QUANTIDADE_DIFERENTE', motivos_divergencia: ['QUANTIDADE_DIFERENTE'],
           status: 'EM_RECONTAGEM', precisa_recontagem: true,
+          itens_esperados: _snapshotEsperadoEndereco(inv,item.endereco),
           criada_em: new Date().toISOString(), criada_por: _currentAnalistaUser?.email || 'sistema',
         };
         novasDivs.push(div);
@@ -507,6 +613,7 @@
           tipo_divergencia: 'PRODUTO_NAO_IDENTIFICADO', motivos_divergencia: ['PRODUTO_NAO_IDENTIFICADO'],
           contagem_uuid: c.uuid, operador: c.operador,
           status: 'ABERTA', precisa_recontagem: true,
+          itens_esperados: _snapshotEsperadoEndereco(inv,c.endereco),
           criada_em: new Date().toISOString(), criada_por: _currentAnalistaUser?.email || 'sistema',
         };
         novasDivs.push(div);
@@ -533,6 +640,7 @@
           tipo_divergencia: 'PRODUTO_FORA_ENDERECO', motivos_divergencia: ['PRODUTO_FORA_ENDERECO'],
           contagem_uuid: c.uuid, operador: c.operador,
           status: 'ABERTA', precisa_recontagem: true,
+          itens_esperados: _snapshotEsperadoEndereco(inv,c.endereco),
           criada_em: new Date().toISOString(), criada_por: _currentAnalistaUser?.email || 'sistema',
         };
         novasDivs.push(div);
@@ -585,6 +693,9 @@
         vistos.add(div.id);
         const st = String(div.status || 'ABERTA').toUpperCase();
         if (st === 'RESOLVIDA' || st === 'PERSISTENTE' || div.precisa_recontagem === false) return;
+        // Uma rodada concluída volta primeiro para a decisão do Analista.
+        // Não criar a próxima automaticamente durante "Atualizar".
+        if (String(div.status_recontagem || '').toLowerCase() === 'aguardando_analista') return;
         const jaExiste = [...state().recontagens, ...novasRecs].some(r =>
           String(r.divergencia_id || '') === String(div.id) &&
           !['CONCLUIDA','CANCELADA'].includes(String(r.status || '').toUpperCase())
@@ -942,56 +1053,26 @@
       return;
     }
 
-    // ── 2ª rodada sem consenso → criar 3ª recontagem ──
+    // ── Rodada sem consenso → devolver ao Analista ──
+    // A próxima rodada NÃO nasce atribuída nem é enviada automaticamente ao
+    // mesmo coletor. O Analista decide se é necessária e usa "Atribuir".
     updatedDiv = Object.assign({}, updatedDiv, {
       status_recontagem: 'aguardando_analista', operador_responsavel: null, status: 'EM_RECONTAGEM',
       qtd_segunda: qtd, produto_segunda: produto, operador_segunda: operador, data_segunda: agora
     });
-
-    const _proxNum = numeroAtual + 1;
-    if (_proxNum <= MAX_CONTAGENS){
-      const qtdEspLog  = Number(recCtx.qtd_esperada);
-      const qtdPrimLog = Number(recCtx.qtd_primeira);
-      const rec3 = {
-        id: gerarId('REC'), divergencia_id: div.id,
-        inventario_id: recCtx.inventario_id, inventario_nome: recCtx.inventario_nome,
-        endereco: recCtx.endereco, produto: recCtx.produto, descricao: recCtx.descricao,
-        qtd_esperada: recCtx.qtd_esperada,
-        qtd_primeira: recCtx.qtd_primeira, produto_primeira: _nd(recCtx.produto_primeira || recCtx.produto),
-        qtd_segunda: qtd, produto_segunda: produto,
-        qtd_terceira: null, produto_terceira: null,
-        operador_primeira: recCtx.operador_primeira, operador_segunda: operador, operador_terceira: null,
-        data_segunda: agora, data_terceira: null,
-        numero_recontagem: _proxNum, tipo: _proxNum >= MAX_CONTAGENS ? 'TERCEIRA_CONTAGEM' : 'RECONTAGEM',
-        historico_recontagens: [
-          ...(recCtx.historico_recontagens || []),
-          { numero: 1, qtd, produto, operador, data: agora },
-        ],
-        contagem_original_uuid: recCtx.contagem_original_uuid,
-        qtd_recontagem: null, produto_recontagem: null, operador: null,
-        status: 'PENDENTE', status_recontagem: 'pendente',
-        criada_em: agora, concluida_em: null,
-        observacao: `${_proxNum}ª contagem necessária — 2ª não confirmou. 1ª=${isFinite(qtdPrimLog)?qtdPrimLog:'—'}(${_nd(recCtx.produto_primeira||recCtx.produto)}) | 2ª=${qtd}(${produto}) | sistema=${isFinite(qtdEspLog)?qtdEspLog:'—'}(${_nd(recCtx.produto)})`,
-        criada_por: _currentAnalistaUser?.email || 'analista',
-      };
-
-      const recsAtualizadas = state().recontagens.map(r => r.id === updatedRec.id ? updatedRec : r);
-      if (!recsAtualizadas.find(r => r.id === rec3.id)) recsAtualizadas.push(rec3);
-
-      fsSalvarRecontagem(rec3);
-      fsSalvarDivergencia(updatedDiv);
-      Store.dispatch(Actions.batch([
-        Actions.upsertEntity('divergencias', updatedDiv, BIZMETA),
-        Actions.replaceSlice('recontagens', recsAtualizadas, BIZMETA),
-        Actions.setPath('ui.recontagemCtx', updatedRec, BIZMETA)
-      ], BIZMETA));
-      showToast(`⚠️ 2ª contagem (${qtd}) sem consenso. ${_proxNum}ª recontagem criada!`, 'w');
-    } else {
-      finalizarComoPersistente(updatedRec, agora);
-      showToast(`🔴 Limite de ${MAX_CONTAGENS} contagens atingido — divergência finalizada como PERSISTENTE.`, 'w');
-    }
-
+    updatedRec = Object.assign({}, updatedRec, {
+      status: 'CONCLUIDA', status_recontagem: 'aguardando_analista',
+      operador_atribuido_anterior: recCtx.operador || recCtx.operador_atribuido_anterior || null,
+      operador: null
+    });
+    fsSalvarRecontagem(updatedRec);
     fsSalvarDivergencia(updatedDiv);
+    Store.dispatch(Actions.batch([
+      Actions.upsertEntity('divergencias', updatedDiv, BIZMETA),
+      Actions.upsertEntity('recontagens', updatedRec, BIZMETA),
+      Actions.setPath('ui.recontagemCtx', updatedRec, BIZMETA)
+    ], BIZMETA));
+    showToast(`⚠️ Recontagem registrada. Aguardando o Analista decidir se haverá nova rodada.`, 'w');
   }
 
   // ── confirmarRecontagem ──────────────────────────────────────────────────────

@@ -542,7 +542,8 @@ function renderDivergencias() {
         </th>
         <th>Inventário</th><th>Rua</th><th>Endereço</th>
         <th>Operador Contagem</th><th>Data</th><th>Tipo</th>
-        <th>Esperado no endereço</th><th>Bipado / contado</th><th>Resultado</th>
+        <th>Esperado no endereço</th><th>1ª Contagem</th>
+        <th>2ª Contagem</th><th>3ª Contagem</th><th>Resultado</th>
         <th>Status</th><th>Status Recontagem</th><th>Atribuído para</th><th>Executado por</th><th>Ações</th>
       </tr></thead>
       <tbody>
@@ -573,16 +574,23 @@ function renderDivergencias() {
           const difColorTxt= d.diferenca     != null ? difColor : 'var(--muted)';
           const inventario = state().inventarios.find(i =>
             String(i.id || '') === String(d.inventario_id || '') ||
-            String(i.codigo || '') === String(d.inventario_id || '')
+            String(i.codigo || '') === String(d.inventario_id || '') ||
+            String(i.nome || '') === String(d.inventario_id || '')
           );
-          const esperadosEndereco = (inventario?.base || []).filter(item =>
+          const esperadosDaBase = (inventario?.base || []).filter(item =>
             String(item.endereco || '').trim().toUpperCase() === String(d.endereco || '').trim().toUpperCase()
           );
+          const esperadosEndereco = esperadosDaBase.length
+            ? esperadosDaBase
+            : (Array.isArray(d.itens_esperados) ? d.itens_esperados : []);
           const esperadoHtml = esperadosEndereco.length
             ? esperadosEndereco.map(item => {
                 const codigo = item.codigo_produto || item.codigoProduto || item.codigo_interno || item.codigoInterno || item.gtin || item.ean || item.dun || '—';
                 const nome = item.descricao_produto || item.descricaoProduto || item.descricao || item.nomeProduto || '';
-                const qtd = item.quantidade_esperada ?? item.quantidadeEsperada ?? item.qtd_esperada ?? item.qtdEsperada ?? item.quantidade ?? '—';
+                const qtd = item.quantidade_esperada ?? item.quantidadeEsperada ?? item.qtd_esperada ?? item.qtdEsperada ??
+                  item.quantidade_enderecada ?? item.qtd_enderecada ?? item.saldo_estoque ?? item.saldo ??
+                  item.saldo_erp ?? item.qtd_sistema ?? item.qtd_estoque ?? item.estoque_total ??
+                  item.estoque ?? item.quantidade ?? item.qtd ?? item.qtde ?? '—';
                 return `<div style="margin-bottom:5px"><div class="mono" style="font-weight:750">${escHTML(codigo)} · Qtd ${escHTML(qtd)}</div>${nome ? `<div style="font-size:.68rem;color:var(--muted);max-width:210px">${escHTML(nome)}</div>` : ''}</div>`;
               }).join('')
             : `<div class="mono" style="font-weight:750">${escHTML(d.produto || '—')} · Qtd ${escHTML(qtdEspTxt)}</div><div style="font-size:.68rem;color:var(--muted)">${escHTML(d.descricao || '')}</div>`;
@@ -593,6 +601,19 @@ function renderDivergencias() {
           const statusRec = d.status_recontagem || (rec ? (rec.status==='CONCLUIDA' ? 'concluida' : 'pendente') : '');
           const atribPara = d.operador_responsavel || rec?.operador || '';
           const executadoPor = rec?.operador_recontagem || d.operador_recontagem || '';
+          const _cellRodada = (qtd, produto, operadorRodada, dataRodada, aguardando) => {
+            if (qtd == null) {
+              return `<td><div style="color:var(--muted);font-size:.7rem;text-align:center;line-height:1.25">${aguardando ? 'Aguardando<br>Analista' : '—'}</div></td>`;
+            }
+            const qtdEsp = parseFloat(d.qtd_esperada);
+            const bate = !isNaN(qtdEsp) && parseFloat(qtd) === qtdEsp;
+            const codigo = String(produto || '').trim().toUpperCase();
+            return `<td>
+              <div style="font-family:var(--mono);font-weight:800;color:${bate ? 'var(--success)' : 'var(--danger)'}">${escHTML(codigo || '—')} · Qtd ${qtd}</div>
+              ${operadorRodada ? `<div style="font-size:.65rem;color:var(--muted)">${escHTML(operadorRodada)}</div>` : ''}
+              ${dataRodada ? `<div style="font-size:.6rem;color:var(--muted-2)">${fmtTs(dataRodada)}</div>` : ''}
+            </td>`;
+          };
 
           return `<tr style="${selecionado ? 'background:rgba(232,117,26,.06)' : ''}">
             <td style="padding:8px 10px">
@@ -619,6 +640,20 @@ function renderDivergencias() {
               const _c1Cell = `<td><div style="font-family:var(--mono);font-weight:800;color:${_corC1}">${escHTML(produtoBipado)} · Qtd ${_qtdC1}</div>${descricaoBipada ? `<div style="font-size:.68rem;color:var(--muted);max-width:210px">${escHTML(descricaoBipada)}</div>` : ''}${d.operador ? `<div style="font-size:.65rem;color:var(--muted)">${escHTML(d.operador)}</div>` : ''}</td>`;
               return _c1Cell;
             })()}
+            ${_cellRodada(
+              rec?.qtd_segunda ?? d.qtd_segunda,
+              rec?.produto_segunda ?? d.produto_segunda,
+              rec?.operador_segunda ?? d.operador_segunda,
+              rec?.data_segunda ?? d.data_segunda,
+              statusRec === 'aguardando_analista' && (rec?.qtd_segunda ?? d.qtd_segunda) == null
+            )}
+            ${_cellRodada(
+              rec?.qtd_terceira ?? d.qtd_terceira,
+              rec?.produto_terceira ?? d.produto_terceira,
+              rec?.operador_terceira ?? d.operador_terceira,
+              rec?.data_terceira ?? d.data_terceira,
+              false
+            )}
             ${(() => {
               const recFinal = state().recontagens
                 .filter(r => r.divergencia_id === d.id)
@@ -626,7 +661,7 @@ function renderDivergencias() {
               const qtdRes = d.qtd_resultado_final ?? recFinal?.qtd_recontagem ?? recFinal?.qtd_terceira ?? recFinal?.qtd_segunda ?? null;
               const opRes  = recFinal?.operador_segunda || recFinal?.operador || '';
               const motivo = d.contagem_aceita || '';
-              if (qtdRes == null) return '<td style="color:var(--muted);font-size:.75rem;text-align:center">—</td>';
+              if (qtdRes == null) return '<td><div style="color:var(--muted);font-size:.7rem;text-align:center;line-height:1.25">Aguardando<br>recontagem</div></td>';
               const qtdEspN = parseFloat(d.qtd_esperada);
               const bate = !isNaN(qtdEspN) && parseFloat(qtdRes) === qtdEspN;
               const cor  = bate ? 'var(--success)' : 'var(--danger)';

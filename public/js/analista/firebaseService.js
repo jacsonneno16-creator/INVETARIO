@@ -233,14 +233,22 @@
 
   function _normalizarItemBase(item){
     const x=Object.assign({},item||{});
-    const qtd=x.quantidade_esperada ?? x.quantidadeEsperada ?? x.qtd_esperada ?? x.qtdEsperada ?? x.quantidade_sistema ?? x.quantidadeSistema ?? x.quantidade;
+    const qtd=x.quantidade_esperada ?? x.quantidadeEsperada ?? x.qtd_esperada ?? x.qtdEsperada ??
+      x.quantidade_sistema ?? x.quantidadeSistema ?? x.quantidade_enderecada ?? x.qtd_enderecada ??
+      x.saldo_estoque ?? x.saldo ?? x.saldo_erp ?? x.qtd_sistema ?? x.qtd_estoque ??
+      x.estoque_total ?? x.estoque ?? x.quantidade ?? x.qtd ?? x.qtde;
     const cod=x.codigo_produto ?? x.codigoProduto ?? x.codigo_interno ?? x.codigoInterno ?? x.sku ?? x.gtin ?? x.ean ?? x.dun ?? '';
     const desc=x.descricao_produto ?? x.descricaoProduto ?? x.descricao ?? x.produto_nome ?? x.nomeProduto ?? x.produto ?? '';
     return Object.assign({},x,{
       endereco:String(x.endereco ?? x.localizacao ?? x.posicao ?? '').trim(),
       codigo_produto:String(cod??'').trim(),
       descricao_produto:String(desc??'').trim(),
-      quantidade_esperada:Number.isFinite(Number(qtd))?Number(qtd):0
+      quantidade_esperada:(()=>{
+        const texto=String(qtd??'').trim().replace(/\s/g,'');
+        const normalizado=texto.includes(',') ? texto.replace(/\./g,'').replace(',','.') : texto;
+        const numero=Number(normalizado);
+        return Number.isFinite(numero)?numero:0;
+      })()
     });
   }
 

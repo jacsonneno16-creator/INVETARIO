@@ -896,7 +896,8 @@ input,select,.btn{min-height:34px}
 table{font-size:.76rem;line-height:1.22}
 table th{padding:8px 10px!important;font-size:.64rem!important;white-space:nowrap}
 table td{padding:8px 10px!important;vertical-align:middle}
-#page-contagens table,#page-recontagens table,#page-pendencias table{min-width:1480px}
+#page-contagens table,#page-pendencias table{min-width:1480px}
+#page-recontagens table{min-width:1880px}
 #page-contagens table td,#page-recontagens table td{height:58px}
 /* v122 — células isoladas: no máximo duas linhas, sem invadir a coluna vizinha */
 #page-recontagens table{table-layout:fixed!important;width:100%!important}
@@ -918,11 +919,12 @@ table td{padding:8px 10px!important;vertical-align:middle}
 #page-recontagens th:nth-child(5){width:105px}
 #page-recontagens th:nth-child(6){width:100px}
 #page-recontagens th:nth-child(7){width:105px}
-#page-recontagens th:nth-child(8),#page-recontagens th:nth-child(9){width:190px}
-#page-recontagens th:nth-child(10){width:110px}
-#page-recontagens th:nth-child(11),#page-recontagens th:nth-child(12){width:105px}
-#page-recontagens th:nth-child(13),#page-recontagens th:nth-child(14){width:120px}
-#page-recontagens th:nth-child(15){width:170px}
+#page-recontagens th:nth-child(8){width:190px}
+#page-recontagens th:nth-child(9),#page-recontagens th:nth-child(10),
+#page-recontagens th:nth-child(11),#page-recontagens th:nth-child(12){width:135px}
+#page-recontagens th:nth-child(13),#page-recontagens th:nth-child(14){width:110px}
+#page-recontagens th:nth-child(15),#page-recontagens th:nth-child(16){width:120px}
+#page-recontagens th:nth-child(17){width:170px}
 .sidebar{font-size:.9rem}.nav-item{min-height:42px;padding:8px 14px}.nav-badge{font-size:.66rem}
 @media(max-width:1200px){:root{font-size:13px}.page{padding:10px 12px 20px}.kpi-card{min-height:82px;padding:13px 15px}}
 </style>
@@ -3313,7 +3315,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
 <!-- ══════════ JAVASCRIPT ══════════ -->
 
 
-</div><script src="js/shared/common-utils.js?v=20260723-52"></script><script src="js/shared/firebase-shared.js?v=20260722-18"></script><script src="js/shared/enderecos-service.js?v=20260724-95"></script><script src="js/shared/produtos-service.js?v=20260724-95"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/01-core-base-storage.js?v=20260724-74"></script><script src="js/analista/services/inventarioService.js?v=20260723-57"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260724-70"></script><script src="js/analista/firebaseService.js?v=20260726-120"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260723-51"></script><script src="js/analista/03-core-navigation.js?v=20260726-122"></script><script src="js/analista/04-compat-pages.js?v=20260724-73"></script><script src="js/analista/09-fs-publicar.js?v=20260724-95"></script><script src="js/analista/10-inventarios-negocio.js?v=20260723-51"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260724-79"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260724-95"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260726-120"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260726-123"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260724-61"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260726-122"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260726-120"></script><script src="js/analista/33-render-enderecos.js?v=20260724-95"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-20"></script><script src="js/analista/35-coletores-render.js?v=20260726-117"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260725-109"></script><script src="js/analista/39-base-produtos.js?v=20260724-95"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260726-123"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260724-95"></script>
+</div><script src="js/shared/common-utils.js?v=20260723-52"></script><script src="js/shared/firebase-shared.js?v=20260722-18"></script><script src="js/shared/enderecos-service.js?v=20260724-95"></script><script src="js/shared/produtos-service.js?v=20260724-95"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/01-core-base-storage.js?v=20260724-74"></script><script src="js/analista/services/inventarioService.js?v=20260723-57"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260724-70"></script><script src="js/analista/firebaseService.js?v=20260726-124"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260723-51"></script><script src="js/analista/03-core-navigation.js?v=20260726-122"></script><script src="js/analista/04-compat-pages.js?v=20260724-73"></script><script src="js/analista/09-fs-publicar.js?v=20260724-95"></script><script src="js/analista/10-inventarios-negocio.js?v=20260723-51"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260724-79"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260724-95"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260726-124"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260726-123"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260724-61"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260726-122"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260726-124"></script><script src="js/analista/33-render-enderecos.js?v=20260724-95"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-20"></script><script src="js/analista/35-coletores-render.js?v=20260726-117"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260725-109"></script><script src="js/analista/39-base-produtos.js?v=20260724-95"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260726-123"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260724-95"></script>
 <div class="modal-bg" id="modal-loja-cadastro"><div class="modal" style="max-width:480px">
   <div class="modal-title">🏪 <span id="ml-title">Cadastrar loja</span></div>
   <input type="hidden" id="ml-id"/>
