@@ -141,7 +141,8 @@
   async function initApp(){
     loadAll();
     setupStorageSync();
-    startPolling();
+    // Inventário não consulta nem relê contagens automaticamente. O cache é
+    // atualizado somente pela ação manual coordenada do analista.
     if (global.AnalistaAppController?.bindUI) global.AnalistaAppController.bindUI();
     renderAll();
     if (typeof global.logSistema === 'function') global.logSistema('SISTEMA', 'Painel do analista iniciado', {});

@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v110-importar-exportar-restaurado';
+var CACHE='dt-inventario-v112-atualizacao-manual-inventario';
 var PRECACHE=[
   '/',
   '/coletor.html',

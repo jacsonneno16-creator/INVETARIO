@@ -323,15 +323,73 @@
     return true;
   }
 
+  async function _carregarEnderecosManual(){
+    const metaSnap=await global.FS_AN.collection('dt_locais_meta').doc('versao').get();
+    if(!metaSnap.exists)return [];
+    const meta=metaSnap.data()||{},versao=String(meta.versao||'');
+    if(!versao||Number(meta.total||0)===0)return [];
+    const snapshot=await global.FS_AN.collection('dt_locais_chunks').where('versao','==',versao).get();
+    const docs=[];
+    (snapshot.docs||[]).slice().sort((a,b)=>Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0)).forEach(doc=>{
+      const data=doc.data()||{};
+      const itens=Array.isArray(data.dados)?data.dados:(Array.isArray(data.itens)?data.itens:[]);
+      itens.forEach((item,index)=>docs.push({id:item.id||`${doc.id}_${index}`,...item}));
+    });
+    global.AnalistaStore.dispatch(Actions.replaceSlice('enderecosLista',docs,{source:'firebase-manual'}));
+    const agrupados=global.AnalistaBootstrap?.agruparEnderecosPorSetor?.(docs)||{};
+    global.AnalistaStore.dispatch(Actions.setPath('enderecosPorSetor',agrupados,{source:'firebase-manual'}));
+    const Storage=global.AnalistaStorage;
+    if(Storage?.storageSave&&Storage?.KEYS?.enderecos)Storage.storageSave(Storage.KEYS.enderecos,docs);
+    return docs;
+  }
+
+  async function _lerColecaoInventariosManual(path,ids,collection){
+    if(!ids.length)return [];
+    const grupos=InventarioService.chunkIds(ids,10);
+    const snaps=await Promise.all(grupos.map(grupo=>global.FS_AN.collection(path).where('inventario_id','in',grupo).get()));
+    const docs=[];
+    snaps.forEach(snap=>snap.docs.forEach(doc=>{
+      const raw={id:doc.id,...doc.data()};
+      docs.push((collection==='divergencias'||collection==='recontagens')?raw:InventarioService.normalizarContagem(raw));
+    }));
+    return docs;
+  }
+
+  // Único ponto de leitura das quatro bases operacionais do Inventário.
+  // Não cria listeners: uma nova consulta só ocorre em outro clique em Atualizar.
+  async function refreshInventarioManual(){
+    if(!navigator.onLine)throw new Error('Sem conexão com a internet.');
+    await _carregarInventariosSeNecessario();
+    const ids=_getActiveInventoryIds();
+    const [enderecos,contagens,vazios,divergencias,recontagens]=await Promise.all([
+      _carregarEnderecosManual(),
+      _lerColecaoInventariosManual('dt_contagens',ids,'contagens'),
+      _lerColecaoInventariosManual('dt_vazios',ids,'vazios'),
+      _lerColecaoInventariosManual('dt_divergencias',ids,'divergencias'),
+      _lerColecaoInventariosManual('dt_recontagens',ids,'recontagens')
+    ]);
+    const contagensUnificadas=new Map();
+    contagens.concat(vazios).forEach(item=>contagensUnificadas.set(String(item.id),item));
+    global.AnalistaStore.dispatch(Actions.batch([
+      Actions.replaceSlice('contagens',Array.from(contagensUnificadas.values()),{source:'firebase-manual'}),
+      Actions.replaceSlice('divergencias',divergencias,{source:'firebase-manual'}),
+      Actions.replaceSlice('recontagens',recontagens,{source:'firebase-manual'})
+    ],{source:'firebase-manual-inventario'}));
+    ['contagens','divergencias','recontagens'].forEach(_persistirSlice);
+    try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'manual-refresh',force:true});}catch(e){console.warn('[FirebaseService] Processamento manual:',e.message);}
+    global.AnalistaBootstrap?.saveAll?.();
+    global.AnalistaBootstrap?.renderAll?.();
+    global.AnalistaNavigation?.renderCurrentPage?.();
+    _emitSync(true,`Atualização manual concluída: ${contagens.length+vazios.length} contagens, ${divergencias.length} conflitos e ${recontagens.length} recontagens.`,{started:false,source:'firebase-manual'});
+    return {enderecos:enderecos.length,contagens:contagens.length+vazios.length,divergencias:divergencias.length,recontagens:recontagens.length};
+  }
+
   if(!global.__dtBasesProdutoListener){
     global.__dtBasesProdutoListener=true;
     global.addEventListener('dt-produtos-atualizados',function(){
-      clearTimeout(global.__dtBasesProdutoTid);
-      global.__dtBasesProdutoTid=setTimeout(function(){
-        _carregarInventariosSeNecessario().then(function(){
-          try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'produtos-atualizados',force:true});}catch(e){console.warn('[FirebaseService] Reprocessar produtos:',e.message);}
-        });
-      },120);
+      // Recalcula somente o instantâneo local. Atualizar produtos não deve
+      // iniciar uma leitura silenciosa das bases do Inventário.
+      try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'produtos-atualizados-cache',force:true});}catch(e){console.warn('[FirebaseService] Reprocessar produtos:',e.message);}
     });
   }
 
@@ -367,54 +425,14 @@
       return false;
     }
 
-    // Sempre garantir listener de coletores ativo (independe de inventários)
+    // Coletores continuam com status próprio; as bases do Inventário permanecem
+    // no cache até o analista clicar em Atualizar.
     if (!state.unsubscribers.coletores) {
       state.unsubscribers.coletores = _listenColetores();
     }
-
-    // Carregar inventários e catálogo de endereços do Firebase.
-    await _carregarInventariosSeNecessario();
-    try{
-      if(global.DTProdutos?.carregar) await global.DTProdutos.carregar(false);
-    }catch(e){ console.warn('[FirebaseService] Falha ao carregar Base de Produtos:',e.message); }
-    // Reprocessar registros antigos depois que a base do inventário e o catálogo
-    // de produtos estiverem disponíveis. Isso corrige automaticamente registros
-    // que antes apareciam como "Código sem cadastro" e qtd sistema null.
-    try{
-      global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'bases-carregadas',force:true});
-    }catch(e){ console.warn('[FirebaseService] Reprocessamento após carregar bases:',e.message); }
-    if (!state.unsubscribers.enderecos) state.unsubscribers.enderecos = _listenEnderecos();
-
-    const ids = _getActiveInventoryIds();
-    if (!ids.length) {
-      ['contagens','vazios','divergencias','recontagens'].forEach(function(collection){
-        (state.unsubscribers[collection]||[]).forEach(function(unsub){try{unsub();}catch(_e){}});
-        state.unsubscribers[collection]=[];
-      });
-      state.started=false;state.currentInventoryIds=[];
-      _emitSync(true, 'Sem inventário ativo — dados operacionais limpos.', { started: false, source: 'firebase' });
-      return true;
-    }
-
-    const fingerprint = ids.join('|');
-    if (state.started && state.currentInventoryIds.join('|') === fingerprint) {
-      _emitSync(true, 'Tempo real ativo', { started: true });
-      return true;
-    }
-
-    // Parar listeners de contagens antes de reiniciar
-    ['contagens', 'vazios', 'divergencias', 'recontagens'].forEach(collection => {
-      (state.unsubscribers[collection] || []).forEach(unsub => { try { unsub(); } catch(_) {} });
-      state.unsubscribers[collection] = [];
-    });
-
-    state.unsubscribers.contagens   = _listenCollection('contagens',   'dt_contagens');
-    state.unsubscribers.vazios      = _listenCollection('vazios',      'dt_vazios');
-    state.unsubscribers.divergencias = _listenCollection('divergencias', 'dt_divergencias');
-    state.unsubscribers.recontagens = _listenCollection('recontagens', 'dt_recontagens');
-    state.started = true;
-    state.currentInventoryIds = ids.slice();
-    _emitSync(true, 'Tempo real ativo', { started: true });
+    state.started=false;
+    state.currentInventoryIds=[];
+    _emitSync(true,'Dados do Inventário carregados do cache. Clique em Atualizar para consultar novas contagens.',{started:false,source:'cache'});
     return true;
   }
 
@@ -437,5 +455,5 @@
     _emitSync(true, 'Cache local recarregado', { started: false, source: 'cache' });
   }
 
-  global.AnalistaFirebaseService = { start, stop, refreshFromCache, refreshColetores, refreshBasesRelacionadas, state };
+  global.AnalistaFirebaseService = { start, stop, refreshFromCache, refreshColetores, refreshBasesRelacionadas, refreshInventarioManual, state };
 })(window);

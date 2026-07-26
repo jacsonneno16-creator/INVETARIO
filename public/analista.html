@@ -1188,7 +1188,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
 </div>
 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
 <span id="cont-sync-info" style="font-size:.72rem;color:var(--muted)">Última sync: —</span>
-<button class="btn btn-primary btn-sm" onclick="sincronizarContagens()">🔄 Atualizar contagens</button>
+<button class="btn btn-primary btn-sm" onclick="atualizarDadosAnalista(this)">🔄 Atualizar contagens</button>
 <button class="btn btn-export btn-sm" onclick="exportarContagens()">⬇ Exportar</button>
 </div>
 </div>
@@ -1230,12 +1230,13 @@ table td{padding:8px 10px!important;vertical-align:middle}
 </select>
 </div>
 <div id="cont-table-wrap">
-<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma contagem</div><div class="empty-sub">As contagens dos coletores aparecerão automaticamente aqui</div></div>
+<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma contagem</div><div class="empty-sub">Clique em Atualizar para buscar as contagens dos coletores</div></div>
 </div>
 </div>
 </div>
 <!-- ══ PENDÊNCIAS ══ -->
 <div class="page" id="page-pendencias">
+<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="atualizarDadosAnalista(this)">🔄 Atualizar</button></div>
 <div class="sec-hdr">
 <div>
 <div class="sec-title">⏳ Pendências Operacionais</div>
@@ -1302,6 +1303,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
 </div>
 <!-- ══ DIVERGÊNCIAS ══ -->
 <div class="page" id="page-divergencias">
+<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="atualizarDadosAnalista(this)">🔄 Atualizar</button></div>
 <div class="sec-hdr">
 <div>
 <div class="sec-title">⚠️ Contagens em Conflito</div>
@@ -1522,6 +1524,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
 </div>
 <!-- ══ RECONTAGENS ══ -->
 <div class="page" id="page-recontagens">
+<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="atualizarDadosAnalista(this)">🔄 Atualizar</button></div>
 <div class="sec-hdr">
 <div>
 <div class="sec-title">🔄 Rodadas de Contagem</div>
@@ -3258,7 +3261,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260722-19"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260725-109"></script><script src="js/analista/42-topbar-tools.js?v=20260724-95"></script><script src="js/analista/43-importar-exportar-api.js?v=20260725-110"></script><script src="js/analista/app-controller.js?v=20260724-79"></script><script src="js/analista/00-auth-login.js?v=20260724-95"></script>
+<script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260722-19"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260726-111"></script><script src="js/analista/42-topbar-tools.js?v=20260724-95"></script><script src="js/analista/43-importar-exportar-api.js?v=20260725-110"></script><script src="js/analista/app-controller.js?v=20260724-79"></script><script src="js/analista/00-auth-login.js?v=20260724-95"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}
@@ -3275,6 +3278,11 @@ table td{padding:8px 10px!important;vertical-align:middle}
 .dash-column b{position:absolute;left:50%;top:-18px;transform:translateX(-50%);font-size:.67rem;color:var(--text);font-style:normal;font-variant-numeric:tabular-nums}.dash-column[style*="height:0"] b{top:-15px;color:var(--muted)}
 .dash-column-label{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;padding:9px 3px 0;text-align:center;font-size:.66rem;line-height:1.25;font-weight:650;word-break:break-word}.dash-column-label em{font-style:normal;color:var(--muted)}
 @media(max-width:980px){.dash-pie{grid-column:span 12}.dash-pie-body{flex-wrap:wrap}.dash-column-legend small{display:none}.dash-column-chart{min-width:max(620px,calc(var(--chart-count) * 80px))}}
+.acomp-aud-filter-active{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:10px 0 4px;padding:9px 12px;border:1px solid rgba(37,137,237,.25);border-radius:10px;background:rgba(37,137,237,.07);font-size:.72rem;color:var(--text)}
+.acomp-aud-filter-active button{border:0;background:transparent;color:#2563eb;font-weight:750;cursor:pointer}
+.acomp-chart-selected{outline:2px solid rgba(37,137,237,.5)!important;outline-offset:-2px;border-radius:9px;background:rgba(37,137,237,.07)!important}
+.acomp-aud-chart-host .dash-column-chart{min-width:max(620px,calc(var(--chart-count) * 86px))}
+.acomp-aud-chart-host .dash-pie-body{min-height:270px}
 </style>
 </body>
 </html>

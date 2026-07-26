@@ -4,6 +4,7 @@
   const oldRenderAcompanhamento=window.renderAcompanhamentoInventarioBase || window.renderAcompanhamento;
   const oldTrocarInventarioAcomp=window.trocarInventarioAcomp;
   let acompAudItens=[], acompAudOcorrencias=[], acompAudMetas=[], acompAudLoja='';
+  let acompAudFiltro={tipo:'',valor:''};
   function safe(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   function tipoAcomp(){return document.getElementById('acomp-tipo')?.value||'inventario';}
   // Estrutura: loja.local.area.rua.coluna.nivel.sequencia — rua=índice3, coluna=índice4, nível=índice5.
@@ -91,13 +92,86 @@
   function agrupar(lista,fn){const m={};lista.forEach(x=>{const k=fn(x)||'SEM DADO';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}
   const GRAD=['linear-gradient(90deg,#f97316,#fb923c)','linear-gradient(90deg,#2563eb,#38bdf8)','linear-gradient(90deg,#10b981,#34d399)','linear-gradient(90deg,#8b5cf6,#a78bfa)','linear-gradient(90deg,#ef4444,#fb7185)','linear-gradient(90deg,#06b6d4,#67e8f9)','linear-gradient(90deg,#eab308,#fde047)','linear-gradient(90deg,#ec4899,#f9a8d4)','linear-gradient(90deg,#14b8a6,#5eead4)','linear-gradient(90deg,#6366f1,#a5b4fc)'];
   function progressRows(arr,total){if(!arr.length)return '<div class="empty"><div class="empty-title">Sem dados para exibir</div></div>';return arr.map(([l,v],idx)=>{const pct=total?Math.round(v/total*100):0;return `<div style="display:grid;grid-template-columns:100px 1fr 55px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><b style="font-size:.75rem">${safe(l)}</b><div class="prog"><div class="prog-fill" style="width:${pct}%;background:${GRAD[idx%GRAD.length]}"></div></div><span class="mono" style="font-size:.7rem;text-align:right">${v} · ${pct}%</span></div>`}).join('');}
+  function jsArg(v){return String(v??'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ');}
+  function acompFiltrados(){
+    const f=acompAudFiltro;
+    if(!f.tipo||!f.valor)return acompAudItens;
+    return acompAudItens.filter(i=>{
+      if(f.tipo==='status')return audStatus(i)===f.valor;
+      if(f.tipo==='rua')return enderecoPartes(i.endereco).rua===f.valor;
+      if(f.tipo==='nivel')return enderecoPartes(i.endereco).nivel===f.valor;
+      if(f.tipo==='coluna')return enderecoPartes(i.endereco).coluna===f.valor;
+      if(f.tipo==='operador')return String(i.operadorNome||i.operador_nome||i.operadorId||i.operador_id||'SEM OPERADOR')===f.valor;
+      return true;
+    });
+  }
+  function acompFiltroInfo(){
+    if(!acompAudFiltro.tipo)return '';
+    const nomes={status:'Resultado',rua:'Rua',nivel:'Nível',coluna:'Coluna',operador:'Operador'};
+    return `<div class="acomp-aud-filter-active"><span>Filtro ativo: <b>${safe(nomes[acompAudFiltro.tipo]||acompAudFiltro.tipo)} — ${safe(acompAudFiltro.valor)}</b></span><button type="button" onclick="_acompAudChartClick('','')">✕ Limpar filtro</button></div>`;
+  }
+  function acompColumnChart(arr,tipo,limit){
+    if(!arr.length)return '<div class="empty"><div class="empty-title">Sem dados para exibir</div><div class="empty-sub">Clique em Atualizar para carregar a auditoria selecionada.</div></div>';
+    const dados=arr.slice(0,limit||12),max=Math.max(...dados.map(x=>Math.max(x.auditados,x.divergencias)),1),teto=Math.max(1,Math.ceil(max/4)*4);
+    const linhas=[0,1,2,3,4].map(n=>Math.round(teto*n/4));
+    return `<div class="dash-column-legend"><span><i class="auditados"></i>Auditados</span><span><i class="divergencias"></i>Divergências</span><small>Primeiro clique filtra; o segundo remove</small></div>
+      <div class="dash-column-scroll"><div class="dash-column-chart" style="--chart-count:${dados.length}">
+        <div class="dash-y-axis">${linhas.map((v,i)=>`<span style="bottom:${i*25}%">${v}</span>`).join('')}</div>
+        <div class="dash-grid-lines">${linhas.map((_,i)=>`<i style="bottom:${i*25}%"></i>`).join('')}</div>
+        <div class="dash-column-groups">${dados.map((x,idx)=>{
+          const ativo=acompAudFiltro.tipo===tipo&&acompAudFiltro.valor===String(x.label);
+          const ha=x.auditados?Math.max(4,x.auditados/teto*100):0,hd=x.divergencias?Math.max(4,x.divergencias/teto*100):0;
+          return `<button type="button" class="dash-column-group${ativo?' acomp-chart-selected':''}" onclick="_acompAudChartClick('${tipo}','${jsArg(x.label)}')" title="${safe(x.label)}: ${x.auditados} auditados e ${x.divergencias} divergências">
+            <span class="dash-columns"><i class="dash-column auditados" style="height:${ha}%"><b>${x.auditados}</b></i><i class="dash-column divergencias" style="height:${hd}%"><b>${x.divergencias}</b></i></span>
+            <span class="dash-column-label"><em>${idx+1}.</em> ${safe(x.label)}</span>
+          </button>`;
+        }).join('')}</div>
+      </div></div>`;
+  }
+  function acompResultChart(itens){
+    const valores=[
+      {label:'Corretos',filter:'OK',value:itens.filter(i=>audStatus(i)==='OK').length,color:'#10b981'},
+      {label:'Divergentes',filter:'DIVERGENTE',value:itens.filter(i=>audStatus(i)==='DIVERGENTE').length,color:'#ef4444'},
+      {label:'Pendentes',filter:'PENDENTE',value:itens.filter(i=>audStatus(i)==='PENDENTE').length,color:'#f59e0b'},
+      {label:'Vazios',filter:'ENDERECO_VAZIO',value:itens.filter(i=>audStatus(i)==='ENDERECO_VAZIO').length,color:'#64748b'}
+    ];
+    const total=valores.reduce((s,x)=>s+x.value,0),base=total||1;let grau=0;
+    const stops=valores.map(x=>{const ini=grau;grau+=x.value/base*360;return `${x.color} ${ini}deg ${grau}deg`;}).join(',');
+    return `<div class="dash-pie-body"><div class="dash-donut" style="background:conic-gradient(${stops})"><div class="dash-donut-value">${total.toLocaleString('pt-BR')}<small>Total</small></div></div><div class="dash-stat-list">${valores.map(x=>`<button type="button" class="dash-stat-row${acompAudFiltro.tipo==='status'&&acompAudFiltro.valor===x.filter?' acomp-chart-selected':''}" onclick="_acompAudChartClick('status','${x.filter}')" title="Filtrar por ${x.label}"><span><i class="dash-dot" style="background:${x.color}"></i>${x.label}</span><b>${x.value.toLocaleString('pt-BR')}</b></button>`).join('')}</div></div>`;
+  }
+  function restaurarLayoutInventario(){
+    const ruas=document.getElementById('acomp-ruas-grid');
+    if(ruas){ruas.className='dash-scroll-card';ruas.style.cssText='padding:12px 20px;display:flex;flex-direction:column;gap:8px;max-height:420px;overflow-y:auto';}
+    const detalhe=document.getElementById('acomp-progress-detail');
+    if(detalhe){detalhe.className='dash-scroll-card';detalhe.style.cssText='padding:20px;max-height:380px;overflow-y:auto';}
+    const coletores=document.getElementById('acomp-coletores-wrap');
+    if(coletores){coletores.className='dash-scroll-card';coletores.style.cssText='max-height:380px;overflow-y:auto';}
+    const titulos=document.querySelectorAll('#page-acompanhamento .tc-title');
+    if(titulos[0])titulos[0].textContent='🛣️ Progresso por Rua';
+    if(titulos[1])titulos[1].textContent='🗂️ Progresso por Local de Estoque';
+    if(titulos[2])titulos[2].textContent='👤 Produtividade por Operador';
+  }
   function renderAcompAuditoria(){const id=document.getElementById('acomp-sel-inv')?.value||'';const meta=acompAudMetas.find(m=>m.id===id);const total=acompAudItens.length;const ok=acompAudItens.filter(i=>audStatus(i)==='OK').length;const div=acompAudItens.filter(i=>audStatus(i)==='DIVERGENTE').length;const vaz=acompAudItens.filter(i=>audStatus(i)==='ENDERECO_VAZIO').length;const pend=acompAudItens.filter(i=>audStatus(i)==='PENDENTE').length;const concl=total-pend;const pct=total?Math.round(concl/total*100):0;setText('acomp-inv-nome',meta?(meta.nome||meta.auditoria_nome||meta.id):'Selecione uma auditoria para monitorar');setText('ak-total',total.toLocaleString('pt-BR'));setText('ak-contados',concl.toLocaleString('pt-BR'));setText('ak-pendentes',pend.toLocaleString('pt-BR'));setText('ak-diverg',div.toLocaleString('pt-BR'));setText('ak-recount',vaz.toLocaleString('pt-BR'));setText('ak-pct',pct+'%');
     const labels=['Total de Endereços','Endereços Auditados','Endereços Pendentes','Endereços Divergentes','Endereços Vazios','% Concluído'];document.querySelectorAll('#acomp-kpis .kpi-lbl').forEach((e,i)=>e.textContent=labels[i]||e.textContent);setHero(pct,meta?(meta.nome||meta.auditoria_nome||meta.id):'Auditoria não selecionada',`${concl.toLocaleString('pt-BR')} de ${total.toLocaleString('pt-BR')} endereços auditados · ${ok} corretos · ${div} divergentes · ${acompAudOcorrencias.length} fora da auditoria`,'#fb923c');
     let ocorrBox=document.getElementById('acomp-aud-ocorrencias');if(!ocorrBox){ocorrBox=document.createElement('div');ocorrBox.id='acomp-aud-ocorrencias';document.getElementById('acomp-kpis')?.after(ocorrBox);}if(ocorrBox){ocorrBox.innerHTML=acompAudOcorrencias.length?`<div class="alert warn" style="margin:12px 0"><b>📍 ${acompAudOcorrencias.length} produto(s) encontrado(s) fora dos endereços previstos</b><div style="margin-top:8px;overflow:auto"><table><thead><tr><th>Endereço encontrado</th><th>Produto</th><th>Operador</th><th>Data</th></tr></thead><tbody>${acompAudOcorrencias.slice().reverse().slice(0,20).map(o=>`<tr><td class="mono">${safe(o.endereco)}</td><td>${safe(o.produtoLido||o.produto_lido||o.codigoLido||'—')}</td><td>${safe(o.operador_nome||o.operadorNome||'—')}</td><td>${safe(o.encontrado_em||o.criadoEm||'—')}</td></tr>`).join('')}</tbody></table></div></div>`:'';}
-    const ruas=agrupar(acompAudItens,i=>enderecoPartes(i.endereco).rua);document.getElementById('acomp-ruas-grid').innerHTML=progressRows(ruas,total);document.getElementById('acomp-progress-detail').innerHTML=progressRows([['Corretos',ok],['Divergentes',div],['Vazios',vaz],['Pendentes',pend]],total);const ops=agrupar(acompAudItens.filter(i=>audStatus(i)!=='PENDENTE'),i=>i.operadorNome||i.operador_nome||i.operadorId||i.operador_id||'SEM OPERADOR');document.getElementById('acomp-coletores-wrap').innerHTML=`<div style="padding:16px 20px">${progressRows(ops,Math.max(concl,1))}</div>`;setText('acomp-ultima-sync','Última sync: '+new Date().toLocaleTimeString('pt-BR'));
+    const filtrados=acompFiltrados();
+    const ruas=groupStats(filtrados,i=>enderecoPartes(i.endereco).rua);
+    const ops=groupStats(filtrados.filter(i=>audStatus(i)!=='PENDENTE'),i=>i.operadorNome||i.operador_nome||i.operadorId||i.operador_id||'SEM OPERADOR');
+    const filtroHtml=acompFiltroInfo();
+    const ruasGrid=document.getElementById('acomp-ruas-grid');
+    if(ruasGrid){ruasGrid.className='acomp-aud-chart-host';ruasGrid.style.cssText='padding:4px 18px 20px;overflow:hidden';ruasGrid.innerHTML=filtroHtml+acompColumnChart(ruas,'rua',12);}
+    const detalhe=document.getElementById('acomp-progress-detail');
+    if(detalhe){detalhe.className='acomp-aud-chart-host';detalhe.style.cssText='padding:4px 18px 20px;overflow:hidden';detalhe.innerHTML=acompResultChart(filtrados);}
+    const coletores=document.getElementById('acomp-coletores-wrap');
+    if(coletores){coletores.className='acomp-aud-chart-host';coletores.style.cssText='padding:4px 18px 20px;overflow:hidden';coletores.innerHTML=acompColumnChart(ops,'operador',10);}
+    const titulos=document.querySelectorAll('#page-acompanhamento .tc-title');
+    if(titulos[0])titulos[0].textContent='📊 Auditados e divergências por rua';
+    if(titulos[1])titulos[1].textContent='🎯 Resultado da auditoria';
+    if(titulos[2])titulos[2].textContent='👤 Resultado por operador';
+    setText('acomp-ultima-sync','Última atualização: '+new Date().toLocaleTimeString('pt-BR'));
   }
-  window.trocarTipoAcompanhamento=async function(){const sel=document.getElementById('acomp-sel-inv');if(tipoAcomp()==='auditoria'){window.AnalistaState?.set('ui.acompanhamentoInventarioId',null,{source:'acomp-tipo'});renderAcompAuditoria();}else{if(sel){sel.innerHTML='<option value="">Escolha um inventário</option>';sel.value='';}ensureHero().style.display='';oldRenderAcompanhamento?.();const inv=window.AnalistaStore?.getState()?.ui?.acompanhamentoInventarioId;setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);}};
-  window.trocarInventarioAcomp=async function(){if(tipoAcomp()==='auditoria'){acompAudItens=[];acompAudOcorrencias=[];return renderAcompAuditoria();}return oldTrocarInventarioAcomp?.();};
+  window.trocarTipoAcompanhamento=async function(){const sel=document.getElementById('acomp-sel-inv');if(tipoAcomp()==='auditoria'){window.AnalistaState?.set('ui.acompanhamentoInventarioId',null,{source:'acomp-tipo'});renderAcompAuditoria();}else{if(sel){sel.innerHTML='<option value="">Escolha um inventário</option>';sel.value='';}restaurarLayoutInventario();ensureHero().style.display='';oldRenderAcompanhamento?.();const inv=window.AnalistaStore?.getState()?.ui?.acompanhamentoInventarioId;setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);}};
+  window.trocarInventarioAcomp=async function(){if(tipoAcomp()==='auditoria'){acompAudItens=[];acompAudOcorrencias=[];acompAudFiltro={tipo:'',valor:''};return renderAcompAuditoria();}return oldTrocarInventarioAcomp?.();};
   window.renderAcompanhamento=function(){if(tipoAcomp()==='auditoria')return renderAcompAuditoria();oldRenderAcompanhamento?.();setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);};
   window.atualizarAcompanhamentoAuditoriaManual=async function(){
     await loadAuditoriasAcomp(true);
@@ -106,6 +180,12 @@
     await popularAcompAuditorias();
     if(sel&&atual&&acompAudMetas.some(m=>m.id===atual))sel.value=atual;
     await carregarAuditoriaSelecionada();
+  };
+  window._acompAudChartClick=function(tipo,valor){
+    if(!tipo){acompAudFiltro={tipo:'',valor:''};}
+    else if(acompAudFiltro.tipo===tipo&&acompAudFiltro.valor===valor){acompAudFiltro={tipo:'',valor:''};}
+    else{acompAudFiltro={tipo,valor};}
+    renderAcompAuditoria();
   };
 
   function groupStats(lista,keyFn){const m={};lista.forEach(i=>{const k=keyFn(i)||'SEM DADO';if(!m[k])m[k]={label:k,total:0,auditados:0,divergencias:0,ok:0,vazios:0};const x=m[k];x.total++;const st=audStatus(i);if(st!=='PENDENTE')x.auditados++;if(st==='DIVERGENTE')x.divergencias++;if(st==='OK')x.ok++;if(st==='ENDERECO_VAZIO')x.vazios++;});return Object.values(m).sort((a,b)=>b.divergencias-a.divergencias||b.auditados-a.auditados);}
@@ -148,14 +228,31 @@
   let atualizacaoManualEmAndamento=null;
   window.atualizarTresAbasAuditoria=function(botao){
     if(atualizacaoManualEmAndamento)return atualizacaoManualEmAndamento;
-    const botoes=[...document.querySelectorAll('[onclick^="atualizarTresAbasAuditoria"]')];
+    const botoes=[...document.querySelectorAll('[onclick^="atualizarTresAbasAuditoria"],[onclick^="atualizarDadosAnalista"]')];
     botoes.forEach(b=>{b.disabled=true;b.dataset.textoAtualizar=b.innerHTML;b.innerHTML='⏳ Atualizando...';});
-    atualizacaoManualEmAndamento=Promise.all([
-      Promise.resolve(window.atualizarDashboardAuditoriaManual?.()),
-      Promise.resolve(window.atualizarAcompanhamentoAuditoriaManual?.()),
-      Promise.resolve(window.atualizarAuditoriaOperacionalManual?.())
-    ]).then(()=>{
-      window.showToast?.('Dashboard, Acompanhamento e Auditoria atualizados.','s');
+    const pagina=botao?.closest?.('.page')?.id||'';
+    const modoAuditoria=pagina==='page-auditoria'
+      ||(pagina==='page-dashboard'&&document.getElementById('dash-mode')?.value==='auditoria')
+      ||(pagina==='page-acompanhamento'&&document.getElementById('acomp-tipo')?.value==='auditoria');
+    atualizacaoManualEmAndamento=(modoAuditoria
+      ? Promise.all([
+          Promise.resolve(window.atualizarDashboardAuditoriaManual?.()),
+          Promise.resolve(window.atualizarAcompanhamentoAuditoriaManual?.()),
+          Promise.resolve(window.atualizarAuditoriaOperacionalManual?.())
+        ])
+      : Promise.resolve(window.AnalistaFirebaseService?.refreshInventarioManual?.())
+    ).then(()=>{
+      if(modoAuditoria){
+        window.showToast?.('Dashboard, Acompanhamento e Auditoria atualizados.','s');
+      }else{
+        window.renderDashboard?.();
+        window.renderAcompanhamento?.();
+        window.renderContagens?.();
+        window.renderPendencias?.();
+        window.renderDivergencias?.();
+        window.renderRecontagens?.();
+        window.showToast?.('As quatro bases do Inventário foram atualizadas.','s');
+      }
     }).catch(e=>{
       console.error('[ATUALIZAÇÃO MANUAL AUDITORIA]',e);
       window.showToast?.('Não foi possível atualizar todas as telas: '+(e?.message||e),'e');
@@ -165,5 +262,6 @@
     });
     return atualizacaoManualEmAndamento;
   };
+  window.atualizarDadosAnalista=window.atualizarTresAbasAuditoria;
   document.addEventListener('DOMContentLoaded',()=>{ensureHero();const tipo=document.getElementById('acomp-tipo');if(tipo)tipo.value='inventario';});
 })();

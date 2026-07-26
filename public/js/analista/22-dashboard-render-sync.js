@@ -411,6 +411,22 @@ function _dashMiniBars(items, opts={}) {
   }).join('');
 }
 
+function _dashInventoryColumns(items, onclickFn) {
+  if (!items.length) return `<div class="empty" style="padding:20px"><div class="empty-icon">📊</div><div class="empty-title">Sem dados para o gráfico</div></div>`;
+  const max = Math.max(...items.map(i => Math.max(i.contados, i.pendentes)), 1);
+  return `<div class="dash-ranking-body"><div class="dash-column-legend"><span><i style="background:#2563eb"></i>Contados</span><span><i style="background:#ef4444"></i>Pendentes</span></div><div class="dash-column-scroll"><div class="dash-column-chart" style="--chart-count:${items.length};min-width:max(520px,calc(${items.length} * 82px))">${items.map(item => {
+    const hc=Math.max(item.contados?8:2,Math.round(item.contados/max*100));
+    const hp=Math.max(item.pendentes?8:2,Math.round(item.pendentes/max*100));
+    const arg=String(item.filterValue??item.label).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    return `<button type="button" class="dash-column-group" onclick="${onclickFn}('${arg}')" title="${_dashSafe(item.label)}: ${item.contados} contados e ${item.pendentes} pendentes">
+      <div class="dash-column-value-row"><span>${item.contados}</span><span>${item.pendentes}</span></div>
+      <div class="dash-column-bars"><i class="dash-column-bar audited" style="height:${hc}%"></i><i class="dash-column-bar divergent" style="height:${hp}%"></i></div>
+      <strong class="dash-column-label">${_dashSafe(item.label)}</strong>
+      <small>${item.pct}% concluído</small>
+    </button>`;
+  }).join('')}</div></div></div>`;
+}
+
 function _renderDashboardCharts() {
   const wrap = document.getElementById('dash-charts-wrap');
   if (!wrap) return;
@@ -433,23 +449,8 @@ function _renderDashboardCharts() {
   const pct = Math.max(0, Math.min(100, dc.pctGeral || 0));
   const pendPct = 100 - pct;
 
-  const ruasHtml = _dashMiniBars(ruas.map(r => ({
-    label: `Rua ${r.label}`,
-    value: r.pendentes,
-    valueLabel: `${r.pendentes} pend.`,
-    sub: `${r.contados}/${r.total} conferidos · ${r.pct}%`,
-    color: 'linear-gradient(90deg,#ef4444,#f97316)',
-    onclick: `dashApplyRuaFilter(${JSON.stringify(r.label)})`
-  })), { clickable: true });
-
-  const locaisHtml = _dashMiniBars(locais.map(l => ({
-    label: l.label,
-    value: l.pendentes,
-    valueLabel: `${l.pendentes} pend.`,
-    sub: `${l.contados}/${l.total} conferidos · ${l.pct}%`,
-    color: 'linear-gradient(90deg,#0ea5e9,#22c55e)',
-    onclick: `dashApplyLocalFilter(${JSON.stringify(l.label)})`
-  })), { clickable: true });
+  const ruasHtml = _dashInventoryColumns(ruas.map(r => ({...r,filterValue:r.label,label:`Rua ${r.label}`})), 'dashApplyRuaFilter');
+  const locaisHtml = _dashInventoryColumns(locais, 'dashApplyLocalFilter');
 
   const operadoresHtml = operadores.length ? operadores.map((op, idx) => `
     <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start;padding:10px 12px;border-radius:12px" onclick="dashApplyOperadorFilter(${JSON.stringify(op.operador)})">
@@ -496,11 +497,11 @@ function _renderDashboardCharts() {
       </div>
       <div class="tc">
         <div class="tc-header"><div><div class="tc-title">🛣️ Ruas com mais pendências</div><div class="sec-sub">Clique para filtrar a rua</div></div></div>
-        <div style="padding:14px;display:flex;flex-direction:column;gap:8px">${ruasHtml}</div>
+        <div>${ruasHtml}</div>
       </div>
       <div class="tc">
         <div class="tc-header"><div><div class="tc-title">🏭 Locais com mais pendências</div><div class="sec-sub">Clique para filtrar o local</div></div></div>
-        <div style="padding:14px;display:flex;flex-direction:column;gap:8px">${locaisHtml}</div>
+        <div>${locaisHtml}</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1.2fr .8fr;gap:16px;margin-bottom:16px">
