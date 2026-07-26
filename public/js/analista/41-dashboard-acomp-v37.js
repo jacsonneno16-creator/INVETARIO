@@ -4,6 +4,7 @@
   const oldRenderAcompanhamento=window.renderAcompanhamentoInventarioBase || window.renderAcompanhamento;
   const oldTrocarInventarioAcomp=window.trocarInventarioAcomp;
   let acompAudItens=[], acompAudOcorrencias=[], acompAudMetas=[], acompAudLoja='';
+  let acompInventarioAnterior='';
   let acompAudFiltro={tipo:'',valor:''};
   function safe(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   function tipoAcomp(){return document.getElementById('acomp-tipo')?.value||'inventario';}
@@ -170,7 +171,33 @@
     if(titulos[2])titulos[2].textContent='👤 Resultado por operador';
     setText('acomp-ultima-sync','Última atualização: '+new Date().toLocaleTimeString('pt-BR'));
   }
-  window.trocarTipoAcompanhamento=async function(){const sel=document.getElementById('acomp-sel-inv');if(tipoAcomp()==='auditoria'){window.AnalistaState?.set('ui.acompanhamentoInventarioId',null,{source:'acomp-tipo'});renderAcompAuditoria();}else{if(sel){sel.innerHTML='<option value="">Escolha um inventário</option>';sel.value='';}restaurarLayoutInventario();ensureHero().style.display='';oldRenderAcompanhamento?.();const inv=window.AnalistaStore?.getState()?.ui?.acompanhamentoInventarioId;setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);}};
+  window.trocarTipoAcompanhamento=async function(){
+    const sel=document.getElementById('acomp-sel-inv');
+    if(tipoAcomp()==='auditoria'){
+      acompInventarioAnterior=String(window.AnalistaStore?.getState()?.ui?.acompanhamentoInventarioId||sel?.value||'');
+      window.AnalistaState?.set('ui.acompanhamentoInventarioId',null,{source:'acomp-tipo'});
+      acompAudItens=[];acompAudOcorrencias=[];acompAudFiltro={tipo:'',valor:''};
+      if(sel){sel.disabled=true;sel.innerHTML='<option value="">Carregando auditorias...</option>';}
+      renderAcompAuditoria();
+      try{
+        await loadAuditoriasAcomp(false);
+        if(sel)sel.value='';
+        await popularAcompAuditorias();
+      }catch(e){
+        console.error('[ACOMP AUD] Falha ao preparar seletor:',e);
+        if(sel)sel.innerHTML='<option value="">Não foi possível listar as auditorias</option>';
+        window.showToast?.('Não foi possível listar as auditorias. Clique em Atualizar para tentar novamente.','e');
+      }finally{
+        if(sel)sel.disabled=false;
+      }
+      renderAcompAuditoria();
+      return;
+    }
+    if(sel){sel.disabled=false;sel.innerHTML='<option value="">Escolha um inventário</option>';}
+    if(acompInventarioAnterior)window.AnalistaState?.set('ui.acompanhamentoInventarioId',acompInventarioAnterior,{source:'acomp-tipo'});
+    restaurarLayoutInventario();ensureHero().style.display='';oldRenderAcompanhamento?.();
+    setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);
+  };
   window.trocarInventarioAcomp=async function(){if(tipoAcomp()==='auditoria'){acompAudItens=[];acompAudOcorrencias=[];acompAudFiltro={tipo:'',valor:''};return renderAcompAuditoria();}return oldTrocarInventarioAcomp?.();};
   window.renderAcompanhamento=function(){if(tipoAcomp()==='auditoria')return renderAcompAuditoria();oldRenderAcompanhamento?.();setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);};
   window.atualizarAcompanhamentoAuditoriaManual=async function(){
