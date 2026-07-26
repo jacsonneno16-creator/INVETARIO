@@ -376,7 +376,10 @@
       Actions.replaceSlice('recontagens',recontagens,{source:'firebase-manual'})
     ],{source:'firebase-manual-inventario'}));
     ['contagens','divergencias','recontagens'].forEach(_persistirSlice);
-    try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'manual-refresh',force:true});}catch(e){console.warn('[FirebaseService] Processamento manual:',e.message);}
+    // O clique em Atualizar é o momento canônico de cruzar as contagens recebidas.
+    // Toda divergência aberta precisa gerar também a rodada pendente correspondente;
+    // caso contrário o conflito aparece em "Em Conflito", mas não chega a "Rodadas".
+    try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'manual-refresh',force:true});}catch(e){console.warn('[FirebaseService] Processamento manual:',e.message);}
     global.AnalistaBootstrap?.saveAll?.();
     global.AnalistaBootstrap?.renderAll?.();
     global.AnalistaNavigation?.renderCurrentPage?.();

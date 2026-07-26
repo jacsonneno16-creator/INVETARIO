@@ -120,7 +120,16 @@ function onGtinInput() {
       normProd(r.gtin)           === valNorm ||
       normProd(r.dun)            === valNorm ||
       normProd(r.codigo_produto) === valNorm;
-    const reg = APP.base.find(_match);
+    const regInventario = APP.base.find(_match);
+    const produtoGeral = window.DTProdutos?.buscarSync(val) || { encontrado:false };
+    const reg = regInventario || (produtoGeral.encontrado ? {
+      codigo_produto: produtoGeral.codigoInterno || produtoGeral.produtoId || valNorm,
+      descricao_produto: produtoGeral.nomeProduto || 'Produto sem descrição',
+      gtin: produtoGeral.gtin || valNorm,
+      dun: produtoGeral.dun || '',
+      produto_id: produtoGeral.produtoId || '',
+      _base_geral: true
+    } : null);
     if (reg) {
       APP.atual.produtoAtual = reg;
 
@@ -140,12 +149,18 @@ function onGtinInput() {
       }
 
       pbox.style.display = '';
+      const nomeProduto = produtoGeral.encontrado
+        ? produtoGeral.nomeProduto
+        : (reg.descricao_produto || 'Produto sem descrição');
+      const codigoCadastro = produtoGeral.encontrado
+        ? (produtoGeral.codigoInterno || reg.codigo_produto || '')
+        : (reg.codigo_produto || '');
       pbox.innerHTML = `
         <div class="prod-card">
           <div class="prod-icon">📦</div>
-          <div>
-            <div class="prod-name">${reg.descricao_produto||'—'}</div>
-            <div class="prod-code">${reg.codigo_produto||''} · ${isDun?'DUN':'GTIN'}: ${val}</div>
+          <div style="min-width:0">
+            <div class="prod-code" style="font-size:.82rem;font-weight:800">${escHTML(isDun?'DUN':'GTIN')}: ${escHTML(val)}${codigoCadastro ? ` · Cód. ${escHTML(codigoCadastro)}` : ''}</div>
+            <div class="prod-name" style="font-size:.7rem;font-weight:600;margin-top:3px;line-height:1.25;color:var(--muted)">${escHTML(nomeProduto)}</div>
           </div>
         </div>`;
     } else {
@@ -933,4 +948,3 @@ function resetContagem() {
   updateSteps();
   setTimeout(() => { const el = document.getElementById('f-endereco'); if (el) el.focus(); }, 80);
 }
-

@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v118-central-ajuda-completa';
+var CACHE='dt-inventario-v121-produtividade-filtros-colunas-fixas';
 var PRECACHE=[
   '/',
   '/coletor.html',
@@ -6,11 +6,14 @@ var PRECACHE=[
   '/js-legacy/shared/common-utils.js',
   '/js-legacy/shared/firebase-shared.js',
   '/js-legacy/shared/enderecos-service.js',
+  '/js-legacy/shared/produtos-service.js',
   '/js-legacy/coletor/00-bootstrap-manifest.js',
   '/js-legacy/coletor/01-core-firebase-cache.js',
   '/js-legacy/coletor/03-estado-app.js',
   '/js-legacy/coletor/04-auth-login.js',
   '/js-legacy/coletor/05-inventarios-download.js',
+  '/js-legacy/coletor/07-etapa-endereco.js',
+  '/js-legacy/coletor/08-etapas-produto-quantidade-salvamento.js',
   '/js-legacy/coletor/17-auditoria-meta.js',
   '/js-legacy/coletor/18-auditoria-fluxo.js'
 ];

@@ -894,7 +894,10 @@ function loteOnGtinInput() {
   if (!val) { fb.innerHTML = ''; return; }
   const match = _buscarProduto(val); // reutiliza a lógica existente de busca de produto
   if (match) {
-    fb.innerHTML = `<div class="fb ok" style="font-size:.75rem">✓ ${escHTML(match.descricao_produto || match.codigo_produto)}</div>`;
+    fb.innerHTML = `<div class="fb ok" style="display:block">
+      <div style="font-size:.78rem;font-weight:800">✓ Código bipado: ${escHTML(val)}</div>
+      <div style="font-size:.68rem;font-weight:600;margin-top:3px;line-height:1.25;opacity:.82">${escHTML(match.descricao_produto || 'Produto sem descrição')}</div>
+    </div>`;
   } else {
     fb.innerHTML = `<div class="fb warn" style="font-size:.75rem">⚠ Código não encontrado na base — será registrado assim mesmo</div>`;
   }
@@ -917,13 +920,30 @@ function loteConfirmarGtin() {
 
 /** Reutiliza a lógica de busca de produto do fluxo normal */
 function _buscarProduto(gtin) {
-  if (!APP.base?.length) return null;
+  const codigo = normProd(gtin);
   const endNorm = APP.lote?.endNorm || APP.atual._endNorm || '';
+  const corresponde = r =>
+    normProd(r.gtin) === codigo ||
+    normProd(r.dun) === codigo ||
+    normProd(r.codigo_produto) === codigo;
   // Primeiro tenta pelo endereço + gtin
-  const matchEnd = APP.base.find(r => r._end === endNorm && (r.gtin === gtin || r.codigo_produto === gtin));
+  const matchEnd = (APP.base || []).find(r => r._end === endNorm && corresponde(r));
   if (matchEnd) return matchEnd;
   // Fallback: qualquer produto com esse código
-  return APP.base.find(r => r.gtin === gtin || r.codigo_produto === gtin) || null;
+  const matchInventario = (APP.base || []).find(corresponde);
+  if (matchInventario) return matchInventario;
+  // Mesma Base Geral usada pela Auditoria: identifica o produto mesmo quando
+  // ele não consta na base operacional/endereço deste inventário.
+  const geral = window.DTProdutos?.buscarSync(gtin) || { encontrado:false };
+  if (!geral.encontrado) return null;
+  return {
+    codigo_produto: geral.codigoInterno || geral.produtoId || codigo,
+    descricao_produto: geral.nomeProduto || 'Produto sem descrição',
+    gtin: geral.gtin || codigo,
+    dun: geral.dun || '',
+    produto_id: geral.produtoId || '',
+    _base_geral: true
+  };
 }
 
 // ──────────────────────────────────────────────────────────────────

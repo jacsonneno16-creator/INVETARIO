@@ -540,9 +540,9 @@ function renderDivergencias() {
             style="width:15px;height:15px;cursor:pointer;accent-color:var(--orange)"
             onchange="divToggleTodos(this.checked)">
         </th>
-        <th>Inventário</th><th>Rua</th><th>Endereço</th><th>Produto</th>
+        <th>Inventário</th><th>Rua</th><th>Endereço</th>
         <th>Operador Contagem</th><th>Data</th><th>Tipo</th>
-        <th>Sistema</th><th>1ª Contagem</th><th>Resultado</th>
+        <th>Esperado no endereço</th><th>Bipado / contado</th><th>Resultado</th>
         <th>Status</th><th>Status Recontagem</th><th>Atribuído para</th><th>Executado por</th><th>Ações</th>
       </tr></thead>
       <tbody>
@@ -571,6 +571,23 @@ function renderDivergencias() {
           const qtdContTxt = d.qtd_contada   != null ? d.qtd_contada   : '—';
           const difTxt     = d.diferenca     != null ? (d.diferenca > 0 ? '+'+d.diferenca : String(d.diferenca)) : '—';
           const difColorTxt= d.diferenca     != null ? difColor : 'var(--muted)';
+          const inventario = state().inventarios.find(i =>
+            String(i.id || '') === String(d.inventario_id || '') ||
+            String(i.codigo || '') === String(d.inventario_id || '')
+          );
+          const esperadosEndereco = (inventario?.base || []).filter(item =>
+            String(item.endereco || '').trim().toUpperCase() === String(d.endereco || '').trim().toUpperCase()
+          );
+          const esperadoHtml = esperadosEndereco.length
+            ? esperadosEndereco.map(item => {
+                const codigo = item.codigo_produto || item.codigoProduto || item.codigo_interno || item.codigoInterno || item.gtin || item.ean || item.dun || '—';
+                const nome = item.descricao_produto || item.descricaoProduto || item.descricao || item.nomeProduto || '';
+                const qtd = item.quantidade_esperada ?? item.quantidadeEsperada ?? item.qtd_esperada ?? item.qtdEsperada ?? item.quantidade ?? '—';
+                return `<div style="margin-bottom:5px"><div class="mono" style="font-weight:750">${escHTML(codigo)} · Qtd ${escHTML(qtd)}</div>${nome ? `<div style="font-size:.68rem;color:var(--muted);max-width:210px">${escHTML(nome)}</div>` : ''}</div>`;
+              }).join('')
+            : `<div class="mono" style="font-weight:750">${escHTML(d.produto || '—')} · Qtd ${escHTML(qtdEspTxt)}</div><div style="font-size:.68rem;color:var(--muted)">${escHTML(d.descricao || '')}</div>`;
+          const produtoBipado = d.produto_contado || d.gtin_bipado || d.produto || '—';
+          const descricaoBipada = d.descricao_contada || d.descricao || '';
 
           // Status recontagem
           const statusRec = d.status_recontagem || (rec ? (rec.status==='CONCLUIDA' ? 'concluida' : 'pendente') : '');
@@ -587,15 +604,10 @@ function renderDivergencias() {
             <td style="font-size:.75rem;color:var(--muted)">${d.inventario_nome || d.inventario_id}</td>
             <td class="mono" style="font-weight:600">${rua}</td>
             <td class="mono">${escHTML(d.endereco)}${d.endereco_correto ? `<br><span style="font-size:.65rem;color:var(--muted)">→ ${escHTML(d.endereco_correto)}</span>` : ''}</td>
-            <td>
-              <div style="font-weight:600;font-size:.82rem">${escHTML(d.produto)}</div>
-              <div style="font-size:.7rem;color:var(--muted);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escHTML(d.descricao || '')}</div>
-              ${d.gtin_bipado ? `<div style="font-size:.65rem;color:var(--muted)">GTIN: ${d.gtin_bipado}</div>` : ''}
-            </td>
             <td style="font-size:.8rem">${operador}</td>
             <td class="mono" style="font-size:.72rem;color:var(--muted);white-space:nowrap">${fmtTs(d.criada_em)}</td>
             <td><span class="badge ${tipoCls}">${tipoTxt}</span></td>
-            <td class="mono" style="font-weight:700">${qtdEspTxt}${d.produto ? `<div style="font-size:.6rem;color:var(--muted);font-family:var(--mono)">${escHTML(d.produto)}</div>` : ''}</td>
+            <td>${esperadoHtml}</td>
             ${(() => {
               // Reutilizável: renderiza célula de contagem com produto e cor
               const _ndpD = v => String(v||'').trim().toUpperCase();
@@ -604,7 +616,7 @@ function renderDivergencias() {
               const _qtdEsp = parseFloat(d.qtd_esperada);
               const _bateC1 = !isNaN(_qtdEsp) && d.qtd_contada === _qtdEsp;
               const _corC1  = _bateC1 ? 'var(--success)' : 'var(--danger)';
-              const _c1Cell = `<td><div style="font-family:var(--mono);font-weight:800;color:${_corC1}">${_qtdC1}</div>${d.operador ? `<div style="font-size:.65rem;color:var(--muted)">${d.operador}</div>` : ''}</td>`;
+              const _c1Cell = `<td><div style="font-family:var(--mono);font-weight:800;color:${_corC1}">${escHTML(produtoBipado)} · Qtd ${_qtdC1}</div>${descricaoBipada ? `<div style="font-size:.68rem;color:var(--muted);max-width:210px">${escHTML(descricaoBipada)}</div>` : ''}${d.operador ? `<div style="font-size:.65rem;color:var(--muted)">${escHTML(d.operador)}</div>` : ''}</td>`;
               return _c1Cell;
             })()}
             ${(() => {

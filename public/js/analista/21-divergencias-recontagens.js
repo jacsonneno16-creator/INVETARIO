@@ -431,6 +431,11 @@
 
         const produtoBase = _idPrincipalBase(item);
         const descricaoBase = _descricaoProduto(item, item);
+        const contagensItem = contsUnicas.filter(c => (infoContagem.get(c) || {}).key === key);
+        const primeiraContagem = contagensItem[0] || null;
+        const produtoContado = _idsProduto(primeiraContagem)[0] || produtoBase;
+        const descricaoContada = _descricaoProduto(item, primeiraContagem);
+        const operadorContagem = [...new Set(contagensItem.map(c => c.operador).filter(Boolean))].join(', ');
         const diferenca = qtdCont - qtdEsp;
         if (diferenca === 0){
           const divExistente = state().divergencias.find(d =>
@@ -441,6 +446,8 @@
           if (divExistente){
             const updatedDiv = Object.assign({}, divExistente, {
               produto: produtoBase, descricao: descricaoBase,
+              produto_contado: produtoContado, descricao_contada: descricaoContada,
+              gtin_bipado: produtoContado, operador: operadorContagem || divExistente.operador,
               qtd_esperada: qtdEsp, qtd_contada: qtdCont, diferenca: 0,
               status: 'RESOLVIDA', resolvida_em: new Date().toISOString(), resolvida_por: 'sistema (correção)'
             });
@@ -458,6 +465,8 @@
         if (existente){
           const atualizado = Object.assign({}, existente, {
             produto: produtoBase, descricao: descricaoBase,
+            produto_contado: produtoContado, descricao_contada: descricaoContada,
+            gtin_bipado: produtoContado, operador: operadorContagem || existente.operador,
             qtd_esperada: qtdEsp, qtd_contada: qtdCont, diferenca,
             tipo_divergencia: 'QUANTIDADE_DIFERENTE', motivos_divergencia: ['QUANTIDADE_DIFERENTE'],
             status: existente.status === 'PERSISTENTE' ? 'PERSISTENTE' : 'EM_RECONTAGEM',
@@ -471,6 +480,8 @@
         const div = {
           id: gerarId('DIV'), inventario_id: inv.id, inventario_nome: inv.nome,
           endereco: item.endereco, produto: produtoBase, descricao: descricaoBase,
+          produto_contado: produtoContado, descricao_contada: descricaoContada,
+          gtin_bipado: produtoContado, operador: operadorContagem,
           qtd_esperada: qtdEsp, qtd_contada: qtdCont, diferenca,
           tipo_divergencia: 'QUANTIDADE_DIFERENTE', motivos_divergencia: ['QUANTIDADE_DIFERENTE'],
           status: 'EM_RECONTAGEM', precisa_recontagem: true,
@@ -666,7 +677,9 @@
 
     const qtd1  = ultimaRec?.qtd_primeira    ?? qtdCont;
     const prod1 = ultimaRec?.produto_primeira ??
-      (div.tipo_divergencia === 'VAZIO_COM_PRODUTO_NA_BASE' ? 'VAZIO' : _nd(div.produto));
+      (div.tipo_divergencia === 'VAZIO_COM_PRODUTO_NA_BASE'
+        ? 'VAZIO'
+        : _nd(div.produto_contado || div.gtin_bipado || div.produto));
 
     const rec = {
       id: gerarId('REC'), divergencia_id: div.id,
