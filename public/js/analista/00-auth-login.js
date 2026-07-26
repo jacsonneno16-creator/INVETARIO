@@ -137,6 +137,12 @@ async function _onAnalistaLogado(user) {
       uid:user.uid, email:user.email, acesso_todas_lojas:true, lojas_permitidas:[]
     };
 
+    // Quando o administrador definiu os canais, o painel só aceita usuários
+    // com acesso explícito ao Analista. Cadastros antigos continuam compatíveis.
+    if (acesso?.canais_acesso && acesso.canais_acesso.analista !== true) {
+      throw new Error('Este login possui acesso somente ao Coletor.');
+    }
+
     const permitidas = await window.DTLoja.garantirLojaInicial();
     if (!permitidas.length) throw new Error('Este login não possui acesso a nenhuma loja. Solicite a liberação ao administrador.');
     const atual = window.getDTLojaAtiva();
@@ -156,6 +162,9 @@ async function _onAnalistaLogado(user) {
   }
   catch(e){ _setLoginErro('Não foi possível preparar o ambiente da loja: '+e.message); await AUTH_AN.signOut(); return; }
   _mostrarApp();
+  if (typeof window.aplicarPermissoesAnalista === 'function') {
+    window.aplicarPermissoesAnalista();
+  }
   atualizarIndicadorLojaAtual();
 
   // 🔥 CHAMADA SEGURA DO INIT

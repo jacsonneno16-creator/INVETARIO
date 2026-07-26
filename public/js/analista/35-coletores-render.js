@@ -119,11 +119,14 @@ function renderColetores() {
   _renderPainelVisualColetores(cols);
   _renderTabelaColetores(cols);
 
-  // Produtividade por operador — melhorada
+  // Compatibilidade com versões antigas que ainda possuam o painel de produtividade.
+  // Na tela atual o painel foi removido; portanto, nenhum conteúdo é renderizado.
+  const colTableWrap = document.getElementById('col-table-wrap');
+  if (colTableWrap) {
   if (!operadores.length) {
-    document.getElementById('col-table-wrap').innerHTML = `<div class="empty"><div class="empty-icon">👤</div><div class="empty-title">Nenhum operador com contagens</div><div class="empty-sub">As contagens aparecerão aqui conforme os operadores registrarem</div></div>`;
+    colTableWrap.innerHTML = `<div class="empty"><div class="empty-icon">👤</div><div class="empty-title">Nenhum operador com contagens</div><div class="empty-sub">As contagens aparecerão aqui conforme os operadores registrarem</div></div>`;
   } else {
-    document.getElementById('col-table-wrap').innerHTML = `
+    colTableWrap.innerHTML = `
       <div class="tbl-wrap"><table>
         <thead><tr>
           <th>Operador</th><th>Coletor Atual</th>
@@ -166,6 +169,7 @@ function renderColetores() {
           </tr>`;
         }).join('')}</tbody>
       </table></div>`;
+  }
   }
   document.getElementById('col-painel-ultima-atualizacao').textContent = 'Atualizado: ' + new Date().toLocaleTimeString('pt-BR');
 }

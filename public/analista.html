@@ -240,11 +240,26 @@
     .page-title { font-size: .96rem; font-weight: 700; white-space: nowrap; color: var(--text); letter-spacing: -.015em; }
     .topbar-divider { width: 1px; height: 20px; background: var(--border); }
     .topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .content { flex: 1; padding: 28px 30px; display: flex; flex-direction: column; gap: 24px; }
+    .content {
+      flex: 1;
+      padding: 20px 30px 28px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-start;
+      align-items: stretch;
+      align-content: flex-start;
+      gap: 24px;
+    }
 
     /* ═══ PAGES ═══ */
     .page { display: none; flex-direction: column; gap: 22px; }
-    .page.on { display: flex; }
+    .page.on {
+      display: flex;
+      justify-content: flex-start;
+      align-items: stretch;
+      align-self: stretch;
+      margin-top: 0;
+    }
 
     /* ════════════════════════════════════════
        KPI CARDS — Premium Redesign
@@ -1508,9 +1523,9 @@ table td{padding:8px 10px!important;vertical-align:middle}
 <!-- Ranking visual -->
 <div class="tc" id="prod-podio-wrap" style="margin-bottom:16px">
 <div class="tc-header" style="border-top-color:var(--orange)">
-<div class="tc-title">🥇 Ranking de Produtividade</div>
+<div class="tc-title">📊 Análise de Produtividade</div>
 </div>
-<div id="prod-ranking-cards" style="display:flex;flex-wrap:wrap;gap:12px;padding:16px"></div>
+<div id="prod-graficos-wrap"></div>
 </div>
 <!-- Tabela detalhada -->
 <div class="tc">
@@ -1703,13 +1718,6 @@ table td{padding:8px 10px!important;vertical-align:middle}
 </div>
 <div id="col-cadastro-wrap">
 <div class="empty"><div class="empty-icon">📱</div><div class="empty-title">Nenhum dispositivo registrado</div><div class="empty-sub">Os coletores aparecem aqui assim que acessam o sistema</div></div>
-</div>
-</div>
-<!-- Histórico de sessões -->
-<div class="tc">
-<div class="tc-header"><div class="tc-title">📊 Produtividade por Operador</div></div>
-<div id="col-table-wrap">
-<div class="empty"><div class="empty-icon">👤</div><div class="empty-title">Nenhum operador com contagens</div><div class="empty-sub">Os operadores aparecerão conforme enviarem contagens</div></div>
 </div>
 </div>
 </div>
@@ -1907,7 +1915,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
 </div>
 <!-- MODAL: Criar Usuário -->
 <div id="op-modal-criar-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:950;align-items:center;justify-content:center">
-<div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:0;width:100%;max-width:480px;margin:20px;overflow:hidden">
+<div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:0;width:100%;max-width:820px;max-height:94vh;margin:20px;overflow:auto">
 <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
 <div style="font-weight:700;font-size:1.05rem">➕ Criar Usuário</div>
 <button onclick="opFecharModalCriar()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--muted);line-height:1">✕</button>
@@ -1978,8 +1986,17 @@ table td{padding:8px 10px!important;vertical-align:middle}
 </div>
 <div id="op-lojas-criar-box" style="display:none;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2)">
 <div id="op-lojas-criar-lista" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px"></div>
-<div style="font-size:.7rem;color:var(--muted);margin-top:8px">Selecione as lojas que este usuário pode acessar no coletor.</div>
+<div style="font-size:.7rem;color:var(--muted);margin-top:8px">Selecione as lojas que este usuário pode acessar.</div>
 </div>
+</div>
+<div class="fi full">
+<div class="fl" style="margin-bottom:8px">Onde este login pode entrar</div>
+<div id="op-canais-criar" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+</div>
+<div class="fi full">
+<div class="fl" style="margin-bottom:8px">Permissões detalhadas do Analista</div>
+<div style="font-size:.72rem;color:var(--muted);margin-bottom:9px">Sem a permissão “Visualizar”, a aba não aparecerá para este login.</div>
+<div id="op-permissoes-criar"></div>
 </div>
 <div id="op-preview" style="display:none;background:rgba(0,214,143,.07);border:1px solid rgba(0,214,143,.25);border-radius:var(--r);padding:12px 14px">
 <div style="font-size:.72rem;font-weight:700;color:var(--green-mid);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">📋 Conta que será criada</div>
@@ -2011,34 +2028,9 @@ table td{padding:8px 10px!important;vertical-align:middle}
 <div class="empty"><div class="empty-icon">🔑</div><div class="empty-title">Carregando operadores…</div></div>
 </div>
 </div>
-<!-- ══ RECONTAGENS ATRIBUÍDAS (visão do operador) ══ -->
-<div class="tc" style="border-top:3px solid var(--orange)">
-<div class="tc-header" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-<div>
-<div class="tc-title">🔄 Recontagens Atribuídas</div>
-<div style="font-size:.73rem;color:var(--muted);margin-top:2px">Fila de recontagem visível pelo operador — selecione um operador para visualizar</div>
-</div>
-<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-<select class="filter-sel" id="op-rec-filtro-operador" onchange="opRenderRecontagensAtribuidas()" style="min-width:180px">
-<option value="">Selecione um operador…</option>
-</select>
-<select class="filter-sel" id="op-rec-filtro-status" onchange="opRenderRecontagensAtribuidas()">
-<option value="">Todos os status</option>
-<option value="pendente">⏳ Pendente</option>
-<option value="em_andamento">🔄 Em andamento</option>
-<option value="concluida">✅ Concluída</option>
-<option value="cancelada">❌ Cancelada</option>
-</select>
-<button class="btn btn-ghost btn-sm" onclick="opCarregarOperadoresParaFiltro()">🔄 Atualizar lista</button>
-</div>
-</div>
-<div id="op-rec-atribuidas-wrap" style="padding:16px">
-<div class="empty"><div class="empty-icon">🔄</div><div class="empty-title">Selecione um operador para ver as recontagens atribuídas</div></div>
-</div>
-</div>
 <!-- Modal editar operador -->
 <div id="op-modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:900;display:none;align-items:center;justify-content:center">
-<div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:440px;margin:20px">
+<div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:820px;max-height:94vh;overflow:auto;margin:20px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
 <div style="font-weight:700;font-size:1rem">✏️ Editar Operador</div>
 <button onclick="opFecharModal()" style="background:none;border:none;font-size:1.2rem;cursor:pointer;color:var(--muted)">✕</button>
@@ -2071,6 +2063,15 @@ table td{padding:8px 10px!important;vertical-align:middle}
 <div id="op-lojas-editar-box" style="display:none;padding:12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2)">
 <div id="op-lojas-editar-lista" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px"></div>
 </div>
+</div>
+<div class="fi">
+<div class="fl" style="margin-bottom:8px">Onde este login pode entrar</div>
+<div id="op-canais-editar" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+</div>
+<div class="fi">
+<div class="fl" style="margin-bottom:8px">Permissões detalhadas do Analista</div>
+<div style="font-size:.72rem;color:var(--muted);margin-bottom:9px">Sem “Visualizar”, a aba fica oculta.</div>
+<div id="op-permissoes-editar"></div>
 </div>
 <div class="fi">
 <div class="fl">Nova senha <span style="color:var(--muted);font-size:.65rem">(deixe em branco para manter)</span></div>
@@ -3252,7 +3253,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
 <!-- ══════════ JAVASCRIPT ══════════ -->
 
 
-</div><script src="js/shared/common-utils.js?v=20260723-52"></script><script src="js/shared/firebase-shared.js?v=20260722-18"></script><script src="js/shared/enderecos-service.js?v=20260724-95"></script><script src="js/shared/produtos-service.js?v=20260724-95"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/01-core-base-storage.js?v=20260724-74"></script><script src="js/analista/services/inventarioService.js?v=20260723-57"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260724-70"></script><script src="js/analista/firebaseService.js?v=20260724-95"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260723-51"></script><script src="js/analista/03-core-navigation.js?v=20260722-20"></script><script src="js/analista/04-compat-pages.js?v=20260724-73"></script><script src="js/analista/09-fs-publicar.js?v=20260724-95"></script><script src="js/analista/10-inventarios-negocio.js?v=20260723-51"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260724-79"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260724-95"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260724-95"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260725-109"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260724-61"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260724-78"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260724-70"></script><script src="js/analista/33-render-enderecos.js?v=20260724-95"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-20"></script><script src="js/analista/35-coletores-render.js?v=20260724-61"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260725-109"></script><script src="js/analista/39-base-produtos.js?v=20260724-95"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260724-65"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260724-95"></script>
+</div><script src="js/shared/common-utils.js?v=20260723-52"></script><script src="js/shared/firebase-shared.js?v=20260722-18"></script><script src="js/shared/enderecos-service.js?v=20260724-95"></script><script src="js/shared/produtos-service.js?v=20260724-95"></script><script src="js/analista/actions.js?v=20260722-16"></script><script src="js/analista/reducers.js?v=20260722-16"></script><script src="js/analista/store.js?v=20260722-16"></script><script src="js/analista/01-core-base-storage.js?v=20260724-74"></script><script src="js/analista/services/inventarioService.js?v=20260723-57"></script><script src="js/analista/services/auditoriaService.js?v=20260722-16"></script><script src="js/analista/services/divergenciaService.js?v=20260724-70"></script><script src="js/analista/firebaseService.js?v=20260724-95"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260723-51"></script><script src="js/analista/03-core-navigation.js?v=20260722-20"></script><script src="js/analista/04-compat-pages.js?v=20260724-73"></script><script src="js/analista/09-fs-publicar.js?v=20260724-95"></script><script src="js/analista/10-inventarios-negocio.js?v=20260723-51"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260724-79"></script><script src="js/analista/12-validacao-operacional.js?v=20260722-16"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260724-95"></script><script src="js/analista/20-sync-contagens.js?v=20260722-16"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260724-95"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260725-109"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260724-61"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260724-78"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260724-70"></script><script src="js/analista/33-render-enderecos.js?v=20260724-95"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260722-20"></script><script src="js/analista/35-coletores-render.js?v=20260726-117"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260725-109"></script><script src="js/analista/39-base-produtos.js?v=20260724-95"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260726-117"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260724-95"></script>
 <div class="modal-bg" id="modal-loja-cadastro"><div class="modal" style="max-width:480px">
   <div class="modal-title">🏪 <span id="ml-title">Cadastrar loja</span></div>
   <input type="hidden" id="ml-id"/>
@@ -3261,7 +3262,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260722-19"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260726-114"></script><script src="js/analista/42-topbar-tools.js?v=20260724-95"></script><script src="js/analista/43-importar-exportar-api.js?v=20260725-110"></script><script src="js/analista/app-controller.js?v=20260724-79"></script><script src="js/analista/00-auth-login.js?v=20260724-95"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260726-116"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260726-114"></script><script src="js/analista/42-topbar-tools.js?v=20260724-95"></script><script src="js/analista/43-importar-exportar-api.js?v=20260725-110"></script><script src="js/analista/app-controller.js?v=20260724-79"></script><script src="js/analista/00-auth-login.js?v=20260726-115"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}

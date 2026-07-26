@@ -248,6 +248,12 @@ async function doLogin() {
       window.DT_USUARIO_ACESSO_ATUAL = acessoGlobal || {
         uid:user.uid, email:user.email, acesso_todas_lojas:true, lojas_permitidas:[]
       };
+      if (acessoGlobal?.canais_acesso && acessoGlobal.canais_acesso.coletor !== true) {
+        _setBtn('ENTRAR', false);
+        await AUTH.signOut().catch(()=>{});
+        _setFb('Este login possui acesso somente ao painel Analista.', 'err');
+        return;
+      }
 
       // Carrega as lojas permitidas. Uma única loja entra direto; duas ou
       // mais exibem o seletor antes do menu principal.

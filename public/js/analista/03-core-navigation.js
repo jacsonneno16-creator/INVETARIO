@@ -22,6 +22,10 @@ const PAGE_NAMES = {
 let _currentPage = 'dashboard';
 
 function goPage(id, el) {
+  if (typeof window.temPermissao === 'function' && !window.temPermissao(id, 'visualizar')) {
+    if (typeof window.showToast === 'function') window.showToast('Você não possui acesso a esta aba.', 'error');
+    return;
+  }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('on'));
   const pageEl = document.getElementById('page-' + id);

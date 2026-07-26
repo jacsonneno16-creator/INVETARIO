@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v114-acompanhamento-auditoria';
+var CACHE='dt-inventario-v118-central-ajuda-completa';
 var PRECACHE=[
   '/',
   '/coletor.html',
