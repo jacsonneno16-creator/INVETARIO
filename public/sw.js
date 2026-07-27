@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v152-auditoria-offline';
+var CACHE='dt-inventario-v153-login-analista';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -7,6 +7,12 @@ var PRECACHE=[
   '/manifest.webmanifest',
   '/manifest-coletor.json',
   '/js/legacy-polyfills.js',
+  '/js/shared/common-utils.js',
+  '/js/shared/firebase-shared.js',
+  '/js/analista/actions.js',
+  '/js/analista/reducers.js',
+  '/js/analista/store.js',
+  '/js/analista/00-auth-login.js',
   '/js-legacy/shared/common-utils.js',
   '/js-legacy/shared/firebase-shared.js',
   '/js-legacy/shared/enderecos-service.js',
