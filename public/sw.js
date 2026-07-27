@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v141-nome-produto-divergencias';
+var CACHE='dt-inventario-v142-recuperacao-usuario-existente';
 var PRECACHE=[
   '/',
   '/index.html',

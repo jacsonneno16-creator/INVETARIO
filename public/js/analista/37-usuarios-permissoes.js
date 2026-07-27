@@ -69,7 +69,50 @@
   function opGerarSenha(){document.getElementById('op-senha').value=Math.random().toString(36).slice(-4).toUpperCase()+Math.floor(1000+Math.random()*9000);}
   function toggleOpSenha(){const e=document.getElementById('op-senha');e.type=e.type==='password'?'text':'password';}function toggleOpeditSenha(){const e=document.getElementById('opedit-senha');e.type=e.type==='password'?'text':'password';}
   function opValidarUsername(){}function opValidarSenha(){}
-  async function criarOperador(){const nome=document.getElementById('op-nome').value.trim(),login=document.getElementById('op-username').value.trim().toLowerCase(),senha=document.getElementById('op-senha').value;if(!nome||!login||senha.length<6)return global.showToast?.('Preencha nome, login e senha com no mínimo 6 caracteres','error');if(!validarAcesso('criar'))return;const email=login.includes('@')?login:login+'@daterrinhaalimentos.com.br',modo=document.querySelector('input[name="op-lojas-criar-modo"]:checked')?.value||'todas',sel=[...document.querySelectorAll('#op-lojas-criar-lista input:checked')].map(x=>x.value);if(modo==='selecionadas'&&!sel.length)return global.showToast?.('Selecione ao menos uma loja','error');try{let app;try{app=firebase.app('dt-user-admin');}catch(_){app=firebase.initializeApp(global.DT_FIREBASE_CFG,'dt-user-admin');}const cred=await app.auth().createUserWithEmailAndPassword(email,senha);await cred.user.updateProfile({displayName:nome});const c=lerCanais('criar'),data={uid:cred.user.uid,email,nome,perfil:c.analista?'analista':'operador',ativo:true,canais_acesso:c,permissoes:lerPermissoes('criar'),acesso_todas_lojas:modo==='todas',lojas_permitidas:modo==='todas'?[]:sel,criado_em:new Date().toISOString()};await raw().collection(ACCESS).doc(cred.user.uid).set(data);for(const l of lojasCache.filter(l=>data.acesso_todas_lojas||sel.includes(l.id)))await raw().collection('lojas').doc(l.id).collection('dt_operadores').doc(cred.user.uid).set(data,{merge:true});await app.auth().signOut();opFecharModalCriar();global.showToast?.('Usuário criado com permissões detalhadas','success');await listarOperadores();}catch(e){global.showToast?.('Erro ao criar usuário: '+e.message,'error');}}
+  async function criarOperador(){
+    const nome=document.getElementById('op-nome').value.trim(),login=document.getElementById('op-username').value.trim().toLowerCase(),senha=document.getElementById('op-senha').value;
+    if(!nome||!login||senha.length<6)return global.showToast?.('Preencha nome, login e senha com no mínimo 6 caracteres','error');
+    if(!validarAcesso('criar'))return;
+    const email=login.includes('@')?login:login+'@daterrinhaalimentos.com.br',modo=document.querySelector('input[name="op-lojas-criar-modo"]:checked')?.value||'todas',sel=[...document.querySelectorAll('#op-lojas-criar-lista input:checked')].map(x=>x.value);
+    if(modo==='selecionadas'&&!sel.length)return global.showToast?.('Selecione ao menos uma loja','error');
+    let app,cred,contaExistente=false;
+    try{
+      try{app=firebase.app('dt-user-admin');}catch(_){app=firebase.initializeApp(global.DT_FIREBASE_CFG,'dt-user-admin');}
+      try{
+        cred=await app.auth().createUserWithEmailAndPassword(email,senha);
+      }catch(authErro){
+        if(authErro?.code!=='auth/email-already-in-use')throw authErro;
+        contaExistente=true;
+        try{
+          cred=await app.auth().signInWithEmailAndPassword(email,senha);
+        }catch(loginErro){
+          if(loginErro?.code==='auth/wrong-password'||loginErro?.code==='auth/invalid-credential'||loginErro?.code==='auth/invalid-login-credentials'){
+            throw Object.assign(new Error('Este e-mail já possui uma conta. Informe a senha atual dessa conta para recuperar o usuário, ou redefina a senha antes de tentar novamente.'),{code:'dt/email-existente-senha-diferente'});
+          }
+          throw loginErro;
+        }
+      }
+      await cred.user.updateProfile({displayName:nome});
+      const c=lerCanais('criar'),agora=new Date().toISOString(),data={uid:cred.user.uid,email,nome,perfil:c.analista?'analista':'operador',ativo:true,canais_acesso:c,permissoes:lerPermissoes('criar'),acesso_todas_lojas:modo==='todas',lojas_permitidas:modo==='todas'?[]:sel,atualizado_em:agora};
+      if(!contaExistente)data.criado_em=agora;
+      else data.recuperado_em=agora;
+      await raw().collection(ACCESS).doc(cred.user.uid).set(data,{merge:true});
+      for(const l of lojasCache.filter(l=>data.acesso_todas_lojas||sel.includes(l.id)))await raw().collection('lojas').doc(l.id).collection('dt_operadores').doc(cred.user.uid).set(data,{merge:true});
+      await app.auth().signOut();
+      opFecharModalCriar();
+      global.showToast?.(contaExistente?'Usuário existente recuperado e permissões vinculadas':'Usuário criado com permissões detalhadas','success');
+      await listarOperadores();
+    }catch(e){
+      try{await app?.auth().signOut();}catch(_){}
+      const mensagens={
+        'auth/invalid-email':'O e-mail informado é inválido.',
+        'auth/weak-password':'A senha deve ter no mínimo 6 caracteres.',
+        'auth/too-many-requests':'Muitas tentativas. Aguarde alguns minutos e tente novamente.',
+        'auth/network-request-failed':'Falha de conexão. Verifique a internet e tente novamente.'
+      };
+      global.showToast?.(e?.code==='dt/email-existente-senha-diferente'?e.message:(mensagens[e?.code]||('Não foi possível criar o usuário: '+(e?.message||'erro desconhecido'))),'error');
+    }
+  }
   async function opExcluirUsuario(i){
     const u=usuarios[i];
     if(!u||usuarioProtegido(u))return global.showToast?.('Esta conta é protegida e não pode ser excluída','error');
