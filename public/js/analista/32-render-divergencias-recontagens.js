@@ -432,12 +432,9 @@ function renderDivergencias() {
   // rodada, mas a tela renderizava apenas divergências e, por isso, ficava vazia.
   // Recompõe um caso visual a partir da própria recontagem para não esconder a
   // atividade pendente do Analista.
-  state().recontagens
-    .filter(r => !['CONCLUIDA','CANCELADA','RESOLVIDA'].includes(String(r.status || '').toUpperCase()))
-    .forEach(r => {
+  state().recontagens.forEach(r => {
       const vinculada = divergenciasVisiveis.some(d => {
-        const ativa = !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(String(d.status || '').toUpperCase());
-        return ativa && (
+        return (
           (r.divergencia_id && String(d.id) === String(r.divergencia_id)) ||
           (String(d.inventario_id || '') === String(r.inventario_id || r.inventarioId || '') &&
            String(d.endereco || '').trim().toUpperCase() === String(r.endereco || '').trim().toUpperCase())
@@ -445,13 +442,17 @@ function renderDivergencias() {
       });
       if (vinculada) return;
       const statusRec = String(r.status_recontagem || r.status || '').toLowerCase();
+      const concluida = ['concluida','resolvida'].includes(statusRec);
+      const persistente = statusRec === 'persistente' ||
+        String(r.status_bloqueio || '').toUpperCase() === 'PERSISTENTE_BLOQUEADO';
       divergenciasVisiveis.push({
         ...r,
         id: r.divergencia_id || `recontagem-${r.id}`,
         _recontagem_orfa_id: r.id,
         inventario_id: r.inventario_id || r.inventarioId || '',
-        status: statusRec === 'aguardando_analista' ? 'ABERTA' : 'EM_RECONTAGEM',
-        status_recontagem: statusRec,
+        status: persistente ? 'PERSISTENTE' : (concluida ? 'RESOLVIDA' :
+          (statusRec === 'aguardando_analista' ? 'ABERTA' : 'EM_RECONTAGEM')),
+        status_recontagem: concluida ? 'concluida' : statusRec,
         operador_responsavel: r.operador_responsavel || r.operador || '',
         criada_em: r.criada_em || r.atribuido_em || r.data || '',
         tipo_divergencia: r.tipo_divergencia || 'RECONTAGEM_PENDENTE',
@@ -461,8 +462,16 @@ function renderDivergencias() {
       });
     });
 
+  const _invCanonicoHist = obj => {
+    const bruto = String(obj?.inventario_id || obj?.inventarioId || obj?.inventario || '').trim();
+    const inv = (state().inventarios || []).find(i =>
+      [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId].filter(Boolean).map(String).includes(bruto));
+    return String(inv?.id || bruto);
+  };
+  const _chaveHist = obj =>
+    `${_invCanonicoHist(obj)}|${String(obj?.endereco || '').trim().toUpperCase()}`;
   divergenciasVisiveis.forEach(d => {
-    const chave = `${String(d.inventario_id || '').trim()}|${String(d.endereco || '').trim().toUpperCase()}`;
+    const chave = _chaveHist(d);
     const grupo = gruposPorEndereco.get(chave) || [];
     grupo.push(d);
     gruposPorEndereco.set(chave, grupo);
@@ -478,6 +487,15 @@ function renderDivergencias() {
       return pb - pa || String(b.criada_em || '').localeCompare(String(a.criada_em || ''));
     });
     const principal = Object.assign({}, ordenado[0]);
+    const recsEndereco = (state().recontagens || [])
+      .filter(r => _chaveHist(r) === _chaveHist(principal))
+      .sort((a,b) => String(a.recontagem_concluida_em || a.concluida_em || a.criada_em || '')
+        .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.criada_em || '')));
+    const recsExecutadas = recsEndereco.filter(r =>
+      r.qtd_recontagem != null || r.qtd_segunda != null || r.qtd_terceira != null ||
+      ['CONCLUIDA','RESOLVIDA'].includes(String(r.status || '').toUpperCase()));
+    const segunda = recsExecutadas[0] || {};
+    const terceira = recsExecutadas[1] || {};
     principal._divergencias_agrupadas = grupo.map(x => x.id);
     principal.motivos_divergencia = [...new Set(grupo.flatMap(x =>
       Array.isArray(x.motivos_divergencia) ? x.motivos_divergencia : [x.tipo_divergencia]
@@ -489,14 +507,24 @@ function renderDivergencias() {
       const origem = ordenado.find(x => x[campo] != null && x[campo] !== '');
       if (origem) principal[campo] = origem[campo];
     });
+    principal.qtd_segunda = principal.qtd_segunda ?? segunda.qtd_segunda ?? segunda.qtd_recontagem;
+    principal.produto_segunda = principal.produto_segunda || segunda.produto_segunda || segunda.produto_recontagem || segunda.produto || '';
+    principal.operador_segunda = principal.operador_segunda || segunda.operador_segunda || segunda.operador_recontagem || segunda.operador || '';
+    principal.data_segunda = principal.data_segunda || segunda.data_segunda || segunda.recontagem_concluida_em || segunda.concluida_em || '';
+    principal.qtd_terceira = principal.qtd_terceira ?? terceira.qtd_terceira ?? terceira.qtd_recontagem;
+    principal.produto_terceira = principal.produto_terceira || terceira.produto_terceira || terceira.produto_recontagem || terceira.produto || '';
+    principal.operador_terceira = principal.operador_terceira || terceira.operador_terceira || terceira.operador_recontagem || terceira.operador || '';
+    principal.data_terceira = principal.data_terceira || terceira.data_terceira || terceira.recontagem_concluida_em || terceira.concluida_em || '';
+    principal._recontagens_endereco = recsEndereco;
+    principal._vezes_contado = 1 + (principal.qtd_segunda != null ? 1 : 0) + (principal.qtd_terceira != null ? 1 : 0);
+    if (String(principal.status || '').toUpperCase() === 'RESOLVIDA') {
+      principal.status_recontagem = 'concluida';
+    }
     return principal;
   });
   if (fInv)    dados = dados.filter(d => d.inventario_id === fInv);
   if (fStatus) {
     dados = dados.filter(d => d.status === fStatus);
-  } else {
-    // Por padrão ocultar RESOLVIDA e PERSISTENTE — já encerradas, não precisam poluir a lista
-    dados = dados.filter(d => d.status !== 'RESOLVIDA' && d.status !== 'PERSISTENTE');
   }
   if (fTipo === 'FALTA')                  dados = dados.filter(d => d.diferenca != null && d.diferenca < 0);
   else if (fTipo === 'SOBRA')             dados = dados.filter(d => d.diferenca != null && d.diferenca > 0);
@@ -618,7 +646,7 @@ function renderDivergencias() {
             style="width:15px;height:15px;cursor:pointer;accent-color:var(--orange)"
             onchange="divToggleTodos(this.checked)">
         </th>
-        <th>Inventário</th><th>Rua</th><th>Endereço</th>
+        <th>Inventário</th><th>Rua</th><th>Endereço</th><th>Vezes contado</th>
         <th>Operador Contagem</th><th>Data</th><th>Tipo</th>
         <th>Esperado no endereço</th><th>1ª Contagem</th>
         <th>2ª Contagem</th><th>3ª Contagem</th><th>Resultado</th>
@@ -704,6 +732,7 @@ function renderDivergencias() {
             <td style="font-size:.75rem;color:var(--muted)">${d.inventario_nome || d.inventario_id}</td>
             <td class="mono" style="font-weight:600">${rua}</td>
             <td class="mono">${escHTML(d.endereco)}${d.endereco_correto ? `<br><span style="font-size:.65rem;color:var(--muted)">→ ${escHTML(d.endereco_correto)}</span>` : ''}</td>
+            <td style="text-align:center"><span class="badge b-purple" style="font-size:.76rem">${d._vezes_contado || 1}x</span></td>
             <td style="font-size:.8rem">${operador}</td>
             <td class="mono" style="font-size:.72rem;color:var(--muted);white-space:nowrap">${fmtTs(d.criada_em)}</td>
             <td><span class="badge ${tipoCls}">${tipoTxt}</span></td>
@@ -737,8 +766,10 @@ function renderDivergencias() {
               const recFinal = state().recontagens
                 .filter(r => idsAgrupados.includes(r.divergencia_id))
                 .sort((a,b) => (b.numero_recontagem||1) - (a.numero_recontagem||1))[0] || null;
-              const qtdRes = d.qtd_resultado_final ?? recFinal?.qtd_recontagem ?? recFinal?.qtd_terceira ?? recFinal?.qtd_segunda ?? null;
-              const opRes  = recFinal?.operador_segunda || recFinal?.operador || '';
+              const qtdRes = d.qtd_resultado_final ?? recFinal?.qtd_recontagem ?? recFinal?.qtd_terceira ??
+                recFinal?.qtd_segunda ?? d.qtd_terceira ?? d.qtd_segunda ?? null;
+              const opRes  = recFinal?.operador_segunda || recFinal?.operador ||
+                d.operador_terceira || d.operador_segunda || '';
               const motivo = d.contagem_aceita || '';
               if (qtdRes == null) return '<td><div style="color:var(--muted);font-size:.7rem;text-align:center;line-height:1.25">Aguardando<br>recontagem</div></td>';
               const qtdEspN = parseFloat(d.qtd_esperada);
