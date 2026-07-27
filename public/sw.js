@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v144-logins-senhas-usuarios';
+var CACHE='dt-inventario-v145-correcao-validacao-nome';
 var PRECACHE=[
   '/',
   '/index.html',

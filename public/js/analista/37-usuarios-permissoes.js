@@ -10,7 +10,7 @@
   const partesNome=nome=>String(nome||'').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9\s-]/g,'').split(/\s+/).filter(Boolean);
   const loginsDoNome=nome=>{
     const partes=partesNome(nome),primeiro=partes[0]||'',segundo=partes[1]||'';
-    return {primeiro,analista:primeiro?primeiro+DOMINIO:'',coletor:primeiro&&segundo?primeiro+'.'+segundo:'',coletorEmail:primeiro&&segundo?primeiro+'.'+segundo+DOMINIO:''};
+    return {primeiro,segundo,analista:primeiro?primeiro+DOMINIO:'',coletor:primeiro&&segundo?primeiro+'.'+segundo:'',coletorEmail:primeiro&&segundo?primeiro+'.'+segundo+DOMINIO:''};
   };
 
   const MODULOS=[
@@ -78,7 +78,8 @@
   function opValidarUsername(){}function opValidarSenha(){}
   async function criarOperador(){
     const nome=document.getElementById('op-nome').value.trim(),senha=document.getElementById('op-senha').value,tipo=document.querySelector('input[name="op-tipo"]:checked')?.value||'operador',logins=loginsDoNome(nome);
-    if(!nome||!logins.segundo||senha.length<6)return global.showToast?.('Informe ao menos o primeiro e o segundo nome e uma senha com no mínimo 6 caracteres','error');
+    if(!logins.primeiro||!logins.segundo||!logins.coletor||!logins.coletorEmail)return global.showToast?.('Informe ao menos o primeiro e o segundo nome','error');
+    if(senha.length<6)return global.showToast?.('Informe uma senha com no mínimo 6 caracteres','error');
     if(!validarAcesso('criar'))return;
     const modo=document.querySelector('input[name="op-lojas-criar-modo"]:checked')?.value||'todas',sel=[...document.querySelectorAll('#op-lojas-criar-lista input:checked')].map(x=>x.value);
     if(modo==='selecionadas'&&!sel.length)return global.showToast?.('Selecione ao menos uma loja','error');
