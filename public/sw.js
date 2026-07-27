@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v142-recuperacao-usuario-existente';
+var CACHE='dt-inventario-v143-leituras-recontagem-operador';
 var PRECACHE=[
   '/',
   '/index.html',

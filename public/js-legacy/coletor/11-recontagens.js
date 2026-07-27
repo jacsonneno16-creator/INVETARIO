@@ -87,7 +87,7 @@ function _atualizarBadgeRecontagens() {
     }
 }
 function iniciarListenerRecontagens(invId) {
-    var _a;
+    var _a, _b;
     if (_recListener) {
         try {
             _recListener();
@@ -101,8 +101,16 @@ function iniciarListenerRecontagens(invId) {
     if (!((_a = APP.recontagens) === null || _a === void 0 ? void 0 : _a.length))
         _recCarregando = true;
     try {
+        var operadorAtual_1 = String(((_b = APP.operador) === null || _b === void 0 ? void 0 : _b.name) || '').trim();
+        if (!operadorAtual_1) {
+            _recCarregando = false;
+            APP.recontagens = [];
+            APP.divergenciasAtribuidas = [];
+            renderRecontagensAtribuidas();
+            return;
+        }
         _unsubRec = FS.collection('dt_recontagens')
-            .where('inventario_id', '==', invId)
+            .where('operador', '==', operadorAtual_1)
             .onSnapshot(function (snap) {
             APP.recontagens = snap.docs.map(function (d) {
                 var data = d.data();
@@ -111,6 +119,8 @@ function iniciarListenerRecontagens(invId) {
                 rec.status_recontagem = (rec.status_recontagem || 'pendente').toLowerCase();
                 return rec;
             }).filter(function (r) {
+                if (String(r.inventario_id || '') !== String(invId))
+                    return false;
                 var stRec = (r.status_recontagem || 'pendente').toLowerCase();
                 var st = (r.status || '').toUpperCase();
                 // Excluir canceladas, encerradas e bloqueadas definitivamente
@@ -123,6 +133,21 @@ function iniciarListenerRecontagens(invId) {
                 if ((r.status_bloqueio || '') === 'PERSISTENTE_BLOQUEADO')
                     return false;
                 return true;
+            });
+            // Compatibilidade com tarefas criadas antes da v143: o próprio
+            // coletor responsável cria o indicador leve que bloqueará o endereço
+            // nos outros aparelhos, sem compartilhar os detalhes da tarefa.
+            APP.recontagens.forEach(function (r) {
+                var st = String(r.status || '').toUpperCase();
+                var sr = String(r.status_recontagem || '').toLowerCase();
+                if (!r.endereco || st !== 'PENDENTE' || sr === 'cancelada')
+                    return;
+                var chave = "".concat(invId, "__").concat(encodeURIComponent(String(r.endereco).trim().toUpperCase()));
+                FS.collection('dt_bloqueios_recontagem').doc(chave).set({
+                    ativo: true, inventario_id: invId, endereco: r.endereco,
+                    operador: operadorAtual_1, recontagem_id: r.id,
+                    atualizado_em: new Date().toISOString()
+                }, { merge: true }).catch(function () { });
             });
             _recCarregando = false;
             _atualizarBadgeRecontagens();
@@ -138,31 +163,9 @@ function iniciarListenerRecontagens(invId) {
             _recCarregando = false;
             renderRecontagensAtribuidas();
         });
-        _unsubDiv = FS.collection('dt_divergencias')
-            .where('inventario_id', '==', invId)
-            .onSnapshot(function (snap) {
-            APP.divergenciasAtribuidas = snap.docs.map(function (d) {
-                var data = d.data();
-                delete data.id;
-                var div = __assign({ id: d.id }, data);
-                // Preservar status_recontagem do Firestore sem sobrescrever com padrão
-                // 'pendente' — o analista é quem define o status correto.
-                if (div.status_recontagem) {
-                    div.status_recontagem = div.status_recontagem.toLowerCase();
-                }
-                else {
-                    div.status_recontagem = 'pendente';
-                }
-                return div;
-            }).filter(function (d) {
-                if (_itemEncerradoColetor(d))
-                    return false;
-                // Sem atribuição, o caso pertence exclusivamente à fila do Analista.
-                return _recontagemDoOperadorAtual(d);
-            });
-            _atualizarBadgeRecontagens();
-            renderRecontagensAtribuidas();
-        }, function (err) { console.error('[REC] dt_divergencias erro:', err.code, err.message); });
+        // A divergência completa pertence ao Analista. Os dados operacionais
+        // necessários já acompanham a tarefa em dt_recontagens.
+        APP.divergenciasAtribuidas = [];
         _recListener = function () {
             try {
                 if (_unsubRec)
@@ -289,14 +292,14 @@ function _ativarModoRecontagem(item) {
         if (recVinculada) {
             itemNorm.id = recVinculada.id; // recontagem_id que será gravado na contagem
             itemNorm.numero_recontagem = recVinculada.numero_recontagem || 1;
-        } else {
+        }
+        else {
             // BUG CORRIGIDO: aqui itemNorm.id ficava com o id da DIVERGÊNCIA (não da
             // recontagem), porque nada era feito nesse ramo e o valor herdado de
-            // "__assign({}, item)" permanecia. A contagem enviada gravava
-            // recontagem_id apontando pra um documento que não existe em
-            // dt_recontagens, então o Analista nunca conseguia consolidar essa
-            // rodada — a recontagem "sumia". Agora bloqueamos e pedimos
-            // sincronização em vez de seguir com um id errado.
+            // "{...item}" permanecia. A contagem enviada gravava recontagem_id
+            // apontando pra um documento que não existe em dt_recontagens, então o
+            // Analista nunca conseguia consolidar essa rodada — a recontagem "sumia".
+            // Agora bloqueamos e pedimos sincronização em vez de seguir com um id errado.
             itemNorm.id = null;
             toast('🔄 Recontagem ainda não sincronizada neste aparelho. Toque em "Atualizar" e tente novamente.', 'w');
             return;
@@ -374,11 +377,15 @@ function _concluirRecontagem() {
         if (idEhRecontagem) {
             FS.collection('dt_recontagens').doc(item.id).update(upd).catch(function (e) { return console.warn('[Rec]', e.message); });
         }
-        // Sempre devolver o conflito ao Analista imediatamente. Assim ele não
-        // reaparece para o operador antes de uma nova atribuição explícita.
+        // Sempre devolver o conflito ao Analista imediatamente. Assim, mesmo se o
+        // coletor for reaberto antes do próximo "Atualizar", a rodada concluída não
+        // reaparece para o operador e não fica atribuída por engano.
         var divFsId = item.divergencia_id || (item._col === 'divergencia' ? item.id : null);
         if (divFsId) {
-            FS.collection('dt_divergencias').doc(divFsId).update({ status_recontagem: 'aguardando_analista', operador_responsavel: null }).catch(function (e) { return console.warn('[Div]', e.message); });
+            FS.collection('dt_divergencias').doc(divFsId).update({
+                status_recontagem: 'aguardando_analista',
+                operador_responsavel: null
+            }).catch(function (e) { return console.warn('[Div]', e.message); });
         }
     }
     // Marcar recontagem como concluída e encerrada na lista local
@@ -431,9 +438,9 @@ function renderRecontagensAtribuidas() {
     }
     var recs = (APP.recontagens || [])
         .filter(function (r) {
-        var _a;
         if (_itemEncerradoColetor(r))
             return false;
+        // Só mostrar recontagens atribuídas ao operador atual
         return _recontagemDoOperadorAtual(r);
     })
         .map(function (r) { var _a, _b, _c; return ({ _id: r.id, _col: 'recontagem', endereco: r.endereco || '—', descricao: r.descricao || '', barcode: r.produto || '', qtd1: (_a = r.qtd_primeira) !== null && _a !== void 0 ? _a : '—', qtdEsp: (_b = r.qtd_esperada) !== null && _b !== void 0 ? _b : '—', diferenca: (_c = r.diferenca) !== null && _c !== void 0 ? _c : null, operador: r.operador || '', statusRec: (r.status_recontagem || 'pendente'), obs: r.observacao_atribuicao || r.observacao || '', data: r.atribuido_em || '', tag: '' }); });

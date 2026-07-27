@@ -191,43 +191,13 @@ async function _verificarEnderecoFirebase(endNorm) {
     // ── Verificar se o endereço está em recontagem ativa (divergência ou recontagem pendente) ──
     const emRecontagemLocal = _enderecoEmRecontagem(endNorm);
 
-    // Se não temos info local, consultar Firebase
+    // Os demais coletores recebem somente um indicador leve de bloqueio.
     let emRecontagemFS = false;
     if (!emRecontagemLocal) {
       try {
-        const [snapDiv, snapRec] = await Promise.all([
-          FS.collection('dt_divergencias')
-            .where('inventario_id', '==', APP.inventario.id)
-            .where('endereco', '==', endNorm)
-            .limit(5)
-            .get(),
-          FS.collection('dt_recontagens')
-            .where('inventario_id', '==', APP.inventario.id)
-            .where('endereco', '==', endNorm)
-            .limit(5)
-            .get(),
-        ]);
-        // Apenas divergências com fluxo ABERTO bloqueiam o endereço.
-        // RESOLVIDA, PERSISTENTE e sem_divergencia liberam o endereço para nova contagem.
-        const divAtiva = snapDiv.docs.find(d => {
-          const data = d.data();
-          const s     = (data.status || '').toUpperCase();
-          const bloq  = (data.status_bloqueio || '').toUpperCase();
-          const stRec = (data.status_recontagem || '').toLowerCase();
-          if (s === 'RESOLVIDA')             return false; // encerrada — não bloqueia
-          if (s === 'PERSISTENTE')           return false; // encerrada — não bloqueia
-          if (bloq === 'PERSISTENTE_BLOQUEADO') return false;
-          if (stRec === 'sem_divergencia')   return false; // resolvida — não bloqueia
-          if (data.divergencia_resolvida === true)     return false;
-          if (data.encerrada_definitivamente === true) return false;
-          return s !== ''; // div aberta/em_recontagem bloqueia
-        });
-        // Qualquer recontagem não cancelada = bloqueio permanente
-        const recAtiva = snapRec.docs.find(d => {
-          const sr = (d.data().status_recontagem || '').toLowerCase();
-          return sr !== 'cancelada';
-        });
-        emRecontagemFS = !!(divAtiva || recAtiva);
+        const chaveBloqueio = `${APP.inventario.id}__${encodeURIComponent(String(endNorm).trim().toUpperCase())}`;
+        const snapBloqueio = await FS.collection('dt_bloqueios_recontagem').doc(chaveBloqueio).get();
+        emRecontagemFS = snapBloqueio.exists && snapBloqueio.data()?.ativo === true;
       } catch(e) { /* se falhar, usar info local */ }
     }
 

@@ -55,8 +55,16 @@ function iniciarListenerRecontagens(invId) {
   let _unsubRec = null, _unsubDiv = null;
   if (!APP.recontagens?.length) _recCarregando = true;
   try {
+    const operadorAtual = String(APP.operador?.name || '').trim();
+    if (!operadorAtual) {
+      _recCarregando = false;
+      APP.recontagens = [];
+      APP.divergenciasAtribuidas = [];
+      renderRecontagensAtribuidas();
+      return;
+    }
     _unsubRec = FS.collection('dt_recontagens')
-      .where('inventario_id', '==', invId)
+      .where('operador', '==', operadorAtual)
       .onSnapshot(snap => {
         APP.recontagens = snap.docs.map(d => {
           const data = d.data(); delete data.id;
@@ -64,6 +72,7 @@ function iniciarListenerRecontagens(invId) {
           rec.status_recontagem = (rec.status_recontagem || 'pendente').toLowerCase();
           return rec;
         }).filter(r => {
+          if (String(r.inventario_id || '') !== String(invId)) return false;
           const stRec = (r.status_recontagem || 'pendente').toLowerCase();
           const st    = (r.status || '').toUpperCase();
           // Excluir canceladas, encerradas e bloqueadas definitivamente
@@ -72,6 +81,20 @@ function iniciarListenerRecontagens(invId) {
           if (st === 'PERSISTENTE') return false;
           if ((r.status_bloqueio || '') === 'PERSISTENTE_BLOQUEADO') return false;
           return true;
+        });
+        // Compatibilidade com tarefas criadas antes da v143: o próprio
+        // coletor responsável cria o indicador leve que bloqueará o endereço
+        // nos outros aparelhos, sem compartilhar os detalhes da tarefa.
+        APP.recontagens.forEach(r => {
+          const st = String(r.status || '').toUpperCase();
+          const sr = String(r.status_recontagem || '').toLowerCase();
+          if (!r.endereco || st !== 'PENDENTE' || sr === 'cancelada') return;
+          const chave = `${invId}__${encodeURIComponent(String(r.endereco).trim().toUpperCase())}`;
+          FS.collection('dt_bloqueios_recontagem').doc(chave).set({
+            ativo: true, inventario_id: invId, endereco: r.endereco,
+            operador: operadorAtual, recontagem_id: r.id,
+            atualizado_em: new Date().toISOString()
+          }, { merge: true }).catch(() => {});
         });
         _recCarregando = false;
         _atualizarBadgeRecontagens();
@@ -84,28 +107,9 @@ function iniciarListenerRecontagens(invId) {
         _recCarregando = false; renderRecontagensAtribuidas();
       });
 
-    _unsubDiv = FS.collection('dt_divergencias')
-      .where('inventario_id', '==', invId)
-      .onSnapshot(snap => {
-        APP.divergenciasAtribuidas = snap.docs.map(d => {
-          const data = d.data(); delete data.id;
-          const div = { id: d.id, ...data };
-          // Preservar status_recontagem do Firestore sem sobrescrever com padrão
-          // 'pendente' — o analista é quem define o status correto.
-          if (div.status_recontagem) {
-            div.status_recontagem = div.status_recontagem.toLowerCase();
-          } else {
-            div.status_recontagem = 'pendente';
-          }
-          return div;
-        }).filter(d => {
-          if (_itemEncerradoColetor(d)) return false;
-          // Só mostrar divergências atribuídas ao operador atual
-          return _recontagemDoOperadorAtual(d);
-        });
-        _atualizarBadgeRecontagens();
-        renderRecontagensAtribuidas();
-      }, err => { console.error('[REC] dt_divergencias erro:', err.code, err.message); });
+    // A divergência completa pertence ao Analista. Os dados operacionais
+    // necessários já acompanham a tarefa em dt_recontagens.
+    APP.divergenciasAtribuidas = [];
 
     _recListener = () => {
       try { if (_unsubRec) _unsubRec(); } catch(e) {}

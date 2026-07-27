@@ -1336,6 +1336,10 @@
       });
       fsSalvarDivergencia(updatedDiv);
       fsSalvarRecontagem(updatedRec);
+      if (global.FS_AN && div.inventario_id && div.endereco) {
+        const chaveBloqueio = `${div.inventario_id}__${encodeURIComponent(String(div.endereco).trim().toUpperCase())}`;
+        global.FS_AN.collection('dt_bloqueios_recontagem').doc(chaveBloqueio).delete().catch(() => {});
+      }
       Store.dispatch(Actions.batch([
         Actions.upsertEntity('divergencias', updatedDiv, BIZMETA),
         Actions.upsertEntity('recontagens', updatedRec, BIZMETA),
@@ -1475,6 +1479,19 @@
   //  Usa dispatch imutável — sem mutação direta em d ou recAtiva.
   // ─────────────────────────────────────────────────────────────────────────────
 
+  function _salvarBloqueioLeve(d, operador, recontagemId, agora){
+    if (!global.FS_AN || !d?.inventario_id || !d?.endereco) return;
+    const chaveBloqueio = `${d.inventario_id}__${encodeURIComponent(String(d.endereco).trim().toUpperCase())}`;
+    global.FS_AN.collection('dt_bloqueios_recontagem').doc(chaveBloqueio).set({
+      ativo: true,
+      inventario_id: d.inventario_id,
+      endereco: d.endereco,
+      operador,
+      recontagem_id: recontagemId || null,
+      atualizado_em: agora
+    }, { merge: true }).catch(() => {});
+  }
+
   function atribuirRecontagemSegura(d, operador, atribPor, obs, agora){
     if (!d) return null;
     agora = agora || new Date().toISOString();
@@ -1517,6 +1534,7 @@
         });
         fsSalvarRecontagem(updatedRecAtiva).catch(() => {});
         fsSalvarDivergencia(updatedD).catch(() => {});
+        _salvarBloqueioLeve(d, operador, updatedRecAtiva.id, agora);
         Store.dispatch(Actions.batch([
           Actions.upsertEntity('recontagens', updatedRecAtiva, { source: 'atribuirRecontagemSegura' }),
           Actions.upsertEntity('divergencias', updatedD,       { source: 'atribuirRecontagemSegura' })
@@ -1574,6 +1592,7 @@
     ], { source: 'atribuirRecontagemSegura' }));
     fsSalvarDivergencia(updatedD).catch(() => {});
     fsSalvarRecontagem(rec).catch(() => {});
+    _salvarBloqueioLeve(d, operador, rec.id, agora);
 
     return rec;
   }
