@@ -40,12 +40,20 @@ function _resultadoRodadaEndereco(c){
     String(d.endereco || '').trim().toUpperCase() === end
   );
   if (!div && !c.divergente && c.status !== 'DIVERGENTE') return null;
-  const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarHistorico?.(div || c);
+  // Nunca avalia 2ª/3ª rodada apenas por campos agregados da divergência.
+  // Esses campos podem ficar residuais em registros antigos e gerar falso "OK 3ª".
+  // avaliarEndereco consolida somente recontagens realmente concluídas.
+  const avaliacao = div
+    ? window.AnalistaDivergenciasRuntime?.avaliarEndereco?.(div)
+    : window.AnalistaDivergenciasRuntime?.avaliarHistorico?.(c);
   if (!avaliacao) return null;
   const rodadaLabel = { 1:'1ª', 2:'2ª', 3:'3ª' }[avaliacao.rodada] || '';
   if (avaliacao.estado === 'RESOLVIDA')   return { texto:`✅ OK ${rodadaLabel}`, cls:'b-green' };
   if (avaliacao.estado === 'PERSISTENTE') return { texto:'🔴 Persistente (3 rodadas)', cls:'b-red' };
-  return { texto:`⏳ Aguardando ${rodadaLabel === '1ª' ? '2ª' : '3ª'} contagem`, cls:'b-orange' };
+  const temRodadaConcluida = avaliacao.rodada > 1;
+  return temRodadaConcluida
+    ? { texto:`⏳ Aguardando ${avaliacao.rodada === 2 ? '3ª contagem' : 'análise'}`, cls:'b-orange' }
+    : { texto:'❌ Divergente — aguardando decisão', cls:'b-red' };
 }
 
 // ───────────────────────────────────────────────────────────────────

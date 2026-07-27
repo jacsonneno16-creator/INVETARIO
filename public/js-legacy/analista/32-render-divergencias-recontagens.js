@@ -662,17 +662,24 @@ function renderDivergencias() {
           const esperadosEndereco = esperadosDaBase.length
             ? esperadosDaBase
             : (Array.isArray(d.itens_esperados) ? d.itens_esperados : []);
-          const esperadoHtml = esperadosEndereco.length
-            ? esperadosEndereco.map(item => {
-                const codigo = item.codigo_produto || item.codigoProduto || item.codigo_interno || item.codigoInterno || item.gtin || item.ean || item.dun || '—';
-                const nome = item.descricao_produto || item.descricaoProduto || item.descricao || item.nomeProduto || '';
-                const qtd = item.quantidade_esperada ?? item.quantidadeEsperada ?? item.qtd_esperada ?? item.qtdEsperada ??
-                  item.quantidade_enderecada ?? item.qtd_enderecada ?? item.saldo_estoque ?? item.saldo ??
-                  item.saldo_erp ?? item.qtd_sistema ?? item.qtd_estoque ?? item.estoque_total ??
-                  item.estoque ?? item.quantidade ?? item.qtd ?? item.qtde ?? '—';
-                return `<div style="margin-bottom:5px"><div class="mono" style="font-weight:750">${escHTML(codigo)} · Qtd ${escHTML(qtd)}</div>${nome ? `<div style="font-size:.68rem;color:var(--muted);max-width:210px">${escHTML(nome)}</div>` : ''}</div>`;
-              }).join('')
-            : `<div class="mono" style="font-weight:750">${escHTML(d.produto || '—')} · Qtd ${escHTML(qtdEspTxt)}</div><div style="font-size:.68rem;color:var(--muted)">${escHTML(d.descricao || '')}</div>`;
+          const _qtdEsperadaItem = item => {
+            const bruto = item.quantidade_esperada ?? item.quantidadeEsperada ?? item.qtd_esperada ?? item.qtdEsperada ??
+              item.quantidade_enderecada ?? item.qtd_enderecada ?? item.saldo_estoque ?? item.saldo ??
+              item.saldo_erp ?? item.qtd_sistema ?? item.qtd_estoque ?? item.estoque_total ??
+              item.estoque ?? item.quantidade ?? item.qtd ?? item.qtde;
+            const numero = Number(String(bruto ?? '').replace(',', '.'));
+            return Number.isFinite(numero) ? numero : 0;
+          };
+          const totalEsperadoEndereco = esperadosEndereco.length
+            ? esperadosEndereco.reduce((total, item) => total + _qtdEsperadaItem(item), 0)
+            : Number(qtdEspTxt) || 0;
+          const quantidadePaletes = esperadosEndereco.length || 1;
+          const esperadoHtml = `<button type="button" onclick="abrirDetalhePaletesEsperados(decodeURIComponent('${encodeURIComponent(String(d.id || ''))}'))"
+            title="Clique para visualizar os paletes"
+            style="width:100%;min-width:145px;text-align:left;border:1px solid rgba(59,130,246,.28);background:rgba(59,130,246,.07);border-radius:10px;padding:8px 10px;cursor:pointer;color:inherit">
+              <div class="mono" style="font-weight:850;font-size:.78rem">Total esperado: ${escHTML(totalEsperadoEndereco)}</div>
+              <div style="font-size:.66rem;color:var(--muted);margin-top:3px">📦 ${quantidadePaletes} ${quantidadePaletes === 1 ? 'palete' : 'paletes'} · clique para detalhar</div>
+            </button>`;
           const produtoBipado = d.produto_contado || d.gtin_bipado || d.produto || '—';
           const descricaoBipada = d.descricao_contada || d.descricao || '';
 
@@ -1168,4 +1175,60 @@ function exportarRecontagens() {
     };
   });
   _exportarXlsxAnalista('recontagens-filtradas.xlsx', 'Recontagens', linhas);
+}
+
+
+// Exibe a composição do total esperado em formato de lista de paletes.
+function abrirDetalhePaletesEsperados(divId) {
+  const d = state().divergencias.find(item => String(item.id || '') === String(divId || ''));
+  if (!d) return showToast('Não foi possível localizar essa divergência.', 'e');
+  const inventario = state().inventarios.find(i =>
+    String(i.id || '') === String(d.inventario_id || '') ||
+    String(i.codigo || '') === String(d.inventario_id || '') ||
+    String(i.nome || '') === String(d.inventario_id || '')
+  );
+  const normEnd = valor => String(valor || '').trim().toUpperCase();
+  let itens = (inventario?.base || []).filter(item => normEnd(item.endereco) === normEnd(d.endereco));
+  if (!itens.length && Array.isArray(d.itens_esperados)) itens = d.itens_esperados;
+  if (!itens.length) itens = [{ produto: d.produto, descricao: d.descricao, quantidade_esperada: d.qtd_esperada }];
+
+  const obterQtd = item => {
+    const bruto = item.quantidade_esperada ?? item.quantidadeEsperada ?? item.qtd_esperada ?? item.qtdEsperada ??
+      item.quantidade_enderecada ?? item.qtd_enderecada ?? item.saldo_estoque ?? item.saldo ??
+      item.saldo_erp ?? item.qtd_sistema ?? item.qtd_estoque ?? item.estoque_total ??
+      item.estoque ?? item.quantidade ?? item.qtd ?? item.qtde;
+    const numero = Number(String(bruto ?? '').replace(',', '.'));
+    return Number.isFinite(numero) ? numero : 0;
+  };
+  const total = itens.reduce((soma, item) => soma + obterQtd(item), 0);
+  const linhas = itens.map((item, indice) => {
+    const codigo = item.codigo_produto || item.codigoProduto || item.codigo_interno || item.codigoInterno || item.gtin || item.ean || item.dun || item.produto || '—';
+    const nome = item.descricao_produto || item.descricaoProduto || item.descricao || item.nomeProduto || '';
+    const identificador = item.palete || item.pallet || item.numero_palete || item.numeroPalete || item.sscc || item.lote || `Palete ${indice + 1}`;
+    const qtd = obterQtd(item);
+    return `<div style="display:grid;grid-template-columns:minmax(90px,.7fr) minmax(170px,1.7fr) auto;gap:12px;align-items:center;padding:11px 12px;border-bottom:1px solid var(--border)">
+      <div><div style="font-size:.65rem;color:var(--muted)">PALETE</div><div class="mono" style="font-weight:800">${escHTML(identificador)}</div></div>
+      <div><div class="mono" style="font-weight:800">${escHTML(codigo)}</div>${nome ? `<div style="font-size:.69rem;color:var(--muted);margin-top:2px">${escHTML(nome)}</div>` : ''}</div>
+      <div style="text-align:right"><div style="font-size:.65rem;color:var(--muted)">QUANTIDADE</div><div class="mono" style="font-size:1rem;font-weight:900">${escHTML(qtd)}</div></div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('modal-paletes-esperados-bg')?.remove();
+  document.body.insertAdjacentHTML('beforeend', `<div id="modal-paletes-esperados-bg" class="modal-bg open" style="display:flex;z-index:99999" onclick="if(event.target===this) fecharDetalhePaletesEsperados()">
+    <div class="modal" style="max-width:720px;width:min(720px,94vw);padding:0;overflow:hidden">
+      <div class="modal-hdr" style="padding:18px 20px">
+        <div><div class="modal-title">📦 Paletes do total esperado</div><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Endereço ${escHTML(d.endereco || '—')} · ${itens.length} ${itens.length === 1 ? 'palete' : 'paletes'}</div></div>
+        <button class="modal-close" onclick="fecharDetalhePaletesEsperados()">✕</button>
+      </div>
+      <div style="max-height:60vh;overflow:auto;border-top:1px solid var(--border);border-bottom:1px solid var(--border)">${linhas}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;background:rgba(59,130,246,.07)">
+        <div><div style="font-size:.68rem;color:var(--muted)">TOTAL CONSOLIDADO DO ENDEREÇO</div><div style="font-size:.72rem;color:var(--muted)">Soma de todos os paletes listados acima</div></div>
+        <div class="mono" style="font-size:1.35rem;font-weight:950">${escHTML(total)}</div>
+      </div>
+      <div class="modal-actions" style="padding:14px 20px"><button class="btn btn-primary" onclick="fecharDetalhePaletesEsperados()">Fechar</button></div>
+    </div>
+  </div>`);
+}
+function fecharDetalhePaletesEsperados() {
+  document.getElementById('modal-paletes-esperados-bg')?.remove();
 }

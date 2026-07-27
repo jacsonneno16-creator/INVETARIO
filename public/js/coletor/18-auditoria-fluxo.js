@@ -296,6 +296,38 @@
     return registro;
   }
   let _sincronizandoAuditoria=false;
+  let _timerRetryAuditoria=null;
+  const AUDITORIA_SYNC_TIMEOUT_MS=12000;
+  function comTimeoutAuditoria(promise,ms){
+    return new Promise(function(resolve,reject){
+      let finalizado=false;
+      const timer=setTimeout(function(){
+        if(finalizado)return;
+        finalizado=true;
+        const erro=new Error('Tempo limite de sincronização excedido');
+        erro.code='auditoria/offline-timeout';
+        reject(erro);
+      },ms);
+      Promise.resolve(promise).then(function(valor){
+        if(finalizado)return;
+        finalizado=true;
+        clearTimeout(timer);
+        resolve(valor);
+      },function(erro){
+        if(finalizado)return;
+        finalizado=true;
+        clearTimeout(timer);
+        reject(erro);
+      });
+    });
+  }
+  function agendarSyncAuditoria(){
+    if(_timerRetryAuditoria || !navigator.onLine)return;
+    _timerRetryAuditoria=setTimeout(function(){
+      _timerRetryAuditoria=null;
+      sincronizarFilaAuditoria().catch(function(){});
+    },15000);
+  }
   async function migrarFilaAuditoriaLegada(){
     const chaves=[];
     for(let i=0;i<localStorage.length;i++){
@@ -325,11 +357,15 @@
       for(let i=0;i<fila.length;i++){
         const x=fila[i];
         try {
-          await FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload,{merge:true});
+          await comTimeoutAuditoria(
+            FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload,{merge:true}),
+            AUDITORIA_SYNC_TIMEOUT_MS
+          );
           await window.DTAuditoriaStorage.filaDelete(x.chave);
         } catch(e) {
           console.warn('[AUDITORIA] Item permanece na fila offline:',x.docId,e);
-          if(!navigator.onLine) break;
+          agendarSyncAuditoria();
+          break;
         }
       }
     } finally {
@@ -337,7 +373,13 @@
     }
   }
   window.sincronizarFilaAuditoria=sincronizarFilaAuditoria;
-  window.addEventListener('online',function(){ sincronizarFilaAuditoria(); });
+  window.addEventListener('online',function(){
+    if(_timerRetryAuditoria){ clearTimeout(_timerRetryAuditoria); _timerRetryAuditoria=null; }
+    sincronizarFilaAuditoria().catch(function(){});
+  });
+  window.addEventListener('offline',function(){
+    if(_timerRetryAuditoria){ clearTimeout(_timerRetryAuditoria); _timerRetryAuditoria=null; }
+  });
   migrarFilaAuditoriaLegada().then(function(){
     if(navigator.onLine) sincronizarFilaAuditoria();
   }).catch(function(e){console.warn('[AUDITORIA] Falha ao migrar fila antiga:',e);});

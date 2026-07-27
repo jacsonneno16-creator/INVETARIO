@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v147-login-chunks-enderecos-produtos';
+var CACHE='dt-inventario-v152-auditoria-offline';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -6,19 +6,31 @@ var PRECACHE=[
   '/coletor.html',
   '/manifest.webmanifest',
   '/manifest-coletor.json',
+  '/js/legacy-polyfills.js',
   '/js-legacy/shared/common-utils.js',
   '/js-legacy/shared/firebase-shared.js',
   '/js-legacy/shared/enderecos-service.js',
   '/js-legacy/shared/produtos-service.js',
   '/js-legacy/coletor/00-bootstrap-manifest.js',
   '/js-legacy/coletor/01-core-firebase-cache.js',
+  '/js-legacy/coletor/02-sync-dispositivo.js',
   '/js-legacy/coletor/03-estado-app.js',
   '/js-legacy/coletor/04-auth-login.js',
   '/js-legacy/coletor/05-inventarios-download.js',
+  '/js-legacy/coletor/06-capa-fluxo-steps.js',
   '/js-legacy/coletor/07-etapa-endereco.js',
   '/js-legacy/coletor/08-etapas-produto-quantidade-salvamento.js',
+  '/js-legacy/coletor/09-historico-stats.js',
+  '/js-legacy/coletor/10-navegacao-estorno.js',
+  '/js-legacy/coletor/11-recontagens.js',
+  '/js-legacy/coletor/12-scanner-hardware.js',
+  '/js-legacy/coletor/13-audio-feedback.js',
+  '/js-legacy/coletor/14-toast.js',
+  '/js-legacy/coletor/15-utils-init.js',
+  '/js-legacy/coletor/16-menu-atualizacao.js',
   '/js-legacy/coletor/17-auditoria-meta.js',
-  '/js-legacy/coletor/18-auditoria-fluxo.js'
+  '/js-legacy/coletor/18-auditoria-fluxo.js',
+  '/js/legacy-ui-compat.js'
 ];
 self.addEventListener('install',function(e){
   e.waitUntil(caches.open(CACHE).then(function(c){

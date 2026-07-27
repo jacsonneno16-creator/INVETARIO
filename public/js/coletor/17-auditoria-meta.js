@@ -344,7 +344,8 @@
       if(typeof _dlStep==='function') _dlStep('aud-prod','📦','Base Geral de Produtos','Baixando produtos, GTIN, EAN e DUN…','run');
       if(typeof _dlProg==='function') _dlProg(10,'Baixando Base Geral de Produtos…');
       if(!window.DTProdutos || typeof window.DTProdutos.carregar!=='function') throw new Error('Serviço da Base Geral de Produtos não foi carregado.');
-      let produtos=await window.DTProdutos.carregar(false);
+      // Atualiza e persiste a base antes de liberar a operação offline.
+      let produtos=await window.DTProdutos.carregar(true);
       if(token!==APP._auditoriaCargaToken) return;
       let totalProdutos=(produtos||[]).filter(p=>p&&p.ativo!==false).length;
       if(!totalProdutos){
@@ -361,7 +362,7 @@
 
       if(typeof _dlStep==='function') _dlStep('aud-end','📍','Base Geral de Endereços','Baixando endereços da loja…','run');
       if(typeof _dlProg==='function') _dlProg(45,'Baixando Base Geral de Endereços…');
-      let locais=await _carregarBaseGeralEnderecosAuditoria(false);
+      let locais=await _carregarBaseGeralEnderecosAuditoria(true);
       if(token!==APP._auditoriaCargaToken) return;
       let totalLocais=locais&&typeof locais.size==='number'?locais.size:0;
       if(!totalLocais){

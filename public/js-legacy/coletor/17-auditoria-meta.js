@@ -294,6 +294,43 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         });
     }
     window._carregarBaseGeralEnderecosAuditoria = _carregarBaseGeralEnderecosAuditoria;
+    function _filtrarPendentesComFilaLocal(auditoriaId, lista) {
+        return __awaiter(this, void 0, void 0, function () {
+            var fila, finalizados;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        fila = [];
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaAll()];
+                    case 2:
+                        fila = _a.sent() || [];
+                        return [3 /*break*/, 4];
+                    case 3:
+                        _a.sent();
+                        fila = [];
+                        return [3 /*break*/, 4];
+                    case 4:
+                        finalizados = new Set(fila.filter(function (x) {
+                            var p = x && x.payload || {};
+                            return String(x && x.auditoriaId || '') === String(auditoriaId || '') &&
+                                String(x && x.subcolecao || 'enderecos') === 'enderecos' &&
+                                ['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(String(p.status || '').toUpperCase());
+                        }).flatMap(function (x) {
+                            var p = x.payload || {};
+                            return [String(x.docId || ''), _normalizarEnderecoGeral(p.endereco || '')].filter(Boolean);
+                        }));
+                        return [2 /*return*/, (lista || []).filter(function (item) {
+                            var id = String(item && item.id || '');
+                            var end = _normalizarEnderecoGeral(item && (item.endereco || item.endereco_norm) || '');
+                            return !finalizados.has(id) && !finalizados.has(end);
+                        })];
+                }
+            });
+        });
+    }
     function _carregarEnderecoAuditoria(auditoriaId) {
         return __awaiter(this, void 0, void 0, function () {
             var lojaId, cacheKey, cache, audRef, chunkSnap, rows_1, resultadosSnap, finalizados_1, pendentes_1, e_5, snap, todos, pendentes, e_6;
@@ -306,8 +343,9 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet(cacheKey)];
                     case 1:
                         cache = _a.sent();
-                        if (Array.isArray(cache) && cache.length)
-                            return [2 /*return*/, cache];
+                        if (Array.isArray(cache)) {
+                            return [2 /*return*/, _filtrarPendentesComFilaLocal(auditoriaId, cache)];
+                        }
                         _a.label = 2;
                     case 2:
                         audRef = FS.collection(FCOL.auditorias).doc(auditoriaId);
@@ -556,7 +594,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                             _dlProg(10, 'Baixando Base Geral de Produtos…');
                         if (!window.DTProdutos || typeof window.DTProdutos.carregar !== 'function')
                             throw new Error('Serviço da Base Geral de Produtos não foi carregado.');
-                        return [4 /*yield*/, window.DTProdutos.carregar(false)];
+                        return [4 /*yield*/, window.DTProdutos.carregar(true)];
                     case 2:
                         produtos = _b.sent();
                         if (token !== APP._auditoriaCargaToken)
@@ -586,7 +624,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                             _dlStep('aud-end', '📍', 'Base Geral de Endereços', 'Baixando endereços da loja…', 'run');
                         if (typeof _dlProg === 'function')
                             _dlProg(45, 'Baixando Base Geral de Endereços…');
-                        return [4 /*yield*/, _carregarBaseGeralEnderecosAuditoria(false)];
+                        return [4 /*yield*/, _carregarBaseGeralEnderecosAuditoria(true)];
                     case 6:
                         locais = _b.sent();
                         if (token !== APP._auditoriaCargaToken)

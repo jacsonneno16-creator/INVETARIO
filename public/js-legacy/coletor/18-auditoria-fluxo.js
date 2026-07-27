@@ -416,6 +416,42 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         });
     }
     var _sincronizandoAuditoria = false;
+    var _timerRetryAuditoria = null;
+    var AUDITORIA_SYNC_TIMEOUT_MS = 12000;
+    function comTimeoutAuditoria(promise, ms) {
+        return new Promise(function (resolve, reject) {
+            var finalizado = false;
+            var timer = setTimeout(function () {
+                if (finalizado)
+                    return;
+                finalizado = true;
+                var erro = new Error('Tempo limite de sincronização excedido');
+                erro.code = 'auditoria/offline-timeout';
+                reject(erro);
+            }, ms);
+            Promise.resolve(promise).then(function (valor) {
+                if (finalizado)
+                    return;
+                finalizado = true;
+                clearTimeout(timer);
+                resolve(valor);
+            }, function (erro) {
+                if (finalizado)
+                    return;
+                finalizado = true;
+                clearTimeout(timer);
+                reject(erro);
+            });
+        });
+    }
+    function agendarSyncAuditoria() {
+        if (_timerRetryAuditoria || !navigator.onLine)
+            return;
+        _timerRetryAuditoria = setTimeout(function () {
+            _timerRetryAuditoria = null;
+            sincronizarFilaAuditoria().catch(function () { });
+        }, 15000);
+    }
     function migrarFilaAuditoriaLegada() {
         return __awaiter(this, void 0, void 0, function () {
             var chaves, i, chave, i, chaveLS, fila, j, x;
@@ -483,7 +519,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         _a.trys.push([1, , 10, 11]);
                         return [4 /*yield*/, window.DTAuditoriaStorage.filaAll()];
                     case 2:
-                        fila = _a.sent();
+                        fila = (_a.sent() || []).sort(function (a, b) { return String(a.criadoEm || '').localeCompare(String(b.criadoEm || '')); });
                         i = 0;
                         _a.label = 3;
                     case 3:
@@ -492,7 +528,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         _a.label = 4;
                     case 4:
                         _a.trys.push([4, 7, , 8]);
-                        return [4 /*yield*/, FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload, { merge: true })];
+                        return [4 /*yield*/, comTimeoutAuditoria(FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload, { merge: true }), AUDITORIA_SYNC_TIMEOUT_MS)];
                     case 5:
                         _a.sent();
                         return [4 /*yield*/, window.DTAuditoriaStorage.filaDelete(x.chave)];
@@ -502,8 +538,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                     case 7:
                         e_3 = _a.sent();
                         console.warn('[AUDITORIA] Item permanece na fila offline:', x.docId, e_3);
-                        if (!navigator.onLine)
-                            return [3 /*break*/, 9];
+                        agendarSyncAuditoria();
                         return [3 /*break*/, 8];
                     case 8:
                         i++;
@@ -518,7 +553,19 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         });
     }
     window.sincronizarFilaAuditoria = sincronizarFilaAuditoria;
-    window.addEventListener('online', function () { sincronizarFilaAuditoria(); });
+    window.addEventListener('online', function () {
+        if (_timerRetryAuditoria) {
+            clearTimeout(_timerRetryAuditoria);
+            _timerRetryAuditoria = null;
+        }
+        sincronizarFilaAuditoria().catch(function () { });
+    });
+    window.addEventListener('offline', function () {
+        if (_timerRetryAuditoria) {
+            clearTimeout(_timerRetryAuditoria);
+            _timerRetryAuditoria = null;
+        }
+    });
     migrarFilaAuditoriaLegada().then(function () {
         if (navigator.onLine)
             sincronizarFilaAuditoria();

@@ -105,11 +105,24 @@
   }
 
   function _snapshotEsperadoEndereco(inv,endereco){
-    return (inv?.base||[]).filter(item=>_nd(item.endereco)===_nd(endereco)).map(item=>({
-      codigo_produto:_idPrincipalBase(item),
-      descricao_produto:_descricaoProduto(item,item),
-      quantidade_esperada:_qtdEsperadaItem(item)
-    }));
+    // A base pode trazer uma linha por palete. Para a conferência operacional,
+    // o esperado deve ser o total do produto no endereço, não cada linha isolada.
+    const grupos = new Map();
+    (inv?.base||[]).filter(item=>_nd(item.endereco)===_nd(endereco)).forEach(item=>{
+      const codigo = _idPrincipalBase(item) || _idsProduto(item)[0] || 'SEM_PRODUTO';
+      const chave = _nd(codigo);
+      const atual = grupos.get(chave) || {
+        codigo_produto: codigo,
+        descricao_produto: _descricaoProduto(item,item),
+        quantidade_esperada: 0,
+        quantidade_paletes_base: 0
+      };
+      atual.quantidade_esperada += _qtdEsperadaItem(item);
+      atual.quantidade_paletes_base += 1;
+      if (!atual.descricao_produto) atual.descricao_produto = _descricaoProduto(item,item);
+      grupos.set(chave, atual);
+    });
+    return [...grupos.values()];
   }
 
   function _produtoGeral(obj){
@@ -525,24 +538,49 @@
       const basePorEndereco = new Map();
       const basePorId = new Map();
       const mapaBase = {};
-      inv.base.forEach((item, idx) => {
+      const gruposBase = new Map();
+
+      // Consolida linhas repetidas da base (normalmente uma por palete) pelo
+      // mesmo endereço + produto. Ex.: 79 + 58 + 108 = esperado total 245.
+      inv.base.forEach((item) => {
         const end = _nd(item.endereco);
-        const key = `${end}||BASE_${idx}`;
-        item.__dtKey = key;
-        item.__dtIds = _idsProduto(item);
+        const ids = _idsProduto(item);
+        const produto = _idPrincipalBase(item) || ids[0] || 'SEM_PRODUTO';
+        const key = _normKey(end, produto);
+        let grupo = gruposBase.get(key);
+        if (!grupo) {
+          grupo = Object.assign({}, item, {
+            __dtKey: key,
+            __dtIds: [...ids],
+            __dtItensOriginais: [],
+            __dtQtdEsperadaTotal: 0,
+            __dtQtdPaletesBase: 0
+          });
+          gruposBase.set(key, grupo);
+        }
+        grupo.__dtItensOriginais.push(item);
+        grupo.__dtQtdEsperadaTotal += _qtdEsperadaItem(item);
+        grupo.__dtQtdPaletesBase += 1;
+        ids.forEach(id => { if (!grupo.__dtIds.includes(id)) grupo.__dtIds.push(id); });
+      });
+
+      const baseConsolidada = [...gruposBase.values()].map(grupo => {
+        grupo.quantidade_esperada = grupo.__dtQtdEsperadaTotal;
+        const end = _nd(grupo.endereco);
         if (!basePorEndereco.has(end)) basePorEndereco.set(end, []);
-        basePorEndereco.get(end).push(item);
-        item.__dtIds.forEach(id => {
+        basePorEndereco.get(end).push(grupo);
+        grupo.__dtIds.forEach(id => {
           if (!basePorId.has(id)) basePorId.set(id, []);
-          basePorId.get(id).push(item);
+          basePorId.get(id).push(grupo);
         });
-        mapaBase[key] = item;
+        mapaBase[grupo.__dtKey] = grupo;
+        return grupo;
       });
 
       function localizarItemBase(cont, somenteEndereco=true){
         const candidatos = somenteEndereco
           ? (basePorEndereco.get(_nd(cont.endereco)) || [])
-          : inv.base;
+          : baseConsolidada;
         return candidatos.find(item => _mesmoProduto(item, cont)) || null;
       }
 
@@ -653,7 +691,7 @@
       });
 
       // ── 1a. Divergências de quantidade ──
-      inv.base.forEach(item => {
+      baseConsolidada.forEach(item => {
         const key = item.__dtKey;
         const qtdEsp = _qtdEsperadaItem(item);
         const qtdCont = mapaConts[key] !== undefined ? mapaConts[key] : null;
