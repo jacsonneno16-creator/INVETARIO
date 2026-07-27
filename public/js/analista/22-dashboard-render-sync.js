@@ -461,6 +461,30 @@ function _dashAgruparRecontagens(recontagens, keyFn, limite=8) {
     .slice(0, limite);
 }
 
+function _dashNomeProdutoRecontagem(registro) {
+  const r = registro || {};
+  const nomes = [
+    r.nome_produto, r.nomeProduto, r.produto_nome, r.produtoNome,
+    r.descricao_produto, r.descricaoProduto, r.descricao,
+    r.produto_recontagem_nome, r.produto_segunda_nome, r.produto_terceira_nome
+  ].map(v => String(v || '').trim()).filter(Boolean);
+  if (nomes.length) return nomes[0];
+
+  const valores = [
+    r.produto_recontagem, r.produto_terceira, r.produto_segunda, r.produto,
+    r.codigo_produto, r.codigoProduto, r.codigo_interno, r.codigoInterno,
+    r.gtin, r.ean, r.dun, r.sku
+  ].map(v => String(v || '').trim()).filter(Boolean);
+
+  for (const valor of valores) {
+    const achado = window.DTProdutos?.buscarSync?.(valor);
+    if (achado?.encontrado && achado.nomeProduto) return achado.nomeProduto;
+  }
+
+  const textoJaDescritivo = valores.find(v => /[A-Za-zÀ-ÿ]/.test(v) && !/^\d+$/.test(v));
+  return textoJaDescritivo || 'PRODUTO SEM NOME CADASTRADO';
+}
+
 function _dashMiniBars(items, opts={}) {
   const clickable = !!opts.clickable;
   if (!items.length) return `<div class="empty" style="padding:20px"><div class="empty-icon">📊</div><div class="empty-title">Sem dados para o gráfico</div></div>`;
@@ -535,10 +559,7 @@ function _renderDashboardCharts() {
     const end = enderecos.find(e => String(e.endereco || '') === String(r.endereco || '')) || {};
     return end.rua || extrairRua(r.endereco) || 'SEM RUA';
   });
-  const recProdutos = _dashAgruparRecontagens(recontagens, r =>
-    r.produto_recontagem || r.produto_terceira || r.produto_segunda ||
-    r.produto || r.codigo_produto || r.sku || 'SEM PRODUTO'
-  );
+  const recProdutos = _dashAgruparRecontagens(recontagens, _dashNomeProdutoRecontagem);
   const totalUsuarios = _dashAgruparRecontagens([
     ...contagensNormais.map(c => ({ ...c, _atividade:'Contagem' })),
     ...recontagens.map(r => ({ ...r, _atividade:'Recontagem' }))

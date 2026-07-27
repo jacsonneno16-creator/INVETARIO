@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v140-dashboard-producao-total';
+var CACHE='dt-inventario-v141-nome-produto-divergencias';
 var PRECACHE=[
   '/',
   '/index.html',
