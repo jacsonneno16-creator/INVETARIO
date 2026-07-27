@@ -51,9 +51,13 @@ function setRecFilter(f, el) {
     }
     renderRecontagensAtribuidas();
 }
-function _atualizarBadgeRecontagens() {
+function _recontagemDoOperadorAtual(item) {
     var _a;
-    var opAtual = ((_a = APP.operador) === null || _a === void 0 ? void 0 : _a.name) || '';
+    var atual = String(((_a = APP.operador) === null || _a === void 0 ? void 0 : _a.name) || '').trim().toUpperCase();
+    var atribuido = String((item === null || item === void 0 ? void 0 : item.operador) || (item === null || item === void 0 ? void 0 : item.operador_responsavel) || '').trim().toUpperCase();
+    return atual !== '' && atribuido !== '' && atual === atribuido;
+}
+function _atualizarBadgeRecontagens() {
     var statusEncerrados = ['concluida', 'sem_divergencia', 'resolvida', 'aguardando_analista', 'cancelada'];
     var recs = (APP.recontagens || []).filter(function (r) {
         var st = (r.status || '').toUpperCase();
@@ -64,9 +68,7 @@ function _atualizarBadgeRecontagens() {
             return false;
         if (st === 'PERSISTENTE' || (r.status_bloqueio || '') === 'PERSISTENTE_BLOQUEADO')
             return false;
-        if (opAtual && r.operador && r.operador !== opAtual)
-            return false;
-        return true;
+        return _recontagemDoOperadorAtual(r);
     });
     var pendentes = recs.filter(function (r) { return !statusEncerrados.includes((r.status_recontagem || 'pendente').toLowerCase()); }).length;
     var total = recs.length;
@@ -139,8 +141,6 @@ function iniciarListenerRecontagens(invId) {
         _unsubDiv = FS.collection('dt_divergencias')
             .where('inventario_id', '==', invId)
             .onSnapshot(function (snap) {
-            var _a;
-            var opAtual = ((_a = APP.operador) === null || _a === void 0 ? void 0 : _a.name) || '';
             APP.divergenciasAtribuidas = snap.docs.map(function (d) {
                 var data = d.data();
                 delete data.id;
@@ -157,10 +157,8 @@ function iniciarListenerRecontagens(invId) {
             }).filter(function (d) {
                 if (_itemEncerradoColetor(d))
                     return false;
-                // Só mostrar divergências atribuídas ao operador atual
-                if (opAtual && d.operador_responsavel && d.operador_responsavel !== opAtual)
-                    return false;
-                return true;
+                // Sem atribuição, o caso pertence exclusivamente à fila do Analista.
+                return _recontagemDoOperadorAtual(d);
             });
             _atualizarBadgeRecontagens();
             renderRecontagensAtribuidas();
@@ -427,11 +425,7 @@ function renderRecontagensAtribuidas() {
         var _a;
         if (_itemEncerradoColetor(r))
             return false;
-        // Só mostrar recontagens atribuídas ao operador atual
-        var opAtual = ((_a = APP.operador) === null || _a === void 0 ? void 0 : _a.name) || '';
-        if (opAtual && r.operador && r.operador !== opAtual)
-            return false;
-        return true;
+        return _recontagemDoOperadorAtual(r);
     })
         .map(function (r) { var _a, _b, _c; return ({ _id: r.id, _col: 'recontagem', endereco: r.endereco || '—', descricao: r.descricao || '', barcode: r.produto || '', qtd1: (_a = r.qtd_primeira) !== null && _a !== void 0 ? _a : '—', qtdEsp: (_b = r.qtd_esperada) !== null && _b !== void 0 ? _b : '—', diferenca: (_c = r.diferenca) !== null && _c !== void 0 ? _c : null, operador: r.operador || '', statusRec: (r.status_recontagem || 'pendente'), obs: r.observacao_atribuicao || r.observacao || '', data: r.atribuido_em || '', tag: '' }); });
     var endComRec = new Set(recs.map(function (r) { return r.endereco; }));

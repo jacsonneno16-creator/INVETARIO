@@ -18,8 +18,13 @@ function setRecFilter(f, el) {
   renderRecontagensAtribuidas();
 }
 
+function _recontagemDoOperadorAtual(item) {
+  const atual = String(APP.operador?.name || '').trim().toUpperCase();
+  const atribuido = String(item?.operador || item?.operador_responsavel || '').trim().toUpperCase();
+  return atual !== '' && atribuido !== '' && atual === atribuido;
+}
+
 function _atualizarBadgeRecontagens() {
-  const opAtual = APP.operador?.name || '';
   const statusEncerrados = ['concluida','sem_divergencia','resolvida','aguardando_analista','cancelada'];
   const recs = (APP.recontagens || []).filter(r => {
     const st    = (r.status || '').toUpperCase();
@@ -27,8 +32,7 @@ function _atualizarBadgeRecontagens() {
     if (st === 'CANCELADA' || stRec === 'cancelada') return false;
     if (stRec === 'persistente') return false;
     if (st === 'PERSISTENTE' || (r.status_bloqueio || '') === 'PERSISTENTE_BLOQUEADO') return false;
-    if (opAtual && r.operador && r.operador !== opAtual) return false;
-    return true;
+    return _recontagemDoOperadorAtual(r);
   });
   const pendentes = recs.filter(r => !statusEncerrados.includes((r.status_recontagem || 'pendente').toLowerCase())).length;
   const total = recs.length;
@@ -83,7 +87,6 @@ function iniciarListenerRecontagens(invId) {
     _unsubDiv = FS.collection('dt_divergencias')
       .where('inventario_id', '==', invId)
       .onSnapshot(snap => {
-        const opAtual = APP.operador?.name || '';
         APP.divergenciasAtribuidas = snap.docs.map(d => {
           const data = d.data(); delete data.id;
           const div = { id: d.id, ...data };
@@ -98,8 +101,7 @@ function iniciarListenerRecontagens(invId) {
         }).filter(d => {
           if (_itemEncerradoColetor(d)) return false;
           // Só mostrar divergências atribuídas ao operador atual
-          if (opAtual && d.operador_responsavel && d.operador_responsavel !== opAtual) return false;
-          return true;
+          return _recontagemDoOperadorAtual(d);
         });
         _atualizarBadgeRecontagens();
         renderRecontagensAtribuidas();
@@ -353,9 +355,7 @@ function renderRecontagensAtribuidas() {
     .filter(r => {
       if (_itemEncerradoColetor(r)) return false;
       // Só mostrar recontagens atribuídas ao operador atual
-      const opAtual = APP.operador?.name || '';
-      if (opAtual && r.operador && r.operador !== opAtual) return false;
-      return true;
+      return _recontagemDoOperadorAtual(r);
     })
     .map(r => ({ _id:r.id, _col:'recontagem', endereco:r.endereco||'—', descricao:r.descricao||'', barcode:r.produto||'', qtd1:r.qtd_primeira??'—', qtdEsp:r.qtd_esperada??'—', diferenca:r.diferenca??null, operador:r.operador||'', statusRec:(r.status_recontagem||'pendente'), obs:r.observacao_atribuicao||r.observacao||'', data:r.atribuido_em||'', tag:'' }));
   const endComRec = new Set(recs.map(r=>r.endereco));
