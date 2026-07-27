@@ -289,9 +289,18 @@ function _ativarModoRecontagem(item) {
         if (recVinculada) {
             itemNorm.id = recVinculada.id; // recontagem_id que será gravado na contagem
             itemNorm.numero_recontagem = recVinculada.numero_recontagem || 1;
+        } else {
+            // BUG CORRIGIDO: aqui itemNorm.id ficava com o id da DIVERGÊNCIA (não da
+            // recontagem), porque nada era feito nesse ramo e o valor herdado de
+            // "__assign({}, item)" permanecia. A contagem enviada gravava
+            // recontagem_id apontando pra um documento que não existe em
+            // dt_recontagens, então o Analista nunca conseguia consolidar essa
+            // rodada — a recontagem "sumia". Agora bloqueamos e pedimos
+            // sincronização em vez de seguir com um id errado.
+            itemNorm.id = null;
+            toast('🔄 Recontagem ainda não sincronizada neste aparelho. Toque em "Atualizar" e tente novamente.', 'w');
+            return;
         }
-        // Se não há recontagem vinculada ainda, manter item.id como divergencia_id
-        // e recontagem_id ficará null — o analista cria a recontagem antes de atribuir
     }
     APP.modoRecontagem = itemNorm;
     _endVerif = null; // limpar cache Firebase — recontagem é sessão nova e independente

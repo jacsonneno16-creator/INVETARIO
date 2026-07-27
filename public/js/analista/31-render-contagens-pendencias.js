@@ -18,6 +18,26 @@ function contStatusBadge(status){
 }
 window.contStatusBadge = window.contStatusBadge || contStatusBadge;
 
+// Resume o resultado final das rodadas (1ª/2ª/3ª contagem) de um endereço em
+// um único badge, em vez de o endereço aparecer uma vez por rodada na lista
+// de Contagens. Usa a mesma regra de avaliação da aba Recontagem, então os
+// dois lugares sempre concordam sobre qual rodada "bateu".
+function _resultadoRodadaEndereco(c){
+  if (!c.divergente && c.status !== 'DIVERGENTE') return null; // sem recontagem: status normal já basta
+  const chaveInv = String(c.inventario_id || c.inventarioId || '');
+  const end = String(c.endereco || '').trim().toUpperCase();
+  const div = (state().divergencias || []).find(d =>
+    String(d.inventario_id || d.inventarioId || '') === chaveInv &&
+    String(d.endereco || '').trim().toUpperCase() === end
+  );
+  const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarHistorico?.(div || c);
+  if (!avaliacao) return null;
+  const rodadaLabel = { 1:'1ª', 2:'2ª', 3:'3ª' }[avaliacao.rodada] || '';
+  if (avaliacao.estado === 'RESOLVIDA')   return { texto:`✅ OK ${rodadaLabel}`, cls:'b-green' };
+  if (avaliacao.estado === 'PERSISTENTE') return { texto:'🔴 Persistente (3 rodadas)', cls:'b-red' };
+  return { texto:`⏳ Aguardando ${rodadaLabel === '1ª' ? '2ª' : '3ª'} contagem`, cls:'b-orange' };
+}
+
 // ───────────────────────────────────────────────────────────────────
 //  14. RENDERIZAÇÃO — CONTAGENS
 // ───────────────────────────────────────────────────────────────────
@@ -41,6 +61,13 @@ function renderContagens() {
   }
 
   let dados = state().contagens || [];
+  // Cada rodada de recontagem gerava sua própria linha aqui, então um endereço
+  // recontado 2x aparecia 3x na lista (1ª + 2ª + 3ª) — confuso e redundante,
+  // já que essas rodadas já são exibidas com detalhe na aba Recontagem. Por
+  // padrão mostramos só a 1ª contagem de cada endereço, com um badge dizendo
+  // em qual rodada ele finalmente bateu. Quem quiser ver as rodadas de
+  // recontagem em si pode filtrar explicitamente por Tipo = Recontagem.
+  if (!fTipo) dados = dados.filter(c => c.tipo_contagem !== 'RECONTAGEM');
   if (fInv)    dados = dados.filter(c => String(c.inventario_id || c.inventarioId || '') === String(fInv));
   if (fTipo)   dados = dados.filter(c => c.tipo_contagem === fTipo);
   if (fStatus) {
@@ -149,7 +176,12 @@ function renderContagens() {
             <td>
               ${excluida
                 ? `<span class="badge b-gray">🗑 Excluída</span>`
-                : `<span class="badge ${contStatusBadge(c.status)}">${c.status || 'PENDENTE'}</span>`
+                : (() => {
+                    const rodada = _resultadoRodadaEndereco(c);
+                    return rodada
+                      ? `<span class="badge ${rodada.cls}" title="Resultado final considerando as rodadas de recontagem">${rodada.texto}</span>`
+                      : `<span class="badge ${contStatusBadge(c.status)}">${c.status || 'PENDENTE'}</span>`;
+                  })()
               }
             </td>
             <td>

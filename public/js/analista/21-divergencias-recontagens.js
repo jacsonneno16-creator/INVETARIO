@@ -138,10 +138,18 @@
     return _idsProduto(b).some(x => aa.has(x));
   }
 
-  function _parContagem(qtd, produto){
+  // Antes: se "produto" viesse vazio (rodada só gravou a quantidade, sem
+  // repetir o código do item), a rodada inteira virava null e a comparação
+  // era pulada — mesmo com a quantidade certinha. Isso deixava o status
+  // travado em "aguardando análise"/"divergente" mesmo quando 2ª e 3ª
+  // contagem batiam entre si. Agora só a quantidade é obrigatória; quando o
+  // produto não foi informado nessa rodada, assume-se o produto esperado
+  // (produtoFallback) em vez de descartar a comparação.
+  function _parContagem(qtd, produto, produtoFallback){
     const n = Number(qtd);
-    const p = _nd(produto);
-    return Number.isFinite(n) && p ? { qtd:n, produto:p } : null;
+    if (!Number.isFinite(n)) return null;
+    const p = _nd(produto) || _nd(produtoFallback) || '';
+    return { qtd:n, produto:p };
   }
 
   function _paresIguais(a,b){
@@ -155,10 +163,11 @@
     const sistema = _parContagem(obj.qtd_esperada, obj.produto);
     const primeira = _parContagem(
       obj.qtd_primeira ?? obj.qtd_contada,
-      obj.produto_primeira || obj.produto_contado || obj.gtin_bipado || obj.produto
+      obj.produto_primeira || obj.produto_contado || obj.gtin_bipado || obj.produto,
+      obj.produto
     );
-    const segunda = _parContagem(obj.qtd_segunda, obj.produto_segunda || obj.produto_recontagem);
-    const terceira = _parContagem(obj.qtd_terceira, obj.produto_terceira || obj.produto_recontagem);
+    const segunda = _parContagem(obj.qtd_segunda, obj.produto_segunda || obj.produto_recontagem, obj.produto);
+    const terceira = _parContagem(obj.qtd_terceira, obj.produto_terceira || obj.produto_recontagem, obj.produto);
 
     if (_paresIguais(primeira, sistema)) {
       return { estado:'RESOLVIDA', referencia:'OK_PRIMEIRA_SISTEMA', rodada:1, resultado:primeira };
@@ -374,12 +383,26 @@
     // A contagem fica em dt_contagens; sem esta consolidação a tarefa podia ser
     // marcada como concluída, mas quantidade/produto não apareciam na Recontagem.
     const recsComResultado = state().recontagens.map(rec => {
-      const recebidas = state().contagens.filter(c =>
-        c.tipo_contagem === 'RECONTAGEM' &&
-        !_isVazio(c) &&
-        !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA' &&
-        String(c.recontagem_id || '') === String(rec.id || '')
+      const _baseValida = c =>
+        c.tipo_contagem === 'RECONTAGEM' && !_isVazio(c) &&
+        !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA';
+      let recebidas = state().contagens.filter(c =>
+        _baseValida(c) && String(c.recontagem_id || '') === String(rec.id || '')
       );
+      // Recuperação: um bug já corrigido no coletor podia gravar recontagem_id
+      // igual ao ID da DIVERGÊNCIA (em vez do ID da recontagem) quando a rodada
+      // era iniciada antes de sincronizar. Isso deixava a rodada enviada
+      // "invisível" para o Analista. Como plano B, casa pelo endereço +
+      // inventário + número da rodada, que é único por definição.
+      if (!recebidas.length && rec.divergencia_id) {
+        const candidatas = state().contagens.filter(c =>
+          _baseValida(c) &&
+          String(c.recontagem_id || '') === String(rec.divergencia_id || '') &&
+          _mesmoIdInventario(_idInventarioRegistro(c), _idInventarioRegistro(rec)) &&
+          _nd(c.endereco) === _nd(rec.endereco)
+        );
+        if (candidatas.length) recebidas = candidatas;
+      }
       if (!recebidas.length) {
         const pendenteSemAnalista = String(rec.status || '').toUpperCase() === 'PENDENTE' &&
           String(rec.status_recontagem || 'pendente').toLowerCase() === 'pendente' &&
