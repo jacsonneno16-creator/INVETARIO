@@ -166,9 +166,19 @@ function onGtinInput() {
     } else {
       APP.atual.produtoAtual = null;
       APP.atual.produtoDivergenteEnd = false;
-      fb.innerHTML = `<div class="fb err">✗ Código não encontrado na base</div>`;
-      document.getElementById('f-gtin').className = 'field icon-r field-err';
+      const produtosCarregados = !!window.DTProdutos?.cache?.carregado;
+      fb.innerHTML = produtosCarregados
+        ? `<div class="fb err">✗ Código não encontrado na base</div>`
+        : `<div class="fb warn">⏳ Consultando a Base Geral de Produtos…</div>`;
+      document.getElementById('f-gtin').className = produtosCarregados ? 'field icon-r field-err' : 'field icon-r';
       pbox.style.display = 'none';
+      if (!produtosCarregados && window.DTProdutos?.carregar) {
+        const codigoConsultado = val;
+        window.DTProdutos.carregar().then(() => {
+          const campo = document.getElementById('f-gtin');
+          if (campo && campo.value.trim() === codigoConsultado) onGtinInput();
+        }).catch(() => {});
+      }
       // ► SEM SOM AQUI — o som toca em confirmarGtin() quando Enter chega
     }
   } else {

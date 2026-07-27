@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v126-recontagem-atribuicao-manual';
+var CACHE='dt-inventario-v128-recontagem-somente-analista';
 var PRECACHE=[
   '/',
   '/coletor.html',

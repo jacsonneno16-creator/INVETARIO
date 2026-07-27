@@ -29,7 +29,7 @@
   function scheduleBusinessReprocess(){
     clearTimeout(processTid);
     processTid = setTimeout(() => {
-      try { DivergenciaService.processarDivergencias({ criarRecontagens: true, source: 'store-reactive' }); }
+      try { DivergenciaService.processarDivergencias({ criarRecontagens: false, source: 'store-reactive' }); }
       catch (err) { console.warn('[AppController] processarDivergencias', err); }
       try { DivergenciaService.corrigirOrfas(); }
       catch (err) { console.warn('[AppController] corrigirDivsOrfas', err); }

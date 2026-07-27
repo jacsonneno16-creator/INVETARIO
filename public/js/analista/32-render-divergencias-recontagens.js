@@ -96,6 +96,13 @@ function divDeselecionarTodos() {
 }
 
 function divAtribuirRapido(divId) {
+  const div = state().divergencias.find(d => d.id === divId);
+  const totalRecontagens = state().recontagens.filter(r => r.divergencia_id === divId).length;
+  if (!div || ['RESOLVIDA','PERSISTENTE'].includes(String(div.status || '').toUpperCase()) ||
+      div.qtd_terceira != null || totalRecontagens >= 2) {
+    showToast('🔒 As três contagens já foram concluídas. Esta atividade está finalizada.', 'e');
+    return;
+  }
   _divSelecionadas.clear();
   _divSelecionadas.add(divId);
   divAtualizarBarraSel();
@@ -414,7 +421,38 @@ function renderDivergencias() {
     if (cur) selInv.value = cur;
   }
 
-  let dados = state().divergencias;
+  // A Recontagem é um processo por endereço. Motivos diferentes detectados
+  // no mesmo inventário/endereço devem ocupar uma única linha, sem esconder
+  // o histórico das rodadas nem inflar os indicadores.
+  const gruposPorEndereco = new Map();
+  state().divergencias.forEach(d => {
+    const chave = `${String(d.inventario_id || '').trim()}|${String(d.endereco || '').trim().toUpperCase()}`;
+    const grupo = gruposPorEndereco.get(chave) || [];
+    grupo.push(d);
+    gruposPorEndereco.set(chave, grupo);
+  });
+  let dados = [...gruposPorEndereco.values()].map(grupo => {
+    const ordenado = [...grupo].sort((a,b) => {
+      const pa = String(a.status_recontagem || '').toLowerCase() === 'aguardando_analista' ? 3
+        : (a.operador_responsavel ? 2 : 1);
+      const pb = String(b.status_recontagem || '').toLowerCase() === 'aguardando_analista' ? 3
+        : (b.operador_responsavel ? 2 : 1);
+      return pb - pa || String(b.criada_em || '').localeCompare(String(a.criada_em || ''));
+    });
+    const principal = Object.assign({}, ordenado[0]);
+    principal._divergencias_agrupadas = grupo.map(x => x.id);
+    principal.motivos_divergencia = [...new Set(grupo.flatMap(x =>
+      Array.isArray(x.motivos_divergencia) ? x.motivos_divergencia : [x.tipo_divergencia]
+    ).filter(Boolean))];
+    principal.itens_esperados = grupo.flatMap(x => Array.isArray(x.itens_esperados) ? x.itens_esperados : []);
+    ['qtd_segunda','produto_segunda','operador_segunda','data_segunda',
+     'qtd_terceira','produto_terceira','operador_terceira','data_terceira',
+     'qtd_resultado_final','produto_recontagem','operador_recontagem'].forEach(campo => {
+      const origem = ordenado.find(x => x[campo] != null && x[campo] !== '');
+      if (origem) principal[campo] = origem[campo];
+    });
+    return principal;
+  });
   if (fInv)    dados = dados.filter(d => d.inventario_id === fInv);
   if (fStatus) {
     dados = dados.filter(d => d.status === fStatus);
@@ -549,8 +587,9 @@ function renderDivergencias() {
       <tbody>
         ${dados.map(d => {
           const difColor = d.diferenca > 0 ? 'var(--warn)' : d.diferenca < 0 ? 'var(--danger)' : 'var(--success)';
+          const idsAgrupados = d._divergencias_agrupadas || [d.id];
           const rec = state().recontagens
-            .filter(r => r.divergencia_id === d.id)
+            .filter(r => idsAgrupados.includes(r.divergencia_id))
             .sort((a,b) => (b.numero_recontagem||1) - (a.numero_recontagem||1))[0] || null;
           const endInfo = getEnderecoInfo(d.endereco);
           const rua = endInfo?.rua || '—';
@@ -656,21 +695,31 @@ function renderDivergencias() {
             )}
             ${(() => {
               const recFinal = state().recontagens
-                .filter(r => r.divergencia_id === d.id)
+                .filter(r => idsAgrupados.includes(r.divergencia_id))
                 .sort((a,b) => (b.numero_recontagem||1) - (a.numero_recontagem||1))[0] || null;
               const qtdRes = d.qtd_resultado_final ?? recFinal?.qtd_recontagem ?? recFinal?.qtd_terceira ?? recFinal?.qtd_segunda ?? null;
               const opRes  = recFinal?.operador_segunda || recFinal?.operador || '';
               const motivo = d.contagem_aceita || '';
               if (qtdRes == null) return '<td><div style="color:var(--muted);font-size:.7rem;text-align:center;line-height:1.25">Aguardando<br>recontagem</div></td>';
               const qtdEspN = parseFloat(d.qtd_esperada);
-              const bate = !isNaN(qtdEspN) && parseFloat(qtdRes) === qtdEspN;
-              const cor  = bate ? 'var(--success)' : 'var(--danger)';
-              const icone = bate ? '✅' : '❌';
-              const mTxt = motivo === 'SEGUNDA_CONTAGEM' ? '2ª bateu sistema'
+              const encerradaOk = String(d.status || '').toUpperCase() === 'RESOLVIDA' ||
+                String(motivo).startsWith('OK_') || motivo === 'CONSENSO_SEGUNDA_TERCEIRA';
+              const cor  = encerradaOk ? 'var(--success)' : 'var(--danger)';
+              const icone = encerradaOk ? '✅' : '❌';
+              const mTxt = motivo === 'OK_PRIMEIRA_SISTEMA' ? 'OK 1ª — bateu com o sistema'
+                         : motivo === 'OK_SEGUNDA_SISTEMA' ? 'OK 2ª — bateu com o sistema'
+                         : motivo === 'OK_SEGUNDA_PRIMEIRA' ? 'OK 2ª — bateu com a 1ª'
+                         : motivo === 'OK_TERCEIRA_SISTEMA' ? 'OK 3ª — bateu com o sistema'
+                         : motivo === 'OK_TERCEIRA_PRIMEIRA' ? 'OK 3ª — bateu com a 1ª'
+                         : motivo === 'OK_TERCEIRA_SEGUNDA' ? 'OK 3ª — bateu com a 2ª'
+                         : motivo === 'SEGUNDA_CONTAGEM' ? 'OK 2ª — bateu com o sistema'
+                         : motivo === 'CONSENSO_SEGUNDA_TERCEIRA' ? 'OK 3ª — bateu com a 2ª'
                          : motivo === 'TERCEIRA_SEM_CONSENSO' ? '3 rodadas sem consenso'
                          : motivo === 'LIBERACAO_ANALISTA' ? 'Liberado pelo analista'
                          : motivo ? motivo.replace(/_/g,' ').toLowerCase() : '';
-              let cell = '<td><div style="font-family:var(--mono);font-weight:800;color:' + cor + '">' + icone + ' ' + qtdRes + '</div>';
+              const rodadaOk = motivo.includes('PRIMEIRA') ? 'OK 1ª' : motivo.includes('SEGUNDA') && !motivo.includes('TERCEIRA') ? 'OK 2ª' : motivo.includes('TERCEIRA') || motivo === 'CONSENSO_SEGUNDA_TERCEIRA' ? 'OK 3ª' : 'Conferiu';
+              let cell = '<td><div style="font-family:var(--mono);font-weight:800;color:' + cor + '">' + icone + ' ' + (encerradaOk ? rodadaOk : 'Divergente') + '</div>';
+              cell += '<div style="font-size:.66rem;color:var(--muted);line-height:1.3">Esperado: <b>' + (isNaN(qtdEspN) ? '—' : qtdEspN) + '</b><br>Recontado: <b>' + qtdRes + '</b></div>';
               if (opRes) cell += '<div style="font-size:.65rem;color:var(--muted)">' + opRes + '</div>';
               if (mTxt)  cell += '<div style="font-size:.62rem;color:var(--muted);font-style:italic">' + mTxt + '</div>';
               cell += '</td>';

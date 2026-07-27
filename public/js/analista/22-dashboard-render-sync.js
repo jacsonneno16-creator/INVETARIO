@@ -469,6 +469,7 @@ function _renderDashboardCharts() {
     const h = Math.max(8, Math.round((b.total / totalHoraMax) * 100));
     const active = b.total > 0;
     return `<div title="${String(b.hora).padStart(2,'0')}:00 · ${b.total} contagem(ns)" style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;min-width:0">
+      <div style="height:14px;font-family:var(--mono);font-size:.65rem;font-weight:800;color:${active ? 'var(--orange)' : 'transparent'};line-height:14px">${active ? b.total.toLocaleString('pt-BR') : '0'}</div>
       <div style="height:110px;width:100%;display:flex;align-items:flex-end;justify-content:center">
         <div style="width:100%;max-width:22px;height:${active ? h : 8}%;border-radius:8px 8px 4px 4px;background:${active ? 'linear-gradient(180deg,var(--orange-h),var(--orange))' : 'var(--border)'};transition:height .25s"></div>
       </div>

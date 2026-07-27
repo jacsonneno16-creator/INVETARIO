@@ -327,7 +327,7 @@
   async function refreshBasesRelacionadas(){
     await _carregarInventariosSeNecessario();
     try{ await global.DTProdutos?.carregar?.(true); }catch(e){ console.warn('[FirebaseService] Atualização de produtos:',e.message); }
-    try{ global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'bases-refresh',force:true}); }catch(e){ console.warn('[FirebaseService] Reprocessamento de bases:',e.message); }
+    try{ global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'bases-refresh',force:true}); }catch(e){ console.warn('[FirebaseService] Reprocessamento de bases:',e.message); }
     return true;
   }
 
@@ -385,9 +385,9 @@
     ],{source:'firebase-manual-inventario'}));
     ['contagens','divergencias','recontagens'].forEach(_persistirSlice);
     // O clique em Atualizar é o momento canônico de cruzar as contagens recebidas.
-    // Toda divergência aberta precisa gerar também a rodada pendente correspondente;
-    // caso contrário o conflito aparece em "Em Conflito", mas não chega a "Rodadas".
-    try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'manual-refresh',force:true});}catch(e){console.warn('[FirebaseService] Processamento manual:',e.message);}
+    // Processar apenas a divergência. A 2ª ou 3ª contagem somente nasce quando
+    // o Analista clicar em Atribuir e escolher o operador.
+    try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'manual-refresh',force:true});}catch(e){console.warn('[FirebaseService] Processamento manual:',e.message);}
     global.AnalistaBootstrap?.saveAll?.();
     global.AnalistaBootstrap?.renderAll?.();
     global.AnalistaNavigation?.renderCurrentPage?.();
