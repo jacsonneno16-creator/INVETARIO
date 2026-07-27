@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v143-leituras-recontagem-operador';
+var CACHE='dt-inventario-v144-logins-senhas-usuarios';
 var PRECACHE=[
   '/',
   '/index.html',

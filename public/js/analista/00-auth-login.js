@@ -64,6 +64,23 @@ function doLoginAnalista() {
     .catch(err => { _loginSolicitadoPeloUsuario = false; _setLoginErro(_traduzirErroLoginAnalista(err)); });
 }
 
+async function enviarRecuperacaoSenhaAnalista(event) {
+  event?.preventDefault?.();
+  _clearLoginErro();
+  let email = _normalizarEmailAnalista(document.getElementById('an-email')?.value || '');
+  if (!email) return _setLoginErro('Informe o e-mail do Analista para receber o link de redefinição.');
+  if (!email.includes('@')) email += '@daterrinhaalimentos.com.br';
+  try {
+    await AUTH_AN.sendPasswordResetEmail(email);
+    _setLoginErro('Se este e-mail estiver cadastrado, o link para criar uma nova senha será enviado.');
+  } catch (err) {
+    if (err?.code === 'auth/invalid-email') return _setLoginErro('Informe um e-mail válido.');
+    if (err?.code === 'auth/too-many-requests') return _setLoginErro('Muitas tentativas. Aguarde alguns minutos e tente novamente.');
+    if (err?.code === 'auth/network-request-failed') return _setLoginErro('Não foi possível conectar. Verifique a internet e tente novamente.');
+    _setLoginErro('Se este e-mail estiver cadastrado, o link para criar uma nova senha será enviado.');
+  }
+}
+
 function doLogoutAnalista() {
   _loginSolicitadoPeloUsuario = false;
   AUTH_AN.signOut().then(() => {
@@ -328,6 +345,7 @@ function updateStaticTexts(){}
 
 window.doLoginAnalista = doLoginAnalista;
 window.doLogoutAnalista = doLogoutAnalista;
+window.enviarRecuperacaoSenhaAnalista = enviarRecuperacaoSenhaAnalista;
 window.togglePassAnalista = togglePassAnalista;
 
 window.updateStaticTexts = updateStaticTexts;

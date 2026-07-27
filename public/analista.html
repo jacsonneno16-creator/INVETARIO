@@ -810,6 +810,8 @@
     .login-btn:hover { opacity: .92; transform: translateY(-1px); }
     .login-btn:active { transform: translateY(0); }
     .login-btn:disabled { opacity: .6; cursor: not-allowed; transform: none; }
+    .login-forgot{display:block;margin:-8px 0 14px;text-align:right;color:var(--accent);font-size:.8rem;font-weight:700;text-decoration:none;cursor:pointer}
+    .login-forgot:hover{text-decoration:underline}
     .login-error {
       display: none; margin-top: 12px; padding: 10px 14px;
       background: rgba(217,32,32,.08); border: 1px solid rgba(217,32,32,.2);
@@ -939,7 +941,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
 <div class="login-sub">Acesse o painel da Da Terrinha Alimentos</div>
 <div class="login-field">
 <label class="login-label" for="an-email">Email</label>
-<input autocomplete="username" autocapitalize="none" spellcheck="false" class="login-input" id="an-email" onkeydown="if(event.key==='Enter')document.getElementById('an-pass').focus()" placeholder="analista@daterrinha.com.br" type="email"/>
+<input autocomplete="username" autocapitalize="none" spellcheck="false" class="login-input" id="an-email" onkeydown="if(event.key==='Enter')document.getElementById('an-pass').focus()" placeholder="nome@daterrinhaalimentos.com.br" type="email"/>
 </div>
 <div class="login-field">
 <label class="login-label" for="an-pass">Senha</label>
@@ -948,6 +950,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
 <span class="login-eye" onclick="togglePassAnalista()">👁</span>
 </div>
 </div>
+<a class="login-forgot" href="#" onclick="enviarRecuperacaoSenhaAnalista(event)">Esqueci minha senha</a>
 <button class="login-btn" id="btn-login-analista" onclick="doLoginAnalista()">
       ENTRAR
     </button>
@@ -2012,12 +2015,10 @@ table td{padding:8px 10px!important;vertical-align:middle}
 <div class="fi">
 <div class="fl" style="display:flex;justify-content:space-between">
 <span>Login <span style="color:var(--danger)">*</span></span>
-<span style="font-size:.68rem;color:var(--muted);font-weight:400">nome.sobrenome</span>
+<span style="font-size:.68rem;color:var(--muted);font-weight:400">gerado pelo nome</span>
 </div>
-<div style="display:flex;align-items:center;border:1.5px solid var(--border);border-radius:var(--r);overflow:hidden">
-<input autocapitalize="none" autocomplete="off" autocorrect="off" id="op-username" oninput="opValidarUsername()" placeholder="nome.sobrenome" style="flex:1;padding:9px 12px;border:none;background:transparent;font-family:var(--mono);font-size:.88rem;outline:none;color:var(--text)">
-<div style="padding:9px 12px;background:var(--surface-2);color:var(--muted);font-family:var(--mono);font-size:.76rem;border-left:1px solid var(--border);white-space:nowrap">@daterrinhaalimentos.com.br</div>
-</input></div>
+<input id="op-username" type="hidden">
+<div id="op-logins-preview" style="padding:11px 13px;border:1.5px solid var(--border);border-radius:var(--r);background:var(--surface-2);font-family:var(--mono);font-size:.8rem;line-height:1.7;color:var(--text)">Informe o nome completo.</div>
 <div id="op-username-fb" style="font-size:.73rem;margin-top:4px;min-height:16px"></div>
 </div>
 <!-- Cargo / Setor REMOVIDO -->
@@ -3324,7 +3325,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260727-142"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260726-123"></script><script src="js/analista/42-topbar-tools.js?v=20260724-95"></script><script src="js/analista/43-importar-exportar-api.js?v=20260725-110"></script><script src="js/analista/app-controller.js?v=20260726-128"></script><script src="js/analista/00-auth-login.js?v=20260726-115"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260723-33"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260727-144"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260726-123"></script><script src="js/analista/42-topbar-tools.js?v=20260724-95"></script><script src="js/analista/43-importar-exportar-api.js?v=20260725-110"></script><script src="js/analista/app-controller.js?v=20260726-128"></script><script src="js/analista/00-auth-login.js?v=20260727-144"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}
@@ -3354,7 +3355,7 @@ table td{padding:8px 10px!important;vertical-align:middle}
 (function(){
   if('serviceWorker' in navigator){
     window.addEventListener('load',function(){
-      navigator.serviceWorker.register('/sw.js?v=137').then(function(reg){
+      navigator.serviceWorker.register('/sw.js?v=144').then(function(reg){
         reg.update();
       }).catch(function(e){
         if(window.console) console.warn('[PWA]',e);
