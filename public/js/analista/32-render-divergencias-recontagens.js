@@ -425,7 +425,43 @@ function renderDivergencias() {
   // no mesmo inventário/endereço devem ocupar uma única linha, sem esconder
   // o histórico das rodadas nem inflar os indicadores.
   const gruposPorEndereco = new Map();
-  state().divergencias.forEach(d => {
+  const divergenciasVisiveis = [...state().divergencias];
+
+  // Uma rodada pode continuar existindo no Firebase mesmo quando a divergência
+  // vinculada foi removida/arquivada por versões anteriores. O menu contava essa
+  // rodada, mas a tela renderizava apenas divergências e, por isso, ficava vazia.
+  // Recompõe um caso visual a partir da própria recontagem para não esconder a
+  // atividade pendente do Analista.
+  state().recontagens
+    .filter(r => !['CONCLUIDA','CANCELADA','RESOLVIDA'].includes(String(r.status || '').toUpperCase()))
+    .forEach(r => {
+      const vinculada = divergenciasVisiveis.some(d => {
+        const ativa = !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(String(d.status || '').toUpperCase());
+        return ativa && (
+          (r.divergencia_id && String(d.id) === String(r.divergencia_id)) ||
+          (String(d.inventario_id || '') === String(r.inventario_id || r.inventarioId || '') &&
+           String(d.endereco || '').trim().toUpperCase() === String(r.endereco || '').trim().toUpperCase())
+        );
+      });
+      if (vinculada) return;
+      const statusRec = String(r.status_recontagem || r.status || '').toLowerCase();
+      divergenciasVisiveis.push({
+        ...r,
+        id: r.divergencia_id || `recontagem-${r.id}`,
+        _recontagem_orfa_id: r.id,
+        inventario_id: r.inventario_id || r.inventarioId || '',
+        status: statusRec === 'aguardando_analista' ? 'ABERTA' : 'EM_RECONTAGEM',
+        status_recontagem: statusRec,
+        operador_responsavel: r.operador_responsavel || r.operador || '',
+        criada_em: r.criada_em || r.atribuido_em || r.data || '',
+        tipo_divergencia: r.tipo_divergencia || 'RECONTAGEM_PENDENTE',
+        motivos_divergencia: r.motivos_divergencia || ['Recontagem pendente'],
+        produto: r.produto || r.gtin || r.codigo || '',
+        quantidade_contada: r.quantidade_contada ?? r.quantidade ?? r.qtd ?? null
+      });
+    });
+
+  divergenciasVisiveis.forEach(d => {
     const chave = `${String(d.inventario_id || '').trim()}|${String(d.endereco || '').trim().toUpperCase()}`;
     const grupo = gruposPorEndereco.get(chave) || [];
     grupo.push(d);
@@ -433,10 +469,12 @@ function renderDivergencias() {
   });
   let dados = [...gruposPorEndereco.values()].map(grupo => {
     const ordenado = [...grupo].sort((a,b) => {
-      const pa = String(a.status_recontagem || '').toLowerCase() === 'aguardando_analista' ? 3
-        : (a.operador_responsavel ? 2 : 1);
-      const pb = String(b.status_recontagem || '').toLowerCase() === 'aguardando_analista' ? 3
-        : (b.operador_responsavel ? 2 : 1);
+      const ativaA = !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(String(a.status || '').toUpperCase());
+      const ativaB = !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(String(b.status || '').toUpperCase());
+      const pa = (ativaA ? 10 : 0) + (String(a.status_recontagem || '').toLowerCase() === 'aguardando_analista' ? 3
+        : (a.operador_responsavel ? 2 : 1));
+      const pb = (ativaB ? 10 : 0) + (String(b.status_recontagem || '').toLowerCase() === 'aguardando_analista' ? 3
+        : (b.operador_responsavel ? 2 : 1));
       return pb - pa || String(b.criada_em || '').localeCompare(String(a.criada_em || ''));
     });
     const principal = Object.assign({}, ordenado[0]);
@@ -548,7 +586,9 @@ function renderDivergencias() {
   _popSel('div-foperador', todosOps,     fOperador, 'Todos os operadores');
 
   // KPIs
-  const all        = state().divergencias.filter(d => !fInv || d.inventario_id === fInv);
+  // Os indicadores usam a mesma fonte consolidada da tabela, inclusive
+  // recontagens órfãs recuperadas acima.
+  const all        = divergenciasVisiveis.filter(d => !fInv || d.inventario_id === fInv);
   const abertas    = all.filter(d => d.status === 'ABERTA').length;
   const emRec      = all.filter(d => d.status === 'EM_RECONTAGEM').length;
   const resolvidas = all.filter(d => d.status === 'RESOLVIDA').length;

@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v129-offline-analista';
+var CACHE='dt-inventario-v130-recuperacao-scripts';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -33,6 +33,30 @@ self.addEventListener('fetch',function(e){
   var u=new URL(e.request.url);
   var local=u.origin===self.location.origin;
   if(local){
+    var arquivoCritico=e.request.mode==='navigate' ||
+      u.pathname.slice(-5)==='.html' ||
+      u.pathname.slice(-3)==='.js';
+    if(arquivoCritico){
+      e.respondWith(fetch(e.request,{cache:'no-store'}).then(function(r){
+        if(!r||!r.ok)throw new Error('Resposta inválida');
+        var copia=r.clone();
+        e.waitUntil(caches.open(CACHE).then(function(c){
+          return c.put(e.request,copia);
+        }).catch(function(){}));
+        return r;
+      }).catch(function(){
+        return caches.match(e.request,{ignoreSearch:false}).then(function(exata){
+          if(exata)return exata;
+          if(e.request.mode==='navigate'){
+            var fallback=u.pathname.indexOf('coletor')>=0?'/coletor.html':
+              (u.pathname.indexOf('analista')>=0?'/analista.html':'/index.html');
+            return caches.match(fallback,{ignoreSearch:true});
+          }
+          return new Response('',{status:504,statusText:'Offline'});
+        });
+      }));
+      return;
+    }
     e.respondWith(caches.match(e.request,{ignoreSearch:true}).then(function(cached){
       var atualiza=fetch(e.request).then(function(r){
         if(r&&r.ok){var copia=r.clone();caches.open(CACHE).then(function(c){return c.put(e.request,copia);}).catch(function(){});}
