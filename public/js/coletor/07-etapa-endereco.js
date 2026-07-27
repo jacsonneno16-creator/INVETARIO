@@ -332,7 +332,13 @@ function confirmarEnderecoSilencioso() {
     return;
   }
   if (status === 'proprio') {
-    _modalOpcoesProprio(valNorm, verifAtual.docsMeus || []);
+    fb.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px">
+      <b>🔒 Primeira contagem já realizada neste endereço</b>
+      <span style="font-size:.7rem;opacity:.9">Uma nova contagem somente pode ser liberada pelo Analista na aba Recontagem.</span>
+    </div>`;
+    document.getElementById('f-endereco').className = 'field field-err';
+    APP.atual.enderecoValido = false;
+    beepErr();
     return;
   }
 
@@ -464,8 +470,15 @@ function confirmarEndereco() {
   }
 
   if (status === 'proprio') {
-    // Mesmo operador — mostrar opções: continuar ou estornar
-    _modalOpcoesProprio(valNorm, docsMeus);
+    // Mesmo operador também não pode iniciar uma segunda primeira contagem.
+    // Correções exigem estorno; novas rodadas exigem atribuição do Analista.
+    fb.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px">
+      <b>🔒 Primeira contagem já realizada neste endereço</b>
+      <span style="font-size:.7rem;opacity:.9">Para corrigir, use Estorno. Para recontar, aguarde a atribuição do Analista.</span>
+    </div>`;
+    document.getElementById('f-endereco').className = 'field field-err';
+    APP.atual.enderecoValido = false;
+    beepErr();
     return;
   }
 

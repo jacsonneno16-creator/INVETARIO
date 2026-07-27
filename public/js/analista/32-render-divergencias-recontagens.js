@@ -826,15 +826,81 @@ function renderRecontagens() {
     if (cur) selInv.value = cur;
   }
 
-  // Por divergencia, mostrar apenas o rec com maior numero_recontagem (mais recente).
-  // Evita linhas duplicadas quando há rec1 (CONCLUIDA) + rec3 (PENDENTE/CONCLUIDA).
-  const _recPorDiv = {};
-  state().recontagens.forEach(r => {
-    const key = r.divergencia_id || r.id;
-    const ex  = _recPorDiv[key];
-    if (!ex || (r.numero_recontagem || 1) > (ex.numero_recontagem || 1)) _recPorDiv[key] = r;
+  // A unidade operacional da recontagem é o endereço, não o tipo/id da
+  // divergência. Versões antigas podiam criar mais de uma divergência para o
+  // mesmo endereço; agrupar por divergencia_id escondia a 1ª contagem ou
+  // produzia linhas repetidas. A chave canônica é inventário + endereço.
+  const _normRec = v => String(v || '').trim().toUpperCase();
+  const _chaveEndereco = obj =>
+    `${String(obj?.inventario_id || obj?.inventarioId || '').trim()}|${_normRec(obj?.endereco)}`;
+  const _gruposRec = new Map();
+  const _adicionarGrupo = (obj, tipo) => {
+    if (!obj || !_normRec(obj.endereco)) return;
+    const chave = _chaveEndereco(obj);
+    const grupo = _gruposRec.get(chave) || { divergencias:[], recontagens:[] };
+    grupo[tipo].push(obj);
+    _gruposRec.set(chave, grupo);
+  };
+  state().divergencias.forEach(d => _adicionarGrupo(d, 'divergencias'));
+  state().recontagens.forEach(r => _adicionarGrupo(r, 'recontagens'));
+
+  let dados = [..._gruposRec.values()].map(grupo => {
+    const divs = [...grupo.divergencias].sort((a,b) =>
+      String(b.criada_em || '').localeCompare(String(a.criada_em || ''))
+    );
+    const recs = [...grupo.recontagens].sort((a,b) =>
+      Number(a.numero_recontagem || 1) - Number(b.numero_recontagem || 1) ||
+      String(a.criada_em || '').localeCompare(String(b.criada_em || ''))
+    );
+    const principal = Object.assign({}, recs[recs.length - 1] || divs[0] || {});
+    const divPrincipal = divs.find(d =>
+      !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(String(d.status || '').toUpperCase())
+    ) || divs[0] || {};
+
+    // A primeira contagem nasce em dt_contagens/dt_divergencias. Ela precisa
+    // aparecer mesmo antes de o Analista criar a segunda rodada.
+    const contPrimeira = state().contagens
+      .filter(c =>
+        _chaveEndereco(c) === _chaveEndereco(principal) &&
+        String(c.tipo_contagem || '').toUpperCase() !== 'RECONTAGEM' &&
+        !c._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(c.status || '').toUpperCase())
+      )
+      .sort((a,b) => String(a.criado_em || a.dataHora || '').localeCompare(String(b.criado_em || b.dataHora || '')))[0];
+
+    const recSegunda = recs.find(r => Number(r.numero_recontagem || 1) === 1 && r.qtd_recontagem != null) || {};
+    const recTerceira = recs.find(r => Number(r.numero_recontagem || 1) === 2 && r.qtd_recontagem != null) || {};
+    Object.assign(principal, {
+      divergencia_id: divPrincipal.id || principal.divergencia_id,
+      inventario_id: divPrincipal.inventario_id || principal.inventario_id,
+      inventario_nome: divPrincipal.inventario_nome || principal.inventario_nome,
+      endereco: divPrincipal.endereco || principal.endereco,
+      produto: divPrincipal.produto || principal.produto || contPrimeira?.gtin || contPrimeira?.codigo_produto || '',
+      descricao: divPrincipal.descricao || divPrincipal.descricao_produto || principal.descricao || contPrimeira?.descricao_produto || '',
+      qtd_esperada: divPrincipal.qtd_esperada ?? principal.qtd_esperada,
+      qtd_primeira: divPrincipal.qtd_primeira ?? divPrincipal.qtd_contada ?? principal.qtd_primeira ??
+        contPrimeira?.quantidade ?? contPrimeira?.qtd_caixas,
+      produto_primeira: divPrincipal.produto_primeira || divPrincipal.produto_contado ||
+        principal.produto_primeira || contPrimeira?.gtin || contPrimeira?.codigo_produto || '',
+      operador_primeira: divPrincipal.operador_primeira || divPrincipal.operador ||
+        principal.operador_primeira || contPrimeira?.operador || '',
+      data_primeira: divPrincipal.data_primeira || divPrincipal.criada_em ||
+        principal.data_primeira || contPrimeira?.criado_em || contPrimeira?.dataHora || '',
+      qtd_segunda: recSegunda.qtd_segunda ?? recSegunda.qtd_recontagem ?? divPrincipal.qtd_segunda ?? principal.qtd_segunda,
+      produto_segunda: recSegunda.produto_segunda || recSegunda.produto_recontagem || divPrincipal.produto_segunda || principal.produto_segunda || '',
+      operador_segunda: recSegunda.operador_segunda || recSegunda.operador_recontagem || divPrincipal.operador_segunda || principal.operador_segunda || '',
+      data_segunda: recSegunda.data_segunda || recSegunda.recontagem_concluida_em || divPrincipal.data_segunda || principal.data_segunda || '',
+      qtd_terceira: recTerceira.qtd_terceira ?? recTerceira.qtd_recontagem ?? divPrincipal.qtd_terceira ?? principal.qtd_terceira,
+      produto_terceira: recTerceira.produto_terceira || recTerceira.produto_recontagem || divPrincipal.produto_terceira || principal.produto_terceira || '',
+      operador_terceira: recTerceira.operador_terceira || recTerceira.operador_recontagem || divPrincipal.operador_terceira || principal.operador_terceira || '',
+      data_terceira: recTerceira.data_terceira || recTerceira.recontagem_concluida_em || divPrincipal.data_terceira || principal.data_terceira || '',
+      status: principal.status || divPrincipal.status || 'ABERTA',
+      status_recontagem: principal.status_recontagem || divPrincipal.status_recontagem || 'aguardando_analista',
+      _somente_divergencia: recs.length === 0,
+      _divergencias_agrupadas: divs.map(d => d.id),
+      _recontagens_agrupadas: recs.map(r => r.id)
+    });
+    return principal;
   });
-  let dados = Object.values(_recPorDiv);
   if (fInv)    dados = dados.filter(r => String(r.inventario_id || r.inventarioId || '') === String(fInv));
   if (fStatus) dados = dados.filter(r => r.status === fStatus);
   if (fRua)    dados = dados.filter(r => (getEnderecoInfo(r.endereco)?.rua || '—') === fRua);
@@ -897,7 +963,15 @@ function renderRecontagens() {
   }
 
   // KPIs
-  const allRec = state().recontagens.filter(r => !fInv || r.inventario_id === fInv);
+  // Indicadores e tabela usam exatamente os mesmos casos consolidados por
+  // endereço. Assim o menu não mostra 1 enquanto a tabela mostra 0, nem conta
+  // três documentos técnicos como três atividades operacionais.
+  const allRec = [..._gruposRec.values()].map(grupo => {
+    const recs = [...grupo.recontagens].sort((a,b) =>
+      Number(b.numero_recontagem || 1) - Number(a.numero_recontagem || 1)
+    );
+    return recs[0] || grupo.divergencias[0];
+  }).filter(r => r && (!fInv || String(r.inventario_id || r.inventarioId || '') === String(fInv)));
   const pendentes    = allRec.filter(r => r.status === 'PENDENTE').length;
   const concluidas   = allRec.filter(r => r.status === 'CONCLUIDA').length;
   const atribuidas   = allRec.filter(r => {
@@ -1014,7 +1088,9 @@ function renderRecontagens() {
                     : `<span style="font-size:.72rem;color:var(--muted)">${fmtTs(r.concluida_em)}</span>`
                 }
                 ${(!_isFluxoEncerrado(r) && naoAtribuido)
-                  ? `<button class="btn btn-ghost btn-sm" onclick="divAtribuirPorRec('${r.id}')" style="font-size:.72rem" title="Atribuir a um operador">👤 Atribuir</button>`
+                  ? `<button class="btn btn-ghost btn-sm" onclick="${r._somente_divergencia
+                      ? `divAtribuirRapido('${r.divergencia_id}')`
+                      : `divAtribuirPorRec('${r.id}')`}" style="font-size:.72rem" title="Atribuir a um operador">👤 Atribuir</button>`
                   : ''}
               </div>
             </td>

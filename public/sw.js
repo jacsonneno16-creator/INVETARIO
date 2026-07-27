@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v130-recuperacao-scripts';
+var CACHE='dt-inventario-v131-contagem-recontagem-canonica';
 var PRECACHE=[
   '/',
   '/index.html',

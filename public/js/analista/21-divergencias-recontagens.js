@@ -1270,7 +1270,17 @@
       return null;
     }
 
-    const recAtiva = DivSvc.obterRecontagemAtivaPorDivergencia(d.id);
+    const mesmaChaveEndereco = r =>
+      _mesmoIdInventario(_idInventarioRegistro(r), _idInventarioRegistro(d)) &&
+      _nd(r.endereco) === _nd(d.endereco);
+    // O bloqueio precisa ser por endereço. Registros antigos podem ter ids de
+    // divergência diferentes para o mesmo endereço e, nesse caso, a verificação
+    // apenas por divergencia_id permitia atribuições duplicadas.
+    const recAtiva = state().recontagens.find(r =>
+      mesmaChaveEndereco(r) &&
+      String(r.status || '').toUpperCase() === 'PENDENTE' &&
+      !DivSvc.isFluxoEncerrado(r)
+    ) || null;
     if (recAtiva){
       if (!recAtiva.operador){
         const updatedRecAtiva = Object.assign({}, recAtiva, {
@@ -1295,7 +1305,7 @@
     }
 
     const recConcluida = state().recontagens.find(r =>
-      r.divergencia_id === d.id && r.status === 'CONCLUIDA' && !DivSvc.isFluxoEncerrado(r)
+      mesmaChaveEndereco(r) && r.status === 'CONCLUIDA' && !DivSvc.isFluxoEncerrado(r)
     );
     if (recConcluida && d.status_recontagem !== 'aguardando_analista'){
       showToast(`🔒 ${d.endereco} já possui recontagem concluída. O analista deve decidir manualmente o próximo passo.`, 'e');
@@ -1303,7 +1313,7 @@
     }
 
     const numeroAtualRec = Number(
-      state().recontagens.filter(r => r.divergencia_id === d.id)
+      state().recontagens.filter(mesmaChaveEndereco)
         .reduce((max, r) => Math.max(max, r.numero_recontagem || 1), 0)
     );
     if (numeroAtualRec >= (MAX_CONTAGENS - 1) || d.qtd_terceira != null){
