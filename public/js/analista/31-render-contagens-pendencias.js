@@ -23,13 +23,23 @@ window.contStatusBadge = window.contStatusBadge || contStatusBadge;
 // de Contagens. Usa a mesma regra de avaliação da aba Recontagem, então os
 // dois lugares sempre concordam sobre qual rodada "bateu".
 function _resultadoRodadaEndereco(c){
-  if (!c.divergente && c.status !== 'DIVERGENTE') return null; // sem recontagem: status normal já basta
-  const chaveInv = String(c.inventario_id || c.inventarioId || '');
+  const invRegistro = (state().inventarios || []).find(i => {
+    const aliases=[i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
+      .filter(Boolean).map(String);
+    return aliases.includes(String(c.inventario_id || c.inventarioId || ''));
+  });
+  const chaveInv = String(invRegistro?.id || c.inventario_id || c.inventarioId || '');
   const end = String(c.endereco || '').trim().toUpperCase();
   const div = (state().divergencias || []).find(d =>
-    String(d.inventario_id || d.inventarioId || '') === chaveInv &&
+    (() => {
+      const id=String(d.inventario_id || d.inventarioId || '');
+      return id === chaveInv || (invRegistro &&
+        [invRegistro.id,invRegistro.codigo,invRegistro.nome,invRegistro.inventario_id,invRegistro.inventarioId]
+          .filter(Boolean).map(String).includes(id));
+    })() &&
     String(d.endereco || '').trim().toUpperCase() === end
   );
+  if (!div && !c.divergente && c.status !== 'DIVERGENTE') return null;
   const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarHistorico?.(div || c);
   if (!avaliacao) return null;
   const rodadaLabel = { 1:'1ª', 2:'2ª', 3:'3ª' }[avaliacao.rodada] || '';
@@ -67,7 +77,24 @@ function renderContagens() {
   // padrão mostramos só a 1ª contagem de cada endereço, com um badge dizendo
   // em qual rodada ele finalmente bateu. Quem quiser ver as rodadas de
   // recontagem em si pode filtrar explicitamente por Tipo = Recontagem.
-  if (!fTipo) dados = dados.filter(c => c.tipo_contagem !== 'RECONTAGEM');
+  if (!fTipo) {
+    dados = dados.filter(c => c.tipo_contagem !== 'RECONTAGEM');
+    const grupos = new Map();
+    const chaveContagem = c => {
+      const id=String(c.inventario_id || c.inventarioId || '');
+      const inv=(state().inventarios || []).find(i =>
+        [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
+          .filter(Boolean).map(String).includes(id));
+      return `${String(inv?.id || id)}|${String(c.endereco || '').trim().toUpperCase()}`;
+    };
+    dados.forEach(c => {
+      const chave=chaveContagem(c);
+      const atual=grupos.get(chave);
+      const data=x=>String(x.timestamp || x.criado_em || x.dataHora || '');
+      if (!atual || data(c).localeCompare(data(atual)) < 0) grupos.set(chave,c);
+    });
+    dados=[...grupos.values()];
+  }
   if (fInv)    dados = dados.filter(c => String(c.inventario_id || c.inventarioId || '') === String(fInv));
   if (fTipo)   dados = dados.filter(c => c.tipo_contagem === fTipo);
   if (fStatus) {
@@ -114,7 +141,7 @@ function renderContagens() {
   const _setCK = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
   _setCK('ck-total',       _allConts.length);
   _setCK('ck-processadas', _allConts.filter(c => c.status === 'PROCESSADO').length);
-  _setCK('ck-divergentes', _allConts.filter(c => c.status === 'DIVERGENTE').length);
+  _setCK('ck-divergentes', _allConts.filter(c => c.divergente === true).length);
   _setCK('ck-pendentes',   _allConts.filter(c => !c.status || c.status === 'PENDENTE').length);
   _setCK('ck-recontagens', _allConts.filter(c => c.tipo_contagem === 'RECONTAGEM').length);
 

@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v132-historico-consolidado';
+var CACHE='dt-inventario-v135-fluxo-consolidado';
 var PRECACHE=[
   '/',
   '/index.html',

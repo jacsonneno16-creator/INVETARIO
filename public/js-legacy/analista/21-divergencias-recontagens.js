@@ -805,6 +805,67 @@
       });
     });
 
+    // Recupera a 1ª contagem DIVERGENTE quando versões anteriores deixaram de
+    // criar seu documento em dt_divergencias. A unidade é inventário/endereço:
+    // cria um único conflito para o Analista, sem criar rodada para o Coletor.
+    const _gruposPrimeiraDivergente = new Map();
+    state().contagens.filter(c =>
+      String(c.tipo_contagem || '').toUpperCase() !== 'RECONTAGEM' &&
+      String(c.status || '').toUpperCase() === 'DIVERGENTE' &&
+      !_isVazio(c) && !c._excluida &&
+      _idInventarioRegistro(c) && _nd(c.endereco)
+    ).forEach(c => {
+      const chave = `${_idInventarioRegistro(c)}|${_nd(c.endereco)}`;
+      const grupo = _gruposPrimeiraDivergente.get(chave) || [];
+      grupo.push(c);
+      _gruposPrimeiraDivergente.set(chave, grupo);
+    });
+    _gruposPrimeiraDivergente.forEach(grupo => {
+      const primeira = [...grupo].sort((a,b) =>
+        String(a.criado_em || a.dataHora || '').localeCompare(String(b.criado_em || b.dataHora || ''))
+      )[0];
+      const invRegistro = _inventarioPorAlias(_idInventarioRegistro(primeira));
+      const invCanonico = invRegistro?.id || _idInventarioRegistro(primeira);
+      const jaExiste = [...state().divergencias, ...novasDivs, ...divsUpdate].some(d =>
+        _mesmoIdInventario(_idInventarioRegistro(d), invCanonico) &&
+        _nd(d.endereco) === _nd(primeira.endereco)
+      );
+      if (jaExiste) return;
+      const itensBase = _snapshotEsperadoEndereco(invRegistro, primeira.endereco);
+      const esperadoCampo = primeira.qtd_esperada ?? primeira.quantidade_esperada ??
+        primeira.qtd_sistema ?? primeira.quantidade_sistema;
+      const qtdEsperada = itensBase.length
+        ? itensBase.reduce((s, item) => s + _qtdEsperadaItem(item), 0)
+        : (esperadoCampo == null ? null : Number(esperadoCampo));
+      const qtdContada = grupo.reduce((s, c) => s + _qtdComparavel(c), 0);
+      const produtos = [...new Set(grupo.flatMap(c => _codigosLidosPrioritarios(c)).filter(Boolean))];
+      const produto = produtos.join(', ') || primeira.codigo_produto || '';
+      const operadores = [...new Set(grupo.map(c => c.operador || c.operador_nome).filter(Boolean))].join(', ');
+      const div = {
+        id: gerarId('DIV'), inventario_id: invCanonico,
+        inventario_nome: invRegistro?.nome || primeira.inventario_nome || primeira.inventario || invCanonico,
+        endereco: primeira.endereco, produto, produto_contado: produto,
+        descricao: primeira.descricao_produto || primeira.descricao || '',
+        qtd_esperada: Number.isFinite(qtdEsperada) ? qtdEsperada : null,
+        qtd_contada: qtdContada, qtd_primeira: qtdContada,
+        diferenca: Number.isFinite(qtdEsperada) ? qtdContada - qtdEsperada : null,
+        operador: operadores, operador_primeira: operadores,
+        data_primeira: primeira.criado_em || primeira.dataHora || '',
+        contagem_uuid: primeira.uuid || primeira.id || null,
+        tipo_divergencia: 'QUANTIDADE_DIFERENTE',
+        motivos_divergencia: ['QUANTIDADE_DIFERENTE'],
+        status: 'EM_RECONTAGEM', status_recontagem: 'aguardando_analista',
+        precisa_recontagem: true, operador_responsavel: null,
+        itens_esperados: itensBase,
+        criada_em: primeira.criado_em || primeira.dataHora || new Date().toISOString(),
+        criada_por: _currentAnalistaUser?.email || 'sistema',
+        recuperada_de_contagem: true
+      };
+      novasDivs.push(div);
+      fsSalvarDivergencia(div);
+      novos++;
+    });
+
     // Nenhuma rodada nasce durante o processamento. A divergência fica na fila
     // do Analista; somente "Atribuir" cria e libera a 2ª ou a 3ª contagem.
     [...novasDivs, ...divsUpdate].forEach(div => {
