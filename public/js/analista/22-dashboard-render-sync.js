@@ -390,6 +390,77 @@ function _dashHourlySeries(contagensConsideradas) {
   return buckets;
 }
 
+function _dashIsRecontagem(registro) {
+  const tipo = String(registro?.tipo_contagem || registro?.tipo || registro?.origem || '').toUpperCase();
+  return tipo.includes('RECONTAGEM') ||
+    Number(registro?.numero_recontagem || registro?.rodada || 0) > 0 ||
+    !!registro?.recontagem_id ||
+    (!!registro?.divergencia_id && (
+      registro?.qtd_recontagem != null ||
+      registro?.recontagem_concluida_em ||
+      String(registro?.status_recontagem || '').toLowerCase() === 'concluida'
+    ));
+}
+
+function _dashDataRegistro(registro) {
+  const raw = registro?.recontagem_concluida_em || registro?.concluida_em ||
+    registro?.criado_em || registro?.created_at || registro?.data_hora ||
+    registro?.dataHora || registro?.ts || registro?.updated_at;
+  if (!raw) return '';
+  if (typeof raw.toDate === 'function') {
+    const d = raw.toDate();
+    return isNaN(d) ? '' : d.toISOString();
+  }
+  const d = new Date(raw);
+  return isNaN(d) ? '' : d.toISOString();
+}
+
+function _dashRecontagensConsideradas(dc) {
+  const filtros = dc?.filtros || {};
+  const enderecos = state().enderecosLista || [];
+  const aceitoNoFiltro = r => {
+    if (r?._excluida) return false;
+    if (filtros.inventarioId && String(r?.inventario_id || '') !== String(filtros.inventarioId)) return false;
+    const end = enderecos.find(e => String(e.endereco || '') === String(r?.endereco || '')) || {};
+    const rua = end.rua || extrairRua(r?.endereco) || 'SEM RUA';
+    const local = end.setor || r?.setor || r?.local || 'SEM LOCAL';
+    if (filtros.rua && String(rua) !== String(filtros.rua)) return false;
+    if (filtros.local && String(local) !== String(filtros.local)) return false;
+    return true;
+  };
+  const candidatos = [
+    ...(state().contagens || []).filter(_dashIsRecontagem),
+    ...(state().recontagens || []).filter(r =>
+      r?.qtd_recontagem != null || r?.qtd_segunda != null || r?.qtd_terceira != null ||
+      r?.recontagem_concluida_em || String(r?.status || '').toUpperCase() === 'CONCLUIDA' ||
+      String(r?.status_recontagem || '').toLowerCase() === 'concluida'
+    )
+  ].filter(aceitoNoFiltro);
+  const unicos = new Map();
+  candidatos.forEach((r, idx) => {
+    const chave = String(r.id || [
+      r.inventario_id || '', r.endereco || '', r.divergencia_id || '',
+      r.numero_recontagem || r.rodada || '', _dashDataRegistro(r),
+      r.operador_recontagem || r.operador || '', r.qtd_recontagem ?? r.quantidade ?? ''
+    ].join('|') || `rec-${idx}`);
+    const anterior = unicos.get(chave);
+    unicos.set(chave, anterior ? { ...anterior, ...r } : r);
+  });
+  return [...unicos.values()];
+}
+
+function _dashAgruparRecontagens(recontagens, keyFn, limite=8) {
+  const mapa = new Map();
+  (recontagens || []).forEach(r => {
+    const chave = String(keyFn(r) || 'SEM DADO').trim() || 'SEM DADO';
+    mapa.set(chave, (mapa.get(chave) || 0) + 1);
+  });
+  return [...mapa.entries()]
+    .map(([label, value]) => ({ label, value }))
+    .sort((a,b) => b.value - a.value || a.label.localeCompare(b.label, 'pt-BR', { numeric:true }))
+    .slice(0, limite);
+}
+
 function _dashMiniBars(items, opts={}) {
   const clickable = !!opts.clickable;
   if (!items.length) return `<div class="empty" style="padding:20px"><div class="empty-icon">📊</div><div class="empty-title">Sem dados para o gráfico</div></div>`;
@@ -413,15 +484,15 @@ function _dashMiniBars(items, opts={}) {
 
 function _dashInventoryColumns(items, onclickFn) {
   if (!items.length) return `<div class="empty" style="padding:24px 16px;min-height:150px;display:flex;flex-direction:column;justify-content:center"><div class="empty-icon">📊</div><div class="empty-title">Sem dados para o filtro selecionado</div><div class="empty-sub">Altere os filtros ou clique em Atualizar.</div></div>`;
-  const max = Math.max(...items.map(i => Math.max(i.contados, i.pendentes)), 1);
+  const max = Math.max(...items.map(i => Math.max(i.contados, i.total)), 1);
   const teto=Math.max(1,Math.ceil(max/4)*4);
   const linhas=[0,1,2,3,4].map(n=>Math.round(teto*n/4));
-  return `<div class="dash-ranking-body"><div class="dash-column-legend"><span><i style="background:#2563eb"></i>Contados</span><span><i style="background:#ef4444"></i>Pendentes</span></div><div class="dash-column-scroll"><div class="dash-column-chart" style="--chart-count:${items.length};min-width:max(520px,calc(${items.length} * 82px))"><div class="dash-y-axis">${linhas.map((v,i)=>`<span style="bottom:${i*25}%">${v}</span>`).join('')}</div><div class="dash-grid-lines">${linhas.map((_,i)=>`<i style="bottom:${i*25}%"></i>`).join('')}</div><div class="dash-column-groups">${items.map(item => {
+  return `<div class="dash-ranking-body"><div class="dash-column-legend"><span><i style="background:#2563eb"></i>Contados</span><span><i style="background:#ef4444"></i>Totais</span></div><div class="dash-column-scroll"><div class="dash-column-chart" style="--chart-count:${items.length};min-width:max(520px,calc(${items.length} * 82px))"><div class="dash-y-axis">${linhas.map((v,i)=>`<span style="bottom:${i*25}%">${v}</span>`).join('')}</div><div class="dash-grid-lines">${linhas.map((_,i)=>`<i style="bottom:${i*25}%"></i>`).join('')}</div><div class="dash-column-groups">${items.map(item => {
     const hc=item.contados?Math.max(4,Math.round(item.contados/teto*100)):0;
-    const hp=item.pendentes?Math.max(4,Math.round(item.pendentes/teto*100)):0;
+    const ht=item.total?Math.max(4,Math.round(item.total/teto*100)):0;
     const arg=String(item.filterValue??item.label).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
-    return `<button type="button" class="dash-column-group" onclick="${onclickFn}('${arg}')" title="${_dashSafe(item.label)}: ${item.contados} contados e ${item.pendentes} pendentes">
-      <span class="dash-columns"><i class="dash-column auditados" style="height:${hc}%"><b>${item.contados}</b></i><i class="dash-column divergencias" style="height:${hp}%"><b>${item.pendentes}</b></i></span>
+    return `<button type="button" class="dash-column-group" onclick="${onclickFn}('${arg}')" title="${_dashSafe(item.label)}: ${item.contados} contados de ${item.total} totais">
+      <span class="dash-columns"><i class="dash-column auditados" style="height:${hc}%"><b>${item.contados}</b></i><i class="dash-column divergencias" style="height:${ht}%"><b>${item.total}</b></i></span>
       <span class="dash-column-label">${_dashSafe(item.label)}<small style="display:block;margin-top:3px;color:var(--muted)">${item.pct}% concluído</small></span>
     </button>`;
   }).join('')}</div></div></div></div>`;
@@ -442,9 +513,36 @@ function _renderDashboardCharts() {
   const locais = _dashBuildBreakdown(dc.endsBase, dc.invsConsiderados, e => e.setor || 'SEM LOCAL')
     .sort((a,b) => b.pendentes - a.pendentes || a.pct - b.pct)
     .slice(0,6);
-  const operadores = _dashTopOperadores(dc.contagensConsideradas);
-  const serieHoras = _dashHourlySeries(dc.contagensConsideradas);
+  const contagensNormais = dc.contagensConsideradas.filter(c => !_dashIsRecontagem(c));
+  const recontagens = _dashRecontagensConsideradas(dc);
+  const operadores = _dashTopOperadores(contagensNormais);
+  const serieHoras = _dashHourlySeries(contagensNormais);
+  const serieHorasRecontagem = _dashHourlySeries(recontagens.map(r => ({
+    ...r, criado_em: _dashDataRegistro(r)
+  })));
+  const serieHorasTotal = serieHoras.map((b, idx) => ({
+    hora: b.hora,
+    total: b.total + (serieHorasRecontagem[idx]?.total || 0)
+  }));
   const totalHoraMax = Math.max(...serieHoras.map(x => x.total), 1);
+  const totalHoraRecMax = Math.max(...serieHorasRecontagem.map(x => x.total), 1);
+  const totalHoraGeralMax = Math.max(...serieHorasTotal.map(x => x.total), 1);
+  const enderecos = state().enderecosLista || [];
+  const recUsuarios = _dashAgruparRecontagens(recontagens, r =>
+    r.operador_recontagem || r.operador_nome || r.operador || r.usuario || 'SEM OPERADOR'
+  );
+  const recRuas = _dashAgruparRecontagens(recontagens, r => {
+    const end = enderecos.find(e => String(e.endereco || '') === String(r.endereco || '')) || {};
+    return end.rua || extrairRua(r.endereco) || 'SEM RUA';
+  });
+  const recProdutos = _dashAgruparRecontagens(recontagens, r =>
+    r.produto_recontagem || r.produto_terceira || r.produto_segunda ||
+    r.produto || r.codigo_produto || r.sku || 'SEM PRODUTO'
+  );
+  const totalUsuarios = _dashAgruparRecontagens([
+    ...contagensNormais.map(c => ({ ...c, _atividade:'Contagem' })),
+    ...recontagens.map(r => ({ ...r, _atividade:'Recontagem' }))
+  ], r => r.operador_recontagem || r.operador_nome || r.operador || r.usuario || 'SEM OPERADOR');
 
   const pct = Math.max(0, Math.min(100, dc.pctGeral || 0));
   const pendPct = 100 - pct;
@@ -476,6 +574,43 @@ function _renderDashboardCharts() {
       <div style="font-size:.61rem;font-family:var(--mono);color:${active ? 'var(--text-2)' : 'var(--muted-2)'}">${String(b.hora).padStart(2,'0')}</div>
     </div>`;
   }).join('');
+  const recountHourBars = serieHorasRecontagem.map(b => {
+    const h = Math.max(8, Math.round((b.total / totalHoraRecMax) * 100));
+    const active = b.total > 0;
+    return `<div title="${String(b.hora).padStart(2,'0')}:00 · ${b.total} recontagem(ns)" style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;min-width:0">
+      <div style="height:14px;font-family:var(--mono);font-size:.65rem;font-weight:800;color:${active ? '#7c3aed' : 'transparent'};line-height:14px">${active ? b.total.toLocaleString('pt-BR') : '0'}</div>
+      <div style="height:110px;width:100%;display:flex;align-items:flex-end;justify-content:center">
+        <div style="width:100%;max-width:22px;height:${active ? h : 8}%;border-radius:8px 8px 4px 4px;background:${active ? 'linear-gradient(180deg,#a78bfa,#7c3aed)' : 'var(--border)'};transition:height .25s"></div>
+      </div>
+      <div style="font-size:.61rem;font-family:var(--mono);color:${active ? 'var(--text-2)' : 'var(--muted-2)'}">${String(b.hora).padStart(2,'0')}</div>
+    </div>`;
+  }).join('');
+  const totalHourBars = serieHorasTotal.map(b => {
+    const h = Math.max(8, Math.round((b.total / totalHoraGeralMax) * 100));
+    const active = b.total > 0;
+    return `<div title="${String(b.hora).padStart(2,'0')}:00 · ${b.total} atividade(s) no total" style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;min-width:0">
+      <div style="height:14px;font-family:var(--mono);font-size:.65rem;font-weight:800;color:${active ? 'var(--green-mid)' : 'transparent'};line-height:14px">${active ? b.total.toLocaleString('pt-BR') : '0'}</div>
+      <div style="height:110px;width:100%;display:flex;align-items:flex-end;justify-content:center">
+        <div style="width:100%;max-width:22px;height:${active ? h : 8}%;border-radius:8px 8px 4px 4px;background:${active ? 'linear-gradient(180deg,var(--green-light),var(--green-mid))' : 'var(--border)'};transition:height .25s"></div>
+      </div>
+      <div style="font-size:.61rem;font-family:var(--mono);color:${active ? 'var(--text-2)' : 'var(--muted-2)'}">${String(b.hora).padStart(2,'0')}</div>
+    </div>`;
+  }).join('');
+  const recUsuariosHtml = _dashMiniBars(recUsuarios.map(i => ({
+    ...i, color:'linear-gradient(90deg,#7c3aed,#a78bfa)', sub:`${i.value} recontagem(ns)`
+  })));
+  const recRuasHtml = _dashMiniBars(recRuas.map(i => ({
+    ...i, label:`Rua ${i.label}`, color:'linear-gradient(90deg,#dc2626,#fb7185)',
+    sub:`${i.value} recontagem(ns) gerada(s)`
+  })));
+  const recProdutosHtml = _dashMiniBars(recProdutos.map(i => ({
+    ...i, color:'linear-gradient(90deg,#d97706,#fbbf24)',
+    sub:`${i.value} recontagem(ns) gerada(s)`
+  })));
+  const totalUsuariosHtml = _dashMiniBars(totalUsuarios.map(i => ({
+    ...i, color:'linear-gradient(90deg,var(--green-mid),var(--green-light))',
+    sub:`${i.value} atividade(s): contagens + recontagens`
+  })));
 
   wrap.innerHTML = `
     <div style="display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:16px;margin-bottom:4px">
@@ -515,6 +650,40 @@ function _renderDashboardCharts() {
       <div class="tc">
         <div class="tc-header"><div><div class="tc-title">👥 Ranking de operadores</div><div class="sec-sub">Clique para abrir as contagens já filtradas por operador</div></div></div>
         <div style="padding:14px;display:flex;flex-direction:column;gap:8px">${operadoresHtml}</div>
+      </div>
+    </div>
+    <div style="margin:4px 0 12px">
+      <div style="font-size:1rem;font-weight:800;color:var(--text)">🔄 Análise de recontagens</div>
+      <div class="sec-sub">Somente rodadas de recontagem executadas no filtro atual; não são somadas às contagens normais.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr .8fr;gap:16px;margin-bottom:16px">
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">⏱️ Recontagens por hora</div><div class="sec-sub">${recontagens.length.toLocaleString('pt-BR')} recontagem(ns) executada(s)</div></div></div>
+        <div style="padding:18px 16px 12px"><div style="display:flex;gap:8px;align-items:flex-end">${recountHourBars}</div></div>
+      </div>
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">👥 Usuários com mais recontagens</div><div class="sec-sub">Ranking de rodadas executadas</div></div></div>
+        <div style="padding:12px">${recUsuariosHtml}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr .8fr;gap:16px;margin-bottom:16px">
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">📊 Produção total por hora</div><div class="sec-sub">Contagens + recontagens executadas no filtro atual</div></div></div>
+        <div style="padding:18px 16px 12px"><div style="display:flex;gap:8px;align-items:flex-end">${totalHourBars}</div></div>
+      </div>
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">🏆 Ranking total de usuários</div><div class="sec-sub">Soma de contagens e recontagens por pessoa</div></div></div>
+        <div style="padding:12px">${totalUsuariosHtml}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">🛣️ Ruas que mais geraram recontagem</div><div class="sec-sub">Endereços divergentes agrupados por rua</div></div></div>
+        <div style="padding:12px">${recRuasHtml}</div>
+      </div>
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">📦 Produtos que mais geraram recontagem</div><div class="sec-sub">Produtos vinculados às rodadas realizadas</div></div></div>
+        <div style="padding:12px">${recProdutosHtml}</div>
       </div>
     </div>`;
 }

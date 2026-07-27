@@ -525,7 +525,22 @@
           divergencia_resolvida: avaliacao.estado === 'RESOLVIDA',
           encerrada_definitivamente: true, operador_responsavel: null,
           finalizada_em: item.finalizada_em || new Date().toISOString()
-        } : { status_recontagem:'aguardando_analista', operador_responsavel:null });
+        } : {
+          // Um registro antigo pode ter sido encerrado incorretamente apenas
+          // porque existia uma 2ª rodada. Se as quantidades/produtos não
+          // coincidem, ele precisa ser reaberto para a 3ª contagem.
+          status: 'ABERTA',
+          status_recontagem: 'aguardando_analista',
+          precisa_recontagem: true,
+          contagem_aceita: null,
+          qtd_resultado_final: null,
+          produto_resultado_final: '',
+          divergencia_resolvida: false,
+          encerrada_definitivamente: false,
+          resolvida_em: null,
+          finalizada_em: null,
+          operador_responsavel: null
+        });
         atualizacoesPorId.set(atualizado.id, atualizado);
         fsSalvarDivergencia(atualizado);
       });
@@ -540,6 +555,39 @@
     const divsConsolidadas = state().divergencias.map(d => atualizacoesPorId.get(d.id) || d);
     if (JSON.stringify(divsConsolidadas) !== JSON.stringify(state().divergencias)) {
       Store.dispatch(Actions.replaceSlice('divergencias', divsConsolidadas, BIZMETA));
+    }
+
+    // Reabre dados legados marcados como RESOLVIDA/OK sem coincidência real.
+    // Isso é indispensável para o caso: sistema=8, 1ª=2, 2ª=4. Duas rodadas
+    // diferentes não formam consenso e devem aguardar a 3ª contagem.
+    const divsRevalidadas = state().divergencias.map(div => {
+      const hist = _historicoConsolidadoEndereco(div);
+      const avaliacao = _avaliarHistoricoContagens(hist);
+      if (avaliacao.estado !== 'AGUARDANDO_ANALISTA') return div;
+      const estavaEncerradaErrado =
+        String(div.status || '').toUpperCase() === 'RESOLVIDA' ||
+        div.divergencia_resolvida === true ||
+        div.encerrada_definitivamente === true ||
+        String(div.contagem_aceita || '').startsWith('OK_');
+      if (!estavaEncerradaErrado) return div;
+      const atualizado = Object.assign({}, div, {
+        status: 'ABERTA',
+        status_recontagem: 'aguardando_analista',
+        precisa_recontagem: true,
+        contagem_aceita: null,
+        qtd_resultado_final: null,
+        produto_resultado_final: '',
+        divergencia_resolvida: false,
+        encerrada_definitivamente: false,
+        resolvida_em: null,
+        finalizada_em: null,
+        operador_responsavel: null
+      });
+      fsSalvarDivergencia(atualizado);
+      return atualizado;
+    });
+    if (JSON.stringify(divsRevalidadas) !== JSON.stringify(state().divergencias)) {
+      Store.dispatch(Actions.replaceSlice('divergencias', divsRevalidadas, BIZMETA));
     }
 
     // Corrige também casos antigos que já tinham 2ª e 3ª salvas, mas ficaram
@@ -1431,16 +1479,18 @@
     if (!d) return null;
     agora = agora || new Date().toISOString();
 
-    if (DivSvc.isFluxoEncerrado(d)){
-      showToast(`🔒 ${d.endereco} já está encerrado. Não é possível atribuir.`, 'e');
-      return null;
-    }
-
     const historicoAtual = _historicoConsolidadoEndereco(d);
     const avaliacaoAtual = _avaliarHistoricoContagens(historicoAtual);
     if (avaliacaoAtual.estado === 'RESOLVIDA' || avaliacaoAtual.estado === 'PERSISTENTE' ||
         historicoAtual._recontagens.length >= (MAX_CONTAGENS - 1)){
       showToast(`🔒 ${d.endereco} já possui as três contagens e está finalizado. Não é possível atribuir novamente.`, 'e');
+      return null;
+    }
+    // A avaliação real prevalece sobre flags antigas. Um registro marcado
+    // incorretamente como encerrado, mas sem consenso após a 2ª contagem,
+    // precisa aceitar a atribuição da 3ª rodada.
+    if (DivSvc.isFluxoEncerrado(d) && avaliacaoAtual.estado !== 'AGUARDANDO_ANALISTA'){
+      showToast(`🔒 ${d.endereco} já está encerrado. Não é possível atribuir.`, 'e');
       return null;
     }
 
@@ -1534,7 +1584,8 @@
   global.AnalistaDivergenciasRuntime = {
     processar:     processarDivergencias,
     corrigirOrfas: corrigirOrfas,
-    avaliarHistorico: _avaliarHistoricoContagens
+    avaliarHistorico: _avaliarHistoricoContagens,
+    avaliarEndereco: d => _avaliarHistoricoContagens(_historicoConsolidadoEndereco(d))
   };
 
   // Exportações globais para chamadas via onclick no HTML e outros módulos

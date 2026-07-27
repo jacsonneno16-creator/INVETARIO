@@ -43,6 +43,9 @@ let _recDadosFiltradosExport = [];
 
 function divPodeSelecionar(div) {
   if (!div) return false;
+  const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarEndereco?.(div);
+  if (avaliacao?.estado === 'AGUARDANDO_ANALISTA') return true;
+  if (avaliacao?.estado === 'RESOLVIDA' || avaliacao?.estado === 'PERSISTENTE') return false;
   const status = String(div.status || '').toUpperCase();
   const statusRec = String(div.status_recontagem || '').toLowerCase();
   return !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(status) &&
@@ -107,9 +110,11 @@ function divDeselecionarTodos() {
 
 function divAtribuirRapido(divId) {
   const div = state().divergencias.find(d => d.id === divId);
-  const totalRecontagens = state().recontagens.filter(r => r.divergencia_id === divId).length;
-  if (!div || ['RESOLVIDA','PERSISTENTE'].includes(String(div.status || '').toUpperCase()) ||
-      div.qtd_terceira != null || totalRecontagens >= 2) {
+  const totalRecontagens = state().recontagens.filter(r =>
+    r.divergencia_id === divId &&
+    !['CANCELADA','EXCLUIDA'].includes(String(r.status || '').toUpperCase())
+  ).length;
+  if (!div || !divPodeSelecionar(div) || div.qtd_terceira != null || totalRecontagens >= 2) {
     showToast('🔒 As três contagens já foram concluídas. Esta atividade está finalizada.', 'e');
     return;
   }
@@ -531,8 +536,31 @@ function renderDivergencias() {
     principal.data_terceira = principal.data_terceira || terceira.data_terceira || terceira.recontagem_concluida_em || terceira.concluida_em || '';
     principal._recontagens_endereco = recsEndereco;
     principal._vezes_contado = 1 + (principal.qtd_segunda != null ? 1 : 0) + (principal.qtd_terceira != null ? 1 : 0);
-    if (String(principal.status || '').toUpperCase() === 'RESOLVIDA') {
-      principal.status_recontagem = 'concluida';
+    // Nunca confiar cegamente no status legado. O resultado deve ser
+    // recalculado pelas rodadas reais: só há OK quando produto e quantidade
+    // coincidem com o sistema ou com uma contagem anterior.
+    const avaliacaoAtual = window.AnalistaDivergenciasRuntime?.avaliarHistorico?.(principal);
+    if (avaliacaoAtual?.estado === 'RESOLVIDA' || avaliacaoAtual?.estado === 'PERSISTENTE') {
+      principal.status = avaliacaoAtual.estado;
+      principal.status_recontagem = avaliacaoAtual.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida';
+      principal.contagem_aceita = avaliacaoAtual.referencia;
+      principal.qtd_resultado_final = avaliacaoAtual.resultado?.qtd ?? null;
+      principal.produto_resultado_final = avaliacaoAtual.resultado?.produto || '';
+      principal.divergencia_resolvida = avaliacaoAtual.estado === 'RESOLVIDA';
+      principal.encerrada_definitivamente = true;
+      principal.operador_responsavel = null;
+    } else if (avaliacaoAtual?.estado === 'AGUARDANDO_ANALISTA') {
+      principal.status = 'ABERTA';
+      principal.status_recontagem = 'aguardando_analista';
+      principal.precisa_recontagem = true;
+      principal.contagem_aceita = null;
+      principal.qtd_resultado_final = null;
+      principal.produto_resultado_final = '';
+      principal.divergencia_resolvida = false;
+      principal.encerrada_definitivamente = false;
+      principal.resolvida_em = null;
+      principal.finalizada_em = null;
+      principal.operador_responsavel = null;
     }
     return principal;
   });

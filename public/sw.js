@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v137-selecao-somente-pendentes';
+var CACHE='dt-inventario-v140-dashboard-producao-total';
 var PRECACHE=[
   '/',
   '/index.html',
