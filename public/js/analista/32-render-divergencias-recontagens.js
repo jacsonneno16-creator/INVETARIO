@@ -867,8 +867,11 @@ function renderRecontagens() {
       )
       .sort((a,b) => String(a.criado_em || a.dataHora || '').localeCompare(String(b.criado_em || b.dataHora || '')))[0];
 
-    const recSegunda = recs.find(r => Number(r.numero_recontagem || 1) === 1 && r.qtd_recontagem != null) || {};
-    const recTerceira = recs.find(r => Number(r.numero_recontagem || 1) === 2 && r.qtd_recontagem != null) || {};
+    const recsConcluidas = recs.filter(r => r.qtd_recontagem != null)
+      .sort((a,b) => String(a.recontagem_concluida_em || a.concluida_em || a.criada_em || '')
+        .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.criada_em || '')));
+    const recSegunda = recsConcluidas[0] || {};
+    const recTerceira = recsConcluidas[1] || {};
     Object.assign(principal, {
       divergencia_id: divPrincipal.id || principal.divergencia_id,
       inventario_id: divPrincipal.inventario_id || principal.inventario_id,
@@ -893,12 +896,22 @@ function renderRecontagens() {
       produto_terceira: recTerceira.produto_terceira || recTerceira.produto_recontagem || divPrincipal.produto_terceira || principal.produto_terceira || '',
       operador_terceira: recTerceira.operador_terceira || recTerceira.operador_recontagem || divPrincipal.operador_terceira || principal.operador_terceira || '',
       data_terceira: recTerceira.data_terceira || recTerceira.recontagem_concluida_em || divPrincipal.data_terceira || principal.data_terceira || '',
-      status: principal.status || divPrincipal.status || 'ABERTA',
-      status_recontagem: principal.status_recontagem || divPrincipal.status_recontagem || 'aguardando_analista',
+      status: divPrincipal.status || principal.status || 'ABERTA',
+      status_recontagem: divPrincipal.status_recontagem || principal.status_recontagem || 'aguardando_analista',
       _somente_divergencia: recs.length === 0,
       _divergencias_agrupadas: divs.map(d => d.id),
       _recontagens_agrupadas: recs.map(r => r.id)
     });
+    const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarHistorico?.(principal);
+    if (avaliacao && (avaliacao.estado === 'RESOLVIDA' || avaliacao.estado === 'PERSISTENTE')) {
+      principal.status = avaliacao.estado;
+      principal.status_recontagem = avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida';
+      principal.contagem_aceita = avaliacao.referencia;
+      principal.qtd_resultado_final = avaliacao.resultado?.qtd ?? null;
+      principal.produto_resultado_final = avaliacao.resultado?.produto || '';
+      principal.encerrada_definitivamente = true;
+      principal.operador_responsavel = null;
+    }
     return principal;
   });
   if (fInv)    dados = dados.filter(r => String(r.inventario_id || r.inventarioId || '') === String(fInv));

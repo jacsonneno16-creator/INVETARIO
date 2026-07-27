@@ -186,6 +186,37 @@
     return { estado:'AGUARDANDO_ANALISTA', referencia:null, rodada:segunda ? 2 : 1, resultado:segunda || primeira };
   }
 
+  function _chaveOperacional(obj){
+    return `${_nd(_idInventarioRegistro(obj))}|${_nd(obj?.endereco)}`;
+  }
+
+  function _historicoConsolidadoEndereco(div){
+    const chave = _chaveOperacional(div);
+    const divs = state().divergencias.filter(d => _chaveOperacional(d) === chave);
+    const recs = state().recontagens
+      .filter(r => _chaveOperacional(r) === chave && r.qtd_recontagem != null &&
+        !['CANCELADA','EXCLUIDA'].includes(String(r.status || '').toUpperCase()))
+      .sort((a,b) => String(a.recontagem_concluida_em || a.concluida_em || a.criada_em || '')
+        .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.criada_em || '')));
+    const primeiraDiv = [...divs].sort((a,b) =>
+      String(a.criada_em || '').localeCompare(String(b.criada_em || ''))
+    ).find(d => d.qtd_primeira != null || d.qtd_contada != null) || div;
+    const segunda = recs[0] || {};
+    const terceira = recs[1] || {};
+    return Object.assign({}, primeiraDiv, {
+      qtd_segunda: segunda.qtd_segunda ?? segunda.qtd_recontagem ?? primeiraDiv.qtd_segunda,
+      produto_segunda: segunda.produto_segunda || segunda.produto_recontagem || primeiraDiv.produto_segunda || '',
+      operador_segunda: segunda.operador_segunda || segunda.operador_recontagem || '',
+      data_segunda: segunda.data_segunda || segunda.recontagem_concluida_em || segunda.concluida_em || '',
+      qtd_terceira: terceira.qtd_terceira ?? terceira.qtd_recontagem ?? primeiraDiv.qtd_terceira,
+      produto_terceira: terceira.produto_terceira || terceira.produto_recontagem || primeiraDiv.produto_terceira || '',
+      operador_terceira: terceira.operador_terceira || terceira.operador_recontagem || '',
+      data_terceira: terceira.data_terceira || terceira.recontagem_concluida_em || terceira.concluida_em || '',
+      _divergencias: divs,
+      _recontagens: recs
+    });
+  }
+
   // ─────────────────────────────────────────────────────────────────────────────
   //  9. LÓGICA DE DIVERGÊNCIAS
   // ─────────────────────────────────────────────────────────────────────────────
@@ -442,6 +473,50 @@
         Actions.replaceSlice('recontagens', recsComResultado, BIZMETA),
         Actions.replaceSlice('divergencias', divsComResultado, BIZMETA)
       ], BIZMETA));
+    }
+
+    const chavesMigradas = new Set();
+    const atualizacoesPorId = new Map();
+    state().divergencias.forEach(div => {
+      const chave = _chaveOperacional(div);
+      if (chavesMigradas.has(chave)) return;
+      chavesMigradas.add(chave);
+      const hist = _historicoConsolidadoEndereco(div);
+      const avaliacao = _avaliarHistoricoContagens(hist);
+      const final = avaliacao.estado === 'RESOLVIDA' || avaliacao.estado === 'PERSISTENTE';
+      const campos = {
+        qtd_primeira: hist.qtd_primeira ?? hist.qtd_contada,
+        produto_primeira: hist.produto_primeira || hist.produto_contado || hist.produto || '',
+        qtd_segunda: hist.qtd_segunda ?? null, produto_segunda: hist.produto_segunda || '',
+        operador_segunda: hist.operador_segunda || '', data_segunda: hist.data_segunda || '',
+        qtd_terceira: hist.qtd_terceira ?? null, produto_terceira: hist.produto_terceira || '',
+        operador_terceira: hist.operador_terceira || '', data_terceira: hist.data_terceira || ''
+      };
+      hist._divergencias.forEach(item => {
+        const atualizado = Object.assign({}, item, campos, final ? {
+          status: avaliacao.estado,
+          status_recontagem: avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida',
+          precisa_recontagem: false, contagem_aceita: avaliacao.referencia,
+          qtd_resultado_final: avaliacao.resultado?.qtd ?? null,
+          produto_resultado_final: avaliacao.resultado?.produto || '',
+          divergencia_resolvida: avaliacao.estado === 'RESOLVIDA',
+          encerrada_definitivamente: true, operador_responsavel: null,
+          finalizada_em: item.finalizada_em || new Date().toISOString()
+        } : { status_recontagem:'aguardando_analista', operador_responsavel:null });
+        atualizacoesPorId.set(atualizado.id, atualizado);
+        fsSalvarDivergencia(atualizado);
+      });
+      if (final) state().recontagens.filter(r => _chaveOperacional(r) === chave &&
+        String(r.status || '').toUpperCase() === 'PENDENTE').forEach(r =>
+          fsSalvarRecontagem(Object.assign({}, r, {
+            status:'CANCELADA', status_recontagem:'cancelada', operador:null,
+            cancelada_motivo:'FLUXO_CONSOLIDADO_ENCERRADO', cancelada_em:new Date().toISOString()
+          }))
+        );
+    });
+    const divsConsolidadas = state().divergencias.map(d => atualizacoesPorId.get(d.id) || d);
+    if (JSON.stringify(divsConsolidadas) !== JSON.stringify(state().divergencias)) {
+      Store.dispatch(Actions.replaceSlice('divergencias', divsConsolidadas, BIZMETA));
     }
 
     // Corrige também casos antigos que já tinham 2ª e 3ª salvas, mas ficaram
@@ -1270,6 +1345,14 @@
       return null;
     }
 
+    const historicoAtual = _historicoConsolidadoEndereco(d);
+    const avaliacaoAtual = _avaliarHistoricoContagens(historicoAtual);
+    if (avaliacaoAtual.estado === 'RESOLVIDA' || avaliacaoAtual.estado === 'PERSISTENTE' ||
+        historicoAtual._recontagens.length >= (MAX_CONTAGENS - 1)){
+      showToast(`🔒 ${d.endereco} já possui as três contagens e está finalizado. Não é possível atribuir novamente.`, 'e');
+      return null;
+    }
+
     const mesmaChaveEndereco = r =>
       _mesmoIdInventario(_idInventarioRegistro(r), _idInventarioRegistro(d)) &&
       _nd(r.endereco) === _nd(d.endereco);
@@ -1312,10 +1395,7 @@
       return null;
     }
 
-    const numeroAtualRec = Number(
-      state().recontagens.filter(mesmaChaveEndereco)
-        .reduce((max, r) => Math.max(max, r.numero_recontagem || 1), 0)
-    );
+    const numeroAtualRec = historicoAtual._recontagens.length;
     if (numeroAtualRec >= (MAX_CONTAGENS - 1) || d.qtd_terceira != null){
       showToast(`🔒 ${d.endereco} já atingiu o limite de ${MAX_CONTAGENS} contagens.`, 'e');
       return null;
@@ -1362,7 +1442,8 @@
   // ─────────────────────────────────────────────────────────────────────────────
   global.AnalistaDivergenciasRuntime = {
     processar:     processarDivergencias,
-    corrigirOrfas: corrigirOrfas
+    corrigirOrfas: corrigirOrfas,
+    avaliarHistorico: _avaliarHistoricoContagens
   };
 
   // Exportações globais para chamadas via onclick no HTML e outros módulos
