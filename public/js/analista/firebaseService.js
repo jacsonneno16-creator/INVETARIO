@@ -331,6 +331,44 @@
     return true;
   }
 
+  // Um navegador novo não possui o cache local usado pelo painel. Portanto,
+  // após o login carregamos uma vez apenas as bases estruturais da loja atual.
+  // As coleções operacionais (contagens, divergências e recontagens) continuam
+  // fora desta rotina e só são consultadas pelo botão Atualizar, evitando
+  // reintroduzir as leituras excessivas que motivaram o modo manual.
+  async function _carregarBasesEssenciaisLogin(){
+    const resultados = await Promise.allSettled([
+      _carregarInventariosSeNecessario(),
+      _carregarEnderecosManual(),
+      global.DTProdutos?.carregar?.(false)
+    ]);
+    const nomes = ['inventários', 'endereços', 'produtos'];
+    const falhas = resultados
+      .map((resultado, indice) => ({ resultado, nome: nomes[indice] }))
+      .filter(item => item.resultado.status === 'rejected');
+
+    falhas.forEach(item => {
+      console.warn(
+        `[FirebaseService] Falha ao carregar ${item.nome} no login:`,
+        item.resultado.reason?.message || item.resultado.reason
+      );
+    });
+
+    const enderecos = resultados[1].status === 'fulfilled'
+      ? (resultados[1].value || []).length
+      : (global.AnalistaStore.getState().enderecosLista || []).length;
+    const inventarios = (global.AnalistaStore.getState().inventarios || []).length;
+
+    global.AnalistaBootstrap?.saveAll?.();
+    global.AnalistaBootstrap?.renderAll?.();
+    global.AnalistaNavigation?.renderCurrentPage?.();
+
+    if (falhas.length) {
+      throw new Error(`Não foi possível carregar: ${falhas.map(item => item.nome).join(', ')}.`);
+    }
+    return { inventarios, enderecos };
+  }
+
   async function _carregarEnderecosManual(){
     const metaSnap=await global.FS_AN.collection('dt_locais_meta').doc('versao').get();
     if(!metaSnap.exists)return [];
@@ -436,14 +474,22 @@
       return false;
     }
 
-    // Coletores continuam com status próprio; as bases do Inventário permanecem
-    // no cache até o analista clicar em Atualizar.
+    // Carrega as bases estruturais também em computadores sem cache. O histórico
+    // operacional permanece no fluxo manual para controlar o volume de leituras.
+    _emitSync(true, 'Carregando dados da loja...', { started: false, source: 'firebase-bootstrap' });
+    const essenciais = await _carregarBasesEssenciaisLogin();
+
+    // Coletores continuam com status próprio.
     if (!state.unsubscribers.coletores) {
       state.unsubscribers.coletores = _listenColetores();
     }
     state.started=false;
     state.currentInventoryIds=[];
-    _emitSync(true,'Dados do Inventário carregados do cache. Clique em Atualizar para consultar novas contagens.',{started:false,source:'cache'});
+    _emitSync(
+      true,
+      `${essenciais.enderecos} endereços e ${essenciais.inventarios} inventários carregados. Clique em Atualizar para consultar novas contagens.`,
+      {started:false,source:'firebase-bootstrap'}
+    );
     return true;
   }
 

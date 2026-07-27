@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v145-correcao-validacao-nome';
+var CACHE='dt-inventario-v146-bootstrap-analista-multidispositivo';
 var PRECACHE=[
   '/',
   '/index.html',
