@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v146-bootstrap-analista-multidispositivo';
+var CACHE='dt-inventario-v147-login-chunks-enderecos-produtos';
 var PRECACHE=[
   '/',
   '/index.html',

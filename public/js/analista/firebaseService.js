@@ -340,7 +340,7 @@
     const resultados = await Promise.allSettled([
       _carregarInventariosSeNecessario(),
       _carregarEnderecosManual(),
-      global.DTProdutos?.carregar?.(false)
+      global.DTProdutos?.carregar?.(true, true)
     ]);
     const nomes = ['inventários', 'endereços', 'produtos'];
     const falhas = resultados
@@ -358,6 +358,7 @@
       ? (resultados[1].value || []).length
       : (global.AnalistaStore.getState().enderecosLista || []).length;
     const inventarios = (global.AnalistaStore.getState().inventarios || []).length;
+    const produtos = global.DTProdutos?.cache?.lista?.length || 0;
 
     global.AnalistaBootstrap?.saveAll?.();
     global.AnalistaBootstrap?.renderAll?.();
@@ -366,7 +367,7 @@
     if (falhas.length) {
       throw new Error(`Não foi possível carregar: ${falhas.map(item => item.nome).join(', ')}.`);
     }
-    return { inventarios, enderecos };
+    return { inventarios, enderecos, produtos };
   }
 
   async function _carregarEnderecosManual(){
@@ -487,7 +488,7 @@
     state.currentInventoryIds=[];
     _emitSync(
       true,
-      `${essenciais.enderecos} endereços e ${essenciais.inventarios} inventários carregados. Clique em Atualizar para consultar novas contagens.`,
+      `${essenciais.enderecos} endereços, ${essenciais.produtos} produtos e ${essenciais.inventarios} inventários carregados. Clique em Atualizar para consultar novas contagens.`,
       {started:false,source:'firebase-bootstrap'}
     );
     return true;

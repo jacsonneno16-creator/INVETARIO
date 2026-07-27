@@ -77,7 +77,7 @@
       if(Array.isArray(lista))indexar(lista);
     }catch(e){console.warn('[Produtos] Falha ao carregar cache local:',e);}
   }
-  async function carregar(force=false){
+  async function carregar(force=false,strict=false){
     const loja='GLOBAL';
     if(cache.carregando)return cache.carregando;
     if(!navigator.onLine){
@@ -92,7 +92,10 @@
         try{
           const meta=await fs.collection('dt_produtos_meta').doc('versao').get();
           if(meta.exists)versaoServidor=texto(meta.data().versao||meta.data().atualizadoEm||'');
-        }catch(_e){}
+          if(meta.exists)var metaServidor=meta.data()||{};
+        }catch(_e){
+          if(strict)throw new Error('Não foi possível ler o metadado da base de produtos: '+(_e.message||_e));
+        }
         const versaoLocal=localStorage.getItem(versaoKey)||cache.versao||'';
         cache.ultimaVerificacao=Date.now();
         if(!force&&cache.carregado&&cache.loja===loja&&versaoServidor&&versaoLocal===versaoServidor){
@@ -101,6 +104,7 @@
         }
         if(!versaoServidor){
           console.warn('[Produtos] Metadado de versão ausente; mantendo cache local.');
+          if(strict)throw new Error('A base de produtos não possui uma versão publicada em chunks.');
           if(!cache.carregado||cache.loja!==loja)await carregarLocal();
           return cache.lista;
         }
@@ -111,6 +115,10 @@
         const docs=(chunks.docs||[]).slice().sort(function(a,b){return Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0);});
         let rows=[];
         docs.forEach(function(d){const x=d.data()||{};const itens=x.itens||x.dados||x.registros||[];rows=rows.concat(itens);});
+        const esperadoChunks=Number((metaServidor||{}).totalChunks||(metaServidor||{}).chunks||0);
+        const esperadoProdutos=Number((metaServidor||{}).totalProdutos||(metaServidor||{}).total||0);
+        if(esperadoChunks&&docs.length!==esperadoChunks)throw new Error('Base de produtos incompleta: '+docs.length+' de '+esperadoChunks+' chunks recebidos.');
+        if(esperadoProdutos&&rows.length!==esperadoProdutos)throw new Error('Base de produtos incompleta: '+rows.length+' de '+esperadoProdutos+' produtos recebidos.');
         console.log('[Produtos] Base atualizada somente por chunks:',docs.length,'documentos /',rows.length,'produtos / versão',versaoServidor);
         const result=indexar(rows);
         cache.versao=versaoServidor;
@@ -119,6 +127,7 @@
       }catch(e){
         console.warn('[Produtos] Falha ao atualizar base:',e);
         if(!cache.carregado||cache.loja!==loja)await carregarLocal();
+        if(strict)throw e;
         return cache.lista;
       }finally{cache.carregando=null;}
     })();
