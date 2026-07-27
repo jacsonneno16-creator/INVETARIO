@@ -3350,5 +3350,16 @@ table td{padding:8px 10px!important;vertical-align:middle}
 .acomp-inventario-compacto .tbl-wrap table{margin:0}
 @media(min-width:1200px){#page-acompanhamento>.tc{margin-bottom:12px}}
 </style>
+<script>
+(function(){
+  if('serviceWorker' in navigator){
+    window.addEventListener('load',function(){
+      navigator.serviceWorker.register('/sw.js?v=129').catch(function(e){
+        if(window.console) console.warn('[PWA]',e);
+      });
+    });
+  }
+})();
+</script>
 </body>
 </html>

@@ -1,8 +1,11 @@
-var CACHE='dt-inventario-v128-recontagem-somente-analista';
+var CACHE='dt-inventario-v129-offline-analista';
 var PRECACHE=[
   '/',
+  '/index.html',
+  '/analista.html',
   '/coletor.html',
-  '/manifest.json',
+  '/manifest.webmanifest',
+  '/manifest-coletor.json',
   '/js-legacy/shared/common-utils.js',
   '/js-legacy/shared/firebase-shared.js',
   '/js-legacy/shared/enderecos-service.js',
@@ -35,7 +38,20 @@ self.addEventListener('fetch',function(e){
         if(r&&r.ok){var copia=r.clone();caches.open(CACHE).then(function(c){return c.put(e.request,copia);}).catch(function(){});}
         return r;
       }).catch(function(){return null;});
-      return cached||atualiza.then(function(r){return r||new Response('Offline',{status:503,statusText:'Offline'});});
+      return cached||atualiza.then(function(r){
+        if(r)return r;
+        if(e.request.mode==='navigate'){
+          var fallback=u.pathname.indexOf('coletor')>=0?'/coletor.html':
+            (u.pathname.indexOf('analista')>=0?'/analista.html':'/index.html');
+          return caches.match(fallback,{ignoreSearch:true}).then(function(page){
+            return page||new Response('Sem conexão. Reconecte-se e tente novamente.',{
+              status:200,
+              headers:{'Content-Type':'text/plain; charset=utf-8'}
+            });
+          });
+        }
+        return new Response('',{status:504,statusText:'Offline'});
+      });
     }));
     return;
   }
