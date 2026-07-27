@@ -41,6 +41,15 @@ let _divSelecionadas = new Set();
 let _divDadosFiltradosExport = [];
 let _recDadosFiltradosExport = [];
 
+function divPodeSelecionar(div) {
+  if (!div) return false;
+  const status = String(div.status || '').toUpperCase();
+  const statusRec = String(div.status_recontagem || '').toLowerCase();
+  return !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(status) &&
+    !['CONCLUIDA','RESOLVIDA','SEM_DIVERGENCIA','CANCELADA'].includes(statusRec.toUpperCase()) &&
+    !(typeof _isFluxoEncerrado === 'function' && _isFluxoEncerrado(div));
+}
+
 function divStatusBadge(status) {
   switch (String(status || '').toUpperCase()) {
     case 'ABERTA':        return 'b-red';
@@ -65,7 +74,8 @@ function divAtualizarBarraSel() {
 }
 
 function divToggleSel(id, checked) {
-  if (checked) _divSelecionadas.add(id);
+  const div = state().divergencias.find(d => d.id === id);
+  if (checked && divPodeSelecionar(div)) _divSelecionadas.add(id);
   else _divSelecionadas.delete(id);
   divAtualizarBarraSel();
   // Atualizar checkbox master
@@ -234,6 +244,10 @@ async function divPopularSelectOperadores(selectId) {
 
 // ── Abrir modal de atribuição ────────────────────────────────────────────────
 async function abrirAtribuirRecontagem() {
+  _divSelecionadas = new Set([..._divSelecionadas].filter(id =>
+    divPodeSelecionar(state().divergencias.find(d => d.id === id))
+  ));
+  divAtualizarBarraSel();
   if (!_divSelecionadas.size) { showToast('Selecione pelo menos um endereço', 'w'); return; }
 
   // Resumo dos endereços selecionados
@@ -268,7 +282,7 @@ function confirmarAtribuicao() {
 
   _divSelecionadas.forEach(id => {
     const d = state().divergencias.find(x => x.id === id);
-    if (!d) return;
+    if (!divPodeSelecionar(d)) return;
 
     // ── Delegar toda a lógica de validação + criação para atribuirRecontagemSegura ──
     const rec = atribuirRecontagemSegura(d, operador, atribPor, obs, agora);
@@ -663,7 +677,9 @@ function renderDivergencias() {
           const rua = endInfo?.rua || '—';
           const cont = state().contagens.find(c => c.inventario_id === d.inventario_id && c.endereco === d.endereco && !c._excluida);
           const operador = d.operador || cont?.operador || '—';
-          const selecionado = _divSelecionadas.has(d.id);
+          const podeSelecionar = divPodeSelecionar(d);
+          if (!podeSelecionar) _divSelecionadas.delete(d.id);
+          const selecionado = podeSelecionar && _divSelecionadas.has(d.id);
 
           let tipoCls, tipoTxt;
           switch(d.tipo_divergencia) {
@@ -724,10 +740,10 @@ function renderDivergencias() {
 
           return `<tr style="${selecionado ? 'background:rgba(232,117,26,.06)' : ''}">
             <td style="padding:8px 10px">
-              <input type="checkbox" class="div-row-chk" data-id="${d.id}"
+              ${podeSelecionar ? `<input type="checkbox" class="div-row-chk" data-id="${d.id}"
                 style="width:15px;height:15px;cursor:pointer;accent-color:var(--orange)"
                 ${selecionado ? 'checked' : ''}
-                onchange="divToggleSel('${d.id}', this.checked)">
+                onchange="divToggleSel('${d.id}', this.checked)">` : ''}
             </td>
             <td style="font-size:.75rem;color:var(--muted)">${d.inventario_nome || d.inventario_id}</td>
             <td class="mono" style="font-weight:600">${rua}</td>
@@ -771,6 +787,9 @@ function renderDivergencias() {
               const opRes  = recFinal?.operador_segunda || recFinal?.operador ||
                 d.operador_terceira || d.operador_segunda || '';
               const motivo = d.contagem_aceita || '';
+              const qtdSegundaReal = recFinal?.qtd_segunda ?? d.qtd_segunda;
+              const qtdTerceiraReal = recFinal?.qtd_terceira ?? d.qtd_terceira;
+              const totalRodadas = 1 + (qtdSegundaReal != null ? 1 : 0) + (qtdTerceiraReal != null ? 1 : 0);
               if (qtdRes == null) return '<td><div style="color:var(--muted);font-size:.7rem;text-align:center;line-height:1.25">Aguardando<br>recontagem</div></td>';
               const qtdEspN = parseFloat(d.qtd_esperada);
               const encerradaOk = String(d.status || '').toUpperCase() === 'RESOLVIDA' ||
@@ -788,11 +807,18 @@ function renderDivergencias() {
                          : motivo === 'TERCEIRA_SEM_CONSENSO' ? '3 rodadas sem consenso'
                          : motivo === 'LIBERACAO_ANALISTA' ? 'Liberado pelo analista'
                          : motivo ? motivo.replace(/_/g,' ').toLowerCase() : '';
-              const rodadaOk = motivo.includes('PRIMEIRA') ? 'OK 1ª' : motivo.includes('SEGUNDA') && !motivo.includes('TERCEIRA') ? 'OK 2ª' : motivo.includes('TERCEIRA') || motivo === 'CONSENSO_SEGUNDA_TERCEIRA' ? 'OK 3ª' : 'Conferiu';
+              const rodadaMotivo = motivo.includes('PRIMEIRA') ? 1
+                : motivo.includes('SEGUNDA') && !motivo.includes('TERCEIRA') ? 2
+                : motivo.includes('TERCEIRA') || motivo === 'CONSENSO_SEGUNDA_TERCEIRA' ? 3 : 0;
+              const rodadaExibida = rodadaMotivo ? Math.min(rodadaMotivo, totalRodadas) : totalRodadas;
+              const rodadaOk = encerradaOk && rodadaExibida >= 1 && rodadaExibida <= 3 ? `OK ${rodadaExibida}ª` : 'Conferiu';
+              const mTxtSeguro = encerradaOk && rodadaMotivo > totalRodadas
+                ? `Confirmado na ${totalRodadas}ª contagem`
+                : mTxt;
               let cell = '<td><div style="font-family:var(--mono);font-weight:800;color:' + cor + '">' + icone + ' ' + (encerradaOk ? rodadaOk : 'Divergente') + '</div>';
               cell += '<div style="font-size:.66rem;color:var(--muted);line-height:1.3">Esperado: <b>' + (isNaN(qtdEspN) ? '—' : qtdEspN) + '</b><br>Recontado: <b>' + qtdRes + '</b></div>';
               if (opRes) cell += '<div style="font-size:.65rem;color:var(--muted)">' + opRes + '</div>';
-              if (mTxt)  cell += '<div style="font-size:.62rem;color:var(--muted);font-style:italic">' + mTxt + '</div>';
+              if (mTxtSeguro)  cell += '<div style="font-size:.62rem;color:var(--muted);font-style:italic">' + mTxtSeguro + '</div>';
               cell += '</td>';
               return cell;
             })()}

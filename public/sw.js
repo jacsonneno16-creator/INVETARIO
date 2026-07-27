@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v136-historico-recontagens';
+var CACHE='dt-inventario-v137-selecao-somente-pendentes';
 var PRECACHE=[
   '/',
   '/index.html',
