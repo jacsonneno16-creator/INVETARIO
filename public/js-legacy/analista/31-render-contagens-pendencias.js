@@ -47,6 +47,16 @@ window.contStatusBadge = window.contStatusBadge || contStatusBadge;
 function _resultadoRodadaEndereco(c) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
     var st = state();
+    // A versão legada também precisa declarar a chave canônica. Sem esta linha,
+    // o navegador interrompe a página com: ReferenceError: FK is not defined.
+    var FK = window.InventoryFlowKey;
+    if (!FK) {
+        FK = {
+            endereco: function (v) { return String(v || '').trim().toUpperCase(); },
+            produto: function (o) { return String((o && (o.produto || o.produto_contado || o.codigo_produto || o.codigoProduto || o.produto_recontagem || o.produto_segunda || o.produto_terceira || o.gtin || o.ean || o.dun)) || '').trim().toUpperCase(); },
+            inventario: function (o) { return String((o && (o.inventario_id || o.inventarioId || o.inventario || o.inventario_nome)) || '').trim().toUpperCase(); }
+        };
+    }
     var invRegistro = (st.inventarios || []).find(function (i) {
         var aliases = [i.id, i.codigo, i.nome, i.inventario_id, i.inventarioId]
             .filter(Boolean).map(String);

@@ -34,7 +34,11 @@ function _resultadoRodadaEndereco(c){
     invRegistro?.inventario_id, invRegistro?.inventarioId,
     c.inventario_id, c.inventarioId
   ].filter(Boolean).map(v => String(v)));
-  const FK = window.InventoryFlowKey;
+  const FK = window.InventoryFlowKey || {
+    endereco: v => String(v || '').trim().toUpperCase(),
+    produto: o => String(o?.produto || o?.produto_contado || o?.codigo_produto || o?.codigoProduto || o?.produto_recontagem || o?.produto_segunda || o?.produto_terceira || o?.gtin || o?.ean || o?.dun || '').trim().toUpperCase(),
+    inventario: o => String(o?.inventario_id || o?.inventarioId || o?.inventario || o?.inventario_nome || '').trim().toUpperCase()
+  };
   const end = FK.endereco(c.endereco);
   const produto = FK.produto(c);
 
