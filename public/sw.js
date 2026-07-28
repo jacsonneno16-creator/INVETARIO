@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v170-atribuicao-recontagem-r4';
+var CACHE='dt-inventario-v170-atribuicao-recontagem-r5';
 var PRECACHE=[
   '/',
   '/index.html',

@@ -56,14 +56,13 @@ function divPodeSelecionar(div) {
   const status = String(div.status || '').trim().toUpperCase();
   const statusRec = String(div.status_recontagem || '').trim().toLowerCase();
 
-  // Bloqueia somente estados realmente finais. Flags antigas isoladas nao podem
-  // impedir uma divergencia que a propria tabela ainda apresenta como aberta.
+  // A mesma regra deve valer no checkbox, no modal e na confirmação.
+  // Bloquear somente quando o fluxo estiver realmente encerrado.
   if (['RESOLVIDA','PERSISTENTE','CANCELADA','EXCLUIDA'].includes(status)) return false;
   if (['resolvida','sem_divergencia','cancelada','persistente','excluida'].includes(statusRec)) return false;
-  if (div.divergencia_resolvida === true && status !== 'ABERTA' && status !== 'EM_RECONTAGEM') return false;
   if (div.qtd_terceira != null) return false;
 
-  const recsValidas = (state().recontagens || []).filter(r => {
+  const recs = (state().recontagens || []).filter(r => {
     const mesmoId = String(r.divergencia_id || '') === String(div.id || '');
     const mesmoEndereco = String(r.inventario_id || '') === String(div.inventario_id || '') &&
       String(r.endereco || '').trim().toUpperCase() === String(div.endereco || '').trim().toUpperCase();
@@ -73,27 +72,32 @@ function divPodeSelecionar(div) {
     return !['CANCELADA','EXCLUIDA'].includes(st) && !['cancelada','excluida'].includes(sr);
   });
 
-  // Se ja existe uma rodada pendente atribuida, nao cria outra em duplicidade.
-  const pendenteAtribuida = recsValidas.some(r =>
-    String(r.status || '').toUpperCase() === 'PENDENTE' &&
-    Boolean(r.operador || r.operador_responsavel)
-  );
-  if (pendenteAtribuida) return false;
-
-  const concluidas = recsValidas.filter(r => {
+  // Uma tarefa pendente já atribuída não pode ser atribuída novamente.
+  const pendenteAtribuida = recs.some(r => {
     const st = String(r.status || '').toUpperCase();
     const sr = String(r.status_recontagem || '').toLowerCase();
-    return st === 'CONCLUIDA' || sr === 'concluida' ||
+    const pendente = st === 'PENDENTE' || sr === 'pendente';
+    return pendente && Boolean(r.operador || r.operador_responsavel);
+  });
+  if (pendenteAtribuida) return false;
+
+  // Aguardando analista significa que a rodada anterior terminou e pode ser
+  // enviada novamente, desde que ainda não exista terceira contagem.
+  if (statusRec === 'aguardando_analista') return true;
+
+  // Conta rodadas reais, eliminando documentos duplicados da mesma rodada.
+  const rodadasConcluidas = new Set();
+  recs.forEach(r => {
+    const st = String(r.status || '').toUpperCase();
+    const sr = String(r.status_recontagem || '').toLowerCase();
+    const concluida = st === 'CONCLUIDA' || sr === 'concluida' ||
       Boolean(r.recontagem_concluida_em || r.concluida_em || r.finalizada_em);
-  }).length;
-  if (concluidas >= 2) return false;
+    if (concluida) rodadasConcluidas.add(Number(r.numero_recontagem || 1));
+  });
+  if (rodadasConcluidas.size >= 2) return false;
 
-  // Regra operacional da tela: divergencia aberta, em recontagem ou aguardando
-  // analista e sem operador deve poder ser selecionada e atribuida.
-  if (['ABERTA','EM_RECONTAGEM','DIVERGENTE'].includes(status)) return true;
-  if (['','pendente','aguardando_analista','aguardando_recontagem'].includes(statusRec)) return true;
-
-  return false;
+  return ['ABERTA','EM_RECONTAGEM','DIVERGENTE'].includes(status) ||
+    ['','pendente','aguardando_recontagem'].includes(statusRec);
 }
 
 function divStatusBadge(status) {
@@ -348,13 +352,15 @@ function confirmarAtribuicao() {
     count = 1;
   }
 
-  _divSelecionadas.forEach(id => {
-    const d = _obterDivSelecionada(id);
-    if (!divPodeSelecionar(d)) return;
+  const selecionadasNoModal = [..._divSelecionadas]
+    .map(id => _obterDivSelecionada(id))
+    .filter(Boolean);
 
-    // ── Delegar toda a lógica de validação + criação para atribuirRecontagemSegura ──
+  selecionadasNoModal.forEach(d => {
+    // A linha já foi validada ao ser selecionada e ao abrir o modal. A função
+    // de serviço faz apenas os bloqueios finais e a gravação da tarefa.
     const rec = atribuirRecontagemSegura(d, operador, atribPor, obs, agora);
-    if (!rec) return; // bloqueado — mensagem já exibida dentro da função
+    if (!rec) return;
     count++;
   });
 
@@ -366,7 +372,11 @@ function confirmarAtribuicao() {
   divAtualizarBarraSel();
 
   logSistema('ATRIBUIÇÃO_RECONTAGEM', `${count} recontagem(s) atribuída(s) a ${operador}`, { count, operador, atribPor, ts: agora });
-  showToast(`✅ ${count} recontagem${count!==1?'s':''} atribuída${count!==1?'s':''} para ${operador}`, 's');
+  if (count > 0) {
+    showToast(`✅ ${count} recontagem${count!==1?'s':''} atribuída${count!==1?'s':''} para ${operador}`, 's');
+  } else {
+    showToast('Não foi possível atribuir. Verifique se a atividade já possui operador ou atingiu a 3ª contagem.', 'e');
+  }
 }
 
 // ── Desvincular recontagem — remove o operador, mantém divergência ABERTA ────

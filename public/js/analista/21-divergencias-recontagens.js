@@ -1703,16 +1703,26 @@
       return null;
     }
 
-    const recConcluida = state().recontagens.find(r =>
-      mesmaChaveOperacional(r) && r.status === 'CONCLUIDA' && !DivSvc.isFluxoEncerrado(r)
-    );
+    const recsDaAtividade = state().recontagens.filter(mesmaChaveOperacional);
+    const recConcluida = recsDaAtividade.find(r => {
+      const st = String(r.status || '').toUpperCase();
+      const sr = String(r.status_recontagem || '').toLowerCase();
+      return st === 'CONCLUIDA' || sr === 'concluida' ||
+        Boolean(r.recontagem_concluida_em || r.concluida_em || r.finalizada_em);
+    });
     if (recConcluida && String(d.status_recontagem || '').toLowerCase() !== 'aguardando_analista'){
       showToast(`🔒 ${d.endereco} já possui recontagem concluída. O analista deve decidir manualmente o próximo passo.`, 'e');
       return null;
     }
 
-    const numeroAtualRec = historicoAtual._recontagens.length;
-    if (numeroAtualRec >= (MAX_CONTAGENS - 1) || d.qtd_terceira != null){
+    // Não usar o tamanho do histórico bruto: sincronizações repetidas podem
+    // criar documentos duplicados e bloquear a próxima rodada indevidamente.
+    const numerosRodadas = recsDaAtividade
+      .map(r => Number(r.numero_recontagem || 1))
+      .filter(n => Number.isFinite(n) && n > 0);
+    const maiorRodada = numerosRodadas.length ? Math.max(...numerosRodadas) : 0;
+    const proximaRodada = maiorRodada + 1;
+    if (proximaRodada > (MAX_CONTAGENS - 1) || d.qtd_terceira != null){
       showToast(`🔒 ${d.endereco} já atingiu o limite de ${MAX_CONTAGENS} contagens.`, 'e');
       return null;
     }
@@ -1740,7 +1750,7 @@
       operador, atribuido_por: atribPor, atribuido_em: agora,
       status: 'PENDENTE', status_recontagem: 'pendente',
       observacao_atribuicao: obs || '',
-      criada_em: agora, numero_recontagem: numeroAtualRec + 1,
+      criada_em: agora, numero_recontagem: proximaRodada,
     };
 
     Store.dispatch(Actions.batch([
