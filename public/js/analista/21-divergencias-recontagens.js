@@ -209,7 +209,7 @@
   }
 
   function _chaveOperacional(obj){
-    return `${_nd(_idInventarioRegistro(obj))}|${_nd(obj?.endereco)}`;
+    return `${_nd(_idInventarioRegistro(obj))}|${_nd(obj?.endereco)}|${_nd(obj?.produto || obj?.produto_contado || obj?.codigo_produto || obj?.produto_recontagem)}`;
   }
 
   function _historicoConsolidadoEndereco(div){
@@ -435,12 +435,13 @@
       // era iniciada antes de sincronizar. Isso deixava a rodada enviada
       // "invisível" para o Analista. Como plano B, casa pelo endereço +
       // inventário + número da rodada, que é único por definição.
-      if (!recebidas.length && rec.divergencia_id) {
+      if (!recebidas.length) {
         const candidatas = state().contagens.filter(c =>
           _baseValida(c) &&
-          String(c.recontagem_id || '') === String(rec.divergencia_id || '') &&
+          (String(c.recontagem_id || '') === String(rec.divergencia_id || '') || !c.recontagem_id) &&
           _mesmoIdInventario(_idInventarioRegistro(c), _idInventarioRegistro(rec)) &&
-          _nd(c.endereco) === _nd(rec.endereco)
+          _nd(c.endereco) === _nd(rec.endereco) &&
+          (c.numero_recontagem === rec.numero_recontagem || !c.numero_recontagem)
         );
         if (candidatas.length) recebidas = candidatas;
       }
@@ -817,8 +818,9 @@
         const divRef = c.divergencia_id
           ? state().divergencias.find(d => d.id === c.divergencia_id)
           : state().divergencias.find(d =>
-              d.inventario_id === c.inventario_id &&
-              _nd(d.endereco) === _nd(c.endereco)
+              _mesmoIdInventario(_idInventarioRegistro(d), _idInventarioRegistro(c)) &&
+              _nd(d.endereco) === _nd(c.endereco) &&
+              _mesmoProduto(d, c)
             );
         const novoStatus = !divRef ? 'PROCESSADO'
           : divRef.status === 'RESOLVIDA'   ? 'PROCESSADO'
@@ -1034,7 +1036,7 @@
       !_isVazio(c) && !c._excluida &&
       _idInventarioRegistro(c) && _nd(c.endereco)
     ).forEach(c => {
-      const chave = `${_idInventarioRegistro(c)}|${_nd(c.endereco)}`;
+      const chave = `${_idInventarioRegistro(c)}|${_nd(c.endereco)}|${_nd(_idsProduto(c)[0] || c.codigo_produto || c.gtin || 'SEM_PRODUTO')}`;
       const grupo = _gruposPrimeiraDivergente.get(chave) || [];
       grupo.push(c);
       _gruposPrimeiraDivergente.set(chave, grupo);
@@ -1047,10 +1049,16 @@
       const invCanonico = invRegistro?.id || _idInventarioRegistro(primeira);
       const jaExiste = [...state().divergencias, ...novasDivs, ...divsUpdate].some(d =>
         _mesmoIdInventario(_idInventarioRegistro(d), invCanonico) &&
-        _nd(d.endereco) === _nd(primeira.endereco)
+        _nd(d.endereco) === _nd(primeira.endereco) &&
+        _mesmoProduto(d, primeira)
       );
       if (jaExiste) return;
-      const itensBase = _snapshotEsperadoEndereco(invRegistro, primeira.endereco);
+      const todosItensBase = _snapshotEsperadoEndereco(invRegistro, primeira.endereco);
+      const idsPrimeira = new Set(_idsProduto(primeira));
+      const itensBase = todosItensBase.filter(item => {
+        const idsItem = _idsProduto(item);
+        return !idsPrimeira.size || idsItem.some(id => idsPrimeira.has(id));
+      });
       const esperadoCampo = primeira.qtd_esperada ?? primeira.quantidade_esperada ??
         primeira.qtd_sistema ?? primeira.quantidade_sistema;
       const qtdEsperada = itensBase.length
@@ -1577,14 +1585,15 @@
       return null;
     }
 
-    const mesmaChaveEndereco = r =>
+    const mesmaChaveOperacional = r =>
       _mesmoIdInventario(_idInventarioRegistro(r), _idInventarioRegistro(d)) &&
-      _nd(r.endereco) === _nd(d.endereco);
+      _nd(r.endereco) === _nd(d.endereco) &&
+      (String(r.divergencia_id || '') === String(d.id || '') || _mesmoProduto(r, d));
     // O bloqueio precisa ser por endereço. Registros antigos podem ter ids de
     // divergência diferentes para o mesmo endereço e, nesse caso, a verificação
     // apenas por divergencia_id permitia atribuições duplicadas.
     const recAtiva = state().recontagens.find(r =>
-      mesmaChaveEndereco(r) &&
+      mesmaChaveOperacional(r) &&
       String(r.status || '').toUpperCase() === 'PENDENTE' &&
       !DivSvc.isFluxoEncerrado(r)
     ) || null;
@@ -1613,7 +1622,7 @@
     }
 
     const recConcluida = state().recontagens.find(r =>
-      mesmaChaveEndereco(r) && r.status === 'CONCLUIDA' && !DivSvc.isFluxoEncerrado(r)
+      mesmaChaveOperacional(r) && r.status === 'CONCLUIDA' && !DivSvc.isFluxoEncerrado(r)
     );
     if (recConcluida && d.status_recontagem !== 'aguardando_analista'){
       showToast(`🔒 ${d.endereco} já possui recontagem concluída. O analista deve decidir manualmente o próximo passo.`, 'e');

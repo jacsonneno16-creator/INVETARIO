@@ -296,14 +296,19 @@ function _concluirRecontagem() {
     // Coletor APENAS atualiza a recontagem — não escreve na divergência.
     // O analista é o dono da divergência. sincronizarRecontagensComContagens
     // gravará aguardando_analista quando processar a contagem recém-enviada.
-    const upd = { status_recontagem:'concluida', recontagem_concluida_em:new Date().toISOString(), operador_recontagem:APP.operador?.name||'' };
-    // Só atualizar dt_recontagens se item.id for de fato uma recontagem (não uma divergência).
-    // item._col === 'recontagem' → id é recontagem.
-    // item._col === 'divergencia' com divergencia_id definido → _ativarModoRecontagem encontrou a rec e sobrescreveu item.id.
-    // item._col === 'divergencia' sem divergencia_id → item.id é a divergência; NÃO gravar no lugar errado.
-    const idEhRecontagem = item._col === 'recontagem' || (item._col === 'divergencia' && item.divergencia_id && item.id !== item.divergencia_id);
-    if (idEhRecontagem) {
-      FS.collection('dt_recontagens').doc(item.id).update(upd).catch(e=>console.warn('[Rec]',e.message));
+    const agora = new Date().toISOString();
+    const upd = { 
+      status_recontagem:'concluida', 
+      recontagem_concluida_em: agora, 
+      operador_recontagem: APP.operador?.name || '',
+      status: 'CONCLUIDA' 
+    };
+    
+    // Garantir que estamos atualizando o documento de RECONTAGEM e não a DIVERGÊNCIA
+    const idRecontagemReal = (item._col === 'recontagem') ? item.id : (item.divergencia_id && item.id !== item.divergencia_id ? item.id : null);
+    
+    if (idRecontagemReal) {
+      FS.collection('dt_recontagens').doc(idRecontagemReal).update(upd).catch(e=>console.warn('[Rec]',e.message));
     }
     // Sempre devolver o conflito ao Analista imediatamente. Assim, mesmo se o
     // coletor for reaberto antes do próximo "Atualizar", a rodada concluída não

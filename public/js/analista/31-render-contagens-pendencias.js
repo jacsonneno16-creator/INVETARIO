@@ -23,44 +23,95 @@ window.contStatusBadge = window.contStatusBadge || contStatusBadge;
 // de Contagens. Usa a mesma regra de avaliação da aba Recontagem, então os
 // dois lugares sempre concordam sobre qual rodada "bateu".
 function _resultadoRodadaEndereco(c){
-  const invRegistro = (state().inventarios || []).find(i => {
+  const st = state();
+  const invRegistro = (st.inventarios || []).find(i => {
     const aliases=[i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
       .filter(Boolean).map(String);
     return aliases.includes(String(c.inventario_id || c.inventarioId || ''));
   });
-  const chaveInv = String(invRegistro?.id || c.inventario_id || c.inventarioId || '');
+  const invIds = new Set([
+    invRegistro?.id, invRegistro?.codigo, invRegistro?.nome,
+    invRegistro?.inventario_id, invRegistro?.inventarioId,
+    c.inventario_id, c.inventarioId
+  ].filter(Boolean).map(v => String(v)));
   const end = String(c.endereco || '').trim().toUpperCase();
-  const codigoContagem = String(c.codigo_produto || c.codigoProduto || c.produto || c.gtin || c.ean || c.dun || '').trim().toUpperCase();
-  const candidatas = (state().divergencias || []).filter(d =>
-    (() => {
-      const id=String(d.inventario_id || d.inventarioId || '');
-      return id === chaveInv || (invRegistro &&
-        [invRegistro.id,invRegistro.codigo,invRegistro.nome,invRegistro.inventario_id,invRegistro.inventarioId]
-          .filter(Boolean).map(String).includes(id));
-    })() &&
-    String(d.endereco || '').trim().toUpperCase() === end
-  );
-  // Prefere a divergência do mesmo produto. Isso evita usar o histórico de
-  // outro palete/produto do endereço e mostrar uma rodada que não pertence à linha.
-  const div = candidatas.find(d => {
-    const codigoDiv = String(d.produto || d.produto_contado || d.codigo_produto || d.gtin || d.ean || d.dun || '').trim().toUpperCase();
-    return codigoContagem && codigoDiv && codigoContagem === codigoDiv;
-  }) || (candidatas.length === 1 ? candidatas[0] : null);
-  if (!div && !c.divergente && c.status !== 'DIVERGENTE') return null;
-  // Nunca avalia 2ª/3ª rodada apenas por campos agregados da divergência.
-  // Esses campos podem ficar residuais em registros antigos e gerar falso "OK 3ª".
-  // avaliarEndereco consolida somente recontagens realmente concluídas.
-  const avaliacao = div
-    ? window.AnalistaDivergenciasRuntime?.avaliarEndereco?.(div)
-    : window.AnalistaDivergenciasRuntime?.avaliarHistorico?.(c);
-  if (!avaliacao) return null;
-  const rodadaLabel = { 1:'1ª', 2:'2ª', 3:'3ª' }[avaliacao.rodada] || '';
-  if (avaliacao.estado === 'RESOLVIDA')   return { texto:`✅ OK ${rodadaLabel}`, cls:'b-green' };
-  if (avaliacao.estado === 'PERSISTENTE') return { texto:'🔴 Persistente (3 rodadas)', cls:'b-red' };
-  const temRodadaConcluida = avaliacao.rodada > 1;
-  return temRodadaConcluida
-    ? { texto:`⏳ Aguardando ${avaliacao.rodada === 2 ? '3ª contagem' : 'análise'}`, cls:'b-orange' }
-    : { texto:'❌ Divergente — aguardando decisão', cls:'b-red' };
+  const produto = String(
+    c.codigo_produto || c.codigoProduto || c.produto || c.gtin || c.ean || c.dun || ''
+  ).trim().toUpperCase();
+
+  const normalizaProduto = obj => String(
+    obj?.produto || obj?.produto_contado || obj?.codigo_produto || obj?.codigoProduto ||
+    obj?.produto_recontagem || obj?.produto_segunda || obj?.produto_terceira ||
+    obj?.gtin || obj?.ean || obj?.dun || ''
+  ).trim().toUpperCase();
+
+  // A divergência precisa pertencer ao mesmo inventário, endereço E produto.
+  // Não usa mais fallback por "única divergência do endereço", pois isso ligava
+  // uma contagem a outro produto e podia exibir OK 3ª indevidamente.
+  const div = (st.divergencias || []).find(d => {
+    const inv = String(d.inventario_id || d.inventarioId || '');
+    return invIds.has(inv) &&
+      String(d.endereco || '').trim().toUpperCase() === end &&
+      produto && normalizaProduto(d) === produto;
+  }) || null;
+
+  if (!div) {
+    if (c.divergente === true || String(c.status || '').toUpperCase() === 'DIVERGENTE') {
+      return { texto:'❌ Divergente — aguardando decisão', cls:'b-red' };
+    }
+    // Primeira contagem sem divergência confirmada nunca pode aparecer como 2ª/3ª.
+    if (String(c.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM') {
+      return { texto:'✅ OK 1ª', cls:'b-green' };
+    }
+    return null;
+  }
+
+  const statusConcluido = r => {
+    const status = String(r.status_recontagem || r.status || '').trim().toUpperCase();
+    const dataConclusao = r.recontagem_concluida_em || r.concluida_em ||
+      r.data_conclusao || r.finalizada_em || r.processada_em || null;
+    const statusOk = ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA'].includes(status);
+    const statusBloqueado = ['PENDENTE','ATRIBUIDA','ATRIBUÍDA','EM_ANDAMENTO','ABERTA','CANCELADA','EXCLUIDA'].includes(status);
+    return r.qtd_recontagem != null && !statusBloqueado && (statusOk || Boolean(dataConclusao));
+  };
+
+  // Só considera recontagens realmente concluídas e vinculadas à divergência exata.
+  const recs = (st.recontagens || [])
+    .filter(r => String(r.divergencia_id || '') === String(div.id || '') && statusConcluido(r))
+    .sort((a,b) => {
+      const na=Number(a.numero_recontagem || 0), nb=Number(b.numero_recontagem || 0);
+      if (na !== nb) return na - nb;
+      return String(a.recontagem_concluida_em || a.concluida_em || a.finalizada_em || '')
+        .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.finalizada_em || ''));
+    });
+
+  const base = {
+    qtd_esperada: div.qtd_esperada,
+    produto: div.produto || div.produto_contado || produto,
+    qtd_primeira: div.qtd_primeira ?? div.qtd_contada ?? c.quantidade,
+    produto_primeira: div.produto_primeira || div.produto_contado || produto,
+    qtd_segunda: recs[0]?.qtd_recontagem ?? null,
+    produto_segunda: recs[0]?.produto_recontagem || recs[0]?.produto || produto,
+    qtd_terceira: recs[1]?.qtd_recontagem ?? null,
+    produto_terceira: recs[1]?.produto_recontagem || recs[1]?.produto || produto
+  };
+
+  const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarHistorico?.(base);
+  if (!avaliacao) return { texto:'❌ Divergente — aguardando decisão', cls:'b-red' };
+
+  // Trava de segurança: a rodada exibida nunca pode ser maior que a quantidade
+  // de recontagens realmente concluídas (1ª + até duas recontagens).
+  const rodadaMaximaReal = 1 + Math.min(recs.length, 2);
+  const rodadaReal = Math.min(Number(avaliacao.rodada || 1), rodadaMaximaReal);
+
+  if (avaliacao.estado === 'RESOLVIDA') {
+    return { texto:`✅ OK ${rodadaReal}ª`, cls:'b-green' };
+  }
+  if (recs.length >= 2 && avaliacao.estado === 'PERSISTENTE') {
+    return { texto:'🔴 Persistente (3 rodadas)', cls:'b-red' };
+  }
+  if (recs.length === 1) return { texto:'⏳ Aguardando 3ª contagem', cls:'b-orange' };
+  return { texto:'❌ Divergente — aguardando decisão', cls:'b-red' };
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -419,7 +470,7 @@ function renderPendencias() {
   }
 
   // ── SEÇÃO: Divergências abertas ──────────────────────────────────
-  const divAbertas = (state().divergencias || []).filter(d => String(d.inventario_id || d.inventarioId || '') === String(invId) && ['ABERTA','DIVERGENTE','PENDENTE','PERSISTENTE'].includes(String(d.status || '').toUpperCase()));
+  const divAbertas = (state().divergencias || []).filter(d => String(d.inventario_id || d.inventarioId || '') === String(invId) && ['ABERTA','DIVERGENTE','PENDENTE','PERSISTENTE','EM_RECONTAGEM'].includes(String(d.status || '').toUpperCase()));
   const divSec = document.getElementById('pend-div-section');
   const pkDivAbertas = document.getElementById('pk-div-abertas');
   if (pkDivAbertas) pkDivAbertas.textContent = divAbertas.length.toLocaleString('pt-BR');
@@ -439,7 +490,7 @@ function renderPendencias() {
                 <td class="mono">${d.qtd_esperada}</td>
                 <td class="mono" style="font-weight:700;color:${d.qtd_contada<d.qtd_esperada?'var(--danger)':'var(--warn)'}">${d.qtd_contada}</td>
                 <td class="mono" style="font-weight:800;color:${difColor}">${d.diferenca>0?'+':''}${d.diferenca}</td>
-                <td><span class="badge b-red">Aberta</span></td>
+                <td><span class="badge ${d.status === 'EM_RECONTAGEM' ? 'b-orange' : 'b-red'}">${d.status === 'EM_RECONTAGEM' ? 'Em Recontagem' : 'Aberta'}</span></td>
               </tr>`;
             }).join('')}
           </tbody>

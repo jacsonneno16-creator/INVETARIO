@@ -63,25 +63,45 @@ function _salvarOuLimparLogin(email, senha) {
 
 // ── LOGIN ────────────────────────────────────────────────────────────
 
-function doLoginAnalista() {
-  if (!_prepararFirebaseAnalista()) {
-    _setLoginErro('Não foi possível iniciar o login. Atualize a página e verifique a conexão.');
-    return;
+async function doLoginAnalista(event) {
+  try {
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    const btn = document.getElementById('btn-login-analista');
+    const textoOriginal = btn ? btn.textContent : 'ENTRAR';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'ENTRANDO...';
+      btn.setAttribute('aria-busy', 'true');
+    }
+
+    _clearLoginErro();
+    const email = _normalizarEmailAnalista(document.getElementById('an-email')?.value || '');
+    const senha = document.getElementById('an-pass')?.value || '';
+    if (!email) throw new Error('Informe o e-mail.');
+    if (!senha) throw new Error('Informe a senha.');
+    if (!_prepararFirebaseAnalista()) throw new Error('Firebase não iniciou. Atualize a página e tente novamente.');
+    _registrarListenerAuthAnalista();
+
+    _salvarOuLimparLogin(email, senha);
+    _loginSolicitadoPeloUsuario = true;
+    await AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE);
+    await AUTH_AN.signInWithEmailAndPassword(email, senha);
+
+    // O onAuthStateChanged conclui a abertura do painel. Mantém feedback visível
+    // enquanto o ambiente da loja é preparado.
+    if (btn) btn.textContent = 'PREPARANDO...';
+  } catch (err) {
+    _loginSolicitadoPeloUsuario = false;
+    const msg = err && err.code ? _traduzirErroLoginAnalista(err) : (err?.message || 'Não foi possível realizar o login.');
+    _setLoginErro(msg);
+    console.error('[Login Analista]', err);
+    const btn = document.getElementById('btn-login-analista');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'ENTRAR';
+      btn.removeAttribute('aria-busy');
+    }
   }
-  _registrarListenerAuthAnalista();
-  const email = _normalizarEmailAnalista(document.getElementById('an-email')?.value || '');
-  const senha = document.getElementById('an-pass')?.value || '';
-
-  _clearLoginErro();
-
-  if (!email) return _setLoginErro('Informe o e-mail.');
-  if (!senha) return _setLoginErro('Informe a senha.');
-
-  _salvarOuLimparLogin(email, senha);
-  _loginSolicitadoPeloUsuario = true;
-  AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE)
-    .then(() => AUTH_AN.signInWithEmailAndPassword(email, senha))
-    .catch(err => { _loginSolicitadoPeloUsuario = false; _setLoginErro(_traduzirErroLoginAnalista(err)); });
 }
 
 async function enviarRecuperacaoSenhaAnalista(event) {
@@ -391,6 +411,25 @@ window.logSistema = logSistema;
 window.logAuditoria = logAuditoria;
 window.openModal = openModal;
 window.closeModal = closeModal;
+
+// Ligação direta do botão, sem depender de onclick inline ou da ordem do cache.
+function _vincularLoginAnalista() {
+  const btn = document.getElementById('btn-login-analista');
+  const senha = document.getElementById('an-pass');
+  if (btn && btn.dataset.loginBound !== '1') {
+    btn.dataset.loginBound = '1';
+    btn.type = 'button';
+    btn.addEventListener('click', function(event){ window.doLoginAnalista(event); });
+  }
+  if (senha && senha.dataset.loginBound !== '1') {
+    senha.dataset.loginBound = '1';
+    senha.addEventListener('keydown', function(event){
+      if (event.key === 'Enter') window.doLoginAnalista(event);
+    });
+  }
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _vincularLoginAnalista, { once:true });
+else _vincularLoginAnalista();
 
 async function atualizarIndicadorLojaAtual(){
   try{

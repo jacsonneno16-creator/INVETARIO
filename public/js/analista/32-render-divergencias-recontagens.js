@@ -916,9 +916,11 @@ function renderRecontagens() {
       ? [inv.id,inv.codigo,inv.nome,inv.inventario_id,inv.inventarioId].filter(Boolean).map(String)
       : [id];
     const end=String(c.endereco || '').trim().toUpperCase();
+    const prod=_normRec(c.gtin || c.codigo_produto || c.codigoLido || c.produto || '');
     return !(state().divergencias || []).some(d =>
       aliases.includes(String(d.inventario_id || d.inventarioId || '')) &&
-      String(d.endereco || '').trim().toUpperCase() === end);
+      String(d.endereco || '').trim().toUpperCase() === end &&
+      (!prod || _produtoCanonicoRec(d) === prod));
   });
   if (faltaVinculo && typeof processarDivergencias === 'function') {
     processarDivergencias({ criarRecontagens:false, source:'render-recontagens', force:true });
@@ -940,10 +942,9 @@ function renderRecontagens() {
     if (cur) selInv.value = cur;
   }
 
-  // A unidade operacional da recontagem é o endereço, não o tipo/id da
-  // divergência. Versões antigas podiam criar mais de uma divergência para o
-  // mesmo endereço; agrupar por divergencia_id escondia a 1ª contagem ou
-  // produzia linhas repetidas. A chave canônica é inventário + endereço.
+  // A unidade operacional é inventário + endereço + produto. Agrupar somente
+  // pelo endereço mistura produtos diferentes do mesmo picking, exibe totais
+  // errados e faz uma recontagem pendente bloquear a criação das demais.
   const _normRec = v => String(v || '').trim().toUpperCase();
   const _inventarioCanonicoRec = obj => {
     const id=String(obj?.inventario_id || obj?.inventarioId || obj?.inventario || '').trim();
@@ -952,8 +953,14 @@ function renderRecontagens() {
         .filter(Boolean).map(String).includes(id));
     return String(inv?.id || id);
   };
+  const _produtoCanonicoRec = obj => {
+    const ids = [obj?.produto, obj?.produto_contado, obj?.produto_recontagem,
+      obj?.produto_primeira, obj?.codigo_produto, obj?.gtin, obj?.ean, obj?.dun]
+      .map(_normRec).filter(Boolean);
+    return ids[0] || 'SEM_PRODUTO';
+  };
   const _chaveEndereco = obj =>
-    `${_inventarioCanonicoRec(obj)}|${_normRec(obj?.endereco)}`;
+    `${_inventarioCanonicoRec(obj)}|${_normRec(obj?.endereco)}|${_produtoCanonicoRec(obj)}`;
   const _gruposRec = new Map();
   const _adicionarGrupo = (obj, tipo) => {
     if (!obj || !_normRec(obj.endereco)) return;

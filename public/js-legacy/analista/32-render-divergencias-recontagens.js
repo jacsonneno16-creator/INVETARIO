@@ -833,10 +833,9 @@ function renderRecontagens() {
     if (cur) selInv.value = cur;
   }
 
-  // A unidade operacional da recontagem é o endereço, não o tipo/id da
-  // divergência. Versões antigas podiam criar mais de uma divergência para o
-  // mesmo endereço; agrupar por divergencia_id escondia a 1ª contagem ou
-  // produzia linhas repetidas. A chave canônica é inventário + endereço.
+  // A unidade operacional é inventário + endereço + produto. Agrupar somente
+  // pelo endereço mistura produtos diferentes do mesmo picking, exibe totais
+  // errados e faz uma recontagem pendente bloquear a criação das demais.
   const _normRec = v => String(v || '').trim().toUpperCase();
   const _chaveEndereco = obj =>
     `${String(obj?.inventario_id || obj?.inventarioId || '').trim()}|${_normRec(obj?.endereco)}`;

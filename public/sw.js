@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v160-login-analista-estavel';
+var CACHE='dt-inventario-v163-status-rodada-estrito';
 var PRECACHE=[
   '/',
   '/index.html',
