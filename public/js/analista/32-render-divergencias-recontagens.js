@@ -40,6 +40,10 @@ function _marcarDivResolvida(divId) {
 let _divSelecionadas = new Set();
 let _divDadosFiltradosExport = [];
 let _recDadosFiltradosExport = [];
+// Mantém a mesma visão consolidada usada pela tabela. Sem isso, o clique no
+// checkbox voltava ao documento bruto de divergência, que podia estar com flags
+// antigas de encerramento mesmo quando o histórico atual ainda era divergente.
+let _divSelecionaveisRender = new Map();
 
 function divPodeSelecionar(div) {
   if (!div) return false;
@@ -95,21 +99,22 @@ function divAtualizarBarraSel() {
 }
 
 function divToggleSel(id, checked) {
-  const div = state().divergencias.find(d => d.id === id);
+  const div = _divSelecionaveisRender.get(String(id)) ||
+    state().divergencias.find(d => String(d.id) === String(id));
   if (checked && divPodeSelecionar(div)) _divSelecionadas.add(id);
   else _divSelecionadas.delete(id);
   divAtualizarBarraSel();
   // Atualizar checkbox master
   const chkAll = document.getElementById('div-chk-all');
   if (chkAll) {
-    const total = document.querySelectorAll('.div-row-chk').length;
+    const total = document.querySelectorAll('.div-row-chk:not(:disabled)').length;
     chkAll.indeterminate = _divSelecionadas.size > 0 && _divSelecionadas.size < total;
     chkAll.checked = total > 0 && _divSelecionadas.size === total;
   }
 }
 
 function divToggleTodos(checked) {
-  document.querySelectorAll('.div-row-chk').forEach(chk => {
+  document.querySelectorAll('.div-row-chk:not(:disabled)').forEach(chk => {
     chk.checked = checked;
     const id = chk.dataset.id;
     if (checked) _divSelecionadas.add(id);
@@ -656,6 +661,15 @@ function renderDivergencias() {
   else dados = [...dados].sort((a,b) => (b.criada_em||'').localeCompare(a.criada_em||''));
 
   _divDadosFiltradosExport = dados.slice();
+
+  // A seleção deve obedecer ao resultado consolidado que o usuário está vendo,
+  // e não ao documento bruto possivelmente desatualizado em dt_divergencias.
+  _divSelecionaveisRender = new Map(
+    dados.filter(d => divPodeSelecionar(d)).map(d => [String(d.id), d])
+  );
+  for (const id of [..._divSelecionadas]) {
+    if (!_divSelecionaveisRender.has(String(id))) _divSelecionadas.delete(id);
+  }
 
   // Populat filtros dinâmicos (rua, nível, setor, produto, operador)
   const _popSel = (id, valores, cur, emptyLabel) => {

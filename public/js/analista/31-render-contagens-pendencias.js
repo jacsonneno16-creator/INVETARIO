@@ -68,12 +68,28 @@ function _resultadoRodadaEndereco(c){
   })();
 
   if (!div) {
-    if (c.divergente === true || String(c.status || '').toUpperCase() === 'DIVERGENTE' || divsMesmoEndereco.length > 0) {
+    const statusContagem = String(c.status || '').trim().toUpperCase();
+    const possuiSinalDivergencia = c.divergente === true || c._alertaQtd === true ||
+      c.divergencia_potencial === true || statusContagem === 'DIVERGENTE' ||
+      divsMesmoEndereco.length > 0;
+
+    if (possuiSinalDivergencia) {
       return { texto:'❌ Divergente — aguardando decisão', cls:'b-red' };
     }
-    // Só mostra OK 1ª quando não existe qualquer divergência aberta para o endereço.
-    if (String(c.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM') {
+
+    // Ausência momentânea de divergência não significa que a 1ª contagem foi
+    // aprovada. A análise que compara a contagem com a base é assíncrona e pode
+    // ainda não ter criado/vinculado a divergência. Portanto, OK 1ª somente é
+    // exibido depois que o processamento marcou explicitamente a contagem como
+    // PROCESSADO (ou um status equivalente de conclusão).
+    const primeiraProcessada = ['PROCESSADO','OK','CONCLUIDA','CONCLUÍDA','RESOLVIDA']
+      .includes(statusContagem);
+    if (String(c.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM' && primeiraProcessada) {
       return { texto:'✅ OK 1ª', cls:'b-green' };
+    }
+
+    if (String(c.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM') {
+      return { texto:'⏳ Aguardando processamento', cls:'b-orange' };
     }
     return null;
   }
