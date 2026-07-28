@@ -34,23 +34,32 @@ function _resultadoRodadaEndereco(c){
     invRegistro?.inventario_id, invRegistro?.inventarioId,
     c.inventario_id, c.inventarioId
   ].filter(Boolean).map(v => String(v)));
-  const end = String(c.endereco || '').trim().toUpperCase();
-  const produto = String(
-    c.codigo_produto || c.codigoProduto || c.produto || c.gtin || c.ean || c.dun || ''
-  ).trim().toUpperCase();
+  const FK = window.InventoryFlowKey;
+  const end = FK.endereco(c.endereco);
+  const produto = FK.produto(c);
 
-  const normalizaProduto = obj => String(
-    obj?.produto || obj?.produto_contado || obj?.codigo_produto || obj?.codigoProduto ||
-    obj?.produto_recontagem || obj?.produto_segunda || obj?.produto_terceira ||
-    obj?.gtin || obj?.ean || obj?.dun || ''
-  ).trim().toUpperCase();
+  const normalizaProduto = obj => FK.produto(obj);
 
   // A divergência precisa pertencer ao mesmo inventário, endereço E produto.
   // Não usa mais fallback por "única divergência do endereço", pois isso ligava
   // uma contagem a outro produto e podia exibir OK 3ª indevidamente.
+  const inventarioCanonicoContagem = FK.inventario(c, st.inventarios);
   const divsMesmoEndereco = (st.divergencias || []).filter(d => {
-    const inv = String(d.inventario_id || d.inventarioId || '');
-    return invIds.has(inv) && String(d.endereco || '').trim().toUpperCase() === end;
+    const mesmoEndereco = FK.endereco(d.endereco) === end;
+    if (!mesmoEndereco) return false;
+
+    // O Firestore pode trazer a contagem com o código curto do inventário
+    // (ex.: "1") e a divergência com o ID técnico (ex.: "INV-...").
+    // Comparar apenas o valor bruto fazia a aba Contagens perder o vínculo e
+    // mostrar "OK 1ª" mesmo com recontagem aberta. A comparação canônica
+    // usa os aliases cadastrados do inventário e mantém as duas abas alinhadas.
+    const inventarioCanonicoDiv = FK.inventario(d, st.inventarios);
+    if (inventarioCanonicoContagem && inventarioCanonicoDiv) {
+      return inventarioCanonicoContagem === inventarioCanonicoDiv;
+    }
+
+    const invBruto = String(d.inventario_id || d.inventarioId || d.inventario || d.inventario_nome || '');
+    return invIds.has(invBruto);
   });
 
   // Primeiro tenta o vínculo explícito da contagem. Depois usa produto normalizado.
@@ -105,7 +114,7 @@ function _resultadoRodadaEndereco(c){
 
   // Só considera recontagens realmente concluídas e vinculadas à divergência exata.
   const recs = (st.recontagens || [])
-    .filter(r => String(r.divergencia_id || '') === String(div.id || '') && statusConcluido(r))
+    .filter(r => (String(r.divergencia_id || '') === String(div.id || '') || FK.mesmo(r, div, st.inventarios)) && statusConcluido(r))
     .sort((a,b) => {
       const na=Number(a.numero_recontagem || 0), nb=Number(b.numero_recontagem || 0);
       if (na !== nb) return na - nb;
@@ -191,8 +200,7 @@ function renderContagens() {
       const inv=(state().inventarios || []).find(i =>
         [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
           .filter(Boolean).map(String).includes(id));
-      const produto = String(c.codigo_produto || c.codigoProduto || c.produto || c.gtin || c.ean || c.dun || '').trim().toUpperCase();
-      return `${String(inv?.id || id)}|${String(c.endereco || '').trim().toUpperCase()}|${produto}`;
+      return FK.chave(Object.assign({}, c, { inventario_id: inv?.id || id }), state().inventarios);
     };
     dados.forEach(c => {
       const chave=chaveContagem(c);
@@ -226,7 +234,8 @@ function renderContagens() {
     const ontem = new Date(hoje); ontem.setDate(ontem.getDate()-1);
     const set7 = new Date(hoje); set7.setDate(set7.getDate()-7);
     dados = dados.filter(c => {
-      const ts = c.timestamp ? new Date(c.timestamp) : null;
+      const valorData = c.timestamp || c.criado_em || c.dataHora || null;
+      const ts = valorData ? new Date(valorData) : null;
       if (!ts) return false;
       if (fPeriodo === 'hoje') return ts >= hoje;
       if (fPeriodo === 'ontem') return ts >= ontem && ts < hoje;
@@ -241,7 +250,7 @@ function renderContagens() {
     (c.codigo_produto||'').toLowerCase().includes(busca) ||
     (c.descricao_produto||'').toLowerCase().includes(busca)
   );
-  dados = [...dados].sort((a,b) => (b.timestamp||'').localeCompare(a.timestamp||''));
+  dados = [...dados].sort((a,b) => String(b.timestamp||b.criado_em||b.dataHora||'').localeCompare(String(a.timestamp||a.criado_em||a.dataHora||'')));
 
   // KPIs Contagens
   const _allConts = state().contagens.filter(c => !c._excluida && c.status !== 'ESTORNADA');
@@ -288,7 +297,7 @@ function renderContagens() {
 
           const prodExib=_produtoContagemExibicao(c);
           return `<tr style="${rowStyle}">
-            <td class="mono" style="white-space:nowrap;font-size:.75rem">${fmtTs(c.timestamp)}</td>
+            <td class="mono" style="white-space:nowrap;font-size:.75rem">${fmtTs(c.timestamp || c.criado_em || c.dataHora)}</td>
             <td>
               <div style="display:flex;align-items:center;gap:6px">
                 <div class="u-avatar" style="width:24px;height:24px;font-size:.65rem;flex-shrink:0">${(c.operador||'?')[0].toUpperCase()}</div>

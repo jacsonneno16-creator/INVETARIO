@@ -68,9 +68,16 @@ function _resultadoRodadaEndereco(c) {
     // A divergência precisa pertencer ao mesmo inventário, endereço E produto.
     // Não usa mais fallback por "única divergência do endereço", pois isso ligava
     // uma contagem a outro produto e podia exibir OK 3ª indevidamente.
+    var inventarioCanonicoContagem = FK.inventario(c, st.inventarios);
     var divsMesmoEndereco = (st.divergencias || []).filter(function (d) {
-        var inv = String(d.inventario_id || d.inventarioId || '');
-        return invIds.has(inv) && String(d.endereco || '').trim().toUpperCase() === end;
+        var mesmoEndereco = FK.endereco(d.endereco) === end;
+        if (!mesmoEndereco)
+            return false;
+        var inventarioCanonicoDiv = FK.inventario(d, st.inventarios);
+        if (inventarioCanonicoContagem && inventarioCanonicoDiv)
+            return inventarioCanonicoContagem === inventarioCanonicoDiv;
+        var invBruto = String(d.inventario_id || d.inventarioId || d.inventario || d.inventario_nome || '');
+        return invIds.has(invBruto);
     });
     // Primeiro tenta o vínculo explícito da contagem. Depois usa produto normalizado.
     // Como último recurso, aceita a única divergência aberta do endereço. Isso evita

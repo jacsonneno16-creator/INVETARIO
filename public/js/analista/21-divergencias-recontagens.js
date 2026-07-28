@@ -1636,11 +1636,12 @@
 
   function _salvarBloqueioLeve(d, operador, recontagemId, agora){
     if (!global.FS_AN || !d?.inventario_id || !d?.endereco) return;
-    const chaveBloqueio = `${d.inventario_id}__${encodeURIComponent(String(d.endereco).trim().toUpperCase())}`;
+    const chaveBloqueio = encodeURIComponent(window.InventoryFlowKey.chave(d, state().inventarios));
     global.FS_AN.collection('dt_bloqueios_recontagem').doc(chaveBloqueio).set({
       ativo: true,
       inventario_id: d.inventario_id,
       endereco: d.endereco,
+      chave_fluxo: window.InventoryFlowKey.chave(d, state().inventarios),
       operador,
       recontagem_id: recontagemId || null,
       atualizado_em: agora
@@ -1667,10 +1668,10 @@
       return null;
     }
 
+    const chaveAtividade = window.InventoryFlowKey.chave(d, state().inventarios);
     const mesmaChaveOperacional = r =>
-      _mesmoIdInventario(_idInventarioRegistro(r), _idInventarioRegistro(d)) &&
-      _nd(r.endereco) === _nd(d.endereco) &&
-      (String(r.divergencia_id || '') === String(d.id || '') || _mesmoProduto(r, d));
+      String(r.divergencia_id || '') === String(d.id || '') ||
+      window.InventoryFlowKey.chave(r, state().inventarios) === chaveAtividade;
     // O bloqueio precisa ser por endereço. Registros antigos podem ter ids de
     // divergência diferentes para o mesmo endereço e, nesse caso, a verificação
     // apenas por divergencia_id permitia atribuições duplicadas.
@@ -1733,13 +1734,14 @@
       atribuido_em:          agora,
       status:                d.status === 'ABERTA' ? 'EM_RECONTAGEM' : d.status,
       status_recontagem:     'pendente',
-      observacao_atribuicao: obs || ''
+      observacao_atribuicao: obs || '',
+      chave_fluxo: chaveAtividade
     });
 
     const rec = {
       id: 'rec_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       divergencia_id: d.id, inventario_id: d.inventario_id, inventario_nome: d.inventario_nome,
-      endereco: d.endereco, produto: d.produto, descricao: d.descricao,
+      endereco: d.endereco, produto: d.produto || d.produto_contado || d.codigo_produto || d.gtin, descricao: d.descricao || d.descricao_produto,
       qtd_esperada: d.qtd_esperada,
       qtd_primeira: d.qtd_contada,
       produto_primeira: _nd(d.produto_contado || d.produto),
@@ -1751,6 +1753,7 @@
       status: 'PENDENTE', status_recontagem: 'pendente',
       observacao_atribuicao: obs || '',
       criada_em: agora, numero_recontagem: proximaRodada,
+      chave_fluxo: chaveAtividade,
     };
 
     Store.dispatch(Actions.batch([

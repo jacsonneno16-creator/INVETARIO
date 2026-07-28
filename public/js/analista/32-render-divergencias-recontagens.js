@@ -1,10 +1,15 @@
 function state(){ return window.AnalistaStore.getState(); }
+const _FK = window.InventoryFlowKey;
+const _normRec = v => _FK.texto(v);
+const _inventarioCanonicoRec = obj => _FK.inventario(obj, state().inventarios);
+const _produtoCanonicoRec = obj => _FK.produto(obj);
+const _chaveEndereco = obj => _FK.chave(obj, state().inventarios);
 // ───────────────────────────────────────────────────────────────────
 //  16. RENDERIZAÇÃO — DIVERGÊNCIAS
 // ───────────────────────────────────────────────────────────────────
 
 function marcarDivergenciaResolvida(divId) {
-  const div = state().divergencias.find(d => d.id === divId);
+  const div = _obterDivSelecionada(divId);
   if (!div) return;
   showConfirm(`Marcar a divergência do endereço ${escHTML(div.endereco)} como RESOLVIDA?`, () => _marcarDivResolvida(divId), { title: '✅ Resolver divergência', icon: '✅', okLabel: 'Marcar resolvida', okClass: 'btn-success' }); return;
 }
@@ -64,9 +69,8 @@ function divPodeSelecionar(div) {
 
   const recs = (state().recontagens || []).filter(r => {
     const mesmoId = String(r.divergencia_id || '') === String(div.id || '');
-    const mesmoEndereco = String(r.inventario_id || '') === String(div.inventario_id || '') &&
-      String(r.endereco || '').trim().toUpperCase() === String(div.endereco || '').trim().toUpperCase();
-    if (!mesmoId && !mesmoEndereco) return false;
+    const mesmaAtividade = _FK.mesmo(r, div, state().inventarios);
+    if (!mesmoId && !mesmaAtividade) return false;
     const st = String(r.status || '').toUpperCase();
     const sr = String(r.status_recontagem || '').toLowerCase();
     return !['CANCELADA','EXCLUIDA'].includes(st) && !['cancelada','excluida'].includes(sr);
@@ -529,7 +533,7 @@ function renderDivergencias() {
         return (
           (r.divergencia_id && String(d.id) === String(r.divergencia_id)) ||
           (String(d.inventario_id || '') === String(r.inventario_id || r.inventarioId || '') &&
-           String(d.endereco || '').trim().toUpperCase() === String(r.endereco || '').trim().toUpperCase())
+           _FK.endereco(d.endereco) === _FK.endereco(r.endereco))
         );
       });
       if (vinculada) return;
@@ -660,7 +664,7 @@ function renderDivergencias() {
   if (fProduto) dados = dados.filter(d => (d.produto||'') === fProduto);
   // Filtrar por operador
   if (fOperador) dados = dados.filter(d => {
-    const cont = state().contagens.find(c => c.inventario_id === d.inventario_id && c.endereco === d.endereco && !c._excluida);
+    const cont = state().contagens.find(c => _FK.mesmo(c, d, state().inventarios) && !c._excluida);
     const op = d.operador || cont?.operador || '';
     return op === fOperador;
   });
@@ -731,7 +735,7 @@ function renderDivergencias() {
   const todosSetores= [...new Set(state().divergencias.map(d => { const i=getEnderecoInfo(d.endereco); return i?.setor||i?.local||i?.nome_local||''; }).filter(Boolean))].sort();
   const todosProds  = [...new Set(state().divergencias.map(d => d.produto).filter(Boolean))].sort();
   const todosOps    = [...new Set(state().divergencias.map(d => {
-    const cont = state().contagens.find(c => c.inventario_id === d.inventario_id && c.endereco === d.endereco && !c._excluida);
+    const cont = state().contagens.find(c => _FK.mesmo(c, d, state().inventarios) && !c._excluida);
     return d.operador || cont?.operador || '';
   }).filter(Boolean))].sort();
   _popSel('div-frua',      todasRuas,    fRua,      'Todas as ruas');
@@ -788,7 +792,7 @@ function renderDivergencias() {
             .sort((a,b) => (b.numero_recontagem||1) - (a.numero_recontagem||1))[0] || null;
           const endInfo = getEnderecoInfo(d.endereco);
           const rua = endInfo?.rua || '—';
-          const cont = state().contagens.find(c => c.inventario_id === d.inventario_id && c.endereco === d.endereco && !c._excluida);
+          const cont = state().contagens.find(c => _FK.mesmo(c, d, state().inventarios) && !c._excluida);
           const operador = d.operador || cont?.operador || '—';
           const podeSelecionar = divPodeSelecionar(d);
           if (!podeSelecionar) _divSelecionadas.delete(d.id);
@@ -814,7 +818,7 @@ function renderDivergencias() {
             String(i.nome || '') === String(d.inventario_id || '')
           );
           const esperadosDaBase = (inventario?.base || []).filter(item =>
-            String(item.endereco || '').trim().toUpperCase() === String(d.endereco || '').trim().toUpperCase()
+            _FK.mesmo(item, d, state().inventarios)
           );
           const esperadosEndereco = esperadosDaBase.length
             ? esperadosDaBase
@@ -1000,11 +1004,11 @@ function renderRecontagens() {
     const aliases=inv
       ? [inv.id,inv.codigo,inv.nome,inv.inventario_id,inv.inventarioId].filter(Boolean).map(String)
       : [id];
-    const end=String(c.endereco || '').trim().toUpperCase();
+    const end=_FK.endereco(c.endereco);
     const prod=_normRec(c.gtin || c.codigo_produto || c.codigoLido || c.produto || '');
     return !(state().divergencias || []).some(d =>
       aliases.includes(String(d.inventario_id || d.inventarioId || '')) &&
-      String(d.endereco || '').trim().toUpperCase() === end &&
+      _FK.endereco(d.endereco) === end &&
       (!prod || _produtoCanonicoRec(d) === prod));
   });
   if (faltaVinculo && typeof processarDivergencias === 'function') {
@@ -1027,25 +1031,8 @@ function renderRecontagens() {
     if (cur) selInv.value = cur;
   }
 
-  // A unidade operacional é inventário + endereço + produto. Agrupar somente
-  // pelo endereço mistura produtos diferentes do mesmo picking, exibe totais
-  // errados e faz uma recontagem pendente bloquear a criação das demais.
-  const _normRec = v => String(v || '').trim().toUpperCase();
-  const _inventarioCanonicoRec = obj => {
-    const id=String(obj?.inventario_id || obj?.inventarioId || obj?.inventario || '').trim();
-    const inv=(state().inventarios || []).find(i =>
-      [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
-        .filter(Boolean).map(String).includes(id));
-    return String(inv?.id || id);
-  };
-  const _produtoCanonicoRec = obj => {
-    const ids = [obj?.produto, obj?.produto_contado, obj?.produto_recontagem,
-      obj?.produto_primeira, obj?.codigo_produto, obj?.gtin, obj?.ean, obj?.dun]
-      .map(_normRec).filter(Boolean);
-    return ids[0] || 'SEM_PRODUTO';
-  };
-  const _chaveEndereco = obj =>
-    `${_inventarioCanonicoRec(obj)}|${_normRec(obj?.endereco)}|${_produtoCanonicoRec(obj)}`;
+  // A unidade operacional é inventário + endereço + produto, usando a mesma
+  // normalização da aba Contagens e da rotina de atribuição.
   const _gruposRec = new Map();
   const _adicionarGrupo = (obj, tipo) => {
     if (!obj || !_normRec(obj.endereco)) return;
@@ -1076,7 +1063,7 @@ function renderRecontagens() {
         operador_primeira:c.operador || c.operador_nome || '',
         data_primeira:c.timestamp || c.criado_em || c.dataHora || '',
         status:'EM_RECONTAGEM', status_recontagem:'aguardando_analista',
-        precisa_recontagem:true, _virtual_de_contagem:true
+        precisa_recontagem:true, chave_fluxo:_chaveEndereco(c), _virtual_de_contagem:true
       });
     }
     _gruposRec.set(chave,grupo);
@@ -1112,6 +1099,7 @@ function renderRecontagens() {
     const recTerceira = recsConcluidas[1] || {};
     Object.assign(principal, {
       divergencia_id: divPrincipal.id || principal.divergencia_id,
+      chave_fluxo: _chaveEndereco(divPrincipal.id ? divPrincipal : principal),
       inventario_id: divPrincipal.inventario_id || principal.inventario_id,
       inventario_nome: divPrincipal.inventario_nome || principal.inventario_nome,
       endereco: divPrincipal.endereco || principal.endereco,
