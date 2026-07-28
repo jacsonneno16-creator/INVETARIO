@@ -628,6 +628,10 @@ function _executarSalvar(qty) {
     tipo_bipagem: _isDunBipado ? 'DUN' : 'GTIN',   // qual código foi bipado
     quantidade_esperada: qtdEsp || '',
     divergente,
+    // Indicador local/informativo para o status offline do coletor.
+    // A divergência oficial continua sendo validada pelo Analista.
+    _alertaQtd: _alertaQtd,
+    divergencia_potencial: _alertaQtd,
     operador:       APP.operador?.name  || '',
     operador_id:    APP.operador?.email || APP.operador?.usuario || APP.operador?.login || '',
     operador_nome:  APP.operador?.name  || APP.operador?.nome || '',
