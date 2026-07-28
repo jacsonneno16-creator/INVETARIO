@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v170-auditoria-sync-background';
+var CACHE='dt-inventario-v170-auditoria-sync-background-r2';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -97,5 +97,9 @@ self.addEventListener('fetch',function(e){
     }));
     return;
   }
-  e.respondWith(fetch(e.request).catch(function(){return caches.match(e.request);}));
+  e.respondWith(fetch(e.request).catch(function(){
+    return caches.match(e.request).then(function(cached){
+      return cached || new Response('',{status:504,statusText:'Offline'});
+    });
+  }));
 });
