@@ -5,15 +5,30 @@
 function state(){ return window.AnalistaStore.getState(); }
 
 // ── FIREBASE ─────────────────────────────────────────────────────────
-if (typeof window.getDTFirebaseApp !== 'function' || typeof window.getDTFirestore !== 'function' || typeof window.getDTAuth !== 'function') {
-  throw new Error('Firebase compartilhado não carregou antes do módulo de login.');
+// Inicializacao tolerante a cache antigo e carregamento lento. O modulo nao
+// deixa de exportar doLoginAnalista caso o Firebase ainda nao esteja pronto.
+var FS_AN = null;
+var AUTH_AN = null;
+var _authListenerRegistrado = false;
+
+function _prepararFirebaseAnalista() {
+  try {
+    if (typeof window.getDTFirebaseApp !== 'function' ||
+        typeof window.getDTFirestore !== 'function' ||
+        typeof window.getDTAuth !== 'function') return false;
+    window.getDTFirebaseApp();
+    FS_AN = window.getDTFirestore();
+    AUTH_AN = window.getDTAuth();
+    window.FS_AN = FS_AN;
+    window.AUTH_AN = AUTH_AN;
+    return !!AUTH_AN;
+  } catch (err) {
+    console.error('[Login Analista] Falha ao preparar Firebase:', err);
+    return false;
+  }
 }
-window.getDTFirebaseApp();
-var FS_AN   = window.getDTFirestore();
-var AUTH_AN = window.getDTAuth();
-// Exposto explicitamente em window pois firebaseService.js acessa via global.FS_AN
-window.FS_AN   = FS_AN;
-window.AUTH_AN = AUTH_AN;
+
+_prepararFirebaseAnalista();
 
 window._currentAnalistaUser = null;
 var _loginSolicitadoPeloUsuario = false;
@@ -49,6 +64,11 @@ function _salvarOuLimparLogin(email, senha) {
 // ── LOGIN ────────────────────────────────────────────────────────────
 
 function doLoginAnalista() {
+  if (!_prepararFirebaseAnalista()) {
+    _setLoginErro('Não foi possível iniciar o login. Atualize a página e verifique a conexão.');
+    return;
+  }
+  _registrarListenerAuthAnalista();
   const email = _normalizarEmailAnalista(document.getElementById('an-email')?.value || '');
   const senha = document.getElementById('an-pass')?.value || '';
 
@@ -67,6 +87,7 @@ function doLoginAnalista() {
 async function enviarRecuperacaoSenhaAnalista(event) {
   event?.preventDefault?.();
   _clearLoginErro();
+  if (!_prepararFirebaseAnalista()) return _setLoginErro('Não foi possível iniciar o Firebase. Atualize a página.');
   let email = _normalizarEmailAnalista(document.getElementById('an-email')?.value || '');
   if (!email) return _setLoginErro('Informe o e-mail do Analista para receber o link de redefinição.');
   if (!email.includes('@')) email += '@daterrinhaalimentos.com.br';
@@ -82,6 +103,7 @@ async function enviarRecuperacaoSenhaAnalista(event) {
 }
 
 function doLogoutAnalista() {
+  if (!_prepararFirebaseAnalista()) { _mostrarLogin(); return; }
   _loginSolicitadoPeloUsuario = false;
   AUTH_AN.signOut().then(() => {
     window._currentAnalistaUser = null;
@@ -225,11 +247,9 @@ function _mostrarLogin() {
 // ── SESSION ──────────────────────────────────────────────────────────
 // Nunca reaproveita sessão anterior. Só abre o painel depois que o usuário
 // clicar em Entrar ou pressionar Enter com e-mail e senha preenchidos.
-async function _iniciarAuthAnalista() {
-  _loginSolicitadoPeloUsuario = false;
-  _mostrarLogin();
-  _carregarLoginLembrado();
-
+function _registrarListenerAuthAnalista() {
+  if (_authListenerRegistrado || !_prepararFirebaseAnalista()) return false;
+  _authListenerRegistrado = true;
   AUTH_AN.onAuthStateChanged(async user => {
     if (user) {
       if (!_loginSolicitadoPeloUsuario) {
@@ -243,6 +263,20 @@ async function _iniciarAuthAnalista() {
     }
     _mostrarLogin();
   });
+  return true;
+}
+
+async function _iniciarAuthAnalista() {
+  _loginSolicitadoPeloUsuario = false;
+  _mostrarLogin();
+  _carregarLoginLembrado();
+  if (!_registrarListenerAuthAnalista()) {
+    let tentativas = 0;
+    const timer = setInterval(() => {
+      tentativas += 1;
+      if (_registrarListenerAuthAnalista() || tentativas >= 20) clearInterval(timer);
+    }, 250);
+  }
 }
 
 _iniciarAuthAnalista();
