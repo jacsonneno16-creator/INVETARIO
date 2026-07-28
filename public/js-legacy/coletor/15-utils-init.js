@@ -122,3 +122,51 @@ function atualizarFilaStatus() {
 }
 // Atualiza indicador a cada 5s
 setInterval(atualizarFilaStatus, 5000);
+
+
+// Sincronização unificada e silenciosa (ES5): nunca recarrega a página.
+(function () {
+    var syncPromise = null;
+    window.sincronizarTudoEmSegundoPlano = function (origem) {
+        if (!navigator.onLine)
+            return Promise.resolve({ offline: true });
+        if (syncPromise)
+            return syncPromise;
+        syncPromise = Promise.resolve().then(function () {
+            if (typeof idbGetPendentes !== 'function' || typeof enviarFilaPendente !== 'function')
+                return null;
+            return idbGetPendentes().then(function (pendentes) {
+                FILA_ENVIO = Array.isArray(pendentes) ? pendentes : [];
+                filaSave(FILA_ENVIO);
+                return FILA_ENVIO.length ? enviarFilaPendente() : null;
+            });
+        }).catch(function (e) {
+            console.warn('[SYNC] Contagens permanecem pendentes:', e);
+        }).then(function () {
+            if (typeof window.sincronizarFilaAuditoria === 'function')
+                return window.sincronizarFilaAuditoria();
+            return null;
+        }).catch(function (e) {
+            console.warn('[SYNC] Auditorias permanecem pendentes:', e);
+        }).then(function () {
+            try { atualizarBarraStatus(); } catch (e) { }
+            try { return atualizarFilaStatus(); } catch (e) { return null; }
+        }).then(function () { return { origem: origem || 'automatico' }; });
+        syncPromise.then(function () { syncPromise = null; }, function () { syncPromise = null; });
+        return syncPromise;
+    };
+    enviarFilaManual = function () {
+        if (!navigator.onLine) {
+            toast('📶 Sem internet — os registros continuam salvos no aparelho', 'w');
+            return Promise.resolve();
+        }
+        toast('⬆️ Sincronizando contagens e auditorias em segundo plano…', 'w');
+        return window.sincronizarTudoEmSegundoPlano('manual').then(function () {
+            try { updateStats(); } catch (e) { }
+            return atualizarFilaStatus();
+        });
+    };
+    window.addEventListener('online', function () {
+        setTimeout(function () { window.sincronizarTudoEmSegundoPlano('online').catch(function () { }); }, 250);
+    });
+})();

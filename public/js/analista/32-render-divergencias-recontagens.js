@@ -43,14 +43,32 @@ let _recDadosFiltradosExport = [];
 
 function divPodeSelecionar(div) {
   if (!div) return false;
-  const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarEndereco?.(div);
-  if (avaliacao?.estado === 'AGUARDANDO_ANALISTA') return true;
-  if (avaliacao?.estado === 'RESOLVIDA' || avaliacao?.estado === 'PERSISTENTE') return false;
   const status = String(div.status || '').toUpperCase();
   const statusRec = String(div.status_recontagem || '').toLowerCase();
-  return !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(status) &&
-    !['CONCLUIDA','RESOLVIDA','SEM_DIVERGENCIA','CANCELADA'].includes(statusRec.toUpperCase()) &&
-    !(typeof _isFluxoEncerrado === 'function' && _isFluxoEncerrado(div));
+  if (['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(status)) return false;
+  if (['resolvida','sem_divergencia','cancelada','persistente'].includes(statusRec)) return false;
+
+  const recsValidas = (state().recontagens || []).filter(r =>
+    String(r.divergencia_id || '') === String(div.id || '') &&
+    !['CANCELADA','EXCLUIDA'].includes(String(r.status || '').toUpperCase()) &&
+    !['cancelada','excluida'].includes(String(r.status_recontagem || '').toLowerCase())
+  );
+  const concluidas = recsValidas.filter(r => {
+    const st = String(r.status || '').toUpperCase();
+    const sr = String(r.status_recontagem || '').toLowerCase();
+    return st === 'CONCLUIDA' || sr === 'concluida' || Boolean(r.recontagem_concluida_em || r.concluida_em || r.finalizada_em);
+  });
+  if (concluidas.length >= 2 || div.qtd_terceira != null) return false;
+
+  const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarEndereco?.(div);
+  if (avaliacao?.estado === 'RESOLVIDA' || avaliacao?.estado === 'PERSISTENTE') return false;
+
+  // Divergência aberta ou aguardando analista deve continuar selecionável,
+  // mesmo quando registros antigos deixaram flags inconsistentes de encerramento.
+  if (['ABERTA','EM_RECONTAGEM','DIVERGENTE'].includes(status) ||
+      ['','pendente','aguardando_analista','concluida'].includes(statusRec)) return true;
+
+  return !(typeof _isFluxoEncerrado === 'function' && _isFluxoEncerrado(div));
 }
 
 function divStatusBadge(status) {
@@ -110,12 +128,18 @@ function divDeselecionarTodos() {
 
 function divAtribuirRapido(divId) {
   const div = state().divergencias.find(d => d.id === divId);
-  const totalRecontagens = state().recontagens.filter(r =>
+  const recontagensValidas = state().recontagens.filter(r =>
     r.divergencia_id === divId &&
-    !['CANCELADA','EXCLUIDA'].includes(String(r.status || '').toUpperCase())
+    !['CANCELADA','EXCLUIDA'].includes(String(r.status || '').toUpperCase()) &&
+    !['cancelada','excluida'].includes(String(r.status_recontagem || '').toLowerCase())
+  );
+  const concluidas = recontagensValidas.filter(r =>
+    String(r.status || '').toUpperCase() === 'CONCLUIDA' ||
+    String(r.status_recontagem || '').toLowerCase() === 'concluida' ||
+    Boolean(r.recontagem_concluida_em || r.concluida_em || r.finalizada_em)
   ).length;
-  if (!div || !divPodeSelecionar(div) || div.qtd_terceira != null || totalRecontagens >= 2) {
-    showToast('🔒 As três contagens já foram concluídas. Esta atividade está finalizada.', 'e');
+  if (!div || !divPodeSelecionar(div) || div.qtd_terceira != null || concluidas >= 2) {
+    showToast('🔒 Esta atividade já atingiu o limite de contagens ou está encerrada.', 'e');
     return;
   }
   _divSelecionadas.clear();

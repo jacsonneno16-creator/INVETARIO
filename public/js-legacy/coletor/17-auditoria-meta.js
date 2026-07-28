@@ -45,6 +45,22 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
     }
 };
+var __read = (this && this.__read) || function (o, n) {
+    var m = typeof Symbol === "function" && o[Symbol.iterator];
+    if (!m) return o;
+    var i = m.call(o), r, ar = [], e;
+    try {
+        while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+    }
+    catch (error) { e = { error: error }; }
+    finally {
+        try {
+            if (r && !r.done && (m = i["return"])) m.call(i);
+        }
+        finally { if (e) throw e.error; }
+    }
+    return ar;
+};
 var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     if (pack || arguments.length === 2) for (var i = 0, l = from.length, ar; i < l; i++) {
         if (ar || !(i in from)) {
@@ -273,6 +289,47 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         var _a;
         return ((_a = window.DTEnderecos) === null || _a === void 0 ? void 0 : _a.chave(valor)) || String(valor == null ? '' : valor).trim().toUpperCase();
     }
+    // Mantém no aparelho um índice simples dos códigos presentes na própria
+    // auditoria. Ele é usado quando a conexão cai e a Base Geral de Produtos não
+    // consegue responder naquele instante. Assim, um GTIN/EAN/DUN já baixado não
+    // passa a ser tratado como produto errado apenas por falta de rede.
+    function _hidratarMapaProdutosAuditoria(rows) {
+        APP.auditoriaProdutosMap = APP.auditoriaProdutosMap || {};
+        (Array.isArray(rows) ? rows : []).forEach(function (r) {
+            var nome = String((r === null || r === void 0 ? void 0 : r.produtoEsperado) || (r === null || r === void 0 ? void 0 : r.produto_esperado) || (r === null || r === void 0 ? void 0 : r.produto_nome) || (r === null || r === void 0 ? void 0 : r.descricao) || (r === null || r === void 0 ? void 0 : r.produto) || '').trim();
+            var codigos = [
+                r === null || r === void 0 ? void 0 : r.gtinEsperado,
+                r === null || r === void 0 ? void 0 : r.gtin_esperado,
+                r === null || r === void 0 ? void 0 : r.eanEsperado,
+                r === null || r === void 0 ? void 0 : r.ean_esperado,
+                r === null || r === void 0 ? void 0 : r.ean,
+                r === null || r === void 0 ? void 0 : r.gtin,
+                r === null || r === void 0 ? void 0 : r.dunEsperado,
+                r === null || r === void 0 ? void 0 : r.dun_esperado,
+                r === null || r === void 0 ? void 0 : r.dun,
+                r === null || r === void 0 ? void 0 : r.codigoProduto,
+                r === null || r === void 0 ? void 0 : r.codigo_produto,
+                r === null || r === void 0 ? void 0 : r.codigoInterno,
+                r === null || r === void 0 ? void 0 : r.codigo_interno,
+                r === null || r === void 0 ? void 0 : r.sku
+            ].map(function (v) { return String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]/g, ''); }).filter(Boolean);
+            codigos.forEach(function (codigo) {
+                var _a, _b;
+                if (nome)
+                    APP.auditoriaProdutosMap[codigo] = nome;
+                var geral = (_b = (_a = window.DTProdutos) === null || _a === void 0 ? void 0 : _a.buscarSync) === null || _b === void 0 ? void 0 : _b.call(_a, codigo);
+                if (geral === null || geral === void 0 ? void 0 : geral.encontrado) {
+                    [geral.id, geral.gtin, geral.ean, geral.dun, geral.codigoInterno, geral.codigo_interno, geral.sku]
+                        .map(function (v) { return String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]/g, ''); })
+                        .filter(Boolean)
+                        .forEach(function (alias) { if (nome)
+                        APP.auditoriaProdutosMap[alias] = nome; });
+                }
+            });
+        });
+        return APP.auditoriaProdutosMap;
+    }
+    window._hidratarMapaProdutosAuditoria = _hidratarMapaProdutosAuditoria;
     function _carregarBaseGeralEnderecosAuditoria(forcar) {
         return __awaiter(this, void 0, void 0, function () {
             var lojaId, cacheKey, cache, e_4, locais, versaoServidor, meta, e_5, chunks, docsUsar, e_6, erro_1, cache, e_7;
@@ -408,9 +465,9 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         rows_1 = [];
                         chunkSnap.docs.forEach(function (doc) {
                             var d = doc.data();
-                            rows_1.push.apply(rows_1, (d.dados || d.itens || d.registros || []));
+                            rows_1.push.apply(rows_1, __spreadArray([], __read((d.dados || d.itens || d.registros || [])), false));
                         });
-                        APP.auditoriaProdutosMap = APP.auditoriaProdutosMap || {};
+                        _hidratarMapaProdutosAuditoria(rows_1);
                         rows_1.forEach(function (r) {
                             var codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
                             var nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
@@ -457,6 +514,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         snap = _a.sent();
                         todos = snap.docs.map(function (d) { return (__assign({ id: d.id }, d.data())); });
                         APP.auditoriaProdutosMap = {};
+                        _hidratarMapaProdutosAuditoria(todos);
                         todos.forEach(function (r) {
                             var codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
                             var nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
@@ -515,7 +573,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             return;
         lista = lista || APP.auditoriasMenu || [];
         var select = document.getElementById('aud-loja-select');
-        var lojas = __spreadArray([], new Set((lista || []).flatMap(function (x) { return _extrairLojasDaAuditoria(x); }).filter(Boolean)), true).sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
+        var lojas = __spreadArray([], __read(new Set((lista || []).flatMap(function (x) { return _extrairLojasDaAuditoria(x); }).filter(Boolean))), false).sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
         if (select) {
             var atual = APP.lojaFiltroAuditoria || '';
             select.innerHTML = '<option value="">Todas as lojas</option>' + lojas.map(function (loja) { return "<option value=\"".concat(escHTML(loja), "\">").concat(escHTML(loja), "</option>"); }).join('');
@@ -744,6 +802,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         _a.label = 19;
                     case 19:
                         APP.auditorias = Array.isArray(baseAuditoria) ? baseAuditoria : [];
+                        _hidratarMapaProdutosAuditoria(APP.auditorias);
                         totalAud = (APP.auditorias || []).length;
                         if (typeof _dlStep === 'function')
                             _dlStep('aud-base', '📝', 'Base da Auditoria', totalAud + ' endereços pendentes', 'ok');

@@ -121,6 +121,34 @@
     return window.DTEnderecos?.chave(valor) || String(valor == null ? '' : valor).trim().toUpperCase();
   }
 
+  // Mantém no aparelho um índice simples dos códigos presentes na própria
+  // auditoria. Ele é usado quando a conexão cai e a Base Geral de Produtos não
+  // consegue responder naquele instante. Assim, um GTIN/EAN/DUN já baixado não
+  // passa a ser tratado como produto errado apenas por falta de rede.
+  function _hidratarMapaProdutosAuditoria(rows){
+    APP.auditoriaProdutosMap = APP.auditoriaProdutosMap || {};
+    (Array.isArray(rows) ? rows : []).forEach(function(r){
+      const nome = String(r?.produtoEsperado || r?.produto_esperado || r?.produto_nome || r?.descricao || r?.produto || '').trim();
+      const codigos = [
+        r?.gtinEsperado,r?.gtin_esperado,r?.eanEsperado,r?.ean_esperado,r?.ean,r?.gtin,
+        r?.dunEsperado,r?.dun_esperado,r?.dun,r?.codigoProduto,r?.codigo_produto,
+        r?.codigoInterno,r?.codigo_interno,r?.sku
+      ].map(function(v){ return String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]/g,''); }).filter(Boolean);
+      codigos.forEach(function(codigo){
+        if (nome) APP.auditoriaProdutosMap[codigo] = nome;
+        const geral = window.DTProdutos?.buscarSync?.(codigo);
+        if (geral?.encontrado) {
+          [geral.id,geral.gtin,geral.ean,geral.dun,geral.codigoInterno,geral.codigo_interno,geral.sku]
+            .map(function(v){ return String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]/g,''); })
+            .filter(Boolean)
+            .forEach(function(alias){ if (nome) APP.auditoriaProdutosMap[alias] = nome; });
+        }
+      });
+    });
+    return APP.auditoriaProdutosMap;
+  }
+  window._hidratarMapaProdutosAuditoria = _hidratarMapaProdutosAuditoria;
+
   async function _carregarBaseGeralEnderecosAuditoria(forcar){
     const lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
     const cacheKey = 'dt_auditoria_locais_' + lojaId;
@@ -203,7 +231,7 @@
         const d = doc.data();
         rows.push(...(d.dados || d.itens || d.registros || []));
       });
-      APP.auditoriaProdutosMap = APP.auditoriaProdutosMap || {};
+      _hidratarMapaProdutosAuditoria(rows);
       rows.forEach(r => {
         const codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
         const nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
@@ -239,6 +267,7 @@
     const snap = await audRef.collection('enderecos').get();
     const todos = snap.docs.map(d => ({ id:d.id, ...d.data() }));
     APP.auditoriaProdutosMap = {};
+    _hidratarMapaProdutosAuditoria(todos);
     todos.forEach(r => {
       const codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
       const nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
@@ -433,6 +462,7 @@
         if(typeof _dlStep==='function') _dlStep('aud-base','📝','Base da Auditoria','Modo offline — '+baseAuditoria.length+' endereços pendentes no aparelho','run');
       }
       APP.auditorias=Array.isArray(baseAuditoria)?baseAuditoria:[];
+      _hidratarMapaProdutosAuditoria(APP.auditorias);
       const totalAud=(APP.auditorias||[]).length;
       if(typeof _dlStep==='function') _dlStep('aud-base','📝','Base da Auditoria',totalAud+' endereços pendentes','ok');
       if(typeof _dlProg==='function') _dlProg(100,'Todas as informações foram carregadas.');

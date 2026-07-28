@@ -92,6 +92,10 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     function reservarEnderecoAuditoria(item) {
         return __awaiter(this, void 0, void 0, function () {
             return __generator(this, function (_a) {
+                // A operação do coletor não pode depender de uma transação de rede.
+                // navigator.onLine também permanece true em vários Androids quando o Wi-Fi
+                // perdeu acesso, fazendo a transação ficar pendurada por tempo indefinido.
+                // A lista baixada e a fila local são a fonte de verdade durante a leitura.
                 return [2 /*return*/, !!item];
             });
         });
@@ -152,6 +156,23 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             return texto(nomeMapeado);
         var encontrado = (APP.auditorias || []).find(function (item) { return normalizarCodigo(dunEsperado(item)) === alvo; });
         return encontrado ? descricaoEsperada(encontrado) : 'Produto não identificado';
+    }
+    function produtoCompativelOffline(lido, item) {
+        var _a;
+        var alvo = normalizarCodigo(lido);
+        if (!alvo)
+            return false;
+        var esperados = codigosEsperados(item);
+        if (esperados.indexOf(alvo) >= 0)
+            return true;
+        // O mapa é criado durante o download e permanece em memória quando a rede
+        // cai. Compara também pelo nome canônico para reconhecer códigos alternativos
+        // do mesmo produto sem consultar o Firebase.
+        var nomeLido = normalizarCodigo(((_a = APP.auditoriaProdutosMap) === null || _a === void 0 ? void 0 : _a[alvo]) || '');
+        var nomeEsperado = normalizarCodigo(descricaoEsperada(item));
+        if (nomeLido && nomeEsperado && (nomeLido === nomeEsperado || nomeLido.includes(nomeEsperado) || nomeEsperado.includes(nomeLido)))
+            return true;
+        return mesmoProdutoDaBase(lido, item);
     }
     function encontrarEndereco(valor) {
         var alvo = normalizarEndereco(valor);
@@ -287,6 +308,9 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                     return [2 /*return*/, false];
                 if (APP.locaisAtivos && APP.locaisAtivos.has(alvo))
                     return [2 /*return*/, true];
+                // A Base Geral já foi baixada antes de entrar na auditoria. Não consultar
+                // Firebase durante o bip: isso mantém a etapa instantânea mesmo quando o
+                // Android ainda reporta conexão após a queda do sinal.
                 return [2 /*return*/, false];
             });
         });
@@ -507,7 +531,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     }
     function sincronizarFilaAuditoria() {
         return __awaiter(this, void 0, void 0, function () {
-            var fila, i, x, e_3;
+            var fila, i, x, e_1;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -519,7 +543,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         _a.trys.push([1, , 10, 11]);
                         return [4 /*yield*/, window.DTAuditoriaStorage.filaAll()];
                     case 2:
-                        fila = (_a.sent() || []).sort(function (a, b) { return String(a.criadoEm || '').localeCompare(String(b.criadoEm || '')); });
+                        fila = _a.sent();
                         i = 0;
                         _a.label = 3;
                     case 3:
@@ -536,10 +560,10 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         _a.sent();
                         return [3 /*break*/, 8];
                     case 7:
-                        e_3 = _a.sent();
-                        console.warn('[AUDITORIA] Item permanece na fila offline:', x.docId, e_3);
+                        e_1 = _a.sent();
+                        console.warn('[AUDITORIA] Item permanece na fila offline:', x.docId, e_1);
                         agendarSyncAuditoria();
-                        return [3 /*break*/, 8];
+                        return [3 /*break*/, 9];
                     case 8:
                         i++;
                         return [3 /*break*/, 3];
@@ -572,9 +596,10 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     }).catch(function (e) { console.warn('[AUDITORIA] Falha ao migrar fila antiga:', e); });
     function salvarOcorrenciaForaAuditoria(produtoLido) {
         return __awaiter(this, void 0, void 0, function () {
-            var item, momento, lido, prod, meta, produtoCorreto, famProd, famMeta, alvo, el, docId, payload, error_1;
-            return __generator(this, function (_a) {
-                switch (_a.label) {
+            var item, momento, lido, prod, meta, produtoCorreto, famProd, famMeta, alvo, nomeOffline, nomeMeta, el, docId, payload, error_1;
+            var _a;
+            return __generator(this, function (_b) {
+                switch (_b.label) {
                     case 0:
                         if (estado.processando || !estado.item)
                             return [2 /*return*/];
@@ -592,6 +617,11 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                                 alvo = normalizarCodigo(meta.produtoCodigo || meta.gtin || meta.dun || '');
                                 produtoCorreto = !!(alvo && (normalizarCodigo(lido) === alvo || normalizarCodigo(prod.id) === alvo));
                             }
+                        }
+                        if (!produtoCorreto) {
+                            nomeOffline = normalizarCodigo(((_a = APP.auditoriaProdutosMap) === null || _a === void 0 ? void 0 : _a[normalizarCodigo(lido)]) || '');
+                            nomeMeta = normalizarCodigo(meta.produtoNome || meta.produto_nome || meta.familiaNome || '');
+                            produtoCorreto = !!(nomeOffline && nomeMeta && (nomeOffline === nomeMeta || nomeOffline.includes(nomeMeta) || nomeMeta.includes(nomeOffline)));
                         }
                         if (!produtoCorreto) {
                             mostrarResultado('O produto bipado não é o produto selecionado nesta auditoria. Bipe o produto correto.', 'erro');
@@ -625,15 +655,15 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             criadoEm: momento,
                             atualizadoEm: momento
                         };
-                        _a.label = 1;
+                        _b.label = 1;
                     case 1:
-                        _a.trys.push([1, 3, , 4]);
+                        _b.trys.push([1, 3, , 4]);
                         return [4 /*yield*/, enfileirarAuditoria(docId, payload, 'ocorrencias')];
                     case 2:
-                        _a.sent();
+                        _b.sent();
                         return [3 /*break*/, 4];
                     case 3:
-                        error_1 = _a.sent();
+                        error_1 = _b.sent();
                         console.error('[AUDITORIA] Falha ao persistir ocorrência no aparelho:', error_1);
                         mostrarResultado('Não foi possível salvar no aparelho. Não prossiga e tente novamente.', 'erro');
                         tocar('erro');
@@ -769,13 +799,15 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         }
         var prod = window.DTProdutos && window.DTProdutos.buscarSync ? window.DTProdutos.buscarSync(lido) : { encontrado: false };
         var esperados = codigosEsperados(estado.item);
-        var correto = esperados.indexOf(normalizarCodigo(lido)) >= 0 || mesmoProdutoDaBase(lido, estado.item);
+        var correto = produtoCompativelOffline(lido, estado.item);
         var meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId(); }) || {};
         if (meta.tipoAuditoria === 'produto' && meta.familiaId && prod.encontrado) {
             var famProd = normalizarCodigo(prod.familiaCodigo || prod.familiaNome);
             correto = famProd === normalizarCodigo(meta.familiaId) || famProd === normalizarCodigo(meta.familiaNome);
         }
-        if (!prod.encontrado && esperados.indexOf(normalizarCodigo(lido)) < 0)
+        // Não invalida uma correspondência já confirmada pela base baixada só porque
+        // o serviço global de produtos ficou momentaneamente indisponível offline.
+        if (!prod.encontrado && !produtoCompativelOffline(lido, estado.item))
             correto = false;
         if (estado.item.previstoVazio === true || !esperados.length)
             correto = false;

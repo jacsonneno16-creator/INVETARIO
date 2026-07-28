@@ -40,6 +40,106 @@ function contStatusBadge(status) {
     return 'b-orange';
 }
 window.contStatusBadge = window.contStatusBadge || contStatusBadge;
+// Resume o resultado final das rodadas (1ª/2ª/3ª contagem) de um endereço em
+// um único badge, em vez de o endereço aparecer uma vez por rodada na lista
+// de Contagens. Usa a mesma regra de avaliação da aba Recontagem, então os
+// dois lugares sempre concordam sobre qual rodada "bateu".
+function _resultadoRodadaEndereco(c) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
+    var st = state();
+    var invRegistro = (st.inventarios || []).find(function (i) {
+        var aliases = [i.id, i.codigo, i.nome, i.inventario_id, i.inventarioId]
+            .filter(Boolean).map(String);
+        return aliases.includes(String(c.inventario_id || c.inventarioId || ''));
+    });
+    var invIds = new Set([
+        invRegistro === null || invRegistro === void 0 ? void 0 : invRegistro.id,
+        invRegistro === null || invRegistro === void 0 ? void 0 : invRegistro.codigo,
+        invRegistro === null || invRegistro === void 0 ? void 0 : invRegistro.nome,
+        invRegistro === null || invRegistro === void 0 ? void 0 : invRegistro.inventario_id,
+        invRegistro === null || invRegistro === void 0 ? void 0 : invRegistro.inventarioId,
+        c.inventario_id, c.inventarioId
+    ].filter(Boolean).map(function (v) { return String(v); }));
+    var end = String(c.endereco || '').trim().toUpperCase();
+    var produto = String(c.codigo_produto || c.codigoProduto || c.produto || c.gtin || c.ean || c.dun || '').trim().toUpperCase();
+    var normalizaProduto = function (obj) { return String((obj === null || obj === void 0 ? void 0 : obj.produto) || (obj === null || obj === void 0 ? void 0 : obj.produto_contado) || (obj === null || obj === void 0 ? void 0 : obj.codigo_produto) || (obj === null || obj === void 0 ? void 0 : obj.codigoProduto) ||
+        (obj === null || obj === void 0 ? void 0 : obj.produto_recontagem) || (obj === null || obj === void 0 ? void 0 : obj.produto_segunda) || (obj === null || obj === void 0 ? void 0 : obj.produto_terceira) ||
+        (obj === null || obj === void 0 ? void 0 : obj.gtin) || (obj === null || obj === void 0 ? void 0 : obj.ean) || (obj === null || obj === void 0 ? void 0 : obj.dun) || '').trim().toUpperCase(); };
+    // A divergência precisa pertencer ao mesmo inventário, endereço E produto.
+    // Não usa mais fallback por "única divergência do endereço", pois isso ligava
+    // uma contagem a outro produto e podia exibir OK 3ª indevidamente.
+    var divsMesmoEndereco = (st.divergencias || []).filter(function (d) {
+        var inv = String(d.inventario_id || d.inventarioId || '');
+        return invIds.has(inv) && String(d.endereco || '').trim().toUpperCase() === end;
+    });
+    // Primeiro tenta o vínculo explícito da contagem. Depois usa produto normalizado.
+    // Como último recurso, aceita a única divergência aberta do endereço. Isso evita
+    // exibir "OK 1ª" quando o registro da contagem traz GTIN e a divergência ficou
+    // gravada com código interno do mesmo produto.
+    var idContagem = String(c.uuid || c.id || '');
+    var div = divsMesmoEndereco.find(function (d) {
+        return idContagem && String(d.contagem_uuid || d.contagem_id || d.origem_contagem_id || '') === idContagem;
+    }) || divsMesmoEndereco.find(function (d) { return produto && normalizaProduto(d) === produto; }) || (function () {
+        var abertas = divsMesmoEndereco.filter(function (d) {
+            return !['RESOLVIDA', 'PERSISTENTE', 'CANCELADA'].includes(String(d.status || '').toUpperCase());
+        });
+        return abertas.length === 1 ? abertas[0] : null;
+    })();
+    if (!div) {
+        if (c.divergente === true || String(c.status || '').toUpperCase() === 'DIVERGENTE' || divsMesmoEndereco.length > 0) {
+            return { texto: '❌ Divergente — aguardando decisão', cls: 'b-red' };
+        }
+        // Só mostra OK 1ª quando não existe qualquer divergência aberta para o endereço.
+        if (String(c.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM') {
+            return { texto: '✅ OK 1ª', cls: 'b-green' };
+        }
+        return null;
+    }
+    var statusConcluido = function (r) {
+        var status = String(r.status_recontagem || r.status || '').trim().toUpperCase();
+        var dataConclusao = r.recontagem_concluida_em || r.concluida_em ||
+            r.data_conclusao || r.finalizada_em || r.processada_em || null;
+        var statusOk = ['CONCLUIDA', 'CONCLUÍDA', 'FINALIZADA', 'PROCESSADA', 'RESOLVIDA'].includes(status);
+        var statusBloqueado = ['PENDENTE', 'ATRIBUIDA', 'ATRIBUÍDA', 'EM_ANDAMENTO', 'ABERTA', 'CANCELADA', 'EXCLUIDA'].includes(status);
+        return r.qtd_recontagem != null && !statusBloqueado && (statusOk || Boolean(dataConclusao));
+    };
+    // Só considera recontagens realmente concluídas e vinculadas à divergência exata.
+    var recs = (st.recontagens || [])
+        .filter(function (r) { return String(r.divergencia_id || '') === String(div.id || '') && statusConcluido(r); })
+        .sort(function (a, b) {
+        var na = Number(a.numero_recontagem || 0), nb = Number(b.numero_recontagem || 0);
+        if (na !== nb)
+            return na - nb;
+        return String(a.recontagem_concluida_em || a.concluida_em || a.finalizada_em || '')
+            .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.finalizada_em || ''));
+    });
+    var base = {
+        qtd_esperada: div.qtd_esperada,
+        produto: div.produto || div.produto_contado || produto,
+        qtd_primeira: (_b = (_a = div.qtd_primeira) !== null && _a !== void 0 ? _a : div.qtd_contada) !== null && _b !== void 0 ? _b : c.quantidade,
+        produto_primeira: div.produto_primeira || div.produto_contado || produto,
+        qtd_segunda: (_d = (_c = recs[0]) === null || _c === void 0 ? void 0 : _c.qtd_recontagem) !== null && _d !== void 0 ? _d : null,
+        produto_segunda: ((_e = recs[0]) === null || _e === void 0 ? void 0 : _e.produto_recontagem) || ((_f = recs[0]) === null || _f === void 0 ? void 0 : _f.produto) || produto,
+        qtd_terceira: (_h = (_g = recs[1]) === null || _g === void 0 ? void 0 : _g.qtd_recontagem) !== null && _h !== void 0 ? _h : null,
+        produto_terceira: ((_j = recs[1]) === null || _j === void 0 ? void 0 : _j.produto_recontagem) || ((_k = recs[1]) === null || _k === void 0 ? void 0 : _k.produto) || produto
+    };
+    var avaliacao = (_m = (_l = window.AnalistaDivergenciasRuntime) === null || _l === void 0 ? void 0 : _l.avaliarHistorico) === null || _m === void 0 ? void 0 : _m.call(_l, base);
+    if (!avaliacao)
+        return { texto: '❌ Divergente — aguardando decisão', cls: 'b-red' };
+    // Trava de segurança: a rodada exibida nunca pode ser maior que a quantidade
+    // de recontagens realmente concluídas (1ª + até duas recontagens).
+    var rodadaMaximaReal = 1 + Math.min(recs.length, 2);
+    var rodadaReal = Math.min(Number(avaliacao.rodada || 1), rodadaMaximaReal);
+    if (avaliacao.estado === 'RESOLVIDA') {
+        return { texto: "\u2705 OK ".concat(rodadaReal, "\u00AA"), cls: 'b-green' };
+    }
+    if (recs.length >= 2 && avaliacao.estado === 'PERSISTENTE') {
+        return { texto: '🔴 Persistente (3 rodadas)', cls: 'b-red' };
+    }
+    if (recs.length === 1)
+        return { texto: '⏳ Aguardando 3ª contagem', cls: 'b-orange' };
+    return { texto: '❌ Divergente — aguardando decisão', cls: 'b-red' };
+}
 // ───────────────────────────────────────────────────────────────────
 //  14. RENDERIZAÇÃO — CONTAGENS
 // ───────────────────────────────────────────────────────────────────
@@ -62,6 +162,33 @@ function renderContagens() {
             selInv.value = cur_1;
     }
     var dados = state().contagens || [];
+    // Cada rodada de recontagem gerava sua própria linha aqui, então um endereço
+    // recontado 2x aparecia 3x na lista (1ª + 2ª + 3ª) — confuso e redundante,
+    // já que essas rodadas já são exibidas com detalhe na aba Recontagem. Por
+    // padrão mostramos só a 1ª contagem de cada endereço, com um badge dizendo
+    // em qual rodada ele finalmente bateu. Quem quiser ver as rodadas de
+    // recontagem em si pode filtrar explicitamente por Tipo = Recontagem.
+    if (!fTipo) {
+        dados = dados.filter(function (c) { return c.tipo_contagem !== 'RECONTAGEM'; });
+        var grupos_1 = new Map();
+        var chaveContagem_1 = function (c) {
+            var id = String(c.inventario_id || c.inventarioId || '');
+            var inv = (state().inventarios || []).find(function (i) {
+                return [i.id, i.codigo, i.nome, i.inventario_id, i.inventarioId]
+                    .filter(Boolean).map(String).includes(id);
+            });
+            var produto = String(c.codigo_produto || c.codigoProduto || c.produto || c.gtin || c.ean || c.dun || '').trim().toUpperCase();
+            return "".concat(String((inv === null || inv === void 0 ? void 0 : inv.id) || id), "|").concat(String(c.endereco || '').trim().toUpperCase(), "|").concat(produto);
+        };
+        dados.forEach(function (c) {
+            var chave = chaveContagem_1(c);
+            var atual = grupos_1.get(chave);
+            var data = function (x) { return String(x.timestamp || x.criado_em || x.dataHora || ''); };
+            if (!atual || data(c).localeCompare(data(atual)) < 0)
+                grupos_1.set(chave, c);
+        });
+        dados = __spreadArray([], grupos_1.values(), true);
+    }
     if (fInv)
         dados = dados.filter(function (c) { return String(c.inventario_id || c.inventarioId || '') === String(fInv); });
     if (fTipo)
@@ -118,7 +245,7 @@ function renderContagens() {
         el.textContent = v; };
     _setCK('ck-total', _allConts.length);
     _setCK('ck-processadas', _allConts.filter(function (c) { return c.status === 'PROCESSADO'; }).length);
-    _setCK('ck-divergentes', _allConts.filter(function (c) { return c.status === 'DIVERGENTE'; }).length);
+    _setCK('ck-divergentes', _allConts.filter(function (c) { return c.divergente === true; }).length);
     _setCK('ck-pendentes', _allConts.filter(function (c) { return !c.status || c.status === 'PENDENTE'; }).length);
     _setCK('ck-recontagens', _allConts.filter(function (c) { return c.tipo_contagem === 'RECONTAGEM'; }).length);
     // Atualizar selects dinâmicos (rua e operador)
@@ -150,7 +277,12 @@ function renderContagens() {
             ? "".concat(c.qtd_caixas, " CX")
             : ((_a = c.quantidade) !== null && _a !== void 0 ? _a : '—'), "</td>\n            <td><span class=\"badge ").concat(c.tipo_contagem === 'RECONTAGEM' ? 'b-purple' : 'b-blue', "\">").concat(c.tipo_contagem || 'PRIMEIRA', "</span></td>\n            <td>\n              ").concat(excluida
             ? "<span class=\"badge b-gray\">\uD83D\uDDD1 Exclu\u00EDda</span>"
-            : "<span class=\"badge ".concat(contStatusBadge(c.status), "\">").concat(c.status || 'PENDENTE', "</span>"), "\n            </td>\n            <td>\n              ").concat(excluida
+            : (function () {
+                var rodada = _resultadoRodadaEndereco(c);
+                return rodada
+                    ? "<span class=\"badge ".concat(rodada.cls, "\" title=\"Resultado final considerando as rodadas de recontagem\">").concat(rodada.texto, "</span>")
+                    : "<span class=\"badge ".concat(contStatusBadge(c.status), "\">").concat(c.status || 'PENDENTE', "</span>");
+            })(), "\n            </td>\n            <td>\n              ").concat(excluida
             ? "<button class=\"btn btn-ghost btn-sm\" onclick=\"restaurarContagem('".concat(c.id, "')\" title=\"Restaurar contagem\">\u21A9 Restaurar</button>")
             : "<div style=\"display:flex;gap:4px\">\n                     <button class=\"btn btn-danger btn-sm\" onclick=\"abrirEstorno('".concat(c.id, "')\" title=\"Estornar \u2014 libera endere\u00E7o com registro\">\u21A9 Estornar</button>\n                   </div>"), "\n            </td>\n          </tr>");
     }).join(''), "\n      </tbody>\n    </table></div>");
@@ -291,14 +423,14 @@ function renderPendencias() {
             document.getElementById('pend-rec-wrap').innerHTML = "\n        <div class=\"tbl-wrap\"><table>\n          <thead><tr><th>Endere\u00E7o</th><th>Produto</th><th>Qtd Sistema</th><th>1\u00AA Contagem</th><th>Diferen\u00E7a</th><th>A\u00E7\u00E3o</th></tr></thead>\n          <tbody>\n            ".concat(recPend.slice(0, 10).map(function (r) {
                 var diff = r.qtd_primeira - r.qtd_esperada;
                 return "<tr>\n                <td class=\"mono\">".concat(r.endereco, "</td>\n                <td style=\"font-size:.82rem\">").concat(r.produto, "</td>\n                <td class=\"mono\">").concat(r.qtd_esperada, "</td>\n                <td class=\"mono\" style=\"color:var(--danger);font-weight:700\">").concat(r.qtd_primeira, "</td>\n                <td class=\"mono\" style=\"font-weight:800;color:").concat(diff > 0 ? 'var(--warn)' : 'var(--danger)', "\">\n                  ").concat(diff > 0 ? '+' : '').concat(diff, "\n                </td>\n                <td><button class=\"btn btn-primary btn-sm\" onclick=\"abrirRegistrarRecontagem('").concat(r.id, "')\">\uD83D\uDCDD Registrar</button></td>\n              </tr>");
-            }).join(''), "\n          </tbody>\n        </table></div>\n        ").concat(recPend.length > 10 ? "<div style=\"padding:8px 16px;font-size:.75rem;color:var(--muted)\">... e mais ".concat(recPend.length - 10, ". Veja a aba Rodadas.</div>") : '');
+            }).join(''), "\n          </tbody>\n        </table></div>\n        ").concat(recPend.length > 10 ? "<div style=\"padding:8px 16px;font-size:.75rem;color:var(--muted)\">... e mais ".concat(recPend.length - 10, ". Veja a aba Recontagem.</div>") : '');
         }
         else {
             recSec.style.display = 'none';
         }
     }
     // ── SEÇÃO: Divergências abertas ──────────────────────────────────
-    var divAbertas = (state().divergencias || []).filter(function (d) { return String(d.inventario_id || d.inventarioId || '') === String(invId) && ['ABERTA', 'DIVERGENTE', 'PENDENTE', 'PERSISTENTE'].includes(String(d.status || '').toUpperCase()); });
+    var divAbertas = (state().divergencias || []).filter(function (d) { return String(d.inventario_id || d.inventarioId || '') === String(invId) && ['ABERTA', 'DIVERGENTE', 'PENDENTE', 'PERSISTENTE', 'EM_RECONTAGEM'].includes(String(d.status || '').toUpperCase()); });
     var divSec = document.getElementById('pend-div-section');
     var pkDivAbertas = document.getElementById('pk-div-abertas');
     if (pkDivAbertas)
@@ -309,8 +441,8 @@ function renderPendencias() {
             document.getElementById('pend-div-count').textContent = "".concat(divAbertas.length, " diverg\u00EAncia(s) aberta(s)");
             document.getElementById('pend-div-wrap').innerHTML = "\n        <div class=\"tbl-wrap\"><table>\n          <thead><tr><th>Endere\u00E7o</th><th>Produto</th><th>Qtd Sistema</th><th>Qtd Contada</th><th>Diferen\u00E7a</th><th>Status</th></tr></thead>\n          <tbody>\n            ".concat(divAbertas.slice(0, 10).map(function (d) {
                 var difColor = d.diferenca > 0 ? 'var(--warn)' : 'var(--danger)';
-                return "<tr>\n                <td class=\"mono\">".concat(escHTML(d.endereco), "</td>\n                <td style=\"font-size:.82rem\">").concat(escHTML(d.produto), "</td>\n                <td class=\"mono\">").concat(d.qtd_esperada, "</td>\n                <td class=\"mono\" style=\"font-weight:700;color:").concat(d.qtd_contada < d.qtd_esperada ? 'var(--danger)' : 'var(--warn)', "\">").concat(d.qtd_contada, "</td>\n                <td class=\"mono\" style=\"font-weight:800;color:").concat(difColor, "\">").concat(d.diferenca > 0 ? '+' : '').concat(d.diferenca, "</td>\n                <td><span class=\"badge b-red\">Aberta</span></td>\n              </tr>");
-            }).join(''), "\n          </tbody>\n        </table></div>\n        ").concat(divAbertas.length > 10 ? "<div style=\"padding:8px 16px;font-size:.75rem;color:var(--muted)\">... e mais ".concat(divAbertas.length - 10, ". Veja a aba Em Conflito.</div>") : '');
+                return "<tr>\n                <td class=\"mono\">".concat(escHTML(d.endereco), "</td>\n                <td style=\"font-size:.82rem\">").concat(escHTML(d.produto), "</td>\n                <td class=\"mono\">").concat(d.qtd_esperada, "</td>\n                <td class=\"mono\" style=\"font-weight:700;color:").concat(d.qtd_contada < d.qtd_esperada ? 'var(--danger)' : 'var(--warn)', "\">").concat(d.qtd_contada, "</td>\n                <td class=\"mono\" style=\"font-weight:800;color:").concat(difColor, "\">").concat(d.diferenca > 0 ? '+' : '').concat(d.diferenca, "</td>\n                <td><span class=\"badge ").concat(d.status === 'EM_RECONTAGEM' ? 'b-orange' : 'b-red', "\">").concat(d.status === 'EM_RECONTAGEM' ? 'Em Recontagem' : 'Aberta', "</span></td>\n              </tr>");
+            }).join(''), "\n          </tbody>\n        </table></div>\n        ").concat(divAbertas.length > 10 ? "<div style=\"padding:8px 16px;font-size:.75rem;color:var(--muted)\">... e mais ".concat(divAbertas.length - 10, ". Veja a aba Recontagem.</div>") : '');
         }
         else {
             divSec.style.display = 'none';

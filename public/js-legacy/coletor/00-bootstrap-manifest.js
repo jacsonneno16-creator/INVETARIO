@@ -241,10 +241,10 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     };
     window.confirmarAuditoriaItem = function (id) {
         return __awaiter(this, void 0, void 0, function () {
-            var item, origem, confirmados, semAjuste, payload, e_1;
-            var _a, _b, _c, _d;
-            return __generator(this, function (_e) {
-                switch (_e.label) {
+            var item, origem, confirmados, semAjuste, agora, auditoriaId, payload, e_1;
+            var _a, _b, _c, _d, _e;
+            return __generator(this, function (_f) {
+                switch (_f.label) {
                     case 0:
                         item = (APP.auditorias || []).find(function (a) { return a.id === id; });
                         if (!item)
@@ -261,30 +261,50 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                             });
                         });
                         semAjuste = _audSignature(confirmados) === _audSignature(origem);
+                        agora = new Date().toISOString();
+                        auditoriaId = ((_a = APP.inventario) === null || _a === void 0 ? void 0 : _a.auditoria_id) || ((_b = APP.inventario) === null || _b === void 0 ? void 0 : _b.id);
                         payload = {
                             itens_confirmados: confirmados,
-                            confirmado_por: ((_a = APP.operador) === null || _a === void 0 ? void 0 : _a.name) || '',
-                            confirmado_por_email: ((_b = APP.operador) === null || _b === void 0 ? void 0 : _b.email) || '',
-                            confirmado_em: new Date().toISOString(),
+                            confirmado_por: ((_c = APP.operador) === null || _c === void 0 ? void 0 : _c.name) || '',
+                            confirmado_por_email: ((_d = APP.operador) === null || _d === void 0 ? void 0 : _d.email) || '',
+                            confirmado_em: agora,
                             com_ajuste: !semAjuste,
                             status: semAjuste ? 'CONFIRMADO_SEM_AJUSTE' : 'CONFIRMADO_COM_AJUSTE',
                             disponivel_coletor: false,
                             liberada_coletor: true,
-                            atualizado_em: new Date().toISOString(),
+                            atualizado_em: agora,
                         };
-                        _e.label = 1;
+                        _f.label = 1;
                     case 1:
-                        _e.trys.push([1, 3, , 4]);
-                        return [4 /*yield*/, FS.collection(FCOL.auditorias).doc(((_c = APP.inventario) === null || _c === void 0 ? void 0 : _c.auditoria_id) || ((_d = APP.inventario) === null || _d === void 0 ? void 0 : _d.id)).collection('enderecos').doc(id).set(payload, { merge: true })];
+                        _f.trys.push([1, 3, , 4]);
+                        if (!auditoriaId)
+                            throw new Error('Auditoria do inventário não identificada.');
+                        if (!((_e = window.DTAuditoriaStorage) === null || _e === void 0 ? void 0 : _e.filaPut))
+                            throw new Error('Armazenamento offline da auditoria indisponível.');
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaPut({
+                                chave: [String(auditoriaId), 'enderecos', String(id)].join('::'),
+                                docId: String(id),
+                                auditoriaId: String(auditoriaId),
+                                subcolecao: 'enderecos',
+                                payload: payload,
+                                criadoEm: agora
+                            })];
                     case 2:
-                        _e.sent();
+                        _f.sent();
                         APP.auditorias = (APP.auditorias || []).filter(function (a) { return a.id !== id; });
                         renderAuditoriaColetor();
-                        toast(semAjuste ? '✅ Confirmado sem ajuste' : '✅ Confirmado com ajuste', 's');
+                        toast(semAjuste
+                            ? (navigator.onLine ? '✅ Confirmado sem ajuste' : '📥 Confirmado sem ajuste — aguardando sincronização')
+                            : (navigator.onLine ? '✅ Confirmado com ajuste' : '📥 Confirmado com ajuste — aguardando sincronização'), 's');
+                        if (navigator.onLine && typeof window.sincronizarFilaAuditoria === 'function') {
+                            window.sincronizarFilaAuditoria().catch(function (e) {
+                                console.warn('[AUDITORIA] Confirmação salva localmente; sincronização pendente:', e);
+                            });
+                        }
                         return [3 /*break*/, 4];
                     case 3:
-                        e_1 = _e.sent();
-                        toast('Erro ao confirmar auditoria: ' + e_1.message, 'e');
+                        e_1 = _f.sent();
+                        toast('Erro ao salvar confirmação da auditoria no dispositivo: ' + e_1.message, 'e');
                         return [3 /*break*/, 4];
                     case 4: return [2 /*return*/];
                 }

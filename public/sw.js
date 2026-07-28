@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v166-recontagem-consistente';
+var CACHE='dt-inventario-v170-auditoria-sync-background';
 var PRECACHE=[
   '/',
   '/index.html',

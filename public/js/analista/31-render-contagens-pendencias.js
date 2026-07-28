@@ -48,18 +48,30 @@ function _resultadoRodadaEndereco(c){
   // A divergência precisa pertencer ao mesmo inventário, endereço E produto.
   // Não usa mais fallback por "única divergência do endereço", pois isso ligava
   // uma contagem a outro produto e podia exibir OK 3ª indevidamente.
-  const div = (st.divergencias || []).find(d => {
+  const divsMesmoEndereco = (st.divergencias || []).filter(d => {
     const inv = String(d.inventario_id || d.inventarioId || '');
-    return invIds.has(inv) &&
-      String(d.endereco || '').trim().toUpperCase() === end &&
-      produto && normalizaProduto(d) === produto;
-  }) || null;
+    return invIds.has(inv) && String(d.endereco || '').trim().toUpperCase() === end;
+  });
+
+  // Primeiro tenta o vínculo explícito da contagem. Depois usa produto normalizado.
+  // Como último recurso, aceita a única divergência aberta do endereço. Isso evita
+  // exibir "OK 1ª" quando o registro da contagem traz GTIN e a divergência ficou
+  // gravada com código interno do mesmo produto.
+  const idContagem = String(c.uuid || c.id || '');
+  const div = divsMesmoEndereco.find(d =>
+    idContagem && String(d.contagem_uuid || d.contagem_id || d.origem_contagem_id || '') === idContagem
+  ) || divsMesmoEndereco.find(d => produto && normalizaProduto(d) === produto) || (() => {
+    const abertas = divsMesmoEndereco.filter(d =>
+      !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(String(d.status || '').toUpperCase())
+    );
+    return abertas.length === 1 ? abertas[0] : null;
+  })();
 
   if (!div) {
-    if (c.divergente === true || String(c.status || '').toUpperCase() === 'DIVERGENTE') {
+    if (c.divergente === true || String(c.status || '').toUpperCase() === 'DIVERGENTE' || divsMesmoEndereco.length > 0) {
       return { texto:'❌ Divergente — aguardando decisão', cls:'b-red' };
     }
-    // Primeira contagem sem divergência confirmada nunca pode aparecer como 2ª/3ª.
+    // Só mostra OK 1ª quando não existe qualquer divergência aberta para o endereço.
     if (String(c.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM') {
       return { texto:'✅ OK 1ª', cls:'b-green' };
     }

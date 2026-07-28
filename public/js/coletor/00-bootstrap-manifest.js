@@ -221,24 +221,54 @@ window.iniciarListenerAuditoria = function(invId){
       quantidade_dun: document.getElementById(`aud-qtd-${id}-${j}`)?.value?.trim() || '',
     }));
     const semAjuste = _audSignature(confirmados) === _audSignature(origem);
+    const agora = new Date().toISOString();
+    const auditoriaId = APP.inventario?.auditoria_id || APP.inventario?.id;
     const payload = {
       itens_confirmados: confirmados,
       confirmado_por: APP.operador?.name || '',
       confirmado_por_email: APP.operador?.email || '',
-      confirmado_em: new Date().toISOString(),
+      confirmado_em: agora,
       com_ajuste: !semAjuste,
       status: semAjuste ? 'CONFIRMADO_SEM_AJUSTE' : 'CONFIRMADO_COM_AJUSTE',
       disponivel_coletor: false,
       liberada_coletor: true,
-      atualizado_em: new Date().toISOString(),
+      atualizado_em: agora,
     };
+
     try {
-      await FS.collection(FCOL.auditorias).doc(APP.inventario?.auditoria_id || APP.inventario?.id).collection('enderecos').doc(id).set(payload, { merge: true });
+      if (!auditoriaId) throw new Error('Auditoria do inventário não identificada.');
+      if (!window.DTAuditoriaStorage?.filaPut) throw new Error('Armazenamento offline da auditoria indisponível.');
+
+      // Offline-first: confirma no IndexedDB antes de qualquer tentativa no Firebase.
+      // A chave canônica faz novas confirmações do mesmo endereço substituírem a
+      // versão anterior na fila, sem criar duplicidade.
+      await window.DTAuditoriaStorage.filaPut({
+        chave: [String(auditoriaId), 'enderecos', String(id)].join('::'),
+        docId: String(id),
+        auditoriaId: String(auditoriaId),
+        subcolecao: 'enderecos',
+        payload,
+        criadoEm: agora
+      });
+
       APP.auditorias = (APP.auditorias || []).filter(a => a.id !== id);
       renderAuditoriaColetor();
-      toast(semAjuste ? '✅ Confirmado sem ajuste' : '✅ Confirmado com ajuste', 's');
+      toast(
+        semAjuste
+          ? (navigator.onLine ? '✅ Confirmado sem ajuste' : '📥 Confirmado sem ajuste — aguardando sincronização')
+          : (navigator.onLine ? '✅ Confirmado com ajuste' : '📥 Confirmado com ajuste — aguardando sincronização'),
+        's'
+      );
+
+      // Não bloqueia a interface. Em caso de falha, o registro permanece na fila
+      // e será reenviado pelos retries e pelo evento online já existentes.
+      if (navigator.onLine && typeof window.sincronizarFilaAuditoria === 'function') {
+        window.sincronizarFilaAuditoria().catch(function(e){
+          console.warn('[AUDITORIA] Confirmação salva localmente; sincronização pendente:', e);
+        });
+      }
     } catch(e) {
-      toast('Erro ao confirmar auditoria: ' + e.message, 'e');
+      toast('Erro ao salvar confirmação da auditoria no dispositivo: ' + e.message, 'e');
     }
   };
 

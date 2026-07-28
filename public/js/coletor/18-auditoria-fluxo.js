@@ -103,6 +103,22 @@
     return encontrado ? descricaoEsperada(encontrado) : 'Produto não identificado';
   }
 
+  function produtoCompativelOffline(lido,item){
+    const alvo=normalizarCodigo(lido);
+    if(!alvo)return false;
+    const esperados=codigosEsperados(item);
+    if(esperados.indexOf(alvo)>=0)return true;
+
+    // O mapa é criado durante o download e permanece em memória quando a rede
+    // cai. Compara também pelo nome canônico para reconhecer códigos alternativos
+    // do mesmo produto sem consultar o Firebase.
+    const nomeLido=normalizarCodigo(APP.auditoriaProdutosMap?.[alvo]||'');
+    const nomeEsperado=normalizarCodigo(descricaoEsperada(item));
+    if(nomeLido&&nomeEsperado&&(nomeLido===nomeEsperado||nomeLido.includes(nomeEsperado)||nomeEsperado.includes(nomeLido)))return true;
+
+    return mesmoProdutoDaBase(lido,item);
+  }
+
   function encontrarEndereco(valor){
     const alvo = normalizarEndereco(valor);
     if (!alvo) return null;
@@ -402,6 +418,11 @@
       }
     }
     if (!produtoCorreto) {
+      const nomeOffline=normalizarCodigo(APP.auditoriaProdutosMap?.[normalizarCodigo(lido)]||'');
+      const nomeMeta=normalizarCodigo(meta.produtoNome||meta.produto_nome||meta.familiaNome||'');
+      produtoCorreto=!!(nomeOffline&&nomeMeta&&(nomeOffline===nomeMeta||nomeOffline.includes(nomeMeta)||nomeMeta.includes(nomeOffline)));
+    }
+    if (!produtoCorreto) {
       mostrarResultado('O produto bipado não é o produto selecionado nesta auditoria. Bipe o produto correto.', 'erro');
       tocar('erro');
       const el = elementos(); if (el.produto) { el.produto.select(); el.produto.focus(); }
@@ -536,10 +557,12 @@
     }
     const prod=window.DTProdutos&&window.DTProdutos.buscarSync?window.DTProdutos.buscarSync(lido):{encontrado:false};
     const esperados=codigosEsperados(estado.item);
-    let correto=esperados.indexOf(normalizarCodigo(lido))>=0||mesmoProdutoDaBase(lido,estado.item);
+    let correto=produtoCompativelOffline(lido,estado.item);
     const meta=(APP.auditoriasMenu||[]).find(function(x){return x.id===auditoriaId();})||{};
     if(meta.tipoAuditoria==='produto'&&meta.familiaId&&prod.encontrado){const famProd=normalizarCodigo(prod.familiaCodigo||prod.familiaNome);correto=famProd===normalizarCodigo(meta.familiaId)||famProd===normalizarCodigo(meta.familiaNome);}
-    if(!prod.encontrado&&esperados.indexOf(normalizarCodigo(lido))<0)correto=false;
+    // Não invalida uma correspondência já confirmada pela base baixada só porque
+    // o serviço global de produtos ficou momentaneamente indisponível offline.
+    if(!prod.encontrado&&!produtoCompativelOffline(lido,estado.item))correto=false;
     if(estado.item.previstoVazio===true||!esperados.length)correto=false;
     if (estado.foraAuditoria || estado.item.foraAuditoria === true) {
       salvarOcorrenciaForaAuditoria(lido);
