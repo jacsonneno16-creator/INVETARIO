@@ -1653,16 +1653,17 @@
 
     const historicoAtual = _historicoConsolidadoEndereco(d);
     const avaliacaoAtual = _avaliarHistoricoContagens(historicoAtual);
-    if (avaliacaoAtual.estado === 'RESOLVIDA' || avaliacaoAtual.estado === 'PERSISTENTE' ||
-        historicoAtual._recontagens.length >= (MAX_CONTAGENS - 1)){
-      showToast(`🔒 ${d.endereco} já possui as três contagens e está finalizado. Não é possível atribuir novamente.`, 'e');
-      return null;
-    }
-    // A avaliação real prevalece sobre flags antigas. Um registro marcado
-    // incorretamente como encerrado, mas sem consenso após a 2ª contagem,
-    // precisa aceitar a atribuição da 3ª rodada.
-    if (DivSvc.isFluxoEncerrado(d) && avaliacaoAtual.estado !== 'AGUARDANDO_ANALISTA'){
-      showToast(`🔒 ${d.endereco} já está encerrado. Não é possível atribuir.`, 'e');
+    const statusAtual = String(d.status || '').toUpperCase();
+    const statusRecAtual = String(d.status_recontagem || '').toLowerCase();
+    const explicitamenteFinal =
+      ['RESOLVIDA','PERSISTENTE','CANCELADA','EXCLUIDA'].includes(statusAtual) ||
+      ['resolvida','sem_divergencia','persistente','cancelada','excluida'].includes(statusRecAtual) ||
+      d.qtd_terceira != null;
+
+    // Nao bloquear uma linha que a propria tela apresenta como ABERTA ou
+    // AGUARDANDO ANALISTA apenas por causa de historico antigo/duplicado.
+    if (explicitamenteFinal){
+      showToast(`🔒 ${d.endereco} já está finalizado. Não é possível atribuir novamente.`, 'e');
       return null;
     }
 
@@ -1705,7 +1706,7 @@
     const recConcluida = state().recontagens.find(r =>
       mesmaChaveOperacional(r) && r.status === 'CONCLUIDA' && !DivSvc.isFluxoEncerrado(r)
     );
-    if (recConcluida && d.status_recontagem !== 'aguardando_analista'){
+    if (recConcluida && String(d.status_recontagem || '').toLowerCase() !== 'aguardando_analista'){
       showToast(`🔒 ${d.endereco} já possui recontagem concluída. O analista deve decidir manualmente o próximo passo.`, 'e');
       return null;
     }

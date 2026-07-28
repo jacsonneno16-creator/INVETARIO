@@ -45,34 +45,55 @@ let _recDadosFiltradosExport = [];
 // antigas de encerramento mesmo quando o histórico atual ainda era divergente.
 let _divSelecionaveisRender = new Map();
 
+function _obterDivSelecionada(id) {
+  return _divSelecionaveisRender.get(String(id)) ||
+    state().divergencias.find(d => String(d.id) === String(id)) || null;
+}
+
 function divPodeSelecionar(div) {
   if (!div) return false;
-  const status = String(div.status || '').toUpperCase();
-  const statusRec = String(div.status_recontagem || '').toLowerCase();
-  if (['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(status)) return false;
-  if (['resolvida','sem_divergencia','cancelada','persistente'].includes(statusRec)) return false;
 
-  const recsValidas = (state().recontagens || []).filter(r =>
-    String(r.divergencia_id || '') === String(div.id || '') &&
-    !['CANCELADA','EXCLUIDA'].includes(String(r.status || '').toUpperCase()) &&
-    !['cancelada','excluida'].includes(String(r.status_recontagem || '').toLowerCase())
+  const status = String(div.status || '').trim().toUpperCase();
+  const statusRec = String(div.status_recontagem || '').trim().toLowerCase();
+
+  // Bloqueia somente estados realmente finais. Flags antigas isoladas nao podem
+  // impedir uma divergencia que a propria tabela ainda apresenta como aberta.
+  if (['RESOLVIDA','PERSISTENTE','CANCELADA','EXCLUIDA'].includes(status)) return false;
+  if (['resolvida','sem_divergencia','cancelada','persistente','excluida'].includes(statusRec)) return false;
+  if (div.divergencia_resolvida === true && status !== 'ABERTA' && status !== 'EM_RECONTAGEM') return false;
+  if (div.qtd_terceira != null) return false;
+
+  const recsValidas = (state().recontagens || []).filter(r => {
+    const mesmoId = String(r.divergencia_id || '') === String(div.id || '');
+    const mesmoEndereco = String(r.inventario_id || '') === String(div.inventario_id || '') &&
+      String(r.endereco || '').trim().toUpperCase() === String(div.endereco || '').trim().toUpperCase();
+    if (!mesmoId && !mesmoEndereco) return false;
+    const st = String(r.status || '').toUpperCase();
+    const sr = String(r.status_recontagem || '').toLowerCase();
+    return !['CANCELADA','EXCLUIDA'].includes(st) && !['cancelada','excluida'].includes(sr);
+  });
+
+  // Se ja existe uma rodada pendente atribuida, nao cria outra em duplicidade.
+  const pendenteAtribuida = recsValidas.some(r =>
+    String(r.status || '').toUpperCase() === 'PENDENTE' &&
+    Boolean(r.operador || r.operador_responsavel)
   );
+  if (pendenteAtribuida) return false;
+
   const concluidas = recsValidas.filter(r => {
     const st = String(r.status || '').toUpperCase();
     const sr = String(r.status_recontagem || '').toLowerCase();
-    return st === 'CONCLUIDA' || sr === 'concluida' || Boolean(r.recontagem_concluida_em || r.concluida_em || r.finalizada_em);
-  });
-  if (concluidas.length >= 2 || div.qtd_terceira != null) return false;
+    return st === 'CONCLUIDA' || sr === 'concluida' ||
+      Boolean(r.recontagem_concluida_em || r.concluida_em || r.finalizada_em);
+  }).length;
+  if (concluidas >= 2) return false;
 
-  const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarEndereco?.(div);
-  if (avaliacao?.estado === 'RESOLVIDA' || avaliacao?.estado === 'PERSISTENTE') return false;
+  // Regra operacional da tela: divergencia aberta, em recontagem ou aguardando
+  // analista e sem operador deve poder ser selecionada e atribuida.
+  if (['ABERTA','EM_RECONTAGEM','DIVERGENTE'].includes(status)) return true;
+  if (['','pendente','aguardando_analista','aguardando_recontagem'].includes(statusRec)) return true;
 
-  // Divergência aberta ou aguardando analista deve continuar selecionável,
-  // mesmo quando registros antigos deixaram flags inconsistentes de encerramento.
-  if (['ABERTA','EM_RECONTAGEM','DIVERGENTE'].includes(status) ||
-      ['','pendente','aguardando_analista','concluida'].includes(statusRec)) return true;
-
-  return !(typeof _isFluxoEncerrado === 'function' && _isFluxoEncerrado(div));
+  return false;
 }
 
 function divStatusBadge(status) {
@@ -99,8 +120,7 @@ function divAtualizarBarraSel() {
 }
 
 function divToggleSel(id, checked) {
-  const div = _divSelecionaveisRender.get(String(id)) ||
-    state().divergencias.find(d => String(d.id) === String(id));
+  const div = _obterDivSelecionada(id);
   if (checked && divPodeSelecionar(div)) _divSelecionadas.add(id);
   else _divSelecionadas.delete(id);
   divAtualizarBarraSel();
@@ -279,7 +299,7 @@ async function divPopularSelectOperadores(selectId) {
 // ── Abrir modal de atribuição ────────────────────────────────────────────────
 async function abrirAtribuirRecontagem() {
   _divSelecionadas = new Set([..._divSelecionadas].filter(id =>
-    divPodeSelecionar(state().divergencias.find(d => d.id === id))
+    divPodeSelecionar(_obterDivSelecionada(id))
   ));
   divAtualizarBarraSel();
   if (!_divSelecionadas.size) { showToast('Selecione pelo menos um endereço', 'w'); return; }
@@ -288,7 +308,7 @@ async function abrirAtribuirRecontagem() {
   const resumo = document.getElementById('atrib-resumo');
   if (resumo) {
     const lista = [..._divSelecionadas].map(id => {
-      const d = state().divergencias.find(x => x.id === id);
+      const d = _obterDivSelecionada(id);
       return d ? `<span class="badge b-orange" style="font-size:.72rem">${escHTML(d.endereco)}</span>` : '';
     }).join(' ');
     resumo.innerHTML = `<div style="font-weight:700;margin-bottom:8px;color:var(--text)">📍 ${_divSelecionadas.size} endereço${_divSelecionadas.size!==1?'s':''} selecionado${_divSelecionadas.size!==1?'s':''}:</div><div style="display:flex;flex-wrap:wrap;gap:4px">${lista}</div>`;
@@ -314,8 +334,22 @@ function confirmarAtribuicao() {
   const atribPor = _currentAnalistaUser?.displayName || _currentAnalistaUser?.email || 'Analista';
   let count = 0;
 
+  // Caso a linha de recontagem nao tenha divergencia vinculada, atualiza a
+  // propria tarefa em vez de fechar o modal informando 0 atribuicoes.
+  if (_recAtribuirDireto) {
+    const recAtualizada = Object.assign({}, _recAtribuirDireto, {
+      operador, operador_responsavel: operador, atribuido_por: atribPor,
+      atribuido_em: agora, status: 'PENDENTE', status_recontagem: 'pendente',
+      observacao_atribuicao: obs || ''
+    });
+    fsSalvarRecontagem(recAtualizada).catch(() => {});
+    Store.dispatch(Actions.upsertEntity('recontagens', recAtualizada, { source: 'atribuirRecontagemDireto' }));
+    _recAtribuirDireto = null;
+    count = 1;
+  }
+
   _divSelecionadas.forEach(id => {
-    const d = state().divergencias.find(x => x.id === id);
+    const d = _obterDivSelecionada(id);
     if (!divPodeSelecionar(d)) return;
 
     // ── Delegar toda a lógica de validação + criação para atribuirRecontagemSegura ──
