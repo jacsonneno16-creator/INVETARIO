@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v163-status-rodada-estrito';
+var CACHE='dt-inventario-v166-recontagem-consistente';
 var PRECACHE=[
   '/',
   '/index.html',

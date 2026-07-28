@@ -166,7 +166,7 @@
   }
 
   function _paresIguais(a,b){
-    return !!a && !!b && a.qtd === b.qtd && a.produto === b.produto;
+    return Boolean(a && b && a.produto && b.produto && a.qtd === b.qtd && a.produto === b.produto);
   }
 
   // Regra operacional única para processamento novo e recuperação de registros
@@ -208,37 +208,53 @@
     return { estado:'AGUARDANDO_ANALISTA', referencia:null, rodada:segunda ? 2 : 1, resultado:segunda || primeira };
   }
 
+  function _produtoOperacional(obj){
+    return _nd(
+      obj?.produto_recontagem || obj?.produto_terceira || obj?.produto_segunda ||
+      obj?.produto_primeira || obj?.produto || obj?.produto_contado ||
+      obj?.codigo_produto || obj?.codigo_interno || obj?.gtin_bipado ||
+      obj?.gtin || obj?.ean || obj?.dun || obj?.sku || ''
+    );
+  }
+
   function _chaveOperacional(obj){
-    return `${_nd(_idInventarioRegistro(obj))}|${_nd(obj?.endereco)}|${_nd(obj?.produto || obj?.produto_contado || obj?.codigo_produto || obj?.produto_recontagem)}`;
+    return `${_nd(_idInventarioRegistro(obj))}|${_nd(obj?.endereco)}|${_produtoOperacional(obj)}`;
+  }
+
+  function _mesmoProdutoOperacional(a,b){
+    if (_mesmoProduto(a,b)) return true;
+    const pa=_produtoOperacional(a), pb=_produtoOperacional(b);
+    return Boolean(pa && pb && pa===pb);
   }
 
   function _historicoConsolidadoEndereco(div){
-    const chave = _chaveOperacional(div);
-    const divs = state().divergencias.filter(d => _chaveOperacional(d) === chave);
+    const divs = state().divergencias.filter(d =>
+      _mesmoIdInventario(_idInventarioRegistro(d), _idInventarioRegistro(div)) &&
+      _nd(d.endereco) === _nd(div.endereco) &&
+      _mesmoProdutoOperacional(d, div)
+    );
     const recs = state().recontagens
       .filter(r => {
-        if (_chaveOperacional(r) !== chave) return false;
-        if (r.qtd_recontagem == null) return false;
+        if (!_mesmoIdInventario(_idInventarioRegistro(r), _idInventarioRegistro(div))) return false;
+        if (_nd(r.endereco) !== _nd(div.endereco)) return false;
+        if (!_mesmoProdutoOperacional(r, div)) return false;
+        if (r.qtd_recontagem == null && r.qtd_segunda == null && r.qtd_terceira == null) return false;
 
-        // Uma rodada só entra no acompanhamento quando foi realmente concluída.
-        // Registros PENDENTES podem carregar quantidade residual de tentativas
-        // anteriores e eram interpretados como 2ª/3ª contagem, gerando falso
-        // "OK 3ª" mesmo quando apenas a primeira contagem havia sido feita.
-        const status = String(r.status_recontagem || r.status || '').toUpperCase();
+        // Só incorpora rodadas efetivamente concluídas. Os dois campos de status
+        // são avaliados separadamente porque registros antigos podem estar
+        // inconsistentes entre status e status_recontagem.
+        const status = String(r.status || '').toUpperCase();
+        const stRec = String(r.status_recontagem || '').toUpperCase();
         const temConclusao = Boolean(
-          r.recontagem_concluida_em || r.concluida_em || r.data_conclusao ||
-          r.finalizada_em
+          r.recontagem_concluida_em || r.concluida_em || r.data_conclusao || r.finalizada_em
         );
-        const concluida = ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA'].includes(status);
+        const estadosConcluidos = ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA'];
+        const estadosInvalidos = ['CANCELADA','EXCLUIDA','PERSISTENTE'];
+        const concluida = estadosConcluidos.includes(status) || estadosConcluidos.includes(stRec);
+        if (estadosInvalidos.includes(status) || estadosInvalidos.includes(stRec)) return false;
         if (!temConclusao && !concluida) return false;
-        if (['PENDENTE','ATRIBUIDA','ATRIBUÍDA','EM_ANDAMENTO','CANCELADA','EXCLUIDA'].includes(status)) return false;
 
-        // Quando houver vínculo explícito, não mistura recontagens de outra
-        // divergência/produto existente no mesmo endereço.
         if (r.divergencia_id && div.id && String(r.divergencia_id) !== String(div.id)) return false;
-        const prodDiv = _nd(div.produto || div.produto_contado || div.codigo_produto);
-        const prodRec = _nd(r.produto_recontagem || r.produto_segunda || r.produto_terceira || r.produto);
-        if (!r.divergencia_id && prodDiv && prodRec && prodDiv !== prodRec) return false;
         return true;
       })
       .sort((a,b) => {
@@ -296,6 +312,8 @@
     const updated = state().contagens.map(c => {
       if (!_mesmoIdInventario(_idInventarioRegistro(c),_idInventarioRegistro(div))) return c;
       if (_nd(c.endereco)  !== _nd(div.endereco))  return c;
+      // Não altera contagens de outro produto existente no mesmo endereço.
+      if (!_mesmoProduto(c, div)) return c;
       if (c.status === novoStatus) return c;
       houve = true;
       return Object.assign({}, c, { status: novoStatus });
@@ -336,12 +354,17 @@
       fsSalvarDivergencia(updatedDiv);
       dbg('[Max] Divergência finalizada como PERSISTENTE:', updatedDiv.endereco);
 
-      // Cancelar todas as outras recontagens pendentes do mesmo endereço
+      // Cancelar apenas recontagens pendentes do mesmo inventário, endereço e produto.
       const updatedRecontagens = state().recontagens.map(r => {
         if (r.id === rec.id) return updatedRec;
-        if (r.inventario_id !== div.inventario_id) return r;
-        if (nd(r.endereco)  !== nd(div.endereco))  return r;
-        if (r.status === 'CONCLUIDA' || r.status === 'CANCELADA') return r;
+        if (!_mesmoIdInventario(_idInventarioRegistro(r), _idInventarioRegistro(div))) return r;
+        if (nd(r.endereco) !== nd(div.endereco)) return r;
+        if (!_mesmoProduto(r, div)) return r;
+        const statusR = String(r.status || '').toUpperCase();
+        const statusRecR = String(r.status_recontagem || '').toLowerCase();
+        if (statusR === 'CONCLUIDA' || statusR === 'CANCELADA' ||
+            statusRecR === 'concluida' || statusRecR === 'cancelada' ||
+            statusRecR === 'persistente') return r;
         const cancelada = Object.assign({}, r, {
           status:           'CANCELADA',
           status_recontagem:'cancelada',
@@ -1168,18 +1191,45 @@
     return novos;
   }
 
+  function _temValorContagem(v){
+    return v !== null && v !== undefined && v !== '';
+  }
+
+  function _rodadaDestinoReal(rec){
+    if (!rec) return 2;
+    if (_temValorContagem(rec.qtd_terceira)) return null;
+    if (_temValorContagem(rec.qtd_segunda)) return 3;
+    return 2;
+  }
+
+  function _numeroRecontagemReal(rec){
+    const rodada = _rodadaDestinoReal(rec);
+    return rodada == null ? null : rodada - 1;
+  }
+
+  function _idsProdutoRegistro(obj){
+    return [obj?.produto, obj?.codigo_produto, obj?.codigo, obj?.sku, obj?.gtin, obj?.gtin_bipado, obj?.produto_contado]
+      .map(_nd).filter(Boolean);
+  }
+
+  function _mesmoProdutoRegistro(a, b){
+    const aa = _idsProdutoRegistro(a);
+    const bb = _idsProdutoRegistro(b);
+    return aa.some(x => bb.includes(x));
+  }
+
   // ── Helper: criar recontagem para divergência (sem mutação, acumula em array) ──
   function _criarRecontagemParaDivergencia(div, inv, qtdCont, novasRecs){
     if (DivSvc.isFluxoEncerrado(div)){ dbg('[Rec] Criação bloqueada — fluxo encerrado:', div.endereco, div.status); return; }
     if (DivSvc.obterRecontagemAtivaPorDivergencia(div.id)){ dbg('[Rec] Bloqueado — rec ativa já existe:', div.endereco); return; }
 
     const recsAnt = state().recontagens
-      .filter(r => r.divergencia_id === div.id && r.status === 'CONCLUIDA')
-      .sort((a, b) => (a.numero_recontagem || 1) - (b.numero_recontagem || 1));
-    const ultimaRec     = recsAnt[recsAnt.length - 1] || null;
-    const numeroNovaRec = ultimaRec ? (ultimaRec.numero_recontagem || 1) + 1 : 1;
+      .filter(r => String(r.divergencia_id || '') === String(div.id || '') && String(r.status || '').toUpperCase() === 'CONCLUIDA')
+      .sort((a, b) => new Date(a.concluida_em || a.criada_em || 0) - new Date(b.concluida_em || b.criada_em || 0));
+    const ultimaRec = recsAnt[recsAnt.length - 1] || null;
+    const numeroNovaRec = ultimaRec ? _numeroRecontagemReal(ultimaRec) : 1;
 
-    if (numeroNovaRec > (MAX_CONTAGENS - 1)){ dbg('[Rec] Bloqueado — MAX_CONTAGENS atingido:', div.endereco, numeroNovaRec); return; }
+    if (numeroNovaRec == null || numeroNovaRec > (MAX_CONTAGENS - 1)){ dbg('[Rec] Bloqueado — MAX_CONTAGENS atingido:', div.endereco); return; }
 
     const qtd1  = ultimaRec?.qtd_primeira    ?? qtdCont;
     const prod1 = ultimaRec?.produto_primeira ??
@@ -1211,12 +1261,15 @@
     };
 
     // Vincular contagem original
-    const contOriginal = state().contagens.find(c =>
-      _pertenceInventario(c, inv) &&
-      _nd(c.endereco) === _nd(div.endereco) &&
-      (_nd(c.codigo_produto) === _nd(div.produto) || _nd(c.gtin) === _nd(div.produto)) &&
-      !c._excluida && c.status !== 'ESTORNADA'
-    );
+    const contOriginal = state().contagens
+      .filter(c =>
+        _pertenceInventario(c, inv) &&
+        _nd(c.endereco) === _nd(div.endereco) &&
+        _mesmoProdutoRegistro(c, div) &&
+        !c._excluida && String(c.status || '').toUpperCase() !== 'ESTORNADA' &&
+        String(c.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM'
+      )
+      .sort((a, b) => new Date(a.dataHora || a.criado_em || 0) - new Date(b.dataHora || b.criado_em || 0))[0];
     if (contOriginal){
       rec.contagem_original_uuid = contOriginal.uuid || String(contOriginal.id);
       rec.operador_primeira      = contOriginal.operador || null;
@@ -1229,15 +1282,16 @@
   }
 
   // ─────────────────────────────────────────────────────────────────────────────
-  //  corrigirOrfas — remove recontagens sem divergência vinculada
+  //  corrigirOrfas — somente diagnostica. Nunca apaga automaticamente porque
+  //  divergências e recontagens podem chegar em momentos diferentes do Firebase.
   // ─────────────────────────────────────────────────────────────────────────────
   function corrigirOrfas(){
-    const divIds = new Set(state().divergencias.map(d => d.id));
-    const orfas  = state().recontagens.filter(r => r.divergencia_id && !divIds.has(r.divergencia_id));
-    if (!orfas.length) return 0;
-    const novasRecs = state().recontagens.filter(r => !orfas.includes(r));
-    Store.dispatch(Actions.replaceSlice('recontagens', novasRecs, BIZMETA));
-    dbg('[CorrigirOrfas] removidas:', orfas.length);
+    const divergencias = state().divergencias || [];
+    const recontagens = state().recontagens || [];
+    if (!divergencias.length || !recontagens.length) return 0;
+    const divIds = new Set(divergencias.map(d => String(d.id)));
+    const orfas = recontagens.filter(r => r.divergencia_id && !divIds.has(String(r.divergencia_id)));
+    if (orfas.length) dbg('[CorrigirOrfas] detectadas (mantidas para reconciliação):', orfas.length);
     return orfas.length;
   }
 
@@ -1255,8 +1309,8 @@
       return;
     }
 
-    const _numAtual = recontagemCtx.numero_recontagem || 1;
-    if (_numAtual >= MAX_CONTAGENS && recontagemCtx.qtd_terceira != null){
+    const _rodadaDestino = _rodadaDestinoReal(recontagemCtx);
+    if (_rodadaDestino == null){
       showToast(`⛔ Limite de ${MAX_CONTAGENS} contagens atingido para este endereço. Divergência finalizada.`, 'w');
       return;
     }
@@ -1294,9 +1348,10 @@
 
     const _recProdEl = document.getElementById('rec-produto');
     if (_recProdEl){
-      _recProdEl.value = '';
-      _recProdEl.placeholder = ctx.tipo_divergencia === 'VAZIO_COM_PRODUTO_NA_BASE'
-        ? 'VAZIO' : _nd(ctx.produto) || 'Código do produto bipado';
+      const ehVazio = ctx.tipo_divergencia === 'VAZIO_COM_PRODUTO_NA_BASE';
+      _recProdEl.value = ehVazio ? _PROD_VAZIO : '';
+      _recProdEl.placeholder = ehVazio ? _PROD_VAZIO : _nd(ctx.produto) || 'Código do produto bipado';
+      _recProdEl.readOnly = ehVazio;
     }
     const _recProdInfo = document.getElementById('rec-produto-info');
     if (_recProdInfo){
@@ -1347,7 +1402,8 @@
     for (const ref of referencias){
       if (qtdAtual === ref.qtd && prodAtual === ref.produto){
         dbg('[Resolve] ✅ Bate com', ref.origem, '| qtd=', qtdAtual, 'prod=', prodAtual);
-        const rodada = Number(recCtx.numero_recontagem || 1) + 1;
+        const rodada = _rodadaDestinoReal(recCtx);
+        if (rodada == null) return { resolveu: false, referencia: null };
         const origem = ref.origem === 'SISTEMA' ? 'SISTEMA'
           : ref.origem === 'CONTAGEM_1' ? 'PRIMEIRA'
           : ref.origem === 'CONTAGEM_2' ? 'SEGUNDA'
@@ -1363,7 +1419,12 @@
   // ── aplicarResultadoRecontagem — imutável ────────────────────────────────────
 
   function aplicarResultadoRecontagem(recCtx, qtd, produto, operador, agora, decisao){
-    const numeroAtual = Number(recCtx.numero_recontagem || 1);
+    const rodadaDestino = _rodadaDestinoReal(recCtx);
+    if (rodadaDestino == null){
+      showToast(`⛔ Limite de ${MAX_CONTAGENS} contagens atingido.`, 'w');
+      return;
+    }
+    const numeroAtual = rodadaDestino - 1;
 
     // Campos comuns da rodada
     let updatedRec = Object.assign({}, recCtx, {
@@ -1371,10 +1432,10 @@
       status: 'CONCLUIDA', concluida_em: agora, status_recontagem: 'concluida',
       operador_recontagem: operador || recCtx.operador_recontagem || ''
     });
-    if (numeroAtual === 1){
-      updatedRec = Object.assign({}, updatedRec, { qtd_segunda: qtd, produto_segunda: produto, operador_segunda: operador, data_segunda: agora });
-    } else if (numeroAtual >= 2){
-      updatedRec = Object.assign({}, updatedRec, { qtd_terceira: qtd, produto_terceira: produto, operador_terceira: operador, data_terceira: agora });
+    if (rodadaDestino === 2){
+      updatedRec = Object.assign({}, updatedRec, { numero_recontagem: 1, qtd_segunda: qtd, produto_segunda: produto, operador_segunda: operador, data_segunda: agora });
+    } else if (rodadaDestino === 3){
+      updatedRec = Object.assign({}, updatedRec, { numero_recontagem: 2, qtd_terceira: qtd, produto_terceira: produto, operador_terceira: operador, data_terceira: agora });
     }
 
     const div = state().divergencias.find(d => d.id === recCtx.divergencia_id);
@@ -1388,9 +1449,9 @@
     }
 
     let updatedDiv = Object.assign({}, div, { qtd_recontagem: qtd, produto_recontagem: produto });
-    if (numeroAtual === 1){
+    if (rodadaDestino === 2){
       updatedDiv = Object.assign({}, updatedDiv, { qtd_segunda: qtd, produto_segunda: produto, operador_segunda: operador, data_segunda: agora });
-    } else if (numeroAtual >= 2){
+    } else if (rodadaDestino === 3){
       updatedDiv = Object.assign({}, updatedDiv, { qtd_terceira: qtd, produto_terceira: produto, operador_terceira: operador, data_terceira: agora });
     }
 
@@ -1424,7 +1485,7 @@
     }
 
     // ── PERSISTENTE (3ª rodada sem consenso) ──
-    if (numeroAtual >= 2){
+    if (rodadaDestino === 3){
       updatedDiv = Object.assign({}, updatedDiv, {
         status: 'PERSISTENTE', status_bloqueio: 'PERSISTENTE_BLOQUEADO', status_recontagem: 'concluida',
         divergencia_resolvida: false, encerrada_definitivamente: true,
@@ -1439,7 +1500,12 @@
         if (r.id === updatedRec.id) return updatedRec;
         if (r.inventario_id !== div.inventario_id) return r;
         if (_nd(r.endereco) !== _nd(div.endereco)) return r;
-        if (r.status === 'CONCLUIDA' || r.status === 'CANCELADA') return r;
+        if (!_mesmoProdutoRegistro(r, div)) return r;
+        const statusR = String(r.status || '').toUpperCase();
+        const statusRecR = String(r.status_recontagem || '').toLowerCase();
+        if (statusR === 'CONCLUIDA' || statusR === 'CANCELADA' ||
+            statusRecR === 'concluida' || statusRecR === 'cancelada' ||
+            statusRecR === 'persistente') return r;
         const cancelada = Object.assign({}, r, {
           status: 'CANCELADA', status_recontagem: 'cancelada',
           cancelada_em: agora, cancelada_motivo: 'PERSISTENTE_BLOQUEADO'
@@ -1454,7 +1520,7 @@
         Actions.replaceSlice('recontagens', updatedRecontagens, BIZMETA),
         Actions.setPath('ui.recontagemCtx', updatedRec, BIZMETA)
       ], BIZMETA));
-      showToast(`🔴 Divergência PERSISTENTE em ${div.endereco}. Nenhuma das ${numeroAtual + 1} contagens chegou a consenso.`, 'e');
+      showToast(`🔴 Divergência PERSISTENTE em ${div.endereco}. Nenhuma das ${rodadaDestino} contagens chegou a consenso.`, 'e');
       return;
     }
 
@@ -1492,13 +1558,13 @@
       return;
     }
 
-    const _numManual = ctx.numero_recontagem || 1;
-    if (_numManual > MAX_CONTAGENS){
-      showToast(`⛔ Limite de ${MAX_CONTAGENS} contagens atingido. Registre como PERSISTENTE.`, 'w');
+    const _rodadaManual = _rodadaDestinoReal(ctx);
+    if (_rodadaManual == null){
+      showToast(`⛔ Limite de ${MAX_CONTAGENS} contagens atingido.`, 'w');
       closeModal('modal-reg-recontagem');
-      finalizarComoPersistente(ctx);
       return;
     }
+    const _numManual = _rodadaManual - 1;
 
     const selOp  = document.getElementById('rec-operador');
     const operador = (selOp?.value || selOp?.querySelector('option:checked')?.text || '').trim();
