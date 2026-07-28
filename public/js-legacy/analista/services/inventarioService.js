@@ -1,7 +1,14 @@
 (function (global) {
     var InventarioService = {
         getInventariosAtivosIds: function (inventarios) {
-            return (inventarios || []).filter(function (i) { return i && i.status === 'ATIVO'; }).map(function (i) { return i.id; }).filter(Boolean);
+            var ativos = new Set(['ATIVO', 'ABERTO', 'PUBLICADO', 'LIBERADO', 'EM_ANDAMENTO', 'PAUSADO']);
+            var aliases = [];
+            (inventarios || []).filter(function (i) { return i && ativos.has(String(i.status || '').toUpperCase()); }).forEach(function (i) {
+                [i.id, i.codigo, i.nome, i.inventario_id, i.inventarioId]
+                    .filter(function (v) { return v != null && String(v).trim(); })
+                    .forEach(function (v) { aliases.push(String(v).trim()); });
+            });
+            return Array.from(new Set(aliases));
         },
         chunkIds: function (ids, size) {
             if (size === void 0) { size = 10; }

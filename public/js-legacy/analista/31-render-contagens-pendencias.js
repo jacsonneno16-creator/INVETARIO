@@ -19,6 +19,22 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     return to.concat(ar || Array.prototype.slice.call(from));
 };
 function state() { return window.AnalistaStore.getState(); }
+function _contagensFK() {
+    if (window.InventoryFlowKey)
+        return window.InventoryFlowKey;
+    var texto = function (v) { return String(v == null ? '' : v).trim().toUpperCase(); };
+    var endereco = function (v) { return texto(v); };
+    var produto = function (o) { return texto((o && (o.produto || o.produto_contado || o.codigo_produto || o.codigoProduto || o.produto_recontagem || o.produto_segunda || o.produto_terceira || o.gtin || o.ean || o.dun)) || ''); };
+    var inventario = function (o) { return texto((o && (o.inventario_id || o.inventarioId || o.inventario || o.inventario_nome)) || ''); };
+    var chave = function (o, inventarios) {
+        var bruto = String((o && (o.inventario_id || o.inventarioId || o.inventario || o.inventario_nome)) || '');
+        var inv = (inventarios || []).find(function (i) { return [i.id, i.codigo, i.nome, i.inventario_id, i.inventarioId].filter(Boolean).map(String).includes(bruto); });
+        return texto((inv && inv.id) || bruto) + '|' + endereco(o && o.endereco) + '|' + produto(o);
+    };
+    var mesmo = function (a, b, inventarios) { return chave(a, inventarios) === chave(b, inventarios); };
+    return { texto: texto, endereco: endereco, produto: produto, inventario: inventario, chave: chave, mesmo: mesmo };
+}
+
 function _produtoContagemExibicao(c) {
     var _a, _b;
     var codigo = (c === null || c === void 0 ? void 0 : c.codigo_produto) || (c === null || c === void 0 ? void 0 : c.codigoProduto) || (c === null || c === void 0 ? void 0 : c.gtin) || (c === null || c === void 0 ? void 0 : c.ean) || (c === null || c === void 0 ? void 0 : c.dun) || (c === null || c === void 0 ? void 0 : c.codigo_lido) || (c === null || c === void 0 ? void 0 : c.codigoLido) || '';
@@ -47,16 +63,7 @@ window.contStatusBadge = window.contStatusBadge || contStatusBadge;
 function _resultadoRodadaEndereco(c) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
     var st = state();
-    // A versão legada também precisa declarar a chave canônica. Sem esta linha,
-    // o navegador interrompe a página com: ReferenceError: FK is not defined.
-    var FK = window.InventoryFlowKey;
-    if (!FK) {
-        FK = {
-            endereco: function (v) { return String(v || '').trim().toUpperCase(); },
-            produto: function (o) { return String((o && (o.produto || o.produto_contado || o.codigo_produto || o.codigoProduto || o.produto_recontagem || o.produto_segunda || o.produto_terceira || o.gtin || o.ean || o.dun)) || '').trim().toUpperCase(); },
-            inventario: function (o) { return String((o && (o.inventario_id || o.inventarioId || o.inventario || o.inventario_nome)) || '').trim().toUpperCase(); }
-        };
-    }
+    var FK = _contagensFK();
     var invRegistro = (st.inventarios || []).find(function (i) {
         var aliases = [i.id, i.codigo, i.nome, i.inventario_id, i.inventarioId]
             .filter(Boolean).map(String);
@@ -161,6 +168,7 @@ function _resultadoRodadaEndereco(c) {
 //  14. RENDERIZAÇÃO — CONTAGENS
 // ───────────────────────────────────────────────────────────────────
 function renderContagens() {
+    var FK = _contagensFK();
     var _a, _b, _c, _d, _e, _f, _g;
     var busca = (((_a = document.getElementById('cont-busca')) === null || _a === void 0 ? void 0 : _a.value) || '').toLowerCase();
     var fInv = ((_b = document.getElementById('cont-finv')) === null || _b === void 0 ? void 0 : _b.value) || '';
@@ -207,7 +215,9 @@ function renderContagens() {
         dados = __spreadArray([], grupos_1.values(), true);
     }
     if (fInv)
-        dados = dados.filter(function (c) { return String(c.inventario_id || c.inventarioId || '') === String(fInv); });
+        var invFiltro_1 = (state().inventarios || []).find(function (i) { return String(i.id) === String(fInv); });
+        var aliasesFiltro_1 = new Set([invFiltro_1 === null || invFiltro_1 === void 0 ? void 0 : invFiltro_1.id, invFiltro_1 === null || invFiltro_1 === void 0 ? void 0 : invFiltro_1.codigo, invFiltro_1 === null || invFiltro_1 === void 0 ? void 0 : invFiltro_1.nome, invFiltro_1 === null || invFiltro_1 === void 0 ? void 0 : invFiltro_1.inventario_id, invFiltro_1 === null || invFiltro_1 === void 0 ? void 0 : invFiltro_1.inventarioId].filter(Boolean).map(function (v) { return String(v).trim(); }));
+        dados = dados.filter(function (c) { return aliasesFiltro_1.has(String(c.inventario_id || c.inventarioId || c.inventario || '').trim()); });
     if (fTipo)
         dados = dados.filter(function (c) { return c.tipo_contagem === fTipo; });
     if (fStatus) {

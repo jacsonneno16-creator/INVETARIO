@@ -1,5 +1,20 @@
 function state(){ return window.AnalistaStore.getState(); }
 
+function _contagensFK(){
+  if (window.InventoryFlowKey) return window.InventoryFlowKey;
+  const texto = v => String(v ?? '').trim().toUpperCase();
+  const endereco = v => texto(v);
+  const produto = o => texto(o?.produto || o?.produto_contado || o?.codigo_produto || o?.codigoProduto || o?.produto_recontagem || o?.produto_segunda || o?.produto_terceira || o?.gtin || o?.ean || o?.dun || '');
+  const inventario = o => texto(o?.inventario_id || o?.inventarioId || o?.inventario || o?.inventario_nome || '');
+  const chave = (o, inventarios) => {
+    const bruto = String(o?.inventario_id || o?.inventarioId || o?.inventario || o?.inventario_nome || '');
+    const inv = (inventarios || []).find(i => [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId].filter(Boolean).map(String).includes(bruto));
+    return `${texto(inv?.id || bruto)}|${endereco(o?.endereco)}|${produto(o)}`;
+  };
+  const mesmo = (a,b,inventarios) => chave(a,inventarios) === chave(b,inventarios);
+  return { texto, endereco, produto, inventario, chave, mesmo };
+}
+
 function _produtoContagemExibicao(c){
   const codigo=c?.codigo_produto||c?.codigoProduto||c?.gtin||c?.ean||c?.dun||c?.codigo_lido||c?.codigoLido||'';
   const atual=String(c?.descricao_produto||c?.descricaoProduto||c?.descricao||'').trim();
@@ -34,11 +49,7 @@ function _resultadoRodadaEndereco(c){
     invRegistro?.inventario_id, invRegistro?.inventarioId,
     c.inventario_id, c.inventarioId
   ].filter(Boolean).map(v => String(v)));
-  const FK = window.InventoryFlowKey || {
-    endereco: v => String(v || '').trim().toUpperCase(),
-    produto: o => String(o?.produto || o?.produto_contado || o?.codigo_produto || o?.codigoProduto || o?.produto_recontagem || o?.produto_segunda || o?.produto_terceira || o?.gtin || o?.ean || o?.dun || '').trim().toUpperCase(),
-    inventario: o => String(o?.inventario_id || o?.inventarioId || o?.inventario || o?.inventario_nome || '').trim().toUpperCase()
-  };
+  const FK = _contagensFK();
   const end = FK.endereco(c.endereco);
   const produto = FK.produto(c);
 
@@ -172,6 +183,7 @@ function _resultadoRodadaEndereco(c){
 // ───────────────────────────────────────────────────────────────────
 
 function renderContagens() {
+  const FK = _contagensFK();
   const busca    = (document.getElementById('cont-busca')?.value || '').toLowerCase();
   const fInv     = document.getElementById('cont-finv')?.value || '';
   const fTipo    = document.getElementById('cont-ftipo')?.value || '';
@@ -214,7 +226,12 @@ function renderContagens() {
     });
     dados=[...grupos.values()];
   }
-  if (fInv)    dados = dados.filter(c => String(c.inventario_id || c.inventarioId || '') === String(fInv));
+  if (fInv) {
+    const invFiltro=(state().inventarios||[]).find(i=>String(i.id)===String(fInv));
+    const aliasesFiltro=new Set([invFiltro?.id,invFiltro?.codigo,invFiltro?.nome,invFiltro?.inventario_id,invFiltro?.inventarioId]
+      .filter(Boolean).map(v=>String(v).trim()));
+    dados = dados.filter(c => aliasesFiltro.has(String(c.inventario_id || c.inventarioId || c.inventario || '').trim()));
+  }
   if (fTipo)   dados = dados.filter(c => c.tipo_contagem === fTipo);
   if (fStatus) {
     if (fStatus === 'DIVERGENTE') {

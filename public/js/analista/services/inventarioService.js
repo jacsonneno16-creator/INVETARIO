@@ -2,7 +2,17 @@
   const InventarioService = {
     getInventariosAtivosIds(inventarios){
       const ativos = new Set(['ATIVO','ABERTO','PUBLICADO','LIBERADO','EM_ANDAMENTO','PAUSADO']);
-      return (inventarios || []).filter(i => i && ativos.has(String(i.status || '').toUpperCase())).map(i => i.id).filter(Boolean);
+      // Os registros operacionais antigos podem guardar o inventário pelo ID
+      // técnico, código curto ou nome. Consultar apenas i.id fazia a tela não
+      // carregar divergências/recontagens gravadas com outro alias e, por isso,
+      // a Contagem podia aparecer como OK mesmo havendo recontagem aberta.
+      const aliases = [];
+      (inventarios || []).filter(i => i && ativos.has(String(i.status || '').toUpperCase())).forEach(i => {
+        [i.id, i.codigo, i.nome, i.inventario_id, i.inventarioId]
+          .filter(v => v != null && String(v).trim())
+          .forEach(v => aliases.push(String(v).trim()));
+      });
+      return [...new Set(aliases)];
     },
     chunkIds(ids, size = 10){
       const out = [];
