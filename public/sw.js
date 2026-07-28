@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v170-auditoria-sync-background-r2';
+var CACHE='dt-inventario-v170-auditoria-sync-background-r3';
 var PRECACHE=[
   '/',
   '/index.html',

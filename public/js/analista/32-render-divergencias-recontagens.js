@@ -593,6 +593,9 @@ function renderDivergencias() {
     }
     return principal;
   });
+  // Snapshot sem filtros da mesma visão consolidada usada pela tabela. Os cards
+  // não podem contar documentos brutos com status legado diferente do exibido.
+  const dadosConsolidados = dados.slice();
   if (fInv)    dados = dados.filter(d => d.inventario_id === fInv);
   if (fStatus) {
     dados = dados.filter(d => d.status === fStatus);
@@ -696,7 +699,7 @@ function renderDivergencias() {
   // KPIs
   // Os indicadores usam a mesma fonte consolidada da tabela, inclusive
   // recontagens órfãs recuperadas acima.
-  const all        = divergenciasVisiveis.filter(d => !fInv || d.inventario_id === fInv);
+  const all        = dadosConsolidados.filter(d => !fInv || String(d.inventario_id) === String(fInv));
   const abertas    = all.filter(d => d.status === 'ABERTA').length;
   const emRec      = all.filter(d => d.status === 'EM_RECONTAGEM').length;
   const resolvidas = all.filter(d => d.status === 'RESOLVIDA').length;

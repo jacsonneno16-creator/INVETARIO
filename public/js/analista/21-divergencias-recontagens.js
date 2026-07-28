@@ -182,7 +182,22 @@
     const segunda = _parContagem(obj.qtd_segunda, obj.produto_segunda || obj.produto_recontagem, obj.produto);
     const terceira = _parContagem(obj.qtd_terceira, obj.produto_terceira || obj.produto_recontagem, obj.produto);
 
-    if (_paresIguais(primeira, sistema)) {
+    // Uma divergência já aberta é a evidência autoritativa de que a 1ª rodada
+    // ainda NÃO foi aceita. Em bases com vários paletes, qtd_esperada do documento
+    // pode representar apenas uma linha da base e coincidir por acaso com a leitura,
+    // embora o total do endereço continue divergente. Nesse cenário, nunca encerrar
+    // como OK 1ª; manter aguardando recontagem e só resolver por uma rodada posterior
+    // ou por encerramento explícito do analista.
+    const statusFluxo = String(obj?.status || '').trim().toUpperCase();
+    const statusRecontagem = String(obj?.status_recontagem || '').trim().toLowerCase();
+    const divergenciaPrimeiraAtiva =
+      ['ABERTA','DIVERGENTE','PENDENTE','EM_RECONTAGEM'].includes(statusFluxo) ||
+      ['pendente','em_andamento','aguardando_analista'].includes(statusRecontagem) ||
+      obj?.divergente === true || obj?.precisa_recontagem === true ||
+      (Number.isFinite(Number(obj?.diferenca)) && Number(obj.diferenca) !== 0) ||
+      Boolean(obj?.tipo_divergencia);
+
+    if (_paresIguais(primeira, sistema) && !divergenciaPrimeiraAtiva) {
       return { estado:'RESOLVIDA', referencia:'OK_PRIMEIRA_SISTEMA', rodada:1, resultado:primeira };
     }
     if (segunda) {

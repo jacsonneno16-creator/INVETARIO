@@ -113,6 +113,18 @@ function _resultadoRodadaEndereco(c){
         .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.finalizada_em || ''));
     });
 
+  // A própria existência de uma divergência ativa prevalece sobre um possível
+  // empate acidental entre a leitura e um qtd_esperada parcial/legado. Sem uma
+  // recontagem concluída, esta linha ainda está divergente e jamais pode ser OK 1ª.
+  const statusDiv = String(div.status || '').trim().toUpperCase();
+  const statusRecDiv = String(div.status_recontagem || '').trim().toLowerCase();
+  const divergenciaAtiva =
+    ['ABERTA','DIVERGENTE','PENDENTE','EM_RECONTAGEM'].includes(statusDiv) ||
+    ['pendente','em_andamento','aguardando_analista'].includes(statusRecDiv);
+  if (divergenciaAtiva && recs.length === 0) {
+    return { texto:'❌ Divergente — aguardando recontagem', cls:'b-red' };
+  }
+
   const base = {
     qtd_esperada: div.qtd_esperada,
     produto: div.produto || div.produto_contado || produto,
