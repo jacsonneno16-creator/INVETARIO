@@ -162,6 +162,96 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         filaAll: function () { return _audStoreAll('fila'); },
         filaDelete: function (chave) { return _audStoreDelete('fila', chave); }
     };
+    var AUDITORIA_ABERTURA_TIMEOUT_MS = 10000;
+    function _comTimeoutAberturaAuditoria(promise, ms, rotulo) {
+        return Promise.race([
+            Promise.resolve(promise),
+            new Promise(function (_, reject) { return setTimeout(function () { return reject(new Error('Tempo excedido ao carregar ' + rotulo + '.')); }, ms || AUDITORIA_ABERTURA_TIMEOUT_MS); })
+        ]);
+    }
+    function _produtosCacheAuditoria() {
+        return __awaiter(this, void 0, void 0, function () {
+            var lista, e_1;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        lista = [];
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet('dt_produtos_cache__GLOBAL')];
+                    case 2:
+                        lista = _a.sent();
+                        if (!Array.isArray(lista))
+                            lista = JSON.parse(localStorage.getItem('dt_produtos_cache__GLOBAL') || '[]');
+                        if (Array.isArray(lista) && lista.length && window.DTProdutos && typeof window.DTProdutos.indexar === 'function')
+                            window.DTProdutos.indexar(lista);
+                        return [3 /*break*/, 4];
+                    case 3:
+                        e_1 = _a.sent();
+                        lista = [];
+                        return [3 /*break*/, 4];
+                    case 4: return [2 /*return*/, Array.isArray(lista) ? lista : []];
+                }
+            });
+        });
+    }
+    function _locaisCacheAuditoria() {
+        return __awaiter(this, void 0, void 0, function () {
+            var lojaId, chave, lista, e_2, locais;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+                        chave = 'dt_auditoria_locais_' + lojaId;
+                        lista = [];
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet(chave)];
+                    case 2:
+                        lista = _a.sent();
+                        if (!Array.isArray(lista))
+                            lista = JSON.parse(localStorage.getItem(chave) || '[]');
+                        return [3 /*break*/, 4];
+                    case 3:
+                        e_2 = _a.sent();
+                        lista = [];
+                        return [3 /*break*/, 4];
+                    case 4:
+                        locais = new Set(Array.isArray(lista) ? lista : []);
+                        if (locais.size) {
+                            APP.locaisAtivos = locais;
+                            APP._locaisDoFirebase = false;
+                        }
+                        return [2 /*return*/, locais];
+                }
+            });
+        });
+    }
+    function _baseAuditoriaCache(auditoriaId) {
+        return __awaiter(this, void 0, void 0, function () {
+            var lojaId, chave, registro, e_3;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+                        chave = 'dt_auditoria_cache_' + lojaId + '_' + auditoriaId;
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, _audStoreGet('cache', chave)];
+                    case 2:
+                        registro = _a.sent();
+                        return [2 /*return*/, { encontrado: !!registro, lista: registro && Array.isArray(registro.valor) ? registro.valor : [] }];
+                    case 3:
+                        e_3 = _a.sent();
+                        return [2 /*return*/, { encontrado: false, lista: [] }];
+                    case 4: return [2 /*return*/];
+                }
+            });
+        });
+    }
     function _auditoriaMeta(lista) {
         return (lista || []).map(function (a) { return ({
             id: String(a.auditoria_id || a.id || '').trim(),
@@ -185,7 +275,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     }
     function _carregarBaseGeralEnderecosAuditoria(forcar) {
         return __awaiter(this, void 0, void 0, function () {
-            var lojaId, cacheKey, cache, e_1, locais, versaoServidor, meta, e_2, chunks, docsUsar, e_3, erro_1, cache, e_4;
+            var lojaId, cacheKey, cache, e_4, locais, versaoServidor, meta, e_5, chunks, docsUsar, e_6, erro_1, cache, e_7;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -207,7 +297,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         APP._locaisDoFirebase = false;
                         return [2 /*return*/, APP.locaisAtivos];
                     case 3:
-                        e_1 = _a.sent();
+                        e_4 = _a.sent();
                         APP.locaisAtivos = APP.locaisAtivos || new Set();
                         return [2 /*return*/, APP.locaisAtivos];
                     case 4:
@@ -226,7 +316,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                             versaoServidor = String((meta.data() || {}).versao || '');
                         return [3 /*break*/, 9];
                     case 8:
-                        e_2 = _a.sent();
+                        e_5 = _a.sent();
                         return [3 /*break*/, 9];
                     case 9:
                         if (!versaoServidor)
@@ -259,8 +349,8 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         localStorage.removeItem(cacheKey);
                         return [3 /*break*/, 14];
                     case 13:
-                        e_3 = _a.sent();
-                        console.warn('[AUDITORIA] Não foi possível persistir a base de endereços no IndexedDB:', e_3);
+                        e_6 = _a.sent();
+                        console.warn('[AUDITORIA] Não foi possível persistir a base de endereços no IndexedDB:', e_6);
                         return [3 /*break*/, 14];
                     case 14:
                         console.log('[AUDITORIA] Base Geral de Endereços carregada:', locais.size, 'loja:', lojaId);
@@ -282,7 +372,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         APP.locaisAtivos = new Set(cache);
                         return [3 /*break*/, 19];
                     case 18:
-                        e_4 = _a.sent();
+                        e_7 = _a.sent();
                         APP.locaisAtivos = APP.locaisAtivos || new Set();
                         return [3 /*break*/, 19];
                     case 19:
@@ -294,46 +384,9 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         });
     }
     window._carregarBaseGeralEnderecosAuditoria = _carregarBaseGeralEnderecosAuditoria;
-    function _filtrarPendentesComFilaLocal(auditoriaId, lista) {
-        return __awaiter(this, void 0, void 0, function () {
-            var fila, finalizados;
-            return __generator(this, function (_a) {
-                switch (_a.label) {
-                    case 0:
-                        fila = [];
-                        _a.label = 1;
-                    case 1:
-                        _a.trys.push([1, 3, , 4]);
-                        return [4 /*yield*/, window.DTAuditoriaStorage.filaAll()];
-                    case 2:
-                        fila = _a.sent() || [];
-                        return [3 /*break*/, 4];
-                    case 3:
-                        _a.sent();
-                        fila = [];
-                        return [3 /*break*/, 4];
-                    case 4:
-                        finalizados = new Set(fila.filter(function (x) {
-                            var p = x && x.payload || {};
-                            return String(x && x.auditoriaId || '') === String(auditoriaId || '') &&
-                                String(x && x.subcolecao || 'enderecos') === 'enderecos' &&
-                                ['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(String(p.status || '').toUpperCase());
-                        }).flatMap(function (x) {
-                            var p = x.payload || {};
-                            return [String(x.docId || ''), _normalizarEnderecoGeral(p.endereco || '')].filter(Boolean);
-                        }));
-                        return [2 /*return*/, (lista || []).filter(function (item) {
-                            var id = String(item && item.id || '');
-                            var end = _normalizarEnderecoGeral(item && (item.endereco || item.endereco_norm) || '');
-                            return !finalizados.has(id) && !finalizados.has(end);
-                        })];
-                }
-            });
-        });
-    }
     function _carregarEnderecoAuditoria(auditoriaId) {
         return __awaiter(this, void 0, void 0, function () {
-            var lojaId, cacheKey, cache, audRef, chunkSnap, rows_1, resultadosSnap, finalizados_1, pendentes_1, e_5, snap, todos, pendentes, e_6;
+            var lojaId, cacheKey, cache, audRef, chunkSnap, rows_1, resultadosSnap, finalizados_1, pendentes_1, e_8, snap, todos, pendentes, e_9;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -343,9 +396,8 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet(cacheKey)];
                     case 1:
                         cache = _a.sent();
-                        if (Array.isArray(cache)) {
-                            return [2 /*return*/, _filtrarPendentesComFilaLocal(auditoriaId, cache)];
-                        }
+                        if (Array.isArray(cache) && cache.length)
+                            return [2 /*return*/, cache];
                         _a.label = 2;
                     case 2:
                         audRef = FS.collection(FCOL.auditorias).doc(auditoriaId);
@@ -396,8 +448,8 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         localStorage.removeItem(cacheKey);
                         return [3 /*break*/, 8];
                     case 7:
-                        e_5 = _a.sent();
-                        console.warn('[AUDITORIA] Não foi possível persistir a base da auditoria:', e_5);
+                        e_8 = _a.sent();
+                        console.warn('[AUDITORIA] Não foi possível persistir a base da auditoria:', e_8);
                         return [3 /*break*/, 8];
                     case 8: return [2 /*return*/, pendentes_1];
                     case 9: return [4 /*yield*/, audRef.collection('enderecos').get()];
@@ -423,7 +475,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         _a.sent();
                         return [3 /*break*/, 14];
                     case 13:
-                        e_6 = _a.sent();
+                        e_9 = _a.sent();
                         return [3 /*break*/, 14];
                     case 14: return [2 /*return*/, pendentes];
                 }
@@ -542,9 +594,9 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     };
     window.selecionarAuditoriaMenu = function (auditoriaId) {
         return __awaiter(this, void 0, void 0, function () {
-            var meta, lojasAuditoria, lojaAuditoria, token, produtos, totalProdutos, locais, totalLocais, _a, totalAud, entrar, cancelar, status_1, err_1, cancelar, entrar;
-            return __generator(this, function (_b) {
-                switch (_b.label) {
+            var meta, lojasAuditoria, lojaAuditoria, token, produtos, e_10, totalProdutos, locais, e_11, totalLocais, baseAuditoria, baseObtidaOnline, e_12, cacheAuditoria, totalAud, entrar, cancelar, status_1, err_1, cancelar, entrar;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
                     case 0:
                         if (APP._auditoriaCarregando)
                             return [2 /*return*/];
@@ -585,80 +637,113 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         APP.auditoriaBase = [];
                         APP.contagens = [];
                         _prepararTelaDownloadAuditoria(meta);
-                        _b.label = 1;
+                        _a.label = 1;
                     case 1:
-                        _b.trys.push([1, 11, 12, 13]);
+                        _a.trys.push([1, 20, 21, 22]);
                         if (typeof _dlStep === 'function')
                             _dlStep('aud-prod', '📦', 'Base Geral de Produtos', 'Baixando produtos, GTIN, EAN e DUN…', 'run');
                         if (typeof _dlProg === 'function')
                             _dlProg(10, 'Baixando Base Geral de Produtos…');
                         if (!window.DTProdutos || typeof window.DTProdutos.carregar !== 'function')
                             throw new Error('Serviço da Base Geral de Produtos não foi carregado.');
-                        return [4 /*yield*/, window.DTProdutos.carregar(true)];
+                        produtos = [];
+                        if (!navigator.onLine) return [3 /*break*/, 5];
+                        _a.label = 2;
                     case 2:
-                        produtos = _b.sent();
-                        if (token !== APP._auditoriaCargaToken)
-                            return [2 /*return*/];
-                        totalProdutos = (produtos || []).filter(function (p) { return p && p.ativo !== false; }).length;
-                        if (!!totalProdutos) return [3 /*break*/, 5];
-                        // Uma falha passageira de rede pode ter derrubado o download antes da hora —
-                        // tenta mais uma vez forçando atualização antes de dizer que está vazia.
-                        if (typeof _dlStep === 'function')
-                            _dlStep('aud-prod', '📦', 'Base Geral de Produtos', 'Nova tentativa…', 'run');
-                        return [4 /*yield*/, new Promise(function (r) { return setTimeout(r, 1500); })];
+                        _a.trys.push([2, 4, , 5]);
+                        return [4 /*yield*/, _comTimeoutAberturaAuditoria(window.DTProdutos.carregar(true), AUDITORIA_ABERTURA_TIMEOUT_MS, 'a Base Geral de Produtos')];
                     case 3:
-                        _b.sent();
-                        return [4 /*yield*/, window.DTProdutos.carregar(true)];
+                        produtos = _a.sent();
+                        return [3 /*break*/, 5];
                     case 4:
-                        produtos = _b.sent();
+                        e_10 = _a.sent();
+                        console.warn('[AUDITORIA] Produtos online indisponíveis; usando cache local:', e_10);
+                        return [3 /*break*/, 5];
+                    case 5:
                         if (token !== APP._auditoriaCargaToken)
                             return [2 /*return*/];
                         totalProdutos = (produtos || []).filter(function (p) { return p && p.ativo !== false; }).length;
-                        _b.label = 5;
-                    case 5:
+                        if (!!totalProdutos) return [3 /*break*/, 7];
+                        return [4 /*yield*/, _produtosCacheAuditoria()];
+                    case 6:
+                        produtos = _a.sent();
+                        totalProdutos = (produtos || []).filter(function (p) { return p && p.ativo !== false; }).length;
+                        if (totalProdutos && typeof _dlStep === 'function')
+                            _dlStep('aud-prod', '📦', 'Base Geral de Produtos', 'Modo offline — ' + totalProdutos + ' produtos do aparelho', 'run');
+                        _a.label = 7;
+                    case 7:
                         if (!totalProdutos)
-                            throw new Error('Não foi possível baixar a Base Geral de Produtos (verifique a conexão com a internet e tente novamente). Se o problema continuar, confirme com o analista se a base de produtos foi publicada.');
+                            throw new Error('Esta auditoria ainda não foi preparada neste aparelho. Conecte-se à internet uma vez para baixar a Base Geral de Produtos.');
                         if (typeof _dlStep === 'function')
                             _dlStep('aud-prod', '📦', 'Base Geral de Produtos', totalProdutos + ' produtos carregados', 'ok');
                         if (typeof _dlStep === 'function')
                             _dlStep('aud-end', '📍', 'Base Geral de Endereços', 'Baixando endereços da loja…', 'run');
                         if (typeof _dlProg === 'function')
                             _dlProg(45, 'Baixando Base Geral de Endereços…');
-                        return [4 /*yield*/, _carregarBaseGeralEnderecosAuditoria(true)];
-                    case 6:
-                        locais = _b.sent();
-                        if (token !== APP._auditoriaCargaToken)
-                            return [2 /*return*/];
-                        totalLocais = locais && typeof locais.size === 'number' ? locais.size : 0;
-                        if (!!totalLocais) return [3 /*break*/, 9];
-                        // Idem: pode ser uma falha passageira de rede — tenta mais uma vez antes de desistir.
-                        if (typeof _dlStep === 'function')
-                            _dlStep('aud-end', '📍', 'Base Geral de Endereços', 'Nova tentativa…', 'run');
-                        return [4 /*yield*/, new Promise(function (r) { return setTimeout(r, 1500); })];
-                    case 7:
-                        _b.sent();
-                        return [4 /*yield*/, _carregarBaseGeralEnderecosAuditoria(true)];
+                        locais = new Set();
+                        if (!navigator.onLine) return [3 /*break*/, 11];
+                        _a.label = 8;
                     case 8:
-                        locais = _b.sent();
+                        _a.trys.push([8, 10, , 11]);
+                        return [4 /*yield*/, _comTimeoutAberturaAuditoria(_carregarBaseGeralEnderecosAuditoria(true), AUDITORIA_ABERTURA_TIMEOUT_MS, 'a Base Geral de Endereços')];
+                    case 9:
+                        locais = _a.sent();
+                        return [3 /*break*/, 11];
+                    case 10:
+                        e_11 = _a.sent();
+                        console.warn('[AUDITORIA] Endereços online indisponíveis; usando cache local:', e_11);
+                        return [3 /*break*/, 11];
+                    case 11:
                         if (token !== APP._auditoriaCargaToken)
                             return [2 /*return*/];
                         totalLocais = locais && typeof locais.size === 'number' ? locais.size : 0;
-                        _b.label = 9;
-                    case 9:
+                        if (!!totalLocais) return [3 /*break*/, 13];
+                        return [4 /*yield*/, _locaisCacheAuditoria()];
+                    case 12:
+                        locais = _a.sent();
+                        totalLocais = locais && typeof locais.size === 'number' ? locais.size : 0;
+                        if (totalLocais && typeof _dlStep === 'function')
+                            _dlStep('aud-end', '📍', 'Base Geral de Endereços', 'Modo offline — ' + totalLocais + ' endereços do aparelho', 'run');
+                        _a.label = 13;
+                    case 13:
                         if (!totalLocais)
-                            throw new Error('Não foi possível baixar a Base Geral de Endereços (verifique a conexão com a internet e tente novamente). Se o problema continuar, confirme com o analista se os endereços foram publicados.');
+                            throw new Error('Esta auditoria ainda não foi preparada neste aparelho. Conecte-se à internet uma vez para baixar a Base Geral de Endereços.');
                         if (typeof _dlStep === 'function')
                             _dlStep('aud-end', '📍', 'Base Geral de Endereços', totalLocais + ' endereços carregados', 'ok');
                         if (typeof _dlStep === 'function')
                             _dlStep('aud-base', '📝', 'Base da Auditoria', 'Baixando endereços pendentes…', 'run');
                         if (typeof _dlProg === 'function')
                             _dlProg(75, 'Baixando Base da Auditoria…');
-                        _a = APP;
-                        return [4 /*yield*/, _carregarEnderecoAuditoria(auditoriaId)];
-                    case 10:
-                        _a.auditorias = _b.sent();
+                        baseAuditoria = [];
+                        baseObtidaOnline = false;
+                        if (!navigator.onLine) return [3 /*break*/, 17];
+                        _a.label = 14;
+                    case 14:
+                        _a.trys.push([14, 16, , 17]);
+                        return [4 /*yield*/, _comTimeoutAberturaAuditoria(_carregarEnderecoAuditoria(auditoriaId), AUDITORIA_ABERTURA_TIMEOUT_MS, 'a Base da Auditoria')];
+                    case 15:
+                        baseAuditoria = _a.sent();
+                        baseObtidaOnline = Array.isArray(baseAuditoria);
+                        return [3 /*break*/, 17];
+                    case 16:
+                        e_12 = _a.sent();
+                        console.warn('[AUDITORIA] Base online indisponível; usando cache local:', e_12);
+                        return [3 /*break*/, 17];
+                    case 17:
                         if (token !== APP._auditoriaCargaToken)
                             return [2 /*return*/];
+                        if (!!baseObtidaOnline) return [3 /*break*/, 19];
+                        return [4 /*yield*/, _baseAuditoriaCache(auditoriaId)];
+                    case 18:
+                        cacheAuditoria = _a.sent();
+                        if (!cacheAuditoria.encontrado)
+                            throw new Error('A base desta auditoria não está salva neste aparelho. Conecte-se à internet uma vez para fazer o primeiro download.');
+                        baseAuditoria = cacheAuditoria.lista;
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-base', '📝', 'Base da Auditoria', 'Modo offline — ' + baseAuditoria.length + ' endereços pendentes no aparelho', 'run');
+                        _a.label = 19;
+                    case 19:
+                        APP.auditorias = Array.isArray(baseAuditoria) ? baseAuditoria : [];
                         totalAud = (APP.auditorias || []).length;
                         if (typeof _dlStep === 'function')
                             _dlStep('aud-base', '📝', 'Base da Auditoria', totalAud + ' endereços pendentes', 'ok');
@@ -677,9 +762,9 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         status_1 = document.getElementById('dl-status-txt');
                         if (status_1)
                             status_1.textContent = 'Carregamento concluído. Toque em OK para continuar.';
-                        return [3 /*break*/, 13];
-                    case 11:
-                        err_1 = _b.sent();
+                        return [3 /*break*/, 22];
+                    case 20:
+                        err_1 = _a.sent();
                         console.error('[AUDITORIA] Falha ao preparar auditoria:', err_1);
                         APP._auditoriaPronta = false;
                         if (typeof _dlSetErro === 'function')
@@ -695,12 +780,12 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         entrar = document.getElementById('dl-btn-entrar');
                         if (entrar)
                             entrar.style.display = 'none';
-                        return [3 /*break*/, 13];
-                    case 12:
+                        return [3 /*break*/, 22];
+                    case 21:
                         if (token === APP._auditoriaCargaToken)
                             APP._auditoriaCarregando = false;
                         return [7 /*endfinally*/];
-                    case 13: return [2 /*return*/];
+                    case 22: return [2 /*return*/];
                 }
             });
         });

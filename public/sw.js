@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v153-login-analista';
+var CACHE='dt-inventario-v155-auditoria-offline-cache-first';
 var PRECACHE=[
   '/',
   '/index.html',

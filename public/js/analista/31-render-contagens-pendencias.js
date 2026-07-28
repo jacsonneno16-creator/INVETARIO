@@ -30,7 +30,8 @@ function _resultadoRodadaEndereco(c){
   });
   const chaveInv = String(invRegistro?.id || c.inventario_id || c.inventarioId || '');
   const end = String(c.endereco || '').trim().toUpperCase();
-  const div = (state().divergencias || []).find(d =>
+  const codigoContagem = String(c.codigo_produto || c.codigoProduto || c.produto || c.gtin || c.ean || c.dun || '').trim().toUpperCase();
+  const candidatas = (state().divergencias || []).filter(d =>
     (() => {
       const id=String(d.inventario_id || d.inventarioId || '');
       return id === chaveInv || (invRegistro &&
@@ -39,6 +40,12 @@ function _resultadoRodadaEndereco(c){
     })() &&
     String(d.endereco || '').trim().toUpperCase() === end
   );
+  // Prefere a divergência do mesmo produto. Isso evita usar o histórico de
+  // outro palete/produto do endereço e mostrar uma rodada que não pertence à linha.
+  const div = candidatas.find(d => {
+    const codigoDiv = String(d.produto || d.produto_contado || d.codigo_produto || d.gtin || d.ean || d.dun || '').trim().toUpperCase();
+    return codigoContagem && codigoDiv && codigoContagem === codigoDiv;
+  }) || (candidatas.length === 1 ? candidatas[0] : null);
   if (!div && !c.divergente && c.status !== 'DIVERGENTE') return null;
   // Nunca avalia 2ª/3ª rodada apenas por campos agregados da divergência.
   // Esses campos podem ficar residuais em registros antigos e gerar falso "OK 3ª".

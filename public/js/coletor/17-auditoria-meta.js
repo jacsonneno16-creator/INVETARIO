@@ -61,6 +61,44 @@
     filaDelete:chave=>_audStoreDelete('fila',chave)
   };
 
+
+  const AUDITORIA_ABERTURA_TIMEOUT_MS = 10000;
+  function _comTimeoutAberturaAuditoria(promise, ms, rotulo){
+    return Promise.race([
+      Promise.resolve(promise),
+      new Promise((_,reject)=>setTimeout(()=>reject(new Error('Tempo excedido ao carregar '+rotulo+'.')),ms||AUDITORIA_ABERTURA_TIMEOUT_MS))
+    ]);
+  }
+  async function _produtosCacheAuditoria(){
+    let lista=[];
+    try{
+      lista=await window.DTAuditoriaStorage.cacheGet('dt_produtos_cache__GLOBAL');
+      if(!Array.isArray(lista)) lista=JSON.parse(localStorage.getItem('dt_produtos_cache__GLOBAL')||'[]');
+      if(Array.isArray(lista)&&lista.length&&window.DTProdutos&&typeof window.DTProdutos.indexar==='function') window.DTProdutos.indexar(lista);
+    }catch(e){ lista=[]; }
+    return Array.isArray(lista)?lista:[];
+  }
+  async function _locaisCacheAuditoria(){
+    const lojaId=window.getDTLojaAtiva?window.getDTLojaAtiva():'';
+    const chave='dt_auditoria_locais_'+lojaId;
+    let lista=[];
+    try{
+      lista=await window.DTAuditoriaStorage.cacheGet(chave);
+      if(!Array.isArray(lista)) lista=JSON.parse(localStorage.getItem(chave)||'[]');
+    }catch(e){ lista=[]; }
+    const locais=new Set(Array.isArray(lista)?lista:[]);
+    if(locais.size){ APP.locaisAtivos=locais; APP._locaisDoFirebase=false; }
+    return locais;
+  }
+  async function _baseAuditoriaCache(auditoriaId){
+    const lojaId=window.getDTLojaAtiva?window.getDTLojaAtiva():'';
+    const chave='dt_auditoria_cache_'+lojaId+'_'+auditoriaId;
+    try{
+      const registro=await _audStoreGet('cache',chave);
+      return { encontrado:!!registro, lista:registro&&Array.isArray(registro.valor)?registro.valor:[] };
+    }catch(e){ return { encontrado:false, lista:[] }; }
+  }
+
   function _auditoriaMeta(lista){
     return (lista || []).map(a => ({
       id: String(a.auditoria_id || a.id || '').trim(),
@@ -344,42 +382,57 @@
       if(typeof _dlStep==='function') _dlStep('aud-prod','📦','Base Geral de Produtos','Baixando produtos, GTIN, EAN e DUN…','run');
       if(typeof _dlProg==='function') _dlProg(10,'Baixando Base Geral de Produtos…');
       if(!window.DTProdutos || typeof window.DTProdutos.carregar!=='function') throw new Error('Serviço da Base Geral de Produtos não foi carregado.');
-      // Atualiza e persiste a base antes de liberar a operação offline.
-      let produtos=await window.DTProdutos.carregar(true);
+      // Rede com timeout; se falhar, usa imediatamente a base já persistida no aparelho.
+      let produtos=[];
+      if(navigator.onLine){
+        try{ produtos=await _comTimeoutAberturaAuditoria(window.DTProdutos.carregar(true),AUDITORIA_ABERTURA_TIMEOUT_MS,'a Base Geral de Produtos'); }
+        catch(e){ console.warn('[AUDITORIA] Produtos online indisponíveis; usando cache local:',e); }
+      }
       if(token!==APP._auditoriaCargaToken) return;
       let totalProdutos=(produtos||[]).filter(p=>p&&p.ativo!==false).length;
       if(!totalProdutos){
-        // Uma falha passageira de rede pode ter derrubado o download antes da hora —
-        // tenta mais uma vez forçando atualização antes de dizer que está vazia.
-        if(typeof _dlStep==='function') _dlStep('aud-prod','📦','Base Geral de Produtos','Nova tentativa…','run');
-        await new Promise(r=>setTimeout(r,1500));
-        produtos=await window.DTProdutos.carregar(true);
-        if(token!==APP._auditoriaCargaToken) return;
+        produtos=await _produtosCacheAuditoria();
         totalProdutos=(produtos||[]).filter(p=>p&&p.ativo!==false).length;
+        if(totalProdutos&&typeof _dlStep==='function') _dlStep('aud-prod','📦','Base Geral de Produtos','Modo offline — '+totalProdutos+' produtos do aparelho','run');
       }
-      if(!totalProdutos) throw new Error('Não foi possível baixar a Base Geral de Produtos (verifique a conexão com a internet e tente novamente). Se o problema continuar, confirme com o analista se a base de produtos foi publicada.');
+      if(!totalProdutos) throw new Error('Esta auditoria ainda não foi preparada neste aparelho. Conecte-se à internet uma vez para baixar a Base Geral de Produtos.');
       if(typeof _dlStep==='function') _dlStep('aud-prod','📦','Base Geral de Produtos',totalProdutos+' produtos carregados','ok');
 
       if(typeof _dlStep==='function') _dlStep('aud-end','📍','Base Geral de Endereços','Baixando endereços da loja…','run');
       if(typeof _dlProg==='function') _dlProg(45,'Baixando Base Geral de Endereços…');
-      let locais=await _carregarBaseGeralEnderecosAuditoria(true);
+      let locais=new Set();
+      if(navigator.onLine){
+        try{ locais=await _comTimeoutAberturaAuditoria(_carregarBaseGeralEnderecosAuditoria(true),AUDITORIA_ABERTURA_TIMEOUT_MS,'a Base Geral de Endereços'); }
+        catch(e){ console.warn('[AUDITORIA] Endereços online indisponíveis; usando cache local:',e); }
+      }
       if(token!==APP._auditoriaCargaToken) return;
       let totalLocais=locais&&typeof locais.size==='number'?locais.size:0;
       if(!totalLocais){
-        // Idem: pode ser uma falha passageira de rede — tenta mais uma vez antes de desistir.
-        if(typeof _dlStep==='function') _dlStep('aud-end','📍','Base Geral de Endereços','Nova tentativa…','run');
-        await new Promise(r=>setTimeout(r,1500));
-        locais=await _carregarBaseGeralEnderecosAuditoria(true);
-        if(token!==APP._auditoriaCargaToken) return;
+        locais=await _locaisCacheAuditoria();
         totalLocais=locais&&typeof locais.size==='number'?locais.size:0;
+        if(totalLocais&&typeof _dlStep==='function') _dlStep('aud-end','📍','Base Geral de Endereços','Modo offline — '+totalLocais+' endereços do aparelho','run');
       }
-      if(!totalLocais) throw new Error('Não foi possível baixar a Base Geral de Endereços (verifique a conexão com a internet e tente novamente). Se o problema continuar, confirme com o analista se os endereços foram publicados.');
+      if(!totalLocais) throw new Error('Esta auditoria ainda não foi preparada neste aparelho. Conecte-se à internet uma vez para baixar a Base Geral de Endereços.');
       if(typeof _dlStep==='function') _dlStep('aud-end','📍','Base Geral de Endereços',totalLocais+' endereços carregados','ok');
 
       if(typeof _dlStep==='function') _dlStep('aud-base','📝','Base da Auditoria','Baixando endereços pendentes…','run');
       if(typeof _dlProg==='function') _dlProg(75,'Baixando Base da Auditoria…');
-      APP.auditorias=await _carregarEnderecoAuditoria(auditoriaId);
+      let baseAuditoria=[];
+      let baseObtidaOnline=false;
+      if(navigator.onLine){
+        try{
+          baseAuditoria=await _comTimeoutAberturaAuditoria(_carregarEnderecoAuditoria(auditoriaId),AUDITORIA_ABERTURA_TIMEOUT_MS,'a Base da Auditoria');
+          baseObtidaOnline=Array.isArray(baseAuditoria);
+        }catch(e){ console.warn('[AUDITORIA] Base online indisponível; usando cache local:',e); }
+      }
       if(token!==APP._auditoriaCargaToken) return;
+      if(!baseObtidaOnline){
+        const cacheAuditoria=await _baseAuditoriaCache(auditoriaId);
+        if(!cacheAuditoria.encontrado) throw new Error('A base desta auditoria não está salva neste aparelho. Conecte-se à internet uma vez para fazer o primeiro download.');
+        baseAuditoria=cacheAuditoria.lista;
+        if(typeof _dlStep==='function') _dlStep('aud-base','📝','Base da Auditoria','Modo offline — '+baseAuditoria.length+' endereços pendentes no aparelho','run');
+      }
+      APP.auditorias=Array.isArray(baseAuditoria)?baseAuditoria:[];
       const totalAud=(APP.auditorias||[]).length;
       if(typeof _dlStep==='function') _dlStep('aud-base','📝','Base da Auditoria',totalAud+' endereços pendentes','ok');
       if(typeof _dlProg==='function') _dlProg(100,'Todas as informações foram carregadas.');

@@ -216,10 +216,38 @@
     const chave = _chaveOperacional(div);
     const divs = state().divergencias.filter(d => _chaveOperacional(d) === chave);
     const recs = state().recontagens
-      .filter(r => _chaveOperacional(r) === chave && r.qtd_recontagem != null &&
-        !['CANCELADA','EXCLUIDA'].includes(String(r.status || '').toUpperCase()))
-      .sort((a,b) => String(a.recontagem_concluida_em || a.concluida_em || a.criada_em || '')
-        .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.criada_em || '')));
+      .filter(r => {
+        if (_chaveOperacional(r) !== chave) return false;
+        if (r.qtd_recontagem == null) return false;
+
+        // Uma rodada só entra no acompanhamento quando foi realmente concluída.
+        // Registros PENDENTES podem carregar quantidade residual de tentativas
+        // anteriores e eram interpretados como 2ª/3ª contagem, gerando falso
+        // "OK 3ª" mesmo quando apenas a primeira contagem havia sido feita.
+        const status = String(r.status_recontagem || r.status || '').toUpperCase();
+        const temConclusao = Boolean(
+          r.recontagem_concluida_em || r.concluida_em || r.data_conclusao ||
+          r.finalizada_em || r.sincronizado_em
+        );
+        const concluida = ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA'].includes(status);
+        if (!temConclusao && !concluida) return false;
+        if (['PENDENTE','ATRIBUIDA','ATRIBUÍDA','EM_ANDAMENTO','CANCELADA','EXCLUIDA'].includes(status)) return false;
+
+        // Quando houver vínculo explícito, não mistura recontagens de outra
+        // divergência/produto existente no mesmo endereço.
+        if (r.divergencia_id && div.id && String(r.divergencia_id) !== String(div.id)) return false;
+        const prodDiv = _nd(div.produto || div.produto_contado || div.codigo_produto);
+        const prodRec = _nd(r.produto_recontagem || r.produto_segunda || r.produto_terceira || r.produto);
+        if (!r.divergencia_id && prodDiv && prodRec && prodDiv !== prodRec) return false;
+        return true;
+      })
+      .sort((a,b) => {
+        const rodadaA = Number(a.numero_recontagem || 0);
+        const rodadaB = Number(b.numero_recontagem || 0);
+        if (rodadaA && rodadaB && rodadaA !== rodadaB) return rodadaA - rodadaB;
+        return String(a.recontagem_concluida_em || a.concluida_em || a.finalizada_em || '')
+          .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.finalizada_em || ''));
+      });
     const primeiraDiv = [...divs].sort((a,b) =>
       String(a.criada_em || '').localeCompare(String(b.criada_em || ''))
     ).find(d => d.qtd_primeira != null || d.qtd_contada != null) || div;
