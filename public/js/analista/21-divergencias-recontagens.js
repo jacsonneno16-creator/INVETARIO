@@ -227,7 +227,7 @@
         const status = String(r.status_recontagem || r.status || '').toUpperCase();
         const temConclusao = Boolean(
           r.recontagem_concluida_em || r.concluida_em || r.data_conclusao ||
-          r.finalizada_em || r.sincronizado_em
+          r.finalizada_em
         );
         const concluida = ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA'].includes(status);
         if (!temConclusao && !concluida) return false;

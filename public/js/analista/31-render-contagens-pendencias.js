@@ -100,7 +100,8 @@ function renderContagens() {
       const inv=(state().inventarios || []).find(i =>
         [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
           .filter(Boolean).map(String).includes(id));
-      return `${String(inv?.id || id)}|${String(c.endereco || '').trim().toUpperCase()}`;
+      const produto = String(c.codigo_produto || c.codigoProduto || c.produto || c.gtin || c.ean || c.dun || '').trim().toUpperCase();
+      return `${String(inv?.id || id)}|${String(c.endereco || '').trim().toUpperCase()}|${produto}`;
     };
     dados.forEach(c => {
       const chave=chaveContagem(c);
