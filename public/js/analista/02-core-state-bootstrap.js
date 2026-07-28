@@ -104,8 +104,7 @@
     window.addEventListener('storage', e => {
       if (Object.values(global.KEYS).includes(e.key) || String(e.key || '').startsWith('invcount_base_') || e.key === 'invcount_auditoria_metas') {
         loadAll();
-        if (global.AnalistaNavigation?.renderCurrentPage) global.AnalistaNavigation.renderCurrentPage();
-        if (typeof global.atualizarBadgesNav === 'function') global.atualizarBadgesNav();
+        // O subscriber do Store agenda uma unica renderizacao consolidada.
         updateSyncUI(true, 'Dados atualizados do cache secundário');
       }
     });
@@ -130,8 +129,7 @@
           Actions.replaceSlice('recontagens',  recontagens,  { source: 'polling-cache' }),
           Actions.replaceSlice('coletores',    coletores,    { source: 'polling-cache' })
         ]);
-        if (global.AnalistaNavigation?.renderCurrentPage) global.AnalistaNavigation.renderCurrentPage();
-        if (typeof global.atualizarBadgesNav === 'function') global.atualizarBadgesNav();
+        // O subscriber do Store agenda uma unica renderizacao consolidada.
         updateSyncUI(true, new Date().toLocaleTimeString('pt-BR'));
       }
       lastTs = currentTs || lastTs;

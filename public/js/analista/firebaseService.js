@@ -361,8 +361,8 @@
     const produtos = global.DTProdutos?.cache?.lista?.length || 0;
 
     global.AnalistaBootstrap?.saveAll?.();
-    global.AnalistaBootstrap?.renderAll?.();
-    global.AnalistaNavigation?.renderCurrentPage?.();
+    // O Store/AppController consolida a renderizacao; nao redesenhar dashboard,
+    // enderecos e pagina atual tres vezes no mesmo ciclo.
 
     if (falhas.length) {
       throw new Error(`Não foi possível carregar: ${falhas.map(item => item.nome).join(', ')}.`);
@@ -428,8 +428,8 @@
     // o Analista clicar em Atribuir e escolher o operador.
     try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'manual-refresh',force:true});}catch(e){console.warn('[FirebaseService] Processamento manual:',e.message);}
     global.AnalistaBootstrap?.saveAll?.();
-    global.AnalistaBootstrap?.renderAll?.();
-    global.AnalistaNavigation?.renderCurrentPage?.();
+    // O Store/AppController consolida a renderizacao; nao redesenhar dashboard,
+    // enderecos e pagina atual tres vezes no mesmo ciclo.
     _emitSync(true,`Atualização manual concluída: ${contagens.length+vazios.length} contagens, ${divergencias.length} conflitos e ${recontagens.length} recontagens.`,{started:false,source:'firebase-manual'});
     return {enderecos:enderecos.length,contagens:contagens.length+vazios.length,divergencias:divergencias.length,recontagens:recontagens.length};
   }
