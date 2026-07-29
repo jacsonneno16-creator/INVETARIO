@@ -494,14 +494,16 @@ function exportarContagens(){
       'Operador ultima rodada': ultima.operador || c.operador || '',
       'Inventario': inventarioTexto(c),
       'Endereco': c.endereco || '',
-      'Codigo produto ultima rodada': valorSeguro(prod.codigo || ultima.produto || ''),
+      // O codigo exportado deve ser exatamente o que o operador bipou.
+      // O cadastro do produto serve apenas para completar a descricao.
+      'Codigo bipado ultima rodada': valorSeguro(ultima.produto || prod.codigo || ''),
       'Produto ultima rodada': valorSeguro(prod.descricao || ultima.descricao || ''),
       'Quantidade ultima rodada': ultima.quantidade ?? '',
       'Status do fluxo': textoStatus(c),
       'Tipo registro original': c.tipo_contagem || 'PRIMEIRA',
       'Data/Hora 1a contagem': fmtTs(c.timestamp || c.criado_em || c.dataHora),
       'Operador 1a contagem': c.operador || c.operador_nome || '',
-      'Codigo produto 1a contagem': valorSeguro(primeiraProd.codigo || ''),
+      'Codigo bipado 1a contagem': valorSeguro(c.gtin_bipado || c.codigoLido || c.codigo_lido || c.dunLido || c.dun_lido || c.gtinLido || c.gtin_lido || primeiraProd.codigo || ''),
       'Produto 1a contagem': valorSeguro(primeiraProd.descricao || ''),
       'Quantidade 1a contagem': c.quantidade ?? c.qtd ?? c.qtd_contada ?? '',
       'ID contagem': c.uuid || c.id || '',

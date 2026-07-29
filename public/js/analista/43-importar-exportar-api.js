@@ -62,6 +62,41 @@
   function inventoryRows(id) {
     return (state().contagens || []).filter(function (row) { return !id || inventoryId(row) === String(id); });
   }
+  // Retorna exatamente o codigo lido pelo operador. O cadastro do produto
+  // e usado apenas como fallback para registros legados que nao guardavam a leitura.
+  function scannedCode(row) {
+    if (!row) return '';
+    var candidates = [row.codigoLido,row.codigo_lido,row.gtin_bipado,row.dunLido,row.dun_lido,
+      row.codigo_bipado,row.barcode_lido,row.gtinLido,row.gtin_lido,row.gtin,row.ean,row.dun];
+    for (var i=0;i<candidates.length;i++) {
+      var code = String(candidates[i] == null ? '' : candidates[i]).trim().replace(/\s+/g,'');
+      if (code) return code;
+    }
+    return String(row.codigo_produto || row.codigoProduto || row.produto_codigo || '').trim();
+  }
+  function countedQty(row) {
+    if (!row) return 0;
+    var value = row.quantidade;
+    if (value == null) value = row.qtd;
+    if (value == null) value = row.qtd_recontagem;
+    if (value == null) value = row.qtd_segunda;
+    if (value == null) value = row.qtd_terceira;
+    return Number(String(value == null ? 0 : value).replace(',','.')) || 0;
+  }
+  function latestRecountReading(rec) {
+    if (!rec) return null;
+    var st = state();
+    var recId = String(rec.id || rec.recontagem_id || '');
+    var rows = (st.contagens || []).filter(function (c) {
+      if (c._excluida || String(c.status || '').toUpperCase() === 'ESTORNADA') return false;
+      if (String(c.tipo_contagem || '').toUpperCase() !== 'RECONTAGEM') return false;
+      return recId && String(c.recontagem_id || '') === recId;
+    });
+    rows.sort(function(a,b){
+      return String(a.timestamp || a.criado_em || a.dataHora || '').localeCompare(String(b.timestamp || b.criado_em || b.dataHora || ''));
+    });
+    return rows.length ? rows[rows.length-1] : null;
+  }
   function flowKey(row) {
     var FK = global.InventoryFlowKey;
     if (FK && typeof FK.chave === 'function') {
@@ -101,9 +136,12 @@
       if (first.divergente === true || status === 'DIVERGENTE') return null;
       return {
         rodada:1,
-        codigo:first.codigo_produto || first.codigoProduto || first.gtin_bipado || first.gtin || first.ean || first.dun || '',
-        descricao:first.descricao_produto || first.produto_descricao || first.produto || '',
-        quantidade:Number(first.quantidade != null ? first.quantidade : first.qtd) || 0,
+        codigo:scannedCode(first),
+        descricao:first.descricao_produto || first.produtoLidoNome || first.produto_descricao || first.produto || '',
+        quantidade:countedQty(first),
+        validade:first.validade || first.data_validade || '',
+        lote_produto:first.lote_produto || first.lote || first.numero_lote_produto || '',
+        palete:first.palete || first.palete_key || first.capa_palete || first.capa || '',
         motivo:'PRIMEIRA_CONTAGEM'
       };
     }
@@ -125,29 +163,34 @@
       qtd_esperada: div.qtd_esperada,
       produto: div.produto || div.codigo_produto || first.codigo_produto || first.gtin || '',
       qtd_primeira: div.qtd_primeira != null ? div.qtd_primeira : (div.qtd_contada != null ? div.qtd_contada : first.quantidade),
-      produto_primeira: div.produto_primeira || div.produto_contado || first.gtin_bipado || first.codigo_produto || first.gtin || '',
+      produto_primeira: div.produto_primeira || div.produto_contado || scannedCode(first),
       qtd_segunda: recs[0] ? (recs[0].qtd_segunda != null ? recs[0].qtd_segunda : recs[0].qtd_recontagem) : null,
-      produto_segunda: recs[0] ? (recs[0].produto_segunda || recs[0].produto_recontagem || recs[0].produto || '') : '',
+      produto_segunda: recs[0] ? (recs[0].produto_segunda || recs[0].produto_recontagem || '') : '',
       qtd_terceira: recs[1] ? (recs[1].qtd_terceira != null ? recs[1].qtd_terceira : recs[1].qtd_recontagem) : null,
-      produto_terceira: recs[1] ? (recs[1].produto_terceira || recs[1].produto_recontagem || recs[1].produto || '') : '',
-      status: div.status,
-      status_recontagem: div.status_recontagem,
-      divergente: div.divergente,
-      precisa_recontagem: div.precisa_recontagem,
-      tipo_divergencia: div.tipo_divergencia
+      produto_terceira: recs[1] ? (recs[1].produto_terceira || recs[1].produto_recontagem || '') : '',
+      status: div.status,status_recontagem: div.status_recontagem,divergente: div.divergente,
+      precisa_recontagem: div.precisa_recontagem,tipo_divergencia: div.tipo_divergencia
     };
     var evaluation = global.AnalistaDivergenciasRuntime && global.AnalistaDivergenciasRuntime.avaliarHistorico
       ? global.AnalistaDivergenciasRuntime.avaliarHistorico(history) : null;
     if (!evaluation || evaluation.estado !== 'RESOLVIDA' || !evaluation.resultado) return null;
 
+    var source = evaluation.rodada === 1 ? first : latestRecountReading(recs[evaluation.rodada - 2]);
+    var rec = evaluation.rodada > 1 ? recs[evaluation.rodada - 2] : null;
     var result = evaluation.resultado;
-    var code = result.produto || history.produto || first.codigo_produto || first.gtin || '';
+    var code = scannedCode(source) || scannedCode(rec) || result.produto || history.produto || '';
     var found = global.DTProdutos && global.DTProdutos.buscarSync ? global.DTProdutos.buscarSync(code) : null;
     return {
       rodada:evaluation.rodada,
       codigo:code,
-      descricao:(found && found.encontrado ? found.nomeProduto : '') || div.descricao_produto || first.descricao_produto || first.produto_descricao || '',
-      quantidade:Number(result.qtd) || 0,
+      descricao:(source && (source.descricao_produto || source.produtoLidoNome || source.descricao)) ||
+        (found && found.encontrado ? found.nomeProduto : '') || div.descricao_produto || first.descricao_produto || '',
+      quantidade:source ? countedQty(source) : (Number(result.qtd) || 0),
+      validade:(source && (source.validade || source.data_validade)) || (rec && (rec.validade || rec.data_validade)) || first.validade || '',
+      lote_produto:(source && (source.lote_produto || source.lote || source.numero_lote_produto)) ||
+        (rec && (rec.lote_produto || rec.lote || rec.numero_lote_produto)) || first.lote_produto || first.lote || '',
+      palete:(source && (source.palete || source.palete_key || source.capa_palete || source.capa)) ||
+        (rec && (rec.palete || rec.palete_key || rec.capa_palete || rec.capa)) || first.palete || first.palete_key || first.capa || '',
       motivo:evaluation.referencia || 'RESOLVIDA'
     };
   }
@@ -162,26 +205,76 @@
       var currentDate = current ? String(current.timestamp || current.criado_em || current.dataHora || '') : '';
       if (!current || date.localeCompare(currentDate) < 0) firstByFlow[key] = row;
     });
-
-    var grouped = {};
-    Object.keys(firstByFlow).forEach(function (flow) {
-      var first = firstByFlow[flow];
-      var finalRow = finalPhysicalRow(first);
-      if (!finalRow) return; // pendentes/persistentes nao entram na exportacao final
-      var key = [first.endereco || '', finalRow.codigo || ''].join('|');
-      if (!grouped[key]) grouped[key] = {
-        endereco:first.endereco || '',
-        codigo_produto:finalRow.codigo || '',
-        gtin:finalRow.codigo || '',
+    return Object.keys(firstByFlow).map(function (flow) {
+      var first = firstByFlow[flow], finalRow = finalPhysicalRow(first);
+      if (!finalRow) return null;
+      return {
+        endereco:String(first.endereco || '').trim(),
+        gtin:String(finalRow.codigo || '').trim(),
         descricao_produto:finalRow.descricao || '',
-        quantidade:0,
+        quantidade:Number(finalRow.quantidade) || 0,
+        lote_produto:String(finalRow.lote_produto || '').trim(),
+        validade:String(finalRow.validade || '').trim(),
+        palete:String(finalRow.palete || '').trim(),
         rodada_resultado:finalRow.rodada,
         motivo_resultado:finalRow.motivo
       };
-      grouped[key].quantidade += finalRow.quantidade;
-      grouped[key].rodada_resultado = Math.max(grouped[key].rodada_resultado || 1, finalRow.rodada || 1);
+    }).filter(Boolean);
+  }
+  function normalizeValidity(value) {
+    var text = String(value || '').trim();
+    if (!text) return '';
+    var m = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+    if (!m) return text;
+    var year = m[3].length === 2 ? '20' + m[3] : m[3];
+    return m[1].padStart(2,'0') + '/' + m[2].padStart(2,'0') + '/' + year;
+  }
+  function decimalBR(value) {
+    var n = Number(value);
+    if (!Number.isFinite(n)) return '';
+    return String(n).replace('.', ',');
+  }
+  function bluesoftLayout(inv, selected) {
+    if (selected && selected !== 'AUTO') return selected;
+    var raw = String((inv && (inv.tipo_inventario_logistico || inv.tipo_logistico || inv.layout_bluesoft || inv.modo_contagem)) || '').toUpperCase();
+    if (inv && (inv.com_endereco_logistico === true || inv.usa_enderecamento === true || /ENDERE/.test(raw))) return 'ENDERECAMENTO';
+    if (inv && (inv.com_endereco_logistico === false || inv.usa_enderecamento === false || /GERAL|SEM_ENDERE/.test(raw))) return 'GERAL';
+    return 'ENDERECAMENTO';
+  }
+  function buildBluesoftExport(invId, layout, loteContagem) {
+    var rows = consolidatedRows(invId), errors = [], grouped = {}, palletAddress = {};
+    rows.forEach(function(row, index){
+      var line = index + 2;
+      var gtin = String(row.gtin || '').trim().replace(/\s+/g,'');
+      var qty = Number(row.quantidade);
+      var address = String(row.endereco || '').trim();
+      var productLot = String(row.lote_produto || '').trim();
+      var validity = normalizeValidity(row.validade);
+      var pallet = String(row.palete || '').trim();
+      if (!gtin) errors.push('Linha ' + line + ': codigo bipado ausente.');
+      else if (!/^\d{1,14}$/.test(gtin)) errors.push('Linha ' + line + ': GTIN/PLU deve conter somente numeros e ter ate 14 digitos (' + gtin + ').');
+      if (!Number.isFinite(qty) || qty < 0) errors.push('Linha ' + line + ': quantidade invalida.');
+      if (layout === 'ENDERECAMENTO') {
+        if (!address) errors.push('Linha ' + line + ': endereco logistico ausente.');
+        if (productLot.length > 30) errors.push('Linha ' + line + ': lote do produto possui mais de 30 caracteres.');
+        if (validity && !/^\d{2}\/\d{2}\/\d{4}$/.test(validity)) errors.push('Linha ' + line + ': validade deve estar em dd/mm/aaaa.');
+        if (pallet && !/^\d{1,9}$/.test(pallet)) errors.push('Linha ' + line + ': palete deve ter somente numeros e ate 9 digitos.');
+        if (pallet) {
+          if (palletAddress[pallet] && palletAddress[pallet] !== address) errors.push('Palete ' + pallet + ' aparece em enderecos diferentes.');
+          palletAddress[pallet] = address;
+        }
+        var k = [address,gtin,productLot,validity,pallet].join('|');
+        if (!grouped[k]) grouped[k] = {endereco_logistico:address,gtin:gtin,quantidade:0,lote_produto:productLot,validade:validity,palete:pallet};
+        grouped[k].quantidade += qty;
+      } else {
+        var lot = String(loteContagem || '').trim();
+        if (!/^\d{1,7}$/.test(lot)) errors.push('Informe o lote de contagem Bluesoft com ate 7 digitos.');
+        var kg = [lot,gtin].join('|');
+        if (!grouped[kg]) grouped[kg] = {lote:lot,gtin:gtin,quantidade:0};
+        grouped[kg].quantidade += qty;
+      }
     });
-    return Object.keys(grouped).map(function (key) { return grouped[key]; });
+    return {rows:Object.keys(grouped).map(function(k){return grouped[k];}),errors:Array.from(new Set(errors))};
   }
   function dataset(type) {
     var st = state();
@@ -392,13 +485,31 @@
   };
   global.ieExportarBluesoft = function () {
     var invId = value('ie-bluesoft-inv');
-    if (!invId) return toast('Selecione o inventário.', 'w');
-    var rows = consolidatedRows(invId);
-    if (!rows.length) return toast('Esse inventário não possui contagens para exportar.', 'w');
-    if (!global.XLSX) return toast('Biblioteca do Excel não carregada.', 'e');
-    var sheet = global.XLSX.utils.json_to_sheet(rows);
-    var book = global.XLSX.utils.book_new(); global.XLSX.utils.book_append_sheet(book, sheet, 'Contagens');
-    global.XLSX.writeFile(book, 'bluesoft_' + invId + '_' + fileStamp() + '.xlsx');
+    if (!invId) return toast('Selecione o inventario.', 'w');
+    var inv = (state().inventarios || []).find(function(i){return String(i.id) === String(invId);}) || {};
+    var layout = bluesoftLayout(inv, value('ie-bluesoft-layout') || 'AUTO');
+    var result = buildBluesoftExport(invId, layout, value('ie-bluesoft-lote'));
+    if (!result.rows.length) return toast('Nao ha contagens resolvidas para exportar. Pendencias e persistentes nao entram no arquivo.', 'w');
+    if (result.errors.length) {
+      var preview = result.errors.slice(0,8).join('\n');
+      if (result.errors.length > 8) preview += '\n... e mais ' + (result.errors.length-8) + ' erro(s).';
+      alert('A exportacao foi bloqueada pelas validacoes da Bluesoft:\n\n' + preview);
+      return;
+    }
+    var headers = layout === 'ENDERECAMENTO'
+      ? ['endereco_logistico','gtin','quantidade','lote_produto','validade','palete']
+      : ['lote','gtin','quantidade'];
+    var csv = '\uFEFF' + headers.join(';') + '\r\n' + result.rows.map(function(row){
+      return headers.map(function(h){ return h === 'quantidade' ? decimalBR(row[h]) : String(row[h] == null ? '' : row[h]); }).join(';');
+    }).join('\r\n');
+    var suffix = layout === 'ENDERECAMENTO' ? 'enderecamento' : 'geral';
+    downloadBlob(csv, 'bluesoft_' + suffix + '_' + invId + '_' + fileStamp() + '.csv', 'text/csv;charset=utf-8');
+    toast(result.rows.length.toLocaleString('pt-BR') + ' item(ns) exportado(s) no layout Bluesoft ' + (layout === 'ENDERECAMENTO' ? 'com enderecamento.' : 'geral.'), 's');
+  };
+  global.ieBluesoftLayoutChanged = function () {
+    var layout = value('ie-bluesoft-layout');
+    var box = el('ie-bluesoft-lote-wrap');
+    if (box) box.style.display = layout === 'GERAL' ? 'flex' : 'none';
   };
 
   function configFromForm() {
