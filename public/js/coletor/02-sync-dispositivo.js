@@ -638,6 +638,28 @@ async function enviarFilaPendente() {
         status_sync: 'sincronizado',
       });
 
+      // Uma recontagem concluída offline chega aqui junto com a contagem.
+      // Atualizar a tarefa vinculada no mesmo ciclo de sincronização evita que
+      // ela reapareça como PENDENTE no coletor. A divergência continua sendo
+      // propriedade do Analista e não é alterada pelo coletor.
+      if (String(c.tipo_contagem || '').toUpperCase() === 'RECONTAGEM' && c.recontagem_id) {
+        try {
+          await FS.collection('dt_recontagens').doc(String(c.recontagem_id)).set({
+            status_recontagem: 'concluida',
+            status: 'CONCLUIDA',
+            numero_recontagem: Number(c.numero_recontagem || 1),
+            recontagem_concluida_em: c.criado_em || new Date().toISOString(),
+            operador_recontagem: c.operador_nome || c.operador || '',
+            contagem_uuid: c.uuid || docId,
+            atualizado_em: new Date().toISOString()
+          }, { merge: true });
+        } catch (statusErr) {
+          // A contagem já foi preservada. O Analista ainda consegue consolidar
+          // pelo recontagem_id/chave de fluxo; portanto não duplicamos o envio.
+          console.warn('[fila] Contagem enviada, mas status da recontagem não foi atualizado:', statusErr.message);
+        }
+      }
+
       // Remove do IDB e marca localmente
       await idbDelete(c.uuid);
       enviados.push(c.uuid || c.id);

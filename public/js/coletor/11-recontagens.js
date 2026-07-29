@@ -90,9 +90,16 @@ function iniciarListenerRecontagens(invId) {
           const st = String(r.status || '').toUpperCase();
           const sr = String(r.status_recontagem || '').toLowerCase();
           if (!r.endereco || st !== 'PENDENTE' || sr === 'cancelada') return;
-          const chave = `${invId}__${encodeURIComponent(String(r.endereco).trim().toUpperCase())}`;
+          // Mesma chave canônica usada pelo Analista: inventário + endereço + produto.
+          // Evita que produtos diferentes do mesmo endereço compartilhem o bloqueio.
+          const chaveFluxo = window.InventoryFlowKey
+            ? window.InventoryFlowKey.chave(r, APP.inventarios || (APP.inventario ? [APP.inventario] : []))
+            : `${invId}|${String(r.endereco).trim().toUpperCase()}|${r.produto || r.codigo_produto || 'SEM_PRODUTO'}`;
+          const chave = encodeURIComponent(chaveFluxo);
           FS.collection('dt_bloqueios_recontagem').doc(chave).set({
             ativo: true, inventario_id: invId, endereco: r.endereco,
+            produto: r.produto || r.codigo_produto || '',
+            chave_fluxo: chaveFluxo,
             operador: operadorAtual, recontagem_id: r.id,
             atualizado_em: new Date().toISOString()
           }, { merge: true }).catch(() => {});

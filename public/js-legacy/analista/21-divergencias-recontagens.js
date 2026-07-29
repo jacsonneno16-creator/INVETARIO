@@ -200,15 +200,9 @@
       obj.produto_primeira || obj.produto_contado || obj.gtin_bipado || obj.produto,
       obj.produto
     );
-    const segunda = _parContagem(obj.qtd_segunda, obj.produto_segunda || obj.produto_recontagem, obj.produto);
+    const segunda = _parContagem(obj.qtd_segunda ?? obj.qtd_recontagem, obj.produto_segunda || obj.produto_recontagem, obj.produto);
     const terceira = _parContagem(obj.qtd_terceira, obj.produto_terceira || obj.produto_recontagem, obj.produto);
 
-    // Uma divergência já aberta é a evidência autoritativa de que a 1ª rodada
-    // ainda NÃO foi aceita. Em bases com vários paletes, qtd_esperada do documento
-    // pode representar apenas uma linha da base e coincidir por acaso com a leitura,
-    // embora o total do endereço continue divergente. Nesse cenário, nunca encerrar
-    // como OK 1ª; manter aguardando recontagem e só resolver por uma rodada posterior
-    // ou por encerramento explícito do analista.
     const statusFluxo = String(obj?.status || '').trim().toUpperCase();
     const statusRecontagem = String(obj?.status_recontagem || '').trim().toLowerCase();
     const divergenciaPrimeiraAtiva =
@@ -218,30 +212,64 @@
       (Number.isFinite(Number(obj?.diferenca)) && Number(obj.diferenca) !== 0) ||
       Boolean(obj?.tipo_divergencia);
 
-    if (_paresIguais(primeira, sistema) && !divergenciaPrimeiraAtiva) {
-      return { estado:'RESOLVIDA', referencia:'OK_PRIMEIRA_SISTEMA', rodada:1, resultado:primeira };
+    const somenteQuantidade = obj?.comparacao_somente_quantidade === true;
+    const fluxoConsolidado = obj?.fluxo_consolidado_endereco === true;
+    const rodadas = [primeira, segunda, terceira];
+    const rodadasQueBateram = rodadas.reduce((acc, rodada, indice) => {
+      if (_paresIguais(rodada, sistema, somenteQuantidade)) acc.push(indice + 1);
+      return acc;
+    }, []);
+    const resultado = (estado, referencia, rodada, parResultado) => ({
+      estado, referencia, rodada, resultado:parResultado,
+      rodadasQueBateram,
+      esperado:sistema?.qtd ?? null,
+      fluxoConsolidado
+    });
+
+    // No fluxo consolidado do endereço, a rodada mais recente é autoritativa.
+    // Todas as rodadas que bateram continuam destacadas, mas a última existente
+    // é quem define o status final nas abas Contagens e Recontagem.
+    if (fluxoConsolidado) {
+      if (terceira) {
+        return _paresIguais(terceira, sistema, true)
+          ? resultado('RESOLVIDA','OK_TERCEIRA_TOTAL_ENDERECO',3,terceira)
+          : resultado('PERSISTENTE','TERCEIRA_DIVERGENTE_TOTAL_ENDERECO',3,terceira);
+      }
+      if (segunda) {
+        return _paresIguais(segunda, sistema, true)
+          ? resultado('RESOLVIDA','OK_SEGUNDA_TOTAL_ENDERECO',2,segunda)
+          : resultado('AGUARDANDO_ANALISTA',null,2,segunda);
+      }
+      if (_paresIguais(primeira, sistema, true) && !divergenciaPrimeiraAtiva) {
+        return resultado('RESOLVIDA','OK_PRIMEIRA_TOTAL_ENDERECO',1,primeira);
+      }
+      return resultado('AGUARDANDO_ANALISTA',null,1,primeira);
+    }
+
+    if (_paresIguais(primeira, sistema, somenteQuantidade) && !divergenciaPrimeiraAtiva) {
+      return resultado('RESOLVIDA','OK_PRIMEIRA_SISTEMA',1,primeira);
     }
     if (segunda) {
-      if (_paresIguais(segunda, sistema)) {
-        return { estado:'RESOLVIDA', referencia:'OK_SEGUNDA_SISTEMA', rodada:2, resultado:segunda };
+      if (_paresIguais(segunda, sistema, somenteQuantidade)) {
+        return resultado('RESOLVIDA','OK_SEGUNDA_SISTEMA',2,segunda);
       }
-      if (_paresIguais(segunda, primeira)) {
-        return { estado:'RESOLVIDA', referencia:'OK_SEGUNDA_PRIMEIRA', rodada:2, resultado:segunda };
+      if (_paresIguais(segunda, primeira, somenteQuantidade)) {
+        return resultado('RESOLVIDA','OK_SEGUNDA_PRIMEIRA',2,segunda);
       }
     }
     if (terceira) {
-      if (_paresIguais(terceira, sistema)) {
-        return { estado:'RESOLVIDA', referencia:'OK_TERCEIRA_SISTEMA', rodada:3, resultado:terceira };
+      if (_paresIguais(terceira, sistema, somenteQuantidade)) {
+        return resultado('RESOLVIDA','OK_TERCEIRA_SISTEMA',3,terceira);
       }
-      if (_paresIguais(terceira, primeira)) {
-        return { estado:'RESOLVIDA', referencia:'OK_TERCEIRA_PRIMEIRA', rodada:3, resultado:terceira };
+      if (_paresIguais(terceira, primeira, somenteQuantidade)) {
+        return resultado('RESOLVIDA','OK_TERCEIRA_PRIMEIRA',3,terceira);
       }
-      if (_paresIguais(terceira, segunda)) {
-        return { estado:'RESOLVIDA', referencia:'OK_TERCEIRA_SEGUNDA', rodada:3, resultado:terceira };
+      if (_paresIguais(terceira, segunda, somenteQuantidade)) {
+        return resultado('RESOLVIDA','OK_TERCEIRA_SEGUNDA',3,terceira);
       }
-      return { estado:'PERSISTENTE', referencia:'TERCEIRA_SEM_CONSENSO', rodada:3, resultado:terceira };
+      return resultado('PERSISTENTE','TERCEIRA_SEM_CONSENSO',3,terceira);
     }
-    return { estado:'AGUARDANDO_ANALISTA', referencia:null, rodada:segunda ? 2 : 1, resultado:segunda || primeira };
+    return resultado('AGUARDANDO_ANALISTA',null,segunda ? 2 : 1,segunda || primeira);
   }
 
   function _produtoOperacional(obj){
@@ -503,6 +531,21 @@
           (c.numero_recontagem === rec.numero_recontagem || !c.numero_recontagem)
         );
         if (candidatas.length) recebidas = candidatas;
+      }
+      // Último fallback seguro: chave canônica de inventário/endereço/produto.
+      if (!recebidas.length) {
+        const chaveRec = window.InventoryFlowKey
+          ? window.InventoryFlowKey.chave(rec, state().inventarios)
+          : _chaveOperacional(rec);
+        const candidatasChave = state().contagens.filter(c => {
+          if (!_baseValida(c)) return false;
+          const chaveC = window.InventoryFlowKey
+            ? window.InventoryFlowKey.chave(c, state().inventarios)
+            : _chaveOperacional(c);
+          return chaveC === chaveRec &&
+            (!c.numero_recontagem || Number(c.numero_recontagem) === Number(rec.numero_recontagem || 1));
+        });
+        if (candidatasChave.length) recebidas = candidatasChave;
       }
       if (!recebidas.length) {
         const pendenteSemAnalista = String(rec.status || '').toUpperCase() === 'PENDENTE' &&

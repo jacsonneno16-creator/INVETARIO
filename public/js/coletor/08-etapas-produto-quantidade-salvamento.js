@@ -641,6 +641,9 @@ function _executarSalvar(qty) {
     tipo_contagem:    APP.modoRecontagem ? 'RECONTAGEM' : 'PRIMEIRA',
     recontagem_id:    APP.modoRecontagem ? (APP.modoRecontagem.id || null) : null,
     divergencia_id:   APP.modoRecontagem ? (APP.modoRecontagem.divergencia_id || (APP.modoRecontagem._col === 'divergencia' ? APP.modoRecontagem.id : null)) : null,
+    // Rodada explícita para auditoria e recuperação de registros offline/legados.
+    // 1 = primeira recontagem (2ª contagem); 2 = segunda recontagem (3ª contagem).
+    numero_recontagem: APP.modoRecontagem ? Number(APP.modoRecontagem.numero_recontagem || 1) : null,
     dataHora:   new Date(),
     criado_em:  new Date().toISOString(),
     numero: APP.contagens.filter(c => c.endereco === a.endereco && c.gtin === a.gtin).length + 1,

@@ -45,31 +45,12 @@ const _totalEsperadoEnderecoRec = obj => {
 // se uma recontagem concluida totaliza exatamente o total esperado do endereco,
 // o fluxo esta resolvido. Nao reutilizar a qtd_esperada individual da divergencia.
 const _avaliarTotalConsolidadoRec = (obj, totalEsperado) => {
-  const numero = valor => {
-    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
-    const n = Number(String(valor).replace(',', '.'));
-    return Number.isFinite(n) ? n : null;
-  };
-  const esperado = numero(totalEsperado);
-  if (esperado === null) return null;
-
-  const segunda = numero(obj?.qtd_segunda ?? obj?.qtd_recontagem);
-  const terceira = numero(obj?.qtd_terceira);
-
-  // A rodada mais recente e autoritativa. Havendo terceira, ela decide o fluxo.
-  if (terceira !== null) {
-    return terceira === esperado
-      ? { estado:'RESOLVIDA', referencia:'OK_TERCEIRA_TOTAL_ENDERECO', rodada:3,
-          resultado:{ qtd:terceira, produto:obj?.produto_terceira || obj?.produto_recontagem || '' } }
-      : { estado:'PERSISTENTE', referencia:'TERCEIRA_DIVERGENTE_TOTAL_ENDERECO', rodada:3,
-          resultado:{ qtd:terceira, produto:obj?.produto_terceira || obj?.produto_recontagem || '' } };
-  }
-
-  if (segunda !== null && segunda === esperado) {
-    return { estado:'RESOLVIDA', referencia:'OK_SEGUNDA_TOTAL_ENDERECO', rodada:2,
-      resultado:{ qtd:segunda, produto:obj?.produto_segunda || obj?.produto_recontagem || '' } };
-  }
-  return null;
+  return window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
+    ...(obj || {}),
+    qtd_esperada: totalEsperado,
+    comparacao_somente_quantidade: true,
+    fluxo_consolidado_endereco: true
+  }) || null;
 };
 
 const _chaveEndereco = obj => {

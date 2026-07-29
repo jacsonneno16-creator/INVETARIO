@@ -147,15 +147,25 @@ function _resultadoRodadaEndereco(c) {
     });
     if (totalEsperadoEndereco !== null && recsEnderecoConcluidas.length) {
         var consolidada = recsEnderecoConcluidas.find(function (r) { return r.qtd_terceira != null || r.qtd_segunda != null; }) || {};
-        var segundaTotal = numeroSeguro(consolidada.qtd_segunda != null ? consolidada.qtd_segunda :
-            (recsEnderecoConcluidas[0].qtd_segunda != null ? recsEnderecoConcluidas[0].qtd_segunda : recsEnderecoConcluidas[0].qtd_recontagem));
-        var terceiraRegistro = recsEnderecoConcluidas[1] || {};
-        var terceiraTotal = numeroSeguro(consolidada.qtd_terceira != null ? consolidada.qtd_terceira :
-            (terceiraRegistro.qtd_terceira != null ? terceiraRegistro.qtd_terceira : terceiraRegistro.qtd_recontagem));
-        if (terceiraTotal !== null && terceiraTotal === totalEsperadoEndereco)
-            return { texto: '✅ OK 3ª', cls: 'b-green' };
-        if (terceiraTotal === null && segundaTotal !== null && segundaTotal === totalEsperadoEndereco)
-            return { texto: '✅ OK 2ª', cls: 'b-green' };
+        var segundaTotal = numeroSeguro(consolidada.qtd_segunda != null ? consolidada.qtd_segunda : (recsEnderecoConcluidas[0] && (recsEnderecoConcluidas[0].qtd_segunda != null ? recsEnderecoConcluidas[0].qtd_segunda : recsEnderecoConcluidas[0].qtd_recontagem)));
+        var terceiraTotal = numeroSeguro(consolidada.qtd_terceira != null ? consolidada.qtd_terceira : (recsEnderecoConcluidas[1] && (recsEnderecoConcluidas[1].qtd_terceira != null ? recsEnderecoConcluidas[1].qtd_terceira : recsEnderecoConcluidas[1].qtd_recontagem)));
+        var avaliacaoConsolidada = window.AnalistaDivergenciasRuntime && window.AnalistaDivergenciasRuntime.avaliarHistorico ? window.AnalistaDivergenciasRuntime.avaliarHistorico({
+            qtd_esperada: totalEsperadoEndereco,
+            qtd_primeira: div.qtd_primeira != null ? div.qtd_primeira : (div.qtd_contada != null ? div.qtd_contada : c.quantidade),
+            qtd_segunda: segundaTotal,
+            qtd_terceira: terceiraTotal,
+            status: div.status,
+            status_recontagem: div.status_recontagem,
+            divergente: div.divergente,
+            precisa_recontagem: div.precisa_recontagem,
+            tipo_divergencia: div.tipo_divergencia,
+            comparacao_somente_quantidade: true,
+            fluxo_consolidado_endereco: true
+        }) : null;
+        if (avaliacaoConsolidada && avaliacaoConsolidada.estado === 'RESOLVIDA')
+            return { texto: '✅ OK ' + avaliacaoConsolidada.rodada + 'ª', cls: 'b-green' };
+        if (avaliacaoConsolidada && avaliacaoConsolidada.estado === 'PERSISTENTE')
+            return { texto: '🔴 Persistente (3 rodadas)', cls: 'b-red' };
     }
 
     var statusConcluido = function (r) {

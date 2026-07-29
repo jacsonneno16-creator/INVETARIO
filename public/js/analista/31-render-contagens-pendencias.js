@@ -8,6 +8,64 @@ function _produtoContagemExibicao(c){
   return {codigo:codigo||ach?.codigoInterno||ach?.gtin||ach?.dun||'',descricao:(!placeholder?atual:'')||(ach?.encontrado?ach.nomeProduto:'Código sem cadastro')};
 }
 
+
+// Retorna a rodada mais recente concluida para exibicao na aba Contagens.
+// O registro original permanece intacto; esta funcao apenas monta a visao
+// operacional com produto, quantidade, operador e data da ultima rodada.
+function _ultimaRodadaContagem(c){
+  const st=state();
+  const FK=window.InventoryFlowKey;
+  const primeira={
+    rodada:1,
+    quantidade:c?.quantidade ?? c?.qtd ?? c?.qtd_contada ?? null,
+    produto:c?.gtin_bipado || c?.gtinLido || c?.gtin_lido || c?.codigo_lido || c?.codigoLido || c?.codigo_produto || c?.codigoProduto || c?.gtin || c?.ean || c?.dun || '',
+    descricao:c?.descricao_produto || c?.descricaoProduto || c?.produto_descricao || c?.descricao || '',
+    operador:c?.operador || c?.operador_nome || '',
+    data:c?.timestamp || c?.criado_em || c?.dataHora || ''
+  };
+  if(!FK) return primeira;
+
+  const inv=FK.inventario(c,st.inventarios);
+  const end=FK.endereco(c?.endereco);
+  const prod=FK.produto(c);
+  const cid=String(c?.uuid || c?.id || '');
+  const divs=(st.divergencias || []).filter(d =>
+    FK.inventario(d,st.inventarios)===inv && FK.endereco(d?.endereco)===end &&
+    !['CANCELADA','EXCLUIDA','ESTORNADA'].includes(String(d?.status || '').toUpperCase())
+  );
+  const div=divs.find(d => cid && [d?.contagem_uuid,d?.contagem_id,d?.origem_contagem_id].filter(Boolean).map(String).includes(cid)) ||
+    divs.find(d => FK.produto(d)===prod) || (divs.length===1 ? divs[0] : null);
+  if(!div) return primeira;
+
+  const concluida=r => {
+    const status=String(r?.status_recontagem || r?.status || '').trim().toUpperCase();
+    const bloqueada=['PENDENTE','ATRIBUIDA','ATRIBUÍDA','EM_ANDAMENTO','ABERTA','CANCELADA','EXCLUIDA'].includes(status);
+    const temQtd=r?.qtd_recontagem != null || r?.qtd_segunda != null || r?.qtd_terceira != null;
+    const temData=Boolean(r?.recontagem_concluida_em || r?.concluida_em || r?.finalizada_em || r?.data_segunda || r?.data_terceira);
+    return temQtd && !bloqueada && (temData || ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA','AGUARDANDO_ANALISTA'].includes(status));
+  };
+  const recs=(st.recontagens || []).filter(r =>
+    (String(r?.divergencia_id || '')===String(div?.id || '') || FK.mesmo(r,div,st.inventarios)) && concluida(r)
+  ).sort((a,b) => {
+    const na=Number(a?.numero_recontagem || 0), nb=Number(b?.numero_recontagem || 0);
+    if(na!==nb) return na-nb;
+    return String(a?.data_terceira || a?.recontagem_concluida_em || a?.concluida_em || a?.data_segunda || '')
+      .localeCompare(String(b?.data_terceira || b?.recontagem_concluida_em || b?.concluida_em || b?.data_segunda || ''));
+  });
+  if(!recs.length) return primeira;
+
+  const r=recs[recs.length-1];
+  const rodada=Math.min(3,1+Math.max(1,Number(r?.numero_recontagem || recs.length)));
+  return {
+    rodada,
+    quantidade:r?.qtd_terceira ?? r?.qtd_segunda ?? r?.qtd_recontagem ?? r?.quantidade ?? primeira.quantidade,
+    produto:r?.produto_terceira || r?.produto_segunda || r?.produto_recontagem || r?.gtin_bipado || r?.codigo_produto || r?.produto || primeira.produto,
+    descricao:r?.descricao_produto || r?.produto_descricao || r?.descricao || primeira.descricao,
+    operador:r?.operador_terceira || r?.operador_segunda || r?.operador_recontagem || r?.operador || primeira.operador,
+    data:r?.data_terceira || r?.data_segunda || r?.recontagem_concluida_em || r?.concluida_em || r?.finalizada_em || primeira.data
+  };
+}
+
 function contStatusBadge(status){
   const st = String(status || 'PENDENTE').toUpperCase();
   if (st === 'PROCESSADO' || st === 'OK' || st === 'CONCLUIDA') return 'b-green';
@@ -113,12 +171,24 @@ function _resultadoRodadaEndereco(c){
     const consolidada = recsEnderecoConcluidas.find(r => r.qtd_terceira != null || r.qtd_segunda != null) || {};
     const segunda = numeroSeguro(consolidada.qtd_segunda ?? recsEnderecoConcluidas[0]?.qtd_segunda ?? recsEnderecoConcluidas[0]?.qtd_recontagem);
     const terceira = numeroSeguro(consolidada.qtd_terceira ?? recsEnderecoConcluidas[1]?.qtd_terceira ?? recsEnderecoConcluidas[1]?.qtd_recontagem);
-    // A rodada mais recente decide. Se a 3ª existe e bate, o fluxo está resolvido.
-    if (terceira !== null && terceira === totalEsperadoEndereco) {
-      return { texto:'✅ OK 3ª', cls:'b-green' };
+    const avaliacaoConsolidada = window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
+      qtd_esperada: totalEsperadoEndereco,
+      qtd_primeira: div.qtd_primeira ?? div.qtd_contada ?? c.quantidade,
+      qtd_segunda: segunda,
+      qtd_terceira: terceira,
+      status: div.status,
+      status_recontagem: div.status_recontagem,
+      divergente: div.divergente,
+      precisa_recontagem: div.precisa_recontagem,
+      tipo_divergencia: div.tipo_divergencia,
+      comparacao_somente_quantidade: true,
+      fluxo_consolidado_endereco: true
+    });
+    if (avaliacaoConsolidada?.estado === 'RESOLVIDA') {
+      return { texto:`✅ OK ${avaliacaoConsolidada.rodada}ª`, cls:'b-green' };
     }
-    if (terceira === null && segunda !== null && segunda === totalEsperadoEndereco) {
-      return { texto:'✅ OK 2ª', cls:'b-green' };
+    if (avaliacaoConsolidada?.estado === 'PERSISTENTE') {
+      return { texto:'🔴 Persistente (3 rodadas)', cls:'b-red' };
     }
   }
 
@@ -327,13 +397,18 @@ function renderContagens() {
             ? `<span style="font-size:.65rem;color:var(--muted)"> · cap:${end.capacidade_paletes}</span>` : '';
           const ruaInfo  = end?.rua ? `<div style="font-size:.65rem;color:var(--muted)">Rua: ${end.rua}</div>` : '';
 
-          const prodExib=_produtoContagemExibicao(c);
+          const ultima=_ultimaRodadaContagem(c);
+          const prodExib=_produtoContagemExibicao(Object.assign({},c,{
+            codigo_produto:ultima.produto,
+            gtin:ultima.produto,
+            descricao_produto:ultima.descricao
+          }));
           return `<tr style="${rowStyle}">
-            <td class="mono" style="white-space:nowrap;font-size:.75rem">${fmtTs(c.timestamp || c.criado_em || c.dataHora)}</td>
+            <td class="mono" style="white-space:nowrap;font-size:.75rem">${fmtTs(ultima.data || c.timestamp || c.criado_em || c.dataHora)}<div style="font-size:.62rem;color:var(--muted)">Última: ${ultima.rodada}ª rodada</div></td>
             <td>
               <div style="display:flex;align-items:center;gap:6px">
-                <div class="u-avatar" style="width:24px;height:24px;font-size:.65rem;flex-shrink:0">${(c.operador||'?')[0].toUpperCase()}</div>
-                <span style="font-weight:600;font-size:.82rem">${c.operador || '—'}</span>
+                <div class="u-avatar" style="width:24px;height:24px;font-size:.65rem;flex-shrink:0">${(ultima.operador||c.operador||'?')[0].toUpperCase()}</div>
+                <span style="font-weight:600;font-size:.82rem">${ultima.operador || c.operador || '—'}</span>
               </div>
             </td>
             <td style="font-size:.75rem;color:var(--muted)">${inv?.codigo || c.inventario_id}</td>
@@ -342,11 +417,7 @@ function renderContagens() {
               <div style="font-weight:600;font-size:.82rem">${prodExib.codigo || '—'}</div>
               <div style="font-size:.72rem;color:var(--muted)">${prodExib.descricao || ''}</div>
             </td>
-            <td class="mono" style="font-weight:700;font-size:.9rem">${
-              (c.qtd_caixas != null && c.fator_caixa > 1)
-                ? `${c.qtd_caixas} CX`
-                : (c.quantidade ?? '—')
-            }</td>
+            <td class="mono" style="font-weight:700;font-size:.9rem">${ultima.quantidade ?? '—'}<div style="font-size:.62rem;color:var(--muted);font-family:var(--font)">${ultima.rodada === 1 ? '1ª contagem' : ultima.rodada + 'ª contagem'}</div></td>
             <td><span class="badge ${c.tipo_contagem === 'RECONTAGEM' ? 'b-purple' : 'b-blue'}">${c.tipo_contagem || 'PRIMEIRA'}</span></td>
             <td>
               ${excluida
