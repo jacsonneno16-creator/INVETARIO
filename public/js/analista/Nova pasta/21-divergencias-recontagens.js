@@ -226,37 +226,48 @@
       fluxoConsolidado
     });
 
-    // ── Lógica de Consenso (Pontos 2 e 6) ──
-    // Se estiver em comparacao_somente_quantidade, as rodadas ignoram GTIN/Produto.
+    // No fluxo consolidado do endereço, a rodada mais recente é autoritativa.
+    // Todas as rodadas que bateram continuam destacadas, mas a última existente
+    // é quem define o status final nas abas Contagens e Recontagem.
+    if (fluxoConsolidado) {
+      if (terceira) {
+        return _paresIguais(terceira, sistema, true)
+          ? resultado('RESOLVIDA','OK_TERCEIRA_TOTAL_ENDERECO',3,terceira)
+          : resultado('PERSISTENTE','TERCEIRA_DIVERGENTE_TOTAL_ENDERECO',3,terceira);
+      }
+      if (segunda) {
+        return _paresIguais(segunda, sistema, true)
+          ? resultado('RESOLVIDA','OK_SEGUNDA_TOTAL_ENDERECO',2,segunda)
+          : resultado('AGUARDANDO_ANALISTA',null,2,segunda);
+      }
+      if (_paresIguais(primeira, sistema, true) && !divergenciaPrimeiraAtiva) {
+        return resultado('RESOLVIDA','OK_PRIMEIRA_TOTAL_ENDERECO',1,primeira);
+      }
+      return resultado('AGUARDANDO_ANALISTA',null,1,primeira);
+    }
+
     if (_paresIguais(primeira, sistema, somenteQuantidade) && !divergenciaPrimeiraAtiva) {
       return resultado('RESOLVIDA','OK_PRIMEIRA_SISTEMA',1,primeira);
     }
     if (segunda) {
-      if (_paresIguais(segunda, sistema, somenteQuantidade)) return resultado('RESOLVIDA','OK_SEGUNDA_SISTEMA',2,segunda);
-      if (_paresIguais(segunda, primeira, somenteQuantidade)) return resultado('RESOLVIDA','OK_SEGUNDA_PRIMEIRA',2,segunda);
+      if (_paresIguais(segunda, sistema, somenteQuantidade)) {
+        return resultado('RESOLVIDA','OK_SEGUNDA_SISTEMA',2,segunda);
+      }
+      if (_paresIguais(segunda, primeira, somenteQuantidade)) {
+        return resultado('RESOLVIDA','OK_SEGUNDA_PRIMEIRA',2,segunda);
+      }
     }
     if (terceira) {
-      if (_paresIguais(terceira, sistema, somenteQuantidade)) return resultado('RESOLVIDA','OK_TERCEIRA_SISTEMA',3,terceira);
-      if (_paresIguais(terceira, primeira, somenteQuantidade)) return resultado('RESOLVIDA','OK_TERCEIRA_PRIMEIRA',3,terceira);
-      if (_paresIguais(terceira, segunda, somenteQuantidade)) return resultado('RESOLVIDA','OK_TERCEIRA_SEGUNDA',3,terceira);
-      
-      // Fallback Consenso 2ª=3ª (Ponto 2 / Cenário E)
-      if (segunda && _paresIguais(terceira, segunda, true)) {
-        return resultado('RESOLVIDA','OK_CONSENSO_2_3',3,terceira);
+      if (_paresIguais(terceira, sistema, somenteQuantidade)) {
+        return resultado('RESOLVIDA','OK_TERCEIRA_SISTEMA',3,terceira);
       }
-      
-      // Se chegou na 3ª e nada bateu, é PERSISTENTE (Ponto 1)
+      if (_paresIguais(terceira, primeira, somenteQuantidade)) {
+        return resultado('RESOLVIDA','OK_TERCEIRA_PRIMEIRA',3,terceira);
+      }
+      if (_paresIguais(terceira, segunda, somenteQuantidade)) {
+        return resultado('RESOLVIDA','OK_TERCEIRA_SEGUNDA',3,terceira);
+      }
       return resultado('PERSISTENTE','TERCEIRA_SEM_CONSENSO',3,terceira);
-    }
-
-    // No fluxo consolidado (Ponto 2), se ainda não chegou na 3ª, aguarda analista.
-    if (fluxoConsolidado) {
-      return resultado('AGUARDANDO_ANALISTA',null,segunda ? 2 : 1,segunda || primeira);
-    }
-
-    // Fallback para persistência se as 3 rodadas existem mas não há consenso
-    if (primeira && segunda && terceira) {
-       return resultado('PERSISTENTE','FALTA_CONSENSO_3_RODADAS',3,terceira);
     }
     return resultado('AGUARDANDO_ANALISTA',null,segunda ? 2 : 1,segunda || primeira);
   }
@@ -281,15 +292,16 @@
   }
 
   function _historicoConsolidadoEndereco(div){
-    // Ponto 5: Única montagem de histórico baseada apenas no ENDEREÇO + INVENTÁRIO.
     const divs = state().divergencias.filter(d =>
       _mesmoIdInventario(_idInventarioRegistro(d), _idInventarioRegistro(div)) &&
-      _nd(d.endereco) === _nd(div.endereco)
+      _nd(d.endereco) === _nd(div.endereco) &&
+      _mesmoProdutoOperacional(d, div)
     );
     const recs = state().recontagens
       .filter(r => {
         if (!_mesmoIdInventario(_idInventarioRegistro(r), _idInventarioRegistro(div))) return false;
         if (_nd(r.endereco) !== _nd(div.endereco)) return false;
+        if (!_mesmoProdutoOperacional(r, div)) return false;
         if (r.qtd_recontagem == null && r.qtd_segunda == null && r.qtd_terceira == null) return false;
 
         // Só incorpora rodadas efetivamente concluídas. Os dois campos de status
@@ -398,7 +410,7 @@
       const updatedDiv = Object.assign({}, div, {
         status:              'PERSISTENTE',
         status_bloqueio:     'PERSISTENTE_BLOQUEADO',
-        status_recontagem:   'persistente', // Ponto 1: Gravar persistente corretamente
+        status_recontagem:   'concluida',
         resolvida_em:        agora,
         qtd_resultado_final: qtdFinal,
         contagem_aceita:     'TERCEIRA_SEM_CONSENSO'
@@ -611,7 +623,7 @@
             qtd_resultado_final: avaliacao.resultado?.qtd ?? null,
             produto_resultado_final: avaliacao.resultado?.produto || '',
             status: avaliacao.estado,
-            status_recontagem: avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'persistente', // Ponto 1
+            status_recontagem: avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida',
             precisa_recontagem: false,
             contagem_aceita: avaliacao.referencia,
             divergencia_resolvida: avaliacao.estado === 'RESOLVIDA',
@@ -650,7 +662,7 @@
       hist._divergencias.forEach(item => {
         const atualizado = Object.assign({}, item, campos, final ? {
           status: avaliacao.estado,
-          status_recontagem: avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'persistente', // Ponto 1
+          status_recontagem: avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida',
           precisa_recontagem: false, contagem_aceita: avaliacao.referencia,
           qtd_resultado_final: avaliacao.resultado?.qtd ?? null,
           produto_resultado_final: avaliacao.resultado?.produto || '',
@@ -728,13 +740,12 @@
       const avaliacao = _avaliarHistoricoContagens(div);
       if (avaliacao.estado !== 'RESOLVIDA' && avaliacao.estado !== 'PERSISTENTE') return div;
       const statusRecFinal = avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida';
-      const statusRecFinalReal = avaliacao.estado === 'PERSISTENTE' ? 'persistente' : statusRecFinal;
-      if (div.status === avaliacao.estado && div.status_recontagem === statusRecFinalReal && div.precisa_recontagem === false) return div;
+      if (div.status === avaliacao.estado && div.status_recontagem === statusRecFinal && div.precisa_recontagem === false) return div;
       const atualizado = Object.assign({}, div, {
         qtd_resultado_final: avaliacao.resultado?.qtd ?? null,
         produto_resultado_final: avaliacao.resultado?.produto || '',
         status: avaliacao.estado,
-        status_recontagem: statusRecFinalReal, // Ponto 1
+        status_recontagem: statusRecFinal,
         precisa_recontagem: false,
         contagem_aceita: avaliacao.referencia,
         divergencia_resolvida: avaliacao.estado === 'RESOLVIDA',
@@ -1555,13 +1566,12 @@
     // ── PERSISTENTE (3ª rodada sem consenso) ──
     if (rodadaDestino === 3){
       updatedDiv = Object.assign({}, updatedDiv, {
-        status: 'PERSISTENTE', status_bloqueio: 'PERSISTENTE_BLOQUEADO', status_recontagem: 'persistente', // Ponto 1
+        status: 'PERSISTENTE', status_bloqueio: 'PERSISTENTE_BLOQUEADO', status_recontagem: 'concluida',
         divergencia_resolvida: false, encerrada_definitivamente: true,
         resolvida_em: agora, resolvida_por: _currentAnalistaUser?.email || 'Analista',
         qtd_resultado_final: qtd, contagem_aceita: 'TERCEIRA_SEM_CONSENSO'
       });
       updatedRec = Object.assign({}, updatedRec, {
-        status_recontagem: 'persistente', // Ponto 1
         divergencia_resolvida: false, encerrada_definitivamente: true, contagem_aceita: 'TERCEIRA_SEM_CONSENSO'
       });
 
@@ -1810,18 +1820,9 @@
   // ─────────────────────────────────────────────────────────────────────────────
   //  Registro do runtime — ativa o DivergenciaService.processarDivergencias
   // ─────────────────────────────────────────────────────────────────────────────
-  // Ponto 7: Única validação de fluxo encerrado.
-  function isFluxoEncerrado(obj){
-    const s = _nd(obj?.status);
-    const sr = _nd(obj?.status_recontagem);
-    return ['RESOLVIDA','PERSISTENTE','CANCELADA','EXCLUIDA','ESTORNADA'].includes(s) ||
-           ['SEM_DIVERGENCIA','RESOLVIDA','PERSISTENTE','CANCELADA'].includes(sr);
-  }
-  global.AnalistaDivergenciaService.isFluxoEncerrado = isFluxoEncerrado;
-
   function _resolverFluxoEndereco(obj){
     const historico = _historicoConsolidadoEndereco(obj || {});
-    const avaliacao = _avaliarHistoricoContagens(historico); // Ponto 2: Usar mesma lógica
+    const avaliacao = _avaliarResumoConsolidado(historico, historico.qtd_esperada);
     const estado = avaliacao?.estado || 'AGUARDANDO_ANALISTA';
     const rodada = Number(avaliacao?.rodada || (historico.qtd_terceira != null ? 3 : historico.qtd_segunda != null ? 2 : 1));
     const referencia = String(avaliacao?.referencia || '');
