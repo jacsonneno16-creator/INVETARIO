@@ -280,6 +280,9 @@ function _atualizarBannerRecontagem(item) {
         <div style="flex:1;min-width:0">
           <div style="font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.1em;color:#fbbf24;margin-bottom:5px">🔄 NOVA RODADA</div>
           <div style="font-family:var(--mono);font-weight:800;font-size:1.1rem;color:var(--warn);padding-bottom:5px;margin-bottom:5px;border-bottom:1px dashed rgba(251,191,36,.3)">📍 ${item.endereco}</div>
+          ${Number(item._capacidade_rodada || item.capacidade_pallets || item.capacidade_paletes || item.capacidade || 0) > 0
+            ? `<div style="font-size:.72rem;color:#fde68a;margin-bottom:5px">📦 Paletes desta rodada: <b>${Number(item._paletes_contados_rodada || 0)}</b>/<b>${Number(item._capacidade_rodada || item.capacidade_pallets || item.capacidade_paletes || item.capacidade || 0)}</b></div>`
+            : `<div style="font-size:.72rem;color:#fde68a;margin-bottom:5px">📦 Registre todos os paletes e encerre com ENDERECO VAZIO</div>`}
           ${item.descricao ? `<div style="font-size:.7rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.descricao}</div>` : ''}
           ${item.observacao_atribuicao || item.observacao
             ? `<div style="margin-top:5px;padding:5px 8px;background:rgba(251,191,36,.08);border-radius:6px;font-size:.68rem;color:#fbbf24;font-style:italic">💬 ${item.observacao_atribuicao || item.observacao}</div>`

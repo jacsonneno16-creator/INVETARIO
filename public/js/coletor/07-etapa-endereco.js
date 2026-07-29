@@ -727,8 +727,18 @@ function _palletsNoEnderecoAtual(endNorm) {
     !c._excluida &&
     c.status !== 'ESTORNADA' &&
     c.status !== 'EXCLUIDA' &&
-    // Em recontagem: ignorar registros de contagem anterior (PRIMEIRA)
-    (!APP.modoRecontagem || c.tipo_contagem === 'RECONTAGEM')
+    // Em recontagem: considerar somente os paletes da rodada/tarefa atual.
+    // Isso evita que paletes de recontagens anteriores consumam a capacidade
+    // da nova rodada no mesmo endereco.
+    (!APP.modoRecontagem || (
+      c.tipo_contagem === 'RECONTAGEM' &&
+      (
+        String(c.recontagem_id || '') === String(APP.modoRecontagem.id || '') ||
+        (!c.recontagem_id &&
+          String(c.divergencia_id || '') === String(APP.modoRecontagem.divergencia_id || '') &&
+          Number(c.numero_recontagem || 1) === Number(APP.modoRecontagem.numero_recontagem || 1))
+      )
+    ))
   );
 
   // _verificarEnderecoFirebase() consulta as contagens existentes no Firestore antes
@@ -739,7 +749,15 @@ function _palletsNoEnderecoAtual(endNorm) {
     !c._excluida &&
     c.status !== 'ESTORNADA' &&
     c.status !== 'EXCLUIDA' &&
-    (!APP.modoRecontagem || c.tipo_contagem === 'RECONTAGEM')
+    (!APP.modoRecontagem || (
+      c.tipo_contagem === 'RECONTAGEM' &&
+      (
+        String(c.recontagem_id || '') === String(APP.modoRecontagem.id || '') ||
+        (!c.recontagem_id &&
+          String(c.divergencia_id || '') === String(APP.modoRecontagem.divergencia_id || '') &&
+          Number(c.numero_recontagem || 1) === Number(APP.modoRecontagem.numero_recontagem || 1))
+      )
+    ))
   );
 
   // União idempotente: a mesma contagem pode existir no array local e no snapshot.

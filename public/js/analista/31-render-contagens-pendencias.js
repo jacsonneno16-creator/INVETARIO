@@ -129,6 +129,37 @@ function _ultimaRodadaContagem(c){
   };
 }
 
+
+function _avaliarDistribuicaoPaletes(c){
+  const st=state();
+  const FK=window.InventoryFlowKey;
+  if(!FK) return null;
+  const inv=FK.inventario(c,st.inventarios);
+  const end=FK.endereco(c?.endereco);
+  const prod=FK.produto(c);
+  const invObj=(st.inventarios||[]).find(i=>FK.inventario(i,st.inventarios)===inv);
+  const num=v=>{ if(v===null||v===undefined||String(v).trim()==='') return 0; const n=Number(String(v).replace(',','.')); return Number.isFinite(n)?n:0; };
+  const pal=x=>String(x?.palete ?? x?.pallet ?? x?.numero_palete ?? x?.numeroPalete ?? x?.palete_key ?? x?.capa_palete ?? x?.capa ?? '').trim();
+  const qtd=x=>num(x?.quantidade_esperada ?? x?.qtd_esperada ?? x?.quantidade_enderecada ?? x?.saldo_estoque ?? x?.qtd_sistema ?? x?.estoque ?? x?.quantidade ?? x?.qtd ?? x?.qtde);
+  const base=(invObj?.base||[]).filter(x=>FK.endereco(x?.endereco)===end && (!prod || FK.produto(x)===prod));
+  const esperado=new Map();
+  base.forEach(x=>{ const k=pal(x); if(k) esperado.set(k,(esperado.get(k)||0)+qtd(x)); });
+  if(esperado.size<2) return null;
+  const validas=(st.contagens||[]).filter(x=>!x?._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(x?.status||'').toUpperCase()) && FK.inventario(x,st.inventarios)===inv && FK.endereco(x?.endereco)===end && (!prod || FK.produto(x)===prod));
+  if(!validas.length) return null;
+  const rodada=x=>String(x?.tipo_contagem||'PRIMEIRA').toUpperCase()==='RECONTAGEM' ? Math.min(3,1+Math.max(1,Number(x?.numero_recontagem||1))) : 1;
+  const ultima=Math.max(...validas.map(rodada));
+  const atual=new Map();
+  validas.filter(x=>rodada(x)===ultima).forEach(x=>{ const k=pal(x); if(k) atual.set(k,(atual.get(k)||0)+num(x?.quantidade ?? x?.qtd ?? x?.qtd_contada)); });
+  if(!atual.size) return null;
+  const totalEsp=[...esperado.values()].reduce((a,b)=>a+b,0);
+  const totalAt=[...atual.values()].reduce((a,b)=>a+b,0);
+  const chaves=new Set([...esperado.keys(),...atual.keys()]);
+  const divergentes=[...chaves].filter(k=>Math.abs((esperado.get(k)||0)-(atual.get(k)||0))>1e-9);
+  return {rodada:ultima,totalEsperado:totalEsp,totalContado:totalAt,totalBate:Math.abs(totalEsp-totalAt)<1e-9,divergentes,quantidadeDivergente:divergentes.length};
+}
+window.avaliarDistribuicaoPaletes=_avaliarDistribuicaoPaletes;
+
 function contStatusBadge(status){
   const st = String(status || 'PENDENTE').toUpperCase();
   if (st === 'PROCESSADO' || st === 'OK' || st === 'CONCLUIDA') return 'b-green';
@@ -248,6 +279,10 @@ function _resultadoRodadaEndereco(c){
       fluxo_consolidado_endereco: true
     });
     if (avaliacaoConsolidada?.estado === 'RESOLVIDA') {
+      const dist=_avaliarDistribuicaoPaletes(c);
+      if(dist?.totalBate && dist.quantidadeDivergente>0){
+        return { texto:`⚠️ Total correto — ${dist.quantidadeDivergente} palete(s) divergente(s)`, cls:'b-orange', divergencia_paletes:true };
+      }
       return { texto:`✅ OK ${avaliacaoConsolidada.rodada}ª`, cls:'b-green' };
     }
     if (avaliacaoConsolidada?.estado === 'PERSISTENTE') {

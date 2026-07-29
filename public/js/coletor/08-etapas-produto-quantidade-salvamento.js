@@ -676,10 +676,42 @@ function _executarSalvar(qty) {
     }, 600);
   }
 
-  // Em recontagem: concluir e voltar para aba de recontagens
+  // Em recontagem, a rodada deve respeitar a mesma capacidade de paletes
+  // cadastrada na base geral de enderecos. Nao concluir apos o primeiro
+  // palete quando o endereco comporta mais de um.
   if (APP.modoRecontagem) {
-    resetContagem();
-    _concluirRecontagem();
+    const _endRec = a._endNorm || a.endereco || APP.modoRecontagem.endereco || '';
+    const _capRec = Number(
+      APP.endCapacidade?.[_endRec] ??
+      a.capacidadeEnd ??
+      APP.modoRecontagem.capacidade_pallets ??
+      APP.modoRecontagem.capacidade_paletes ??
+      APP.modoRecontagem.capacidade ?? 0
+    ) || 0;
+    const _usadosRec = _palletsNoEnderecoAtual(_endRec);
+
+    APP.recPalletAtual = _usadosRec + 1;
+    if (typeof _atualizarBannerRecontagem === 'function') {
+      APP.modoRecontagem._paletes_contados_rodada = _usadosRec;
+      APP.modoRecontagem._capacidade_rodada = _capRec;
+      _atualizarBannerRecontagem(APP.modoRecontagem);
+    }
+
+    if (_capRec > 0 && _usadosRec >= _capRec) {
+      toast(`✅ Recontagem concluida: ${_usadosRec}/${_capRec} paletes registrados`, 's');
+      resetContagem();
+      _concluirRecontagem();
+      return;
+    }
+
+    // Capacidade ainda nao atingida (ou nao cadastrada): manter o endereco
+    // ativo para o proximo palete. O operador pode encerrar antes usando
+    // ENDERECO VAZIO quando nao houver mais paletes fisicos.
+    _manterEnderecoAtivo(a.endereco, _endRec, _capRec || a.capacidadeEnd, a.somentesDun);
+    const faltam = _capRec > 0 ? Math.max(0, _capRec - _usadosRec) : null;
+    toast(faltam === null
+      ? `📦 Palete ${_usadosRec} salvo — bipe o proximo ou encerre o endereco`
+      : `📦 Palete ${_usadosRec}/${_capRec} salvo — faltam ${faltam}`, 's');
     return;
   }
 
