@@ -45,13 +45,52 @@ const _totalEsperadoEnderecoRec = obj => {
 // se uma recontagem concluida totaliza exatamente o total esperado do endereco,
 // o fluxo esta resolvido. Nao reutilizar a qtd_esperada individual da divergencia.
 const _avaliarTotalConsolidadoRec = (obj, totalEsperado) => {
-  return window.AnalistaDivergenciasRuntime?.avaliarEndereco?.(obj) ||
+  // A tabela, o modal e a aba Contagens devem avaliar exatamente os mesmos
+  // totais exibidos. Nao priorizar status/documentos legados do endereco.
+  return window.AnalistaDivergenciasRuntime?.avaliarResumo?.(obj, totalEsperado) ||
     window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
       ...(obj || {}),
       qtd_esperada: totalEsperado,
       comparacao_somente_quantidade: true,
       fluxo_consolidado_endereco: true
     }) || null;
+};
+
+// Único tradutor da avaliação consolidada para os campos exibidos em todas as telas.
+// Divergências e Recontagens devem chamar esta função, sem reinterpretar estados.
+const _aplicarAvaliacaoConsolidadaRec = (principal, totalEsperado) => {
+  const avaliacao = _avaliarTotalConsolidadoRec(principal, totalEsperado);
+  if (!avaliacao) return { principal, avaliacao:null };
+
+  if (avaliacao.estado === 'RESOLVIDA') {
+    Object.assign(principal, {
+      status:'RESOLVIDA', status_recontagem:'sem_divergencia',
+      contagem_aceita:avaliacao.referencia,
+      qtd_resultado_final:avaliacao.resultado?.qtd ?? null,
+      produto_resultado_final:avaliacao.resultado?.produto || '',
+      divergencia_resolvida:true, encerrada_definitivamente:true,
+      precisa_recontagem:false, operador_responsavel:null
+    });
+  } else if (avaliacao.estado === 'PERSISTENTE') {
+    Object.assign(principal, {
+      status:'PERSISTENTE', status_recontagem:'persistente',
+      contagem_aceita:null,
+      qtd_resultado_final:avaliacao.resultado?.qtd ?? null,
+      produto_resultado_final:avaliacao.resultado?.produto || '',
+      divergencia_resolvida:false, encerrada_definitivamente:true,
+      precisa_recontagem:false, operador_responsavel:null
+    });
+  } else if (avaliacao.estado === 'AGUARDANDO_ANALISTA') {
+    Object.assign(principal, {
+      status:'ABERTA', status_recontagem:'aguardando_analista',
+      precisa_recontagem:true, contagem_aceita:null,
+      qtd_resultado_final:null, produto_resultado_final:'',
+      divergencia_resolvida:false, encerrada_definitivamente:false,
+      resolvida_em:null, finalizada_em:null, operador_responsavel:null
+    });
+  }
+  principal._avaliacao_consolidada = avaliacao;
+  return { principal, avaliacao };
 };
 
 const _chaveEndereco = obj => {
@@ -71,6 +110,8 @@ function marcarDivergenciaResolvida(divId) {
 }
 
 function _marcarDivResolvida(divId) {
+  const div = _obterDivSelecionada(divId);
+  if (!div) return;
   div.status        = 'RESOLVIDA';
   div.resolvida_em  = new Date().toISOString();
   div.resolvida_por = _currentAnalistaUser?.email || 'Analista';
@@ -714,34 +755,7 @@ function renderDivergencias() {
     // A linha consolidada representa o endereco inteiro. Para decidir o consenso,
     // comparar o total contado com o total esperado do endereco, sem exigir que
     // todas as rodadas tenham repetido o mesmo codigo de produto.
-    const avaliacaoAtual = _avaliarTotalConsolidadoRec(principal, totalEsperadoEndereco) ||
-      window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
-        ...principal,
-        qtd_esperada: totalEsperadoEndereco ?? principal.qtd_esperada,
-        comparacao_somente_quantidade: true
-      });
-    if (avaliacaoAtual?.estado === 'RESOLVIDA' || avaliacaoAtual?.estado === 'PERSISTENTE') {
-      principal.status = avaliacaoAtual.estado;
-      principal.status_recontagem = avaliacaoAtual.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida';
-      principal.contagem_aceita = avaliacaoAtual.referencia;
-      principal.qtd_resultado_final = avaliacaoAtual.resultado?.qtd ?? null;
-      principal.produto_resultado_final = avaliacaoAtual.resultado?.produto || '';
-      principal.divergencia_resolvida = avaliacaoAtual.estado === 'RESOLVIDA';
-      principal.encerrada_definitivamente = true;
-      principal.operador_responsavel = null;
-    } else if (avaliacaoAtual?.estado === 'AGUARDANDO_ANALISTA') {
-      principal.status = 'ABERTA';
-      principal.status_recontagem = 'aguardando_analista';
-      principal.precisa_recontagem = true;
-      principal.contagem_aceita = null;
-      principal.qtd_resultado_final = null;
-      principal.produto_resultado_final = '';
-      principal.divergencia_resolvida = false;
-      principal.encerrada_definitivamente = false;
-      principal.resolvida_em = null;
-      principal.finalizada_em = null;
-      principal.operador_responsavel = null;
-    }
+    _aplicarAvaliacaoConsolidadaRec(principal, totalEsperadoEndereco);
     return principal;
   });
   // Snapshot sem filtros da mesma visão consolidada usada pela tabela. Os cards
@@ -1205,21 +1219,7 @@ function renderRecontagens() {
     });
     const totalEsperadoEndereco = _totalEsperadoEnderecoRec(principal);
     principal._qtd_esperada_endereco = totalEsperadoEndereco;
-    const avaliacao = _avaliarTotalConsolidadoRec(principal, totalEsperadoEndereco) ||
-      window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
-        ...principal,
-        qtd_esperada: totalEsperadoEndereco ?? principal.qtd_esperada,
-        comparacao_somente_quantidade: true
-      });
-    if (avaliacao && (avaliacao.estado === 'RESOLVIDA' || avaliacao.estado === 'PERSISTENTE')) {
-      principal.status = avaliacao.estado;
-      principal.status_recontagem = avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida';
-      principal.contagem_aceita = avaliacao.referencia;
-      principal.qtd_resultado_final = avaliacao.resultado?.qtd ?? null;
-      principal.produto_resultado_final = avaliacao.resultado?.produto || '';
-      principal.encerrada_definitivamente = true;
-      principal.operador_responsavel = null;
-    }
+    _aplicarAvaliacaoConsolidadaRec(principal, totalEsperadoEndereco);
     return principal;
   });
   dados = dados.filter(r => {
@@ -1540,18 +1540,44 @@ function abrirDetalhePaletesEsperados(divId) {
     const n = Number(String(v).replace(',', '.'));
     return Number.isFinite(n) ? n : null;
   };
-  const comparacoes = rodadas.map(r => {
+  const historicoModal = {
+    qtd_primeira: numero(rodadas[0].qtd),
+    qtd_segunda: numero(rodadas[1].qtd),
+    qtd_terceira: numero(rodadas[2].qtd),
+    qtd_esperada: total,
+    comparacao_somente_quantidade: true,
+    fluxo_consolidado_endereco: true
+  };
+  const avaliacaoModal = _avaliarTotalConsolidadoRec(historicoModal, total);
+  const rodadaAceita = avaliacaoModal?.estado === 'RESOLVIDA' ? Number(avaliacaoModal.rodada || 0) : 0;
+  const referencia = String(avaliacaoModal?.referencia || '');
+  const rodadasConsenso = new Set();
+  if (referencia.includes('PRIMEIRA')) rodadasConsenso.add(1);
+  if (referencia.includes('SEGUNDA')) rodadasConsenso.add(2);
+  if (referencia.includes('TERCEIRA')) rodadasConsenso.add(3);
+  if (rodadaAceita) rodadasConsenso.add(rodadaAceita);
+
+  const comparacoes = rodadas.map((r, idx) => {
+    const numeroRodada = idx + 1;
     const qtd = numero(r.qtd);
-    const bateu = qtd !== null && qtd === total;
+    const bateuSistema = qtd !== null && qtd === total;
+    const aceitaPorFluxo = avaliacaoModal?.estado === 'RESOLVIDA' && rodadasConsenso.has(numeroRodada);
+    const ok = bateuSistema || aceitaPorFluxo;
     const codigo = String(r.produto || '').split(/[,;|]+/).map(x => x.trim()).filter(Boolean)[0] || '';
     const nome = codigo ? _nomeProdutoRec(codigo) : 'Sem contagem';
-    return `<div style="border:1px solid ${bateu ? 'rgba(34,197,94,.45)' : 'var(--border)'};background:${bateu ? 'rgba(34,197,94,.11)' : 'var(--surface)'};border-radius:12px;padding:12px;min-width:0;box-shadow:${bateu ? 'inset 0 0 0 1px rgba(34,197,94,.12)' : 'none'}">
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${r.titulo}</strong>${bateu ? '<span class="badge b-green">✅ Bateu</span>' : (qtd === null ? '<span class="badge b-gray">Sem registro</span>' : '<span class="badge b-red">Divergente</span>')}</div>
+    const badge = qtd === null
+      ? '<span class="badge b-gray">Sem registro</span>'
+      : ok
+        ? `<span class="badge b-green">✅ ${bateuSistema ? 'Bateu total' : 'Consenso'}</span>`
+        : '<span class="badge b-red">Divergente</span>';
+    return `<div style="border:1px solid ${ok ? 'rgba(34,197,94,.45)' : 'var(--border)'};background:${ok ? 'rgba(34,197,94,.11)' : 'var(--surface)'};border-radius:12px;padding:12px;min-width:0;box-shadow:${ok ? 'inset 0 0 0 1px rgba(34,197,94,.12)' : 'none'}">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${r.titulo}</strong>${badge}</div>
       <div style="font-size:.72rem;color:var(--muted);margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHTML(nome)}">${escHTML(nome)}</div>
-      <div class="mono" style="font-size:1.05rem;font-weight:950;margin-top:4px;color:${bateu ? 'var(--success)' : 'inherit'}">${qtd === null ? '—' : `Qtd ${escHTML(qtd)}`}</div>
+      <div class="mono" style="font-size:1.05rem;font-weight:950;margin-top:4px;color:${ok ? 'var(--success)' : 'inherit'}">${qtd === null ? '—' : `Qtd ${escHTML(qtd)}`}</div>
       <div style="font-size:.66rem;color:var(--muted);margin-top:3px">Esperado consolidado: ${escHTML(total)}</div>
     </div>`;
   }).join('');
+
 
   document.getElementById('modal-paletes-esperados-bg')?.remove();
   document.body.insertAdjacentHTML('beforeend', `<div id="modal-paletes-esperados-bg" class="modal-bg open" style="display:flex;z-index:99999" onclick="if(event.target===this) fecharDetalhePaletesEsperados()">

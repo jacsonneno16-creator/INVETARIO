@@ -131,6 +131,8 @@ function _ultimaRodadaContagem(c){
 
 
 function _avaliarDistribuicaoPaletes(c){
+  return null; /* validacao autoritativa e somente pelo total do endereco */
+  /*
   const st=state();
   const FK=window.InventoryFlowKey;
   if(!FK) return null;
@@ -157,6 +159,7 @@ function _avaliarDistribuicaoPaletes(c){
   const chaves=new Set([...esperado.keys(),...atual.keys()]);
   const divergentes=[...chaves].filter(k=>Math.abs((esperado.get(k)||0)-(atual.get(k)||0))>1e-9);
   return {rodada:ultima,totalEsperado:totalEsp,totalContado:totalAt,totalBate:Math.abs(totalEsp-totalAt)<1e-9,divergentes,quantidadeDivergente:divergentes.length};
+  */
 }
 window.avaliarDistribuicaoPaletes=_avaliarDistribuicaoPaletes;
 
@@ -178,179 +181,58 @@ function _resultadoRodadaEndereco(c){
   const st = state();
   const FK = window.InventoryFlowKey;
   if (!FK) return { texto:'⚠️ Status indisponível', cls:'b-orange' };
-  const invCanonico = FK.inventario(c, st.inventarios);
-  const end = FK.endereco(c.endereco);
-  const produto = FK.produto(c);
-  const idContagem = String(c.uuid || c.id || '');
-
-  // O vínculo é resolvido em três níveis, sempre dentro do mesmo inventário e
-  // endereço: ID explícito da contagem, chave operacional completa e, por fim,
-  // única divergência do endereço. Registros antigos podem usar ID/código/nome
-  // do inventário e GTIN/código interno do produto.
-  const divsMesmoEndereco = (st.divergencias || []).filter(d =>
-    FK.inventario(d, st.inventarios) === invCanonico &&
-    FK.endereco(d.endereco) === end &&
-    !['CANCELADA','EXCLUIDA','ESTORNADA'].includes(String(d.status || '').trim().toUpperCase())
+  const inv = FK.inventario(c, st.inventarios);
+  const end = FK.endereco(c?.endereco);
+  const divs = (st.divergencias || []).filter(d =>
+    FK.inventario(d, st.inventarios) === inv &&
+    FK.endereco(d?.endereco) === end &&
+    !['CANCELADA','EXCLUIDA','ESTORNADA'].includes(String(d?.status || '').toUpperCase())
   );
-  const divPorId = divsMesmoEndereco.find(d =>
-    idContagem && [d.contagem_uuid,d.contagem_id,d.origem_contagem_id]
-      .filter(Boolean).map(String).includes(idContagem)
-  );
-  const divPorProduto = divsMesmoEndereco.find(d => FK.produto(d) === produto);
-  const ativas = divsMesmoEndereco.filter(d => {
-    const sd=String(d.status || '').trim().toUpperCase();
-    const sr=String(d.status_recontagem || '').trim().toLowerCase();
-    return ['ABERTA','DIVERGENTE','PENDENTE','EM_RECONTAGEM'].includes(sd) ||
-      ['pendente','atribuida','atribuída','em_andamento','aguardando_analista'].includes(sr) ||
-      d.divergente === true || d.precisa_recontagem === true;
-  });
-  const div = divPorId || divPorProduto || (ativas.length === 1 ? ativas[0] : null) ||
-    (divsMesmoEndereco.length === 1 ? divsMesmoEndereco[0] : null);
+  const div = divs[0] || null;
 
   if (!div) {
-    const statusContagem = String(c.status || '').trim().toUpperCase();
-    const possuiSinalDivergencia = c.divergente === true || c._alertaQtd === true ||
-      c.divergencia_potencial === true || statusContagem === 'DIVERGENTE' ||
-      divsMesmoEndereco.length > 0;
-
-    if (possuiSinalDivergencia) {
-      return { texto:'❌ Divergente — aguardando decisão', cls:'b-red' };
-    }
-
-    // Ausência momentânea de divergência não significa que a 1ª contagem foi
-    // aprovada. A análise que compara a contagem com a base é assíncrona e pode
-    // ainda não ter criado/vinculado a divergência. Portanto, OK 1ª somente é
-    // exibido depois que o processamento marcou explicitamente a contagem como
-    // PROCESSADO (ou um status equivalente de conclusão).
-    const primeiraProcessada = ['PROCESSADO','OK','CONCLUIDA','CONCLUÍDA','RESOLVIDA']
-      .includes(statusContagem);
-    if (String(c.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM' && primeiraProcessada) {
-      return { texto:'✅ OK 1ª', cls:'b-green' };
-    }
-
-    if (String(c.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM') {
-      return { texto:'⏳ Aguardando processamento', cls:'b-orange' };
-    }
-    return null;
+    // Não confiar em status legado. Recalcula o total da 1ª rodada do endereço.
+    const mesmas = (st.contagens || []).filter(x =>
+      FK.inventario(x, st.inventarios) === inv &&
+      FK.endereco(x?.endereco) === end &&
+      !['ESTORNADA','EXCLUIDA','CANCELADA'].includes(String(x?.status || '').toUpperCase()) &&
+      String(x?.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM'
+    );
+    const numero = v => {
+      const n = Number(String(v ?? '').replace(',', '.'));
+      return Number.isFinite(n) ? n : 0;
+    };
+    const totalPrimeira = mesmas.reduce((soma,x) => soma + numero(x?.quantidade ?? x?.qtd_contada ?? x?.qtd_primeira), 0);
+    const inventarioObj = (st.inventarios || []).find(i => FK.inventario(i, st.inventarios) === inv);
+    const baseEndereco = (inventarioObj?.base || []).filter(x => FK.endereco(x?.endereco) === end);
+    const totalEsperado = baseEndereco.reduce((soma,x) => soma + numero(
+      x?.quantidade_esperada ?? x?.qtd_esperada ?? x?.quantidade_enderecada ??
+      x?.saldo_estoque ?? x?.qtd_sistema ?? x?.estoque ?? x?.quantidade ?? x?.qtd
+    ), 0);
+    if (mesmas.length && Math.abs(totalPrimeira - totalEsperado) < 1e-9)
+      return { texto:'✅ OK 1ª — total do endereço', cls:'b-green' };
+    if (mesmas.length)
+      return { texto:'❌ Divergente — aguardando recontagem', cls:'b-red' };
+    return { texto:'⏳ Aguardando processamento', cls:'b-orange' };
   }
 
-  // A aba Recontagem trabalha com o total consolidado do endereço. A aba
-  // Contagens precisa usar a mesma fonte e a mesma regra; caso contrário, uma
-  // linha resolvida por 173 = 173 continua aparecendo como persistente aqui.
-  const numeroSeguro = valor => {
-    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
-    const n = Number(String(valor).replace(',', '.'));
-    return Number.isFinite(n) ? n : null;
-  };
-  const inventarioAtual = (st.inventarios || []).find(i => FK.inventario(i, st.inventarios) === invCanonico);
-  const itensEndereco = (inventarioAtual?.base || []).filter(item => FK.endereco(item?.endereco) === end);
-  const qtdItem = item => numeroSeguro(
-    item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ??
-    item?.quantidade_enderecada ?? item?.qtd_enderecada ?? item?.saldo_estoque ?? item?.saldo ??
-    item?.saldo_erp ?? item?.qtd_sistema ?? item?.qtd_estoque ?? item?.estoque_total ??
-    item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde
-  ) ?? 0;
-  const totalEsperadoEndereco = itensEndereco.length
-    ? itensEndereco.reduce((soma, item) => soma + qtdItem(item), 0)
-    : null;
-  const recsEnderecoConcluidas = (st.recontagens || []).filter(r => {
-    if (FK.inventario(r, st.inventarios) !== invCanonico || FK.endereco(r?.endereco) !== end) return false;
-    const status = String(r.status_recontagem || r.status || '').trim().toUpperCase();
-    const temQtd = r.qtd_recontagem != null || r.qtd_segunda != null || r.qtd_terceira != null;
-    const temConclusao = Boolean(r.recontagem_concluida_em || r.concluida_em || r.data_conclusao || r.finalizada_em || r.data_segunda || r.data_terceira);
-    return temQtd && (temConclusao || ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA','AGUARDANDO_ANALISTA'].includes(status));
-  }).sort((a,b) => String(a.data_terceira || a.recontagem_concluida_em || a.concluida_em || a.data_segunda || '')
-    .localeCompare(String(b.data_terceira || b.recontagem_concluida_em || b.concluida_em || b.data_segunda || '')));
-  if (totalEsperadoEndereco !== null && recsEnderecoConcluidas.length) {
-    const consolidada = recsEnderecoConcluidas.find(r => r.qtd_terceira != null || r.qtd_segunda != null) || {};
-    const segunda = numeroSeguro(consolidada.qtd_segunda ?? recsEnderecoConcluidas[0]?.qtd_segunda ?? recsEnderecoConcluidas[0]?.qtd_recontagem);
-    const terceira = numeroSeguro(consolidada.qtd_terceira ?? recsEnderecoConcluidas[1]?.qtd_terceira ?? recsEnderecoConcluidas[1]?.qtd_recontagem);
-    const avaliacaoConsolidada = window.AnalistaDivergenciasRuntime?.avaliarEndereco?.(div) ||
-      window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
-        qtd_esperada: totalEsperadoEndereco,
-        qtd_primeira: div.qtd_primeira ?? div.qtd_contada ?? c.quantidade,
-        qtd_segunda: segunda,
-        qtd_terceira: terceira,
-        comparacao_somente_quantidade: true,
-        fluxo_consolidado_endereco: true
-      });
-    if (avaliacaoConsolidada?.estado === 'RESOLVIDA') {
-      return { texto:`✅ OK ${avaliacaoConsolidada.rodada}ª — total do endereço`, cls:'b-green' };
-    }
-    if (avaliacaoConsolidada?.estado === 'PERSISTENTE') {
-      return { texto:'🔴 Persistente (3 rodadas)', cls:'b-red' };
-    }
-  }
-
-  const statusConcluido = r => {
-    const status = String(r.status_recontagem || r.status || '').trim().toUpperCase();
-    const dataConclusao = r.recontagem_concluida_em || r.concluida_em ||
-      r.data_conclusao || r.finalizada_em || r.processada_em || null;
-    const statusOk = ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA'].includes(status);
-    const statusBloqueado = ['PENDENTE','ATRIBUIDA','ATRIBUÍDA','EM_ANDAMENTO','ABERTA','CANCELADA','EXCLUIDA'].includes(status);
-    return r.qtd_recontagem != null && !statusBloqueado && (statusOk || Boolean(dataConclusao));
-  };
-
-  // Só considera recontagens realmente concluídas e vinculadas à divergência exata.
-  const recs = (st.recontagens || [])
-    .filter(r => (String(r.divergencia_id || '') === String(div.id || '') || FK.mesmo(r, div, st.inventarios)) && statusConcluido(r))
-    .sort((a,b) => {
-      const na=Number(a.numero_recontagem || 0), nb=Number(b.numero_recontagem || 0);
-      if (na !== nb) return na - nb;
-      return String(a.recontagem_concluida_em || a.concluida_em || a.finalizada_em || '')
-        .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.finalizada_em || ''));
-    });
-
-  // A própria existência de uma divergência ativa prevalece sobre um possível
-  // empate acidental entre a leitura e um qtd_esperada parcial/legado. Sem uma
-  // recontagem concluída, esta linha ainda está divergente e jamais pode ser OK 1ª.
-  const statusDiv = String(div.status || '').trim().toUpperCase();
-  const statusRecDiv = String(div.status_recontagem || '').trim().toLowerCase();
-  const divergenciaAtiva =
-    ['ABERTA','DIVERGENTE','PENDENTE','EM_RECONTAGEM'].includes(statusDiv) ||
-    ['pendente','em_andamento','aguardando_analista'].includes(statusRecDiv);
-  if (divergenciaAtiva && recs.length === 0) {
-    return { texto:'❌ Divergente — aguardando recontagem', cls:'b-red' };
-  }
-
-  const base = {
-    qtd_esperada: div.qtd_esperada,
-    produto: div.produto || div.produto_contado || produto,
-    qtd_primeira: div.qtd_primeira ?? div.qtd_contada ?? c.quantidade,
-    produto_primeira: div.produto_primeira || div.produto_contado || produto,
-    qtd_segunda: recs[0]?.qtd_recontagem ?? null,
-    produto_segunda: recs[0]?.produto_recontagem || recs[0]?.produto || produto,
-    qtd_terceira: recs[1]?.qtd_recontagem ?? null,
-    produto_terceira: recs[1]?.produto_recontagem || recs[1]?.produto || produto
-  };
-
-  const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarHistorico?.(base);
+  // Fonte única: o mesmo histórico consolidado e o mesmo avaliador usados na
+  // aba Recontagem. Nenhum status é recalculado por palete/produto nesta tela.
+  const hist = window.AnalistaDivergenciasRuntime?.historicoEndereco?.(div) || div;
+  const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarResumo?.(hist, hist?.qtd_esperada) ||
+    window.AnalistaDivergenciasRuntime?.avaliarEndereco?.(div);
   if (!avaliacao) return { texto:'❌ Divergente — aguardando decisão', cls:'b-red' };
 
-  // Trava de segurança: a rodada exibida nunca pode ser maior que a quantidade
-  // de recontagens realmente concluídas (1ª + até duas recontagens).
-  const rodadaMaximaReal = 1 + Math.min(recs.length, 2);
-  const rodadaReal = Math.min(Number(avaliacao.rodada || 1), rodadaMaximaReal);
-
   if (avaliacao.estado === 'RESOLVIDA') {
-    // Uma divergência encerrada manualmente, sem recontagem concluída, não pode
-    // virar OK 1ª. OK 1ª só existe quando o próprio processamento registrou que
-    // a primeira leitura bateu com o sistema.
-    if (rodadaReal === 1) {
-      const motivo = String(div.motivo_resolucao || div.referencia_resolucao || div.resultado || '').toUpperCase();
-      const okPrimeiraExplicito = motivo.includes('OK_PRIMEIRA') || motivo.includes('OK 1') ||
-        div.ok_primeira === true || div.resultado_primeira === 'OK';
-      return okPrimeiraExplicito
-        ? { texto:'✅ OK 1ª', cls:'b-green' }
-        : { texto:'✅ Resolvida pelo analista', cls:'b-green' };
-    }
-    return { texto:`✅ OK ${rodadaReal}ª`, cls:'b-green' };
+    return { texto:`✅ OK ${Number(avaliacao.rodada || 1)}ª — total do endereço`, cls:'b-green' };
   }
-  if (recs.length >= 2 && avaliacao.estado === 'PERSISTENTE') {
+  if (avaliacao.estado === 'PERSISTENTE') {
     return { texto:'🔴 Persistente (3 rodadas)', cls:'b-red' };
   }
-  if (recs.length === 1) return { texto:'⏳ Aguardando 3ª contagem', cls:'b-orange' };
-  return { texto:'❌ Divergente — aguardando decisão', cls:'b-red' };
+  const temSegunda = hist?.qtd_segunda != null;
+  return temSegunda
+    ? { texto:'⏳ Aguardando 3ª contagem', cls:'b-orange' }
+    : { texto:'❌ Divergente — aguardando recontagem', cls:'b-red' };
 }
 
 // ───────────────────────────────────────────────────────────────────

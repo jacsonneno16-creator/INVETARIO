@@ -1869,10 +1869,28 @@
   // ─────────────────────────────────────────────────────────────────────────────
   //  Registro do runtime — ativa o DivergenciaService.processarDivergencias
   // ─────────────────────────────────────────────────────────────────────────────
+  function _avaliarResumoConsolidado(obj, totalEsperado){
+    const historico = {
+      ...(obj || {}),
+      qtd_esperada: totalEsperado ?? obj?.qtd_esperada,
+      qtd_primeira: obj?.qtd_primeira ?? obj?.qtd_contada,
+      qtd_segunda: obj?.qtd_segunda ?? obj?.qtd_recontagem,
+      qtd_terceira: obj?.qtd_terceira,
+      produto_primeira: 'TOTAL_ENDERECO',
+      produto_segunda: (obj?.qtd_segunda ?? obj?.qtd_recontagem) == null ? '' : 'TOTAL_ENDERECO',
+      produto_terceira: obj?.qtd_terceira == null ? '' : 'TOTAL_ENDERECO',
+      comparacao_somente_quantidade: true,
+      fluxo_consolidado_endereco: true
+    };
+    return _avaliarHistoricoContagens(historico);
+  }
+
   global.AnalistaDivergenciasRuntime = {
     processar:     processarDivergencias,
     corrigirOrfas: corrigirOrfas,
     avaliarHistorico: _avaliarHistoricoContagens,
+    avaliarResumo: _avaliarResumoConsolidado,
+    historicoEndereco: _historicoConsolidadoEndereco,
     avaliarEndereco: d => _avaliarHistoricoContagens(_historicoConsolidadoEndereco(d))
   };
 
