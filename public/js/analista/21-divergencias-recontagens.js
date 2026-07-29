@@ -230,24 +230,35 @@
       fluxoConsolidado
     });
 
-    // No fluxo consolidado do endereço, a rodada mais recente é autoritativa.
-    // Todas as rodadas que bateram continuam destacadas, mas a última existente
-    // é quem define o status final nas abas Contagens e Recontagem.
+    // No fluxo consolidado do endereço, o total esperado continua sendo uma
+    // referência válida, mas o consenso entre rodadas também encerra o fluxo.
+    // Assim, 1ª = 2ª ou qualquer par concordante na 3ª rodada produz o mesmo
+    // resultado nas abas Contagens e Recontagem.
     if (fluxoConsolidado) {
-      if (terceira) {
-        return _paresIguais(terceira, sistema, true)
-          ? resultado('RESOLVIDA','OK_TERCEIRA_TOTAL_ENDERECO',3,terceira)
-          : resultado('PERSISTENTE','TERCEIRA_DIVERGENTE_TOTAL_ENDERECO',3,terceira);
-      }
-      if (segunda) {
-        return _paresIguais(segunda, sistema, true)
-          ? resultado('RESOLVIDA','OK_SEGUNDA_TOTAL_ENDERECO',2,segunda)
-          : resultado('AGUARDANDO_ANALISTA',null,2,segunda);
-      }
-      if (_paresIguais(primeira, sistema, true) && !divergenciaPrimeiraAtiva) {
+      if (_paresIguais(primeira, sistema, true)) {
         return resultado('RESOLVIDA','OK_PRIMEIRA_TOTAL_ENDERECO',1,primeira);
       }
-      return resultado('AGUARDANDO_ANALISTA',null,1,primeira);
+      if (segunda) {
+        if (_paresIguais(segunda, sistema, true)) {
+          return resultado('RESOLVIDA','OK_SEGUNDA_TOTAL_ENDERECO',2,segunda);
+        }
+        if (_paresIguais(segunda, primeira, true)) {
+          return resultado('RESOLVIDA','OK_SEGUNDA_PRIMEIRA_TOTAL_ENDERECO',2,segunda);
+        }
+      }
+      if (terceira) {
+        if (_paresIguais(terceira, sistema, true)) {
+          return resultado('RESOLVIDA','OK_TERCEIRA_TOTAL_ENDERECO',3,terceira);
+        }
+        if (_paresIguais(terceira, primeira, true)) {
+          return resultado('RESOLVIDA','OK_TERCEIRA_PRIMEIRA_TOTAL_ENDERECO',3,terceira);
+        }
+        if (_paresIguais(terceira, segunda, true)) {
+          return resultado('RESOLVIDA','OK_TERCEIRA_SEGUNDA_TOTAL_ENDERECO',3,terceira);
+        }
+        return resultado('PERSISTENTE','TERCEIRA_SEM_CONSENSO_TOTAL_ENDERECO',3,terceira);
+      }
+      return resultado('AGUARDANDO_ANALISTA',null,segunda ? 2 : 1,segunda || primeira);
     }
 
     if (_paresIguais(primeira, sistema, somenteQuantidade) && !divergenciaPrimeiraAtiva) {
@@ -286,7 +297,7 @@
   }
 
   function _chaveOperacional(obj){
-    return `${_nd(_idInventarioRegistro(obj))}|${_nd(obj?.endereco)}|${_produtoOperacional(obj)}`;
+    return `${_nd(_idInventarioRegistro(obj))}|${_nd(obj?.endereco)}`;
   }
 
   function _mesmoProdutoOperacional(a,b){
@@ -296,58 +307,77 @@
   }
 
   function _historicoConsolidadoEndereco(div){
-    const divs = state().divergencias.filter(d =>
-      _mesmoIdInventario(_idInventarioRegistro(d), _idInventarioRegistro(div)) &&
-      _nd(d.endereco) === _nd(div.endereco) &&
-      _mesmoProdutoOperacional(d, div)
-    );
-    const recs = state().recontagens
-      .filter(r => {
-        if (!_mesmoIdInventario(_idInventarioRegistro(r), _idInventarioRegistro(div))) return false;
-        if (_nd(r.endereco) !== _nd(div.endereco)) return false;
-        if (!_mesmoProdutoOperacional(r, div)) return false;
-        if (r.qtd_recontagem == null && r.qtd_segunda == null && r.qtd_terceira == null) return false;
-
-        // Só incorpora rodadas efetivamente concluídas. Os dois campos de status
-        // são avaliados separadamente porque registros antigos podem estar
-        // inconsistentes entre status e status_recontagem.
-        const status = String(r.status || '').toUpperCase();
-        const stRec = String(r.status_recontagem || '').toUpperCase();
-        const temConclusao = Boolean(
-          r.recontagem_concluida_em || r.concluida_em || r.data_conclusao || r.finalizada_em
-        );
-        const estadosConcluidos = ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA'];
-        const estadosInvalidos = ['CANCELADA','EXCLUIDA','PERSISTENTE'];
-        const concluida = estadosConcluidos.includes(status) || estadosConcluidos.includes(stRec);
-        if (estadosInvalidos.includes(status) || estadosInvalidos.includes(stRec)) return false;
-        if (!temConclusao && !concluida) return false;
-
-        if (r.divergencia_id && div.id && String(r.divergencia_id) !== String(div.id)) return false;
-        return true;
-      })
-      .sort((a,b) => {
-        const rodadaA = Number(a.numero_recontagem || 0);
-        const rodadaB = Number(b.numero_recontagem || 0);
-        if (rodadaA && rodadaB && rodadaA !== rodadaB) return rodadaA - rodadaB;
-        return String(a.recontagem_concluida_em || a.concluida_em || a.finalizada_em || '')
-          .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.finalizada_em || ''));
+    const invId = _idInventarioRegistro(div);
+    const endereco = _nd(div?.endereco);
+    const mesmoEndereco = obj =>
+      _mesmoIdInventario(_idInventarioRegistro(obj), invId) &&
+      _nd(obj?.endereco) === endereco;
+    const numero = valor => {
+      if (valor === null || valor === undefined || String(valor).trim() === '') return 0;
+      const n = Number(String(valor).replace(',', '.'));
+      return Number.isFinite(n) ? n : 0;
+    };
+    const idRegistro = obj => String(obj?.uuid || obj?.id || obj?.contagem_uuid || '');
+    const unicos = lista => {
+      const vistos = new Set();
+      return (lista || []).filter(item => {
+        const id = idRegistro(item) || JSON.stringify([
+          item?.tipo_contagem, item?.numero_recontagem, item?.palete, item?.capa_palete,
+          item?.quantidade, item?.criado_em, item?.operador
+        ]);
+        if (vistos.has(id)) return false;
+        vistos.add(id); return true;
       });
-    const primeiraDiv = [...divs].sort((a,b) =>
-      String(a.criada_em || '').localeCompare(String(b.criada_em || ''))
-    ).find(d => d.qtd_primeira != null || d.qtd_contada != null) || div;
-    const segunda = recs[0] || {};
-    const terceira = recs[1] || {};
+    };
+    const contagensValidas = unicos((state().contagens || []).filter(c =>
+      mesmoEndereco(c) && !c?._excluida && String(c?.status || '').toUpperCase() !== 'ESTORNADA'
+    ));
+    const primeiras = contagensValidas.filter(c => String(c?.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM');
+    const recContagens = contagensValidas.filter(c => String(c?.tipo_contagem || '').toUpperCase() === 'RECONTAGEM');
+    const somaContagens = lista => lista.reduce((total, c) => total + numero(c?.quantidade ?? c?.qtd_caixas ?? c?.qtd), 0);
+
+    const divs = (state().divergencias || []).filter(mesmoEndereco);
+    const recs = (state().recontagens || []).filter(r => {
+      if (!mesmoEndereco(r)) return false;
+      const status = String(r.status || '').toUpperCase();
+      const stRec = String(r.status_recontagem || '').toUpperCase();
+      if (['CANCELADA','EXCLUIDA'].includes(status) || ['CANCELADA','EXCLUIDA'].includes(stRec)) return false;
+      return r.qtd_recontagem != null || r.qtd_segunda != null || r.qtd_terceira != null;
+    });
+
+    const inv = (state().inventarios || []).find(i => _mesmoIdInventario(_idInventarioRegistro(i), invId));
+    const totalEsperado = _snapshotEsperadoEndereco(inv, div?.endereco)
+      .reduce((total, item) => total + numero(item?.quantidade_esperada), 0);
+    const qtdPrimeira = primeiras.length
+      ? somaContagens(primeiras)
+      : divs.reduce((total, d) => total + numero(d?.qtd_primeira ?? d?.qtd_contada), 0);
+
+    const qtdRodada = rodada => {
+      const porContagem = recContagens.filter(c => Number(c?.numero_recontagem || 1) === rodada);
+      if (porContagem.length) return somaContagens(porContagem);
+      const docs = recs.filter(r => Number(r?.numero_recontagem || 1) === rodada);
+      if (!docs.length) return null;
+      return docs.reduce((total, r) => total + numero(
+        rodada === 1 ? (r?.qtd_segunda ?? r?.qtd_recontagem) : (r?.qtd_terceira ?? r?.qtd_recontagem)
+      ), 0);
+    };
+    const qtdSegunda = qtdRodada(1);
+    const qtdTerceira = qtdRodada(2);
+    const primeiraDiv = divs[0] || div || {};
     return Object.assign({}, primeiraDiv, {
-      qtd_segunda: segunda.qtd_segunda ?? segunda.qtd_recontagem ?? null,
-      produto_segunda: segunda.produto_segunda || segunda.produto_recontagem || '',
-      operador_segunda: segunda.operador_segunda || segunda.operador_recontagem || '',
-      data_segunda: segunda.data_segunda || segunda.recontagem_concluida_em || segunda.concluida_em || '',
-      qtd_terceira: terceira.qtd_terceira ?? terceira.qtd_recontagem ?? null,
-      produto_terceira: terceira.produto_terceira || terceira.produto_recontagem || '',
-      operador_terceira: terceira.operador_terceira || terceira.operador_recontagem || '',
-      data_terceira: terceira.data_terceira || terceira.recontagem_concluida_em || terceira.concluida_em || '',
+      qtd_esperada: totalEsperado,
+      qtd_primeira: qtdPrimeira,
+      qtd_contada: qtdPrimeira,
+      produto_primeira: 'TOTAL_ENDERECO',
+      qtd_segunda: qtdSegunda,
+      produto_segunda: qtdSegunda == null ? '' : 'TOTAL_ENDERECO',
+      qtd_terceira: qtdTerceira,
+      produto_terceira: qtdTerceira == null ? '' : 'TOTAL_ENDERECO',
+      comparacao_somente_quantidade: true,
+      fluxo_consolidado_endereco: true,
       _divergencias: divs,
-      _recontagens: recs
+      _recontagens: recs,
+      _contagens: contagensValidas
     });
   }
 
@@ -380,8 +410,7 @@
     const updated = state().contagens.map(c => {
       if (!_mesmoIdInventario(_idInventarioRegistro(c),_idInventarioRegistro(div))) return c;
       if (_nd(c.endereco)  !== _nd(div.endereco))  return c;
-      // Não altera contagens de outro produto existente no mesmo endereço.
-      if (!_mesmoProduto(c, div)) return c;
+      // Regra consolidada: todas as linhas/paletes do endereço recebem o mesmo status.
       if (c.status === novoStatus) return c;
       houve = true;
       return Object.assign({}, c, { status: novoStatus });

@@ -45,12 +45,13 @@ const _totalEsperadoEnderecoRec = obj => {
 // se uma recontagem concluida totaliza exatamente o total esperado do endereco,
 // o fluxo esta resolvido. Nao reutilizar a qtd_esperada individual da divergencia.
 const _avaliarTotalConsolidadoRec = (obj, totalEsperado) => {
-  return window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
-    ...(obj || {}),
-    qtd_esperada: totalEsperado,
-    comparacao_somente_quantidade: true,
-    fluxo_consolidado_endereco: true
-  }) || null;
+  return window.AnalistaDivergenciasRuntime?.avaliarEndereco?.(obj) ||
+    window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
+      ...(obj || {}),
+      qtd_esperada: totalEsperado,
+      comparacao_somente_quantidade: true,
+      fluxo_consolidado_endereco: true
+    }) || null;
 };
 
 const _chaveEndereco = obj => {
@@ -1342,7 +1343,6 @@ function renderRecontagens() {
           const atribEm     = r.atribuido_em || div?.atribuido_em || '';
           const atribPor    = r.atribuido_por || div?.atribuido_por || '';
           const statusRec   = r.status_recontagem || div?.status_recontagem || (r.status === 'CONCLUIDA' ? 'concluida' : 'pendente');
-          const distPaletes = window.avaliarDistribuicaoPaletes?.(r) || null;
           const obsAtrib    = r.observacao_atribuicao || div?.observacao_atribuicao || '';
           const naoAtribuido = atribPara === '—' || !atribPara;
           const executadoPor = r.operador_recontagem || div?.operador_recontagem || '';
@@ -1389,11 +1389,9 @@ function renderRecontagens() {
                 : `<span style="font-size:.75rem;color:var(--muted-2)">—</span>`}
             </td>
             <td>
-              ${distPaletes?.totalBate && distPaletes.quantidadeDivergente>0
-                ? `<span class="badge b-orange" style="font-size:.7rem" title="Total correto, mas a distribuição física não coincide com os paletes esperados">⚠️ ${distPaletes.quantidadeDivergente} palete(s) divergente(s)</span>`
-                : statusRec
-                  ? `<span class="badge ${recStatusBadge(statusRec)}" style="font-size:.7rem">${recStatusLabel(statusRec)}</span>`
-                  : `<span class="badge b-yellow" style="font-size:.7rem">⏳ Pendente</span>`}
+              ${statusRec
+                ? `<span class="badge ${recStatusBadge(statusRec)}" style="font-size:.7rem">${recStatusLabel(statusRec)}</span>`
+                : `<span class="badge b-yellow" style="font-size:.7rem">⏳ Pendente</span>`}
             </td>
             <td style="white-space:nowrap">
               <div style="display:flex;gap:4px;flex-wrap:wrap">

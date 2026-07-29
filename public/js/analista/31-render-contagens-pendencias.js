@@ -265,25 +265,17 @@ function _resultadoRodadaEndereco(c){
     const consolidada = recsEnderecoConcluidas.find(r => r.qtd_terceira != null || r.qtd_segunda != null) || {};
     const segunda = numeroSeguro(consolidada.qtd_segunda ?? recsEnderecoConcluidas[0]?.qtd_segunda ?? recsEnderecoConcluidas[0]?.qtd_recontagem);
     const terceira = numeroSeguro(consolidada.qtd_terceira ?? recsEnderecoConcluidas[1]?.qtd_terceira ?? recsEnderecoConcluidas[1]?.qtd_recontagem);
-    const avaliacaoConsolidada = window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
-      qtd_esperada: totalEsperadoEndereco,
-      qtd_primeira: div.qtd_primeira ?? div.qtd_contada ?? c.quantidade,
-      qtd_segunda: segunda,
-      qtd_terceira: terceira,
-      status: div.status,
-      status_recontagem: div.status_recontagem,
-      divergente: div.divergente,
-      precisa_recontagem: div.precisa_recontagem,
-      tipo_divergencia: div.tipo_divergencia,
-      comparacao_somente_quantidade: true,
-      fluxo_consolidado_endereco: true
-    });
+    const avaliacaoConsolidada = window.AnalistaDivergenciasRuntime?.avaliarEndereco?.(div) ||
+      window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
+        qtd_esperada: totalEsperadoEndereco,
+        qtd_primeira: div.qtd_primeira ?? div.qtd_contada ?? c.quantidade,
+        qtd_segunda: segunda,
+        qtd_terceira: terceira,
+        comparacao_somente_quantidade: true,
+        fluxo_consolidado_endereco: true
+      });
     if (avaliacaoConsolidada?.estado === 'RESOLVIDA') {
-      const dist=_avaliarDistribuicaoPaletes(c);
-      if(dist?.totalBate && dist.quantidadeDivergente>0){
-        return { texto:`⚠️ Total correto — ${dist.quantidadeDivergente} palete(s) divergente(s)`, cls:'b-orange', divergencia_paletes:true };
-      }
-      return { texto:`✅ OK ${avaliacaoConsolidada.rodada}ª`, cls:'b-green' };
+      return { texto:`✅ OK ${avaliacaoConsolidada.rodada}ª — total do endereço`, cls:'b-green' };
     }
     if (avaliacaoConsolidada?.estado === 'PERSISTENTE') {
       return { texto:'🔴 Persistente (3 rodadas)', cls:'b-red' };

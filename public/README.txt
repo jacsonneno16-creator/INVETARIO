@@ -47,3 +47,11 @@ Estrutura:
   - 09-fs-publicar.js .. NOVO: publicação Firestore (inventários, endereços, produtos)
 - js/coletor/........... módulos do aplicativo coletor
 - js/ajuda/............. scripts da central de ajuda
+
+
+VERSAO 191 - VALIDACAO CONSOLIDADA POR ENDERECO
+- Status definido exclusivamente pela soma total esperada x soma total contada do endereco.
+- Distribuicao entre paletes e quantidade de paletes nao geram divergencia.
+- Todas as linhas/paletes do endereco recebem o mesmo status.
+- Recontagens e consenso entre rodadas usam os totais consolidados do endereco.
+- Removido alerta de divergencia entre paletes.
