@@ -158,15 +158,36 @@
   // contagem batiam entre si. Agora só a quantidade é obrigatória; quando o
   // produto não foi informado nessa rodada, assume-se o produto esperado
   // (produtoFallback) em vez de descartar a comparação.
+  function _idsComparacaoProduto(valor){
+    const partes = Array.isArray(valor) ? valor : String(valor ?? '').split(/[,;|]+/);
+    const ids = new Set();
+    partes.map(v => _nd(v)).filter(Boolean).forEach(id => {
+      ids.add(id);
+      try {
+        const ach = global.DTProdutos?.buscarSync?.(id);
+        if (ach?.encontrado) {
+          [ach.codigoInterno, ach.codigo_interno, ach.gtin, ach.ean, ach.dun, ach.codigo]
+            .map(_nd).filter(Boolean).forEach(x => ids.add(x));
+        }
+      } catch(e) {}
+    });
+    return ids;
+  }
+
   function _parContagem(qtd, produto, produtoFallback){
-    const n = Number(qtd);
+    if (qtd === null || qtd === undefined || String(qtd).trim() === '') return null;
+    const n = Number(String(qtd).replace(',', '.'));
     if (!Number.isFinite(n)) return null;
     const p = _nd(produto) || _nd(produtoFallback) || '';
-    return { qtd:n, produto:p };
+    return { qtd:n, produto:p, produtoIds:_idsComparacaoProduto(p) };
   }
 
   function _paresIguais(a,b){
-    return Boolean(a && b && a.produto && b.produto && a.qtd === b.qtd && a.produto === b.produto);
+    if (!a || !b || a.qtd !== b.qtd) return false;
+    const aa = a.produtoIds || _idsComparacaoProduto(a.produto);
+    const bb = b.produtoIds || _idsComparacaoProduto(b.produto);
+    if (!aa.size || !bb.size) return false;
+    return [...aa].some(id => bb.has(id));
   }
 
   // Regra operacional única para processamento novo e recuperação de registros

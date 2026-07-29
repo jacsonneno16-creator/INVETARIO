@@ -3,7 +3,12 @@ const _FK = window.InventoryFlowKey;
 const _normRec = v => _FK.texto(v);
 const _inventarioCanonicoRec = obj => _FK.inventario(obj, state().inventarios);
 const _produtoCanonicoRec = obj => _FK.produto(obj);
-const _chaveEndereco = obj => _FK.chave(obj, state().inventarios);
+const _chaveEndereco = obj => {
+  const x = Object.assign({}, obj || {});
+  // Nao reutiliza chave_fluxo antiga: ela pode ter sido gravada sem produto.
+  delete x.chave_fluxo;
+  return _FK.chave(x, state().inventarios);
+};
 // ───────────────────────────────────────────────────────────────────
 //  16. RENDERIZAÇÃO — DIVERGÊNCIAS
 // ───────────────────────────────────────────────────────────────────
@@ -848,18 +853,19 @@ function renderDivergencias() {
           const statusRec = d.status_recontagem || (rec ? (rec.status==='CONCLUIDA' ? 'concluida' : 'pendente') : '');
           const atribPara = d.operador_responsavel || rec?.operador || '';
           const executadoPor = rec?.operador_recontagem || d.operador_recontagem || '';
+          const _produtoRodada = valor => {
+            const partes = Array.isArray(valor) ? valor : String(valor || '').split(/[,;|]+/);
+            const esperado = _produtoCanonicoRec(d);
+            const limpas = partes.map(v => String(v || '').trim()).filter(Boolean);
+            const correspondente = limpas.find(v => _produtoCanonicoRec({ produto:v }) === esperado);
+            return correspondente || limpas[0] || d.produto_contado || d.produto || '—';
+          };
           const _cellRodada = (qtd, produto, operadorRodada, dataRodada, aguardando) => {
             if (qtd == null) {
-              return `<td><div style="color:var(--muted);font-size:.7rem;text-align:center;line-height:1.25">${aguardando ? 'Aguardando<br>Analista' : '—'}</div></td>`;
+              return `<td><div style="color:var(--muted);font-size:.7rem;text-align:center">${aguardando ? 'Aguardando' : '—'}</div></td>`;
             }
-            const qtdEsp = parseFloat(d.qtd_esperada);
-            const bate = !isNaN(qtdEsp) && parseFloat(qtd) === qtdEsp;
-            const codigo = String(produto || '').trim().toUpperCase();
-            return `<td>
-              <div style="font-family:var(--mono);font-weight:800;color:${bate ? 'var(--success)' : 'var(--danger)'}">${escHTML(codigo || '—')} · Qtd ${qtd}</div>
-              ${operadorRodada ? `<div style="font-size:.65rem;color:var(--muted)">${escHTML(operadorRodada)}</div>` : ''}
-              ${dataRodada ? `<div style="font-size:.6rem;color:var(--muted-2)">${fmtTs(dataRodada)}</div>` : ''}
-            </td>`;
+            const codigo = _produtoRodada(produto);
+            return `<td><div style="font-family:var(--mono);font-weight:800">${escHTML(codigo)} · Qtd ${escHTML(qtd)}</div></td>`;
           };
 
           return `<tr style="${selecionado ? 'background:rgba(232,117,26,.06)' : ''}">
@@ -879,14 +885,8 @@ function renderDivergencias() {
             <td>${esperadoHtml}</td>
             ${(() => {
               // Reutilizável: renderiza célula de contagem com produto e cor
-              const _ndpD = v => String(v||'').trim().toUpperCase();
-              const prodEspD = _ndpD(d.produto);
               const _qtdC1 = d.qtd_contada != null ? d.qtd_contada : '—';
-              const _qtdEsp = parseFloat(d.qtd_esperada);
-              const _bateC1 = !isNaN(_qtdEsp) && d.qtd_contada === _qtdEsp;
-              const _corC1  = _bateC1 ? 'var(--success)' : 'var(--danger)';
-              const _c1Cell = `<td><div style="font-family:var(--mono);font-weight:800;color:${_corC1}">${escHTML(produtoBipado)} · Qtd ${_qtdC1}</div>${descricaoBipada ? `<div style="font-size:.68rem;color:var(--muted);max-width:210px">${escHTML(descricaoBipada)}</div>` : ''}${d.operador ? `<div style="font-size:.65rem;color:var(--muted)">${escHTML(d.operador)}</div>` : ''}</td>`;
-              return _c1Cell;
+              return `<td><div style="font-family:var(--mono);font-weight:800">${escHTML(_produtoRodada(produtoBipado))} · Qtd ${escHTML(_qtdC1)}</div></td>`;
             })()}
             ${_cellRodada(
               rec?.qtd_segunda ?? d.qtd_segunda,
@@ -903,48 +903,9 @@ function renderDivergencias() {
               false
             )}
             ${(() => {
-              const recFinal = state().recontagens
-                .filter(r => idsAgrupados.includes(r.divergencia_id))
-                .sort((a,b) => (b.numero_recontagem||1) - (a.numero_recontagem||1))[0] || null;
-              const qtdRes = d.qtd_resultado_final ?? recFinal?.qtd_recontagem ?? recFinal?.qtd_terceira ??
-                recFinal?.qtd_segunda ?? d.qtd_terceira ?? d.qtd_segunda ?? null;
-              const opRes  = recFinal?.operador_segunda || recFinal?.operador ||
-                d.operador_terceira || d.operador_segunda || '';
-              const motivo = d.contagem_aceita || '';
-              const qtdSegundaReal = recFinal?.qtd_segunda ?? d.qtd_segunda;
-              const qtdTerceiraReal = recFinal?.qtd_terceira ?? d.qtd_terceira;
-              const totalRodadas = 1 + (qtdSegundaReal != null ? 1 : 0) + (qtdTerceiraReal != null ? 1 : 0);
-              if (qtdRes == null) return '<td><div style="color:var(--muted);font-size:.7rem;text-align:center;line-height:1.25">Aguardando<br>recontagem</div></td>';
-              const qtdEspN = parseFloat(d.qtd_esperada);
-              const encerradaOk = String(d.status || '').toUpperCase() === 'RESOLVIDA' ||
-                String(motivo).startsWith('OK_') || motivo === 'CONSENSO_SEGUNDA_TERCEIRA';
-              const cor  = encerradaOk ? 'var(--success)' : 'var(--danger)';
-              const icone = encerradaOk ? '✅' : '❌';
-              const mTxt = motivo === 'OK_PRIMEIRA_SISTEMA' ? 'OK 1ª — bateu com o sistema'
-                         : motivo === 'OK_SEGUNDA_SISTEMA' ? 'OK 2ª — bateu com o sistema'
-                         : motivo === 'OK_SEGUNDA_PRIMEIRA' ? 'OK 2ª — bateu com a 1ª'
-                         : motivo === 'OK_TERCEIRA_SISTEMA' ? 'OK 3ª — bateu com o sistema'
-                         : motivo === 'OK_TERCEIRA_PRIMEIRA' ? 'OK 3ª — bateu com a 1ª'
-                         : motivo === 'OK_TERCEIRA_SEGUNDA' ? 'OK 3ª — bateu com a 2ª'
-                         : motivo === 'SEGUNDA_CONTAGEM' ? 'OK 2ª — bateu com o sistema'
-                         : motivo === 'CONSENSO_SEGUNDA_TERCEIRA' ? 'OK 3ª — bateu com a 2ª'
-                         : motivo === 'TERCEIRA_SEM_CONSENSO' ? '3 rodadas sem consenso'
-                         : motivo === 'LIBERACAO_ANALISTA' ? 'Liberado pelo analista'
-                         : motivo ? motivo.replace(/_/g,' ').toLowerCase() : '';
-              const rodadaMotivo = motivo.includes('PRIMEIRA') ? 1
-                : motivo.includes('SEGUNDA') && !motivo.includes('TERCEIRA') ? 2
-                : motivo.includes('TERCEIRA') || motivo === 'CONSENSO_SEGUNDA_TERCEIRA' ? 3 : 0;
-              const rodadaExibida = rodadaMotivo ? Math.min(rodadaMotivo, totalRodadas) : totalRodadas;
-              const rodadaOk = encerradaOk && rodadaExibida >= 1 && rodadaExibida <= 3 ? `OK ${rodadaExibida}ª` : 'Conferiu';
-              const mTxtSeguro = encerradaOk && rodadaMotivo > totalRodadas
-                ? `Confirmado na ${totalRodadas}ª contagem`
-                : mTxt;
-              let cell = '<td><div style="font-family:var(--mono);font-weight:800;color:' + cor + '">' + icone + ' ' + (encerradaOk ? rodadaOk : 'Divergente') + '</div>';
-              cell += '<div style="font-size:.66rem;color:var(--muted);line-height:1.3">Esperado: <b>' + (isNaN(qtdEspN) ? '—' : qtdEspN) + '</b><br>Recontado: <b>' + qtdRes + '</b></div>';
-              if (opRes) cell += '<div style="font-size:.65rem;color:var(--muted)">' + opRes + '</div>';
-              if (mTxtSeguro)  cell += '<div style="font-size:.62rem;color:var(--muted);font-style:italic">' + mTxtSeguro + '</div>';
-              cell += '</td>';
-              return cell;
+              const resolvida = String(d.status || '').toUpperCase() === 'RESOLVIDA' ||
+                String(d.status_recontagem || '').toLowerCase() === 'sem_divergencia';
+              return `<td><div style="font-family:var(--mono);font-weight:800;color:${resolvida ? 'var(--success)' : 'var(--danger)'}">${resolvida ? '✅ Conferido' : '❌ Divergente'}</div></td>`;
             })()}
                         <td><span class="badge ${divStatusBadge(d.status)}">${d.status}</span></td>
             <td>
@@ -1272,20 +1233,11 @@ function renderRecontagens() {
             if (qtd === null || qtd === undefined) {
               return `<td style="color:var(--muted-2);font-size:.78rem;text-align:center">—</td>`;
             }
-            const qtdEsp    = parseFloat(r.qtd_esperada);
-            const qtdBate   = !isNaN(qtdEsp) && qtd === qtdEsp;
-            const prodBate  = !prodContado || _ndp(prodContado) === '' || _ndp(prodContado) === prodEsp;
-            const tudoBate  = qtdBate && prodBate;
-            const corQtd    = tudoBate ? 'var(--success)' : (qtdBate && !prodBate ? 'var(--warn)' : 'var(--danger)');
-            const prodDivBadge = (!prodBate && prodContado)
-              ? `<div style="font-size:.6rem;color:var(--danger);font-family:var(--mono);font-weight:700;background:rgba(217,32,32,.08);border-radius:3px;padding:1px 4px;margin-top:2px" title="Produto diferente do esperado (${prodEsp})">⚠️ ${_ndp(prodContado)}</div>`
-              : '';
-            return `<td>
-              <div style="font-family:var(--mono);font-weight:800;font-size:.92rem;color:${corQtd}">${qtd}</div>
-              ${prodDivBadge}
-              ${op   ? `<div style="font-size:.65rem;color:var(--muted)">${op}</div>` : ''}
-              ${data ? `<div style="font-size:.6rem;color:var(--muted-2)">${fmtTs(data)}</div>` : ''}
-            </td>`;
+            const partes = Array.isArray(prodContado) ? prodContado : String(prodContado || r.produto || '').split(/[,;|]+/);
+            const esperadoCanonico = _produtoCanonicoRec(r);
+            const limpas = partes.map(v => String(v || '').trim()).filter(Boolean);
+            const produtoExibido = limpas.find(v => _produtoCanonicoRec({produto:v}) === esperadoCanonico) || limpas[0] || r.produto || '—';
+            return `<td><div style="font-family:var(--mono);font-weight:800">${escHTML(produtoExibido)} · Qtd ${escHTML(qtd)}</div></td>`;
           };
 
           return `<tr>

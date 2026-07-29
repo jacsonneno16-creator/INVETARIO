@@ -1,20 +1,5 @@
 function state(){ return window.AnalistaStore.getState(); }
 
-function _contagensFK(){
-  if (window.InventoryFlowKey) return window.InventoryFlowKey;
-  const texto = v => String(v ?? '').trim().toUpperCase();
-  const endereco = v => texto(v);
-  const produto = o => texto(o?.produto || o?.produto_contado || o?.codigo_produto || o?.codigoProduto || o?.produto_recontagem || o?.produto_segunda || o?.produto_terceira || o?.gtin || o?.ean || o?.dun || '');
-  const inventario = o => texto(o?.inventario_id || o?.inventarioId || o?.inventario || o?.inventario_nome || '');
-  const chave = (o, inventarios) => {
-    const bruto = String(o?.inventario_id || o?.inventarioId || o?.inventario || o?.inventario_nome || '');
-    const inv = (inventarios || []).find(i => [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId].filter(Boolean).map(String).includes(bruto));
-    return `${texto(inv?.id || bruto)}|${endereco(o?.endereco)}|${produto(o)}`;
-  };
-  const mesmo = (a,b,inventarios) => chave(a,inventarios) === chave(b,inventarios);
-  return { texto, endereco, produto, inventario, chave, mesmo };
-}
-
 function _produtoContagemExibicao(c){
   const codigo=c?.codigo_produto||c?.codigoProduto||c?.gtin||c?.ean||c?.dun||c?.codigo_lido||c?.codigoLido||'';
   const atual=String(c?.descricao_produto||c?.descricaoProduto||c?.descricao||'').trim();
@@ -39,57 +24,36 @@ window.contStatusBadge = window.contStatusBadge || contStatusBadge;
 // dois lugares sempre concordam sobre qual rodada "bateu".
 function _resultadoRodadaEndereco(c){
   const st = state();
-  const invRegistro = (st.inventarios || []).find(i => {
-    const aliases=[i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
-      .filter(Boolean).map(String);
-    return aliases.includes(String(c.inventario_id || c.inventarioId || ''));
-  });
-  const invIds = new Set([
-    invRegistro?.id, invRegistro?.codigo, invRegistro?.nome,
-    invRegistro?.inventario_id, invRegistro?.inventarioId,
-    c.inventario_id, c.inventarioId
-  ].filter(Boolean).map(v => String(v)));
-  const FK = _contagensFK();
+  const FK = window.InventoryFlowKey;
+  if (!FK) return { texto:'⚠️ Status indisponível', cls:'b-orange' };
+  const invCanonico = FK.inventario(c, st.inventarios);
   const end = FK.endereco(c.endereco);
   const produto = FK.produto(c);
-
-  const normalizaProduto = obj => FK.produto(obj);
-
-  // A divergência precisa pertencer ao mesmo inventário, endereço E produto.
-  // Não usa mais fallback por "única divergência do endereço", pois isso ligava
-  // uma contagem a outro produto e podia exibir OK 3ª indevidamente.
-  const inventarioCanonicoContagem = FK.inventario(c, st.inventarios);
-  const divsMesmoEndereco = (st.divergencias || []).filter(d => {
-    const mesmoEndereco = FK.endereco(d.endereco) === end;
-    if (!mesmoEndereco) return false;
-
-    // O Firestore pode trazer a contagem com o código curto do inventário
-    // (ex.: "1") e a divergência com o ID técnico (ex.: "INV-...").
-    // Comparar apenas o valor bruto fazia a aba Contagens perder o vínculo e
-    // mostrar "OK 1ª" mesmo com recontagem aberta. A comparação canônica
-    // usa os aliases cadastrados do inventário e mantém as duas abas alinhadas.
-    const inventarioCanonicoDiv = FK.inventario(d, st.inventarios);
-    if (inventarioCanonicoContagem && inventarioCanonicoDiv) {
-      return inventarioCanonicoContagem === inventarioCanonicoDiv;
-    }
-
-    const invBruto = String(d.inventario_id || d.inventarioId || d.inventario || d.inventario_nome || '');
-    return invIds.has(invBruto);
-  });
-
-  // Primeiro tenta o vínculo explícito da contagem. Depois usa produto normalizado.
-  // Como último recurso, aceita a única divergência aberta do endereço. Isso evita
-  // exibir "OK 1ª" quando o registro da contagem traz GTIN e a divergência ficou
-  // gravada com código interno do mesmo produto.
   const idContagem = String(c.uuid || c.id || '');
-  const div = divsMesmoEndereco.find(d =>
-    idContagem && String(d.contagem_uuid || d.contagem_id || d.origem_contagem_id || '') === idContagem
-  ) || divsMesmoEndereco.find(d => produto && normalizaProduto(d) === produto) || (() => {
-    const abertas = divsMesmoEndereco.filter(d =>
-      !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(String(d.status || '').toUpperCase())
-    );
-    return abertas.length === 1 ? abertas[0] : null;
-  })();
+
+  // O vínculo é resolvido em três níveis, sempre dentro do mesmo inventário e
+  // endereço: ID explícito da contagem, chave operacional completa e, por fim,
+  // única divergência do endereço. Registros antigos podem usar ID/código/nome
+  // do inventário e GTIN/código interno do produto.
+  const divsMesmoEndereco = (st.divergencias || []).filter(d =>
+    FK.inventario(d, st.inventarios) === invCanonico &&
+    FK.endereco(d.endereco) === end &&
+    !['CANCELADA','EXCLUIDA','ESTORNADA'].includes(String(d.status || '').trim().toUpperCase())
+  );
+  const divPorId = divsMesmoEndereco.find(d =>
+    idContagem && [d.contagem_uuid,d.contagem_id,d.origem_contagem_id]
+      .filter(Boolean).map(String).includes(idContagem)
+  );
+  const divPorProduto = divsMesmoEndereco.find(d => FK.produto(d) === produto);
+  const ativas = divsMesmoEndereco.filter(d => {
+    const sd=String(d.status || '').trim().toUpperCase();
+    const sr=String(d.status_recontagem || '').trim().toLowerCase();
+    return ['ABERTA','DIVERGENTE','PENDENTE','EM_RECONTAGEM'].includes(sd) ||
+      ['pendente','atribuida','atribuída','em_andamento','aguardando_analista'].includes(sr) ||
+      d.divergente === true || d.precisa_recontagem === true;
+  });
+  const div = divPorId || divPorProduto || (ativas.length === 1 ? ativas[0] : null) ||
+    (divsMesmoEndereco.length === 1 ? divsMesmoEndereco[0] : null);
 
   if (!div) {
     const statusContagem = String(c.status || '').trim().toUpperCase();
@@ -169,6 +133,17 @@ function _resultadoRodadaEndereco(c){
   const rodadaReal = Math.min(Number(avaliacao.rodada || 1), rodadaMaximaReal);
 
   if (avaliacao.estado === 'RESOLVIDA') {
+    // Uma divergência encerrada manualmente, sem recontagem concluída, não pode
+    // virar OK 1ª. OK 1ª só existe quando o próprio processamento registrou que
+    // a primeira leitura bateu com o sistema.
+    if (rodadaReal === 1) {
+      const motivo = String(div.motivo_resolucao || div.referencia_resolucao || div.resultado || '').toUpperCase();
+      const okPrimeiraExplicito = motivo.includes('OK_PRIMEIRA') || motivo.includes('OK 1') ||
+        div.ok_primeira === true || div.resultado_primeira === 'OK';
+      return okPrimeiraExplicito
+        ? { texto:'✅ OK 1ª', cls:'b-green' }
+        : { texto:'✅ Resolvida pelo analista', cls:'b-green' };
+    }
     return { texto:`✅ OK ${rodadaReal}ª`, cls:'b-green' };
   }
   if (recs.length >= 2 && avaliacao.estado === 'PERSISTENTE') {
@@ -183,7 +158,8 @@ function _resultadoRodadaEndereco(c){
 // ───────────────────────────────────────────────────────────────────
 
 function renderContagens() {
-  const FK = _contagensFK();
+  const FK = window.InventoryFlowKey;
+  if (!FK) throw new Error('InventoryFlowKey não carregado');
   const busca    = (document.getElementById('cont-busca')?.value || '').toLowerCase();
   const fInv     = document.getElementById('cont-finv')?.value || '';
   const fTipo    = document.getElementById('cont-ftipo')?.value || '';
@@ -226,12 +202,7 @@ function renderContagens() {
     });
     dados=[...grupos.values()];
   }
-  if (fInv) {
-    const invFiltro=(state().inventarios||[]).find(i=>String(i.id)===String(fInv));
-    const aliasesFiltro=new Set([invFiltro?.id,invFiltro?.codigo,invFiltro?.nome,invFiltro?.inventario_id,invFiltro?.inventarioId]
-      .filter(Boolean).map(v=>String(v).trim()));
-    dados = dados.filter(c => aliasesFiltro.has(String(c.inventario_id || c.inventarioId || c.inventario || '').trim()));
-  }
+  if (fInv)    dados = dados.filter(c => String(c.inventario_id || c.inventarioId || '') === String(fInv));
   if (fTipo)   dados = dados.filter(c => c.tipo_contagem === fTipo);
   if (fStatus) {
     if (fStatus === 'DIVERGENTE') {

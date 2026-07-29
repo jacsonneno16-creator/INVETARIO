@@ -864,71 +864,27 @@ function renderDivergencias() {
         var statusRec = d.status_recontagem || (rec ? (rec.status === 'CONCLUIDA' ? 'concluida' : 'pendente') : '');
         var atribPara = d.operador_responsavel || (rec === null || rec === void 0 ? void 0 : rec.operador) || '';
         var executadoPor = (rec === null || rec === void 0 ? void 0 : rec.operador_recontagem) || d.operador_recontagem || '';
+        var _produtoRodada = function (valor) {
+            var partes = Array.isArray(valor) ? valor : String(valor || '').split(/[,;|]+/);
+            var esperado = _produtoCanonicoRec(d);
+            var limpas = partes.map(function (v) { return String(v || '').trim(); }).filter(Boolean);
+            var correspondente = limpas.find(function (v) { return _produtoCanonicoRec({ produto: v }) === esperado; });
+            return correspondente || limpas[0] || d.produto_contado || d.produto || '—';
+        };
         var _cellRodada = function (qtd, produto, operadorRodada, dataRodada, aguardando) {
             if (qtd == null) {
-                return "<td><div style=\"color:var(--muted);font-size:.7rem;text-align:center;line-height:1.25\">".concat(aguardando ? 'Aguardando<br>Analista' : '—', "</div></td>");
+                return '<td><div style="color:var(--muted);font-size:.7rem;text-align:center">' + (aguardando ? 'Aguardando' : '—') + '</div></td>';
             }
-            var qtdEsp = parseFloat(d.qtd_esperada);
-            var bate = !isNaN(qtdEsp) && parseFloat(qtd) === qtdEsp;
-            var codigo = String(produto || '').trim().toUpperCase();
-            return "<td>\n              <div style=\"font-family:var(--mono);font-weight:800;color:".concat(bate ? 'var(--success)' : 'var(--danger)', "\">").concat(escHTML(codigo || '—'), " \u00B7 Qtd ").concat(qtd, "</div>\n              ").concat(operadorRodada ? "<div style=\"font-size:.65rem;color:var(--muted)\">".concat(escHTML(operadorRodada), "</div>") : '', "\n              ").concat(dataRodada ? "<div style=\"font-size:.6rem;color:var(--muted-2)\">".concat(fmtTs(dataRodada), "</div>") : '', "\n            </td>");
+            var codigo = _produtoRodada(produto);
+            return '<td><div style="font-family:var(--mono);font-weight:800">' + escHTML(codigo) + ' · Qtd ' + escHTML(qtd) + '</div></td>';
         };
         return "<tr style=\"".concat(selecionado ? 'background:rgba(232,117,26,.06)' : '', "\">\n            <td style=\"padding:8px 10px\">\n              ").concat(podeSelecionar ? "<input type=\"checkbox\" class=\"div-row-chk\" data-id=\"".concat(d.id, "\"\n                style=\"width:15px;height:15px;cursor:pointer;accent-color:var(--orange)\"\n                ").concat(selecionado ? 'checked' : '', "\n                onchange=\"divToggleSel('").concat(d.id, "', this.checked)\">") : '', "\n            </td>\n            <td style=\"font-size:.75rem;color:var(--muted)\">").concat(d.inventario_nome || d.inventario_id, "</td>\n            <td class=\"mono\" style=\"font-weight:600\">").concat(rua, "</td>\n            <td class=\"mono\">").concat(escHTML(d.endereco)).concat(d.endereco_correto ? "<br><span style=\"font-size:.65rem;color:var(--muted)\">\u2192 ".concat(escHTML(d.endereco_correto), "</span>") : '', "</td>\n            <td style=\"text-align:center\"><span class=\"badge b-purple\" style=\"font-size:.76rem\">").concat(d._vezes_contado || 1, "x</span></td>\n            <td style=\"font-size:.8rem\">").concat(operador, "</td>\n            <td class=\"mono\" style=\"font-size:.72rem;color:var(--muted);white-space:nowrap\">").concat(fmtTs(d.criada_em), "</td>\n            <td><span class=\"badge ").concat(tipoCls, "\">").concat(tipoTxt, "</span></td>\n            <td>").concat(esperadoHtml, "</td>\n            ").concat((function () {
-            // Reutilizável: renderiza célula de contagem com produto e cor
-            var _ndpD = function (v) { return String(v || '').trim().toUpperCase(); };
-            var prodEspD = _ndpD(d.produto);
             var _qtdC1 = d.qtd_contada != null ? d.qtd_contada : '—';
-            var _qtdEsp = parseFloat(d.qtd_esperada);
-            var _bateC1 = !isNaN(_qtdEsp) && d.qtd_contada === _qtdEsp;
-            var _corC1 = _bateC1 ? 'var(--success)' : 'var(--danger)';
-            var _c1Cell = "<td><div style=\"font-family:var(--mono);font-weight:800;color:".concat(_corC1, "\">").concat(escHTML(produtoBipado), " \u00B7 Qtd ").concat(_qtdC1, "</div>").concat(descricaoBipada ? "<div style=\"font-size:.68rem;color:var(--muted);max-width:210px\">".concat(escHTML(descricaoBipada), "</div>") : '').concat(d.operador ? "<div style=\"font-size:.65rem;color:var(--muted)\">".concat(escHTML(d.operador), "</div>") : '', "</td>");
-            return _c1Cell;
+            return '<td><div style="font-family:var(--mono);font-weight:800">' + escHTML(_produtoRodada(produtoBipado)) + ' · Qtd ' + escHTML(_qtdC1) + '</div></td>';
         })(), "\n            ").concat(_cellRodada((_a = rec === null || rec === void 0 ? void 0 : rec.qtd_segunda) !== null && _a !== void 0 ? _a : d.qtd_segunda, (_b = rec === null || rec === void 0 ? void 0 : rec.produto_segunda) !== null && _b !== void 0 ? _b : d.produto_segunda, (_c = rec === null || rec === void 0 ? void 0 : rec.operador_segunda) !== null && _c !== void 0 ? _c : d.operador_segunda, (_d = rec === null || rec === void 0 ? void 0 : rec.data_segunda) !== null && _d !== void 0 ? _d : d.data_segunda, statusRec === 'aguardando_analista' && ((_e = rec === null || rec === void 0 ? void 0 : rec.qtd_segunda) !== null && _e !== void 0 ? _e : d.qtd_segunda) == null), "\n            ").concat(_cellRodada((_f = rec === null || rec === void 0 ? void 0 : rec.qtd_terceira) !== null && _f !== void 0 ? _f : d.qtd_terceira, (_g = rec === null || rec === void 0 ? void 0 : rec.produto_terceira) !== null && _g !== void 0 ? _g : d.produto_terceira, (_h = rec === null || rec === void 0 ? void 0 : rec.operador_terceira) !== null && _h !== void 0 ? _h : d.operador_terceira, (_j = rec === null || rec === void 0 ? void 0 : rec.data_terceira) !== null && _j !== void 0 ? _j : d.data_terceira, false), "\n            ").concat((function () {
-            var _a, _b, _c, _d, _e, _f, _g, _h;
-            var recFinal = state().recontagens
-                .filter(function (r) { return idsAgrupados.includes(r.divergencia_id); })
-                .sort(function (a, b) { return (b.numero_recontagem || 1) - (a.numero_recontagem || 1); })[0] || null;
-            var qtdRes = (_f = (_e = (_d = (_c = (_b = (_a = d.qtd_resultado_final) !== null && _a !== void 0 ? _a : recFinal === null || recFinal === void 0 ? void 0 : recFinal.qtd_recontagem) !== null && _b !== void 0 ? _b : recFinal === null || recFinal === void 0 ? void 0 : recFinal.qtd_terceira) !== null && _c !== void 0 ? _c : recFinal === null || recFinal === void 0 ? void 0 : recFinal.qtd_segunda) !== null && _d !== void 0 ? _d : d.qtd_terceira) !== null && _e !== void 0 ? _e : d.qtd_segunda) !== null && _f !== void 0 ? _f : null;
-            var opRes = (recFinal === null || recFinal === void 0 ? void 0 : recFinal.operador_segunda) || (recFinal === null || recFinal === void 0 ? void 0 : recFinal.operador) ||
-                d.operador_terceira || d.operador_segunda || '';
-            var motivo = d.contagem_aceita || '';
-            var qtdSegundaReal = (_g = recFinal === null || recFinal === void 0 ? void 0 : recFinal.qtd_segunda) !== null && _g !== void 0 ? _g : d.qtd_segunda;
-            var qtdTerceiraReal = (_h = recFinal === null || recFinal === void 0 ? void 0 : recFinal.qtd_terceira) !== null && _h !== void 0 ? _h : d.qtd_terceira;
-            var totalRodadas = 1 + (qtdSegundaReal != null ? 1 : 0) + (qtdTerceiraReal != null ? 1 : 0);
-            if (qtdRes == null)
-                return '<td><div style="color:var(--muted);font-size:.7rem;text-align:center;line-height:1.25">Aguardando<br>recontagem</div></td>';
-            var qtdEspN = parseFloat(d.qtd_esperada);
-            var encerradaOk = String(d.status || '').toUpperCase() === 'RESOLVIDA' ||
-                String(motivo).startsWith('OK_') || motivo === 'CONSENSO_SEGUNDA_TERCEIRA';
-            var cor = encerradaOk ? 'var(--success)' : 'var(--danger)';
-            var icone = encerradaOk ? '✅' : '❌';
-            var mTxt = motivo === 'OK_PRIMEIRA_SISTEMA' ? 'OK 1ª — bateu com o sistema'
-                : motivo === 'OK_SEGUNDA_SISTEMA' ? 'OK 2ª — bateu com o sistema'
-                    : motivo === 'OK_SEGUNDA_PRIMEIRA' ? 'OK 2ª — bateu com a 1ª'
-                        : motivo === 'OK_TERCEIRA_SISTEMA' ? 'OK 3ª — bateu com o sistema'
-                            : motivo === 'OK_TERCEIRA_PRIMEIRA' ? 'OK 3ª — bateu com a 1ª'
-                                : motivo === 'OK_TERCEIRA_SEGUNDA' ? 'OK 3ª — bateu com a 2ª'
-                                    : motivo === 'SEGUNDA_CONTAGEM' ? 'OK 2ª — bateu com o sistema'
-                                        : motivo === 'CONSENSO_SEGUNDA_TERCEIRA' ? 'OK 3ª — bateu com a 2ª'
-                                            : motivo === 'TERCEIRA_SEM_CONSENSO' ? '3 rodadas sem consenso'
-                                                : motivo === 'LIBERACAO_ANALISTA' ? 'Liberado pelo analista'
-                                                    : motivo ? motivo.replace(/_/g, ' ').toLowerCase() : '';
-            var rodadaMotivo = motivo.includes('PRIMEIRA') ? 1
-                : motivo.includes('SEGUNDA') && !motivo.includes('TERCEIRA') ? 2
-                    : motivo.includes('TERCEIRA') || motivo === 'CONSENSO_SEGUNDA_TERCEIRA' ? 3 : 0;
-            var rodadaExibida = rodadaMotivo ? Math.min(rodadaMotivo, totalRodadas) : totalRodadas;
-            var rodadaOk = encerradaOk && rodadaExibida >= 1 && rodadaExibida <= 3 ? "OK ".concat(rodadaExibida, "\u00AA") : 'Conferiu';
-            var mTxtSeguro = encerradaOk && rodadaMotivo > totalRodadas
-                ? "Confirmado na ".concat(totalRodadas, "\u00AA contagem")
-                : mTxt;
-            var cell = '<td><div style="font-family:var(--mono);font-weight:800;color:' + cor + '">' + icone + ' ' + (encerradaOk ? rodadaOk : 'Divergente') + '</div>';
-            cell += '<div style="font-size:.66rem;color:var(--muted);line-height:1.3">Esperado: <b>' + (isNaN(qtdEspN) ? '—' : qtdEspN) + '</b><br>Recontado: <b>' + qtdRes + '</b></div>';
-            if (opRes)
-                cell += '<div style="font-size:.65rem;color:var(--muted)">' + opRes + '</div>';
-            if (mTxtSeguro)
-                cell += '<div style="font-size:.62rem;color:var(--muted);font-style:italic">' + mTxtSeguro + '</div>';
-            cell += '</td>';
-            return cell;
+            var resolvida = String(d.status || '').toUpperCase() === 'RESOLVIDA' ||
+                String(d.status_recontagem || '').toLowerCase() === 'sem_divergencia';
+            return '<td><div style="font-family:var(--mono);font-weight:800;color:' + (resolvida ? 'var(--success)' : 'var(--danger)') + '">' + (resolvida ? '✅ Conferido' : '❌ Divergente') + '</div></td>';
         })(), "\n                        <td><span class=\"badge ").concat(divStatusBadge(d.status), "\">").concat(d.status, "</span></td>\n            <td>\n              ").concat(statusRec
             ? "<span class=\"badge ".concat(recStatusBadge(statusRec), "\" style=\"font-size:.68rem\">").concat(recStatusLabel(statusRec), "</span>")
             : "<span style=\"font-size:.72rem;color:var(--muted-2)\">\u2014</span>", "\n            </td>\n            <td>\n              ").concat(atribPara
@@ -1241,18 +1197,12 @@ function renderRecontagens() {
         var _ndp = function (v) { return String(v || '').trim().toUpperCase(); };
         var prodEsp = _ndp(r.produto);
         var _cellCont = function (qtd, op, data, prodContado) {
-            if (qtd === null || qtd === undefined) {
-                return "<td style=\"color:var(--muted-2);font-size:.78rem;text-align:center\">\u2014</td>";
-            }
-            var qtdEsp = parseFloat(r.qtd_esperada);
-            var qtdBate = !isNaN(qtdEsp) && qtd === qtdEsp;
-            var prodBate = !prodContado || _ndp(prodContado) === '' || _ndp(prodContado) === prodEsp;
-            var tudoBate = qtdBate && prodBate;
-            var corQtd = tudoBate ? 'var(--success)' : (qtdBate && !prodBate ? 'var(--warn)' : 'var(--danger)');
-            var prodDivBadge = (!prodBate && prodContado)
-                ? "<div style=\"font-size:.6rem;color:var(--danger);font-family:var(--mono);font-weight:700;background:rgba(217,32,32,.08);border-radius:3px;padding:1px 4px;margin-top:2px\" title=\"Produto diferente do esperado (".concat(prodEsp, ")\">\u26A0\uFE0F ").concat(_ndp(prodContado), "</div>")
-                : '';
-            return "<td>\n              <div style=\"font-family:var(--mono);font-weight:800;font-size:.92rem;color:".concat(corQtd, "\">").concat(qtd, "</div>\n              ").concat(prodDivBadge, "\n              ").concat(op ? "<div style=\"font-size:.65rem;color:var(--muted)\">".concat(op, "</div>") : '', "\n              ").concat(data ? "<div style=\"font-size:.6rem;color:var(--muted-2)\">".concat(fmtTs(data), "</div>") : '', "\n            </td>");
+            if (qtd === null || qtd === undefined) return '<td style="color:var(--muted-2);font-size:.78rem;text-align:center">—</td>';
+            var partes = Array.isArray(prodContado) ? prodContado : String(prodContado || r.produto || '').split(/[,;|]+/);
+            var esperadoCanonico = _produtoCanonicoRec(r);
+            var limpas = partes.map(function (v) { return String(v || '').trim(); }).filter(Boolean);
+            var produtoExibido = limpas.find(function (v) { return _produtoCanonicoRec({ produto: v }) === esperadoCanonico; }) || limpas[0] || r.produto || '—';
+            return '<td><div style="font-family:var(--mono);font-weight:800">' + escHTML(produtoExibido) + ' · Qtd ' + escHTML(qtd) + '</div></td>';
         };
         return "<tr>\n            <td style=\"font-size:.75rem;color:var(--muted)\">".concat(r.inventario_nome || r.inventario_id, "</td>\n            <td class=\"mono\" style=\"font-weight:600\">").concat(rua, "</td>\n            <td class=\"mono\">").concat(r.endereco, "</td>\n            <td>\n              <div style=\"font-weight:600;font-size:.82rem\">").concat(r.produto, "</div>\n              <div style=\"font-size:.7rem;color:var(--muted)\">").concat(r.descricao || '', "</div>\n            </td>\n            <td class=\"mono\" style=\"font-weight:700\">").concat((_a = r.qtd_esperada) !== null && _a !== void 0 ? _a : '—', "</td>\n            ").concat(_cellCont(r.qtd_primeira, r.operador_primeira, r.data_primeira, r.produto_primeira || r.produto), "\n            ").concat(_cellCont(r.qtd_segunda, r.operador_segunda, r.data_segunda, r.produto_segunda), "\n            ").concat(_cellCont(r.qtd_terceira, r.operador_terceira, r.data_terceira, r.produto_terceira), "\n            <td>\n              ").concat(naoAtribuido
             ? "<span style=\"font-size:.75rem;color:var(--muted-2)\">N\u00E3o atribu\u00EDdo</span>"

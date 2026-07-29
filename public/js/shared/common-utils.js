@@ -107,10 +107,10 @@ window._agruparCapasDuplicadas = window._agruparCapasDuplicadas || _agruparCapas
   }
   function inventario(obj, inventarios){
     obj = obj || {};
-    var bruto = texto(obj.inventario_id || obj.inventarioId || obj.inventario || obj.inventario_codigo || obj.inventario_nome || '');
+    var bruto = texto(obj.inventario_id || obj.inventarioId || obj.inventario || '');
     var lista = Array.isArray(inventarios) ? inventarios : [];
     var achado = lista.find(function(i){
-      return [i && i.id, i && i.codigo, i && i.nome, i && i.inventario_id, i && i.inventarioId, i && i.inventario_codigo, i && i.inventario_nome]
+      return [i && i.id, i && i.codigo, i && i.nome, i && i.inventario_id, i && i.inventarioId]
         .filter(Boolean).map(texto).includes(bruto);
     });
     return texto((achado && (achado.id || achado.codigo)) || bruto);
@@ -139,8 +139,16 @@ window._agruparCapasDuplicadas = window._agruparCapasDuplicadas || _agruparCapas
   }
   function chave(obj, inventarios){
     obj = obj || {};
-    if (obj.chave_fluxo) return texto(obj.chave_fluxo);
-    return inventario(obj, inventarios) + '|' + endereco(obj.endereco) + '|' + produto(obj);
+    // Recalcula a chave a partir dos campos atuais. Registros antigos podem ter
+    // chave_fluxo gravada apenas por inventario/endereco, o que mistura produtos
+    // diferentes na mesma divergencia/recontagem.
+    var inv = inventario(obj, inventarios);
+    var end = endereco(obj.endereco);
+    var prod = produto(obj);
+    if (prod !== 'SEM_PRODUTO') return inv + '|' + end + '|' + prod;
+    var gravada = texto(obj.chave_fluxo);
+    if (gravada && gravada.split('|').length >= 3) return gravada;
+    return inv + '|' + end + '|' + prod;
   }
   function mesmo(a,b,inventarios){
     if (!a || !b) return false;
