@@ -941,13 +941,23 @@ function renderDivergencias() {
             const correspondente = limpas.find(v => _produtoCanonicoRec({ produto:v }) === esperado);
             return correspondente || limpas[0] || d.produto_contado || d.produto || '—';
           };
+          const _qtdBateTotal = qtd => {
+            if (qtd === null || qtd === undefined || String(qtd).trim() === '') return false;
+            const n = Number(String(qtd).replace(',', '.'));
+            const esperado = Number(String(totalEsperadoEndereco).replace(',', '.'));
+            return Number.isFinite(n) && Number.isFinite(esperado) && n === esperado;
+          };
           const _cellRodada = (qtd, produto, operadorRodada, dataRodada, aguardando) => {
             if (qtd == null) {
               return `<td><div style="color:var(--muted);font-size:.7rem;text-align:center">${aguardando ? 'Aguardando' : '—'}</div></td>`;
             }
             const codigo = _produtoRodada(produto);
             const nome = _nomeProdutoRec(codigo);
-            return `<td><div style="font-weight:800" title="Codigo: ${escHTML(codigo)}">${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px">Qtd ${escHTML(qtd)}</div></td>`;
+            const bateu = _qtdBateTotal(qtd);
+            const estilo = bateu
+              ? 'background:rgba(34,197,94,.12);box-shadow:inset 3px 0 0 var(--success);'
+              : '';
+            return `<td style="${estilo}"><div style="font-weight:800;color:${bateu ? 'var(--success)' : 'inherit'}" title="Codigo: ${escHTML(codigo)}">${bateu ? '✅ ' : ''}${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px;font-weight:${bateu ? '900' : '600'};color:${bateu ? 'var(--success)' : 'inherit'}">Qtd ${escHTML(qtd)}${bateu ? ' · conferida' : ''}</div></td>`;
           };
 
           return `<tr style="${selecionado ? 'background:rgba(232,117,26,.06)' : ''}">
@@ -970,7 +980,8 @@ function renderDivergencias() {
               const _qtdC1 = d.qtd_contada != null ? d.qtd_contada : '—';
               const codigo = _produtoRodada(produtoBipado);
               const nome = _nomeProdutoRec(codigo);
-              return `<td><div style="font-weight:800" title="Codigo: ${escHTML(codigo)}">${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px">Qtd ${escHTML(_qtdC1)}</div></td>`;
+              const bateu = _qtdBateTotal(_qtdC1);
+              return `<td style="${bateu ? 'background:rgba(34,197,94,.12);box-shadow:inset 3px 0 0 var(--success);' : ''}"><div style="font-weight:800;color:${bateu ? 'var(--success)' : 'inherit'}" title="Codigo: ${escHTML(codigo)}">${bateu ? '✅ ' : ''}${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px;font-weight:${bateu ? '900' : '600'};color:${bateu ? 'var(--success)' : 'inherit'}">Qtd ${escHTML(_qtdC1)}${bateu ? ' · conferida' : ''}</div></td>`;
             })()}
             ${_cellRodada(
               rec?.qtd_segunda ?? d.qtd_segunda,
@@ -1457,30 +1468,30 @@ function exportarRecontagens() {
 
 // Exibe a composição do total esperado em formato de lista de paletes.
 function abrirDetalhePaletesEsperados(divId) {
-  const d = state().divergencias.find(item => String(item.id || '') === String(divId || ''));
-  if (!d) return showToast('Não foi possível localizar essa divergência.', 'e');
-  const inventario = state().inventarios.find(i =>
-    String(i.id || '') === String(d.inventario_id || '') ||
-    String(i.codigo || '') === String(d.inventario_id || '') ||
-    String(i.nome || '') === String(d.inventario_id || '')
-  );
-  const normEnd = valor => String(valor || '').trim().toUpperCase();
-  let itens = (inventario?.base || []).filter(item => normEnd(item.endereco) === normEnd(d.endereco));
-  if (!itens.length && Array.isArray(d.itens_esperados)) itens = d.itens_esperados;
-  if (!itens.length) itens = [{ produto: d.produto, descricao: d.descricao, quantidade_esperada: d.qtd_esperada }];
+  const bruto = state().divergencias.find(item => String(item.id || '') === String(divId || ''));
+  if (!bruto) return showToast('Não foi possível localizar essa divergência.', 'e');
+  const invCanonico = _inventarioCanonicoRec(bruto);
+  const endCanonico = _FK.endereco(bruto.endereco);
+  const mesmoEndereco = obj =>
+    _inventarioCanonicoRec(obj) === invCanonico && _FK.endereco(obj?.endereco) === endCanonico;
+  const inventario = state().inventarios.find(i => _inventarioCanonicoRec(i) === invCanonico);
+  let itens = (inventario?.base || []).filter(item => _FK.endereco(item?.endereco) === endCanonico);
+  if (!itens.length && Array.isArray(bruto.itens_esperados)) itens = bruto.itens_esperados;
+  if (!itens.length) itens = [{ produto: bruto.produto, descricao: bruto.descricao, quantidade_esperada: bruto.qtd_esperada }];
 
   const obterQtd = item => {
-    const bruto = item.quantidade_esperada ?? item.quantidadeEsperada ?? item.qtd_esperada ?? item.qtdEsperada ??
-      item.quantidade_enderecada ?? item.qtd_enderecada ?? item.saldo_estoque ?? item.saldo ??
-      item.saldo_erp ?? item.qtd_sistema ?? item.qtd_estoque ?? item.estoque_total ??
-      item.estoque ?? item.quantidade ?? item.qtd ?? item.qtde;
-    const numero = Number(String(bruto ?? '').replace(',', '.'));
+    const valor = item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ??
+      item?.quantidade_enderecada ?? item?.qtd_enderecada ?? item?.saldo_estoque ?? item?.saldo ??
+      item?.saldo_erp ?? item?.qtd_sistema ?? item?.qtd_estoque ?? item?.estoque_total ??
+      item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde;
+    if (valor === null || valor === undefined || String(valor).trim() === '') return 0;
+    const numero = Number(String(valor).replace(',', '.'));
     return Number.isFinite(numero) ? numero : 0;
   };
   const total = itens.reduce((soma, item) => soma + obterQtd(item), 0);
   const linhas = itens.map((item, indice) => {
     const codigo = item.codigo_produto || item.codigoProduto || item.codigo_interno || item.codigoInterno || item.gtin || item.ean || item.dun || item.produto || '—';
-    const nome = item.descricao_produto || item.descricaoProduto || item.descricao || item.nomeProduto || '';
+    const nome = item.descricao_produto || item.descricaoProduto || item.descricao || item.nomeProduto || _nomeProdutoRec(codigo) || '';
     const identificador = item.palete || item.pallet || item.numero_palete || item.numeroPalete || item.sscc || item.lote || `Palete ${indice + 1}`;
     const qtd = obterQtd(item);
     return `<div style="display:grid;grid-template-columns:minmax(90px,.7fr) minmax(170px,1.7fr) auto;gap:12px;align-items:center;padding:11px 12px;border-bottom:1px solid var(--border)">
@@ -1490,18 +1501,52 @@ function abrirDetalhePaletesEsperados(divId) {
     </div>`;
   }).join('');
 
+  const divsEndereco = (state().divergencias || []).filter(mesmoEndereco);
+  const primeiraDiv = [...divsEndereco].sort((a,b) => String(a.criada_em || '').localeCompare(String(b.criada_em || '')))
+    .find(x => x.qtd_contada != null || x.qtd_primeira != null) || bruto;
+  const recs = (state().recontagens || []).filter(mesmoEndereco).filter(r =>
+    r.qtd_recontagem != null || r.qtd_segunda != null || r.qtd_terceira != null
+  ).sort((a,b) => String(a.recontagem_concluida_em || a.concluida_em || a.data_segunda || '')
+    .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.data_segunda || '')));
+  const consolidada = recs.find(r => r.qtd_terceira != null || r.qtd_segunda != null) || {};
+  const segundaRec = recs[0] || {};
+  const terceiraRec = recs[1] || {};
+  const rodadas = [
+    { titulo:'1ª contagem', qtd: primeiraDiv.qtd_primeira ?? primeiraDiv.qtd_contada ?? primeiraDiv.quantidade, produto: primeiraDiv.produto_primeira || primeiraDiv.produto_contado || primeiraDiv.gtin_bipado || primeiraDiv.produto || primeiraDiv.codigo_produto },
+    { titulo:'2ª contagem', qtd: consolidada.qtd_segunda ?? segundaRec.qtd_segunda ?? segundaRec.qtd_recontagem, produto: consolidada.produto_segunda || segundaRec.produto_segunda || segundaRec.produto_recontagem || segundaRec.produto },
+    { titulo:'3ª contagem', qtd: consolidada.qtd_terceira ?? terceiraRec.qtd_terceira ?? terceiraRec.qtd_recontagem, produto: consolidada.produto_terceira || terceiraRec.produto_terceira || terceiraRec.produto_recontagem || terceiraRec.produto }
+  ];
+  const numero = v => {
+    if (v === null || v === undefined || String(v).trim() === '') return null;
+    const n = Number(String(v).replace(',', '.'));
+    return Number.isFinite(n) ? n : null;
+  };
+  const comparacoes = rodadas.map(r => {
+    const qtd = numero(r.qtd);
+    const bateu = qtd !== null && qtd === total;
+    const codigo = String(r.produto || '').split(/[,;|]+/).map(x => x.trim()).filter(Boolean)[0] || '';
+    const nome = codigo ? _nomeProdutoRec(codigo) : 'Sem contagem';
+    return `<div style="border:1px solid ${bateu ? 'rgba(34,197,94,.45)' : 'var(--border)'};background:${bateu ? 'rgba(34,197,94,.11)' : 'var(--surface)'};border-radius:12px;padding:12px;min-width:0;box-shadow:${bateu ? 'inset 0 0 0 1px rgba(34,197,94,.12)' : 'none'}">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${r.titulo}</strong>${bateu ? '<span class="badge b-green">✅ Bateu</span>' : (qtd === null ? '<span class="badge b-gray">Sem registro</span>' : '<span class="badge b-red">Divergente</span>')}</div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHTML(nome)}">${escHTML(nome)}</div>
+      <div class="mono" style="font-size:1.05rem;font-weight:950;margin-top:4px;color:${bateu ? 'var(--success)' : 'inherit'}">${qtd === null ? '—' : `Qtd ${escHTML(qtd)}`}</div>
+      <div style="font-size:.66rem;color:var(--muted);margin-top:3px">Esperado consolidado: ${escHTML(total)}</div>
+    </div>`;
+  }).join('');
+
   document.getElementById('modal-paletes-esperados-bg')?.remove();
   document.body.insertAdjacentHTML('beforeend', `<div id="modal-paletes-esperados-bg" class="modal-bg open" style="display:flex;z-index:99999" onclick="if(event.target===this) fecharDetalhePaletesEsperados()">
-    <div class="modal" style="max-width:720px;width:min(720px,94vw);padding:0;overflow:hidden">
+    <div class="modal" style="max-width:820px;width:min(820px,94vw);padding:0;overflow:hidden">
       <div class="modal-hdr" style="padding:18px 20px">
-        <div><div class="modal-title">📦 Paletes do total esperado</div><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Endereço ${escHTML(d.endereco || '—')} · ${itens.length} ${itens.length === 1 ? 'palete' : 'paletes'}</div></div>
+        <div><div class="modal-title">📦 Esperado e comparação das contagens</div><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Endereço ${escHTML(bruto.endereco || '—')} · ${itens.length} ${itens.length === 1 ? 'palete' : 'paletes'}</div></div>
         <button class="modal-close" onclick="fecharDetalhePaletesEsperados()">✕</button>
       </div>
-      <div style="max-height:60vh;overflow:auto;border-top:1px solid var(--border);border-bottom:1px solid var(--border)">${linhas}</div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;background:rgba(59,130,246,.07)">
+      <div style="max-height:42vh;overflow:auto;border-top:1px solid var(--border);border-bottom:1px solid var(--border)">${linhas}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;background:rgba(59,130,246,.07)">
         <div><div style="font-size:.68rem;color:var(--muted)">TOTAL CONSOLIDADO DO ENDEREÇO</div><div style="font-size:.72rem;color:var(--muted)">Soma de todos os paletes listados acima</div></div>
         <div class="mono" style="font-size:1.35rem;font-weight:950">${escHTML(total)}</div>
       </div>
+      <div style="padding:16px 20px"><div style="font-weight:850;margin-bottom:10px">Comparação das contagens</div><div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">${comparacoes}</div></div>
       <div class="modal-actions" style="padding:14px 20px"><button class="btn btn-primary" onclick="fecharDetalhePaletesEsperados()">Fechar</button></div>
     </div>
   </div>`);

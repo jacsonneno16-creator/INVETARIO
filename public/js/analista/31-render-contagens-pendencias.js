@@ -82,6 +82,46 @@ function _resultadoRodadaEndereco(c){
     return null;
   }
 
+  // A aba Recontagem trabalha com o total consolidado do endereço. A aba
+  // Contagens precisa usar a mesma fonte e a mesma regra; caso contrário, uma
+  // linha resolvida por 173 = 173 continua aparecendo como persistente aqui.
+  const numeroSeguro = valor => {
+    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
+    const n = Number(String(valor).replace(',', '.'));
+    return Number.isFinite(n) ? n : null;
+  };
+  const inventarioAtual = (st.inventarios || []).find(i => FK.inventario(i, st.inventarios) === invCanonico);
+  const itensEndereco = (inventarioAtual?.base || []).filter(item => FK.endereco(item?.endereco) === end);
+  const qtdItem = item => numeroSeguro(
+    item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ??
+    item?.quantidade_enderecada ?? item?.qtd_enderecada ?? item?.saldo_estoque ?? item?.saldo ??
+    item?.saldo_erp ?? item?.qtd_sistema ?? item?.qtd_estoque ?? item?.estoque_total ??
+    item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde
+  ) ?? 0;
+  const totalEsperadoEndereco = itensEndereco.length
+    ? itensEndereco.reduce((soma, item) => soma + qtdItem(item), 0)
+    : null;
+  const recsEnderecoConcluidas = (st.recontagens || []).filter(r => {
+    if (FK.inventario(r, st.inventarios) !== invCanonico || FK.endereco(r?.endereco) !== end) return false;
+    const status = String(r.status_recontagem || r.status || '').trim().toUpperCase();
+    const temQtd = r.qtd_recontagem != null || r.qtd_segunda != null || r.qtd_terceira != null;
+    const temConclusao = Boolean(r.recontagem_concluida_em || r.concluida_em || r.data_conclusao || r.finalizada_em || r.data_segunda || r.data_terceira);
+    return temQtd && (temConclusao || ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA','AGUARDANDO_ANALISTA'].includes(status));
+  }).sort((a,b) => String(a.data_terceira || a.recontagem_concluida_em || a.concluida_em || a.data_segunda || '')
+    .localeCompare(String(b.data_terceira || b.recontagem_concluida_em || b.concluida_em || b.data_segunda || '')));
+  if (totalEsperadoEndereco !== null && recsEnderecoConcluidas.length) {
+    const consolidada = recsEnderecoConcluidas.find(r => r.qtd_terceira != null || r.qtd_segunda != null) || {};
+    const segunda = numeroSeguro(consolidada.qtd_segunda ?? recsEnderecoConcluidas[0]?.qtd_segunda ?? recsEnderecoConcluidas[0]?.qtd_recontagem);
+    const terceira = numeroSeguro(consolidada.qtd_terceira ?? recsEnderecoConcluidas[1]?.qtd_terceira ?? recsEnderecoConcluidas[1]?.qtd_recontagem);
+    // A rodada mais recente decide. Se a 3ª existe e bate, o fluxo está resolvido.
+    if (terceira !== null && terceira === totalEsperadoEndereco) {
+      return { texto:'✅ OK 3ª', cls:'b-green' };
+    }
+    if (terceira === null && segunda !== null && segunda === totalEsperadoEndereco) {
+      return { texto:'✅ OK 2ª', cls:'b-green' };
+    }
+  }
+
   const statusConcluido = r => {
     const status = String(r.status_recontagem || r.status || '').trim().toUpperCase();
     const dataConclusao = r.recontagem_concluida_em || r.concluida_em ||

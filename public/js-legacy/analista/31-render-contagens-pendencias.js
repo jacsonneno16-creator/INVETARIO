@@ -95,6 +95,69 @@ function _resultadoRodadaEndereco(c) {
         }
         return null;
     }
+    // Mantem a aba Contagens alinhada com a regra consolidada por endereco
+    // usada na aba Recontagem. Se o total da rodada bate com o total esperado,
+    // nao pode continuar como persistente nesta tela.
+    var numeroSeguro = function (valor) {
+        if (valor === null || valor === undefined || String(valor).trim() === '')
+            return null;
+        var n = Number(String(valor).replace(',', '.'));
+        return Number.isFinite(n) ? n : null;
+    };
+    var inventarioAtual = (st.inventarios || []).find(function (i) {
+        return invIds.has(String(i.id || i.codigo || i.nome || i.inventario_id || i.inventarioId || ''));
+    });
+    var itensEndereco = ((inventarioAtual === null || inventarioAtual === void 0 ? void 0 : inventarioAtual.base) || []).filter(function (item) {
+        return String((item === null || item === void 0 ? void 0 : item.endereco) || '').trim().toUpperCase() === end;
+    });
+    var qtdItem = function (item) {
+        var valor = item.quantidade_esperada;
+        if (valor == null) valor = item.quantidadeEsperada;
+        if (valor == null) valor = item.qtd_esperada;
+        if (valor == null) valor = item.qtdEsperada;
+        if (valor == null) valor = item.quantidade_enderecada;
+        if (valor == null) valor = item.qtd_enderecada;
+        if (valor == null) valor = item.saldo_estoque;
+        if (valor == null) valor = item.saldo;
+        if (valor == null) valor = item.saldo_erp;
+        if (valor == null) valor = item.qtd_sistema;
+        if (valor == null) valor = item.qtd_estoque;
+        if (valor == null) valor = item.estoque_total;
+        if (valor == null) valor = item.estoque;
+        if (valor == null) valor = item.quantidade;
+        if (valor == null) valor = item.qtd;
+        if (valor == null) valor = item.qtde;
+        var n = numeroSeguro(valor);
+        return n == null ? 0 : n;
+    };
+    var totalEsperadoEndereco = itensEndereco.length
+        ? itensEndereco.reduce(function (soma, item) { return soma + qtdItem(item); }, 0)
+        : null;
+    var recsEnderecoConcluidas = (st.recontagens || []).filter(function (r) {
+        var inv = String(r.inventario_id || r.inventarioId || '');
+        if (!invIds.has(inv) || String(r.endereco || '').trim().toUpperCase() !== end)
+            return false;
+        var status = String(r.status_recontagem || r.status || '').trim().toUpperCase();
+        var temQtd = r.qtd_recontagem != null || r.qtd_segunda != null || r.qtd_terceira != null;
+        var temConclusao = Boolean(r.recontagem_concluida_em || r.concluida_em || r.data_conclusao || r.finalizada_em || r.data_segunda || r.data_terceira);
+        return temQtd && (temConclusao || ['CONCLUIDA', 'CONCLUÍDA', 'FINALIZADA', 'PROCESSADA', 'RESOLVIDA', 'AGUARDANDO_ANALISTA'].includes(status));
+    }).sort(function (a, b) {
+        return String(a.data_terceira || a.recontagem_concluida_em || a.concluida_em || a.data_segunda || '')
+            .localeCompare(String(b.data_terceira || b.recontagem_concluida_em || b.concluida_em || b.data_segunda || ''));
+    });
+    if (totalEsperadoEndereco !== null && recsEnderecoConcluidas.length) {
+        var consolidada = recsEnderecoConcluidas.find(function (r) { return r.qtd_terceira != null || r.qtd_segunda != null; }) || {};
+        var segundaTotal = numeroSeguro(consolidada.qtd_segunda != null ? consolidada.qtd_segunda :
+            (recsEnderecoConcluidas[0].qtd_segunda != null ? recsEnderecoConcluidas[0].qtd_segunda : recsEnderecoConcluidas[0].qtd_recontagem));
+        var terceiraRegistro = recsEnderecoConcluidas[1] || {};
+        var terceiraTotal = numeroSeguro(consolidada.qtd_terceira != null ? consolidada.qtd_terceira :
+            (terceiraRegistro.qtd_terceira != null ? terceiraRegistro.qtd_terceira : terceiraRegistro.qtd_recontagem));
+        if (terceiraTotal !== null && terceiraTotal === totalEsperadoEndereco)
+            return { texto: '✅ OK 3ª', cls: 'b-green' };
+        if (terceiraTotal === null && segundaTotal !== null && segundaTotal === totalEsperadoEndereco)
+            return { texto: '✅ OK 2ª', cls: 'b-green' };
+    }
+
     var statusConcluido = function (r) {
         var status = String(r.status_recontagem || r.status || '').trim().toUpperCase();
         var dataConclusao = r.recontagem_concluida_em || r.concluida_em ||
