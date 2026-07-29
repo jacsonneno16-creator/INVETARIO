@@ -182,8 +182,12 @@
     return { qtd:n, produto:p, produtoIds:_idsComparacaoProduto(p) };
   }
 
-  function _paresIguais(a,b){
+  function _paresIguais(a,b, somenteQuantidade){
     if (!a || !b || a.qtd !== b.qtd) return false;
+    // Recontagem consolidada por endereco valida o total fisico do endereco.
+    // Nessa visao, os codigos bipados podem representar itens/paletes distintos
+    // do mesmo endereco; a quantidade total e a referencia autoritativa.
+    if (somenteQuantidade === true) return true;
     const aa = a.produtoIds || _idsComparacaoProduto(a.produto);
     const bb = b.produtoIds || _idsComparacaoProduto(b.produto);
     if (!aa.size || !bb.size) return false;
@@ -218,25 +222,27 @@
       (Number.isFinite(Number(obj?.diferenca)) && Number(obj.diferenca) !== 0) ||
       Boolean(obj?.tipo_divergencia);
 
-    if (_paresIguais(primeira, sistema) && !divergenciaPrimeiraAtiva) {
+    const somenteQuantidade = obj?.comparacao_somente_quantidade === true;
+
+    if (_paresIguais(primeira, sistema, somenteQuantidade) && !divergenciaPrimeiraAtiva) {
       return { estado:'RESOLVIDA', referencia:'OK_PRIMEIRA_SISTEMA', rodada:1, resultado:primeira };
     }
     if (segunda) {
-      if (_paresIguais(segunda, sistema)) {
+      if (_paresIguais(segunda, sistema, somenteQuantidade)) {
         return { estado:'RESOLVIDA', referencia:'OK_SEGUNDA_SISTEMA', rodada:2, resultado:segunda };
       }
-      if (_paresIguais(segunda, primeira)) {
+      if (_paresIguais(segunda, primeira, somenteQuantidade)) {
         return { estado:'RESOLVIDA', referencia:'OK_SEGUNDA_PRIMEIRA', rodada:2, resultado:segunda };
       }
     }
     if (terceira) {
-      if (_paresIguais(terceira, sistema)) {
+      if (_paresIguais(terceira, sistema, somenteQuantidade)) {
         return { estado:'RESOLVIDA', referencia:'OK_TERCEIRA_SISTEMA', rodada:3, resultado:terceira };
       }
-      if (_paresIguais(terceira, primeira)) {
+      if (_paresIguais(terceira, primeira, somenteQuantidade)) {
         return { estado:'RESOLVIDA', referencia:'OK_TERCEIRA_PRIMEIRA', rodada:3, resultado:terceira };
       }
-      if (_paresIguais(terceira, segunda)) {
+      if (_paresIguais(terceira, segunda, somenteQuantidade)) {
         return { estado:'RESOLVIDA', referencia:'OK_TERCEIRA_SEGUNDA', rodada:3, resultado:terceira };
       }
       return { estado:'PERSISTENTE', referencia:'TERCEIRA_SEM_CONSENSO', rodada:3, resultado:terceira };

@@ -3,6 +3,75 @@ const _FK = window.InventoryFlowKey;
 const _normRec = v => _FK.texto(v);
 const _inventarioCanonicoRec = obj => _FK.inventario(obj, state().inventarios);
 const _produtoCanonicoRec = obj => _FK.produto(obj);
+
+const _nomeProdutoRec = valor => {
+  const codigo = String(valor || '').trim();
+  if (!codigo) return 'Produto nao informado';
+  try {
+    const ach = window.DTProdutos?.buscarSync?.(codigo);
+    if (ach?.encontrado) {
+      return String(ach.nomeProduto || ach.descricao || ach.descricaoProduto || ach.produto_nome || codigo).trim();
+    }
+  } catch(e) {}
+  const produtoEstado = (state().produtos || []).find(p =>
+    [p.codigo, p.codigo_produto, p.codigoInterno, p.codigo_interno, p.gtin, p.ean, p.dun]
+      .filter(Boolean).map(String).includes(codigo));
+  return String(produtoEstado?.descricao || produtoEstado?.nome || produtoEstado?.descricao_produto || codigo).trim();
+};
+
+const _totalEsperadoEnderecoRec = obj => {
+  const invCanonico = _inventarioCanonicoRec(obj);
+  const endereco = _FK.endereco(obj?.endereco);
+  const inventario = (state().inventarios || []).find(i => _inventarioCanonicoRec(i) === invCanonico);
+  const itens = (inventario?.base || []).filter(item => _FK.endereco(item?.endereco) === endereco);
+  const qtd = item => {
+    const bruto = item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ??
+      item?.quantidade_enderecada ?? item?.qtd_enderecada ?? item?.saldo_estoque ?? item?.saldo ??
+      item?.saldo_erp ?? item?.qtd_sistema ?? item?.qtd_estoque ?? item?.estoque_total ??
+      item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde;
+    const n = Number(String(bruto ?? '').replace(',', '.'));
+    return Number.isFinite(n) ? n : 0;
+  };
+  if (itens.length) return itens.reduce((total, item) => total + qtd(item), 0);
+  const snap = Array.isArray(obj?.itens_esperados) ? obj.itens_esperados : [];
+  if (snap.length) return snap.reduce((total, item) => total + qtd(item), 0);
+  const fallback = Number(String(obj?.qtd_esperada ?? '').replace(',', '.'));
+  return Number.isFinite(fallback) ? fallback : null;
+};
+
+
+
+// Regra autoritativa da visao consolidada por endereco:
+// se uma recontagem concluida totaliza exatamente o total esperado do endereco,
+// o fluxo esta resolvido. Nao reutilizar a qtd_esperada individual da divergencia.
+const _avaliarTotalConsolidadoRec = (obj, totalEsperado) => {
+  const numero = valor => {
+    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
+    const n = Number(String(valor).replace(',', '.'));
+    return Number.isFinite(n) ? n : null;
+  };
+  const esperado = numero(totalEsperado);
+  if (esperado === null) return null;
+
+  const segunda = numero(obj?.qtd_segunda ?? obj?.qtd_recontagem);
+  const terceira = numero(obj?.qtd_terceira);
+
+  // A rodada mais recente e autoritativa. Havendo terceira, ela decide o fluxo.
+  if (terceira !== null) {
+    return terceira === esperado
+      ? { estado:'RESOLVIDA', referencia:'OK_TERCEIRA_TOTAL_ENDERECO', rodada:3,
+          resultado:{ qtd:terceira, produto:obj?.produto_terceira || obj?.produto_recontagem || '' } }
+      : { estado:'PERSISTENTE', referencia:'TERCEIRA_DIVERGENTE_TOTAL_ENDERECO', rodada:3,
+          resultado:{ qtd:terceira, produto:obj?.produto_terceira || obj?.produto_recontagem || '' } };
+  }
+
+  if (segunda !== null && segunda === esperado) {
+    return { estado:'RESOLVIDA', referencia:'OK_SEGUNDA_TOTAL_ENDERECO', rodada:2,
+      resultado:{ qtd:segunda, produto:obj?.produto_segunda || obj?.produto_recontagem || '' } };
+  }
+  return null;
+};
+
 const _chaveEndereco = obj => {
   const x = Object.assign({}, obj || {});
   // Nao reutiliza chave_fluxo antiga: ela pode ter sido gravada sem produto.
@@ -621,7 +690,17 @@ function renderDivergencias() {
     // Nunca confiar cegamente no status legado. O resultado deve ser
     // recalculado pelas rodadas reais: só há OK quando produto e quantidade
     // coincidem com o sistema ou com uma contagem anterior.
-    const avaliacaoAtual = window.AnalistaDivergenciasRuntime?.avaliarHistorico?.(principal);
+    const totalEsperadoEndereco = _totalEsperadoEnderecoRec(principal);
+    principal._qtd_esperada_endereco = totalEsperadoEndereco;
+    // A linha consolidada representa o endereco inteiro. Para decidir o consenso,
+    // comparar o total contado com o total esperado do endereco, sem exigir que
+    // todas as rodadas tenham repetido o mesmo codigo de produto.
+    const avaliacaoAtual = _avaliarTotalConsolidadoRec(principal, totalEsperadoEndereco) ||
+      window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
+        ...principal,
+        qtd_esperada: totalEsperadoEndereco ?? principal.qtd_esperada,
+        comparacao_somente_quantidade: true
+      });
     if (avaliacaoAtual?.estado === 'RESOLVIDA' || avaliacaoAtual?.estado === 'PERSISTENTE') {
       principal.status = avaliacaoAtual.estado;
       principal.status_recontagem = avaliacaoAtual.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida';
@@ -836,9 +915,11 @@ function renderDivergencias() {
             const numero = Number(String(bruto ?? '').replace(',', '.'));
             return Number.isFinite(numero) ? numero : 0;
           };
-          const totalEsperadoEndereco = esperadosEndereco.length
-            ? esperadosEndereco.reduce((total, item) => total + _qtdEsperadaItem(item), 0)
-            : Number(qtdEspTxt) || 0;
+          const totalEsperadoEndereco = d._qtd_esperada_endereco != null
+            ? d._qtd_esperada_endereco
+            : (esperadosEndereco.length
+              ? esperadosEndereco.reduce((total, item) => total + _qtdEsperadaItem(item), 0)
+              : Number(qtdEspTxt) || 0);
           const quantidadePaletes = esperadosEndereco.length || 1;
           const esperadoHtml = `<button type="button" onclick="abrirDetalhePaletesEsperados(decodeURIComponent('${encodeURIComponent(String(d.id || ''))}'))"
             title="Clique para visualizar os paletes"
@@ -865,7 +946,8 @@ function renderDivergencias() {
               return `<td><div style="color:var(--muted);font-size:.7rem;text-align:center">${aguardando ? 'Aguardando' : '—'}</div></td>`;
             }
             const codigo = _produtoRodada(produto);
-            return `<td><div style="font-family:var(--mono);font-weight:800">${escHTML(codigo)} · Qtd ${escHTML(qtd)}</div></td>`;
+            const nome = _nomeProdutoRec(codigo);
+            return `<td><div style="font-weight:800" title="Codigo: ${escHTML(codigo)}">${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px">Qtd ${escHTML(qtd)}</div></td>`;
           };
 
           return `<tr style="${selecionado ? 'background:rgba(232,117,26,.06)' : ''}">
@@ -886,7 +968,9 @@ function renderDivergencias() {
             ${(() => {
               // Reutilizável: renderiza célula de contagem com produto e cor
               const _qtdC1 = d.qtd_contada != null ? d.qtd_contada : '—';
-              return `<td><div style="font-family:var(--mono);font-weight:800">${escHTML(_produtoRodada(produtoBipado))} · Qtd ${escHTML(_qtdC1)}</div></td>`;
+              const codigo = _produtoRodada(produtoBipado);
+              const nome = _nomeProdutoRec(codigo);
+              return `<td><div style="font-weight:800" title="Codigo: ${escHTML(codigo)}">${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px">Qtd ${escHTML(_qtdC1)}</div></td>`;
             })()}
             ${_cellRodada(
               rec?.qtd_segunda ?? d.qtd_segunda,
@@ -1089,7 +1173,14 @@ function renderRecontagens() {
       _divergencias_agrupadas: divs.map(d => d.id),
       _recontagens_agrupadas: recs.map(r => r.id)
     });
-    const avaliacao = window.AnalistaDivergenciasRuntime?.avaliarHistorico?.(principal);
+    const totalEsperadoEndereco = _totalEsperadoEnderecoRec(principal);
+    principal._qtd_esperada_endereco = totalEsperadoEndereco;
+    const avaliacao = _avaliarTotalConsolidadoRec(principal, totalEsperadoEndereco) ||
+      window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
+        ...principal,
+        qtd_esperada: totalEsperadoEndereco ?? principal.qtd_esperada,
+        comparacao_somente_quantidade: true
+      });
     if (avaliacao && (avaliacao.estado === 'RESOLVIDA' || avaliacao.estado === 'PERSISTENTE')) {
       principal.status = avaliacao.estado;
       principal.status_recontagem = avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida';
@@ -1237,7 +1328,8 @@ function renderRecontagens() {
             const esperadoCanonico = _produtoCanonicoRec(r);
             const limpas = partes.map(v => String(v || '').trim()).filter(Boolean);
             const produtoExibido = limpas.find(v => _produtoCanonicoRec({produto:v}) === esperadoCanonico) || limpas[0] || r.produto || '—';
-            return `<td><div style="font-family:var(--mono);font-weight:800">${escHTML(produtoExibido)} · Qtd ${escHTML(qtd)}</div></td>`;
+            const nome = _nomeProdutoRec(produtoExibido);
+            return `<td><div style="font-weight:800" title="Codigo: ${escHTML(produtoExibido)}">${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px">Qtd ${escHTML(qtd)}</div></td>`;
           };
 
           return `<tr>
