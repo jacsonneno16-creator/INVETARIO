@@ -354,6 +354,10 @@ function renderContagens() {
   );
   dados = [...dados].sort((a,b) => String(b.timestamp||b.criado_em||b.dataHora||'').localeCompare(String(a.timestamp||a.criado_em||a.dataHora||'')));
 
+  // A exportacao deve refletir exatamente a lista visivel, incluindo filtros,
+  // agrupamento por fluxo e a ultima rodada concluida usada na tela.
+  window.__contagensVisiveis = dados.slice();
+
   // KPIs Contagens
   const _allConts = state().contagens.filter(c => !c._excluida && c.status !== 'ESTORNADA');
   const _setCK = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
@@ -442,7 +446,102 @@ function renderContagens() {
         }).join('')}
       </tbody>
     </table></div>`;
+ }
+
+// Exporta exatamente as linhas atualmente exibidas na aba Contagens.
+// A leitura original permanece no historico, mas os campos operacionais
+// (produto, quantidade, operador e horario) usam a ultima rodada concluida.
+function exportarContagens(){
+  const lista = Array.isArray(window.__contagensVisiveis)
+    ? window.__contagensVisiveis.slice()
+    : [];
+
+  if(!lista.length){
+    if(typeof toast === 'function') toast('Nenhuma contagem visivel para exportar.', 'w');
+    else alert('Nenhuma contagem visivel para exportar.');
+    return;
+  }
+
+  const st = state();
+  const textoStatus = c => {
+    const r = _resultadoRodadaEndereco(c);
+    return r?.texto ? String(r.texto).replace(/[✅❌⏳🔴⚠️]/g,'').trim() : String(c.status || 'PENDENTE');
+  };
+  const inventarioTexto = c => {
+    const inv = (st.inventarios || []).find(i =>
+      [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
+        .filter(Boolean).map(String)
+        .includes(String(c.inventario_id || c.inventarioId || ''))
+    );
+    return inv ? `${inv.codigo || inv.id || ''}${inv.nome ? ' - ' + inv.nome : ''}` : String(c.inventario_id || c.inventarioId || '');
+  };
+  const valorSeguro = v => {
+    const t = String(v ?? '');
+    return /^[=+@]/.test(t) || /^-\D/.test(t) ? "'" + t : t;
+  };
+
+  const linhas = lista.map(c => {
+    const ultima = _ultimaRodadaContagem(c);
+    const prod = _produtoContagemExibicao(Object.assign({}, c, {
+      codigo_produto: ultima.produto,
+      gtin: ultima.produto,
+      descricao_produto: ultima.descricao
+    }));
+    const primeiraProd = _produtoContagemExibicao(c);
+    return {
+      'Data/Hora ultima rodada': fmtTs(ultima.data || c.timestamp || c.criado_em || c.dataHora),
+      'Rodada exibida': `${ultima.rodada}a`,
+      'Operador ultima rodada': ultima.operador || c.operador || '',
+      'Inventario': inventarioTexto(c),
+      'Endereco': c.endereco || '',
+      'Codigo produto ultima rodada': valorSeguro(prod.codigo || ultima.produto || ''),
+      'Produto ultima rodada': valorSeguro(prod.descricao || ultima.descricao || ''),
+      'Quantidade ultima rodada': ultima.quantidade ?? '',
+      'Status do fluxo': textoStatus(c),
+      'Tipo registro original': c.tipo_contagem || 'PRIMEIRA',
+      'Data/Hora 1a contagem': fmtTs(c.timestamp || c.criado_em || c.dataHora),
+      'Operador 1a contagem': c.operador || c.operador_nome || '',
+      'Codigo produto 1a contagem': valorSeguro(primeiraProd.codigo || ''),
+      'Produto 1a contagem': valorSeguro(primeiraProd.descricao || ''),
+      'Quantidade 1a contagem': c.quantidade ?? c.qtd ?? c.qtd_contada ?? '',
+      'ID contagem': c.uuid || c.id || '',
+      'ID divergencia': c.divergencia_id || ''
+    };
+  });
+
+  const agora = new Date();
+  const carimbo = agora.toISOString().slice(0,19).replace(/[:T]/g,'-');
+  const nome = `contagens-${carimbo}.xlsx`;
+
+  if(window.XLSX?.utils?.json_to_sheet && window.XLSX?.writeFile){
+    const ws = XLSX.utils.json_to_sheet(linhas);
+    const larguras = Object.keys(linhas[0] || {}).map(chave => ({
+      wch: Math.min(48, Math.max(chave.length + 2, ...linhas.map(l => String(l[chave] ?? '').length + 2)))
+    }));
+    ws['!cols'] = larguras;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Contagens');
+    XLSX.writeFile(wb, nome);
+  } else {
+    const colunas = Object.keys(linhas[0] || {});
+    const esc = v => `"${String(v ?? '').replace(/"/g,'""')}"`;
+    const csv = '\uFEFF' + [colunas.map(esc).join(';')]
+      .concat(linhas.map(l => colunas.map(k => esc(l[k])).join(';')))
+      .join('\r\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nome.replace(/\.xlsx$/i,'.csv');
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  if(typeof toast === 'function') toast(`${linhas.length} contagem(ns) exportada(s).`, 's');
 }
+window.exportarContagens = exportarContagens;
 
 // ───────────────────────────────────────────────────────────────────
 //  15. RENDERIZAÇÃO — PENDÊNCIAS
