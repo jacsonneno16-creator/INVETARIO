@@ -5,16 +5,34 @@
 function state(){ return window.AnalistaStore.getState(); }
 
 // ── FIREBASE ─────────────────────────────────────────────────────────
-getDTFirebaseApp();
-const FS_AN   = getDTFirestore();
-const AUTH_AN = getDTAuth();
-// Exposto explicitamente em window pois firebaseService.js acessa via global.FS_AN
-window.FS_AN   = FS_AN;
-window.AUTH_AN = AUTH_AN;
+// Inicializacao tolerante a cache antigo e carregamento lento. O modulo nao
+// deixa de exportar doLoginAnalista caso o Firebase ainda nao esteja pronto.
+var FS_AN = null;
+var AUTH_AN = null;
+var _authListenerRegistrado = false;
+
+function _prepararFirebaseAnalista() {
+  try {
+    if (typeof window.getDTFirebaseApp !== 'function' ||
+        typeof window.getDTFirestore !== 'function' ||
+        typeof window.getDTAuth !== 'function') return false;
+    window.getDTFirebaseApp();
+    FS_AN = window.getDTFirestore();
+    AUTH_AN = window.getDTAuth();
+    window.FS_AN = FS_AN;
+    window.AUTH_AN = AUTH_AN;
+    return !!AUTH_AN;
+  } catch (err) {
+    console.error('[Login Analista] Falha ao preparar Firebase:', err);
+    return false;
+  }
+}
+
+_prepararFirebaseAnalista();
 
 window._currentAnalistaUser = null;
-let _loginSolicitadoPeloUsuario = false;
-const DT_LOGIN_MEM_KEY = 'dt_analista_login_lembrado_v1';
+var _loginSolicitadoPeloUsuario = false;
+var DT_LOGIN_MEM_KEY = 'dt_analista_login_lembrado_v1';
 
 function _normalizarEmailAnalista(valor) {
   // Mantém exatamente o e-mail cadastrado no Firebase Authentication.
@@ -45,23 +63,67 @@ function _salvarOuLimparLogin(email, senha) {
 
 // ── LOGIN ────────────────────────────────────────────────────────────
 
-function doLoginAnalista() {
-  const email = _normalizarEmailAnalista(document.getElementById('an-email')?.value || '');
-  const senha = document.getElementById('an-pass')?.value || '';
+async function doLoginAnalista(event) {
+  try {
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    const btn = document.getElementById('btn-login-analista');
+    const textoOriginal = btn ? btn.textContent : 'ENTRAR';
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'ENTRANDO...';
+      btn.setAttribute('aria-busy', 'true');
+    }
 
+    _clearLoginErro();
+    const email = _normalizarEmailAnalista(document.getElementById('an-email')?.value || '');
+    const senha = document.getElementById('an-pass')?.value || '';
+    if (!email) throw new Error('Informe o e-mail.');
+    if (!senha) throw new Error('Informe a senha.');
+    if (!_prepararFirebaseAnalista()) throw new Error('Firebase não iniciou. Atualize a página e tente novamente.');
+    _registrarListenerAuthAnalista();
+
+    _salvarOuLimparLogin(email, senha);
+    _loginSolicitadoPeloUsuario = true;
+    await AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE);
+    await AUTH_AN.signInWithEmailAndPassword(email, senha);
+
+    // O onAuthStateChanged conclui a abertura do painel. Mantém feedback visível
+    // enquanto o ambiente da loja é preparado.
+    if (btn) btn.textContent = 'PREPARANDO...';
+  } catch (err) {
+    _loginSolicitadoPeloUsuario = false;
+    const msg = err && err.code ? _traduzirErroLoginAnalista(err) : (err?.message || 'Não foi possível realizar o login.');
+    _setLoginErro(msg);
+    console.error('[Login Analista]', err);
+    const btn = document.getElementById('btn-login-analista');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'ENTRAR';
+      btn.removeAttribute('aria-busy');
+    }
+  }
+}
+
+async function enviarRecuperacaoSenhaAnalista(event) {
+  event?.preventDefault?.();
   _clearLoginErro();
-
-  if (!email) return _setLoginErro('Informe o e-mail.');
-  if (!senha) return _setLoginErro('Informe a senha.');
-
-  _salvarOuLimparLogin(email, senha);
-  _loginSolicitadoPeloUsuario = true;
-  AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE)
-    .then(() => AUTH_AN.signInWithEmailAndPassword(email, senha))
-    .catch(err => { _loginSolicitadoPeloUsuario = false; _setLoginErro(_traduzirErroLoginAnalista(err)); });
+  if (!_prepararFirebaseAnalista()) return _setLoginErro('Não foi possível iniciar o Firebase. Atualize a página.');
+  let email = _normalizarEmailAnalista(document.getElementById('an-email')?.value || '');
+  if (!email) return _setLoginErro('Informe o e-mail do Analista para receber o link de redefinição.');
+  if (!email.includes('@')) email += '@daterrinhaalimentos.com.br';
+  try {
+    await AUTH_AN.sendPasswordResetEmail(email);
+    _setLoginErro('Se este e-mail estiver cadastrado, o link para criar uma nova senha será enviado.');
+  } catch (err) {
+    if (err?.code === 'auth/invalid-email') return _setLoginErro('Informe um e-mail válido.');
+    if (err?.code === 'auth/too-many-requests') return _setLoginErro('Muitas tentativas. Aguarde alguns minutos e tente novamente.');
+    if (err?.code === 'auth/network-request-failed') return _setLoginErro('Não foi possível conectar. Verifique a internet e tente novamente.');
+    _setLoginErro('Se este e-mail estiver cadastrado, o link para criar uma nova senha será enviado.');
+  }
 }
 
 function doLogoutAnalista() {
+  if (!_prepararFirebaseAnalista()) { _mostrarLogin(); return; }
   _loginSolicitadoPeloUsuario = false;
   AUTH_AN.signOut().then(() => {
     window._currentAnalistaUser = null;
@@ -134,6 +196,12 @@ async function _onAnalistaLogado(user) {
       uid:user.uid, email:user.email, acesso_todas_lojas:true, lojas_permitidas:[]
     };
 
+    // Quando o administrador definiu os canais, o painel só aceita usuários
+    // com acesso explícito ao Analista. Cadastros antigos continuam compatíveis.
+    if (acesso?.canais_acesso && acesso.canais_acesso.analista !== true) {
+      throw new Error('Este login possui acesso somente ao Coletor.');
+    }
+
     const permitidas = await window.DTLoja.garantirLojaInicial();
     if (!permitidas.length) throw new Error('Este login não possui acesso a nenhuma loja. Solicite a liberação ao administrador.');
     const atual = window.getDTLojaAtiva();
@@ -153,6 +221,9 @@ async function _onAnalistaLogado(user) {
   }
   catch(e){ _setLoginErro('Não foi possível preparar o ambiente da loja: '+e.message); await AUTH_AN.signOut(); return; }
   _mostrarApp();
+  if (typeof window.aplicarPermissoesAnalista === 'function') {
+    window.aplicarPermissoesAnalista();
+  }
   atualizarIndicadorLojaAtual();
 
   // 🔥 CHAMADA SEGURA DO INIT
@@ -196,11 +267,9 @@ function _mostrarLogin() {
 // ── SESSION ──────────────────────────────────────────────────────────
 // Nunca reaproveita sessão anterior. Só abre o painel depois que o usuário
 // clicar em Entrar ou pressionar Enter com e-mail e senha preenchidos.
-async function _iniciarAuthAnalista() {
-  _loginSolicitadoPeloUsuario = false;
-  _mostrarLogin();
-  _carregarLoginLembrado();
-
+function _registrarListenerAuthAnalista() {
+  if (_authListenerRegistrado || !_prepararFirebaseAnalista()) return false;
+  _authListenerRegistrado = true;
   AUTH_AN.onAuthStateChanged(async user => {
     if (user) {
       if (!_loginSolicitadoPeloUsuario) {
@@ -214,6 +283,20 @@ async function _iniciarAuthAnalista() {
     }
     _mostrarLogin();
   });
+  return true;
+}
+
+async function _iniciarAuthAnalista() {
+  _loginSolicitadoPeloUsuario = false;
+  _mostrarLogin();
+  _carregarLoginLembrado();
+  if (!_registrarListenerAuthAnalista()) {
+    let tentativas = 0;
+    const timer = setInterval(() => {
+      tentativas += 1;
+      if (_registrarListenerAuthAnalista() || tentativas >= 20) clearInterval(timer);
+    }, 250);
+  }
 }
 
 _iniciarAuthAnalista();
@@ -316,6 +399,7 @@ function updateStaticTexts(){}
 
 window.doLoginAnalista = doLoginAnalista;
 window.doLogoutAnalista = doLogoutAnalista;
+window.enviarRecuperacaoSenhaAnalista = enviarRecuperacaoSenhaAnalista;
 window.togglePassAnalista = togglePassAnalista;
 
 window.updateStaticTexts = updateStaticTexts;
@@ -327,6 +411,25 @@ window.logSistema = logSistema;
 window.logAuditoria = logAuditoria;
 window.openModal = openModal;
 window.closeModal = closeModal;
+
+// Ligação direta do botão, sem depender de onclick inline ou da ordem do cache.
+function _vincularLoginAnalista() {
+  const btn = document.getElementById('btn-login-analista');
+  const senha = document.getElementById('an-pass');
+  if (btn && btn.dataset.loginBound !== '1') {
+    btn.dataset.loginBound = '1';
+    btn.type = 'button';
+    btn.addEventListener('click', function(event){ window.doLoginAnalista(event); });
+  }
+  if (senha && senha.dataset.loginBound !== '1') {
+    senha.dataset.loginBound = '1';
+    senha.addEventListener('keydown', function(event){
+      if (event.key === 'Enter') window.doLoginAnalista(event);
+    });
+  }
+}
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _vincularLoginAnalista, { once:true });
+else _vincularLoginAnalista();
 
 async function atualizarIndicadorLojaAtual(){
   try{

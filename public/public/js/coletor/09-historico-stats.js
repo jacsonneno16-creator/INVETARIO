@@ -144,41 +144,21 @@ async function atualizarCacheLocais() {
     // Baixar endereços em chunks de 1000 (dt_locais_chunks) para reduzir leituras.
     const locaisSet = new Set();
     const endCapMapa = {};
-    const chunksSnap = await FS.collection('dt_locais_chunks').orderBy('parte').get();
-    if (!chunksSnap.empty) {
-      const todosDocs = chunksSnap.docs;
-      const docsDaVersao = versaoServidor ? todosDocs.filter(d => String((d.data() || {}).versao || '') === versaoServidor) : [];
-      const docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(d => !(d.data() || {}).versao);
-      docsUsar.forEach(chunkDoc => {
-        const dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
-        dados.forEach(d => {
-          if (d.ativo === false) return;
-          const end = _normStr ? _normStr(d.endereco || '') : String(d.endereco || '').trim().toUpperCase().replace(/\s+/g,' ');
-          if (!end) return;
-          locaisSet.add(end);
-          const cap = parseInt(
-            d.capacidade_paletes ?? d.capacidade_pallets ?? d.capacidade_palete ??
-            d.capacidade_pallet  ?? d.capacidade         ?? d.max_pallets        ?? 0
-          );
-          if (cap > 0) endCapMapa[end] = cap;
-        });
-      });
-    } else {
-      // Fallback para versões antigas que ainda não possuem chunks.
-      const locSnap = await FS.collection(FCOL.locais).get();
-      locSnap.docs.forEach(doc => {
-        const d = doc.data();
+    if (!versaoServidor) throw new Error('Versão da Base Geral de Endereços não encontrada.');
+    const chunksSnap = await FS.collection('dt_locais_chunks').where('versao','==',versaoServidor).get();
+    if (chunksSnap.empty) throw new Error('Base de endereços em chunks não publicada para a versão atual.');
+    const docsUsar = chunksSnap.docs.slice().sort((a,b)=>Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0));
+    docsUsar.forEach(chunkDoc => {
+      const dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
+      dados.forEach(d => {
         if (d.ativo === false) return;
-        const end = _normStr ? _normStr(d.endereco || doc.id) : String(d.endereco || doc.id).trim().toUpperCase().replace(/\s+/g,' ');
+        const end = _normStr ? _normStr(d.endereco || '') : String(d.endereco || '').trim().toUpperCase().replace(/\s+/g,' ');
         if (!end) return;
         locaisSet.add(end);
-        const cap = parseInt(
-          d.capacidade_paletes ?? d.capacidade_pallets ?? d.capacidade_palete ??
-          d.capacidade_pallet  ?? d.capacidade         ?? d.max_pallets        ?? 0
-        );
+        const cap = parseInt(d.capacidade_paletes ?? d.capacidade_pallets ?? d.capacidade_palete ?? d.capacidade_pallet ?? d.capacidade ?? d.max_pallets ?? 0);
         if (cap > 0) endCapMapa[end] = cap;
       });
-    }
+    });
     // Salvar cache
     try {
       localStorage.setItem('col_locais',     JSON.stringify(endCapMapa));
@@ -203,3 +183,102 @@ async function atualizarCacheLocais() {
   }
 }
 
+
+// v156 — Status da Auditoria offline baseado na fila IndexedDB.
+(function(){
+  const _updateStatsBase = window.updateStats;
+  let _audStatsSeq = 0;
+  function _audDocId(r){ return String((r && (r.docId || r.id)) || '').trim(); }
+  function _audStatus(r){ return String((r && (r.status || (r.payload && r.payload.status))) || '').trim().toUpperCase(); }
+  async function _atualizarStatsAuditoriaOffline(){
+    if (!window.APP || APP.modoAcesso !== 'auditoria' || !window.DTAuditoriaStorage) return;
+    const seq = ++_audStatsSeq;
+    const audId = String(APP.inventario?.auditoria_id || APP.inventario?.id || '').trim();
+    if (!audId) return;
+    let fila = [];
+    try { fila = await DTAuditoriaStorage.filaAll(); } catch(e) { fila = []; }
+    if (seq !== _audStatsSeq) return;
+    const pendFila = fila.filter(x => String(x.auditoriaId || '') === audId && (x.subcolecao || 'enderecos') === 'enderecos');
+    const mapa = new Map();
+    (APP.contagens || []).forEach(r => {
+      if (String(r.auditoriaId || r.auditoria_id || '') !== audId) return;
+      const id = _audDocId(r); if (id) mapa.set(id, r);
+    });
+    pendFila.forEach(x => { const id = _audDocId(x); if (id) mapa.set(id, Object.assign({id:id}, x.payload || {})); });
+    const resultados = Array.from(mapa.values()).filter(r => ['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(_audStatus(r)));
+    const pendIds = new Set(pendFila.map(_audDocId).filter(Boolean));
+    const total = resultados.length;
+    const pendentes = resultados.filter(r => pendIds.has(_audDocId(r))).length;
+    const enviadas = Math.max(0, total - pendentes);
+    const divergencias = resultados.filter(r => _audStatus(r) === 'DIVERGENTE').length;
+    const set = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=String(v); };
+    set('st-total', total); set('st-enviadas', enviadas); set('st-pendentes', pendentes); set('st-div', divergencias);
+    window._dtAuditoriaPendentes = pendentes;
+    const bar=document.getElementById('sync-bar'), txt=document.getElementById('sync-bar-text'), spin=document.getElementById('sync-bar-spinner');
+    const label=document.getElementById('conn-label');
+    if (!navigator.onLine) {
+      if (bar) { bar.style.display='flex'; bar.style.background='linear-gradient(90deg,#7c2d12,#92400e)'; }
+      if (txt) txt.textContent=`📵 Sem internet — ${pendentes} auditoria(s) salva(s) localmente e aguardando envio`;
+      if (spin) spin.textContent='💾';
+      if (label) label.textContent=pendentes > 0 ? `📵 ${pendentes} na fila` : '📵 Offline';
+    } else if (pendentes > 0) {
+      if (bar) { bar.style.display='flex'; bar.style.background='linear-gradient(90deg,#1e3a8a,#1d4ed8)'; }
+      if (txt) txt.textContent=`⬆️ Sincronizando ${pendentes} auditoria(s) com Firebase…`;
+      if (spin) spin.textContent='🔄';
+      if (label) label.textContent=`⬆ ${pendentes} pend.`;
+    }
+  }
+  window.atualizarStatsAuditoriaOffline = _atualizarStatsAuditoriaOffline;
+  window.updateStats = function(){
+    if (typeof _updateStatsBase === 'function') _updateStatsBase.apply(this, arguments);
+    _atualizarStatsAuditoriaOffline().catch(function(e){ console.warn('[AUDITORIA] Status offline:', e); });
+  };
+  window.addEventListener('dt-auditoria-salva', function(){ window.updateStats(); });
+  window.addEventListener('online', function(){ setTimeout(function(){ window.updateStats(); }, 300); });
+  window.addEventListener('offline', function(){ window.updateStats(); });
+})();
+
+
+// v157 — Status do modo Inventário baseado na fila real do IndexedDB.
+(function(){
+  const _updateStatsAnterior = window.updateStats;
+  let _invStatsSeq = 0;
+  function _invAtiva(c){ return c && !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA'; }
+  function _invId(c){ return String((c && (c.inventario_id || c.inventarioId)) || '').trim(); }
+  function _invUuid(c){ return String((c && (c.uuid || c.id)) || '').trim(); }
+  function _invDivergenciaLocal(c){ return !!(c && (c._alertaQtd === true || c.divergencia_potencial === true || c.divergente === true)); }
+  window.updateStats = function(){
+    if (window.APP && APP.modoAcesso === 'auditoria') return _updateStatsAnterior.apply(this, arguments);
+    const seq = ++_invStatsSeq;
+    const invId = String(APP.inventario?.id || '').trim();
+    const ativas = (APP.contagens || []).filter(_invAtiva).filter(c => !invId || _invId(c) === invId);
+    const aplicar = (fila) => {
+      if (seq !== _invStatsSeq) return;
+      fila = Array.isArray(fila) ? fila : [];
+      const pendInv = fila.filter(_invAtiva).filter(c => !invId || _invId(c) === invId);
+      const pendIds = new Set(pendInv.map(_invUuid).filter(Boolean));
+      const total = ativas.length;
+      const pendentes = ativas.filter(c => pendIds.has(_invUuid(c))).length;
+      const enviadas = Math.max(0, total - pendentes);
+      const divs = ativas.filter(_invDivergenciaLocal).length;
+      const s = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
+      s('st-total', total); s('st-enviadas', enviadas); s('st-pendentes', pendentes); s('st-div', divs);
+      s('st-op', APP.operador?.name || '—'); s('st-inv', APP.inventario?.nome || '—');
+      s('st-base', APP.base.length ? APP.base.length + ' registros' : '—');
+      s('st-net', navigator.onLine ? '🟢 Online' : '🔴 Offline');
+      s('st-coletor', localStorage.getItem('dt_device_id')?.slice(0,20) || '—');
+      const locVer=localStorage.getItem('col_locais_ver');
+      s('st-locais-ver', locVer ? ('v'+locVer.slice(0,12)+(locVer.length>12?'…':'')) : 'sem cache');
+      const stAud=document.getElementById('st-aud'); if(stAud) stAud.textContent=(APP.auditorias||[]).length;
+      atualizarBarraStatus();
+    };
+    aplicar(FILA_ENVIO || []);
+    if (typeof idbGetPendentes === 'function') {
+      Promise.resolve(idbGetPendentes()).then(fila => {
+        FILA_ENVIO = Array.isArray(fila) ? fila : [];
+        filaSave(FILA_ENVIO);
+        aplicar(FILA_ENVIO);
+      }).catch(() => {});
+    }
+  };
+})();

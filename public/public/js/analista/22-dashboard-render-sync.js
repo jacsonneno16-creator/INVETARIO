@@ -31,8 +31,10 @@ function renderDashboardInventario() {
     if (cur) fInvEl.value = cur;
   }
 
-  // Endereços base (ativos)
-  const endsBaseAtivos = state().enderecosLista.filter(e => e.ativo !== false);
+  // Endereços cadastrados e endereços operacionais ativos.
+  // O card 'End. cadastrados' deve mostrar a mesma quantidade da aba Endereços.
+  const endsBaseTodos = state().enderecosLista || [];
+  const endsBaseAtivos = endsBaseTodos.filter(e => e.ativo !== false);
 
   // Preencher selects de rua e local
   if (fRuaEl) {
@@ -107,7 +109,10 @@ function renderDashboardInventario() {
   });
 
   document.getElementById('kd-inventarios').textContent  = invsConsiderados.length;
-  document.getElementById('kd-enderecos').textContent    = endsFiltered.length.toLocaleString('pt-BR');
+  const totalCadastradosCard = (fRua || fLocal)
+    ? endsBaseTodos.filter(e => (!fRua || (e.rua || extrairRua(e.endereco) || 'SEM RUA') === fRua) && (!fLocal || (e.setor || 'SEM LOCAL') === fLocal)).length
+    : endsBaseTodos.length;
+  document.getElementById('kd-enderecos').textContent    = totalCadastradosCard.toLocaleString('pt-BR');
   document.getElementById('kd-end-contados').textContent = endContadosTotal.toLocaleString('pt-BR');
   document.getElementById('kd-contagens').textContent    = totalConts.toLocaleString('pt-BR');
   document.getElementById('kd-pendencias').textContent   = pendentesTotal.toLocaleString('pt-BR');
@@ -141,7 +146,7 @@ function renderDashboardInventario() {
     alertas += `<div class="alert warn" style="margin-bottom:8px">⏸️ ${pausados.length} inventário(s) <strong>PAUSADO(s)</strong>: ${pausados.map(i=>i.nome).join(', ')} — verifique se deve ser retomado.</div>`;
   }
   if (divAbertos > 5) {
-    alertas += `<div class="alert warn" style="margin-bottom:8px">⚠️ <strong>${divAbertos}</strong> contagens em conflito aguardando resolução. <a href="#" onclick="goPage('divergencias',document.getElementById('nav-divergencias'))" style="color:var(--accent)">Ver conflitos →</a></div>`;
+    alertas += `<div class="alert warn" style="margin-bottom:8px">⚠️ <strong>${divAbertos}</strong> contagens em conflito aguardando resolução. <a href="#" onclick="goPage('recontagens',document.getElementById('nav-recontagens'))" style="color:var(--accent)">Ver recontagens →</a></div>`;
   }
   if (recPend > 0) {
     alertas += `<div class="alert warn" style="margin-bottom:8px">🔄 <strong>${recPend}</strong> rodada(s) pendente(s) aguardando execução. <a href="#" onclick="goPage('recontagens',document.getElementById('nav-recontagens'))" style="color:var(--accent)">Ver rodadas →</a></div>`;
@@ -385,6 +390,101 @@ function _dashHourlySeries(contagensConsideradas) {
   return buckets;
 }
 
+function _dashIsRecontagem(registro) {
+  const tipo = String(registro?.tipo_contagem || registro?.tipo || registro?.origem || '').toUpperCase();
+  return tipo.includes('RECONTAGEM') ||
+    Number(registro?.numero_recontagem || registro?.rodada || 0) > 0 ||
+    !!registro?.recontagem_id ||
+    (!!registro?.divergencia_id && (
+      registro?.qtd_recontagem != null ||
+      registro?.recontagem_concluida_em ||
+      String(registro?.status_recontagem || '').toLowerCase() === 'concluida'
+    ));
+}
+
+function _dashDataRegistro(registro) {
+  const raw = registro?.recontagem_concluida_em || registro?.concluida_em ||
+    registro?.criado_em || registro?.created_at || registro?.data_hora ||
+    registro?.dataHora || registro?.ts || registro?.updated_at;
+  if (!raw) return '';
+  if (typeof raw.toDate === 'function') {
+    const d = raw.toDate();
+    return isNaN(d) ? '' : d.toISOString();
+  }
+  const d = new Date(raw);
+  return isNaN(d) ? '' : d.toISOString();
+}
+
+function _dashRecontagensConsideradas(dc) {
+  const filtros = dc?.filtros || {};
+  const enderecos = state().enderecosLista || [];
+  const aceitoNoFiltro = r => {
+    if (r?._excluida) return false;
+    if (filtros.inventarioId && String(r?.inventario_id || '') !== String(filtros.inventarioId)) return false;
+    const end = enderecos.find(e => String(e.endereco || '') === String(r?.endereco || '')) || {};
+    const rua = end.rua || extrairRua(r?.endereco) || 'SEM RUA';
+    const local = end.setor || r?.setor || r?.local || 'SEM LOCAL';
+    if (filtros.rua && String(rua) !== String(filtros.rua)) return false;
+    if (filtros.local && String(local) !== String(filtros.local)) return false;
+    return true;
+  };
+  const candidatos = [
+    ...(state().contagens || []).filter(_dashIsRecontagem),
+    ...(state().recontagens || []).filter(r =>
+      r?.qtd_recontagem != null || r?.qtd_segunda != null || r?.qtd_terceira != null ||
+      r?.recontagem_concluida_em || String(r?.status || '').toUpperCase() === 'CONCLUIDA' ||
+      String(r?.status_recontagem || '').toLowerCase() === 'concluida'
+    )
+  ].filter(aceitoNoFiltro);
+  const unicos = new Map();
+  candidatos.forEach((r, idx) => {
+    const chave = String(r.id || [
+      r.inventario_id || '', r.endereco || '', r.divergencia_id || '',
+      r.numero_recontagem || r.rodada || '', _dashDataRegistro(r),
+      r.operador_recontagem || r.operador || '', r.qtd_recontagem ?? r.quantidade ?? ''
+    ].join('|') || `rec-${idx}`);
+    const anterior = unicos.get(chave);
+    unicos.set(chave, anterior ? { ...anterior, ...r } : r);
+  });
+  return [...unicos.values()];
+}
+
+function _dashAgruparRecontagens(recontagens, keyFn, limite=8) {
+  const mapa = new Map();
+  (recontagens || []).forEach(r => {
+    const chave = String(keyFn(r) || 'SEM DADO').trim() || 'SEM DADO';
+    mapa.set(chave, (mapa.get(chave) || 0) + 1);
+  });
+  return [...mapa.entries()]
+    .map(([label, value]) => ({ label, value }))
+    .sort((a,b) => b.value - a.value || a.label.localeCompare(b.label, 'pt-BR', { numeric:true }))
+    .slice(0, limite);
+}
+
+function _dashNomeProdutoRecontagem(registro) {
+  const r = registro || {};
+  const nomes = [
+    r.nome_produto, r.nomeProduto, r.produto_nome, r.produtoNome,
+    r.descricao_produto, r.descricaoProduto, r.descricao,
+    r.produto_recontagem_nome, r.produto_segunda_nome, r.produto_terceira_nome
+  ].map(v => String(v || '').trim()).filter(Boolean);
+  if (nomes.length) return nomes[0];
+
+  const valores = [
+    r.produto_recontagem, r.produto_terceira, r.produto_segunda, r.produto,
+    r.codigo_produto, r.codigoProduto, r.codigo_interno, r.codigoInterno,
+    r.gtin, r.ean, r.dun, r.sku
+  ].map(v => String(v || '').trim()).filter(Boolean);
+
+  for (const valor of valores) {
+    const achado = window.DTProdutos?.buscarSync?.(valor);
+    if (achado?.encontrado && achado.nomeProduto) return achado.nomeProduto;
+  }
+
+  const textoJaDescritivo = valores.find(v => /[A-Za-zÀ-ÿ]/.test(v) && !/^\d+$/.test(v));
+  return textoJaDescritivo || 'PRODUTO SEM NOME CADASTRADO';
+}
+
 function _dashMiniBars(items, opts={}) {
   const clickable = !!opts.clickable;
   if (!items.length) return `<div class="empty" style="padding:20px"><div class="empty-icon">📊</div><div class="empty-title">Sem dados para o gráfico</div></div>`;
@@ -406,6 +506,22 @@ function _dashMiniBars(items, opts={}) {
   }).join('');
 }
 
+function _dashInventoryColumns(items, onclickFn) {
+  if (!items.length) return `<div class="empty" style="padding:24px 16px;min-height:150px;display:flex;flex-direction:column;justify-content:center"><div class="empty-icon">📊</div><div class="empty-title">Sem dados para o filtro selecionado</div><div class="empty-sub">Altere os filtros ou clique em Atualizar.</div></div>`;
+  const max = Math.max(...items.map(i => Math.max(i.contados, i.total)), 1);
+  const teto=Math.max(1,Math.ceil(max/4)*4);
+  const linhas=[0,1,2,3,4].map(n=>Math.round(teto*n/4));
+  return `<div class="dash-ranking-body"><div class="dash-column-legend"><span><i style="background:#2563eb"></i>Contados</span><span><i style="background:#ef4444"></i>Totais</span></div><div class="dash-column-scroll"><div class="dash-column-chart" style="--chart-count:${items.length};min-width:max(520px,calc(${items.length} * 82px))"><div class="dash-y-axis">${linhas.map((v,i)=>`<span style="bottom:${i*25}%">${v}</span>`).join('')}</div><div class="dash-grid-lines">${linhas.map((_,i)=>`<i style="bottom:${i*25}%"></i>`).join('')}</div><div class="dash-column-groups">${items.map(item => {
+    const hc=item.contados?Math.max(4,Math.round(item.contados/teto*100)):0;
+    const ht=item.total?Math.max(4,Math.round(item.total/teto*100)):0;
+    const arg=String(item.filterValue??item.label).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+    return `<button type="button" class="dash-column-group" onclick="${onclickFn}('${arg}')" title="${_dashSafe(item.label)}: ${item.contados} contados de ${item.total} totais">
+      <span class="dash-columns"><i class="dash-column auditados" style="height:${hc}%"><b>${item.contados}</b></i><i class="dash-column divergencias" style="height:${ht}%"><b>${item.total}</b></i></span>
+      <span class="dash-column-label">${_dashSafe(item.label)}<small style="display:block;margin-top:3px;color:var(--muted)">${item.pct}% concluído</small></span>
+    </button>`;
+  }).join('')}</div></div></div></div>`;
+}
+
 function _renderDashboardCharts() {
   const wrap = document.getElementById('dash-charts-wrap');
   if (!wrap) return;
@@ -421,30 +537,39 @@ function _renderDashboardCharts() {
   const locais = _dashBuildBreakdown(dc.endsBase, dc.invsConsiderados, e => e.setor || 'SEM LOCAL')
     .sort((a,b) => b.pendentes - a.pendentes || a.pct - b.pct)
     .slice(0,6);
-  const operadores = _dashTopOperadores(dc.contagensConsideradas);
-  const serieHoras = _dashHourlySeries(dc.contagensConsideradas);
+  const contagensNormais = dc.contagensConsideradas.filter(c => !_dashIsRecontagem(c));
+  const recontagens = _dashRecontagensConsideradas(dc);
+  const operadores = _dashTopOperadores(contagensNormais);
+  const serieHoras = _dashHourlySeries(contagensNormais);
+  const serieHorasRecontagem = _dashHourlySeries(recontagens.map(r => ({
+    ...r, criado_em: _dashDataRegistro(r)
+  })));
+  const serieHorasTotal = serieHoras.map((b, idx) => ({
+    hora: b.hora,
+    total: b.total + (serieHorasRecontagem[idx]?.total || 0)
+  }));
   const totalHoraMax = Math.max(...serieHoras.map(x => x.total), 1);
+  const totalHoraRecMax = Math.max(...serieHorasRecontagem.map(x => x.total), 1);
+  const totalHoraGeralMax = Math.max(...serieHorasTotal.map(x => x.total), 1);
+  const enderecos = state().enderecosLista || [];
+  const recUsuarios = _dashAgruparRecontagens(recontagens, r =>
+    r.operador_recontagem || r.operador_nome || r.operador || r.usuario || 'SEM OPERADOR'
+  );
+  const recRuas = _dashAgruparRecontagens(recontagens, r => {
+    const end = enderecos.find(e => String(e.endereco || '') === String(r.endereco || '')) || {};
+    return end.rua || extrairRua(r.endereco) || 'SEM RUA';
+  });
+  const recProdutos = _dashAgruparRecontagens(recontagens, _dashNomeProdutoRecontagem);
+  const totalUsuarios = _dashAgruparRecontagens([
+    ...contagensNormais.map(c => ({ ...c, _atividade:'Contagem' })),
+    ...recontagens.map(r => ({ ...r, _atividade:'Recontagem' }))
+  ], r => r.operador_recontagem || r.operador_nome || r.operador || r.usuario || 'SEM OPERADOR');
 
   const pct = Math.max(0, Math.min(100, dc.pctGeral || 0));
   const pendPct = 100 - pct;
 
-  const ruasHtml = _dashMiniBars(ruas.map(r => ({
-    label: `Rua ${r.label}`,
-    value: r.pendentes,
-    valueLabel: `${r.pendentes} pend.`,
-    sub: `${r.contados}/${r.total} conferidos · ${r.pct}%`,
-    color: 'linear-gradient(90deg,#ef4444,#f97316)',
-    onclick: `dashApplyRuaFilter(${JSON.stringify(r.label)})`
-  })), { clickable: true });
-
-  const locaisHtml = _dashMiniBars(locais.map(l => ({
-    label: l.label,
-    value: l.pendentes,
-    valueLabel: `${l.pendentes} pend.`,
-    sub: `${l.contados}/${l.total} conferidos · ${l.pct}%`,
-    color: 'linear-gradient(90deg,#0ea5e9,#22c55e)',
-    onclick: `dashApplyLocalFilter(${JSON.stringify(l.label)})`
-  })), { clickable: true });
+  const ruasHtml = _dashInventoryColumns(ruas.map(r => ({...r,filterValue:r.label,label:`Rua ${r.label}`})), 'dashApplyRuaFilter');
+  const locaisHtml = _dashInventoryColumns(locais, 'dashApplyLocalFilter');
 
   const operadoresHtml = operadores.length ? operadores.map((op, idx) => `
     <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start;padding:10px 12px;border-radius:12px" onclick="dashApplyOperadorFilter(${JSON.stringify(op.operador)})">
@@ -463,12 +588,50 @@ function _renderDashboardCharts() {
     const h = Math.max(8, Math.round((b.total / totalHoraMax) * 100));
     const active = b.total > 0;
     return `<div title="${String(b.hora).padStart(2,'0')}:00 · ${b.total} contagem(ns)" style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;min-width:0">
+      <div style="height:14px;font-family:var(--mono);font-size:.65rem;font-weight:800;color:${active ? 'var(--orange)' : 'transparent'};line-height:14px">${active ? b.total.toLocaleString('pt-BR') : '0'}</div>
       <div style="height:110px;width:100%;display:flex;align-items:flex-end;justify-content:center">
         <div style="width:100%;max-width:22px;height:${active ? h : 8}%;border-radius:8px 8px 4px 4px;background:${active ? 'linear-gradient(180deg,var(--orange-h),var(--orange))' : 'var(--border)'};transition:height .25s"></div>
       </div>
       <div style="font-size:.61rem;font-family:var(--mono);color:${active ? 'var(--text-2)' : 'var(--muted-2)'}">${String(b.hora).padStart(2,'0')}</div>
     </div>`;
   }).join('');
+  const recountHourBars = serieHorasRecontagem.map(b => {
+    const h = Math.max(8, Math.round((b.total / totalHoraRecMax) * 100));
+    const active = b.total > 0;
+    return `<div title="${String(b.hora).padStart(2,'0')}:00 · ${b.total} recontagem(ns)" style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;min-width:0">
+      <div style="height:14px;font-family:var(--mono);font-size:.65rem;font-weight:800;color:${active ? '#7c3aed' : 'transparent'};line-height:14px">${active ? b.total.toLocaleString('pt-BR') : '0'}</div>
+      <div style="height:110px;width:100%;display:flex;align-items:flex-end;justify-content:center">
+        <div style="width:100%;max-width:22px;height:${active ? h : 8}%;border-radius:8px 8px 4px 4px;background:${active ? 'linear-gradient(180deg,#a78bfa,#7c3aed)' : 'var(--border)'};transition:height .25s"></div>
+      </div>
+      <div style="font-size:.61rem;font-family:var(--mono);color:${active ? 'var(--text-2)' : 'var(--muted-2)'}">${String(b.hora).padStart(2,'0')}</div>
+    </div>`;
+  }).join('');
+  const totalHourBars = serieHorasTotal.map(b => {
+    const h = Math.max(8, Math.round((b.total / totalHoraGeralMax) * 100));
+    const active = b.total > 0;
+    return `<div title="${String(b.hora).padStart(2,'0')}:00 · ${b.total} atividade(s) no total" style="display:flex;flex-direction:column;align-items:center;gap:6px;flex:1;min-width:0">
+      <div style="height:14px;font-family:var(--mono);font-size:.65rem;font-weight:800;color:${active ? 'var(--green-mid)' : 'transparent'};line-height:14px">${active ? b.total.toLocaleString('pt-BR') : '0'}</div>
+      <div style="height:110px;width:100%;display:flex;align-items:flex-end;justify-content:center">
+        <div style="width:100%;max-width:22px;height:${active ? h : 8}%;border-radius:8px 8px 4px 4px;background:${active ? 'linear-gradient(180deg,var(--green-light),var(--green-mid))' : 'var(--border)'};transition:height .25s"></div>
+      </div>
+      <div style="font-size:.61rem;font-family:var(--mono);color:${active ? 'var(--text-2)' : 'var(--muted-2)'}">${String(b.hora).padStart(2,'0')}</div>
+    </div>`;
+  }).join('');
+  const recUsuariosHtml = _dashMiniBars(recUsuarios.map(i => ({
+    ...i, color:'linear-gradient(90deg,#7c3aed,#a78bfa)', sub:`${i.value} recontagem(ns)`
+  })));
+  const recRuasHtml = _dashMiniBars(recRuas.map(i => ({
+    ...i, label:`Rua ${i.label}`, color:'linear-gradient(90deg,#dc2626,#fb7185)',
+    sub:`${i.value} recontagem(ns) gerada(s)`
+  })));
+  const recProdutosHtml = _dashMiniBars(recProdutos.map(i => ({
+    ...i, color:'linear-gradient(90deg,#d97706,#fbbf24)',
+    sub:`${i.value} recontagem(ns) gerada(s)`
+  })));
+  const totalUsuariosHtml = _dashMiniBars(totalUsuarios.map(i => ({
+    ...i, color:'linear-gradient(90deg,var(--green-mid),var(--green-light))',
+    sub:`${i.value} atividade(s): contagens + recontagens`
+  })));
 
   wrap.innerHTML = `
     <div style="display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:16px;margin-bottom:4px">
@@ -491,11 +654,11 @@ function _renderDashboardCharts() {
       </div>
       <div class="tc">
         <div class="tc-header"><div><div class="tc-title">🛣️ Ruas com mais pendências</div><div class="sec-sub">Clique para filtrar a rua</div></div></div>
-        <div style="padding:14px;display:flex;flex-direction:column;gap:8px">${ruasHtml}</div>
+        <div>${ruasHtml}</div>
       </div>
       <div class="tc">
         <div class="tc-header"><div><div class="tc-title">🏭 Locais com mais pendências</div><div class="sec-sub">Clique para filtrar o local</div></div></div>
-        <div style="padding:14px;display:flex;flex-direction:column;gap:8px">${locaisHtml}</div>
+        <div>${locaisHtml}</div>
       </div>
     </div>
     <div style="display:grid;grid-template-columns:1.2fr .8fr;gap:16px;margin-bottom:16px">
@@ -509,20 +672,54 @@ function _renderDashboardCharts() {
         <div class="tc-header"><div><div class="tc-title">👥 Ranking de operadores</div><div class="sec-sub">Clique para abrir as contagens já filtradas por operador</div></div></div>
         <div style="padding:14px;display:flex;flex-direction:column;gap:8px">${operadoresHtml}</div>
       </div>
+    </div>
+    <div style="margin:4px 0 12px">
+      <div style="font-size:1rem;font-weight:800;color:var(--text)">🔄 Análise de recontagens</div>
+      <div class="sec-sub">Somente rodadas de recontagem executadas no filtro atual; não são somadas às contagens normais.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr .8fr;gap:16px;margin-bottom:16px">
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">⏱️ Recontagens por hora</div><div class="sec-sub">${recontagens.length.toLocaleString('pt-BR')} recontagem(ns) executada(s)</div></div></div>
+        <div style="padding:18px 16px 12px"><div style="display:flex;gap:8px;align-items:flex-end">${recountHourBars}</div></div>
+      </div>
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">👥 Usuários com mais recontagens</div><div class="sec-sub">Ranking de rodadas executadas</div></div></div>
+        <div style="padding:12px">${recUsuariosHtml}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1.2fr .8fr;gap:16px;margin-bottom:16px">
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">📊 Produção total por hora</div><div class="sec-sub">Contagens + recontagens executadas no filtro atual</div></div></div>
+        <div style="padding:18px 16px 12px"><div style="display:flex;gap:8px;align-items:flex-end">${totalHourBars}</div></div>
+      </div>
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">🏆 Ranking total de usuários</div><div class="sec-sub">Soma de contagens e recontagens por pessoa</div></div></div>
+        <div style="padding:12px">${totalUsuariosHtml}</div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">🛣️ Ruas que mais geraram recontagem</div><div class="sec-sub">Endereços divergentes agrupados por rua</div></div></div>
+        <div style="padding:12px">${recRuasHtml}</div>
+      </div>
+      <div class="tc">
+        <div class="tc-header"><div><div class="tc-title">📦 Produtos que mais geraram recontagem</div><div class="sec-sub">Produtos vinculados às rodadas realizadas</div></div></div>
+        <div style="padding:12px">${recProdutosHtml}</div>
+      </div>
     </div>`;
 }
 
 function dashApplyRuaFilter(rua) {
   const el = document.getElementById('dash-frua');
   if (!el) return;
-  el.value = rua || '';
+  el.value = String(el.value || '') === String(rua || '') ? '' : (rua || '');
   renderDashboard();
 }
 
 function dashApplyLocalFilter(local) {
   const el = document.getElementById('dash-flocal');
   if (!el) return;
-  el.value = local || '';
+  el.value = String(el.value || '') === String(local || '') ? '' : (local || '');
   renderDashboard();
 }
 
@@ -548,6 +745,8 @@ let _dashAudMetas = [];
 let _dashAudItens = [];
 let _dashAudCarregando = false;
 let _dashAudLoja = '';
+let _dashAudFiltroColuna = '';
+let _dashAudFiltroOperador = '';
 
 function _dashModoAtual(){ return document.getElementById('dash-mode')?.value || 'inventario'; }
 function _dashEnderecoPartes(endereco){
@@ -570,12 +769,15 @@ function alterarModoDashboard(modo){
   renderDashboard();
 }
 function renderDashboard(){
-  if(_dashModoAtual()==='auditoria') return carregarDashboardAuditoria(false);
+  // A auditoria só consulta o Firebase quando o analista clica em Atualizar.
+  // Navegação, filtros e troca de modo apenas redesenham o instantâneo carregado.
+  if(_dashModoAtual()==='auditoria'){ return renderDashboardAuditoria(); }
   document.getElementById('dash-alert-wrap').innerHTML='';
   const action=document.getElementById('dash-recentes-action'); if(action)action.style.display='';
   const title=document.getElementById('dash-recentes-title'); if(title)title.textContent='📦 Inventários Recentes';
   return renderDashboardInventario();
 }
+window.atualizarDashboardAuditoriaManual=function(){ return carregarDashboardAuditoria(true); };
 function limparFiltrosDash(){
   if(_dashModoAtual()==='auditoria'){
     ['dash-faud','dash-fastatus','dash-farua','dash-fanivel','dash-faproduto'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
@@ -591,14 +793,28 @@ async function carregarDashboardAuditoria(forcar){
   _dashAudCarregando=true;
   const wrap=document.getElementById('dash-charts-wrap'); if(wrap)wrap.innerHTML='<div class="tc"><div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando auditorias...</div></div></div>';
   try{
-    const db=window.FS_AN || window.getDTFirestore?.();
-    const snap=await db.collection('dt_auditorias').get();
-    _dashAudMetas=snap.docs.map(d=>({id:d.id,...d.data()}));
+    const raw=window.getDTRawFirestore?.() || window.FS_AN || window.getDTFirestore?.();
+    const metas=[],vistos=new Set();
+    async function add(ref,origem){try{const snap=await ref.get();snap.docs.forEach(d=>{if(vistos.has(d.id))return;vistos.add(d.id);metas.push({id:d.id,...d.data(),_origem:origem,_ref:d.ref});});}catch(e){console.warn('[Dashboard Auditoria] '+origem,e);}}
+    if(window.getDTRawFirestore){
+      if(lojaAtual)await add(raw.collection('lojas').doc(lojaAtual).collection('dt_auditorias'),'loja:'+lojaAtual);
+      try{const ls=await raw.collection('lojas').get();for(const ld of ls.docs){if(ld.id!==lojaAtual)await add(raw.collection('lojas').doc(ld.id).collection('dt_auditorias'),'loja:'+ld.id);}}catch(e){}
+      await add(raw.collection('dt_auditorias'),'raiz');
+    }else await add(raw.collection('dt_auditorias'),'loja');
+    _dashAudMetas=metas;
     const escolhido=document.getElementById('dash-faud')?.value||'';
-    const metas=escolhido?_dashAudMetas.filter(m=>m.id===escolhido):_dashAudMetas;
-    const listas=await Promise.all(metas.map(async m=>{
-      const ss=await db.collection('dt_auditorias').doc(m.id).collection('enderecos').get();
-      return ss.docs.map(d=>({id:d.id,auditoriaId:m.id,auditoriaNome:m.nome||m.auditoria_nome||m.id,...d.data()}));
+    const selecionadas=escolhido?_dashAudMetas.filter(m=>m.id===escolhido):_dashAudMetas;
+    const listas=await Promise.all(selecionadas.map(async m=>{
+      const ref=m._ref || raw.collection('dt_auditorias').doc(m.id);
+      const [res,baseChunks]=await Promise.all([ref.collection('enderecos').get(),ref.collection('base_chunks').get().catch(()=>({docs:[]}))]);
+      const resultados=res.docs.map(d=>({id:d.id,...d.data()}));
+      const base=[];baseChunks.docs.forEach(d=>{const x=d.data()||{};(x.dados||x.itens||x.registros||[]).forEach((r,idx)=>base.push({id:String(r.id||r.docId||d.id+'_'+idx),...r}));});
+      const porId=new Map(resultados.map(r=>[String(r.id),r]));
+      const porEnd=new Map(resultados.map(r=>[String(r.endereco||'').trim().toUpperCase(),r]));
+      const usados=new Set();
+      const unidos=base.length?base.map(b=>{const r=porId.get(String(b.id))||porEnd.get(String(b.endereco||'').trim().toUpperCase());if(r)usados.add(String(r.id));return r?{...b,...r,id:r.id||b.id}:{...b,status:b.status||'PENDENTE'};}):resultados.slice();
+      resultados.forEach(r=>{if(!usados.has(String(r.id))&&!unidos.some(x=>String(x.id)===String(r.id)))unidos.push(r);});
+      return unidos.map(x=>({auditoriaId:m.id,auditoriaNome:m.nome||m.auditoria_nome||m.id,...x}));
     }));
     _dashAudItens=listas.flat(); _dashAudLoja=lojaAtual;
     _dashPopularFiltrosAuditoria(); renderDashboardAuditoria();
@@ -607,6 +823,7 @@ async function carregarDashboardAuditoria(forcar){
     if(wrap)wrap.innerHTML='<div class="tc"><div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar o dashboard de auditoria</div></div></div>';
   }finally{_dashAudCarregando=false;}
 }
+
 function _dashAudStatus(i){
   const s=String(i.status||'PENDENTE').toUpperCase();
   if(['APROVADO','CORRETO','CONFERIDO','FINALIZADO','CONFIRMADO_SEM_AJUSTE'].includes(s))return'OK';
@@ -622,15 +839,22 @@ function _dashPopularFiltrosAuditoria(){
 }
 function _dashAudFiltrados(){
   const aud=document.getElementById('dash-faud')?.value||'', st=document.getElementById('dash-fastatus')?.value||'', rua=document.getElementById('dash-farua')?.value||'', nivel=document.getElementById('dash-fanivel')?.value||'', busca=(document.getElementById('dash-faproduto')?.value||'').toLowerCase();
-  return _dashAudItens.filter(i=>{const p=_dashEnderecoPartes(i.endereco);if(aud&&i.auditoriaId!==aud)return false;if(st&&_dashAudStatus(i)!==st)return false;if(rua&&p.rua!==rua)return false;if(nivel&&p.nivel!==nivel)return false;if(busca&&!String([i.produtoEsperado,i.produto_esperado,i.produtoLido,i.produto_lido,i.dunEsperado,i.dun_esperado,i.dun,i.dunLido,i.dun_lido].join(' ')).toLowerCase().includes(busca))return false;return true;});
+  return _dashAudItens.filter(i=>{const p=_dashEnderecoPartes(i.endereco),op=String(i.operadorNome||i.operador_nome||i.operadorId||i.operador_id||'SEM OPERADOR');if(aud&&i.auditoriaId!==aud)return false;if(st&&_dashAudStatus(i)!==st)return false;if(rua&&p.rua!==rua)return false;if(nivel&&p.nivel!==nivel)return false;if(_dashAudFiltroColuna&&p.coluna!==_dashAudFiltroColuna)return false;if(_dashAudFiltroOperador&&op!==_dashAudFiltroOperador)return false;if(busca&&!String([i.produtoEsperado,i.produto_esperado,i.produtoLido,i.produto_lido,i.dunEsperado,i.dun_esperado,i.dun,i.dunLido,i.dun_lido].join(' ')).toLowerCase().includes(busca))return false;return true;});
 }
 function _dashAgrupar(lista,keyFn,pred){const m={};lista.filter(pred||(()=>true)).forEach(i=>{const k=keyFn(i)||'SEM DADO';m[k]=(m[k]||0)+1;});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}
-function _dashAudBarClick(tipo,valor){const map={rua:'dash-farua',nivel:'dash-fanivel',produto:'dash-faproduto'};const e=document.getElementById(map[tipo]);if(e)e.value=valor;renderDashboardAuditoria();}
+function _dashAudBarClick(tipo,valor){
+  const map={rua:'dash-farua',nivel:'dash-fanivel',produto:'dash-faproduto',status:'dash-fastatus'};
+  const e=document.getElementById(map[tipo]);
+  if(e)e.value=String(e.value||'')===String(valor||'')?'':valor;
+  else if(tipo==='coluna')_dashAudFiltroColuna=_dashAudFiltroColuna===valor?'':valor;
+  else if(tipo==='operador')_dashAudFiltroOperador=_dashAudFiltroOperador===valor?'':valor;
+  renderDashboardAuditoria();
+}
 function _dashAudBars(arr,tipo,lim=10){if(!arr.length)return'<div class="empty" style="padding:20px"><div class="empty-title">Sem dados</div></div>';const max=Math.max(...arr.map(x=>x[1]),1);return arr.slice(0,lim).map(([l,v])=>`<button class="btn btn-ghost btn-sm" onclick="_dashAudBarClick('${tipo}','${String(l).replace(/'/g,"\\'")}')" style="width:100%;display:block;text-align:left;padding:9px 10px;margin-bottom:7px"><div style="display:flex;justify-content:space-between;gap:8px"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_dashSafe(l)}</b><span class="mono">${v}</span></div><div style="height:9px;background:var(--border);border-radius:99px;margin-top:6px;overflow:hidden"><div style="height:100%;width:${Math.max(4,Math.round(v/max*100))}%;background:linear-gradient(90deg,var(--orange),#ef4444);border-radius:99px"></div></div></button>`).join('');}
 function renderDashboardAuditoria(){
   const lista=_dashAudFiltrados(), total=lista.length, ok=lista.filter(i=>_dashAudStatus(i)==='OK').length, div=lista.filter(i=>_dashAudStatus(i)==='DIVERGENTE').length, vaz=lista.filter(i=>_dashAudStatus(i)==='ENDERECO_VAZIO').length, pend=lista.filter(i=>_dashAudStatus(i)==='PENDENTE').length, audit=total-pend, taxa=total?Math.round(audit/total*100):0, acur=audit?Math.round(ok/audit*100):0;
   const ops=new Set(lista.map(i=>i.operadorNome||i.operador_nome||i.operadorId||i.operador_id).filter(Boolean)).size;
-  [_dashAudMetas.length,total,audit,pend,ok,div,vaz,`${taxa}%`,ops].forEach((v,idx)=>_dashSetKpi(idx,v,['Auditorias','Itens previstos','Itens auditados','Pendentes','Itens corretos','Divergências','End. vazios','% executado','Operadores'][idx],['🔎','📍','✅','⏳','🎯','⚠️','📭','📊','👥'][idx]));
+  [_dashAudMetas.length,total,audit,pend,ok,div,vaz,`${taxa}%`,ops].forEach((v,idx)=>_dashSetKpi(idx,v,['Auditorias','Endereços previstos','Endereços auditados','Endereços pendentes','Endereços corretos','Divergências','End. vazios','% executado','Operadores'][idx],['🔎','📍','✅','⏳','🎯','⚠️','📭','📊','👥'][idx]));
   const diverg=lista.filter(i=>_dashAudStatus(i)==='DIVERGENTE');
   const prod=_dashAgrupar(diverg,i=>i.produtoEsperado||i.produto_esperado||i.dunEsperado||i.dun_esperado||i.dun||'SEM PRODUTO');
   const ruas=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).rua), niveis=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).nivel), cols=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).coluna);

@@ -191,43 +191,13 @@ async function _verificarEnderecoFirebase(endNorm) {
     // ── Verificar se o endereço está em recontagem ativa (divergência ou recontagem pendente) ──
     const emRecontagemLocal = _enderecoEmRecontagem(endNorm);
 
-    // Se não temos info local, consultar Firebase
+    // Os demais coletores recebem somente um indicador leve de bloqueio.
     let emRecontagemFS = false;
     if (!emRecontagemLocal) {
       try {
-        const [snapDiv, snapRec] = await Promise.all([
-          FS.collection('dt_divergencias')
-            .where('inventario_id', '==', APP.inventario.id)
-            .where('endereco', '==', endNorm)
-            .limit(5)
-            .get(),
-          FS.collection('dt_recontagens')
-            .where('inventario_id', '==', APP.inventario.id)
-            .where('endereco', '==', endNorm)
-            .limit(5)
-            .get(),
-        ]);
-        // Apenas divergências com fluxo ABERTO bloqueiam o endereço.
-        // RESOLVIDA, PERSISTENTE e sem_divergencia liberam o endereço para nova contagem.
-        const divAtiva = snapDiv.docs.find(d => {
-          const data = d.data();
-          const s     = (data.status || '').toUpperCase();
-          const bloq  = (data.status_bloqueio || '').toUpperCase();
-          const stRec = (data.status_recontagem || '').toLowerCase();
-          if (s === 'RESOLVIDA')             return false; // encerrada — não bloqueia
-          if (s === 'PERSISTENTE')           return false; // encerrada — não bloqueia
-          if (bloq === 'PERSISTENTE_BLOQUEADO') return false;
-          if (stRec === 'sem_divergencia')   return false; // resolvida — não bloqueia
-          if (data.divergencia_resolvida === true)     return false;
-          if (data.encerrada_definitivamente === true) return false;
-          return s !== ''; // div aberta/em_recontagem bloqueia
-        });
-        // Qualquer recontagem não cancelada = bloqueio permanente
-        const recAtiva = snapRec.docs.find(d => {
-          const sr = (d.data().status_recontagem || '').toLowerCase();
-          return sr !== 'cancelada';
-        });
-        emRecontagemFS = !!(divAtiva || recAtiva);
+        const chaveBloqueio = `${APP.inventario.id}__${encodeURIComponent(String(endNorm).trim().toUpperCase())}`;
+        const snapBloqueio = await FS.collection('dt_bloqueios_recontagem').doc(chaveBloqueio).get();
+        emRecontagemFS = snapBloqueio.exists && snapBloqueio.data()?.ativo === true;
       } catch(e) { /* se falhar, usar info local */ }
     }
 
@@ -332,7 +302,13 @@ function confirmarEnderecoSilencioso() {
     return;
   }
   if (status === 'proprio') {
-    _modalOpcoesProprio(valNorm, verifAtual.docsMeus || []);
+    fb.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px">
+      <b>🔒 Primeira contagem já realizada neste endereço</b>
+      <span style="font-size:.7rem;opacity:.9">Uma nova contagem somente pode ser liberada pelo Analista na aba Recontagem.</span>
+    </div>`;
+    document.getElementById('f-endereco').className = 'field field-err';
+    APP.atual.enderecoValido = false;
+    beepErr();
     return;
   }
 
@@ -464,8 +440,15 @@ function confirmarEndereco() {
   }
 
   if (status === 'proprio') {
-    // Mesmo operador — mostrar opções: continuar ou estornar
-    _modalOpcoesProprio(valNorm, docsMeus);
+    // Mesmo operador também não pode iniciar uma segunda primeira contagem.
+    // Correções exigem estorno; novas rodadas exigem atribuição do Analista.
+    fb.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px">
+      <b>🔒 Primeira contagem já realizada neste endereço</b>
+      <span style="font-size:.7rem;opacity:.9">Para corrigir, use Estorno. Para recontar, aguarde a atribuição do Analista.</span>
+    </div>`;
+    document.getElementById('f-endereco').className = 'field field-err';
+    APP.atual.enderecoValido = false;
+    beepErr();
     return;
   }
 
@@ -744,8 +727,18 @@ function _palletsNoEnderecoAtual(endNorm) {
     !c._excluida &&
     c.status !== 'ESTORNADA' &&
     c.status !== 'EXCLUIDA' &&
-    // Em recontagem: ignorar registros de contagem anterior (PRIMEIRA)
-    (!APP.modoRecontagem || c.tipo_contagem === 'RECONTAGEM')
+    // Em recontagem: considerar somente os paletes da rodada/tarefa atual.
+    // Isso evita que paletes de recontagens anteriores consumam a capacidade
+    // da nova rodada no mesmo endereco.
+    (!APP.modoRecontagem || (
+      c.tipo_contagem === 'RECONTAGEM' &&
+      (
+        String(c.recontagem_id || '') === String(APP.modoRecontagem.id || '') ||
+        (!c.recontagem_id &&
+          String(c.divergencia_id || '') === String(APP.modoRecontagem.divergencia_id || '') &&
+          Number(c.numero_recontagem || 1) === Number(APP.modoRecontagem.numero_recontagem || 1))
+      )
+    ))
   );
 
   // _verificarEnderecoFirebase() consulta as contagens existentes no Firestore antes
@@ -756,7 +749,15 @@ function _palletsNoEnderecoAtual(endNorm) {
     !c._excluida &&
     c.status !== 'ESTORNADA' &&
     c.status !== 'EXCLUIDA' &&
-    (!APP.modoRecontagem || c.tipo_contagem === 'RECONTAGEM')
+    (!APP.modoRecontagem || (
+      c.tipo_contagem === 'RECONTAGEM' &&
+      (
+        String(c.recontagem_id || '') === String(APP.modoRecontagem.id || '') ||
+        (!c.recontagem_id &&
+          String(c.divergencia_id || '') === String(APP.modoRecontagem.divergencia_id || '') &&
+          Number(c.numero_recontagem || 1) === Number(APP.modoRecontagem.numero_recontagem || 1))
+      )
+    ))
   );
 
   // União idempotente: a mesma contagem pode existir no array local e no snapshot.
@@ -894,7 +895,10 @@ function loteOnGtinInput() {
   if (!val) { fb.innerHTML = ''; return; }
   const match = _buscarProduto(val); // reutiliza a lógica existente de busca de produto
   if (match) {
-    fb.innerHTML = `<div class="fb ok" style="font-size:.75rem">✓ ${escHTML(match.descricao_produto || match.codigo_produto)}</div>`;
+    fb.innerHTML = `<div class="fb ok" style="display:block">
+      <div style="font-size:.78rem;font-weight:800">✓ Código bipado: ${escHTML(val)}</div>
+      <div style="font-size:.68rem;font-weight:600;margin-top:3px;line-height:1.25;opacity:.82">${escHTML(match.descricao_produto || 'Produto sem descrição')}</div>
+    </div>`;
   } else {
     fb.innerHTML = `<div class="fb warn" style="font-size:.75rem">⚠ Código não encontrado na base — será registrado assim mesmo</div>`;
   }
@@ -917,13 +921,30 @@ function loteConfirmarGtin() {
 
 /** Reutiliza a lógica de busca de produto do fluxo normal */
 function _buscarProduto(gtin) {
-  if (!APP.base?.length) return null;
+  const codigo = normProd(gtin);
   const endNorm = APP.lote?.endNorm || APP.atual._endNorm || '';
+  const corresponde = r =>
+    normProd(r.gtin) === codigo ||
+    normProd(r.dun) === codigo ||
+    normProd(r.codigo_produto) === codigo;
   // Primeiro tenta pelo endereço + gtin
-  const matchEnd = APP.base.find(r => r._end === endNorm && (r.gtin === gtin || r.codigo_produto === gtin));
+  const matchEnd = (APP.base || []).find(r => r._end === endNorm && corresponde(r));
   if (matchEnd) return matchEnd;
   // Fallback: qualquer produto com esse código
-  return APP.base.find(r => r.gtin === gtin || r.codigo_produto === gtin) || null;
+  const matchInventario = (APP.base || []).find(corresponde);
+  if (matchInventario) return matchInventario;
+  // Mesma Base Geral usada pela Auditoria: identifica o produto mesmo quando
+  // ele não consta na base operacional/endereço deste inventário.
+  const geral = window.DTProdutos?.buscarSync(gtin) || { encontrado:false };
+  if (!geral.encontrado) return null;
+  return {
+    codigo_produto: geral.codigoInterno || geral.produtoId || codigo,
+    descricao_produto: geral.nomeProduto || 'Produto sem descrição',
+    gtin: geral.gtin || codigo,
+    dun: geral.dun || '',
+    produto_id: geral.produtoId || '',
+    _base_geral: true
+  };
 }
 
 // ──────────────────────────────────────────────────────────────────

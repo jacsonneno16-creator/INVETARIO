@@ -266,7 +266,7 @@ function excluirEndereco(endCod) {
   showConfirm(`Excluir o endereço ${escHTML(endCod)}? Esta ação não pode ser desfeita.`, () => _excluirEnderecoConfirmado(endCod), { title: 'Excluir endereço', icon: '🗑️', okLabel: 'Excluir', okClass: 'btn-danger' }); return;
 }
 
-function _excluirEnderecoConfirmado(endCod) {
+async function _excluirEnderecoConfirmado(endCod) {
   const setor = state().enderecosLista.find(e => e.endereco === endCod)?.setor || 'SEM LOCAL';
   const lista = (state().enderecosLista || []).filter(e => e.endereco !== endCod);
   const porSetor = { ...(state().enderecosPorSetor || {}) };
@@ -280,8 +280,9 @@ function _excluirEnderecoConfirmado(endCod) {
   ]);
   storageSave(KEYS.enderecos, lista);
   atualizarEnderecos();
-  logSistema('ENDERECO', `Endereço ${endCod} excluído`, { endCod });
-  showToast(`🗑 Endereço ${endCod} excluído`, 's');
+  try { await window.fsPublicarEnderecos(); } catch (e) { console.error('[Endereços] Falha ao republicar chunks:', e); showToast('Endereço removido localmente, mas houve falha ao atualizar o Firebase.', 'e'); return; }
+  logSistema('ENDERECO', `Endereço ${endCod} excluído e base republicada em chunks`, { endCod });
+  showToast(`🗑 Endereço ${endCod} excluído e base atualizada`, 's');
 }
 
 function excluirTodosEnderecos() {
@@ -290,7 +291,7 @@ function excluirTodosEnderecos() {
   showConfirm(`Excluir TODOS os ${total.toLocaleString('pt-BR')} endereços cadastrados? Esta ação não pode ser desfeita.`, () => _excluirTodosEnderecosConfirmado(), { title: 'Excluir todos os endereços', icon: '🗑️', okLabel: 'Excluir tudo', okClass: 'btn-danger' }); return;
 }
 
-function _excluirTodosEnderecosConfirmado() {
+async function _excluirTodosEnderecosConfirmado() {
   const total = state().enderecosLista.length;
   window.AnalistaState.batch([
     window.AnalistaActions.replaceSlice('enderecosLista', [], { source: 'excluirTodosEnderecos' }),
@@ -298,8 +299,9 @@ function _excluirTodosEnderecosConfirmado() {
   ]);
   storageSave(KEYS.enderecos, []);
   atualizarEnderecos();
-  logSistema('ENDERECO', `Todos os ${total} endereços foram excluídos`, {});
-  showToast(`🗑 ${total.toLocaleString('pt-BR')} endereços excluídos`, 's');
+  try { await window.fsPublicarEnderecos(); } catch (e) { console.error('[Endereços] Falha ao limpar chunks:', e); showToast('A tela foi limpa, mas houve falha ao apagar a base publicada no Firebase.', 'e'); return; }
+  logSistema('ENDERECO', `Todos os ${total} endereços foram excluídos e os chunks zerados`, {});
+  showToast(`🗑 ${total.toLocaleString('pt-BR')} endereços excluídos do sistema e do Firebase`, 's');
 }
 
 // ───────────────────────────────────────────────────────────────────

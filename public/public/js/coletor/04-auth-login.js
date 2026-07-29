@@ -248,6 +248,12 @@ async function doLogin() {
       window.DT_USUARIO_ACESSO_ATUAL = acessoGlobal || {
         uid:user.uid, email:user.email, acesso_todas_lojas:true, lojas_permitidas:[]
       };
+      if (acessoGlobal?.canais_acesso && acessoGlobal.canais_acesso.coletor !== true) {
+        _setBtn('ENTRAR', false);
+        await AUTH.signOut().catch(()=>{});
+        _setFb('Este login possui acesso somente ao painel Analista.', 'err');
+        return;
+      }
 
       // Carrega as lojas permitidas. Uma única loja entra direto; duas ou
       // mais exibem o seletor antes do menu principal.
@@ -404,3 +410,6 @@ function _doLogoutConfirmado() {
 }
 
 
+
+// v91: não mantém telas operacionais abertas sem autenticação válida.
+(function(){try{AUTH.onAuthStateChanged(function(user){if(user)return;try{APP._auditoriaPronta=false;APP._auditoriaCarregando=false;APP.operador=null;}catch(e){}var ativa=document.querySelector('.screen.active');if(ativa&&ativa.id&&ativa.id!=='screen-login'){try{goScreen('login');}catch(e){}}});}catch(e){}})();

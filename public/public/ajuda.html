@@ -411,6 +411,12 @@
     }
     .btn-close-help:hover { border-color: var(--orange); color: var(--orange-h); }
   </style>
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<meta name="theme-color" content="#0d4f2f">
+
 </head>
 <body>
 <!-- ── NAV ── -->
@@ -430,13 +436,13 @@
 <div class="hero">
 <div class="hero-badge">❓ Central de Ajuda</div>
 <h1>Como podemos <span>te ajudar?</span></h1>
-<p>Encontre respostas sobre o funcionamento do Analista e do Coletor. A busca entende sinônimos e palavras incompletas.</p>
+<p>Manual completo do Analista e do Coletor. Pesquise uma tela, botão, tarefa, erro ou palavra do dia a dia.</p>
 <div class="search-wrap">
 <span class="search-icon">🔍</span>
-<input autocomplete="off" id="campo-busca" oninput="buscarAjuda(this.value)" placeholder="Ex: capa pallet, estorno, exportar, offline…" spellcheck="false" type="text"/>
+<input autocomplete="off" id="campo-busca" oninput="buscarAjuda(this.value)" placeholder="Ex: criar login, atualizar auditoria, excluir usuário, offline…" spellcheck="false" type="search"/>
 </div>
 <div class="search-hint">
-    Tente: <span>capa</span> <span>estorno</span> <span>offline</span> <span>api</span> <span>exportar</span>
+    Tente: <span>inventário</span> <span>permissões</span> <span>auditoria</span> <span>recontagem</span> <span>publicar</span> · pressione <span>/</span> para buscar
 </div>
 </div>
 <!-- ── MAIN ── -->
@@ -453,7 +459,7 @@
 <div class="empty-search" id="empty-busca">
 <div class="empty-icon">🔎</div>
 <div class="empty-txt">Nenhum resultado encontrado</div>
-<div class="empty-sub">Tente usar outras palavras — ex: "contagem", "login", "download", "sync"</div>
+<div class="empty-sub">Tente outra palavra — por exemplo: “login”, “atualizar”, “endereço”, “Firebase” ou “offline”.</div>
 </div>
 </div>
 <!-- ── MODAL DETALHE ── -->
@@ -465,5 +471,5 @@
 <!-- Voltar ao topo -->
 <button id="back-top" onclick="window.scrollTo({top:0,behavior:'smooth'})" title="Voltar ao topo">▲</button>
 
-<script src="js/ajuda/ajuda-base-conhecimento.js"></script></body>
+<script src="js/ajuda/ajuda-base-conhecimento.js?v=20260726-118"></script></body>
 </html>

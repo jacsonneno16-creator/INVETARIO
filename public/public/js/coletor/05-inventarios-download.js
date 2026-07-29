@@ -186,7 +186,18 @@ function _invBaseVer(docData) {
   );
 }
 
-function selecionarInventario(id, modo = 'inventario') {
+async function _carregarBaseGeralProdutosInventario(force = false) {
+  if (!window.DTProdutos?.carregar) return [];
+  let produtos = await window.DTProdutos.carregar(force);
+  let total = (produtos || []).filter(p => p && p.ativo !== false).length;
+  if (!total && navigator.onLine && !force) {
+    produtos = await window.DTProdutos.carregar(true);
+    total = (produtos || []).filter(p => p && p.ativo !== false).length;
+  }
+  return produtos || [];
+}
+
+async function selecionarInventario(id, modo = 'inventario') {
   APP.modoPendente = modo || 'inventario';
   const inv = (APP.inventariosDisponiveis || []).find(i => i.id === id);
   if (!inv) { toast('Inventário não encontrado', 'e'); return; }
@@ -206,6 +217,13 @@ function selecionarInventario(id, modo = 'inventario') {
   );
 
   if (cacheValido) {
+    const produtosGerais = await _carregarBaseGeralProdutosInventario(false);
+    if (!produtosGerais.length) {
+      toast(navigator.onLine
+        ? 'Não foi possível baixar a Base Geral de Produtos. Tente abrir novamente.'
+        : 'A Base Geral de Produtos ainda não foi baixada neste coletor.', 'e');
+      return;
+    }
     // ── Usar cache local — sem download ──────────────────────
     dbg('[cache] base local válida —', baseLocal.length, 'registros, ver:', verLocal);
     APP.inventario    = inv;
@@ -446,6 +464,10 @@ async function _executarDownload(inv) {
   // Verificar offline — usar cache se existir
   const baseLocal = baseLoad(invId);
   if (!navigator.onLine && baseLocal && baseLocal.length > 0) {
+    const produtosGeraisOffline = await _carregarBaseGeralProdutosInventario(false);
+    if (!produtosGeraisOffline.length) {
+      throw new Error('A Base Geral de Produtos ainda não foi baixada neste coletor. Conecte-se à internet e abra o inventário novamente.');
+    }
     _dlStep('offline', '💾', 'Modo offline', baseLocal.length + ' registros do cache', 'ok');
     _dlProg(100, 'Pronto (offline)');
     APP.inventario    = inv;
@@ -481,7 +503,20 @@ async function _executarDownload(inv) {
   _dlProg(20);
   if (_dlCancelado) return;
 
-  // Etapa 2: base de produtos (chunks)
+  // Etapa 2: mesma Base Geral de Produtos usada pela Auditoria.
+  // Ela fornece cadastro, nome, GTIN, EAN, DUN e código interno e fica no
+  // IndexedDB para que a identificação continue funcionando offline.
+  _dlProg(22, 'Baixando Base Geral de Produtos…');
+  _dlStep('prod-geral', '📦', 'Base Geral de Produtos', 'Baixando produtos, GTIN, EAN e DUN…', 'run');
+  const produtosGerais = await _carregarBaseGeralProdutosInventario(false);
+  if (_dlCancelado) return;
+  if (!produtosGerais.length) {
+    _dlStep('prod-geral', '📦', 'Base Geral de Produtos', 'Base não encontrada', 'err');
+    throw new Error('Não foi possível baixar a Base Geral de Produtos. Confirme se a base foi publicada e tente novamente.');
+  }
+  _dlStep('prod-geral', '📦', 'Base Geral de Produtos', produtosGerais.length + ' produtos carregados', 'ok');
+
+  // Etapa 3: base operacional do inventário (chunks)
   _dlProg(25, 'Baixando base de produtos…');
   _dlStep('base', '📦', 'Base de produtos', 'Carregando…', 'run');
 
@@ -599,41 +634,21 @@ async function _executarDownload(inv) {
     try {
       // v15: leitura principal por chunks de 1000 endereços.
       // Reduz leituras de N endereços para aproximadamente N/1000 documentos.
-      const chunksSnap = await FS.collection('dt_locais_chunks').orderBy('parte').get();
-      if (!chunksSnap.empty) {
-        const todosDocs = chunksSnap.docs;
-        const docsDaVersao = versaoServidor ? todosDocs.filter(d => String((d.data() || {}).versao || '') === versaoServidor) : [];
-        const docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(d => !(d.data() || {}).versao);
-        docsUsar.forEach(chunkDoc => {
-          const dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
-          dados.forEach(d => {
-            if (d.ativo === false) return;
-            const end = _normStr(d.endereco || '');
-            if (!end) return;
-            locaisSet.add(end);
-            const cap = parseInt(
-              d.capacidade_paletes ?? d.capacidade_pallets ?? d.capacidade_palete ??
-              d.capacidade_pallet  ?? d.capacidade         ?? d.max_pallets        ?? 0
-            );
-            if (cap > 0) endCapMapa[end] = cap;
-          });
-        });
-      } else {
-        // Fallback para instalações antigas ainda sem dt_locais_chunks.
-        const locSnap = await FS.collection(FCOL.locais).get();
-        locSnap.docs.forEach(doc => {
-          const d   = doc.data();
+      if (!versaoServidor) throw new Error('Versão da Base Geral de Endereços não encontrada.');
+      const chunksSnap = await FS.collection('dt_locais_chunks').where('versao','==',versaoServidor).get();
+      if (chunksSnap.empty) throw new Error('Base de endereços em chunks não publicada para a versão atual.');
+      const docsUsar = chunksSnap.docs.slice().sort((a,b)=>Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0));
+      docsUsar.forEach(chunkDoc => {
+        const dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
+        dados.forEach(d => {
           if (d.ativo === false) return;
-          const end = _normStr(d.endereco || doc.id);
+          const end = _normStr(d.endereco || '');
           if (!end) return;
           locaisSet.add(end);
-          const cap = parseInt(
-            d.capacidade_paletes ?? d.capacidade_pallets ?? d.capacidade_palete ??
-            d.capacidade_pallet  ?? d.capacidade         ?? d.max_pallets        ?? 0
-          );
+          const cap = parseInt(d.capacidade_paletes ?? d.capacidade_pallets ?? d.capacidade_palete ?? d.capacidade_pallet ?? d.capacidade ?? d.max_pallets ?? 0);
           if (cap > 0) endCapMapa[end] = cap;
         });
-      }
+      });
       // Persistir cache + versão
       try {
         localStorage.setItem(LS_LOCAIS,     JSON.stringify(endCapMapa));

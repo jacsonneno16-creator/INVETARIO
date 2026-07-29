@@ -1,6 +1,6 @@
 (function(global){
 'use strict';
-const COL=()=>global.getDTFirestore().collection(global.DT_FCOL.produtos||'dt_produtos');let lista=[],listener=null,familiaAtiva='TODAS',sincronizandoChunks=false,mutacaoEmAndamento=false;
+const COL=()=>global.getDTRawFirestore().collection(global.DT_FCOL.produtos||'dt_produtos');let lista=[],listener=null,familiaAtiva='TODAS',sincronizandoChunks=false,mutacaoEmAndamento=false;
 const txt=v=>String(v==null?'':v).trim();const esc=v=>txt(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cab=v=>txt(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[_\-]+/g,' ').replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
 const cod=v=>global.DTProdutos.normalizarCodigo(v);
@@ -21,16 +21,26 @@ function render(){
 async function publicarChunksProdutos(){
  if(sincronizandoChunks)return;sincronizandoChunks=true;
  try{
-  const fs=global.getDTFirestore(),raw=global.getDTRawFirestore();
+  const fs=global.getDTRawFirestore(),raw=global.getDTRawFirestore();
   const snap=await COL().get();
   const todos=snap.docs.map(d=>({id:d.id,...d.data()}));
   const tamanho=1000,totalChunks=Math.ceil(todos.length/tamanho),versao=Date.now().toString();
+  // Publicação segura por versão: escreve todos os chunks novos + o meta ANTES de apagar
+  // os antigos. Assim nunca existe uma janela em que o coletor encontra a base vazia
+  // no meio da publicação (mesmo princípio usado em fsPublicarEnderecos).
+  const idsNovos=new Set();
+  const opsNovas=[];
+  for(let i=0;i<totalChunks;i++){
+   const ref=fs.collection('dt_produtos_chunks').doc('v'+versao+'_'+String(i+1).padStart(4,'0'));
+   idsNovos.add(ref.id);
+   opsNovas.push({tipo:'set',ref,data:{parte:i+1,totalPartes:totalChunks,totalProdutos:todos.length,versao,itens:todos.slice(i*tamanho,(i+1)*tamanho)}});
+  }
+  for(let i=0;i<opsNovas.length;i+=350){const batch=raw.batch();opsNovas.slice(i,i+350).forEach(op=>batch.set(op.ref,op.data));await batch.commit();}
+  await fs.collection('dt_produtos_meta').doc('versao').set({versao,totalProdutos:todos.length,totalChunks,atualizadoEm:new Date().toISOString()});
+  // Só agora o coletor passa a enxergar a nova versão completa — pode limpar os chunks antigos.
   const antigos=await fs.collection('dt_produtos_chunks').get();
-  const ops=[];
-  antigos.docs.forEach(d=>ops.push({tipo:'delete',ref:d.ref}));
-  for(let i=0;i<totalChunks;i++)ops.push({tipo:'set',ref:fs.collection('dt_produtos_chunks').doc('parte_'+String(i+1).padStart(4,'0')),data:{parte:i+1,totalPartes:totalChunks,totalProdutos:todos.length,versao,itens:todos.slice(i*tamanho,(i+1)*tamanho)}});
-  ops.push({tipo:'set',ref:fs.collection('dt_produtos_meta').doc('versao'),data:{versao,totalProdutos:todos.length,totalChunks,atualizadoEm:new Date().toISOString()}});
-  for(let i=0;i<ops.length;i+=350){const batch=raw.batch();ops.slice(i,i+350).forEach(op=>op.tipo==='delete'?batch.delete(op.ref):batch.set(op.ref,op.data));await batch.commit();}
+  const opsDelete=antigos.docs.filter(d=>!idsNovos.has(d.id)).map(d=>({tipo:'delete',ref:d.ref}));
+  for(let i=0;i<opsDelete.length;i+=350){const batch=raw.batch();opsDelete.slice(i,i+350).forEach(op=>batch.delete(op.ref));await batch.commit();}
   console.log('[Produtos] Chunks publicados:',totalChunks,'/',todos.length);
  }finally{sincronizandoChunks=false;}
 }
@@ -69,11 +79,24 @@ async function importar(file){
  }catch(e){console.error('[Produtos] Falha na importação',e);const msg=e?.message||String(e);if(global.showToast)global.showToast(msg,'error');else alert(msg);}
  finally{global.__produtoImportando=false;mutacaoEmAndamento=false;if(!listener)iniciar();}
 }
+async function atualizarBase(){
+ if(global.__produtoImportando){if(global.showToast)global.showToast('Já existe uma operação em andamento.','info');return;}
+ global.__produtoImportando=true;mutacaoEmAndamento=true;
+ const aviso=global.showToast?global.showToast('Atualizando base de produtos…','info'):null;
+ try{
+  const snap=await COL().get();
+  lista=snap.docs.map(d=>{const p=global.DTProdutos.normalizarProduto(d.data(),d.id);p.categoriaFamilia=txt(d.data().categoriaFamilia||d.data().familiaCategoria)||inferirCategoria(p.nomeProduto,p.familiaNome);return p;});
+  global.DTProdutos.indexar(lista);render();
+  await publicarChunksProdutos();
+  if(global.showToast)global.showToast(`Base atualizada: ${lista.length} produto(s) publicado(s) para os coletores.`,'success');
+ }catch(e){console.error('[Produtos] Falha ao atualizar base',e);const msg=e?.message||String(e);if(global.showToast)global.showToast(msg,'error');else alert(msg);}
+ finally{global.__produtoImportando=false;mutacaoEmAndamento=false;}
+}
 function exportar(){const dados=lista.map(p=>({'Código interno':p.codigoInterno,'Produto':p.nomeProduto,'Família':p.categoriaFamilia||inferirCategoria(p.nomeProduto,p.familiaNome),'GTIN/EAN':p.gtin,'Unidade':p.unidade,'Embalagem':p.embalagem,'Produto principal':p.familiaNome||p.produtoPrincipal,'Status':p.ativo?'ATIVO':'INATIVO'}));const ws=XLSX.utils.json_to_sheet(dados);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Produtos');XLSX.writeFile(wb,'base_produtos.xlsx');}
 async function excluirTodos(){const total=lista.length;if(!total){if(global.showToast)global.showToast('Não há produtos para excluir.','error');return;}const executar=async()=>{let excluidos=0;mutacaoEmAndamento=true;if(listener){try{listener();}catch(_){}listener=null;}try{const snap=await COL().get();const docs=snap.docs||[];for(let i=0;i<docs.length;i+=300){const batch=global.getDTRawFirestore().batch();docs.slice(i,i+300).forEach(d=>batch.delete(d.ref));await batch.commit();excluidos+=Math.min(300,docs.length-i);}lista=[];global.DTProdutos.indexar([]);await publicarChunksProdutos();render();if(global.showToast)global.showToast(excluidos+' produto(s) excluído(s).','success');}catch(e){console.error(e);if(global.showToast)global.showToast('Erro ao excluir todos: '+e.message,'error');}finally{mutacaoEmAndamento=false;await iniciar();}};if(global.showConfirm)global.showConfirm('Excluir TODOS os '+total.toLocaleString('pt-BR')+' produtos desta loja?',executar,{title:'Excluir todos os produtos',icon:'🗑️',okLabel:'Excluir tudo',okClass:'btn-danger'});else if(confirm('Excluir TODOS os '+total+' produtos desta loja?'))await executar();}
 function reiniciarAoTrocarLoja(){if(listener){try{listener();}catch(_){}listener=null;}lista=[];familiaAtiva='TODAS';global.DTProdutos.indexar([]);render();iniciar();}
 function modelo(){const ws=XLSX.utils.json_to_sheet([{'CÓDIGO INTERNO':'000123','PRODUTO':'00001 TAPIOCA DA TERRINHA 1 KG - CX 12','FAMÍLIA':'TAPIOCA','GTIN':'0789000000001','UNIDADE':'CX'}]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Modelo');XLSX.writeFile(wb,'modelo_base_produtos.xlsx');}
 document.addEventListener('click',async e=>{if(!e.target.closest('.prod-familia-dropdown')){const m=document.getElementById('prod-familia-menu');if(m)m.style.display='none';}const fb=e.target.closest('[data-prod-familia]');if(fb){familiaAtiva=fb.dataset.prodFamilia||'TODAS';render();return;}const b=e.target.closest('[data-prod-acao]');if(!b)return;const p=lista.find(x=>x.id===b.dataset.id);if(!p)return;if(b.dataset.prodAcao==='editar')abrirModal(p);if(b.dataset.prodAcao==='toggle')await salvarProduto({...p,ativo:!p.ativo},p.id);if(b.dataset.prodAcao==='excluir'&&confirm(`Excluir ${p.nomeProduto}?`)){mutacaoEmAndamento=true;try{await COL().doc(p.id).delete();lista=lista.filter(x=>x.id!==p.id);global.DTProdutos.indexar(lista);render();await publicarChunksProdutos();}finally{mutacaoEmAndamento=false;}}});
 if(!global.__baseProdutosListenerLoja){global.__baseProdutosListenerLoja=true;global.addEventListener('dt-loja-alterada',reiniciarAoTrocarLoja);}
-global.renderBaseProdutos=()=>{render();if(!listener)iniciar();};global.produtoNovo=()=>abrirModal();global.produtoImportar=importar;global.produtoExportar=exportar;global.produtoBaixarModelo=modelo;global.produtoExcluirTodos=excluirTodos;
+global.renderBaseProdutos=()=>{render();if(!listener)iniciar();};global.produtoNovo=()=>abrirModal();global.produtoImportar=importar;global.produtoAtualizarBase=atualizarBase;global.produtoExportar=exportar;global.produtoBaixarModelo=modelo;global.produtoExcluirTodos=excluirTodos;global.publicarChunksProdutos=publicarChunksProdutos;
 })(window);

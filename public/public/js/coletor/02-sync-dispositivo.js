@@ -261,7 +261,20 @@ function iniciarListenerAprovacaoColetor(operadorInfo) {
     try {
       await ref.set({status:'online', operador_atual:operadorInfo.name, operador_email:operadorInfo.email, operador_uid:operadorInfo.uid, ultimo_ping:ST()}, {merge:true});
       if (_aprovacaoListener) { _aprovacaoListener(); _aprovacaoListener=null; }
-      location.reload();
+
+      // Ao recuperar a conexão durante uma operação já iniciada, não recarrega a
+      // página. O reload apagava o contexto da auditoria e passava a impressão de
+      // que era necessário começar de novo. Só recarrega quando o coletor ainda
+      // está efetivamente parado na tela de aprovação.
+      // A aprovação ou a volta da conexão nunca deve recarregar a página.
+      // Mantém inventário, endereço, produto e auditoria atuais e sincroniza tudo em segundo plano.
+      if (typeof window.sincronizarTudoEmSegundoPlano === 'function') {
+        window.sincronizarTudoEmSegundoPlano('aprovacao').catch(function(){});
+      } else {
+        if (typeof window.sincronizarFilaAuditoria === 'function') window.sincronizarFilaAuditoria().catch(function(){});
+        if (typeof enviarFilaPendente === 'function') enviarFilaPendente().catch(function(){});
+      }
+      atualizarBarraStatus();
     } catch(e) { console.error('[Aprovação] Falha ao liberar coletor:', e); }
   }, err => console.error('[Aprovação] Listener:', err));
 }
@@ -624,6 +637,28 @@ async function enviarFilaPendente() {
         enviado_em:  new Date(),
         status_sync: 'sincronizado',
       });
+
+      // Uma recontagem concluída offline chega aqui junto com a contagem.
+      // Atualizar a tarefa vinculada no mesmo ciclo de sincronização evita que
+      // ela reapareça como PENDENTE no coletor. A divergência continua sendo
+      // propriedade do Analista e não é alterada pelo coletor.
+      if (String(c.tipo_contagem || '').toUpperCase() === 'RECONTAGEM' && c.recontagem_id) {
+        try {
+          await FS.collection('dt_recontagens').doc(String(c.recontagem_id)).set({
+            status_recontagem: 'concluida',
+            status: 'CONCLUIDA',
+            numero_recontagem: Number(c.numero_recontagem || 1),
+            recontagem_concluida_em: c.criado_em || new Date().toISOString(),
+            operador_recontagem: c.operador_nome || c.operador || '',
+            contagem_uuid: c.uuid || docId,
+            atualizado_em: new Date().toISOString()
+          }, { merge: true });
+        } catch (statusErr) {
+          // A contagem já foi preservada. O Analista ainda consegue consolidar
+          // pelo recontagem_id/chave de fluxo; portanto não duplicamos o envio.
+          console.warn('[fila] Contagem enviada, mas status da recontagem não foi atualizado:', statusErr.message);
+        }
+      }
 
       // Remove do IDB e marca localmente
       await idbDelete(c.uuid);

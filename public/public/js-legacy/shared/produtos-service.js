@@ -47,7 +47,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
 };
 (function (global) {
     'use strict';
-    var cache = { lista: [], porDun: new Map(), porGtin: new Map(), porCodigo: new Map(), porTodos: new Map(), ambiguos: new Map(), carregado: false, carregando: null, loja: '', versao: '', ultimaVerificacao: 0 };
+    var cache = { lista: [], porDun: new Map(), porGtin: new Map(), porCodigo: new Map(), porTodos: new Map(), ambiguos: new Map(), carregado: false, carregando: null, loja: 'GLOBAL', versao: '', ultimaVerificacao: 0 };
     function texto(v) { return String(v == null ? '' : v).trim(); }
     function codigo(v) { return texto(v).replace(/[\s.\-\/()]/g, '').toUpperCase(); }
     function inferirFamilia(nome, unidade) {
@@ -67,7 +67,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         return u || 'OUTRO';
     }
     function produto(raw, id) {
-        var nome = texto(raw.nomeProduto || raw.nome_produto || raw.produto || raw.descricao);
+        var nome = texto(raw.nomeProduto || raw.nome_produto || raw.produto || raw.descricao_produto || raw.descricaoProduto || raw.descricao);
         var unidade = texto(raw.unidade || raw.un || raw.embalagem);
         var fam = inferirFamilia(nome, unidade);
         var gtin = texto(raw.gtin || raw.ean || raw.gtin_principal || raw.gtinPrincipal || raw.gtin_ean || raw.ean_gtin || raw.codigo_barras || raw.codigo_de_barras || raw.codigoBarras || raw.barcode);
@@ -81,8 +81,21 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (el)
             el.textContent = Number(total || 0).toLocaleString('pt-BR');
     }
+    function persistirBaseLocal(lista, tentativa) {
+        tentativa = Number(tentativa || 0);
+        if (global.DTAuditoriaStorage) {
+            global.DTAuditoriaStorage.cacheSet('dt_produtos_cache__GLOBAL', lista).then(function () {
+                try {
+                    localStorage.removeItem('dt_produtos_cache__GLOBAL');
+                }
+                catch (_e) { }
+            }).catch(function (e) { console.warn('[Produtos] Falha ao persistir no IndexedDB:', e); });
+            return;
+        }
+        if (tentativa < 50)
+            setTimeout(function () { persistirBaseLocal(lista, tentativa + 1); }, 100);
+    }
     function indexar(lista) {
-        var _a;
         cache.lista = (lista || []).map(function (x) { return produto(x, x.id); });
         cache.porDun.clear();
         cache.porGtin.clear();
@@ -115,110 +128,137 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         cache.porTodos.forEach(function (arr, k) { if (arr.length > 1)
             cache.ambiguos.set(k, arr.slice()); });
         cache.carregado = true;
-        cache.loja = ((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) || '';
-        try {
-            localStorage.setItem('dt_produtos_cache__' + cache.loja, JSON.stringify(cache.lista));
-        }
-        catch (e) { }
+        cache.loja = 'GLOBAL';
+        // Em coletores, a base completa pode ocupar quase toda a cota do
+        // localStorage. Quando o armazenamento da auditoria estiver disponível,
+        // persiste a base no IndexedDB sem bloquear a leitura em memória.
+        persistirBaseLocal(cache.lista, 0);
         atualizarContadorNav(cache.lista.length);
         global.dispatchEvent(new CustomEvent('dt-produtos-atualizados', { detail: { total: cache.lista.length, ambiguos: cache.ambiguos.size } }));
         return cache.lista;
     }
-    function carregarLocal() { var _a; var loja = ((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) || ''; try {
-        var raw = localStorage.getItem('dt_produtos_cache__' + loja);
-        if (raw)
-            indexar(JSON.parse(raw));
+    function carregarLocal() {
+        return __awaiter(this, void 0, void 0, function () {
+            var lista, raw, e_1;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        _a.trys.push([0, 3, , 4]);
+                        lista = null;
+                        if (!global.DTAuditoriaStorage) return [3 /*break*/, 2];
+                        return [4 /*yield*/, global.DTAuditoriaStorage.cacheGet('dt_produtos_cache__GLOBAL')];
+                    case 1:
+                        lista = _a.sent();
+                        _a.label = 2;
+                    case 2:
+                        if (!Array.isArray(lista)) {
+                            raw = localStorage.getItem('dt_produtos_cache__GLOBAL');
+                            if (raw)
+                                lista = JSON.parse(raw);
+                        }
+                        if (Array.isArray(lista))
+                            indexar(lista);
+                        return [3 /*break*/, 4];
+                    case 3:
+                        e_1 = _a.sent();
+                        console.warn('[Produtos] Falha ao carregar cache local:', e_1);
+                        return [3 /*break*/, 4];
+                    case 4: return [2 /*return*/];
+                }
+            });
+        });
     }
-    catch (e) { } }
     function carregar() {
         return __awaiter(this, arguments, void 0, function (force) {
             var loja;
             var _this = this;
-            var _a;
             if (force === void 0) { force = false; }
-            return __generator(this, function (_b) {
-                loja = ((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) || '';
-                if (cache.carregando)
-                    return [2 /*return*/, cache.carregando];
-                if (!navigator.onLine) {
-                    if (!cache.carregado || cache.loja !== loja)
-                        carregarLocal();
-                    return [2 /*return*/, cache.lista];
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        loja = 'GLOBAL';
+                        if (cache.carregando)
+                            return [2 /*return*/, cache.carregando];
+                        if (!!navigator.onLine) return [3 /*break*/, 3];
+                        if (!(!cache.carregado || cache.loja !== loja)) return [3 /*break*/, 2];
+                        return [4 /*yield*/, carregarLocal()];
+                    case 1:
+                        _a.sent();
+                        _a.label = 2;
+                    case 2: return [2 /*return*/, cache.lista];
+                    case 3:
+                        cache.carregando = (function () { return __awaiter(_this, void 0, void 0, function () {
+                            var fs, versaoKey, versaoServidor, meta, _e_1, versaoLocal, chunks, docs, rows_1, result, e_2;
+                            return __generator(this, function (_a) {
+                                switch (_a.label) {
+                                    case 0:
+                                        _a.trys.push([0, 9, 12, 13]);
+                                        fs = global.getDTRawFirestore();
+                                        versaoKey = 'dt_produtos_versao__' + loja;
+                                        versaoServidor = '';
+                                        _a.label = 1;
+                                    case 1:
+                                        _a.trys.push([1, 3, , 4]);
+                                        return [4 /*yield*/, fs.collection('dt_produtos_meta').doc('versao').get()];
+                                    case 2:
+                                        meta = _a.sent();
+                                        if (meta.exists)
+                                            versaoServidor = texto(meta.data().versao || meta.data().atualizadoEm || '');
+                                        return [3 /*break*/, 4];
+                                    case 3:
+                                        _e_1 = _a.sent();
+                                        return [3 /*break*/, 4];
+                                    case 4:
+                                        versaoLocal = localStorage.getItem(versaoKey) || cache.versao || '';
+                                        cache.ultimaVerificacao = Date.now();
+                                        if (!force && cache.carregado && cache.loja === loja && versaoServidor && versaoLocal === versaoServidor) {
+                                            cache.versao = versaoServidor;
+                                            return [2 /*return*/, cache.lista];
+                                        }
+                                        if (!!versaoServidor) return [3 /*break*/, 7];
+                                        console.warn('[Produtos] Metadado de versão ausente; mantendo cache local.');
+                                        if (!(!cache.carregado || cache.loja !== loja)) return [3 /*break*/, 6];
+                                        return [4 /*yield*/, carregarLocal()];
+                                    case 5:
+                                        _a.sent();
+                                        _a.label = 6;
+                                    case 6: return [2 /*return*/, cache.lista];
+                                    case 7: return [4 /*yield*/, Promise.race([
+                                            fs.collection('dt_produtos_chunks').where('versao', '==', versaoServidor).get(),
+                                            new Promise(function (_, reject) { setTimeout(function () { reject(new Error('Tempo excedido ao carregar chunks de produtos')); }, 30000); })
+                                        ])];
+                                    case 8:
+                                        chunks = _a.sent();
+                                        docs = (chunks.docs || []).slice().sort(function (a, b) { return Number((a.data() || {}).parte || 0) - Number((b.data() || {}).parte || 0); });
+                                        rows_1 = [];
+                                        docs.forEach(function (d) { var x = d.data() || {}; var itens = x.itens || x.dados || x.registros || []; rows_1 = rows_1.concat(itens); });
+                                        console.log('[Produtos] Base atualizada somente por chunks:', docs.length, 'documentos /', rows_1.length, 'produtos / versão', versaoServidor);
+                                        result = indexar(rows_1);
+                                        cache.versao = versaoServidor;
+                                        if (versaoServidor)
+                                            try {
+                                                localStorage.setItem(versaoKey, versaoServidor);
+                                            }
+                                            catch (_e) { }
+                                        return [2 /*return*/, result];
+                                    case 9:
+                                        e_2 = _a.sent();
+                                        console.warn('[Produtos] Falha ao atualizar base:', e_2);
+                                        if (!(!cache.carregado || cache.loja !== loja)) return [3 /*break*/, 11];
+                                        return [4 /*yield*/, carregarLocal()];
+                                    case 10:
+                                        _a.sent();
+                                        _a.label = 11;
+                                    case 11: return [2 /*return*/, cache.lista];
+                                    case 12:
+                                        cache.carregando = null;
+                                        return [7 /*endfinally*/];
+                                    case 13: return [2 /*return*/];
+                                }
+                            });
+                        }); })();
+                        return [2 /*return*/, cache.carregando];
                 }
-                cache.carregando = (function () { return __awaiter(_this, void 0, void 0, function () {
-                    var fs, versaoKey, versaoServidor_1, meta, _e_1, versaoLocal, chunks, docs, daVersao, rows_1, snap, result, e_1;
-                    return __generator(this, function (_a) {
-                        switch (_a.label) {
-                            case 0:
-                                _a.trys.push([0, 9, 10, 11]);
-                                fs = global.getDTFirestore();
-                                versaoKey = 'dt_produtos_versao__' + loja;
-                                versaoServidor_1 = '';
-                                _a.label = 1;
-                            case 1:
-                                _a.trys.push([1, 3, , 4]);
-                                return [4 /*yield*/, fs.collection('dt_produtos_meta').doc('versao').get()];
-                            case 2:
-                                meta = _a.sent();
-                                if (meta.exists)
-                                    versaoServidor_1 = texto(meta.data().versao || meta.data().atualizadoEm || '');
-                                return [3 /*break*/, 4];
-                            case 3:
-                                _e_1 = _a.sent();
-                                return [3 /*break*/, 4];
-                            case 4:
-                                versaoLocal = localStorage.getItem(versaoKey) || cache.versao || '';
-                                cache.ultimaVerificacao = Date.now();
-                                if (!force && cache.carregado && cache.loja === loja && versaoServidor_1 && versaoLocal === versaoServidor_1) {
-                                    cache.versao = versaoServidor_1;
-                                    return [2 /*return*/, cache.lista];
-                                }
-                                return [4 /*yield*/, Promise.race([
-                                        fs.collection('dt_produtos_chunks').orderBy('parte').get(),
-                                        new Promise(function (_, reject) { setTimeout(function () { reject(new Error('Tempo excedido ao carregar chunks de produtos')); }, 12000); })
-                                    ])];
-                            case 5:
-                                chunks = _a.sent();
-                                docs = chunks.docs || [];
-                                if (versaoServidor_1) {
-                                    daVersao = docs.filter(function (d) { return texto((d.data() || {}).versao) === versaoServidor_1; });
-                                    if (daVersao.length)
-                                        docs = daVersao;
-                                }
-                                rows_1 = [];
-                                if (!docs.length) return [3 /*break*/, 6];
-                                docs.forEach(function (d) { var x = d.data() || {}; var itens = x.itens || x.dados || x.registros || []; rows_1 = rows_1.concat(itens); });
-                                console.log('[Produtos] Base atualizada em chunks:', docs.length, 'documentos /', rows_1.length, 'produtos / versão', versaoServidor_1 || 'legada');
-                                return [3 /*break*/, 8];
-                            case 6: return [4 /*yield*/, fs.collection((global.DT_FCOL && global.DT_FCOL.produtos) || 'dt_produtos').get()];
-                            case 7:
-                                snap = _a.sent();
-                                rows_1 = snap.docs.map(function (d) { return (__assign({ id: d.id }, d.data())); });
-                                console.warn('[Produtos] Chunks ausentes; usando coleção individual:', rows_1.length);
-                                _a.label = 8;
-                            case 8:
-                                result = indexar(rows_1);
-                                cache.versao = versaoServidor_1;
-                                if (versaoServidor_1)
-                                    try {
-                                        localStorage.setItem(versaoKey, versaoServidor_1);
-                                    }
-                                    catch (_e) { }
-                                return [2 /*return*/, result];
-                            case 9:
-                                e_1 = _a.sent();
-                                console.warn('[Produtos] Falha ao atualizar base:', e_1);
-                                if (!cache.carregado || cache.loja !== loja)
-                                    carregarLocal();
-                                return [2 /*return*/, cache.lista];
-                            case 10:
-                                cache.carregando = null;
-                                return [7 /*endfinally*/];
-                            case 11: return [2 /*return*/];
-                        }
-                    });
-                }); })();
-                return [2 /*return*/, cache.carregando];
             });
         });
     }
@@ -234,14 +274,14 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         return __assign({ encontrado: true }, arr[0]);
     }
     function buscar(valor) {
-        return __awaiter(this, void 0, void 0, function () { var _a; return __generator(this, function (_b) {
-            switch (_b.label) {
+        return __awaiter(this, void 0, void 0, function () { return __generator(this, function (_a) {
+            switch (_a.label) {
                 case 0:
-                    if (!(!cache.carregado || cache.loja !== (((_a = global.getDTLojaAtiva) === null || _a === void 0 ? void 0 : _a.call(global)) || ''))) return [3 /*break*/, 2];
+                    if (!(!cache.carregado || cache.loja !== 'GLOBAL')) return [3 /*break*/, 2];
                     return [4 /*yield*/, carregar()];
                 case 1:
-                    _b.sent();
-                    _b.label = 2;
+                    _a.sent();
+                    _a.label = 2;
                 case 2: return [2 /*return*/, buscarSync(valor)];
             }
         }); });
@@ -262,13 +302,8 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     if (!global.__dtProdutosPreloadLoja) {
         global.__dtProdutosPreloadLoja = true;
         global.addEventListener('dt-loja-alterada', function () {
-            limparCache();
-            atualizarContadorNav(0);
-            setTimeout(function () {
-                var loja = global.getDTLojaAtiva ? global.getDTLojaAtiva() : '';
-                if (loja && global.getDTFirestore)
-                    carregar(true).catch(function (e) { if (global.console) console.warn('[Produtos] Pré-carga após troca de loja:', e); });
-            }, 250);
+            // Produtos são globais e não mudam quando a loja é trocada.
+            atualizarContadorNav(cache.lista.length);
         });
     }
     function familias() { var mapa = {}; cache.lista.forEach(function (p) { if (!p.ativo)

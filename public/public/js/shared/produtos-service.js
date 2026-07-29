@@ -1,6 +1,6 @@
 (function(global){
   'use strict';
-  const cache={lista:[],porDun:new Map(),porGtin:new Map(),porCodigo:new Map(),porTodos:new Map(),ambiguos:new Map(),carregado:false,carregando:null,loja:'',versao:'',ultimaVerificacao:0};
+  const cache={lista:[],porDun:new Map(),porGtin:new Map(),porCodigo:new Map(),porTodos:new Map(),ambiguos:new Map(),carregado:false,carregando:null,loja:'GLOBAL',versao:'',ultimaVerificacao:0};
   function texto(v){return String(v==null?'':v).trim();}
   function codigo(v){return texto(v).replace(/[\s.\-\/()]/g,'').toUpperCase();}
   function inferirFamilia(nome,unidade){
@@ -16,7 +16,7 @@
     return u||'OUTRO';
   }
   function produto(raw,id){
-    var nome=texto(raw.nomeProduto||raw.nome_produto||raw.produto||raw.descricao);
+    var nome=texto(raw.nomeProduto||raw.nome_produto||raw.produto||raw.descricao_produto||raw.descricaoProduto||raw.descricao);
     var unidade=texto(raw.unidade||raw.un||raw.embalagem);
     var fam=inferirFamilia(nome,unidade);
     var gtin=texto(raw.gtin||raw.ean||raw.gtin_principal||raw.gtinPrincipal||raw.gtin_ean||raw.ean_gtin||raw.codigo_barras||raw.codigo_de_barras||raw.codigoBarras||raw.barcode);
@@ -28,6 +28,19 @@
   function atualizarContadorNav(total){
     var el=global.document&&global.document.getElementById('nb-produtos');
     if(el)el.textContent=Number(total||0).toLocaleString('pt-BR');
+  }
+  function persistirBaseLocal(lista,tentativa){
+    tentativa=Number(tentativa||0);
+    if(global.DTAuditoriaStorage){
+      global.DTAuditoriaStorage.cacheSet('dt_produtos_cache__GLOBAL',lista).then(function(){
+        try{localStorage.removeItem('dt_produtos_cache__GLOBAL');}catch(_e){}
+      }).catch(function(e){console.warn('[Produtos] Falha ao persistir no IndexedDB:',e);});
+      return;
+    }
+    // O módulo de produtos é carregado antes do módulo da auditoria. Em vez de
+    // voltar a gravar a base grande no localStorage, aguarda o IndexedDB ficar
+    // disponível e então migra a cópia antiga.
+    if(tentativa<50)setTimeout(function(){persistirBaseLocal(lista,tentativa+1);},100);
   }
   function indexar(lista){
     cache.lista=(lista||[]).map(x=>produto(x,x.id));
@@ -45,58 +58,76 @@
       (p.codigosExtras||[]).forEach(function(x){addCodigo(x,p,'extra');});
     });
     cache.porTodos.forEach(function(arr,k){if(arr.length>1)cache.ambiguos.set(k,arr.slice());});
-    cache.carregado=true;cache.loja=global.getDTLojaAtiva?.()||'';try{localStorage.setItem('dt_produtos_cache__'+cache.loja,JSON.stringify(cache.lista));}catch(e){}
+    cache.carregado=true;cache.loja='GLOBAL';
+    // Em coletores, a base completa pode ocupar quase toda a cota do
+    // localStorage. Quando o armazenamento da auditoria estiver disponível,
+    // persiste a base no IndexedDB sem bloquear a leitura em memória.
+    persistirBaseLocal(cache.lista,0);
     atualizarContadorNav(cache.lista.length);
     global.dispatchEvent(new CustomEvent('dt-produtos-atualizados',{detail:{total:cache.lista.length,ambiguos:cache.ambiguos.size}})); return cache.lista;
   }
-  function carregarLocal(){const loja=global.getDTLojaAtiva?.()||'';try{const raw=localStorage.getItem('dt_produtos_cache__'+loja);if(raw)indexar(JSON.parse(raw));}catch(e){} }
-  async function carregar(force=false){
-    const loja=global.getDTLojaAtiva?.()||'';
+  async function carregarLocal(){
+    try{
+      let lista=null;
+      if(global.DTAuditoriaStorage) lista=await global.DTAuditoriaStorage.cacheGet('dt_produtos_cache__GLOBAL');
+      if(!Array.isArray(lista)){
+        const raw=localStorage.getItem('dt_produtos_cache__GLOBAL');
+        if(raw)lista=JSON.parse(raw);
+      }
+      if(Array.isArray(lista))indexar(lista);
+    }catch(e){console.warn('[Produtos] Falha ao carregar cache local:',e);}
+  }
+  async function carregar(force=false,strict=false){
+    const loja='GLOBAL';
     if(cache.carregando)return cache.carregando;
     if(!navigator.onLine){
-      if(!cache.carregado||cache.loja!==loja)carregarLocal();
+      if(!cache.carregado||cache.loja!==loja)await carregarLocal();
       return cache.lista;
     }
     cache.carregando=(async()=>{
       try{
-        const fs=global.getDTFirestore();
+        const fs=global.getDTRawFirestore();
         const versaoKey='dt_produtos_versao__'+loja;
         let versaoServidor='';
         try{
           const meta=await fs.collection('dt_produtos_meta').doc('versao').get();
           if(meta.exists)versaoServidor=texto(meta.data().versao||meta.data().atualizadoEm||'');
-        }catch(_e){}
+          if(meta.exists)var metaServidor=meta.data()||{};
+        }catch(_e){
+          if(strict)throw new Error('Não foi possível ler o metadado da base de produtos: '+(_e.message||_e));
+        }
         const versaoLocal=localStorage.getItem(versaoKey)||cache.versao||'';
         cache.ultimaVerificacao=Date.now();
         if(!force&&cache.carregado&&cache.loja===loja&&versaoServidor&&versaoLocal===versaoServidor){
           cache.versao=versaoServidor;
           return cache.lista;
         }
+        if(!versaoServidor){
+          console.warn('[Produtos] Metadado de versão ausente; mantendo cache local.');
+          if(strict)throw new Error('A base de produtos não possui uma versão publicada em chunks.');
+          if(!cache.carregado||cache.loja!==loja)await carregarLocal();
+          return cache.lista;
+        }
         const chunks=await Promise.race([
-          fs.collection('dt_produtos_chunks').orderBy('parte').get(),
+          fs.collection('dt_produtos_chunks').where('versao','==',versaoServidor).get(),
           new Promise(function(_,reject){setTimeout(function(){reject(new Error('Tempo excedido ao carregar chunks de produtos'));},30000);})
         ]);
-        let docs=chunks.docs||[];
-        if(versaoServidor){
-          const daVersao=docs.filter(function(d){return texto((d.data()||{}).versao)===versaoServidor;});
-          if(daVersao.length)docs=daVersao;
-        }
+        const docs=(chunks.docs||[]).slice().sort(function(a,b){return Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0);});
         let rows=[];
-        if(docs.length){
-          docs.forEach(function(d){const x=d.data()||{};const itens=x.itens||x.dados||x.registros||[];rows=rows.concat(itens);});
-          console.log('[Produtos] Base atualizada em chunks:',docs.length,'documentos /',rows.length,'produtos / versão',versaoServidor||'legada');
-        }else{
-          const snap=await fs.collection((global.DT_FCOL&&global.DT_FCOL.produtos)||'dt_produtos').get();
-          rows=snap.docs.map(d=>({id:d.id,...d.data()}));
-          console.warn('[Produtos] Chunks ausentes; usando coleção individual:',rows.length);
-        }
+        docs.forEach(function(d){const x=d.data()||{};const itens=x.itens||x.dados||x.registros||[];rows=rows.concat(itens);});
+        const esperadoChunks=Number((metaServidor||{}).totalChunks||(metaServidor||{}).chunks||0);
+        const esperadoProdutos=Number((metaServidor||{}).totalProdutos||(metaServidor||{}).total||0);
+        if(esperadoChunks&&docs.length!==esperadoChunks)throw new Error('Base de produtos incompleta: '+docs.length+' de '+esperadoChunks+' chunks recebidos.');
+        if(esperadoProdutos&&rows.length!==esperadoProdutos)throw new Error('Base de produtos incompleta: '+rows.length+' de '+esperadoProdutos+' produtos recebidos.');
+        console.log('[Produtos] Base atualizada somente por chunks:',docs.length,'documentos /',rows.length,'produtos / versão',versaoServidor);
         const result=indexar(rows);
         cache.versao=versaoServidor;
         if(versaoServidor)try{localStorage.setItem(versaoKey,versaoServidor);}catch(_e){}
         return result;
       }catch(e){
         console.warn('[Produtos] Falha ao atualizar base:',e);
-        if(!cache.carregado||cache.loja!==loja)carregarLocal();
+        if(!cache.carregado||cache.loja!==loja)await carregarLocal();
+        if(strict)throw e;
         return cache.lista;
       }finally{cache.carregando=null;}
     })();
@@ -109,7 +140,7 @@
     if(arr.length>1)return {encontrado:false,ambiguo:true,codigoLido:texto(valor),candidatos:arr.map(function(p){return {produtoId:p.produtoId,codigoInterno:p.codigoInterno,nomeProduto:p.nomeProduto,gtin:p.gtin,dun:p.dun};})};
     return {encontrado:true,...arr[0]};
   }
-  async function buscar(valor){if(!cache.carregado||cache.loja!==(global.getDTLojaAtiva?.()||''))await carregar();return buscarSync(valor);}
+  async function buscar(valor){if(!cache.carregado||cache.loja!=='GLOBAL')await carregar();return buscarSync(valor);}
   function enriquecer(reg){const r={...reg};const atual=texto(r.produtoLidoNome||r.produtoLido);const placeholder=!atual||/^(PRODUTO NAO IDENTIFICADO|PRODUTO NÃO IDENTIFICADO|PRODUTO NAO CADASTRADO|PRODUTO NÃO CADASTRADO|CODIGO SEM CADASTRO|CÓDIGO SEM CADASTRO)$/i.test(atual);if(!placeholder)return r;const cod=r.dunLido||r.gtinLido||r.codigoLido||r.gtin_bipado||r.gtin;const ach=buscarSync(cod);if(ach.encontrado){r.produtoLidoNome=ach.nomeProduto;r.produtoLido=ach.nomeProduto;r.produtoLidoId=ach.produtoId;}return r;}
   carregarLocal();
   if(global.document){
@@ -119,8 +150,8 @@
   if(!global.__dtProdutosPreloadLoja){
     global.__dtProdutosPreloadLoja=true;
     global.addEventListener('dt-loja-alterada',function(){
-      limparCache();atualizarContadorNav(0);
-      setTimeout(function(){if(global.getDTLojaAtiva?.()&&global.getDTFirestore)carregar(true).catch(function(e){console.warn('[Produtos] Pré-carga após troca de loja:',e);});},250);
+      // Produtos são globais e não mudam quando a loja é trocada.
+      atualizarContadorNav(cache.lista.length);
     });
   }
   function familias(){var mapa={};cache.lista.forEach(function(p){if(!p.ativo)return;var k=p.familiaCodigo||p.familiaNome;if(!k)return;if(!mapa[k])mapa[k]={id:k,nome:p.familiaNome||p.produtoPrincipal||p.nomeProduto,codigo:p.familiaCodigo,produtos:[],unidade:null};mapa[k].produtos.push(p);if(p.embalagem==='UND')mapa[k].unidade=p;});return Object.keys(mapa).map(function(k){return mapa[k];}).sort(function(a,b){return a.nome.localeCompare(b.nome);});}

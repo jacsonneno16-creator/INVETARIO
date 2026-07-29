@@ -104,43 +104,31 @@
       _emitSync(true, `${docs.length} endereços carregados do Firebase`);
     };
 
-    // A publicação atual grava os endereços em dt_locais_chunks.
-    return global.FS_AN.collection('dt_locais_chunks')
-      .orderBy('parte')
-      .onSnapshot(async snapshot => {
-        const docs = [];
-        snapshot.docs.forEach(doc => {
-          const data = doc.data() || {};
-          const itens = Array.isArray(data.dados) ? data.dados
-                     : Array.isArray(data.itens) ? data.itens : [];
-          itens.forEach((item, index) => docs.push({
-            id: item.id || `${doc.id}_${index}`,
-            ...item
-          }));
-        });
-
-        // Se dt_locais_chunks não existir ou estiver vazio, ler a coleção real
-        // mostrada no Firebase Console: dt_locais.
-        if (!docs.length) {
-          try {
-            const snap = await global.FS_AN.collection('dt_locais').get();
-            aplicar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-            return;
-          } catch (fallbackErr) {
-            console.warn('[FirebaseService] dt_locais fallback vazio:', fallbackErr.message);
-          }
-        }
-        aplicar(docs);
-      }, async err => {
-        console.warn('[FirebaseService] dt_locais_chunks:', err.message);
-        // Compatibilidade com bases antigas publicadas documento a documento.
+    // Escuta somente o metadado (1 leitura). Quando a versão muda, baixa os
+    // chunks correspondentes, com no máximo 1.000 endereços por documento.
+    return global.FS_AN.collection('dt_locais_meta').doc('versao')
+      .onSnapshot(async metaSnap => {
         try {
-          const snap = await global.FS_AN.collection('dt_locais').get();
-          aplicar(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        } catch (fallbackErr) {
-          console.warn('[FirebaseService] dt_locais fallback:', fallbackErr.message);
-          _emitSync(false, 'Falha ao carregar endereços do Firebase');
+          if (!metaSnap.exists) { aplicar([]); return; }
+          const meta = metaSnap.data() || {};
+          const versao = String(meta.versao || '');
+          if (!versao || Number(meta.total || 0) === 0) { aplicar([]); return; }
+          const snapshot = await global.FS_AN.collection('dt_locais_chunks').where('versao', '==', versao).get();
+          const ordenados = (snapshot.docs || []).slice().sort((a,b) => Number((a.data()||{}).parte||0) - Number((b.data()||{}).parte||0));
+          const docs = [];
+          ordenados.forEach(doc => {
+            const data = doc.data() || {};
+            const itens = Array.isArray(data.dados) ? data.dados : Array.isArray(data.itens) ? data.itens : [];
+            itens.forEach((item, index) => docs.push({ id: item.id || `${doc.id}_${index}`, ...item }));
+          });
+          aplicar(docs);
+        } catch (err) {
+          console.warn('[FirebaseService] Falha ao carregar chunks de endereços:', err.message);
+          _emitSync(false, 'Falha ao carregar endereços em chunks');
         }
+      }, err => {
+        console.warn('[FirebaseService] dt_locais_meta:', err.message);
+        _emitSync(false, 'Falha ao acompanhar versão dos endereços');
       });
   }
 
@@ -245,14 +233,22 @@
 
   function _normalizarItemBase(item){
     const x=Object.assign({},item||{});
-    const qtd=x.quantidade_esperada ?? x.quantidadeEsperada ?? x.qtd_esperada ?? x.qtdEsperada ?? x.quantidade_sistema ?? x.quantidadeSistema ?? x.quantidade;
+    const qtd=x.quantidade_esperada ?? x.quantidadeEsperada ?? x.qtd_esperada ?? x.qtdEsperada ??
+      x.quantidade_sistema ?? x.quantidadeSistema ?? x.quantidade_enderecada ?? x.qtd_enderecada ??
+      x.saldo_estoque ?? x.saldo ?? x.saldo_erp ?? x.qtd_sistema ?? x.qtd_estoque ??
+      x.estoque_total ?? x.estoque ?? x.quantidade ?? x.qtd ?? x.qtde;
     const cod=x.codigo_produto ?? x.codigoProduto ?? x.codigo_interno ?? x.codigoInterno ?? x.sku ?? x.gtin ?? x.ean ?? x.dun ?? '';
     const desc=x.descricao_produto ?? x.descricaoProduto ?? x.descricao ?? x.produto_nome ?? x.nomeProduto ?? x.produto ?? '';
     return Object.assign({},x,{
       endereco:String(x.endereco ?? x.localizacao ?? x.posicao ?? '').trim(),
       codigo_produto:String(cod??'').trim(),
       descricao_produto:String(desc??'').trim(),
-      quantidade_esperada:Number.isFinite(Number(qtd))?Number(qtd):0
+      quantidade_esperada:(()=>{
+        const texto=String(qtd??'').trim().replace(/\s/g,'');
+        const normalizado=texto.includes(',') ? texto.replace(/\./g,'').replace(',','.') : texto;
+        const numero=Number(normalizado);
+        return Number.isFinite(numero)?numero:0;
+      })()
     });
   }
 
@@ -331,19 +327,119 @@
   async function refreshBasesRelacionadas(){
     await _carregarInventariosSeNecessario();
     try{ await global.DTProdutos?.carregar?.(true); }catch(e){ console.warn('[FirebaseService] Atualização de produtos:',e.message); }
-    try{ global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'bases-refresh',force:true}); }catch(e){ console.warn('[FirebaseService] Reprocessamento de bases:',e.message); }
+    try{ global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'bases-refresh',force:true}); }catch(e){ console.warn('[FirebaseService] Reprocessamento de bases:',e.message); }
     return true;
+  }
+
+  // Um navegador novo não possui o cache local usado pelo painel. Portanto,
+  // após o login carregamos uma vez apenas as bases estruturais da loja atual.
+  // As coleções operacionais (contagens, divergências e recontagens) continuam
+  // fora desta rotina e só são consultadas pelo botão Atualizar, evitando
+  // reintroduzir as leituras excessivas que motivaram o modo manual.
+  async function _carregarBasesEssenciaisLogin(){
+    const resultados = await Promise.allSettled([
+      _carregarInventariosSeNecessario(),
+      _carregarEnderecosManual(),
+      global.DTProdutos?.carregar?.(true, true)
+    ]);
+    const nomes = ['inventários', 'endereços', 'produtos'];
+    const falhas = resultados
+      .map((resultado, indice) => ({ resultado, nome: nomes[indice] }))
+      .filter(item => item.resultado.status === 'rejected');
+
+    falhas.forEach(item => {
+      console.warn(
+        `[FirebaseService] Falha ao carregar ${item.nome} no login:`,
+        item.resultado.reason?.message || item.resultado.reason
+      );
+    });
+
+    const enderecos = resultados[1].status === 'fulfilled'
+      ? (resultados[1].value || []).length
+      : (global.AnalistaStore.getState().enderecosLista || []).length;
+    const inventarios = (global.AnalistaStore.getState().inventarios || []).length;
+    const produtos = global.DTProdutos?.cache?.lista?.length || 0;
+
+    global.AnalistaBootstrap?.saveAll?.();
+    // O Store/AppController consolida a renderizacao; nao redesenhar dashboard,
+    // enderecos e pagina atual tres vezes no mesmo ciclo.
+
+    if (falhas.length) {
+      throw new Error(`Não foi possível carregar: ${falhas.map(item => item.nome).join(', ')}.`);
+    }
+    return { inventarios, enderecos, produtos };
+  }
+
+  async function _carregarEnderecosManual(){
+    const metaSnap=await global.FS_AN.collection('dt_locais_meta').doc('versao').get();
+    if(!metaSnap.exists)return [];
+    const meta=metaSnap.data()||{},versao=String(meta.versao||'');
+    if(!versao||Number(meta.total||0)===0)return [];
+    const snapshot=await global.FS_AN.collection('dt_locais_chunks').where('versao','==',versao).get();
+    const docs=[];
+    (snapshot.docs||[]).slice().sort((a,b)=>Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0)).forEach(doc=>{
+      const data=doc.data()||{};
+      const itens=Array.isArray(data.dados)?data.dados:(Array.isArray(data.itens)?data.itens:[]);
+      itens.forEach((item,index)=>docs.push({id:item.id||`${doc.id}_${index}`,...item}));
+    });
+    global.AnalistaStore.dispatch(Actions.replaceSlice('enderecosLista',docs,{source:'firebase-manual'}));
+    const agrupados=global.AnalistaBootstrap?.agruparEnderecosPorSetor?.(docs)||{};
+    global.AnalistaStore.dispatch(Actions.setPath('enderecosPorSetor',agrupados,{source:'firebase-manual'}));
+    const Storage=global.AnalistaStorage;
+    if(Storage?.storageSave&&Storage?.KEYS?.enderecos)Storage.storageSave(Storage.KEYS.enderecos,docs);
+    return docs;
+  }
+
+  async function _lerColecaoInventariosManual(path,ids,collection){
+    if(!ids.length)return [];
+    const grupos=InventarioService.chunkIds(ids,10);
+    const snaps=await Promise.all(grupos.map(grupo=>global.FS_AN.collection(path).where('inventario_id','in',grupo).get()));
+    const docs=[];
+    snaps.forEach(snap=>snap.docs.forEach(doc=>{
+      const raw={id:doc.id,...doc.data()};
+      docs.push((collection==='divergencias'||collection==='recontagens')?raw:InventarioService.normalizarContagem(raw));
+    }));
+    return docs;
+  }
+
+  // Único ponto de leitura das quatro bases operacionais do Inventário.
+  // Não cria listeners: uma nova consulta só ocorre em outro clique em Atualizar.
+  async function refreshInventarioManual(){
+    if(!navigator.onLine)throw new Error('Sem conexão com a internet.');
+    await _carregarInventariosSeNecessario();
+    const ids=_getActiveInventoryIds();
+    const [enderecos,contagens,vazios,divergencias,recontagens]=await Promise.all([
+      _carregarEnderecosManual(),
+      _lerColecaoInventariosManual('dt_contagens',ids,'contagens'),
+      _lerColecaoInventariosManual('dt_vazios',ids,'vazios'),
+      _lerColecaoInventariosManual('dt_divergencias',ids,'divergencias'),
+      _lerColecaoInventariosManual('dt_recontagens',ids,'recontagens')
+    ]);
+    const contagensUnificadas=new Map();
+    contagens.concat(vazios).forEach(item=>contagensUnificadas.set(String(item.id),item));
+    global.AnalistaStore.dispatch(Actions.batch([
+      Actions.replaceSlice('contagens',Array.from(contagensUnificadas.values()),{source:'firebase-manual'}),
+      Actions.replaceSlice('divergencias',divergencias,{source:'firebase-manual'}),
+      Actions.replaceSlice('recontagens',recontagens,{source:'firebase-manual'})
+    ],{source:'firebase-manual-inventario'}));
+    ['contagens','divergencias','recontagens'].forEach(_persistirSlice);
+    // O clique em Atualizar é o momento canônico de cruzar as contagens recebidas.
+    // Processar apenas a divergência. A 2ª ou 3ª contagem somente nasce quando
+    // o Analista clicar em Atribuir e escolher o operador.
+    try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'manual-refresh',force:true});}catch(e){console.warn('[FirebaseService] Processamento manual:',e.message);}
+    global.AnalistaBootstrap?.saveAll?.();
+    // O Store/AppController consolida a renderizacao; nao redesenhar dashboard,
+    // enderecos e pagina atual tres vezes no mesmo ciclo.
+    _emitSync(true,`Atualização manual concluída: ${contagens.length+vazios.length} contagens, ${divergencias.length} conflitos e ${recontagens.length} recontagens.`,{started:false,source:'firebase-manual'});
+    return {enderecos:enderecos.length,contagens:contagens.length+vazios.length,divergencias:divergencias.length,recontagens:recontagens.length};
   }
 
   if(!global.__dtBasesProdutoListener){
     global.__dtBasesProdutoListener=true;
     global.addEventListener('dt-produtos-atualizados',function(){
-      clearTimeout(global.__dtBasesProdutoTid);
-      global.__dtBasesProdutoTid=setTimeout(function(){
-        _carregarInventariosSeNecessario().then(function(){
-          try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'produtos-atualizados',force:true});}catch(e){console.warn('[FirebaseService] Reprocessar produtos:',e.message);}
-        });
-      },120);
+      // Recalcula somente o instantâneo local. Atualizar produtos não deve
+      // iniciar uma leitura silenciosa das bases do Inventário.
+      try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'produtos-atualizados-cache',force:true});}catch(e){console.warn('[FirebaseService] Reprocessar produtos:',e.message);}
     });
   }
 
@@ -379,54 +475,22 @@
       return false;
     }
 
-    // Sempre garantir listener de coletores ativo (independe de inventários)
+    // Carrega as bases estruturais também em computadores sem cache. O histórico
+    // operacional permanece no fluxo manual para controlar o volume de leituras.
+    _emitSync(true, 'Carregando dados da loja...', { started: false, source: 'firebase-bootstrap' });
+    const essenciais = await _carregarBasesEssenciaisLogin();
+
+    // Coletores continuam com status próprio.
     if (!state.unsubscribers.coletores) {
       state.unsubscribers.coletores = _listenColetores();
     }
-
-    // Carregar inventários e catálogo de endereços do Firebase.
-    await _carregarInventariosSeNecessario();
-    try{
-      if(global.DTProdutos?.carregar) await global.DTProdutos.carregar(false);
-    }catch(e){ console.warn('[FirebaseService] Falha ao carregar Base de Produtos:',e.message); }
-    // Reprocessar registros antigos depois que a base do inventário e o catálogo
-    // de produtos estiverem disponíveis. Isso corrige automaticamente registros
-    // que antes apareciam como "Código sem cadastro" e qtd sistema null.
-    try{
-      global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:true,source:'bases-carregadas',force:true});
-    }catch(e){ console.warn('[FirebaseService] Reprocessamento após carregar bases:',e.message); }
-    if (!state.unsubscribers.enderecos) state.unsubscribers.enderecos = _listenEnderecos();
-
-    const ids = _getActiveInventoryIds();
-    if (!ids.length) {
-      ['contagens','vazios','divergencias','recontagens'].forEach(function(collection){
-        (state.unsubscribers[collection]||[]).forEach(function(unsub){try{unsub();}catch(_e){}});
-        state.unsubscribers[collection]=[];
-      });
-      state.started=false;state.currentInventoryIds=[];
-      _emitSync(true, 'Sem inventário ativo — dados operacionais limpos.', { started: false, source: 'firebase' });
-      return true;
-    }
-
-    const fingerprint = ids.join('|');
-    if (state.started && state.currentInventoryIds.join('|') === fingerprint) {
-      _emitSync(true, 'Tempo real ativo', { started: true });
-      return true;
-    }
-
-    // Parar listeners de contagens antes de reiniciar
-    ['contagens', 'vazios', 'divergencias', 'recontagens'].forEach(collection => {
-      (state.unsubscribers[collection] || []).forEach(unsub => { try { unsub(); } catch(_) {} });
-      state.unsubscribers[collection] = [];
-    });
-
-    state.unsubscribers.contagens   = _listenCollection('contagens',   'dt_contagens');
-    state.unsubscribers.vazios      = _listenCollection('vazios',      'dt_vazios');
-    state.unsubscribers.divergencias = _listenCollection('divergencias', 'dt_divergencias');
-    state.unsubscribers.recontagens = _listenCollection('recontagens', 'dt_recontagens');
-    state.started = true;
-    state.currentInventoryIds = ids.slice();
-    _emitSync(true, 'Tempo real ativo', { started: true });
+    state.started=false;
+    state.currentInventoryIds=[];
+    _emitSync(
+      true,
+      `${essenciais.enderecos} endereços, ${essenciais.produtos} produtos e ${essenciais.inventarios} inventários carregados. Clique em Atualizar para consultar novas contagens.`,
+      {started:false,source:'firebase-bootstrap'}
+    );
     return true;
   }
 
@@ -449,5 +513,5 @@
     _emitSync(true, 'Cache local recarregado', { started: false, source: 'cache' });
   }
 
-  global.AnalistaFirebaseService = { start, stop, refreshFromCache, refreshColetores, refreshBasesRelacionadas, state };
+  global.AnalistaFirebaseService = { start, stop, refreshFromCache, refreshColetores, refreshBasesRelacionadas, refreshInventarioManual, state };
 })(window);

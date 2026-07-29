@@ -8,6 +8,17 @@ service cloud.firestore {
       allow delete: if false;
       match /{document=**} { allow read, write: if signedIn(); }
     }
+    // Base de produtos: catálogo global compartilhado entre todas as lojas
+    // (fica fora de lojas/{lojaId} de propósito, para o coletor carregar uma
+    // única base). Antes só tinha leitura liberada, o que bloqueava a
+    // importação/edição/publicação da base com "Missing or insufficient permissions".
+    match /dt_produtos/{document=**} { allow read, write: if signedIn(); }
+    match /dt_produtos_chunks/{document=**} { allow read, write: if signedIn(); }
+    match /dt_produtos_meta/{document=**} { allow read, write: if signedIn(); }
+    // Coletores (aparelhos): cadastro global também fora de lojas/{lojaId},
+    // pois um mesmo aparelho pode ser usado em mais de uma loja. Sem escrita
+    // aqui o app nem consegue registrar o aparelho no primeiro login.
+    match /dt_coletores/{document=**} { allow read, write: if signedIn(); }
     // Coleções antigas: somente leitura para permitir migração para lojas/{lojaId}.
     match /{legacyCollection}/{document=**} {
       allow read: if signedIn() && legacyCollection != 'lojas';

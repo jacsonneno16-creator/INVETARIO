@@ -2,7 +2,16 @@
   const InventarioService = {
     getInventariosAtivosIds(inventarios){
       const ativos = new Set(['ATIVO','ABERTO','PUBLICADO','LIBERADO','EM_ANDAMENTO','PAUSADO']);
-      return (inventarios || []).filter(i => i && ativos.has(String(i.status || '').toUpperCase())).map(i => i.id).filter(Boolean);
+      // Bases antigas gravaram o mesmo inventário ora pelo ID técnico, ora pelo
+      // código/nome. A leitura operacional precisa consultar todos os aliases;
+      // caso contrário a tela recebe a contagem, mas não recebe a divergência e
+      // acaba exibindo OK 1ª indevidamente.
+      const ids = [];
+      (inventarios || []).filter(i => i && ativos.has(String(i.status || '').toUpperCase())).forEach(i => {
+        [i.id, i.codigo, i.nome, i.inventario_id, i.inventarioId]
+          .filter(Boolean).forEach(v => ids.push(String(v)));
+      });
+      return [...new Set(ids)];
     },
     chunkIds(ids, size = 10){
       const out = [];

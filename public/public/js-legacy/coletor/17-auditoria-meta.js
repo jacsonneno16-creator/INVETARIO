@@ -45,6 +45,22 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
     }
 };
+var __read = (this && this.__read) || function (o, n) {
+    var m = typeof Symbol === "function" && o[Symbol.iterator];
+    if (!m) return o;
+    var i = m.call(o), r, ar = [], e;
+    try {
+        while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+    }
+    catch (error) { e = { error: error }; }
+    finally {
+        try {
+            if (r && !r.done && (m = i["return"])) m.call(i);
+        }
+        finally { if (e) throw e.error; }
+    }
+    return ar;
+};
 var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     if (pack || arguments.length === 2) for (var i = 0, l = from.length, ar; i < l; i++) {
         if (ar || !(i in from)) {
@@ -55,6 +71,203 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     return to.concat(ar || Array.prototype.slice.call(from));
 };
 (function () {
+    var _this = this;
+    // Armazenamento próprio da auditoria. Bases e fila podem ultrapassar com
+    // facilidade a pequena cota do localStorage em coletores Android.
+    var AUD_DB = 'dt_auditoria_offline_db';
+    var AUD_DB_VERSION = 1;
+    var _audDb = null;
+    function _audDbOpen() {
+        if (_audDb)
+            return Promise.resolve(_audDb);
+        return new Promise(function (resolve, reject) {
+            var req = indexedDB.open(AUD_DB, AUD_DB_VERSION);
+            req.onupgradeneeded = function (e) {
+                var db = e.target.result;
+                if (!db.objectStoreNames.contains('cache'))
+                    db.createObjectStore('cache', { keyPath: 'chave' });
+                if (!db.objectStoreNames.contains('fila'))
+                    db.createObjectStore('fila', { keyPath: 'chave' });
+            };
+            req.onsuccess = function (e) { _audDb = e.target.result; resolve(_audDb); };
+            req.onerror = function (e) { return reject(e.target.error); };
+        });
+    }
+    function _audStorePut(store, registro) {
+        return __awaiter(this, void 0, void 0, function () {
+            var db;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0: return [4 /*yield*/, _audDbOpen()];
+                    case 1:
+                        db = _a.sent();
+                        return [2 /*return*/, new Promise(function (resolve, reject) {
+                                var tx = db.transaction(store, 'readwrite');
+                                tx.objectStore(store).put(registro);
+                                tx.oncomplete = function () { return resolve(registro); };
+                                tx.onerror = function (e) { return reject(e.target.error || tx.error); };
+                                tx.onabort = function (e) { return reject(e.target.error || tx.error); };
+                            })];
+                }
+            });
+        });
+    }
+    function _audStoreGet(store, chave) {
+        return __awaiter(this, void 0, void 0, function () {
+            var db;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0: return [4 /*yield*/, _audDbOpen()];
+                    case 1:
+                        db = _a.sent();
+                        return [2 /*return*/, new Promise(function (resolve, reject) {
+                                var req = db.transaction(store, 'readonly').objectStore(store).get(chave);
+                                req.onsuccess = function (e) { return resolve(e.target.result || null); };
+                                req.onerror = function (e) { return reject(e.target.error); };
+                            })];
+                }
+            });
+        });
+    }
+    function _audStoreAll(store) {
+        return __awaiter(this, void 0, void 0, function () {
+            var db;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0: return [4 /*yield*/, _audDbOpen()];
+                    case 1:
+                        db = _a.sent();
+                        return [2 /*return*/, new Promise(function (resolve, reject) {
+                                var req = db.transaction(store, 'readonly').objectStore(store).getAll();
+                                req.onsuccess = function (e) { return resolve(e.target.result || []); };
+                                req.onerror = function (e) { return reject(e.target.error); };
+                            })];
+                }
+            });
+        });
+    }
+    function _audStoreDelete(store, chave) {
+        return __awaiter(this, void 0, void 0, function () {
+            var db;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0: return [4 /*yield*/, _audDbOpen()];
+                    case 1:
+                        db = _a.sent();
+                        return [2 /*return*/, new Promise(function (resolve, reject) {
+                                var tx = db.transaction(store, 'readwrite');
+                                tx.objectStore(store).delete(chave);
+                                tx.oncomplete = function () { return resolve(); };
+                                tx.onerror = function (e) { return reject(e.target.error || tx.error); };
+                            })];
+                }
+            });
+        });
+    }
+    window.DTAuditoriaStorage = {
+        cacheSet: function (chave, valor) { return _audStorePut('cache', { chave: chave, valor: valor, atualizadoEm: new Date().toISOString() }); },
+        cacheGet: function (chave) { return __awaiter(_this, void 0, void 0, function () { var r; return __generator(this, function (_a) {
+            switch (_a.label) {
+                case 0: return [4 /*yield*/, _audStoreGet('cache', chave)];
+                case 1:
+                    r = _a.sent();
+                    return [2 /*return*/, r ? r.valor : null];
+            }
+        }); }); },
+        filaPut: function (registro) { return _audStorePut('fila', registro); },
+        filaAll: function () { return _audStoreAll('fila'); },
+        filaDelete: function (chave) { return _audStoreDelete('fila', chave); }
+    };
+    var AUDITORIA_ABERTURA_TIMEOUT_MS = 10000;
+    function _comTimeoutAberturaAuditoria(promise, ms, rotulo) {
+        return Promise.race([
+            Promise.resolve(promise),
+            new Promise(function (_, reject) { return setTimeout(function () { return reject(new Error('Tempo excedido ao carregar ' + rotulo + '.')); }, ms || AUDITORIA_ABERTURA_TIMEOUT_MS); })
+        ]);
+    }
+    function _produtosCacheAuditoria() {
+        return __awaiter(this, void 0, void 0, function () {
+            var lista, e_1;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        lista = [];
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet('dt_produtos_cache__GLOBAL')];
+                    case 2:
+                        lista = _a.sent();
+                        if (!Array.isArray(lista))
+                            lista = JSON.parse(localStorage.getItem('dt_produtos_cache__GLOBAL') || '[]');
+                        if (Array.isArray(lista) && lista.length && window.DTProdutos && typeof window.DTProdutos.indexar === 'function')
+                            window.DTProdutos.indexar(lista);
+                        return [3 /*break*/, 4];
+                    case 3:
+                        e_1 = _a.sent();
+                        lista = [];
+                        return [3 /*break*/, 4];
+                    case 4: return [2 /*return*/, Array.isArray(lista) ? lista : []];
+                }
+            });
+        });
+    }
+    function _locaisCacheAuditoria() {
+        return __awaiter(this, void 0, void 0, function () {
+            var lojaId, chave, lista, e_2, locais;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+                        chave = 'dt_auditoria_locais_' + lojaId;
+                        lista = [];
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet(chave)];
+                    case 2:
+                        lista = _a.sent();
+                        if (!Array.isArray(lista))
+                            lista = JSON.parse(localStorage.getItem(chave) || '[]');
+                        return [3 /*break*/, 4];
+                    case 3:
+                        e_2 = _a.sent();
+                        lista = [];
+                        return [3 /*break*/, 4];
+                    case 4:
+                        locais = new Set(Array.isArray(lista) ? lista : []);
+                        if (locais.size) {
+                            APP.locaisAtivos = locais;
+                            APP._locaisDoFirebase = false;
+                        }
+                        return [2 /*return*/, locais];
+                }
+            });
+        });
+    }
+    function _baseAuditoriaCache(auditoriaId) {
+        return __awaiter(this, void 0, void 0, function () {
+            var lojaId, chave, registro, e_3;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+                        chave = 'dt_auditoria_cache_' + lojaId + '_' + auditoriaId;
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, _audStoreGet('cache', chave)];
+                    case 2:
+                        registro = _a.sent();
+                        return [2 /*return*/, { encontrado: !!registro, lista: registro && Array.isArray(registro.valor) ? registro.valor : [] }];
+                    case 3:
+                        e_3 = _a.sent();
+                        return [2 /*return*/, { encontrado: false, lista: [] }];
+                    case 4: return [2 /*return*/];
+                }
+            });
+        });
+    }
     function _auditoriaMeta(lista) {
         return (lista || []).map(function (a) { return ({
             id: String(a.auditoria_id || a.id || '').trim(),
@@ -76,9 +289,50 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         var _a;
         return ((_a = window.DTEnderecos) === null || _a === void 0 ? void 0 : _a.chave(valor)) || String(valor == null ? '' : valor).trim().toUpperCase();
     }
+    // Mantém no aparelho um índice simples dos códigos presentes na própria
+    // auditoria. Ele é usado quando a conexão cai e a Base Geral de Produtos não
+    // consegue responder naquele instante. Assim, um GTIN/EAN/DUN já baixado não
+    // passa a ser tratado como produto errado apenas por falta de rede.
+    function _hidratarMapaProdutosAuditoria(rows) {
+        APP.auditoriaProdutosMap = APP.auditoriaProdutosMap || {};
+        (Array.isArray(rows) ? rows : []).forEach(function (r) {
+            var nome = String((r === null || r === void 0 ? void 0 : r.produtoEsperado) || (r === null || r === void 0 ? void 0 : r.produto_esperado) || (r === null || r === void 0 ? void 0 : r.produto_nome) || (r === null || r === void 0 ? void 0 : r.descricao) || (r === null || r === void 0 ? void 0 : r.produto) || '').trim();
+            var codigos = [
+                r === null || r === void 0 ? void 0 : r.gtinEsperado,
+                r === null || r === void 0 ? void 0 : r.gtin_esperado,
+                r === null || r === void 0 ? void 0 : r.eanEsperado,
+                r === null || r === void 0 ? void 0 : r.ean_esperado,
+                r === null || r === void 0 ? void 0 : r.ean,
+                r === null || r === void 0 ? void 0 : r.gtin,
+                r === null || r === void 0 ? void 0 : r.dunEsperado,
+                r === null || r === void 0 ? void 0 : r.dun_esperado,
+                r === null || r === void 0 ? void 0 : r.dun,
+                r === null || r === void 0 ? void 0 : r.codigoProduto,
+                r === null || r === void 0 ? void 0 : r.codigo_produto,
+                r === null || r === void 0 ? void 0 : r.codigoInterno,
+                r === null || r === void 0 ? void 0 : r.codigo_interno,
+                r === null || r === void 0 ? void 0 : r.sku
+            ].map(function (v) { return String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]/g, ''); }).filter(Boolean);
+            codigos.forEach(function (codigo) {
+                var _a, _b;
+                if (nome)
+                    APP.auditoriaProdutosMap[codigo] = nome;
+                var geral = (_b = (_a = window.DTProdutos) === null || _a === void 0 ? void 0 : _a.buscarSync) === null || _b === void 0 ? void 0 : _b.call(_a, codigo);
+                if (geral === null || geral === void 0 ? void 0 : geral.encontrado) {
+                    [geral.id, geral.gtin, geral.ean, geral.dun, geral.codigoInterno, geral.codigo_interno, geral.sku]
+                        .map(function (v) { return String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]/g, ''); })
+                        .filter(Boolean)
+                        .forEach(function (alias) { if (nome)
+                        APP.auditoriaProdutosMap[alias] = nome; });
+                }
+            });
+        });
+        return APP.auditoriaProdutosMap;
+    }
+    window._hidratarMapaProdutosAuditoria = _hidratarMapaProdutosAuditoria;
     function _carregarBaseGeralEnderecosAuditoria(forcar) {
         return __awaiter(this, void 0, void 0, function () {
-            var lojaId, cacheKey, locais, chunks, snap, erro_1, cache;
+            var lojaId, cacheKey, cache, e_4, locais, versaoServidor, meta, e_5, chunks, docsUsar, e_6, erro_1, cache, e_7;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -87,21 +341,49 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         if (!forcar && APP._locaisDoFirebase && APP.locaisAtivos && APP.locaisAtivos.size) {
                             return [2 /*return*/, APP.locaisAtivos];
                         }
-                        locais = new Set();
+                        if (!!navigator.onLine) return [3 /*break*/, 4];
                         _a.label = 1;
                     case 1:
-                        _a.trys.push([1, 7, , 8]);
-                        return [4 /*yield*/, FS.collection('dt_locais_meta').doc('versao').get().catch(function () { return null; })];
+                        _a.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet(cacheKey)];
                     case 2:
-                        var meta = _a.sent();
-                        var versaoServidor = meta && meta.exists ? String((meta.data() || {}).versao || '') : '';
-                        return [4 /*yield*/, FS.collection('dt_locais_chunks').orderBy('parte').get()];
+                        cache = _a.sent();
+                        if (!Array.isArray(cache))
+                            cache = JSON.parse(localStorage.getItem(cacheKey) || '[]');
+                        APP.locaisAtivos = new Set(cache);
+                        APP._locaisDoFirebase = false;
+                        return [2 /*return*/, APP.locaisAtivos];
                     case 3:
+                        e_4 = _a.sent();
+                        APP.locaisAtivos = APP.locaisAtivos || new Set();
+                        return [2 /*return*/, APP.locaisAtivos];
+                    case 4:
+                        locais = new Set();
+                        _a.label = 5;
+                    case 5:
+                        _a.trys.push([5, 15, , 20]);
+                        versaoServidor = '';
+                        _a.label = 6;
+                    case 6:
+                        _a.trys.push([6, 8, , 9]);
+                        return [4 /*yield*/, FS.collection('dt_locais_meta').doc('versao').get()];
+                    case 7:
+                        meta = _a.sent();
+                        if (meta.exists)
+                            versaoServidor = String((meta.data() || {}).versao || '');
+                        return [3 /*break*/, 9];
+                    case 8:
+                        e_5 = _a.sent();
+                        return [3 /*break*/, 9];
+                    case 9:
+                        if (!versaoServidor)
+                            throw new Error('Versão da Base Geral de Endereços não encontrada.');
+                        return [4 /*yield*/, FS.collection('dt_locais_chunks').where('versao', '==', versaoServidor).get()];
+                    case 10:
                         chunks = _a.sent();
-                        if (!!chunks.empty) return [3 /*break*/, 4];
-                        var todosDocs = chunks.docs;
-                        var docsDaVersao = versaoServidor ? todosDocs.filter(function (d) { return String((d.data() || {}).versao || '') === versaoServidor; }) : [];
-                        var docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(function (d) { return !(d.data() || {}).versao; });
+                        if (chunks.empty)
+                            throw new Error('Base Geral de Endereços em chunks não publicada para a versão atual.');
+                        docsUsar = chunks.docs.slice().sort(function (a, b) { return Number((a.data() || {}).parte || 0) - Number((b.data() || {}).parte || 0); });
                         docsUsar.forEach(function (doc) {
                             var dados = doc.data() || {};
                             var itens = dados.dados || dados.itens || dados.registros || [];
@@ -113,41 +395,47 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                                     locais.add(endereco);
                             });
                         });
-                        return [3 /*break*/, 6];
-                    case 4: return [4 /*yield*/, FS.collection(FCOL.locais).get()];
-                    case 5:
-                        snap = _a.sent();
-                        snap.docs.forEach(function (doc) {
-                            var item = doc.data() || {};
-                            if (item.ativo === false)
-                                return;
-                            var endereco = _normalizarEnderecoGeral(item.endereco || item.endereco_norm || item.codigo_endereco || doc.id);
-                            if (endereco)
-                                locais.add(endereco);
-                        });
-                        _a.label = 6;
-                    case 6:
                         APP.locaisAtivos = locais;
                         APP._locaisDoFirebase = true;
-                        try {
-                            localStorage.setItem(cacheKey, JSON.stringify(Array.from(locais)));
-                        }
-                        catch (e) { }
+                        _a.label = 11;
+                    case 11:
+                        _a.trys.push([11, 13, , 14]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheSet(cacheKey, Array.from(locais))];
+                    case 12:
+                        _a.sent();
+                        localStorage.removeItem(cacheKey);
+                        return [3 /*break*/, 14];
+                    case 13:
+                        e_6 = _a.sent();
+                        console.warn('[AUDITORIA] Não foi possível persistir a base de endereços no IndexedDB:', e_6);
+                        return [3 /*break*/, 14];
+                    case 14:
                         console.log('[AUDITORIA] Base Geral de Endereços carregada:', locais.size, 'loja:', lojaId);
                         return [2 /*return*/, locais];
-                    case 7:
+                    case 15:
                         erro_1 = _a.sent();
                         console.warn('[AUDITORIA] Falha ao carregar Base Geral de Endereços:', erro_1);
-                        try {
+                        if ((erro_1 && (erro_1.code === 'permission-denied' || /permission/i.test(erro_1.message || ''))) || !AUTH.currentUser) {
+                            throw new Error('Sessão expirada ou sem permissão no Firebase. Volte ao login e entre novamente.');
+                        }
+                        _a.label = 16;
+                    case 16:
+                        _a.trys.push([16, 18, , 19]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet(cacheKey)];
+                    case 17:
+                        cache = _a.sent();
+                        if (!Array.isArray(cache))
                             cache = JSON.parse(localStorage.getItem(cacheKey) || '[]');
-                            APP.locaisAtivos = new Set(cache);
-                        }
-                        catch (e) {
-                            APP.locaisAtivos = APP.locaisAtivos || new Set();
-                        }
+                        APP.locaisAtivos = new Set(cache);
+                        return [3 /*break*/, 19];
+                    case 18:
+                        e_7 = _a.sent();
+                        APP.locaisAtivos = APP.locaisAtivos || new Set();
+                        return [3 /*break*/, 19];
+                    case 19:
                         APP._locaisDoFirebase = false;
                         return [2 /*return*/, APP.locaisAtivos];
-                    case 8: return [2 /*return*/];
+                    case 20: return [2 /*return*/];
                 }
             });
         });
@@ -155,21 +443,31 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     window._carregarBaseGeralEnderecosAuditoria = _carregarBaseGeralEnderecosAuditoria;
     function _carregarEnderecoAuditoria(auditoriaId) {
         return __awaiter(this, void 0, void 0, function () {
-            var audRef, chunkSnap, rows_1, resultadosSnap, finalizados_1, pendentes, lojaId, snap, todos;
+            var lojaId, cacheKey, cache, audRef, chunkSnap, rows_1, resultadosSnap, finalizados_1, pendentes_1, e_8, snap, todos, pendentes, e_9;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
+                        lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
+                        cacheKey = 'dt_auditoria_cache_' + lojaId + '_' + auditoriaId;
+                        if (!!navigator.onLine) return [3 /*break*/, 2];
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheGet(cacheKey)];
+                    case 1:
+                        cache = _a.sent();
+                        if (Array.isArray(cache) && cache.length)
+                            return [2 /*return*/, cache];
+                        _a.label = 2;
+                    case 2:
                         audRef = FS.collection(FCOL.auditorias).doc(auditoriaId);
                         return [4 /*yield*/, audRef.collection('base_chunks').orderBy('parte').get()];
-                    case 1:
+                    case 3:
                         chunkSnap = _a.sent();
-                        if (!!chunkSnap.empty) return [3 /*break*/, 3];
+                        if (!!chunkSnap.empty) return [3 /*break*/, 9];
                         rows_1 = [];
                         chunkSnap.docs.forEach(function (doc) {
                             var d = doc.data();
-                            rows_1.push.apply(rows_1, (d.dados || d.itens || d.registros || []));
+                            rows_1.push.apply(rows_1, __spreadArray([], __read((d.dados || d.itens || d.registros || [])), false));
                         });
-                        APP.auditoriaProdutosMap = APP.auditoriaProdutosMap || {};
+                        _hidratarMapaProdutosAuditoria(rows_1);
                         rows_1.forEach(function (r) {
                             var codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
                             var nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
@@ -177,7 +475,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                                 APP.auditoriaProdutosMap[codigo] = nome;
                         });
                         return [4 /*yield*/, audRef.collection('enderecos').where('disponivel_coletor', '==', false).get()];
-                    case 2:
+                    case 4:
                         resultadosSnap = _a.sent();
                         finalizados_1 = new Set();
                         resultadosSnap.docs.forEach(function (doc) {
@@ -189,7 +487,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                                 finalizados_1.add((((_a = window.DTEnderecos) === null || _a === void 0 ? void 0 : _a.chave(d.endereco)) || String(d.endereco || '').trim().toUpperCase()));
                             }
                         });
-                        pendentes = rows_1.filter(function (a) {
+                        pendentes_1 = rows_1.filter(function (a) {
                             var _a;
                             var status = String(a.status || '').toUpperCase();
                             var id = String(a.id || '');
@@ -198,27 +496,46 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                                 !['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(status) &&
                                 !finalizados_1.has(id) && !finalizados_1.has(endereco);
                         });
-                        try {
-                            lojaId = window.getDTLojaAtiva ? window.getDTLojaAtiva() : '';
-                            localStorage.setItem('dt_auditoria_cache_' + lojaId + '_' + auditoriaId, JSON.stringify(pendentes));
-                        }
-                        catch (e) { }
-                        return [2 /*return*/, pendentes];
-                    case 3: return [4 /*yield*/, audRef.collection('enderecos').get()];
-                    case 4:
+                        _a.label = 5;
+                    case 5:
+                        _a.trys.push([5, 7, , 8]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes_1)];
+                    case 6:
+                        _a.sent();
+                        localStorage.removeItem(cacheKey);
+                        return [3 /*break*/, 8];
+                    case 7:
+                        e_8 = _a.sent();
+                        console.warn('[AUDITORIA] Não foi possível persistir a base da auditoria:', e_8);
+                        return [3 /*break*/, 8];
+                    case 8: return [2 /*return*/, pendentes_1];
+                    case 9: return [4 /*yield*/, audRef.collection('enderecos').get()];
+                    case 10:
                         snap = _a.sent();
                         todos = snap.docs.map(function (d) { return (__assign({ id: d.id }, d.data())); });
                         APP.auditoriaProdutosMap = {};
+                        _hidratarMapaProdutosAuditoria(todos);
                         todos.forEach(function (r) {
                             var codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
                             var nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
                             if (codigo && nome)
                                 APP.auditoriaProdutosMap[codigo] = nome;
                         });
-                        return [2 /*return*/, todos.filter(function (a) {
-                                var status = String(a.status || '').toUpperCase();
-                                return a.disponivel_coletor !== false && !['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(status);
-                            })];
+                        pendentes = todos.filter(function (a) {
+                            var status = String(a.status || '').toUpperCase();
+                            return a.disponivel_coletor !== false && !['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(status);
+                        });
+                        _a.label = 11;
+                    case 11:
+                        _a.trys.push([11, 13, , 14]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes)];
+                    case 12:
+                        _a.sent();
+                        return [3 /*break*/, 14];
+                    case 13:
+                        e_9 = _a.sent();
+                        return [3 /*break*/, 14];
+                    case 14: return [2 /*return*/, pendentes];
                 }
             });
         });
@@ -256,7 +573,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             return;
         lista = lista || APP.auditoriasMenu || [];
         var select = document.getElementById('aud-loja-select');
-        var lojas = __spreadArray([], new Set((lista || []).flatMap(function (x) { return _extrairLojasDaAuditoria(x); }).filter(Boolean)), true).sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
+        var lojas = __spreadArray([], __read(new Set((lista || []).flatMap(function (x) { return _extrairLojasDaAuditoria(x); }).filter(Boolean))), false).sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
         if (select) {
             var atual = APP.lojaFiltroAuditoria || '';
             select.innerHTML = '<option value="">Todas as lojas</option>' + lojas.map(function (loja) { return "<option value=\"".concat(escHTML(loja), "\">").concat(escHTML(loja), "</option>"); }).join('');
@@ -328,110 +645,209 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
         var audTab = document.getElementById('tab-auditoria');
         if (audTab)
             audTab.style.display = '';
-        goScreen('coleta');
+        goScreen('app');
         if (audTab)
             showView('auditoria', audTab);
         renderAuditoriaColetor();
     };
     window.selecionarAuditoriaMenu = function (auditoriaId) {
-        if (APP._auditoriaCarregando)
-            return;
-        var meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId; });
-        if (!meta) {
-            toast('Auditoria não encontrada', 'e');
-            return;
-        }
-        APP._auditoriaCarregando = true;
-        APP._auditoriaPronta = false;
-        var token = (APP._auditoriaCargaToken || 0) + 1;
-        APP._auditoriaCargaToken = token;
-        APP.modoPendente = 'auditoria';
-        APP.modoAcesso = 'auditoria';
-        APP.inventario = { id: auditoriaId, nome: meta.auditoria_nome || auditoriaId, status: 'ATIVO', auditoria_id: auditoriaId };
-        APP.base = [];
-        APP.auditoriaBase = [];
-        APP.contagens = [];
-        _prepararTelaDownloadAuditoria(meta);
-        var produtosLista = [];
-        if (typeof _dlStep === 'function')
-            _dlStep('aud-prod', '📦', 'Base Geral de Produtos', 'Baixando produtos, GTIN, EAN e DUN…', 'run');
-        if (typeof _dlProg === 'function')
-            _dlProg(10, 'Baixando Base Geral de Produtos…');
-        var p = Promise.resolve().then(function () {
-            if (!window.DTProdutos || typeof window.DTProdutos.carregar !== 'function')
-                throw new Error('Serviço da Base Geral de Produtos não foi carregado.');
-            return window.DTProdutos.carregar(false);
-        }).then(function (produtos) {
-            if (token !== APP._auditoriaCargaToken)
-                throw { cancelado: true };
-            produtosLista = produtos || [];
-            var totalProdutos = produtosLista.filter(function (p) { return p && p.ativo !== false; }).length;
-            if (!totalProdutos)
-                throw new Error('A Base Geral de Produtos está vazia ou não pôde ser baixada. Atualize a base antes de iniciar a auditoria.');
-            if (typeof _dlStep === 'function')
-                _dlStep('aud-prod', '📦', 'Base Geral de Produtos', totalProdutos + ' produtos carregados', 'ok');
-            if (typeof _dlStep === 'function')
-                _dlStep('aud-end', '📍', 'Base Geral de Endereços', 'Baixando endereços da loja…', 'run');
-            if (typeof _dlProg === 'function')
-                _dlProg(45, 'Baixando Base Geral de Endereços…');
-            return _carregarBaseGeralEnderecosAuditoria(false);
-        }).then(function (locais) {
-            if (token !== APP._auditoriaCargaToken)
-                throw { cancelado: true };
-            var totalLocais = locais && typeof locais.size === 'number' ? locais.size : 0;
-            if (!totalLocais)
-                throw new Error('A Base Geral de Endereços está vazia ou não pôde ser baixada. Atualize a base antes de iniciar a auditoria.');
-            if (typeof _dlStep === 'function')
-                _dlStep('aud-end', '📍', 'Base Geral de Endereços', totalLocais + ' endereços carregados', 'ok');
-            if (typeof _dlStep === 'function')
-                _dlStep('aud-base', '📝', 'Base da Auditoria', 'Baixando endereços pendentes…', 'run');
-            if (typeof _dlProg === 'function')
-                _dlProg(75, 'Baixando Base da Auditoria…');
-            return _carregarEnderecoAuditoria(auditoriaId);
-        }).then(function (lista) {
-            if (token !== APP._auditoriaCargaToken)
-                throw { cancelado: true };
-            APP.auditorias = lista || [];
-            if (typeof _dlStep === 'function')
-                _dlStep('aud-base', '📝', 'Base da Auditoria', APP.auditorias.length + ' endereços pendentes', 'ok');
-            if (typeof _dlProg === 'function')
-                _dlProg(100, 'Todas as informações foram carregadas.');
-            APP._auditoriaPronta = true;
-            var entrar = document.getElementById('dl-btn-entrar');
-            if (entrar) {
-                entrar.style.display = '';
-                entrar.textContent = 'OK — iniciar auditoria';
-                entrar.onclick = window.entrarAuditoriaCarregada;
-            }
-            var cancelar = document.getElementById('dl-btn-cancel');
-            if (cancelar)
-                cancelar.style.display = 'none';
-            var status = document.getElementById('dl-status-txt');
-            if (status)
-                status.textContent = 'Carregamento concluído. Toque em OK para continuar.';
-        }).catch(function (err) {
-            if (err && err.cancelado)
-                return;
-            console.error('[AUDITORIA] Falha ao preparar auditoria:', err);
-            APP._auditoriaPronta = false;
-            if (typeof _dlSetErro === 'function')
-                _dlSetErro((err && err.message) || String(err));
-            else
-                toast('Erro ao abrir auditoria: ' + ((err && err.message) || err), 'e');
-            var cancelar = document.getElementById('dl-btn-cancel');
-            if (cancelar) {
-                cancelar.style.display = '';
-                cancelar.textContent = 'Voltar';
-                cancelar.onclick = window.cancelarDownloadAuditoria;
-            }
-            var entrar = document.getElementById('dl-btn-entrar');
-            if (entrar)
-                entrar.style.display = 'none';
-        }).then(function () {
-            if (token === APP._auditoriaCargaToken)
-                APP._auditoriaCarregando = false;
+        return __awaiter(this, void 0, void 0, function () {
+            var meta, lojasAuditoria, lojaAuditoria, token, produtos, e_10, totalProdutos, locais, e_11, totalLocais, baseAuditoria, baseObtidaOnline, e_12, cacheAuditoria, totalAud, entrar, cancelar, status_1, err_1, cancelar, entrar;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        if (APP._auditoriaCarregando)
+                            return [2 /*return*/];
+                        if (!window.AUTH || !AUTH.currentUser) {
+                            APP._auditoriaPronta = false;
+                            APP._auditoriaCarregando = false;
+                            APP.operador = null;
+                            try {
+                                toast('Sua sessão expirou. Entre novamente para baixar a auditoria.', 'e');
+                            }
+                            catch (_) { }
+                            goScreen('login');
+                            return [2 /*return*/];
+                        }
+                        meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId; });
+                        if (!meta) {
+                            toast('Auditoria não encontrada', 'e');
+                            return [2 /*return*/];
+                        }
+                        lojasAuditoria = _extrairLojasDaAuditoria(meta);
+                        if (lojasAuditoria.length) {
+                            lojaAuditoria = String(lojasAuditoria[0] || '').trim();
+                            if (lojaAuditoria && window.getDTLojaAtiva && window.getDTLojaAtiva() !== lojaAuditoria) {
+                                window.setDTLojaAtiva(lojaAuditoria);
+                                APP.locaisAtivos = new Set();
+                                APP._locaisDoFirebase = false;
+                                console.log('[AUDITORIA] Loja alterada para a loja da auditoria:', lojaAuditoria);
+                            }
+                        }
+                        APP._auditoriaCarregando = true;
+                        APP._auditoriaPronta = false;
+                        token = (APP._auditoriaCargaToken || 0) + 1;
+                        APP._auditoriaCargaToken = token;
+                        APP.modoPendente = 'auditoria';
+                        APP.modoAcesso = 'auditoria';
+                        APP.inventario = { id: auditoriaId, nome: meta.auditoria_nome || auditoriaId, status: 'ATIVO', auditoria_id: auditoriaId };
+                        APP.base = [];
+                        APP.auditoriaBase = [];
+                        APP.contagens = [];
+                        _prepararTelaDownloadAuditoria(meta);
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 20, 21, 22]);
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-prod', '📦', 'Base Geral de Produtos', 'Baixando produtos, GTIN, EAN e DUN…', 'run');
+                        if (typeof _dlProg === 'function')
+                            _dlProg(10, 'Baixando Base Geral de Produtos…');
+                        if (!window.DTProdutos || typeof window.DTProdutos.carregar !== 'function')
+                            throw new Error('Serviço da Base Geral de Produtos não foi carregado.');
+                        produtos = [];
+                        if (!navigator.onLine) return [3 /*break*/, 5];
+                        _a.label = 2;
+                    case 2:
+                        _a.trys.push([2, 4, , 5]);
+                        return [4 /*yield*/, _comTimeoutAberturaAuditoria(window.DTProdutos.carregar(true), AUDITORIA_ABERTURA_TIMEOUT_MS, 'a Base Geral de Produtos')];
+                    case 3:
+                        produtos = _a.sent();
+                        return [3 /*break*/, 5];
+                    case 4:
+                        e_10 = _a.sent();
+                        console.warn('[AUDITORIA] Produtos online indisponíveis; usando cache local:', e_10);
+                        return [3 /*break*/, 5];
+                    case 5:
+                        if (token !== APP._auditoriaCargaToken)
+                            return [2 /*return*/];
+                        totalProdutos = (produtos || []).filter(function (p) { return p && p.ativo !== false; }).length;
+                        if (!!totalProdutos) return [3 /*break*/, 7];
+                        return [4 /*yield*/, _produtosCacheAuditoria()];
+                    case 6:
+                        produtos = _a.sent();
+                        totalProdutos = (produtos || []).filter(function (p) { return p && p.ativo !== false; }).length;
+                        if (totalProdutos && typeof _dlStep === 'function')
+                            _dlStep('aud-prod', '📦', 'Base Geral de Produtos', 'Modo offline — ' + totalProdutos + ' produtos do aparelho', 'run');
+                        _a.label = 7;
+                    case 7:
+                        if (!totalProdutos)
+                            throw new Error('Esta auditoria ainda não foi preparada neste aparelho. Conecte-se à internet uma vez para baixar a Base Geral de Produtos.');
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-prod', '📦', 'Base Geral de Produtos', totalProdutos + ' produtos carregados', 'ok');
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-end', '📍', 'Base Geral de Endereços', 'Baixando endereços da loja…', 'run');
+                        if (typeof _dlProg === 'function')
+                            _dlProg(45, 'Baixando Base Geral de Endereços…');
+                        locais = new Set();
+                        if (!navigator.onLine) return [3 /*break*/, 11];
+                        _a.label = 8;
+                    case 8:
+                        _a.trys.push([8, 10, , 11]);
+                        return [4 /*yield*/, _comTimeoutAberturaAuditoria(_carregarBaseGeralEnderecosAuditoria(true), AUDITORIA_ABERTURA_TIMEOUT_MS, 'a Base Geral de Endereços')];
+                    case 9:
+                        locais = _a.sent();
+                        return [3 /*break*/, 11];
+                    case 10:
+                        e_11 = _a.sent();
+                        console.warn('[AUDITORIA] Endereços online indisponíveis; usando cache local:', e_11);
+                        return [3 /*break*/, 11];
+                    case 11:
+                        if (token !== APP._auditoriaCargaToken)
+                            return [2 /*return*/];
+                        totalLocais = locais && typeof locais.size === 'number' ? locais.size : 0;
+                        if (!!totalLocais) return [3 /*break*/, 13];
+                        return [4 /*yield*/, _locaisCacheAuditoria()];
+                    case 12:
+                        locais = _a.sent();
+                        totalLocais = locais && typeof locais.size === 'number' ? locais.size : 0;
+                        if (totalLocais && typeof _dlStep === 'function')
+                            _dlStep('aud-end', '📍', 'Base Geral de Endereços', 'Modo offline — ' + totalLocais + ' endereços do aparelho', 'run');
+                        _a.label = 13;
+                    case 13:
+                        if (!totalLocais)
+                            throw new Error('Esta auditoria ainda não foi preparada neste aparelho. Conecte-se à internet uma vez para baixar a Base Geral de Endereços.');
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-end', '📍', 'Base Geral de Endereços', totalLocais + ' endereços carregados', 'ok');
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-base', '📝', 'Base da Auditoria', 'Baixando endereços pendentes…', 'run');
+                        if (typeof _dlProg === 'function')
+                            _dlProg(75, 'Baixando Base da Auditoria…');
+                        baseAuditoria = [];
+                        baseObtidaOnline = false;
+                        if (!navigator.onLine) return [3 /*break*/, 17];
+                        _a.label = 14;
+                    case 14:
+                        _a.trys.push([14, 16, , 17]);
+                        return [4 /*yield*/, _comTimeoutAberturaAuditoria(_carregarEnderecoAuditoria(auditoriaId), AUDITORIA_ABERTURA_TIMEOUT_MS, 'a Base da Auditoria')];
+                    case 15:
+                        baseAuditoria = _a.sent();
+                        baseObtidaOnline = Array.isArray(baseAuditoria);
+                        return [3 /*break*/, 17];
+                    case 16:
+                        e_12 = _a.sent();
+                        console.warn('[AUDITORIA] Base online indisponível; usando cache local:', e_12);
+                        return [3 /*break*/, 17];
+                    case 17:
+                        if (token !== APP._auditoriaCargaToken)
+                            return [2 /*return*/];
+                        if (!!baseObtidaOnline) return [3 /*break*/, 19];
+                        return [4 /*yield*/, _baseAuditoriaCache(auditoriaId)];
+                    case 18:
+                        cacheAuditoria = _a.sent();
+                        if (!cacheAuditoria.encontrado)
+                            throw new Error('A base desta auditoria não está salva neste aparelho. Conecte-se à internet uma vez para fazer o primeiro download.');
+                        baseAuditoria = cacheAuditoria.lista;
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-base', '📝', 'Base da Auditoria', 'Modo offline — ' + baseAuditoria.length + ' endereços pendentes no aparelho', 'run');
+                        _a.label = 19;
+                    case 19:
+                        APP.auditorias = Array.isArray(baseAuditoria) ? baseAuditoria : [];
+                        _hidratarMapaProdutosAuditoria(APP.auditorias);
+                        totalAud = (APP.auditorias || []).length;
+                        if (typeof _dlStep === 'function')
+                            _dlStep('aud-base', '📝', 'Base da Auditoria', totalAud + ' endereços pendentes', 'ok');
+                        if (typeof _dlProg === 'function')
+                            _dlProg(100, 'Todas as informações foram carregadas.');
+                        APP._auditoriaPronta = true;
+                        entrar = document.getElementById('dl-btn-entrar');
+                        if (entrar) {
+                            entrar.style.display = '';
+                            entrar.textContent = 'OK — iniciar auditoria';
+                            entrar.onclick = window.entrarAuditoriaCarregada;
+                        }
+                        cancelar = document.getElementById('dl-btn-cancel');
+                        if (cancelar)
+                            cancelar.style.display = 'none';
+                        status_1 = document.getElementById('dl-status-txt');
+                        if (status_1)
+                            status_1.textContent = 'Carregamento concluído. Toque em OK para continuar.';
+                        return [3 /*break*/, 22];
+                    case 20:
+                        err_1 = _a.sent();
+                        console.error('[AUDITORIA] Falha ao preparar auditoria:', err_1);
+                        APP._auditoriaPronta = false;
+                        if (typeof _dlSetErro === 'function')
+                            _dlSetErro(err_1.message || String(err_1));
+                        else
+                            toast('Erro ao abrir auditoria: ' + (err_1.message || err_1), 'e');
+                        cancelar = document.getElementById('dl-btn-cancel');
+                        if (cancelar) {
+                            cancelar.style.display = '';
+                            cancelar.textContent = 'Voltar';
+                            cancelar.onclick = window.cancelarDownloadAuditoria;
+                        }
+                        entrar = document.getElementById('dl-btn-entrar');
+                        if (entrar)
+                            entrar.style.display = 'none';
+                        return [3 /*break*/, 22];
+                    case 21:
+                        if (token === APP._auditoriaCargaToken)
+                            APP._auditoriaCarregando = false;
+                        return [7 /*endfinally*/];
+                    case 22: return [2 /*return*/];
+                }
+            });
         });
-        return p;
     };
     var _oldVoltar = window._voltarInventarioConfirmado;
     window._voltarInventarioConfirmado = function () {

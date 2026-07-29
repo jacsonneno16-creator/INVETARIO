@@ -120,7 +120,16 @@ function onGtinInput() {
       normProd(r.gtin)           === valNorm ||
       normProd(r.dun)            === valNorm ||
       normProd(r.codigo_produto) === valNorm;
-    const reg = APP.base.find(_match);
+    const regInventario = APP.base.find(_match);
+    const produtoGeral = window.DTProdutos?.buscarSync(val) || { encontrado:false };
+    const reg = regInventario || (produtoGeral.encontrado ? {
+      codigo_produto: produtoGeral.codigoInterno || produtoGeral.produtoId || valNorm,
+      descricao_produto: produtoGeral.nomeProduto || 'Produto sem descrição',
+      gtin: produtoGeral.gtin || valNorm,
+      dun: produtoGeral.dun || '',
+      produto_id: produtoGeral.produtoId || '',
+      _base_geral: true
+    } : null);
     if (reg) {
       APP.atual.produtoAtual = reg;
 
@@ -140,20 +149,36 @@ function onGtinInput() {
       }
 
       pbox.style.display = '';
+      const nomeProduto = produtoGeral.encontrado
+        ? produtoGeral.nomeProduto
+        : (reg.descricao_produto || 'Produto sem descrição');
+      const codigoCadastro = produtoGeral.encontrado
+        ? (produtoGeral.codigoInterno || reg.codigo_produto || '')
+        : (reg.codigo_produto || '');
       pbox.innerHTML = `
         <div class="prod-card">
           <div class="prod-icon">📦</div>
-          <div>
-            <div class="prod-name">${reg.descricao_produto||'—'}</div>
-            <div class="prod-code">${reg.codigo_produto||''} · ${isDun?'DUN':'GTIN'}: ${val}</div>
+          <div style="min-width:0">
+            <div class="prod-code" style="font-size:.82rem;font-weight:800">${escHTML(isDun?'DUN':'GTIN')}: ${escHTML(val)}${codigoCadastro ? ` · Cód. ${escHTML(codigoCadastro)}` : ''}</div>
+            <div class="prod-name" style="font-size:.7rem;font-weight:600;margin-top:3px;line-height:1.25;color:var(--muted)">${escHTML(nomeProduto)}</div>
           </div>
         </div>`;
     } else {
       APP.atual.produtoAtual = null;
       APP.atual.produtoDivergenteEnd = false;
-      fb.innerHTML = `<div class="fb err">✗ Código não encontrado na base</div>`;
-      document.getElementById('f-gtin').className = 'field icon-r field-err';
+      const produtosCarregados = !!window.DTProdutos?.cache?.carregado;
+      fb.innerHTML = produtosCarregados
+        ? `<div class="fb err">✗ Código não encontrado na base</div>`
+        : `<div class="fb warn">⏳ Consultando a Base Geral de Produtos…</div>`;
+      document.getElementById('f-gtin').className = produtosCarregados ? 'field icon-r field-err' : 'field icon-r';
       pbox.style.display = 'none';
+      if (!produtosCarregados && window.DTProdutos?.carregar) {
+        const codigoConsultado = val;
+        window.DTProdutos.carregar().then(() => {
+          const campo = document.getElementById('f-gtin');
+          if (campo && campo.value.trim() === codigoConsultado) onGtinInput();
+        }).catch(() => {});
+      }
       // ► SEM SOM AQUI — o som toca em confirmarGtin() quando Enter chega
     }
   } else {
@@ -603,6 +628,10 @@ function _executarSalvar(qty) {
     tipo_bipagem: _isDunBipado ? 'DUN' : 'GTIN',   // qual código foi bipado
     quantidade_esperada: qtdEsp || '',
     divergente,
+    // Indicador local/informativo para o status offline do coletor.
+    // A divergência oficial continua sendo validada pelo Analista.
+    _alertaQtd: _alertaQtd,
+    divergencia_potencial: _alertaQtd,
     operador:       APP.operador?.name  || '',
     operador_id:    APP.operador?.email || APP.operador?.usuario || APP.operador?.login || '',
     operador_nome:  APP.operador?.name  || APP.operador?.nome || '',
@@ -610,8 +639,11 @@ function _executarSalvar(qty) {
     coletor_id:     localStorage.getItem('dt_device_id') || '',
     origem:         'COLETOR',
     tipo_contagem:    APP.modoRecontagem ? 'RECONTAGEM' : 'PRIMEIRA',
-    recontagem_id:    APP.modoRecontagem?.id          || null,
-    divergencia_id:   APP.modoRecontagem?.divergencia_id || null,
+    recontagem_id:    APP.modoRecontagem ? (APP.modoRecontagem.id || null) : null,
+    divergencia_id:   APP.modoRecontagem ? (APP.modoRecontagem.divergencia_id || (APP.modoRecontagem._col === 'divergencia' ? APP.modoRecontagem.id : null)) : null,
+    // Rodada explícita para auditoria e recuperação de registros offline/legados.
+    // 1 = primeira recontagem (2ª contagem); 2 = segunda recontagem (3ª contagem).
+    numero_recontagem: APP.modoRecontagem ? Number(APP.modoRecontagem.numero_recontagem || 1) : null,
     dataHora:   new Date(),
     criado_em:  new Date().toISOString(),
     numero: APP.contagens.filter(c => c.endereco === a.endereco && c.gtin === a.gtin).length + 1,
@@ -644,10 +676,42 @@ function _executarSalvar(qty) {
     }, 600);
   }
 
-  // Em recontagem: concluir e voltar para aba de recontagens
+  // Em recontagem, a rodada deve respeitar a mesma capacidade de paletes
+  // cadastrada na base geral de enderecos. Nao concluir apos o primeiro
+  // palete quando o endereco comporta mais de um.
   if (APP.modoRecontagem) {
-    resetContagem();
-    _concluirRecontagem();
+    const _endRec = a._endNorm || a.endereco || APP.modoRecontagem.endereco || '';
+    const _capRec = Number(
+      APP.endCapacidade?.[_endRec] ??
+      a.capacidadeEnd ??
+      APP.modoRecontagem.capacidade_pallets ??
+      APP.modoRecontagem.capacidade_paletes ??
+      APP.modoRecontagem.capacidade ?? 0
+    ) || 0;
+    const _usadosRec = _palletsNoEnderecoAtual(_endRec);
+
+    APP.recPalletAtual = _usadosRec + 1;
+    if (typeof _atualizarBannerRecontagem === 'function') {
+      APP.modoRecontagem._paletes_contados_rodada = _usadosRec;
+      APP.modoRecontagem._capacidade_rodada = _capRec;
+      _atualizarBannerRecontagem(APP.modoRecontagem);
+    }
+
+    if (_capRec > 0 && _usadosRec >= _capRec) {
+      toast(`✅ Recontagem concluida: ${_usadosRec}/${_capRec} paletes registrados`, 's');
+      resetContagem();
+      _concluirRecontagem();
+      return;
+    }
+
+    // Capacidade ainda nao atingida (ou nao cadastrada): manter o endereco
+    // ativo para o proximo palete. O operador pode encerrar antes usando
+    // ENDERECO VAZIO quando nao houver mais paletes fisicos.
+    _manterEnderecoAtivo(a.endereco, _endRec, _capRec || a.capacidadeEnd, a.somentesDun);
+    const faltam = _capRec > 0 ? Math.max(0, _capRec - _usadosRec) : null;
+    toast(faltam === null
+      ? `📦 Palete ${_usadosRec} salvo — bipe o proximo ou encerre o endereco`
+      : `📦 Palete ${_usadosRec}/${_capRec} salvo — faltam ${faltam}`, 's');
     return;
   }
 
@@ -933,4 +997,3 @@ function resetContagem() {
   updateSteps();
   setTimeout(() => { const el = document.getElementById('f-endereco'); if (el) el.focus(); }, 80);
 }
-

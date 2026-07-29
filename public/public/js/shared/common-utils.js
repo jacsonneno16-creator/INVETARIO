@@ -90,3 +90,71 @@ function _agruparCapasDuplicadas(origem) {
   return Array.from(mapa.values()).filter(x => x.total > 1);
 }
 window._agruparCapasDuplicadas = window._agruparCapasDuplicadas || _agruparCapasDuplicadas;
+
+
+// Chave operacional única do fluxo de inventário.
+// Todas as telas e ações devem relacionar registros por:
+// inventário canônico + endereço normalizado + produto normalizado.
+(function(global){
+  function texto(v){
+    return String(v == null ? '' : v).trim().toUpperCase();
+  }
+  function endereco(v){
+    // Remove diferenças apenas de apresentação (pontos, espaços, barras e hífens).
+    // Ex.: 14.1520.1.5.2.4.1.1 e 14.1520.1.5.24.1.1 continuam diferentes
+    // se a sequência numérica realmente for diferente; já espaços/pontuação não interferem.
+    return texto(v).replace(/[^A-Z0-9]/g, '');
+  }
+  function inventario(obj, inventarios){
+    obj = obj || {};
+    var bruto = texto(obj.inventario_id || obj.inventarioId || obj.inventario || '');
+    var lista = Array.isArray(inventarios) ? inventarios : [];
+    var achado = lista.find(function(i){
+      return [i && i.id, i && i.codigo, i && i.nome, i && i.inventario_id, i && i.inventarioId]
+        .filter(Boolean).map(texto).includes(bruto);
+    });
+    return texto((achado && (achado.id || achado.codigo)) || bruto);
+  }
+  function produto(obj){
+    obj = obj || {};
+    var ids = [
+      obj.produto_id, obj.codigo_interno, obj.codigoInterno,
+      obj.codigo_produto, obj.codigoProduto, obj.produto,
+      obj.produto_contado, obj.produto_recontagem, obj.produto_primeira,
+      obj.gtin, obj.ean, obj.dun, obj.codigo_lido, obj.codigoLido
+    ].map(texto).filter(Boolean);
+    // Quando um registro usa GTIN e outro código interno, converte ambos para
+    // o código interno cadastrado antes de formar a chave.
+    if (global.DTProdutos && typeof global.DTProdutos.buscarSync === 'function') {
+      for (var i=0; i<ids.length; i++) {
+        try {
+          var achado = global.DTProdutos.buscarSync(ids[i]);
+          if (achado && achado.encontrado) {
+            return texto(achado.codigoInterno || achado.codigo_interno || achado.gtin || ids[i]);
+          }
+        } catch(e) {}
+      }
+    }
+    return ids[0] || 'SEM_PRODUTO';
+  }
+  function chave(obj, inventarios){
+    obj = obj || {};
+    // Recalcula a chave a partir dos campos atuais. Registros antigos podem ter
+    // chave_fluxo gravada apenas por inventario/endereco, o que mistura produtos
+    // diferentes na mesma divergencia/recontagem.
+    var inv = inventario(obj, inventarios);
+    var end = endereco(obj.endereco);
+    var prod = produto(obj);
+    if (prod !== 'SEM_PRODUTO') return inv + '|' + end + '|' + prod;
+    var gravada = texto(obj.chave_fluxo);
+    if (gravada && gravada.split('|').length >= 3) return gravada;
+    return inv + '|' + end + '|' + prod;
+  }
+  function mesmo(a,b,inventarios){
+    if (!a || !b) return false;
+    var aid=texto(a.divergencia_id), bid=texto(b.divergencia_id);
+    if (aid && bid && aid === bid) return true;
+    return chave(a,inventarios) === chave(b,inventarios);
+  }
+  global.InventoryFlowKey = { texto:texto, endereco:endereco, inventario:inventario, produto:produto, chave:chave, mesmo:mesmo };
+})(window);

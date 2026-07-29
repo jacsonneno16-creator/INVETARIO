@@ -133,7 +133,7 @@ function updateStats() {
 // faça um download fresco do dt_locais — sem precisar relogar.
 function atualizarCacheLocais() {
     return __awaiter(this, void 0, void 0, function () {
-        var btn, versaoServidor, metaDoc, e_1, versaoLocal, locaisSet_1, endCapMapa_1, chunksSnap, locSnap, verStr, el, e_2;
+        var btn, versaoServidor, metaDoc, e_1, versaoLocal, locaisSet_1, endCapMapa_1, chunksSnap, docsUsar, verStr, el, e_2;
         var _a, _b;
         return __generator(this, function (_c) {
             switch (_c.label) {
@@ -145,7 +145,7 @@ function atualizarCacheLocais() {
                     }
                     _c.label = 1;
                 case 1:
-                    _c.trys.push([1, 10, 11, 12]);
+                    _c.trys.push([1, 7, 8, 9]);
                     // Verificar conexão
                     if (!navigator.onLine) {
                         toast('Sem conexão — impossível atualizar endereços', 'e');
@@ -173,13 +173,14 @@ function atualizarCacheLocais() {
                     }
                     locaisSet_1 = new Set();
                     endCapMapa_1 = {};
-                    return [4 /*yield*/, FS.collection('dt_locais_chunks').orderBy('parte').get()];
+                    if (!versaoServidor)
+                        throw new Error('Versão da Base Geral de Endereços não encontrada.');
+                    return [4 /*yield*/, FS.collection('dt_locais_chunks').where('versao', '==', versaoServidor).get()];
                 case 6:
                     chunksSnap = _c.sent();
-                    if (!!chunksSnap.empty) return [3 /*break*/, 7];
-                    var todosDocs = chunksSnap.docs;
-                    var docsDaVersao = versaoServidor ? todosDocs.filter(function (d) { return String((d.data() || {}).versao || '') === versaoServidor; }) : [];
-                    var docsUsar = docsDaVersao.length ? docsDaVersao : todosDocs.filter(function (d) { return !(d.data() || {}).versao; });
+                    if (chunksSnap.empty)
+                        throw new Error('Base de endereços em chunks não publicada para a versão atual.');
+                    docsUsar = chunksSnap.docs.slice().sort(function (a, b) { return Number((a.data() || {}).parte || 0) - Number((b.data() || {}).parte || 0); });
                     docsUsar.forEach(function (chunkDoc) {
                         var dados = chunkDoc.data().dados || chunkDoc.data().itens || [];
                         dados.forEach(function (d) {
@@ -195,25 +196,6 @@ function atualizarCacheLocais() {
                                 endCapMapa_1[end] = cap;
                         });
                     });
-                    return [3 /*break*/, 9];
-                case 7: return [4 /*yield*/, FS.collection(FCOL.locais).get()];
-                case 8:
-                    locSnap = _c.sent();
-                    locSnap.docs.forEach(function (doc) {
-                        var _a, _b, _c, _d, _e, _f;
-                        var d = doc.data();
-                        if (d.ativo === false)
-                            return;
-                        var end = _normStr ? _normStr(d.endereco || doc.id) : String(d.endereco || doc.id).trim().toUpperCase().replace(/\s+/g, ' ');
-                        if (!end)
-                            return;
-                        locaisSet_1.add(end);
-                        var cap = parseInt((_f = (_e = (_d = (_c = (_b = (_a = d.capacidade_paletes) !== null && _a !== void 0 ? _a : d.capacidade_pallets) !== null && _b !== void 0 ? _b : d.capacidade_palete) !== null && _c !== void 0 ? _c : d.capacidade_pallet) !== null && _d !== void 0 ? _d : d.capacidade) !== null && _e !== void 0 ? _e : d.max_pallets) !== null && _f !== void 0 ? _f : 0);
-                        if (cap > 0)
-                            endCapMapa_1[end] = cap;
-                    });
-                    _c.label = 9;
-                case 9:
                     // Salvar cache
                     try {
                         localStorage.setItem('col_locais', JSON.stringify(endCapMapa_1));
@@ -233,20 +215,115 @@ function atualizarCacheLocais() {
                         el.textContent = verStr;
                     toast('✅ ' + locaisSet_1.size + ' endereços atualizados (' + verStr + ')', 's');
                     dbg('[dt_locais] atualização manual: ' + locaisSet_1.size + ' ends | ver:', versaoServidor);
-                    return [3 /*break*/, 12];
-                case 10:
+                    return [3 /*break*/, 9];
+                case 7:
                     e_2 = _c.sent();
                     toast('Erro ao atualizar endereços: ' + e_2.message, 'e');
                     console.warn('[dt_locais] atualizarCacheLocais erro:', e_2);
-                    return [3 /*break*/, 12];
-                case 11:
+                    return [3 /*break*/, 9];
+                case 8:
                     if (btn) {
                         btn.disabled = false;
                         btn.textContent = '🔄 Atualizar endereços';
                     }
                     return [7 /*endfinally*/];
-                case 12: return [2 /*return*/];
+                case 9: return [2 /*return*/];
             }
         });
     });
 }
+
+// v156 — Status da Auditoria offline baseado na fila IndexedDB.
+(function(){
+  var _updateStatsBase = window.updateStats;
+  var _audStatsSeq = 0;
+  function _audDocId(r){ return String((r && (r.docId || r.id)) || '').trim(); }
+  function _audStatus(r){ return String((r && (r.status || (r.payload && r.payload.status))) || '').trim().toUpperCase(); }
+  function _atualizarStatsAuditoriaOffline(){
+    if (!window.APP || APP.modoAcesso !== 'auditoria' || !window.DTAuditoriaStorage) return Promise.resolve();
+    var seq = ++_audStatsSeq;
+    var audId = String((APP.inventario && (APP.inventario.auditoria_id || APP.inventario.id)) || '').trim();
+    if (!audId) return Promise.resolve();
+    return DTAuditoriaStorage.filaAll().catch(function(){ return []; }).then(function(fila){
+      if (seq !== _audStatsSeq) return;
+      var pendFila = fila.filter(function(x){ return String(x.auditoriaId || '') === audId && (x.subcolecao || 'enderecos') === 'enderecos'; });
+      var mapa = new Map();
+      (APP.contagens || []).forEach(function(r){
+        if (String(r.auditoriaId || r.auditoria_id || '') !== audId) return;
+        var id=_audDocId(r); if(id) mapa.set(id,r);
+      });
+      pendFila.forEach(function(x){ var id=_audDocId(x); if(id) mapa.set(id,Object.assign({id:id},x.payload||{})); });
+      var resultados=Array.from(mapa.values()).filter(function(r){ return ['OK','DIVERGENTE','ENDERECO_VAZIO'].indexOf(_audStatus(r))>=0; });
+      var pendIds=new Set(pendFila.map(_audDocId).filter(Boolean));
+      var total=resultados.length;
+      var pendentes=resultados.filter(function(r){ return pendIds.has(_audDocId(r)); }).length;
+      var enviadas=Math.max(0,total-pendentes);
+      var divergencias=resultados.filter(function(r){ return _audStatus(r)==='DIVERGENTE'; }).length;
+      function set(id,v){ var el=document.getElementById(id); if(el) el.textContent=String(v); }
+      set('st-total',total); set('st-enviadas',enviadas); set('st-pendentes',pendentes); set('st-div',divergencias);
+      window._dtAuditoriaPendentes=pendentes;
+      var bar=document.getElementById('sync-bar'),txt=document.getElementById('sync-bar-text'),spin=document.getElementById('sync-bar-spinner'),label=document.getElementById('conn-label');
+      if(!navigator.onLine){
+        if(bar){bar.style.display='flex';bar.style.background='linear-gradient(90deg,#7c2d12,#92400e)';}
+        if(txt)txt.textContent='📵 Sem internet — '+pendentes+' auditoria(s) salva(s) localmente e aguardando envio';
+        if(spin)spin.textContent='💾';
+        if(label)label.textContent=pendentes>0?'📵 '+pendentes+' na fila':'📵 Offline';
+      }else if(pendentes>0){
+        if(bar){bar.style.display='flex';bar.style.background='linear-gradient(90deg,#1e3a8a,#1d4ed8)';}
+        if(txt)txt.textContent='⬆️ Sincronizando '+pendentes+' auditoria(s) com Firebase…';
+        if(spin)spin.textContent='🔄';
+        if(label)label.textContent='⬆ '+pendentes+' pend.';
+      }
+    });
+  }
+  window.atualizarStatsAuditoriaOffline=_atualizarStatsAuditoriaOffline;
+  window.updateStats=function(){ if(typeof _updateStatsBase==='function')_updateStatsBase.apply(this,arguments); _atualizarStatsAuditoriaOffline().catch(function(e){console.warn('[AUDITORIA] Status offline:',e);}); };
+  window.addEventListener('dt-auditoria-salva',function(){window.updateStats();});
+  window.addEventListener('online',function(){setTimeout(function(){window.updateStats();},300);});
+  window.addEventListener('offline',function(){window.updateStats();});
+})();
+
+
+// v157 — Status do modo Inventário baseado na fila real do IndexedDB.
+(function(){
+  const _updateStatsAnterior = window.updateStats;
+  let _invStatsSeq = 0;
+  function _invAtiva(c){ return c && !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA'; }
+  function _invId(c){ return String((c && (c.inventario_id || c.inventarioId)) || '').trim(); }
+  function _invUuid(c){ return String((c && (c.uuid || c.id)) || '').trim(); }
+  function _invDivergenciaLocal(c){ return !!(c && (c._alertaQtd === true || c.divergencia_potencial === true || c.divergente === true)); }
+  window.updateStats = function(){
+    if (window.APP && APP.modoAcesso === 'auditoria') return _updateStatsAnterior.apply(this, arguments);
+    const seq = ++_invStatsSeq;
+    const invId = String(APP.inventario?.id || '').trim();
+    const ativas = (APP.contagens || []).filter(_invAtiva).filter(c => !invId || _invId(c) === invId);
+    const aplicar = (fila) => {
+      if (seq !== _invStatsSeq) return;
+      fila = Array.isArray(fila) ? fila : [];
+      const pendInv = fila.filter(_invAtiva).filter(c => !invId || _invId(c) === invId);
+      const pendIds = new Set(pendInv.map(_invUuid).filter(Boolean));
+      const total = ativas.length;
+      const pendentes = ativas.filter(c => pendIds.has(_invUuid(c))).length;
+      const enviadas = Math.max(0, total - pendentes);
+      const divs = ativas.filter(_invDivergenciaLocal).length;
+      const s = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
+      s('st-total', total); s('st-enviadas', enviadas); s('st-pendentes', pendentes); s('st-div', divs);
+      s('st-op', APP.operador?.name || '—'); s('st-inv', APP.inventario?.nome || '—');
+      s('st-base', APP.base.length ? APP.base.length + ' registros' : '—');
+      s('st-net', navigator.onLine ? '🟢 Online' : '🔴 Offline');
+      s('st-coletor', localStorage.getItem('dt_device_id')?.slice(0,20) || '—');
+      const locVer=localStorage.getItem('col_locais_ver');
+      s('st-locais-ver', locVer ? ('v'+locVer.slice(0,12)+(locVer.length>12?'…':'')) : 'sem cache');
+      const stAud=document.getElementById('st-aud'); if(stAud) stAud.textContent=(APP.auditorias||[]).length;
+      atualizarBarraStatus();
+    };
+    aplicar(FILA_ENVIO || []);
+    if (typeof idbGetPendentes === 'function') {
+      Promise.resolve(idbGetPendentes()).then(fila => {
+        FILA_ENVIO = Array.isArray(fila) ? fila : [];
+        filaSave(FILA_ENVIO);
+        aplicar(FILA_ENVIO);
+      }).catch(() => {});
+    }
+  };
+})();

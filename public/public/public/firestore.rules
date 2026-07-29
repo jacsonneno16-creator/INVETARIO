@@ -1,0 +1,17 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn(){ return request.auth != null; }
+    match /usuarios_acessos/{userId} { allow read, write: if signedIn(); }
+    match /lojas/{lojaId} {
+      allow read, create, update: if signedIn();
+      allow delete: if false;
+      match /{document=**} { allow read, write: if signedIn(); }
+    }
+    // Coleções antigas: somente leitura para permitir migração para lojas/{lojaId}.
+    match /{legacyCollection}/{document=**} {
+      allow read: if signedIn() && legacyCollection != 'lojas';
+      allow write: if false;
+    }
+  }
+}

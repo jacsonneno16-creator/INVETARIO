@@ -7,8 +7,8 @@ const PAGE_NAMES = {
   acompanhamento:   'Acompanhamento',
   contagens:        'Contagens',
   pendencias:       'Pendências',
-  divergencias:     'Em Conflito',
-  recontagens:      'Rodadas',
+  divergencias:     'Recontagem',
+  recontagens:      'Recontagem',
   'rel-divergencias':'Relatório de Conflitos',
   'capas-duplicadas': 'Capas Duplicadas',
   produtividade:    'Produtividade de Operadores',
@@ -22,6 +22,10 @@ const PAGE_NAMES = {
 let _currentPage = 'dashboard';
 
 function goPage(id, el) {
+  if (typeof window.temPermissao === 'function' && !window.temPermissao(id, 'visualizar')) {
+    if (typeof window.showToast === 'function') window.showToast('Você não possui acesso a esta aba.', 'error');
+    return;
+  }
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('on'));
   const pageEl = document.getElementById('page-' + id);
@@ -51,8 +55,8 @@ function renderPage(id) {
         if (typeof window.getInventariosAtivos === 'function' && getInventariosAtivos().length > 0 && window.AnalistaFirebaseService?.start) window.AnalistaFirebaseService.start();
         return _callPage('renderContagens');
       case 'pendencias':         return _callPage('renderPendencias');
-      case 'divergencias':       return _callPage('renderDivergencias');
-      case 'recontagens':        return _callPage('renderRecontagens');
+      case 'divergencias':
+      case 'recontagens':        return _callPage('renderDivergencias');
       case 'rel-divergencias':   return _callPage('renderRelDivergencias');
       case 'capas-duplicadas':   return _callPage('renderCapasDuplicadas');
       case 'produtividade':      return _callPage('renderProdutividade');

@@ -228,12 +228,12 @@ function _enderecoEmRecontagem(endNorm) {
 }
 function _verificarEnderecoFirebase(endNorm) {
     return __awaiter(this, void 0, void 0, function () {
-        var _CACHE_END_TTL, snap, docsAtivos, emRecontagemLocal, emRecontagemFS, _a, snapDiv, snapRec, divAtiva, recAtiva, e_2, bloqueadoRecontagem, meuNome_1, temVazio, docsNaoVazio, docsMeus, docsOutros, status_1, fbEl, campoVal, err_1;
-        var _b, _c, _d;
+        var _CACHE_END_TTL, snap, docsAtivos, emRecontagemLocal, emRecontagemFS, chaveBloqueio, snapBloqueio, e_2, bloqueadoRecontagem, meuNome_1, temVazio, docsNaoVazio, docsMeus, docsOutros, status_1, fbEl, campoVal, err_1;
+        var _a, _b, _c, _d;
         return __generator(this, function (_e) {
             switch (_e.label) {
                 case 0:
-                    if (!((_b = APP.inventario) === null || _b === void 0 ? void 0 : _b.id))
+                    if (!((_a = APP.inventario) === null || _a === void 0 ? void 0 : _a.id))
                         return [2 /*return*/];
                     _CACHE_END_TTL = 5 * 60 * 1000;
                     if ((_endVerif === null || _endVerif === void 0 ? void 0 : _endVerif.endereco) === endNorm && Date.now() - (_endVerif.checkedAt || 0) < _CACHE_END_TTL)
@@ -256,44 +256,11 @@ function _verificarEnderecoFirebase(endNorm) {
                     _e.label = 3;
                 case 3:
                     _e.trys.push([3, 5, , 6]);
-                    return [4 /*yield*/, Promise.all([
-                            FS.collection('dt_divergencias')
-                                .where('inventario_id', '==', APP.inventario.id)
-                                .where('endereco', '==', endNorm)
-                                .limit(5)
-                                .get(),
-                            FS.collection('dt_recontagens')
-                                .where('inventario_id', '==', APP.inventario.id)
-                                .where('endereco', '==', endNorm)
-                                .limit(5)
-                                .get(),
-                        ])];
+                    chaveBloqueio = "".concat(APP.inventario.id, "__").concat(encodeURIComponent(String(endNorm).trim().toUpperCase()));
+                    return [4 /*yield*/, FS.collection('dt_bloqueios_recontagem').doc(chaveBloqueio).get()];
                 case 4:
-                    _a = _e.sent(), snapDiv = _a[0], snapRec = _a[1];
-                    divAtiva = snapDiv.docs.find(function (d) {
-                        var data = d.data();
-                        var s = (data.status || '').toUpperCase();
-                        var bloq = (data.status_bloqueio || '').toUpperCase();
-                        var stRec = (data.status_recontagem || '').toLowerCase();
-                        if (s === 'RESOLVIDA')
-                            return false; // encerrada — não bloqueia
-                        if (s === 'PERSISTENTE')
-                            return false; // encerrada — não bloqueia
-                        if (bloq === 'PERSISTENTE_BLOQUEADO')
-                            return false;
-                        if (stRec === 'sem_divergencia')
-                            return false; // resolvida — não bloqueia
-                        if (data.divergencia_resolvida === true)
-                            return false;
-                        if (data.encerrada_definitivamente === true)
-                            return false;
-                        return s !== ''; // div aberta/em_recontagem bloqueia
-                    });
-                    recAtiva = snapRec.docs.find(function (d) {
-                        var sr = (d.data().status_recontagem || '').toLowerCase();
-                        return sr !== 'cancelada';
-                    });
-                    emRecontagemFS = !!(divAtiva || recAtiva);
+                    snapBloqueio = _e.sent();
+                    emRecontagemFS = snapBloqueio.exists && ((_b = snapBloqueio.data()) === null || _b === void 0 ? void 0 : _b.ativo) === true;
                     return [3 /*break*/, 6];
                 case 5:
                     e_2 = _e.sent();
@@ -393,7 +360,10 @@ function confirmarEnderecoSilencioso() {
         return;
     }
     if (status === 'proprio') {
-        _modalOpcoesProprio(valNorm, verifAtual.docsMeus || []);
+        fb.innerHTML = "<div class=\"fb err\" style=\"flex-direction:column;align-items:flex-start;gap:3px\">\n      <b>\uD83D\uDD12 Primeira contagem j\u00E1 realizada neste endere\u00E7o</b>\n      <span style=\"font-size:.7rem;opacity:.9\">Uma nova contagem somente pode ser liberada pelo Analista na aba Recontagem.</span>\n    </div>";
+        document.getElementById('f-endereco').className = 'field field-err';
+        APP.atual.enderecoValido = false;
+        beepErr();
         return;
     }
     // livre ou sem cache — prosseguir
@@ -512,8 +482,12 @@ function confirmarEndereco() {
         return;
     }
     if (status === 'proprio') {
-        // Mesmo operador — mostrar opções: continuar ou estornar
-        _modalOpcoesProprio(valNorm, docsMeus);
+        // Mesmo operador também não pode iniciar uma segunda primeira contagem.
+        // Correções exigem estorno; novas rodadas exigem atribuição do Analista.
+        fb.innerHTML = "<div class=\"fb err\" style=\"flex-direction:column;align-items:flex-start;gap:3px\">\n      <b>\uD83D\uDD12 Primeira contagem j\u00E1 realizada neste endere\u00E7o</b>\n      <span style=\"font-size:.7rem;opacity:.9\">Para corrigir, use Estorno. Para recontar, aguarde a atribui\u00E7\u00E3o do Analista.</span>\n    </div>";
+        document.getElementById('f-endereco').className = 'field field-err';
+        APP.atual.enderecoValido = false;
+        beepErr();
         return;
     }
     // 'livre' — prosseguir normalmente
@@ -950,7 +924,7 @@ function loteOnGtinInput() {
     }
     var match = _buscarProduto(val); // reutiliza a lógica existente de busca de produto
     if (match) {
-        fb.innerHTML = "<div class=\"fb ok\" style=\"font-size:.75rem\">\u2713 ".concat(escHTML(match.descricao_produto || match.codigo_produto), "</div>");
+        fb.innerHTML = "<div class=\"fb ok\" style=\"display:block\">\n      <div style=\"font-size:.78rem;font-weight:800\">\u2713 C\u00F3digo bipado: ".concat(escHTML(val), "</div>\n      <div style=\"font-size:.68rem;font-weight:600;margin-top:3px;line-height:1.25;opacity:.82\">").concat(escHTML(match.descricao_produto || 'Produto sem descrição'), "</div>\n    </div>");
     }
     else {
         fb.innerHTML = "<div class=\"fb warn\" style=\"font-size:.75rem\">\u26A0 C\u00F3digo n\u00E3o encontrado na base \u2014 ser\u00E1 registrado assim mesmo</div>";
@@ -980,15 +954,34 @@ function loteConfirmarGtin() {
 /** Reutiliza a lógica de busca de produto do fluxo normal */
 function _buscarProduto(gtin) {
     var _a, _b;
-    if (!((_a = APP.base) === null || _a === void 0 ? void 0 : _a.length))
-        return null;
-    var endNorm = ((_b = APP.lote) === null || _b === void 0 ? void 0 : _b.endNorm) || APP.atual._endNorm || '';
+    var codigo = normProd(gtin);
+    var endNorm = ((_a = APP.lote) === null || _a === void 0 ? void 0 : _a.endNorm) || APP.atual._endNorm || '';
+    var corresponde = function (r) {
+        return normProd(r.gtin) === codigo ||
+            normProd(r.dun) === codigo ||
+            normProd(r.codigo_produto) === codigo;
+    };
     // Primeiro tenta pelo endereço + gtin
-    var matchEnd = APP.base.find(function (r) { return r._end === endNorm && (r.gtin === gtin || r.codigo_produto === gtin); });
+    var matchEnd = (APP.base || []).find(function (r) { return r._end === endNorm && corresponde(r); });
     if (matchEnd)
         return matchEnd;
     // Fallback: qualquer produto com esse código
-    return APP.base.find(function (r) { return r.gtin === gtin || r.codigo_produto === gtin; }) || null;
+    var matchInventario = (APP.base || []).find(corresponde);
+    if (matchInventario)
+        return matchInventario;
+    // Mesma Base Geral usada pela Auditoria: identifica o produto mesmo quando
+    // ele não consta na base operacional/endereço deste inventário.
+    var geral = ((_b = window.DTProdutos) === null || _b === void 0 ? void 0 : _b.buscarSync(gtin)) || { encontrado: false };
+    if (!geral.encontrado)
+        return null;
+    return {
+        codigo_produto: geral.codigoInterno || geral.produtoId || codigo,
+        descricao_produto: geral.nomeProduto || 'Produto sem descrição',
+        gtin: geral.gtin || codigo,
+        dun: geral.dun || '',
+        produto_id: geral.produtoId || '',
+        _base_geral: true
+    };
 }
 // ──────────────────────────────────────────────────────────────────
 //  TELA QTD PADRÃO

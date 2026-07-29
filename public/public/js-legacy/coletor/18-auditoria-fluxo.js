@@ -60,7 +60,8 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         etapa: 'endereco',
         item: null,
         processando: false,
-        timerRetorno: null
+        timerRetorno: null,
+        foraAuditoria: false
     };
     function texto(v) { return String(v == null ? '' : v).trim(); }
     function normalizarEndereco(v) {
@@ -90,85 +91,23 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     }
     function reservarEnderecoAuditoria(item) {
         return __awaiter(this, void 0, void 0, function () {
-            var ref, meuDispositivo, e_1;
             return __generator(this, function (_a) {
-                switch (_a.label) {
-                    case 0:
-                        if (!navigator.onLine)
-                            return [2 /*return*/, true];
-                        ref = FS.collection(FCOL.auditorias).doc(auditoriaId()).collection('enderecos').doc(documentoId(item));
-                        meuDispositivo = dispositivoId();
-                        _a.label = 1;
-                    case 1:
-                        _a.trys.push([1, 3, , 4]);
-                        return [4 /*yield*/, FS.runTransaction(function (tx) {
-                                return __awaiter(this, void 0, void 0, function () {
-                                    var snap, atual, status;
-                                    return __generator(this, function (_a) {
-                                        switch (_a.label) {
-                                            case 0: return [4 /*yield*/, tx.get(ref)];
-                                            case 1:
-                                                snap = _a.sent();
-                                                atual = snap.exists ? (snap.data() || {}) : {};
-                                                status = texto(atual.status).toUpperCase();
-                                                if (STATUS_FINAIS.has(status) || atual.disponivel_coletor === false)
-                                                    throw new Error('ENDERECO_FINALIZADO');
-                                                if (atual.em_andamento === true && atual.dispositivo_id && atual.dispositivo_id !== meuDispositivo && !lockExpirado(atual)) {
-                                                    throw new Error('ENDERECO_EM_USO');
-                                                }
-                                                tx.set(ref, {
-                                                    auditoriaId: auditoriaId(),
-                                                    endereco: texto(item.endereco),
-                                                    em_andamento: true,
-                                                    dispositivo_id: meuDispositivo,
-                                                    operador_id: operadorUsuario(),
-                                                    operador_nome: operadorNome(),
-                                                    iniciado_em: agoraISO(),
-                                                    lock_iniciado_em: agoraISO(),
-                                                    disponivel_coletor: true
-                                                }, { merge: true });
-                                                return [2 /*return*/];
-                                        }
-                                    });
-                                });
-                            })];
-                    case 2:
-                        _a.sent();
-                        return [2 /*return*/, true];
-                    case 3:
-                        e_1 = _a.sent();
-                        if (e_1 && e_1.message === 'ENDERECO_EM_USO')
-                            return [2 /*return*/, false];
-                        if (e_1 && e_1.message === 'ENDERECO_FINALIZADO')
-                            return [2 /*return*/, false];
-                        console.warn('[AUDITORIA] Não foi possível criar lock; mantendo suporte offline:', e_1);
-                        return [2 /*return*/, true];
-                    case 4: return [2 /*return*/];
-                }
+                // A operação do coletor não pode depender de uma transação de rede.
+                // navigator.onLine também permanece true em vários Androids quando o Wi-Fi
+                // perdeu acesso, fazendo a transação ficar pendurada por tempo indefinido.
+                // A lista baixada e a fila local são a fonte de verdade durante a leitura.
+                return [2 /*return*/, !!item];
             });
         });
     }
     function liberarLockAuditoria(item) {
-        if (!item || !navigator.onLine || !auditoriaId())
-            return Promise.resolve();
-        var ref = FS.collection(FCOL.auditorias).doc(auditoriaId()).collection('enderecos').doc(documentoId(item));
-        var meuDispositivo = dispositivoId();
-        return FS.runTransaction(function (tx) {
-            return tx.get(ref).then(function (snap) {
-                if (!snap.exists)
-                    return;
-                var atual = snap.data() || {};
-                var status = texto(atual.status).toUpperCase();
-                if (STATUS_FINAIS.has(status))
-                    return;
-                if (atual.em_andamento === true && (!atual.dispositivo_id || atual.dispositivo_id === meuDispositivo)) {
-                    tx.set(ref, { em_andamento: false, dispositivo_id: null, lock_liberado_em: agoraISO() }, { merge: true });
-                }
+        return __awaiter(this, void 0, void 0, function () {
+            return __generator(this, function (_a) {
+                return [2 /*return*/];
             });
-        }).catch(function (e) { console.warn('[AUDITORIA] Falha ao liberar lock:', e); });
+        });
     }
     window.liberarLockAuditoriaAtual = function () { return liberarLockAuditoria(estado.item); };
-
     function listaAuditoria() {
         return (APP.auditorias || []).filter(function (item) {
             var status = texto(item.status).toUpperCase();
@@ -217,6 +156,23 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             return texto(nomeMapeado);
         var encontrado = (APP.auditorias || []).find(function (item) { return normalizarCodigo(dunEsperado(item)) === alvo; });
         return encontrado ? descricaoEsperada(encontrado) : 'Produto não identificado';
+    }
+    function produtoCompativelOffline(lido, item) {
+        var _a;
+        var alvo = normalizarCodigo(lido);
+        if (!alvo)
+            return false;
+        var esperados = codigosEsperados(item);
+        if (esperados.indexOf(alvo) >= 0)
+            return true;
+        // O mapa é criado durante o download e permanece em memória quando a rede
+        // cai. Compara também pelo nome canônico para reconhecer códigos alternativos
+        // do mesmo produto sem consultar o Firebase.
+        var nomeLido = normalizarCodigo(((_a = APP.auditoriaProdutosMap) === null || _a === void 0 ? void 0 : _a[alvo]) || '');
+        var nomeEsperado = normalizarCodigo(descricaoEsperada(item));
+        if (nomeLido && nomeEsperado && (nomeLido === nomeEsperado || nomeLido.includes(nomeEsperado) || nomeEsperado.includes(nomeLido)))
+            return true;
+        return mesmoProdutoDaBase(lido, item);
     }
     function encontrarEndereco(valor) {
         var alvo = normalizarEndereco(valor);
@@ -297,7 +253,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         var itemAnterior = estado.etapa === 'produto' ? estado.item : null;
         if (itemAnterior)
             liberarLockAuditoria(itemAnterior).catch(function () { });
-        estado = { etapa: 'endereco', item: null, processando: false, timerRetorno: null };
+        estado = { etapa: 'endereco', item: null, processando: false, timerRetorno: null, foraAuditoria: false };
         var el = elementos();
         if (el.etapaEndereco)
             el.etapaEndereco.style.display = '';
@@ -345,56 +301,23 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     }
     function consultarEnderecoNaBaseGeral(valor) {
         return __awaiter(this, void 0, void 0, function () {
-            var alvo, snap, existe, consultas, i, q, erro_1;
+            var alvo;
             return __generator(this, function (_a) {
-                switch (_a.label) {
-                    case 0:
-                        alvo = normalizarEndereco(valor);
-                        if (!alvo)
-                            return [2 /*return*/, false];
-                        if (APP.locaisAtivos && APP.locaisAtivos.has(alvo))
-                            return [2 /*return*/, true];
-                        _a.label = 1;
-                    case 1:
-                        _a.trys.push([1, 7, , 8]);
-                        return [4 /*yield*/, FS.collection(FCOL.locais).doc(alvo).get()];
-                    case 2:
-                        snap = _a.sent();
-                        existe = snap.exists && (!snap.data() || snap.data().ativo !== false);
-                        if (!!existe) return [3 /*break*/, 6];
-                        consultas = ['endereco', 'endereco_norm', 'codigo_endereco'];
-                        i = 0;
-                        _a.label = 3;
-                    case 3:
-                        if (!(i < consultas.length && !existe)) return [3 /*break*/, 6];
-                        return [4 /*yield*/, FS.collection(FCOL.locais).where(consultas[i], '==', valor).limit(1).get()];
-                    case 4:
-                        q = _a.sent();
-                        if (!q.empty && q.docs[0].data().ativo !== false)
-                            existe = true;
-                        _a.label = 5;
-                    case 5:
-                        i++;
-                        return [3 /*break*/, 3];
-                    case 6:
-                        if (existe) {
-                            if (!APP.locaisAtivos)
-                                APP.locaisAtivos = new Set();
-                            APP.locaisAtivos.add(alvo);
-                        }
-                        return [2 /*return*/, existe];
-                    case 7:
-                        erro_1 = _a.sent();
-                        console.warn('[AUDITORIA] Falha na consulta direta do endereço:', erro_1);
-                        return [2 /*return*/, false];
-                    case 8: return [2 /*return*/];
-                }
+                alvo = normalizarEndereco(valor);
+                if (!alvo)
+                    return [2 /*return*/, false];
+                if (APP.locaisAtivos && APP.locaisAtivos.has(alvo))
+                    return [2 /*return*/, true];
+                // A Base Geral já foi baixada antes de entrar na auditoria. Não consultar
+                // Firebase durante o bip: isso mantém a etapa instantânea mesmo quando o
+                // Android ainda reporta conexão após a queda do sinal.
+                return [2 /*return*/, false];
             });
         });
     }
     function confirmarEnderecoAuditoria() {
         return __awaiter(this, void 0, void 0, function () {
-            var el, valor, item, existeNaBaseGeral, reservado;
+            var el, valor, item, foraAuditoria, existeNaBaseGeral, meta, tipoProduto, confirmar, reservado;
             var _a, _b;
             return __generator(this, function (_c) {
                 switch (_c.label) {
@@ -410,20 +333,45 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             return [2 /*return*/];
                         }
                         item = encontrarEndereco(valor);
+                        foraAuditoria = false;
                         if (!!item) return [3 /*break*/, 2];
-                        mostrarFeedbackEndereco('Consultando a Base Geral de Endereços…', false);
+                        mostrarFeedbackEndereco('Verificando a Base Geral de Endereços baixada…', false);
                         return [4 /*yield*/, consultarEnderecoNaBaseGeral(valor)];
                     case 1:
                         existeNaBaseGeral = _c.sent();
                         if (existeNaBaseGeral) {
-                            item = encontrarEndereco(valor) || {
-                                id: auditoriaId() + '__' + normalizarEndereco(valor),
-                                endereco: valor,
-                                dunEsperado: '',
-                                produtoEsperado: 'ENDEREÇO PREVISTO VAZIO',
-                                previstoVazio: true,
-                                disponivel_coletor: true
-                            };
+                            meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId(); }) || {};
+                            tipoProduto = texto(meta.tipoAuditoria || meta.tipo_auditoria).toLowerCase() === 'produto';
+                            if (tipoProduto) {
+                                confirmar = window.confirm('Este endereço não faz parte da auditoria por produto. Deseja registrar uma ocorrência de produto encontrado fora dos endereços previstos?');
+                                if (!confirmar) {
+                                    mostrarFeedbackEndereco('Endereço fora da auditoria. Ocorrência não registrada.', true);
+                                    tocar('erro');
+                                    if (el.endereco) {
+                                        el.endereco.select();
+                                        el.endereco.focus();
+                                    }
+                                    return [2 /*return*/];
+                                }
+                                foraAuditoria = true;
+                                item = {
+                                    id: 'OCORRENCIA__' + auditoriaId() + '__' + normalizarEndereco(valor) + '__' + Date.now(),
+                                    endereco: valor,
+                                    dunEsperado: texto(meta.produtoCodigo || meta.produto_codigo || meta.gtin || meta.dun || meta.familiaId || ''),
+                                    produtoEsperado: texto(meta.produtoNome || meta.produto_nome || meta.familiaNome || meta.nomeProduto || 'PRODUTO DA AUDITORIA'),
+                                    foraAuditoria: true,
+                                    disponivel_coletor: true
+                                };
+                            }
+                            else {
+                                mostrarFeedbackEndereco('Este endereço existe na base, mas não faz parte desta auditoria.', true);
+                                tocar('erro');
+                                if (el.endereco) {
+                                    el.endereco.select();
+                                    el.endereco.focus();
+                                }
+                                return [2 /*return*/];
+                            }
                         }
                         _c.label = 2;
                     case 2:
@@ -434,6 +382,13 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                                 el.endereco.select();
                                 el.endereco.focus();
                             }
+                            return [2 /*return*/];
+                        }
+                        estado.foraAuditoria = foraAuditoria || item.foraAuditoria === true;
+                        if (estado.foraAuditoria) {
+                            mostrarFeedbackEndereco('Endereço fora da auditoria confirmado. Bipe o produto encontrado.', false);
+                            tocar('ok');
+                            irParaProduto(item);
                             return [2 /*return*/];
                         }
                         mostrarFeedbackEndereco('Reservando endereço para este coletor…', false);
@@ -460,59 +415,278 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     function documentoId(item) {
         return texto((item === null || item === void 0 ? void 0 : item.id) || "".concat(auditoriaId(), "__").concat(normalizarEndereco(item === null || item === void 0 ? void 0 : item.endereco)));
     }
-    function chaveFilaAuditoria() { return 'dt_auditoria_fila_' + lojaAtual(); }
-    function lerFilaAuditoria() { try {
-        return JSON.parse(localStorage.getItem(chaveFilaAuditoria()) || '[]');
-    }
-    catch (e) {
-        return [];
-    } }
-    function gravarFilaAuditoria(fila) { try {
-        localStorage.setItem(chaveFilaAuditoria(), JSON.stringify(fila || []));
-    }
-    catch (e) { } }
-    function enfileirarAuditoria(docId, payload) { var fila = lerFilaAuditoria().filter(function (x) { return x.docId !== docId; }); fila.push({ docId: docId, auditoriaId: auditoriaId(), payload: payload }); gravarFilaAuditoria(fila); }
-    function sincronizarFilaAuditoria() {
+    function chaveRegistroAuditoria(audId, subcolecao, docId) { return [audId, subcolecao || 'enderecos', docId].join('::'); }
+    function enfileirarAuditoria(docId, payload, subcolecao) {
         return __awaiter(this, void 0, void 0, function () {
-            var fila, restantes, i, x, e_2;
+            var audId, registro;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
-                        fila = lerFilaAuditoria();
-                        if (!fila.length)
-                            return [2 /*return*/];
-                        restantes = [];
+                        audId = auditoriaId();
+                        registro = {
+                            chave: chaveRegistroAuditoria(audId, subcolecao, docId),
+                            docId: docId,
+                            auditoriaId: audId,
+                            subcolecao: subcolecao || 'enderecos',
+                            payload: payload,
+                            criadoEm: agoraISO()
+                        };
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaPut(registro)];
+                    case 1:
+                        _a.sent();
+                        return [2 /*return*/, registro];
+                }
+            });
+        });
+    }
+    var _sincronizandoAuditoria = false;
+    var _timerRetryAuditoria = null;
+    var AUDITORIA_SYNC_TIMEOUT_MS = 12000;
+    function comTimeoutAuditoria(promise, ms) {
+        return new Promise(function (resolve, reject) {
+            var finalizado = false;
+            var timer = setTimeout(function () {
+                if (finalizado)
+                    return;
+                finalizado = true;
+                var erro = new Error('Tempo limite de sincronização excedido');
+                erro.code = 'auditoria/offline-timeout';
+                reject(erro);
+            }, ms);
+            Promise.resolve(promise).then(function (valor) {
+                if (finalizado)
+                    return;
+                finalizado = true;
+                clearTimeout(timer);
+                resolve(valor);
+            }, function (erro) {
+                if (finalizado)
+                    return;
+                finalizado = true;
+                clearTimeout(timer);
+                reject(erro);
+            });
+        });
+    }
+    function agendarSyncAuditoria() {
+        if (_timerRetryAuditoria || !navigator.onLine)
+            return;
+        _timerRetryAuditoria = setTimeout(function () {
+            _timerRetryAuditoria = null;
+            sincronizarFilaAuditoria().catch(function () { });
+        }, 15000);
+    }
+    function migrarFilaAuditoriaLegada() {
+        return __awaiter(this, void 0, void 0, function () {
+            var chaves, i, chave, i, chaveLS, fila, j, x;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        chaves = [];
+                        for (i = 0; i < localStorage.length; i++) {
+                            chave = localStorage.key(i);
+                            if (chave && chave.indexOf('dt_auditoria_fila_') === 0)
+                                chaves.push(chave);
+                        }
                         i = 0;
                         _a.label = 1;
                     case 1:
-                        if (!(i < fila.length)) return [3 /*break*/, 6];
-                        x = fila[i];
+                        if (!(i < chaves.length)) return [3 /*break*/, 7];
+                        chaveLS = chaves[i];
+                        fila = [];
+                        try {
+                            fila = JSON.parse(localStorage.getItem(chaveLS) || '[]');
+                        }
+                        catch (e) { }
+                        j = 0;
                         _a.label = 2;
                     case 2:
-                        _a.trys.push([2, 4, , 5]);
-                        return [4 /*yield*/, FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection('enderecos').doc(x.docId).set(x.payload, { merge: true })];
+                        if (!(j < fila.length)) return [3 /*break*/, 5];
+                        x = fila[j] || {};
+                        if (!x.docId || !x.auditoriaId)
+                            return [3 /*break*/, 4];
+                        x.subcolecao = x.subcolecao || 'enderecos';
+                        x.chave = chaveRegistroAuditoria(x.auditoriaId, x.subcolecao, x.docId);
+                        x.criadoEm = x.criadoEm || agoraISO();
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaPut(x)];
                     case 3:
                         _a.sent();
-                        return [3 /*break*/, 5];
+                        _a.label = 4;
                     case 4:
-                        e_2 = _a.sent();
-                        restantes.push(x);
-                        return [3 /*break*/, 5];
+                        j++;
+                        return [3 /*break*/, 2];
                     case 5:
+                        try {
+                            localStorage.removeItem(chaveLS);
+                        }
+                        catch (e) { }
+                        _a.label = 6;
+                    case 6:
                         i++;
                         return [3 /*break*/, 1];
+                    case 7: return [2 /*return*/];
+                }
+            });
+        });
+    }
+    function sincronizarFilaAuditoria() {
+        return __awaiter(this, void 0, void 0, function () {
+            var fila, i, x, e_1;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        if (_sincronizandoAuditoria || !navigator.onLine)
+                            return [2 /*return*/];
+                        _sincronizandoAuditoria = true;
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, , 10, 11]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaAll()];
+                    case 2:
+                        fila = _a.sent();
+                        i = 0;
+                        _a.label = 3;
+                    case 3:
+                        if (!(i < fila.length)) return [3 /*break*/, 9];
+                        x = fila[i];
+                        _a.label = 4;
+                    case 4:
+                        _a.trys.push([4, 7, , 8]);
+                        return [4 /*yield*/, comTimeoutAuditoria(FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload, { merge: true }), AUDITORIA_SYNC_TIMEOUT_MS)];
+                    case 5:
+                        _a.sent();
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaDelete(x.chave)];
                     case 6:
-                        gravarFilaAuditoria(restantes);
-                        return [2 /*return*/];
+                        _a.sent();
+                        return [3 /*break*/, 8];
+                    case 7:
+                        e_1 = _a.sent();
+                        console.warn('[AUDITORIA] Item permanece na fila offline:', x.docId, e_1);
+                        agendarSyncAuditoria();
+                        return [3 /*break*/, 9];
+                    case 8:
+                        i++;
+                        return [3 /*break*/, 3];
+                    case 9: return [3 /*break*/, 11];
+                    case 10:
+                        _sincronizandoAuditoria = false;
+                        return [7 /*endfinally*/];
+                    case 11: return [2 /*return*/];
                 }
             });
         });
     }
     window.sincronizarFilaAuditoria = sincronizarFilaAuditoria;
-    window.addEventListener('online', function () { sincronizarFilaAuditoria(); });
+    window.addEventListener('online', function () {
+        if (_timerRetryAuditoria) {
+            clearTimeout(_timerRetryAuditoria);
+            _timerRetryAuditoria = null;
+        }
+        sincronizarFilaAuditoria().catch(function () { });
+    });
+    window.addEventListener('offline', function () {
+        if (_timerRetryAuditoria) {
+            clearTimeout(_timerRetryAuditoria);
+            _timerRetryAuditoria = null;
+        }
+    });
+    migrarFilaAuditoriaLegada().then(function () {
+        if (navigator.onLine)
+            sincronizarFilaAuditoria();
+    }).catch(function (e) { console.warn('[AUDITORIA] Falha ao migrar fila antiga:', e); });
+    function salvarOcorrenciaForaAuditoria(produtoLido) {
+        return __awaiter(this, void 0, void 0, function () {
+            var item, momento, lido, prod, meta, produtoCorreto, famProd, famMeta, alvo, nomeOffline, nomeMeta, el, docId, payload, error_1;
+            var _a;
+            return __generator(this, function (_b) {
+                switch (_b.label) {
+                    case 0:
+                        if (estado.processando || !estado.item)
+                            return [2 /*return*/];
+                        item = estado.item;
+                        momento = agoraISO();
+                        lido = texto(produtoLido);
+                        prod = window.DTProdutos && window.DTProdutos.buscarSync ? window.DTProdutos.buscarSync(lido) : { encontrado: false };
+                        meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId(); }) || {};
+                        produtoCorreto = false;
+                        if (prod.encontrado) {
+                            famProd = normalizarCodigo(prod.familiaCodigo || prod.familiaNome || prod.produtoPrincipal);
+                            famMeta = normalizarCodigo(meta.familiaId || meta.familiaNome || meta.produtoCodigo || meta.produtoNome || '');
+                            produtoCorreto = !!(famProd && famMeta && famProd === famMeta);
+                            if (!produtoCorreto) {
+                                alvo = normalizarCodigo(meta.produtoCodigo || meta.gtin || meta.dun || '');
+                                produtoCorreto = !!(alvo && (normalizarCodigo(lido) === alvo || normalizarCodigo(prod.id) === alvo));
+                            }
+                        }
+                        if (!produtoCorreto) {
+                            nomeOffline = normalizarCodigo(((_a = APP.auditoriaProdutosMap) === null || _a === void 0 ? void 0 : _a[normalizarCodigo(lido)]) || '');
+                            nomeMeta = normalizarCodigo(meta.produtoNome || meta.produto_nome || meta.familiaNome || '');
+                            produtoCorreto = !!(nomeOffline && nomeMeta && (nomeOffline === nomeMeta || nomeOffline.includes(nomeMeta) || nomeMeta.includes(nomeOffline)));
+                        }
+                        if (!produtoCorreto) {
+                            mostrarResultado('O produto bipado não é o produto selecionado nesta auditoria. Bipe o produto correto.', 'erro');
+                            tocar('erro');
+                            el = elementos();
+                            if (el.produto) {
+                                el.produto.select();
+                                el.produto.focus();
+                            }
+                            return [2 /*return*/];
+                        }
+                        setProcessando(true);
+                        docId = 'fora__' + normalizarEndereco(item.endereco) + '__' + Date.now();
+                        payload = {
+                            auditoriaId: auditoriaId(),
+                            tipo: 'PRODUTO_FORA_AUDITORIA',
+                            status: 'PRODUTO_FORA_AUDITORIA',
+                            endereco: texto(item.endereco),
+                            produtoLido: localizarProdutoLido(lido),
+                            produto_lido: localizarProdutoLido(lido),
+                            codigoLido: lido,
+                            dunLido: lido,
+                            gtinLido: lido,
+                            produtoEsperado: texto(meta.produtoNome || meta.produto_nome || meta.familiaNome || 'PRODUTO DA AUDITORIA'),
+                            operador_id: operadorUsuario(),
+                            operador_nome: operadorNome(),
+                            dispositivo_id: dispositivoId(),
+                            loja: lojaAtual(),
+                            encontradoForaAuditoria: true,
+                            encontrado_em: momento,
+                            criadoEm: momento,
+                            atualizadoEm: momento
+                        };
+                        _b.label = 1;
+                    case 1:
+                        _b.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, enfileirarAuditoria(docId, payload, 'ocorrencias')];
+                    case 2:
+                        _b.sent();
+                        return [3 /*break*/, 4];
+                    case 3:
+                        error_1 = _b.sent();
+                        console.error('[AUDITORIA] Falha ao persistir ocorrência no aparelho:', error_1);
+                        mostrarResultado('Não foi possível salvar no aparelho. Não prossiga e tente novamente.', 'erro');
+                        tocar('erro');
+                        setProcessando(false);
+                        return [2 /*return*/];
+                    case 4:
+                        mostrarResultado(navigator.onLine ? 'Ocorrência registrada no aparelho e aguardando sincronização.' : 'Ocorrência salva no coletor. Será enviada quando houver conexão.', 'vazio');
+                        tocar('vazio');
+                        try {
+                            window.dispatchEvent(new CustomEvent('dt-auditoria-ocorrencia', { detail: { id: docId, payload: payload } }));
+                        }
+                        catch (e) { }
+                        if (navigator.onLine)
+                            sincronizarFilaAuditoria().catch(function () { });
+                        estado.timerRetorno = setTimeout(irParaEndereco, 1100);
+                        return [2 /*return*/];
+                }
+            });
+        });
+    }
     function salvarResultado(status, produtoLido) {
         return __awaiter(this, void 0, void 0, function () {
-            var item, docId, momento, esperado, lido, nomeLido, payload, ref_1, error_1;
+            var item, docId, momento, esperado, lido, nomeLido, payload, error_2;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -561,38 +735,16 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                         _a.label = 1;
                     case 1:
                         _a.trys.push([1, 3, , 4]);
-                        ref_1 = FS.collection(FCOL.auditorias).doc(auditoriaId()).collection('enderecos').doc(docId);
-                        return [4 /*yield*/, FS.runTransaction(function (tx) {
-                                return __awaiter(this, void 0, void 0, function () {
-                                    var snap, atual, statusAtual;
-                                    return __generator(this, function (_a) {
-                                        switch (_a.label) {
-                                            case 0: return [4 /*yield*/, tx.get(ref_1)];
-                                            case 1:
-                                                snap = _a.sent();
-                                                atual = snap.exists ? (snap.data() || {}) : {};
-                                                statusAtual = texto(atual.status).toUpperCase();
-                                                if (STATUS_FINAIS.has(statusAtual) && atual.dispositivo_id && atual.dispositivo_id !== dispositivoId()) {
-                                                    throw new Error('Este endereço já foi finalizado por outro coletor.');
-                                                }
-                                                if (atual.em_andamento === true && atual.dispositivo_id && atual.dispositivo_id !== dispositivoId() && !lockExpirado(atual)) {
-                                                    throw new Error('Este endereço está em uso por outro coletor.');
-                                                }
-                                                tx.set(ref_1, payload, { merge: true });
-                                                return [2 /*return*/];
-                                        }
-                                    });
-                                });
-                            })];
+                        // Confirma primeiro no armazenamento durável do aparelho. A operação nunca
+                        // fica esperando o timeout da internet; a sincronização ocorre em paralelo.
+                        return [4 /*yield*/, enfileirarAuditoria(docId, payload, 'enderecos')];
                     case 2:
+                        // Confirma primeiro no armazenamento durável do aparelho. A operação nunca
+                        // fica esperando o timeout da internet; a sincronização ocorre em paralelo.
                         _a.sent();
                         APP.auditorias = (APP.auditorias || []).filter(function (a) { return documentoId(a) !== docId; });
                         APP.contagens = (APP.contagens || []).filter(function (a) { return texto(a.id) !== docId; });
                         APP.contagens.unshift(__assign({ id: docId }, payload));
-                        try {
-                            localStorage.setItem('dt_auditoria_resultados_' + lojaAtual() + '_' + auditoriaId(), JSON.stringify(APP.contagens.slice(0, 500)));
-                        }
-                        catch (e) { }
                         atualizarContadorTitulo();
                         try {
                             window.dispatchEvent(new CustomEvent('dt-auditoria-salva', { detail: { id: docId, payload: payload } }));
@@ -610,27 +762,16 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                             mostrarResultado('Endereço registrado como vazio.', 'vazio');
                             tocar('vazio');
                         }
+                        if (navigator.onLine)
+                            sincronizarFilaAuditoria().catch(function () { });
                         estado.timerRetorno = setTimeout(irParaEndereco, 900);
                         return [3 /*break*/, 4];
                     case 3:
-                        error_1 = _a.sent();
-                        console.error('[AUDITORIA] Erro ao salvar resultado:', error_1);
-                        enfileirarAuditoria(docId, payload);
-                        APP.auditorias = (APP.auditorias || []).filter(function (a) { return documentoId(a) !== docId; });
-                        APP.contagens = (APP.contagens || []).filter(function (a) { return texto(a.id) !== docId; });
-                        APP.contagens.unshift(__assign({ id: docId }, payload));
-                        try {
-                            localStorage.setItem('dt_auditoria_resultados_' + lojaAtual() + '_' + auditoriaId(), JSON.stringify(APP.contagens.slice(0, 500)));
-                        }
-                        catch (e) { }
-                        atualizarContadorTitulo();
-                        try {
-                            window.dispatchEvent(new CustomEvent('dt-auditoria-salva', { detail: { id: docId, payload: payload } }));
-                        }
-                        catch (e) { }
-                        mostrarResultado('Auditoria salva no coletor. Será enviada quando houver conexão.', 'vazio');
-                        tocar('vazio');
-                        estado.timerRetorno = setTimeout(irParaEndereco, 900);
+                        error_2 = _a.sent();
+                        console.error('[AUDITORIA] Falha ao persistir resultado no aparelho:', error_2);
+                        mostrarResultado('Não foi possível salvar no aparelho. Não prossiga e tente novamente.', 'erro');
+                        tocar('erro');
+                        setProcessando(false);
                         return [3 /*break*/, 4];
                     case 4: return [2 /*return*/];
                 }
@@ -658,16 +799,22 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         }
         var prod = window.DTProdutos && window.DTProdutos.buscarSync ? window.DTProdutos.buscarSync(lido) : { encontrado: false };
         var esperados = codigosEsperados(estado.item);
-        var correto = esperados.indexOf(normalizarCodigo(lido)) >= 0 || mesmoProdutoDaBase(lido, estado.item);
+        var correto = produtoCompativelOffline(lido, estado.item);
         var meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId(); }) || {};
         if (meta.tipoAuditoria === 'produto' && meta.familiaId && prod.encontrado) {
             var famProd = normalizarCodigo(prod.familiaCodigo || prod.familiaNome);
             correto = famProd === normalizarCodigo(meta.familiaId) || famProd === normalizarCodigo(meta.familiaNome);
         }
-        if (!prod.encontrado && esperados.indexOf(normalizarCodigo(lido)) < 0)
+        // Não invalida uma correspondência já confirmada pela base baixada só porque
+        // o serviço global de produtos ficou momentaneamente indisponível offline.
+        if (!prod.encontrado && !produtoCompativelOffline(lido, estado.item))
             correto = false;
         if (estado.item.previstoVazio === true || !esperados.length)
             correto = false;
+        if (estado.foraAuditoria || estado.item.foraAuditoria === true) {
+            salvarOcorrenciaForaAuditoria(lido);
+            return;
+        }
         if (!prod.encontrado)
             mostrarResultado('Produto não cadastrado. Será registrado como divergente.', 'erro');
         salvarResultado(correto ? STATUS_OK : STATUS_DIVERGENTE, lido);
@@ -689,7 +836,6 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
     // Não chama nenhuma rotina de confirmação ou gravação do Inventário.
     // A seleção e o carregamento obrigatório da Auditoria pertencem exclusivamente
     // ao módulo 17-auditoria-meta.js. Não sobrescrever selecionarAuditoriaMenu aqui.
-
     function registrarEventosUmaVez() {
         if (window.__auditoriaFluxoEventosRegistrados)
             return;
