@@ -111,11 +111,13 @@
     const vistos = new Set();
     (inv?.base||[]).filter(item=>_nd(item.endereco)===_nd(endereco)).forEach(item=>{
       const codigo = _idPrincipalBase(item) || _idsProduto(item)[0] || 'SEM_PRODUTO';
-      const idRegistro = item?.id ?? item?.doc_id ?? item?.document_id ?? item?.uuid ?? item?.base_id ?? item?.registro_id;
       const palete = item?.palete_id ?? item?.pallet_id ?? item?.palete ?? item?.pallet ?? item?.numero_palete ?? item?.palete_numero ?? item?.sequencia_palete ?? '';
-      const chaveRegistro = idRegistro != null && String(idRegistro).trim()
-        ? `ID:${String(idRegistro).trim()}`
-        : ['CMP', _nd(endereco), _nd(palete), _nd(codigo), String(_qtdEsperadaItem(item))].join('|');
+      // A sincronizacao pode recriar a mesma linha com outro id de documento.
+      // Por isso a deduplicacao deve usar a identidade operacional da linha,
+      // e nao o id tecnico do cache/Firestore.
+      const lote = item?.lote ?? item?.lote_id ?? item?.numero_lote ?? '';
+      const validade = item?.validade ?? item?.data_validade ?? '';
+      const chaveRegistro = ['BASE', _nd(endereco), _nd(palete), _nd(codigo), _nd(lote), _nd(validade), String(_qtdEsperadaItem(item))].join('|');
       if (vistos.has(chaveRegistro)) return;
       vistos.add(chaveRegistro);
       const chave = _nd(codigo);
@@ -1899,6 +1901,9 @@
     avaliarHistorico: _avaliarHistoricoContagens,
     avaliarResumo: _avaliarResumoConsolidado,
     historicoEndereco: _historicoConsolidadoEndereco,
+    snapshotEsperadoEndereco: (inventario, endereco) => _snapshotEsperadoEndereco(inventario, endereco),
+    totalEsperadoEndereco: (inventario, endereco) => _snapshotEsperadoEndereco(inventario, endereco)
+      .reduce((total, item) => total + _qtdEsperadaItem(item), 0),
     avaliarEndereco: d => _avaliarHistoricoContagens(_historicoConsolidadoEndereco(d))
   };
 

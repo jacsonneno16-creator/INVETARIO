@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v170-fluxo-unificado-r191';
+var CACHE='dt-inventario-v199-divergencias-total-layout';
 var PRECACHE=[
   '/',
   '/index.html',

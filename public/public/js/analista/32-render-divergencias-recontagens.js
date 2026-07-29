@@ -19,42 +19,53 @@ const _nomeProdutoRec = valor => {
   return String(produtoEstado?.descricao || produtoEstado?.nome || produtoEstado?.descricao_produto || codigo).trim();
 };
 
-const _totalEsperadoEnderecoRec = obj => {
+const _itensEsperadosEnderecoRec = obj => {
   const invCanonico = _inventarioCanonicoRec(obj);
   const endereco = _FK.endereco(obj?.endereco);
   const inventario = (state().inventarios || []).find(i => _inventarioCanonicoRec(i) === invCanonico);
+  const snapshotRuntime = window.AnalistaDivergenciasRuntime?.snapshotEsperadoEndereco?.(inventario, endereco);
+  if (Array.isArray(snapshotRuntime) && snapshotRuntime.length) return snapshotRuntime;
+
+  // Fallback apenas para inicializacao anterior ao runtime. Mantem a mesma
+  // identidade operacional usada pelo motor central, sem confiar em ids tecnicos.
   const itensBrutos = (inventario?.base || []).filter(item => _FK.endereco(item?.endereco) === endereco);
   const qtd = item => {
     const bruto = item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ??
       item?.quantidade_enderecada ?? item?.qtd_enderecada ?? item?.saldo_estoque ?? item?.saldo ??
       item?.saldo_erp ?? item?.qtd_sistema ?? item?.qtd_estoque ?? item?.estoque_total ??
       item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde;
-    const n = Number(String(bruto ?? '').replace(',', '.'));
+    const texto = String(bruto ?? '').trim().replace(/\s/g, '');
+    const n = Number(texto.includes(',') ? texto.replace(/\./g, '').replace(',', '.') : texto);
     return Number.isFinite(n) ? n : 0;
   };
-  // A mesma linha da base pode chegar duplicada ao estado (ex.: cache + sincronizacao).
-  // Deduplicar pelo identificador real do registro ou, na ausencia dele, pelo conjunto
-  // endereco + palete + produto + quantidade. Paletes diferentes continuam somando.
-  const chaveItem = item => {
-    const id = item?.id ?? item?.doc_id ?? item?.document_id ?? item?.uuid ?? item?.base_id ?? item?.registro_id;
-    if (id != null && String(id).trim()) return `ID:${String(id).trim()}`;
+  const norm = v => String(v ?? '').trim().toUpperCase();
+  const vistos = new Set();
+  const unicos = itensBrutos.filter(item => {
     const palete = item?.palete_id ?? item?.pallet_id ?? item?.palete ?? item?.pallet ?? item?.numero_palete ?? item?.palete_numero ?? item?.sequencia_palete ?? '';
     const produto = item?.codigo_produto ?? item?.produto_id ?? item?.produto ?? item?.codigo ?? item?.sku ?? item?.gtin ?? item?.ean ?? item?.dun ?? '';
-    return ['CMP', endereco, String(palete).trim(), String(produto).trim(), String(qtd(item))].join('|');
+    const lote = item?.lote ?? item?.lote_id ?? item?.numero_lote ?? '';
+    const validade = item?.validade ?? item?.data_validade ?? '';
+    const chave = ['BASE', endereco, norm(palete), norm(produto), norm(lote), norm(validade), String(qtd(item))].join('|');
+    if (vistos.has(chave)) return false;
+    vistos.add(chave);
+    return true;
+  });
+  if (unicos.length) return unicos;
+  return Array.isArray(obj?.itens_esperados) ? obj.itens_esperados : [];
+};
+
+const _totalEsperadoEnderecoRec = obj => {
+  const itens = _itensEsperadosEnderecoRec(obj);
+  const qtd = item => {
+    const bruto = item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ??
+      item?.quantidade_enderecada ?? item?.qtd_enderecada ?? item?.saldo_estoque ?? item?.saldo ??
+      item?.saldo_erp ?? item?.qtd_sistema ?? item?.qtd_estoque ?? item?.estoque_total ??
+      item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde;
+    const texto = String(bruto ?? '').trim().replace(/\s/g, '');
+    const n = Number(texto.includes(',') ? texto.replace(/\./g, '').replace(',', '.') : texto);
+    return Number.isFinite(n) ? n : 0;
   };
-  const deduplicar = lista => {
-    const vistos = new Set();
-    return lista.filter(item => {
-      const chave = chaveItem(item);
-      if (vistos.has(chave)) return false;
-      vistos.add(chave);
-      return true;
-    });
-  };
-  const itens = deduplicar(itensBrutos);
   if (itens.length) return itens.reduce((total, item) => total + qtd(item), 0);
-  const snap = deduplicar(Array.isArray(obj?.itens_esperados) ? obj.itens_esperados : []);
-  if (snap.length) return snap.reduce((total, item) => total + qtd(item), 0);
   const fallback = Number(String(obj?.qtd_esperada ?? '').replace(',', '.'));
   return Number.isFinite(fallback) ? fallback : null;
 };
@@ -954,12 +965,7 @@ function renderDivergencias() {
             String(i.codigo || '') === String(d.inventario_id || '') ||
             String(i.nome || '') === String(d.inventario_id || '')
           );
-          const esperadosDaBase = (inventario?.base || []).filter(item =>
-            _FK.mesmo(item, d, state().inventarios)
-          );
-          const esperadosEndereco = esperadosDaBase.length
-            ? esperadosDaBase
-            : (Array.isArray(d.itens_esperados) ? d.itens_esperados : []);
+          const esperadosEndereco = _itensEsperadosEnderecoRec(d);
           const _qtdEsperadaItem = item => {
             const bruto = item.quantidade_esperada ?? item.quantidadeEsperada ?? item.qtd_esperada ?? item.qtdEsperada ??
               item.quantidade_enderecada ?? item.qtd_enderecada ?? item.saldo_estoque ?? item.saldo ??
@@ -970,9 +976,7 @@ function renderDivergencias() {
           };
           const totalEsperadoEndereco = d._qtd_esperada_endereco != null
             ? d._qtd_esperada_endereco
-            : (esperadosEndereco.length
-              ? esperadosEndereco.reduce((total, item) => total + _qtdEsperadaItem(item), 0)
-              : Number(qtdEspTxt) || 0);
+            : _totalEsperadoEnderecoRec(d);
           const quantidadePaletes = esperadosEndereco.length || 1;
           const esperadoHtml = `<button type="button" onclick="abrirDetalhePaletesEsperados(decodeURIComponent('${encodeURIComponent(String(d.id || ''))}'))"
             title="Clique para visualizar os paletes"
