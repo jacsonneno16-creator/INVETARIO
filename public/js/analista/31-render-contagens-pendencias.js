@@ -1,5 +1,18 @@
 function state(){ return window.AnalistaStore.getState(); }
 
+function _paleteContagem(c){
+  const valor=c?.palete ?? c?.pallet ?? c?.numero_palete ?? c?.numeroPalete ??
+    c?.palete_key ?? c?.capa_palete ?? c?.pallete_ou_capa ?? c?.capa ?? '';
+  return String(valor ?? '').trim();
+}
+
+function _ordemPaleteContagem(c){
+  const pal=_paleteContagem(c);
+  const num=Number(pal);
+  if(pal && Number.isFinite(num)) return {grupo:0, valor:num, texto:pal};
+  return {grupo:1, valor:0, texto:pal || String(c?.criado_em || c?.dataHora || c?.timestamp || '')};
+}
+
 function _produtoContagemExibicao(c){
   const codigo=c?.codigo_produto||c?.codigoProduto||c?.gtin||c?.ean||c?.dun||c?.codigo_lido||c?.codigoLido||'';
   const atual=String(c?.descricao_produto||c?.descricaoProduto||c?.descricao||'').trim();
@@ -55,14 +68,64 @@ function _ultimaRodadaContagem(c){
   if(!recs.length) return primeira;
 
   const r=recs[recs.length-1];
-  const rodada=Math.min(3,1+Math.max(1,Number(r?.numero_recontagem || recs.length)));
+  const numeroRodada=Math.max(1,Number(r?.numero_recontagem || recs.length));
+  const rodada=Math.min(3,1+numeroRodada);
+
+  // A tarefa de recontagem guarda o TOTAL do endereço, mas a aba Contagens
+  // precisa continuar exibindo cada palete bipado separadamente. Por isso,
+  // buscamos as leituras brutas da rodada em dt_contagens e associamos cada
+  // leitura ao palete original (primeiro pelo número da capa/palete e, para
+  // dados antigos sem o mesmo identificador, pela posição ordenada).
+  const recontagensBrutas=(st.contagens || []).filter(x => {
+    if(String(x?.tipo_contagem || '').toUpperCase()!=='RECONTAGEM') return false;
+    if(x?._excluida || ['ESTORNADA','EXCLUIDA'].includes(String(x?.status || '').toUpperCase())) return false;
+    if(FK.inventario(x,st.inventarios)!==inv || FK.endereco(x?.endereco)!==end) return false;
+    const vinculada=String(x?.recontagem_id || '')===String(r?.id || '') ||
+      String(x?.divergencia_id || '')===String(div?.id || '');
+    const mesmaRodada=!x?.numero_recontagem || Number(x.numero_recontagem)===numeroRodada;
+    return vinculada && mesmaRodada;
+  }).sort((a,b) => {
+    const oa=_ordemPaleteContagem(a), ob=_ordemPaleteContagem(b);
+    if(oa.grupo!==ob.grupo) return oa.grupo-ob.grupo;
+    if(oa.valor!==ob.valor) return oa.valor-ob.valor;
+    return oa.texto.localeCompare(ob.texto);
+  });
+
+  let leituraPalete=null;
+  const paleteOriginal=_paleteContagem(c);
+  if(paleteOriginal){
+    leituraPalete=recontagensBrutas.find(x => _paleteContagem(x)===paleteOriginal) || null;
+  }
+  if(!leituraPalete && recontagensBrutas.length){
+    const originais=(st.contagens || []).filter(x =>
+      String(x?.tipo_contagem || 'PRIMEIRA').toUpperCase()!=='RECONTAGEM' &&
+      !x?._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(x?.status || '').toUpperCase()) &&
+      FK.inventario(x,st.inventarios)===inv && FK.endereco(x?.endereco)===end &&
+      FK.produto(x)===prod
+    ).sort((a,b) => {
+      const oa=_ordemPaleteContagem(a), ob=_ordemPaleteContagem(b);
+      if(oa.grupo!==ob.grupo) return oa.grupo-ob.grupo;
+      if(oa.valor!==ob.valor) return oa.valor-ob.valor;
+      return oa.texto.localeCompare(ob.texto);
+    });
+    const indice=originais.findIndex(x => String(x?.uuid || x?.id || '')===cid);
+    if(indice>=0 && recontagensBrutas[indice]) leituraPalete=recontagensBrutas[indice];
+  }
+
+  const fonte=leituraPalete || r;
   return {
     rodada,
-    quantidade:r?.qtd_terceira ?? r?.qtd_segunda ?? r?.qtd_recontagem ?? r?.quantidade ?? primeira.quantidade,
-    produto:r?.produto_terceira || r?.produto_segunda || r?.produto_recontagem || r?.gtin_bipado || r?.codigo_produto || r?.produto || primeira.produto,
-    descricao:r?.descricao_produto || r?.produto_descricao || r?.descricao || primeira.descricao,
-    operador:r?.operador_terceira || r?.operador_segunda || r?.operador_recontagem || r?.operador || primeira.operador,
-    data:r?.data_terceira || r?.data_segunda || r?.recontagem_concluida_em || r?.concluida_em || r?.finalizada_em || primeira.data
+    quantidade:leituraPalete
+      ? (leituraPalete?.quantidade ?? leituraPalete?.qtd ?? leituraPalete?.qtd_contada ?? primeira.quantidade)
+      : (r?.qtd_terceira ?? r?.qtd_segunda ?? r?.qtd_recontagem ?? r?.quantidade ?? primeira.quantidade),
+    produto:leituraPalete
+      ? (leituraPalete?.gtin_bipado || leituraPalete?.codigoLido || leituraPalete?.dunLido || leituraPalete?.gtinLido || leituraPalete?.gtin || leituraPalete?.codigo_produto || primeira.produto)
+      : (r?.produto_terceira || r?.produto_segunda || r?.produto_recontagem || r?.gtin_bipado || r?.codigo_produto || r?.produto || primeira.produto),
+    descricao:fonte?.descricao_produto || fonte?.produto_descricao || fonte?.produtoLidoNome || fonte?.descricao || primeira.descricao,
+    operador:fonte?.operador_terceira || fonte?.operador_segunda || fonte?.operador_recontagem || fonte?.operador || fonte?.operador_nome || primeira.operador,
+    data:fonte?.data_terceira || fonte?.data_segunda || fonte?.recontagem_concluida_em || fonte?.concluida_em || fonte?.finalizada_em || fonte?.criado_em || fonte?.dataHora || primeira.data,
+    palete:_paleteContagem(leituraPalete) || paleteOriginal,
+    leitura_individual:Boolean(leituraPalete)
   };
 }
 
@@ -305,7 +368,12 @@ function renderContagens() {
       return FK.chave(Object.assign({}, c, { inventario_id: inv?.id || id }), state().inventarios);
     };
     dados.forEach(c => {
-      const chave=chaveContagem(c);
+      // Um endereço pode ter vários paletes do mesmo produto. A lista de
+      // Contagens deve preservar uma linha por palete; consolidar apenas por
+      // inventário/endereço/produto escondia quatro de cinco paletes, por exemplo.
+      const palete=_paleteContagem(c);
+      const identidadePalete=palete || String(c.uuid || c.id || c.criado_em || c.dataHora || 'SEM_ID');
+      const chave=chaveContagem(c)+'||PALETE:'+identidadePalete;
       const atual=grupos.get(chave);
       const data=x=>String(x.timestamp || x.criado_em || x.dataHora || '');
       if (!atual || data(c).localeCompare(data(atual)) < 0) grupos.set(chave,c);
@@ -416,7 +484,7 @@ function renderContagens() {
               </div>
             </td>
             <td style="font-size:.75rem;color:var(--muted)">${inv?.codigo || c.inventario_id}</td>
-            <td class="mono">${c.endereco || '—'}${capInfo}${ruaInfo}</td>
+            <td class="mono">${c.endereco || '—'}${capInfo}${ruaInfo}${(_paleteContagem(c)||ultima.palete) ? `<div style="font-size:.65rem;color:var(--muted);font-family:var(--font)">Palete: ${escHTML(ultima.palete || _paleteContagem(c))}</div>` : ''}</td>
             <td>
               <div style="font-weight:600;font-size:.82rem">${prodExib.codigo || '—'}</div>
               <div style="font-size:.72rem;color:var(--muted)">${prodExib.descricao || ''}</div>

@@ -299,63 +299,61 @@ async function divPopularSelectOperadores(selectId) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
   const cur = sel.value;
-
-  // Mostrar loading
-  sel.innerHTML = `<option value="">⏳ Carregando operadores...</option>`;
+  sel.innerHTML = '<option value="">⏳ Carregando todos os logins...</option>';
   sel.disabled = true;
 
-  let ops = [];
+  const mapa = new Map();
+  const adicionar = u => {
+    if (!u || u.ativo === false || u.conta_secundaria === true) return;
+    const nome = String(u.nome || u.name || u.displayName || '').trim();
+    const email = String(u.email || '').trim();
+    const loginColetor = String(u.login_coletor || u.email_coletor || '').trim().split('@')[0];
+    const emailAnalista = String(u.email_analista || ((u.canais_acesso?.analista === true || u.perfil === 'analista') ? email : '')).trim();
+    const valor = nome || loginColetor || emailAnalista || email;
+    if (!valor) return;
+    const chave = String(u.uid || u.id || email || loginColetor || valor).toLowerCase();
+    const logins = [...new Set([loginColetor, emailAnalista, email].filter(Boolean))];
+    mapa.set(chave, { valor, nome: nome || valor, logins, perfil: u.perfil || u.tipo || '' });
+  };
 
-  // 1. Tentar usar _opListaCompleta já carregada
-  if (typeof _opListaCompleta !== 'undefined' && _opListaCompleta.length) {
-    ops = _opListaCompleta
-      .filter(o => o.ativo !== false && o.tipo !== 'analista')
-      .map(o => ({ id: o.id, nome: o.nome, cargo: o.cargo }));
+  // Lista oficial de usuários e logins criados no sistema.
+  try {
+    const raw = window.getDTRawFirestore?.();
+    if (raw) {
+      const snap = await raw.collection('usuarios_acessos').get();
+      snap.docs.forEach(d => adicionar({ id:d.id, ...d.data() }));
+    }
+  } catch(e) {
+    console.warn('[Atribuição] usuários_acessos:', e.message);
   }
 
-  // 2. Se vazia, buscar direto do Firestore
-  if (!ops.length && typeof FS_AN !== 'undefined') {
+  // Compatibilidade com cadastros antigos em dt_operadores.
+  if (!mapa.size && typeof FS_AN !== 'undefined') {
     try {
-      const snap = await FS_AN.collection('dt_operadores')
-        .where('ativo', '==', true)
-        .orderBy('nome')
-        .get();
-      if (!snap.empty) {
-        ops = snap.docs.map(d => {
-          const data = d.data();
-          return { id: d.id, nome: data.nome, cargo: data.cargo };
-        }).filter(o => o.nome);
-        // Atualiza cache
-        if (typeof _opListaCompleta !== 'undefined') {
-          snap.docs.forEach(d => {
-            const existing = _opListaCompleta.find(x => x.id === d.id);
-            if (!existing) _opListaCompleta.push({ id: d.id, ...d.data() });
-          });
-        }
-      }
+      const snap = await FS_AN.collection('dt_operadores').get();
+      snap.docs.forEach(d => adicionar({ id:d.id, ...d.data() }));
     } catch(e) {
-      console.warn('[divPopularSelectOperadores] Firestore:', e.message);
+      console.warn('[Atribuição] dt_operadores:', e.message);
     }
   }
 
-  // 3. Fallback: operadores únicos das contagens locais
-  if (!ops.length) {
-    const nomes = [...new Set([
-      ...state().contagens.map(c => c.operador),
-      ...state().recontagens.map(r => r.operador),
-    ].filter(Boolean))].sort();
-    ops = nomes.map(n => ({ id: n, nome: n }));
+  // Fallback local para não bloquear a operação se a rede estiver indisponível.
+  if (!mapa.size) {
+    [...(state().contagens || []), ...(state().recontagens || [])].forEach(x =>
+      adicionar({ id:x.operador || x.operador_responsavel, nome:x.operador || x.operador_responsavel, ativo:true })
+    );
   }
 
+  const ops = [...mapa.values()].sort((a,b) => a.nome.localeCompare(b.nome, 'pt-BR'));
   sel.disabled = false;
-
   if (!ops.length) {
-    sel.innerHTML = `<option value="">⚠️ Nenhum operador cadastrado</option>`;
+    sel.innerHTML = '<option value="">⚠️ Nenhum login cadastrado</option>';
     return;
   }
-
-  sel.innerHTML = `<option value="">Selecione o operador...</option>` +
-    ops.map(o => `<option value="${o.nome || o.id}" ${(o.nome||o.id)===cur?'selected':''}>${o.nome}${o.cargo ? ` — ${o.cargo}` : ''}</option>`).join('');
+  sel.innerHTML = '<option value="">Selecione o usuário...</option>' + ops.map(o => {
+    const detalhe = o.logins.length ? ` — ${o.logins.join(' / ')}` : '';
+    return `<option value="${escHTML(o.valor)}" ${o.valor===cur?'selected':''}>${escHTML(o.nome + detalhe)}</option>`;
+  }).join('');
   if (cur) sel.value = cur;
 }
 
@@ -549,6 +547,32 @@ function recStatusLabel(statusRec) {
   }
 }
 
+
+// Localiza a contagem original exata que deu origem ao fluxo exibido.
+// Prioridade: vínculo explícito por ID; depois mesma chave operacional completa
+// (inventário + endereço + produto). Isso impede que a Recontagem mostre uma
+// quantidade consolidada/legada diferente da linha correspondente em Contagens.
+function _contagemOrigemExataRec(divergencia) {
+  const st = state();
+  const ids = [divergencia?.contagem_uuid, divergencia?.contagem_id, divergencia?.origem_contagem_id]
+    .filter(Boolean).map(String);
+  const validas = (st.contagens || []).filter(c =>
+    String(c?.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM' &&
+    !c?._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(c?.status || '').toUpperCase())
+  );
+  let encontrada = validas.find(c => ids.includes(String(c?.uuid || c?.id || '')));
+  if (encontrada) return encontrada;
+  encontrada = validas.find(c => _FK.mesmo(c, divergencia, st.inventarios));
+  if (encontrada) return encontrada;
+  const inv = _inventarioCanonicoRec(divergencia);
+  const end = _FK.endereco(divergencia?.endereco);
+  const prod = _produtoCanonicoRec(divergencia);
+  return validas.find(c =>
+    _inventarioCanonicoRec(c) === inv && _FK.endereco(c?.endereco) === end &&
+    (!prod || _produtoCanonicoRec(c) === prod)
+  ) || null;
+}
+
 function renderDivergencias() {
   const busca     = (document.getElementById('div-busca')?.value || '').toLowerCase();
   const fInv      = document.getElementById('div-sel-inv')?.value || '';
@@ -638,6 +662,19 @@ function renderDivergencias() {
       return pb - pa || String(b.criada_em || '').localeCompare(String(a.criada_em || ''));
     });
     const principal = Object.assign({}, ordenado[0]);
+    const contagemOrigem = _contagemOrigemExataRec(principal);
+    if (contagemOrigem) {
+      principal._contagem_origem = contagemOrigem;
+      principal.qtd_contada = contagemOrigem.quantidade ?? contagemOrigem.qtd ?? contagemOrigem.qtd_contada ?? principal.qtd_contada;
+      principal.qtd_primeira = principal.qtd_contada;
+      principal.produto_contado = contagemOrigem.gtin_bipado || contagemOrigem.codigoLido || contagemOrigem.codigo_lido || contagemOrigem.dunLido || contagemOrigem.gtinLido || contagemOrigem.codigo_produto || contagemOrigem.gtin || principal.produto_contado;
+      principal.produto_primeira = principal.produto_contado;
+      principal.descricao_contada = contagemOrigem.descricao_produto || contagemOrigem.descricao || principal.descricao_contada;
+      principal.operador = contagemOrigem.operador || contagemOrigem.operador_nome || principal.operador;
+      principal.operador_primeira = principal.operador;
+      principal.criada_em = contagemOrigem.timestamp || contagemOrigem.criado_em || contagemOrigem.dataHora || principal.criada_em;
+      principal.data_primeira = principal.criada_em;
+    }
     const recsEndereco = (state().recontagens || [])
       .filter(r => _chaveHist(r) === _chaveHist(principal))
       .sort((a,b) => String(a.recontagem_concluida_em || a.concluida_em || a.criada_em || '')
@@ -729,7 +766,7 @@ function renderDivergencias() {
   if (fProduto) dados = dados.filter(d => (d.produto||'') === fProduto);
   // Filtrar por operador
   if (fOperador) dados = dados.filter(d => {
-    const cont = state().contagens.find(c => _FK.mesmo(c, d, state().inventarios) && !c._excluida);
+    const cont = d._contagem_origem || _contagemOrigemExataRec(d);
     const op = d.operador || cont?.operador || '';
     return op === fOperador;
   });
@@ -800,7 +837,7 @@ function renderDivergencias() {
   const todosSetores= [...new Set(state().divergencias.map(d => { const i=getEnderecoInfo(d.endereco); return i?.setor||i?.local||i?.nome_local||''; }).filter(Boolean))].sort();
   const todosProds  = [...new Set(state().divergencias.map(d => d.produto).filter(Boolean))].sort();
   const todosOps    = [...new Set(state().divergencias.map(d => {
-    const cont = state().contagens.find(c => _FK.mesmo(c, d, state().inventarios) && !c._excluida);
+    const cont = d._contagem_origem || _contagemOrigemExataRec(d);
     return d.operador || cont?.operador || '';
   }).filter(Boolean))].sort();
   _popSel('div-frua',      todasRuas,    fRua,      'Todas as ruas');
@@ -857,7 +894,7 @@ function renderDivergencias() {
             .sort((a,b) => (b.numero_recontagem||1) - (a.numero_recontagem||1))[0] || null;
           const endInfo = getEnderecoInfo(d.endereco);
           const rua = endInfo?.rua || '—';
-          const cont = state().contagens.find(c => _FK.mesmo(c, d, state().inventarios) && !c._excluida);
+          const cont = d._contagem_origem || _contagemOrigemExataRec(d);
           const operador = d.operador || cont?.operador || '—';
           const podeSelecionar = divPodeSelecionar(d);
           if (!podeSelecionar) _divSelecionadas.delete(d.id);
