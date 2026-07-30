@@ -197,14 +197,20 @@ function divPodeSelecionar(div) {
     return !['CANCELADA','EXCLUIDA'].includes(st) && !['cancelada','excluida'].includes(sr);
   });
 
-  // Uma tarefa pendente já atribuída não pode ser atribuída novamente.
-  const pendenteAtribuida = recs.some(r => {
+  // Uma tarefa atribuída pode ser selecionada novamente enquanto ainda não
+  // tiver sido iniciada no coletor. Nesse caso, a confirmação apenas troca o
+  // responsável na mesma tarefa. Depois do início, a troca fica bloqueada.
+  const pendenteAtribuidaIniciada = recs.some(r => {
     const st = String(r.status || '').toUpperCase();
     const sr = String(r.status_recontagem || '').toLowerCase();
-    const pendente = st === 'PENDENTE' || sr === 'pendente';
-    return pendente && Boolean(r.operador || r.operador_responsavel);
+    const ativa = ['PENDENTE','EM_ANDAMENTO'].includes(st) || ['pendente','em_andamento'].includes(sr);
+    const atribuida = Boolean(r.operador || r.operador_responsavel);
+    const iniciou = globalThis.RecontagemAssignmentPolicy?.foiIniciada
+      ? globalThis.RecontagemAssignmentPolicy.foiIniciada(r)
+      : (st === 'EM_ANDAMENTO' || sr === 'em_andamento' || Boolean(r.iniciada_em || r.recontagem_iniciada_em));
+    return ativa && atribuida && iniciou;
   });
-  if (pendenteAtribuida) return false;
+  if (pendenteAtribuidaIniciada) return false;
 
   // Aguardando analista significa que a rodada anterior terminou e pode ser
   // enviada novamente, desde que ainda não exista terceira contagem.

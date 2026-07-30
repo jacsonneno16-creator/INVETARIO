@@ -1711,6 +1711,26 @@
     }, { merge: true }).catch(() => {});
   }
 
+  function _recontagemFoiIniciada(rec){
+    if (!rec) return false;
+    const st = String(rec.status || '').toUpperCase();
+    const sr = String(rec.status_recontagem || '').toLowerCase();
+    if (st === 'EM_ANDAMENTO' || sr === 'em_andamento') return true;
+    if (rec.iniciada_em || rec.recontagem_iniciada_em || rec.inicio_em || rec.primeira_leitura_em) return true;
+
+    // A existência de uma contagem vinculada é a prova mais segura de início,
+    // inclusive para documentos antigos que não possuem o campo iniciada_em.
+    const recId = String(rec.id || '');
+    if (!recId) return false;
+    return (state().contagens || []).some(c =>
+      String(c.recontagem_id || '') === recId &&
+      !['CANCELADA','EXCLUIDA','ESTORNADA'].includes(String(c.status || '').toUpperCase())
+    );
+  }
+
+  global.RecontagemAssignmentPolicy = global.RecontagemAssignmentPolicy || {};
+  global.RecontagemAssignmentPolicy.foiIniciada = _recontagemFoiIniciada;
+
   function atribuirRecontagemSegura(d, operador, atribPor, obs, agora){
     if (!d) return null;
     agora = agora || new Date().toISOString();
@@ -1762,7 +1782,44 @@
         dbg('[Atribuir] Operador atribuído ao rec existente:', updatedRecAtiva.id, operador);
         return updatedRecAtiva;
       }
-      showToast(`⚠️ ${d.endereco} já possui recontagem pendente atribuída a ${recAtiva.operador}. Aguarde a conclusão.`, 'w');
+      // O analista pode trocar o responsável enquanto a atividade ainda
+      // não foi aberta no coletor. A mesma tarefa é reaproveitada, sem criar
+      // outra recontagem e sem duplicar a rodada.
+      if (!_recontagemFoiIniciada(recAtiva)) {
+        const operadorAnterior = recAtiva.operador || recAtiva.operador_responsavel || null;
+        const updatedRecAtiva = Object.assign({}, recAtiva, {
+          operador,
+          operador_responsavel: operador,
+          operador_atribuido_anterior: operadorAnterior,
+          reatribuido_por: atribPor,
+          reatribuido_em: agora,
+          atribuido_por: atribPor,
+          atribuido_em: agora,
+          status: 'PENDENTE',
+          status_recontagem: 'pendente',
+          observacao_atribuicao: obs || recAtiva.observacao_atribuicao || ''
+        });
+        const updatedD = Object.assign({}, d, {
+          operador_responsavel: operador,
+          operador_atribuido_anterior: operadorAnterior,
+          reatribuido_por: atribPor,
+          reatribuido_em: agora,
+          atribuido_por: atribPor,
+          atribuido_em: agora,
+          status_recontagem: 'pendente'
+        });
+        fsSalvarRecontagem(updatedRecAtiva).catch(() => {});
+        fsSalvarDivergencia(updatedD).catch(() => {});
+        _salvarBloqueioLeve(d, operador, updatedRecAtiva.id, agora);
+        Store.dispatch(Actions.batch([
+          Actions.upsertEntity('recontagens', updatedRecAtiva, { source: 'reatribuirRecontagemSegura' }),
+          Actions.upsertEntity('divergencias', updatedD, { source: 'reatribuirRecontagemSegura' })
+        ], { source: 'reatribuirRecontagemSegura' }));
+        showToast(`🔄 ${d.endereco} reatribuído de ${operadorAnterior || 'sem operador'} para ${operador}.`, 's');
+        return updatedRecAtiva;
+      }
+
+      showToast(`🔒 ${d.endereco} já foi iniciada por ${recAtiva.operador}. Para preservar a contagem em andamento, não é possível trocar o operador.`, 'w');
       return null;
     }
 

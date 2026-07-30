@@ -207,6 +207,36 @@ function selecionarEnderecoRecontagem(itemId) {
   _ativarModoRecontagem(item);
 }
 
+function _marcarRecontagemIniciada(item) {
+  if (!item || !item.id) return;
+  const agora = new Date().toISOString();
+  const operador = APP.operador?.name || APP.operador?.nome || '';
+  const upd = {
+    status: 'EM_ANDAMENTO',
+    status_recontagem: 'em_andamento',
+    iniciada_em: item.iniciada_em || agora,
+    recontagem_iniciada_em: item.recontagem_iniciada_em || agora,
+    operador_recontagem: operador
+  };
+
+  Object.assign(item, upd);
+  const local = (APP.recontagens || []).find(r => String(r.id) === String(item.id));
+  if (local) Object.assign(local, upd);
+
+  if (!navigator.onLine || !FS) return;
+  FS.collection('dt_recontagens').doc(item.id).set(upd, { merge: true }).catch(e =>
+    console.warn('[Rec] Não foi possível marcar início:', e.message)
+  );
+  if (item.divergencia_id) {
+    FS.collection('dt_divergencias').doc(item.divergencia_id).set({
+      status: 'EM_RECONTAGEM',
+      status_recontagem: 'em_andamento',
+      operador_responsavel: operador,
+      recontagem_iniciada_em: upd.recontagem_iniciada_em
+    }, { merge: true }).catch(e => console.warn('[Div] Não foi possível marcar início:', e.message));
+  }
+}
+
 function _ativarModoRecontagem(item) {
   // ── Normalizar ids: garantir que recontagem_id e divergencia_id estejam corretos ──
   // Se o item vier de APP.divergenciasAtribuidas, é uma divergência (não tem divergencia_id).
@@ -246,6 +276,7 @@ function _ativarModoRecontagem(item) {
   }
 
   APP.modoRecontagem = itemNorm;
+  _marcarRecontagemIniciada(itemNorm);
   _endVerif = null;       // limpar cache Firebase — recontagem é sessão nova e independente
   resetContagem();
   showView('contar', document.querySelector('.nav-tab'));

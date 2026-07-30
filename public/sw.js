@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v216-produtos-pendencias';
+var CACHE='dt-inventario-v218-reatribuicao-recontagem';
 var PRECACHE=[
   '/',
   '/index.html',
