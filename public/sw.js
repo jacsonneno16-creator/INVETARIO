@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v210-inicializacao-resiliente';
+var CACHE='dt-inventario-v213-recontagem-capacidade-paletes';
 var PRECACHE=[
   '/',
   '/index.html',

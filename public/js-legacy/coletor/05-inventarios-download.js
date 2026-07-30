@@ -1,3 +1,19 @@
+
+async function carregarAtribuicoesContagem(invId) {
+  APP.atribuicoesContagem = new Map();
+  if (!invId || !navigator.onLine) return APP.atribuicoesContagem;
+  try {
+    const snap = await FS.collection('dt_atribuicoes_contagem').where('inventario_id', '==', String(invId)).get();
+    snap.docs.forEach(d => {
+      const a = { id:d.id, ...d.data() };
+      if (String(a.status || 'PENDENTE').toUpperCase() !== 'PENDENTE') return;
+      APP.atribuicoesContagem.set(_normStr(a.endereco || ''), a);
+    });
+  } catch (e) {
+    console.warn('[Atribuições] Falha ao carregar:', e?.message || e);
+  }
+  return APP.atribuicoesContagem;
+}
 // ═══════════════════════════════════════════════════
 //  INVENTÁRIOS  (Firestore)
 // ═══════════════════════════════════════════════════
@@ -401,6 +417,7 @@ async function _aplicarInventario(inv, modo = 'inventario') {
 
   // Iniciar listener de recontagens em tempo real
   setTimeout(() => iniciarListenerRecontagens(inv.id), 0);
+  setTimeout(() => carregarAtribuicoesContagem(inv.id), 0);
   setTimeout(() => iniciarListenerAuditoria(inv.id), 0);
   const tabs = {
     contar: document.getElementById('tab-contar'),

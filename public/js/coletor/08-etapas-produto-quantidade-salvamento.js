@@ -658,6 +658,20 @@ function _executarSalvar(qty) {
     }
   });
   APP.contagens.unshift(contagem);
+
+  // Encerrar a tarefa de endereço atribuída após a primeira contagem salva.
+  if (!APP.modoRecontagem && navigator.onLine) {
+    const tarefa = APP.atribuicoesContagem?.get(a._endNorm || _normStr(a.endereco));
+    if (tarefa?.id) {
+      FS.collection('dt_atribuicoes_contagem').doc(tarefa.id).set({
+        status:'CONCLUIDA', concluida_em:new Date().toISOString(),
+        concluida_por:APP.operador?.name || APP.operador?.nome || '',
+        contagem_uuid:contagem.uuid
+      }, { merge:true }).catch(e => console.warn('[Atribuições] conclusão:', e?.message || e));
+      APP.atribuicoesContagem.delete(a._endNorm || _normStr(a.endereco));
+    }
+  }
+
   const n = parseInt(a.capa);
   if (!isNaN(n) && n >= APP.proximoCapa) APP.proximoCapa = n + 1;
 

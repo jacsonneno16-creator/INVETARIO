@@ -16,7 +16,26 @@
   const invName = function(id){ const i=(st().inventarios||[]).find(function(x){return x.id===id;}); return i ? (i.nome||i.titulo||i.id) : (id||'—'); };
   const operador = function(x){ return norm(x.operador_nome || x.operador || x.usuario_nome || x.usuario || x.email_operador || 'Não informado'); };
   const produto = function(x){ return norm(x.produto_nome || x.produto || x.descricao || x.gtin || x.dun || x.codigo_produto || '—'); };
-  const local = function(x){ return norm(x.local || x.setor || x.nome_local || x.local_estoque || 'SEM LOCAL'); };
+  const normEnd = function(v){ return norm(v).replace(/\s+/g,'').toUpperCase(); };
+  let _enderecosRefLocal=null, _enderecosMapLocal=null;
+  const enderecoInfo = function(endereco){
+    const lista=st().enderecosLista||[];
+    if(_enderecosRefLocal!==lista){
+      _enderecosRefLocal=lista;
+      _enderecosMapLocal=new Map();
+      lista.forEach(function(e){
+        const chave=normEnd(e && (e.endereco || e.codigo || e.id));
+        if(chave && !_enderecosMapLocal.has(chave)) _enderecosMapLocal.set(chave,e);
+      });
+    }
+    return (_enderecosMapLocal && _enderecosMapLocal.get(normEnd(endereco))) || null;
+  };
+  const local = function(x){
+    const direto=norm(x && (x.nome_local || x.local_area || x.local_estoque || x.descricao_local_estoque || x.setor || x.local));
+    if(direto && direto.toUpperCase()!=='SEM LOCAL' && direto.toUpperCase()!=='SEM_LOCAL') return direto;
+    const e=enderecoInfo(x && x.endereco);
+    return norm(e && (e.nome_local || e.local_area || e.local_estoque || e.descricao_local_estoque || e.setor || e.local || e.area)) || 'SEM LOCAL';
+  };
   const rua = function(x){ return norm(x.rua || global.extrairRua(x.endereco) || 'SEM RUA'); };
   let relDivRowsFiltradas=[];
   let produtividadeRowsFiltradas=[];

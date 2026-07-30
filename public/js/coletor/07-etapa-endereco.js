@@ -357,6 +357,19 @@ function confirmarEndereco() {
     return;
   }
 
+
+  // ── Respeitar vínculo de endereço definido pelo Analista ──
+  const atribuicaoEndereco = APP.atribuicoesContagem?.get(valNorm) || null;
+  if (atribuicaoEndereco) {
+    const atribuido = String(atribuicaoEndereco.operador || atribuicaoEndereco.operador_responsavel || '').trim().toUpperCase();
+    const atualOp = String(APP.operador?.name || APP.operador?.nome || APP.operador?.email || '').trim().toUpperCase();
+    if (atribuido && atualOp && atribuido !== atualOp) {
+      fb.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px"><b>🔒 Endereço atribuído a outro operador</b><span style="font-size:.7rem;opacity:.9">Responsável: ${escHTML(atribuicaoEndereco.operador || atribuicaoEndereco.operador_responsavel)}</span></div>`;
+      document.getElementById('f-endereco').className = 'field field-err';
+      beepErr(); return;
+    }
+  }
+
   // ── Bloqueio por status do inventário ──
   const statusInv = (APP.inventario?.status || '').toUpperCase();
   if (statusInv === 'PAUSADO') {

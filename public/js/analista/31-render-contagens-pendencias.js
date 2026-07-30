@@ -474,6 +474,127 @@ function exportarContagens(){
 }
 window.exportarContagens = exportarContagens;
 
+
+
+// ───────────────────────────────────────────────────────────────────
+//  ATRIBUIÇÃO DE ENDEREÇOS PENDENTES
+// ───────────────────────────────────────────────────────────────────
+let _pendSelecionados = new Set();
+let _pendAtribuicoes = new Map();
+let _pendAtribInvCarregado = '';
+let _pendAtribCarregando = false;
+
+function _pendChave(invId, endereco) {
+  return `${String(invId || '').trim()}|${String(endereco || '').trim().toUpperCase()}`;
+}
+function _pendDocId(invId, endereco) {
+  return encodeURIComponent(_pendChave(invId, endereco)).replace(/%/g, '_');
+}
+function _pendAtribuicao(invId, endereco) {
+  return _pendAtribuicoes.get(_pendChave(invId, endereco)) || null;
+}
+async function _pendCarregarAtribuicoes(invId) {
+  if (!invId || _pendAtribCarregando || _pendAtribInvCarregado === String(invId)) return;
+  _pendAtribCarregando = true;
+  try {
+    const raw = window.getDTRawFirestore?.() || window.FS_AN;
+    if (!raw) return;
+    const snap = await raw.collection('dt_atribuicoes_contagem').where('inventario_id', '==', String(invId)).get();
+    _pendAtribuicoes = new Map();
+    snap.docs.forEach(doc => {
+      const a = { id: doc.id, ...doc.data() };
+      if (String(a.status || 'PENDENTE').toUpperCase() !== 'CANCELADA') {
+        _pendAtribuicoes.set(_pendChave(a.inventario_id, a.endereco), a);
+      }
+    });
+    _pendAtribInvCarregado = String(invId);
+  } catch (e) {
+    console.warn('[Pendências] Falha ao carregar atribuições:', e?.message || e);
+  } finally {
+    _pendAtribCarregando = false;
+    if (document.getElementById('pend-sel-inv')?.value === String(invId)) renderPendencias();
+  }
+}
+function pendToggleEndereco(endereco, checked) {
+  const key = String(endereco || '');
+  if (checked) _pendSelecionados.add(key); else _pendSelecionados.delete(key);
+  pendAtualizarBarraSelecao();
+}
+function pendToggleTodos(checked) {
+  document.querySelectorAll('.pend-row-check:not(:disabled)').forEach(cb => {
+    cb.checked = checked;
+    const end = cb.getAttribute('data-endereco');
+    if (checked) _pendSelecionados.add(end); else _pendSelecionados.delete(end);
+  });
+  pendAtualizarBarraSelecao();
+}
+function pendAtualizarBarraSelecao() {
+  const bar = document.getElementById('pend-selection-bar');
+  const count = document.getElementById('pend-selection-count');
+  if (bar) bar.style.display = _pendSelecionados.size ? 'flex' : 'none';
+  if (count) count.textContent = `${_pendSelecionados.size} endereço${_pendSelecionados.size === 1 ? '' : 's'} selecionado${_pendSelecionados.size === 1 ? '' : 's'}`;
+}
+async function abrirAtribuirPendencias(endereco) {
+  if (endereco) {
+    _pendSelecionados.clear();
+    _pendSelecionados.add(String(endereco));
+  }
+  if (!_pendSelecionados.size) { showToast('Selecione pelo menos um endereço pendente', 'w'); return; }
+  const resumo = document.getElementById('pend-atrib-resumo');
+  if (resumo) resumo.innerHTML = `<div style="font-weight:700;margin-bottom:8px">📍 ${_pendSelecionados.size} endereço${_pendSelecionados.size===1?'':'s'}:</div><div style="display:flex;flex-wrap:wrap;gap:4px">${[..._pendSelecionados].map(e=>`<span class="badge b-yellow" style="font-size:.72rem">${escHTML(e)}</span>`).join('')}</div>`;
+  const obs = document.getElementById('pend-atrib-obs');
+  if (obs) obs.value = '';
+  openModal('modal-atribuir-pendencias');
+  if (typeof divPopularSelectOperadores === 'function') await divPopularSelectOperadores('pend-atrib-operador');
+}
+async function confirmarAtribuicaoPendencias() {
+  const invId = document.getElementById('pend-sel-inv')?.value || '';
+  const operador = document.getElementById('pend-atrib-operador')?.value?.trim();
+  const obs = document.getElementById('pend-atrib-obs')?.value?.trim() || '';
+  if (!invId) { showToast('Selecione um inventário', 'e'); return; }
+  if (!operador) { showToast('Selecione um operador', 'e'); return; }
+  const raw = window.getDTRawFirestore?.() || window.FS_AN;
+  if (!raw) { showToast('Firebase indisponível', 'e'); return; }
+  const agora = new Date().toISOString();
+  const atribPor = window._currentAnalistaUser?.displayName || window._currentAnalistaUser?.email || 'Analista';
+  const ends = [..._pendSelecionados];
+  try {
+    await Promise.all(ends.map(endereco => {
+      const doc = {
+        inventario_id: String(invId), endereco, operador, operador_responsavel: operador,
+        atribuido_por: atribPor, atribuido_em: agora, observacao: obs,
+        status: 'PENDENTE', tipo: 'CONTAGEM', atualizado_em: agora
+      };
+      _pendAtribuicoes.set(_pendChave(invId, endereco), doc);
+      return raw.collection('dt_atribuicoes_contagem').doc(_pendDocId(invId, endereco)).set(doc, { merge:true });
+    }));
+    closeModal('modal-atribuir-pendencias');
+    _pendSelecionados.clear();
+    pendAtualizarBarraSelecao();
+    renderPendencias();
+    showToast(`✅ ${ends.length} endereço${ends.length===1?'':'s'} atribuído${ends.length===1?'':'s'} para ${operador}`, 's');
+  } catch (e) {
+    console.error('[Pendências] Erro ao atribuir:', e);
+    showToast('Não foi possível salvar a atribuição', 'e');
+  }
+}
+async function desvincularPendencia(endereco) {
+  const invId = document.getElementById('pend-sel-inv')?.value || '';
+  const raw = window.getDTRawFirestore?.() || window.FS_AN;
+  if (!raw || !invId || !endereco) return;
+  try {
+    await raw.collection('dt_atribuicoes_contagem').doc(_pendDocId(invId, endereco)).set({ status:'CANCELADA', operador:null, operador_responsavel:null, cancelada_em:new Date().toISOString() }, { merge:true });
+    _pendAtribuicoes.delete(_pendChave(invId, endereco));
+    renderPendencias();
+    showToast('Endereço desvinculado', 's');
+  } catch (e) { showToast('Não foi possível desvincular', 'e'); }
+}
+window.pendToggleEndereco = pendToggleEndereco;
+window.pendToggleTodos = pendToggleTodos;
+window.abrirAtribuirPendencias = abrirAtribuirPendencias;
+window.confirmarAtribuicaoPendencias = confirmarAtribuicaoPendencias;
+window.desvincularPendencia = desvincularPendencia;
+
 // ───────────────────────────────────────────────────────────────────
 //  15. RENDERIZAÇÃO — PENDÊNCIAS
 // ───────────────────────────────────────────────────────────────────
@@ -485,6 +606,7 @@ function renderPendencias() {
   const fLocal = document.getElementById('pend-flocal')?.value || '';
   const fRua   = document.getElementById('pend-frua')?.value || '';
   const invId  = selInv?.value || '';
+  if (invId && _pendAtribInvCarregado !== String(invId)) _pendCarregarAtribuicoes(invId);
 
   // Preencher select de inventários
   if (selInv) {
@@ -534,7 +656,8 @@ function renderPendencias() {
     else if (limiteTingido)  status_pend = 'LIMITE_ATINGIDO';
     else                     status_pend = 'PENDENTE';
 
-    return { ...e, contado, vazioConf, inativo, limiteTingido, usados, status_pend };
+    const atribuicao = _pendAtribuicao(invId, e.endereco);
+    return { ...e, contado, vazioConf, inativo, limiteTingido, usados, status_pend, atribuicao };
   });
 
   // Filtro de locais
@@ -593,20 +716,27 @@ function renderPendencias() {
   document.getElementById('pend-table-wrap').innerHTML = `
     ${inativos > 0 ? `<div class="alert warn" style="margin:12px 16px 0;border-radius:8px">⛔ ${inativos} endereço(s) inativo(s) não serão contabilizados no progresso.</div>` : ''}
     ${limiteAting > 0 ? `<div class="alert warn" style="margin:8px 16px 0;border-radius:8px">🔒 ${limiteAting} endereço(s) com limite de paletes atingido.</div>` : ''}
+    <div id="pend-selection-bar" style="display:${_pendSelecionados.size?'flex':'none'};align-items:center;justify-content:space-between;gap:12px;margin:12px 16px 0;padding:10px 12px;border:1px solid rgba(232,117,26,.28);background:rgba(232,117,26,.06);border-radius:10px"><strong id="pend-selection-count">${_pendSelecionados.size} endereço(s) selecionado(s)</strong><button class="btn btn-primary btn-sm" onclick="abrirAtribuirPendencias()">👥 Atribuir selecionados</button></div>
     <div class="tbl-wrap"><table>
-      <thead><tr><th>Endereço</th><th>Local/Área</th><th>Rua</th><th>Nível</th><th>Tipo</th><th>Paletes (usados/cap)</th><th>Status</th></tr></thead>
+      <thead><tr><th style="width:38px"><input type="checkbox" onchange="pendToggleTodos(this.checked)" title="Selecionar pendentes"></th><th>Endereço</th><th>Local/Área</th><th>Rua</th><th>Nível</th><th>Tipo</th><th>Paletes (usados/cap)</th><th>Operador atribuído</th><th>Status</th><th>Ação</th></tr></thead>
       <tbody>
         ${filtrado.map(e => {
           const s = statusLabel[e.status_pend] || { cls:'b-gray', txt: e.status_pend };
           const cap = e.capacidade_paletes !== null ? String(e.capacidade_paletes) : '∞';
+          const podeAtribuir = e.status_pend === 'PENDENTE';
+          const op = e.atribuicao?.operador || e.atribuicao?.operador_responsavel || '';
+          const opCurto = typeof _nomeCurtoOperador === 'function' ? _nomeCurtoOperador(op) : op;
           return `<tr style="${e.inativo || e.limiteTingido ? 'opacity:.6' : ''}">
+            <td><input class="pend-row-check" data-endereco="${escHTML(e.endereco)}" type="checkbox" ${_pendSelecionados.has(e.endereco)?'checked':''} ${podeAtribuir?'':'disabled'} onchange="pendToggleEndereco('${escHTML(e.endereco)}',this.checked)"></td>
             <td class="mono">${e.endereco}</td>
             <td>${e.setor || '—'}</td>
             <td>${e.rua || '—'}</td>
             <td>${e.nivel || '—'}</td>
             <td>${e.tipo || '—'}</td>
             <td class="mono" style="font-weight:700;color:${e.limiteTingido?'var(--danger)':'inherit'}">${e.usados}/${cap}</td>
+            <td>${op ? `<span class="badge b-purple">👤 ${escHTML(opCurto)}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
             <td><span class="badge ${s.cls}">${s.txt}</span></td>
+            <td>${podeAtribuir ? (op ? `<button class="btn btn-ghost btn-sm" onclick="desvincularPendencia('${escHTML(e.endereco)}')">Desvincular</button>` : `<button class="btn btn-primary btn-sm" onclick="abrirAtribuirPendencias('${escHTML(e.endereco)}')">👥 Atribuir</button>`) : '—'}</td>
           </tr>`;
         }).join('')}
       </tbody>

@@ -22,6 +22,7 @@ var APP = {
     modoAcesso: 'inventario',
     modoPendente: 'inventario',
     divergenciasAtribuidas: [],
+  atribuicoesContagem: new Map(), // endNorm -> tarefa de contagem atribuída
     modoRecontagem: null,
     recPalletAtual: 1,
     sessionStart: new Date(),

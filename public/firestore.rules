@@ -19,6 +19,7 @@ service cloud.firestore {
     // pois um mesmo aparelho pode ser usado em mais de uma loja. Sem escrita
     // aqui o app nem consegue registrar o aparelho no primeiro login.
     match /dt_coletores/{document=**} { allow read, write: if signedIn(); }
+    match /dt_atribuicoes_contagem/{document=**} { allow read, write: if signedIn(); }
     // Coleções antigas: somente leitura para permitir migração para lojas/{lojaId}.
     match /{legacyCollection}/{document=**} {
       allow read: if signedIn() && legacyCollection != 'lojas';
