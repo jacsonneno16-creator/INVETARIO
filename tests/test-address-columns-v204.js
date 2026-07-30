@@ -1,0 +1,10 @@
+const fs=require('fs');
+const vm=require('vm');
+const assert=require('assert');
+const context={window:{}};context.window.window=context.window;vm.createContext(context);
+for(const f of ['public/js/shared/address-state-engine.js','public/js/shared/address-state-selectors.js'])vm.runInContext(fs.readFileSync(f,'utf8'),context,{filename:f});
+const state={inventarios:[{id:'INV',codigo:'INV',base:[{id:'P1',endereco:'A',codigo_produto:'X',quantidade:150},{id:'P2',endereco:'A',codigo_produto:'Y',quantidade:1000}]}],contagens:[{id:'C1',inventario_id:'INV',endereco:'A',codigo_produto:'X',quantidade:150,operador:'Jose'}],divergencias:[{id:'D1',inventario_id:'INV',endereco:'A',status:'RESOLVIDA',qtd_esperada:150,qtd_contada:150}],recontagens:[{id:'R1',divergencia_id:'D1',inventario_id:'INV',endereco:'A',numero_recontagem:1,status:'CONCLUIDA',qtd_recontagem:1150,operador_recontagem:'Valdemir'}]};
+const rows=context.window.InventoryAddressSelectors.list(state);assert.equal(rows.length,1);const r=rows[0];
+assert.equal(r.expectedTotal,1150);assert.equal(r.firstTotal,150);assert.equal(r.secondTotal,1150);assert.equal(r.status,'RESOLVIDA');assert.equal(r.snapshot.status,r.status);
+const c=context.window.InventoryAddressSelectors.columnContract.CONTAGEM;const rr=context.window.InventoryAddressSelectors.columnContract.RECONTAGEM;assert.equal(c.status,'status');assert.equal(rr.status,'status');assert.equal(c.expectedTotal,'expectedTotal');assert.equal(rr.expectedTotal,'expectedTotal');
+console.log('OK v204: Contagem e Recontagem compartilham a mesma linha e o mesmo status.');

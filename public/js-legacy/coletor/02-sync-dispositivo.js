@@ -45,17 +45,6 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
     }
 };
-var __values = (this && this.__values) || function(o) {
-    var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
-    if (m) return m.call(o);
-    if (o && typeof o.length === "number") return {
-        next: function () {
-            if (o && i >= o.length) o = void 0;
-            return { value: o && o[i++], done: !o };
-        }
-    };
-    throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
-};
 // ═══════════════════════════════════════════════════
 //  SYNC AUTOMÁTICO A CADA 10 MIN EM BACKGROUND
 //  Envia fila pendente sem travar o operador
@@ -215,85 +204,70 @@ var _heartbeatInterval = null;
  */
 function registrarColetorNoFirestore(operadorInfo) {
     return __awaiter(this, void 0, void 0, function () {
-        var deviceId, ref, ip, snap, dadosAtuais, foiRevogado, lojas, lojas_1, lojas_1_1, loja, antiga, legado, e_1_1, compatError_1, numero, dados, e_2;
-        var e_1, _a;
-        var _b, _c;
-        return __generator(this, function (_d) {
-            switch (_d.label) {
+        var deviceId, ref, ip, snap, dadosAtuais, foiRevogado, lojas, _i, lojas_1, loja, antiga, legado, compatError_1, numero, dados, e_1;
+        var _a, _b;
+        return __generator(this, function (_c) {
+            switch (_c.label) {
                 case 0:
                     deviceId = obterDeviceId();
                     ref = FS.collection(FCOL.coletores).doc(deviceId);
                     ip = null;
-                    _d.label = 1;
+                    _c.label = 1;
                 case 1:
-                    _d.trys.push([1, 24, , 25]);
+                    _c.trys.push([1, 20, , 21]);
                     return [4 /*yield*/, ref.get()];
                 case 2:
-                    snap = _d.sent();
+                    snap = _c.sent();
                     dadosAtuais = snap.exists ? (snap.data() || {}) : {};
                     foiRevogado = snap.exists && (dadosAtuais.aprovado === 'revogado' || dadosAtuais.excluido === true);
-                    if (!(!snap.exists && !foiRevogado)) return [3 /*break*/, 18];
-                    _d.label = 3;
+                    if (!(!snap.exists && !foiRevogado)) return [3 /*break*/, 14];
+                    _c.label = 3;
                 case 3:
-                    _d.trys.push([3, 17, , 18]);
+                    _c.trys.push([3, 13, , 14]);
                     lojas = Array.isArray(window.DT_LOJAS_USUARIO_ATUAL) ? window.DT_LOJAS_USUARIO_ATUAL : [];
-                    _d.label = 4;
+                    _i = 0, lojas_1 = lojas;
+                    _c.label = 4;
                 case 4:
-                    _d.trys.push([4, 14, 15, 16]);
-                    lojas_1 = __values(lojas), lojas_1_1 = lojas_1.next();
-                    _d.label = 5;
-                case 5:
-                    if (!!lojas_1_1.done) return [3 /*break*/, 13];
-                    loja = lojas_1_1.value;
+                    if (!(_i < lojas_1.length)) return [3 /*break*/, 12];
+                    loja = lojas_1[_i];
                     return [4 /*yield*/, window.getDTRawFirestore().collection('lojas').doc(loja.id).collection(FCOL.coletores).doc(deviceId).get()];
-                case 6:
-                    antiga = _d.sent();
+                case 5:
+                    antiga = _c.sent();
                     if (!antiga.exists)
-                        return [3 /*break*/, 12];
+                        return [3 /*break*/, 11];
                     legado = antiga.data() || {};
-                    if (!(legado.aprovado === 'aprovado' || legado.status === 'aprovado')) return [3 /*break*/, 9];
+                    if (!(legado.aprovado === 'aprovado' || legado.status === 'aprovado')) return [3 /*break*/, 8];
                     return [4 /*yield*/, ref.set(Object.assign({}, legado, {
                             device_id: deviceId,
                             aprovado: 'aprovado',
                             status: 'online',
                             migrado_aprovacao_global_em: ST()
                         }), { merge: true })];
+                case 6:
+                    _c.sent();
+                    return [4 /*yield*/, ref.get()];
                 case 7:
-                    _d.sent();
-                    return [4 /*yield*/, ref.get()];
+                    snap = _c.sent();
+                    return [3 /*break*/, 12];
                 case 8:
-                    snap = _d.sent();
-                    return [3 /*break*/, 13];
-                case 9:
-                    if (!(legado.aprovado === 'bloqueado')) return [3 /*break*/, 12];
+                    if (!(legado.aprovado === 'bloqueado')) return [3 /*break*/, 11];
                     return [4 /*yield*/, ref.set(Object.assign({}, legado, { device_id: deviceId, aprovado: 'bloqueado' }), { merge: true })];
-                case 10:
-                    _d.sent();
+                case 9:
+                    _c.sent();
                     return [4 /*yield*/, ref.get()];
+                case 10:
+                    snap = _c.sent();
+                    return [3 /*break*/, 12];
                 case 11:
-                    snap = _d.sent();
-                    return [3 /*break*/, 13];
-                case 12:
-                    lojas_1_1 = lojas_1.next();
-                    return [3 /*break*/, 5];
-                case 13: return [3 /*break*/, 16];
-                case 14:
-                    e_1_1 = _d.sent();
-                    e_1 = { error: e_1_1 };
-                    return [3 /*break*/, 16];
-                case 15:
-                    try {
-                        if (lojas_1_1 && !lojas_1_1.done && (_a = lojas_1.return)) _a.call(lojas_1);
-                    }
-                    finally { if (e_1) throw e_1.error; }
-                    return [7 /*endfinally*/];
-                case 16: return [3 /*break*/, 18];
-                case 17:
-                    compatError_1 = _d.sent();
+                    _i++;
+                    return [3 /*break*/, 4];
+                case 12: return [3 /*break*/, 14];
+                case 13:
+                    compatError_1 = _c.sent();
                     console.warn('[Coletor] Não foi possível consultar aprovação antiga:', compatError_1.message);
-                    return [3 /*break*/, 18];
-                case 18:
-                    if (!(!snap.exists || foiRevogado)) return [3 /*break*/, 20];
+                    return [3 /*break*/, 14];
+                case 14:
+                    if (!(!snap.exists || foiRevogado)) return [3 /*break*/, 16];
                     numero = deviceId.slice(-4).toUpperCase();
                     return [4 /*yield*/, ref.set({
                             device_id: deviceId,
@@ -313,8 +287,8 @@ function registrarColetorNoFirestore(operadorInfo) {
                             excluido: false,
                             revogado_em: null
                         }, { merge: true })];
-                case 19:
-                    _d.sent();
+                case 15:
+                    _c.sent();
                     // A revogação cumpriu seu papel: bloqueou a restauração automática da
                     // aprovação antiga. O aparelho reaparece agora como pendente e precisa
                     // ser aprovado novamente pelo analista.
@@ -322,21 +296,21 @@ function registrarColetorNoFirestore(operadorInfo) {
                     obterIPPublico().then(function (v) { return v && ref.set({ ip: v }, { merge: true }); }).catch(function () { });
                     dbg('[Coletor] Novo aparelho registrado como Coletor', numero, '— pendente — ID:', deviceId);
                     return [2 /*return*/, 'pendente'];
-                case 20:
+                case 16:
                     dados = snap.data();
                     if (dados.aprovado === 'bloqueado') {
                         console.warn('[Coletor] Aparelho bloqueado — acesso negado.');
                         return [2 /*return*/, 'bloqueado'];
                     }
-                    if (!(dados.aprovado !== 'aprovado')) return [3 /*break*/, 22];
+                    if (!(dados.aprovado !== 'aprovado')) return [3 /*break*/, 18];
                     // Atualiza operador_atual e ping mesmo estando pendente (analista vê quem tentou)
                     return [4 /*yield*/, ref.set({ operador_atual: operadorInfo.name, operador_email: operadorInfo.email || null, operador_uid: operadorInfo.uid || null, ultimo_ping: ST() }, { merge: true })];
-                case 21:
+                case 17:
                     // Atualiza operador_atual e ping mesmo estando pendente (analista vê quem tentou)
-                    _d.sent();
+                    _c.sent();
                     dbg('[Coletor] Aparelho pendente — acesso aguardando aprovacao.');
                     return [2 /*return*/, 'pendente'];
-                case 22: 
+                case 18: 
                 // APROVADO: atualizar operador e sessão (nunca cria novo doc)
                 return [4 /*yield*/, ref.set({
                         operador_atual: operadorInfo.name,
@@ -345,23 +319,23 @@ function registrarColetorNoFirestore(operadorInfo) {
                         sessao: {
                             operador: operadorInfo.name,
                             email: operadorInfo.email,
-                            inventario_id: ((_b = APP.inventario) === null || _b === void 0 ? void 0 : _b.id) || null,
-                            inventario_nome: ((_c = APP.inventario) === null || _c === void 0 ? void 0 : _c.nome) || null,
+                            inventario_id: ((_a = APP.inventario) === null || _a === void 0 ? void 0 : _a.id) || null,
+                            inventario_nome: ((_b = APP.inventario) === null || _b === void 0 ? void 0 : _b.nome) || null,
                             login_em: ST(),
                         },
                     }, { merge: true })];
-                case 23:
+                case 19:
                     // APROVADO: atualizar operador e sessão (nunca cria novo doc)
-                    _d.sent();
+                    _c.sent();
                     obterIPPublico().then(function (v) { return v && ref.set({ ip: v }, { merge: true }); }).catch(function () { });
                     dbg('[Coletor] Sessao atualizada —', operadorInfo.name, '— aprovado — ID:', deviceId);
                     return [2 /*return*/, 'aprovado'];
-                case 24:
-                    e_2 = _d.sent();
-                    console.warn('[Coletor] registrarColetorNoFirestore falhou:', e_2.message);
+                case 20:
+                    e_1 = _c.sent();
+                    console.warn('[Coletor] registrarColetorNoFirestore falhou:', e_1.message);
                     // Em caso de erro de rede, permitir acesso se já tinha sessão local
                     return [2 /*return*/, 'erro'];
-                case 25: return [2 /*return*/];
+                case 21: return [2 /*return*/];
             }
         });
     });
@@ -377,7 +351,7 @@ function iniciarListenerAprovacaoColetor(operadorInfo) {
     }
     var ref = FS.collection(FCOL.coletores).doc(obterDeviceId());
     _aprovacaoListener = ref.onSnapshot(function (snap) { return __awaiter(_this, void 0, void 0, function () {
-        var d, telaAprovacao, aguardandoAprovacao, e_3;
+        var d, e_2;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
@@ -401,9 +375,15 @@ function iniciarListenerAprovacaoColetor(operadorInfo) {
                         _aprovacaoListener();
                         _aprovacaoListener = null;
                     }
-                    // Nunca recarrega ao aprovar ou reconectar: preserva todo o contexto operacional.
-                    if (typeof window.sincronizarTudoEmSegundoPlano === 'function')
+                    // Ao recuperar a conexão durante uma operação já iniciada, não recarrega a
+                    // página. O reload apagava o contexto da auditoria e passava a impressão de
+                    // que era necessário começar de novo. Só recarrega quando o coletor ainda
+                    // está efetivamente parado na tela de aprovação.
+                    // A aprovação ou a volta da conexão nunca deve recarregar a página.
+                    // Mantém inventário, endereço, produto e auditoria atuais e sincroniza tudo em segundo plano.
+                    if (typeof window.sincronizarTudoEmSegundoPlano === 'function') {
                         window.sincronizarTudoEmSegundoPlano('aprovacao').catch(function () { });
+                    }
                     else {
                         if (typeof window.sincronizarFilaAuditoria === 'function')
                             window.sincronizarFilaAuditoria().catch(function () { });
@@ -413,8 +393,8 @@ function iniciarListenerAprovacaoColetor(operadorInfo) {
                     atualizarBarraStatus();
                     return [3 /*break*/, 4];
                 case 3:
-                    e_3 = _a.sent();
-                    console.error('[Aprovação] Falha ao liberar coletor:', e_3);
+                    e_2 = _a.sent();
+                    console.error('[Aprovação] Falha ao liberar coletor:', e_2);
                     return [3 /*break*/, 4];
                 case 4: return [2 /*return*/];
             }
@@ -428,7 +408,7 @@ window.iniciarListenerAprovacaoColetor = iniciarListenerAprovacaoColetor;
  */
 function atualizarInventarioColetor() {
     return __awaiter(this, void 0, void 0, function () {
-        var deviceId, e_4;
+        var deviceId, e_3;
         var _a, _b, _c;
         return __generator(this, function (_d) {
             switch (_d.label) {
@@ -449,8 +429,8 @@ function atualizarInventarioColetor() {
                     dbg('[Coletor] Inventário atualizado:', ((_c = APP.inventario) === null || _c === void 0 ? void 0 : _c.nome) || '—');
                     return [3 /*break*/, 4];
                 case 3:
-                    e_4 = _d.sent();
-                    console.warn('[Coletor] atualizarInventario falhou:', e_4.message);
+                    e_3 = _d.sent();
+                    console.warn('[Coletor] atualizarInventario falhou:', e_3.message);
                     return [3 /*break*/, 4];
                 case 4: return [2 /*return*/];
             }
@@ -463,7 +443,7 @@ function atualizarInventarioColetor() {
  */
 function enviarHeartbeat() {
     return __awaiter(this, void 0, void 0, function () {
-        var deviceId, e_5;
+        var deviceId, e_4;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
@@ -482,7 +462,7 @@ function enviarHeartbeat() {
                     _a.sent();
                     return [3 /*break*/, 4];
                 case 3:
-                    e_5 = _a.sent();
+                    e_4 = _a.sent();
                     return [3 /*break*/, 4];
                 case 4: return [2 /*return*/];
             }
@@ -569,7 +549,7 @@ function iniciarListenerColetor() {
  */
 function marcarColetorOffline() {
     return __awaiter(this, void 0, void 0, function () {
-        var deviceId, updateData, e_6;
+        var deviceId, updateData, e_5;
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
@@ -591,8 +571,8 @@ function marcarColetorOffline() {
                     dbg('[Coletor] Marcado offline.');
                     return [3 /*break*/, 4];
                 case 3:
-                    e_6 = _a.sent();
-                    console.warn('[Coletor] marcarOffline falhou:', e_6.message);
+                    e_5 = _a.sent();
+                    console.warn('[Coletor] marcarOffline falhou:', e_5.message);
                     return [3 /*break*/, 4];
                 case 4: return [2 /*return*/];
             }
@@ -643,7 +623,7 @@ function encerrarTurnoColetor() {
                     }
                     // ── 3. Confirmação de encerramento ───────────────────────────────────────
                     showConfirm('Deseja encerrar seu turno? Após encerrar, você não poderá realizar novas contagens neste inventário.', function () { return __awaiter(_this, void 0, void 0, function () {
-                        var deviceId, e_7;
+                        var deviceId, e_6;
                         return __generator(this, function (_a) {
                             switch (_a.label) {
                                 case 0:
@@ -670,9 +650,9 @@ function encerrarTurnoColetor() {
                                     }, 2000);
                                     return [3 /*break*/, 3];
                                 case 2:
-                                    e_7 = _a.sent();
+                                    e_6 = _a.sent();
                                     APP.turnoEncerrado = false;
-                                    toast('Erro ao encerrar turno: ' + e_7.message, 'e');
+                                    toast('Erro ao encerrar turno: ' + e_6.message, 'e');
                                     return [3 /*break*/, 3];
                                 case 3: return [2 /*return*/];
                             }
@@ -784,7 +764,7 @@ function iniciarListenerInventarios() {
     // Função de poll — executa imediatamente e depois a cada 3 min
     function _pollInventarios() {
         return __awaiter(this, void 0, void 0, function () {
-            var screenInv, screenColeta, dentroInventario, snap, idsAtivos, lista, screenInv_1, e_8;
+            var screenInv, screenColeta, dentroInventario, snap, idsAtivos, lista, screenInv_1, e_7;
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -822,8 +802,8 @@ function iniciarListenerInventarios() {
                         dbg('[Poll] inventários:', lista.length, 'ativos');
                         return [3 /*break*/, 4];
                     case 3:
-                        e_8 = _a.sent();
-                        console.warn('[Poll] Erro ao verificar inventários:', e_8.message);
+                        e_7 = _a.sent();
+                        console.warn('[Poll] Erro ao verificar inventários:', e_7.message);
                         return [3 /*break*/, 4];
                     case 4: return [2 /*return*/];
                 }
@@ -836,7 +816,7 @@ function iniciarListenerInventarios() {
 /** Verifica se o inventário atual ainda existe/está ativo no Firestore */
 function verificarInventarioAtivo() {
     return __awaiter(this, void 0, void 0, function () {
-        var doc, status_1, e_9;
+        var doc, status_1, e_8;
         var _a;
         return __generator(this, function (_b) {
             switch (_b.label) {
@@ -858,8 +838,8 @@ function verificarInventarioAtivo() {
                     }
                     return [3 /*break*/, 4];
                 case 3:
-                    e_9 = _b.sent();
-                    console.warn('[verif] Não foi possível verificar inventário:', e_9.message);
+                    e_8 = _b.sent();
+                    console.warn('[verif] Não foi possível verificar inventário:', e_8.message);
                     return [3 /*break*/, 4];
                 case 4: return [2 /*return*/];
             }
@@ -869,20 +849,19 @@ function verificarInventarioAtivo() {
 /** Envia todas as contagens pendentes em background (não bloqueia UI) */
 function enviarFilaPendente() {
     return __awaiter(this, void 0, void 0, function () {
-        var pendentes, statusInv, enviados, falhas, erroConexao, pendentes_1, pendentes_1_1, c, docId, colecaoDestino, err_1, e_10_1, deviceId, bar_1, barText;
-        var e_10, _a;
-        var _b, _c;
-        return __generator(this, function (_d) {
-            switch (_d.label) {
+        var pendentes, statusInv, enviados, falhas, erroConexao, _i, pendentes_1, c, docId, colecaoDestino, statusErr_1, err_1, deviceId, bar_1, barText;
+        var _a, _b;
+        return __generator(this, function (_c) {
+            switch (_c.label) {
                 case 0:
                     if (!navigator.onLine)
                         return [2 /*return*/];
                     return [4 /*yield*/, idbGetPendentes()];
                 case 1:
-                    pendentes = _d.sent();
+                    pendentes = _c.sent();
                     if (!pendentes.length)
                         return [2 /*return*/];
-                    statusInv = (((_b = APP.inventario) === null || _b === void 0 ? void 0 : _b.status) || '').toUpperCase();
+                    statusInv = (((_a = APP.inventario) === null || _a === void 0 ? void 0 : _a.status) || '').toUpperCase();
                     if (APP.inventario && (statusInv === 'FECHADO' || statusInv === 'CANCELADO')) {
                         console.warn('[fila] Inventário não está ATIVO (' + statusInv + ') — envio bloqueado.');
                         toast('⚠️ Inventário encerrado. Contagens pendentes não enviadas.', 'e');
@@ -898,67 +877,76 @@ function enviarFilaPendente() {
                     enviados = [];
                     falhas = [];
                     erroConexao = false;
-                    _d.label = 2;
+                    _i = 0, pendentes_1 = pendentes;
+                    _c.label = 2;
                 case 2:
-                    _d.trys.push([2, 11, 12, 13]);
-                    pendentes_1 = __values(pendentes), pendentes_1_1 = pendentes_1.next();
-                    _d.label = 3;
-                case 3:
-                    if (!!pendentes_1_1.done) return [3 /*break*/, 10];
-                    c = pendentes_1_1.value;
+                    if (!(_i < pendentes_1.length)) return [3 /*break*/, 13];
+                    c = pendentes_1[_i];
                     if (erroConexao)
-                        return [3 /*break*/, 10]; // abandona lote se conexão caiu no meio
-                    _d.label = 4;
-                case 4:
-                    _d.trys.push([4, 7, , 9]);
+                        return [3 /*break*/, 13]; // abandona lote se conexão caiu no meio
+                    _c.label = 3;
+                case 3:
+                    _c.trys.push([3, 10, , 12]);
                     docId = c.uuid || String(c.id);
                     colecaoDestino = c._destino || FCOL.contagens;
                     return [4 /*yield*/, FS.collection(colecaoDestino).doc(docId).set(__assign(__assign({}, c), { dataHora: c.dataHora
                                 ? (typeof c.dataHora === 'string' ? new Date(c.dataHora) : c.dataHora)
                                 : new Date(), enviado_em: new Date(), status_sync: 'sincronizado' }))];
+                case 4:
+                    _c.sent();
+                    if (!(String(c.tipo_contagem || '').toUpperCase() === 'RECONTAGEM' && c.recontagem_id)) return [3 /*break*/, 8];
+                    _c.label = 5;
                 case 5:
-                    _d.sent();
-                    // Remove do IDB e marca localmente
-                    return [4 /*yield*/, idbDelete(c.uuid)];
+                    _c.trys.push([5, 7, , 8]);
+                    return [4 /*yield*/, FS.collection('dt_recontagens').doc(String(c.recontagem_id)).set({
+                            status_recontagem: 'concluida',
+                            status: 'CONCLUIDA',
+                            numero_recontagem: Number(c.numero_recontagem || 1),
+                            recontagem_concluida_em: c.criado_em || new Date().toISOString(),
+                            operador_recontagem: c.operador_nome || c.operador || '',
+                            contagem_uuid: c.uuid || docId,
+                            atualizado_em: new Date().toISOString()
+                        }, { merge: true })];
                 case 6:
-                    // Remove do IDB e marca localmente
-                    _d.sent();
-                    enviados.push(c.uuid || c.id);
-                    return [3 /*break*/, 9];
+                    _c.sent();
+                    return [3 /*break*/, 8];
                 case 7:
-                    err_1 = _d.sent();
+                    statusErr_1 = _c.sent();
+                    // A contagem já foi preservada. O Analista ainda consegue consolidar
+                    // pelo recontagem_id/chave de fluxo; portanto não duplicamos o envio.
+                    console.warn('[fila] Contagem enviada, mas status da recontagem não foi atualizado:', statusErr_1.message);
+                    return [3 /*break*/, 8];
+                case 8: 
+                // Remove do IDB e marca localmente
+                return [4 /*yield*/, idbDelete(c.uuid)];
+                case 9:
+                    // Remove do IDB e marca localmente
+                    _c.sent();
+                    enviados.push(c.uuid || c.id);
+                    return [3 /*break*/, 12];
+                case 10:
+                    err_1 = _c.sent();
                     console.warn('[Firebase] Erro ao enviar', c.uuid, err_1.message);
                     falhas.push(c.uuid || c.id);
                     // Incrementa tentativas no IDB
                     return [4 /*yield*/, idbPut(__assign(__assign({}, c), { tentativas: (c.tentativas || 0) + 1, ultimo_erro: err_1.message, status_sync: 'pendente' }))];
-                case 8:
+                case 11:
                     // Incrementa tentativas no IDB
-                    _d.sent();
+                    _c.sent();
                     if (err_1.code === 'unavailable' || err_1.code === 'failed-precondition' ||
-                        !navigator.onLine || ((_c = err_1.message) === null || _c === void 0 ? void 0 : _c.includes('network'))) {
+                        !navigator.onLine || ((_b = err_1.message) === null || _b === void 0 ? void 0 : _b.includes('network'))) {
                         erroConexao = true;
                     }
-                    return [3 /*break*/, 9];
-                case 9:
-                    pendentes_1_1 = pendentes_1.next();
-                    return [3 /*break*/, 3];
-                case 10: return [3 /*break*/, 13];
-                case 11:
-                    e_10_1 = _d.sent();
-                    e_10 = { error: e_10_1 };
-                    return [3 /*break*/, 13];
+                    return [3 /*break*/, 12];
                 case 12:
-                    try {
-                        if (pendentes_1_1 && !pendentes_1_1.done && (_a = pendentes_1.return)) _a.call(pendentes_1);
-                    }
-                    finally { if (e_10) throw e_10.error; }
-                    return [7 /*endfinally*/];
+                    _i++;
+                    return [3 /*break*/, 2];
                 case 13:
                     if (!(enviados.length > 0)) return [3 /*break*/, 15];
                     return [4 /*yield*/, idbGetPendentes()];
                 case 14:
                     // Rebuild FILA_ENVIO do IDB (fonte de verdade)
-                    FILA_ENVIO = _d.sent();
+                    FILA_ENVIO = _c.sent();
                     filaSave(FILA_ENVIO); // espelho LS
                     atualizarBarraStatus();
                     updateStats();
@@ -984,7 +972,7 @@ function enviarFilaPendente() {
                                 bar_1.style.display = 'none'; }, 3000);
                         }
                     }
-                    _d.label = 15;
+                    _c.label = 15;
                 case 15: return [2 /*return*/];
             }
         });

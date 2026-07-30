@@ -209,94 +209,9 @@
   // antigos. Cada rodada confirma quando produto E quantidade coincidem com o
   // sistema ou com qualquer contagem anterior.
   function _avaliarHistoricoContagens(obj){
-    if (global.InventoryAddressState?.fromHistory) return global.InventoryAddressState.fromHistory(obj);
-    const sistema = _parContagem(obj.qtd_esperada, obj.produto);
-    const primeira = _parContagem(
-      obj.qtd_primeira ?? obj.qtd_contada,
-      obj.produto_primeira || obj.produto_contado || obj.gtin_bipado || obj.produto,
-      obj.produto
-    );
-    const segunda = _parContagem(obj.qtd_segunda ?? obj.qtd_recontagem, obj.produto_segunda || obj.produto_recontagem, obj.produto);
-    const terceira = _parContagem(obj.qtd_terceira, obj.produto_terceira || obj.produto_recontagem, obj.produto);
-
-    const statusFluxo = String(obj?.status || '').trim().toUpperCase();
-    const statusRecontagem = String(obj?.status_recontagem || '').trim().toLowerCase();
-    const divergenciaPrimeiraAtiva =
-      ['ABERTA','DIVERGENTE','PENDENTE','EM_RECONTAGEM'].includes(statusFluxo) ||
-      ['pendente','em_andamento','aguardando_analista'].includes(statusRecontagem) ||
-      obj?.divergente === true || obj?.precisa_recontagem === true ||
-      (Number.isFinite(Number(obj?.diferenca)) && Number(obj.diferenca) !== 0) ||
-      Boolean(obj?.tipo_divergencia);
-
-    const somenteQuantidade = obj?.comparacao_somente_quantidade === true;
-    const fluxoConsolidado = obj?.fluxo_consolidado_endereco === true;
-    const rodadas = [primeira, segunda, terceira];
-    const rodadasQueBateram = rodadas.reduce((acc, rodada, indice) => {
-      if (_paresIguais(rodada, sistema, somenteQuantidade)) acc.push(indice + 1);
-      return acc;
-    }, []);
-    const resultado = (estado, referencia, rodada, parResultado) => ({
-      estado, referencia, rodada, resultado:parResultado,
-      rodadasQueBateram,
-      esperado:sistema?.qtd ?? null,
-      fluxoConsolidado
-    });
-
-    // No fluxo consolidado do endereço, o total esperado continua sendo uma
-    // referência válida, mas o consenso entre rodadas também encerra o fluxo.
-    // Assim, 1ª = 2ª ou qualquer par concordante na 3ª rodada produz o mesmo
-    // resultado nas abas Contagens e Recontagem.
-    if (fluxoConsolidado) {
-      if (_paresIguais(primeira, sistema, true)) {
-        return resultado('RESOLVIDA','OK_PRIMEIRA_TOTAL_ENDERECO',1,primeira);
-      }
-      if (segunda) {
-        if (_paresIguais(segunda, sistema, true)) {
-          return resultado('RESOLVIDA','OK_SEGUNDA_TOTAL_ENDERECO',2,segunda);
-        }
-        if (_paresIguais(segunda, primeira, true)) {
-          return resultado('RESOLVIDA','OK_SEGUNDA_PRIMEIRA_TOTAL_ENDERECO',2,segunda);
-        }
-      }
-      if (terceira) {
-        if (_paresIguais(terceira, sistema, true)) {
-          return resultado('RESOLVIDA','OK_TERCEIRA_TOTAL_ENDERECO',3,terceira);
-        }
-        if (_paresIguais(terceira, primeira, true)) {
-          return resultado('RESOLVIDA','OK_TERCEIRA_PRIMEIRA_TOTAL_ENDERECO',3,terceira);
-        }
-        if (_paresIguais(terceira, segunda, true)) {
-          return resultado('RESOLVIDA','OK_TERCEIRA_SEGUNDA_TOTAL_ENDERECO',3,terceira);
-        }
-        return resultado('PERSISTENTE','TERCEIRA_SEM_CONSENSO_TOTAL_ENDERECO',3,terceira);
-      }
-      return resultado('AGUARDANDO_ANALISTA',null,segunda ? 2 : 1,segunda || primeira);
-    }
-
-    if (_paresIguais(primeira, sistema, somenteQuantidade) && !divergenciaPrimeiraAtiva) {
-      return resultado('RESOLVIDA','OK_PRIMEIRA_SISTEMA',1,primeira);
-    }
-    if (segunda) {
-      if (_paresIguais(segunda, sistema, somenteQuantidade)) {
-        return resultado('RESOLVIDA','OK_SEGUNDA_SISTEMA',2,segunda);
-      }
-      if (_paresIguais(segunda, primeira, somenteQuantidade)) {
-        return resultado('RESOLVIDA','OK_SEGUNDA_PRIMEIRA',2,segunda);
-      }
-    }
-    if (terceira) {
-      if (_paresIguais(terceira, sistema, somenteQuantidade)) {
-        return resultado('RESOLVIDA','OK_TERCEIRA_SISTEMA',3,terceira);
-      }
-      if (_paresIguais(terceira, primeira, somenteQuantidade)) {
-        return resultado('RESOLVIDA','OK_TERCEIRA_PRIMEIRA',3,terceira);
-      }
-      if (_paresIguais(terceira, segunda, somenteQuantidade)) {
-        return resultado('RESOLVIDA','OK_TERCEIRA_SEGUNDA',3,terceira);
-      }
-      return resultado('PERSISTENTE','TERCEIRA_SEM_CONSENSO',3,terceira);
-    }
-    return resultado('AGUARDANDO_ANALISTA',null,segunda ? 2 : 1,segunda || primeira);
+    const motor = global.InventoryAddressState;
+    if (!motor) throw new Error('InventoryAddressState não carregado');
+    return motor.fromHistory(obj || {});
   }
 
   function _produtoOperacional(obj){
@@ -1918,7 +1833,8 @@
     snapshotEsperadoEndereco: (inventario, endereco) => _snapshotEsperadoEndereco(inventario, endereco),
     totalEsperadoEndereco: (inventario, endereco) => _snapshotEsperadoEndereco(inventario, endereco)
       .reduce((total, item) => total + _qtdEsperadaItem(item), 0),
-    avaliarEndereco: d => _avaliarHistoricoContagens(_historicoConsolidadoEndereco(d))
+    avaliarEndereco: d => global.InventoryAddressState?.consolidate({ state: state(), record: d })?.avaliacao || _avaliarHistoricoContagens(_historicoConsolidadoEndereco(d)),
+    consolidarEndereco: d => global.InventoryAddressState?.consolidate({ state: state(), record: d }) || null
   };
 
   // Exportações globais para chamadas via onclick no HTML e outros módulos

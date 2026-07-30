@@ -61,7 +61,10 @@ function goScreen(id) {
     var aliases = { coleta: 'app', auditoria: 'app' };
     var destino = aliases[id] || id;
     var alvo = document.getElementById('screen-' + destino);
-    if (!alvo) { console.error('[Navegacao] Tela inexistente:', id, 'destino:', destino); return false; }
+    if (!alvo) {
+        console.error('[Navegacao] Tela inexistente:', id, 'destino:', destino);
+        return false;
+    }
     document.querySelectorAll('.screen').forEach(function (s) { return s.classList.remove('active'); });
     alvo.classList.add('active');
     return true;
@@ -277,7 +280,10 @@ function showView(v, el) {
     document.querySelectorAll('.view').forEach(function (e) { return e.classList.remove('on'); });
     document.querySelectorAll('.nav-tab').forEach(function (e) { return e.classList.remove('on'); });
     var viewAlvo = document.getElementById('view-' + v);
-    if (!viewAlvo) { console.error('[Navegacao] View inexistente:', v); return false; }
+    if (!viewAlvo) {
+        console.error('[Navegacao] View inexistente:', v);
+        return false;
+    }
     viewAlvo.classList.add('on');
     if (el)
         el.classList.add('on');

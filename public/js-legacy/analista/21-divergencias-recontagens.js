@@ -105,11 +105,22 @@
   }
 
   function _snapshotEsperadoEndereco(inv,endereco){
+    if (global.InventoryAddressState?.snapshotExpected) return global.InventoryAddressState.snapshotExpected(inv, endereco);
     // A base pode trazer uma linha por palete. Para a conferência operacional,
     // o esperado deve ser o total do produto no endereço, não cada linha isolada.
     const grupos = new Map();
+    const vistos = new Set();
     (inv?.base||[]).filter(item=>_nd(item.endereco)===_nd(endereco)).forEach(item=>{
       const codigo = _idPrincipalBase(item) || _idsProduto(item)[0] || 'SEM_PRODUTO';
+      const palete = item?.palete_id ?? item?.pallet_id ?? item?.palete ?? item?.pallet ?? item?.numero_palete ?? item?.palete_numero ?? item?.sequencia_palete ?? '';
+      // A sincronizacao pode recriar a mesma linha com outro id de documento.
+      // Por isso a deduplicacao deve usar a identidade operacional da linha,
+      // e nao o id tecnico do cache/Firestore.
+      const lote = item?.lote ?? item?.lote_id ?? item?.numero_lote ?? '';
+      const validade = item?.validade ?? item?.data_validade ?? '';
+      const chaveRegistro = ['BASE', _nd(endereco), _nd(palete), _nd(codigo), _nd(lote), _nd(validade), String(_qtdEsperadaItem(item))].join('|');
+      if (vistos.has(chaveRegistro)) return;
+      vistos.add(chaveRegistro);
       const chave = _nd(codigo);
       const atual = grupos.get(chave) || {
         codigo_produto: codigo,
@@ -182,8 +193,12 @@
     return { qtd:n, produto:p, produtoIds:_idsComparacaoProduto(p) };
   }
 
-  function _paresIguais(a,b){
+  function _paresIguais(a,b, somenteQuantidade){
     if (!a || !b || a.qtd !== b.qtd) return false;
+    // Recontagem consolidada por endereco valida o total fisico do endereco.
+    // Nessa visao, os codigos bipados podem representar itens/paletes distintos
+    // do mesmo endereco; a quantidade total e a referencia autoritativa.
+    if (somenteQuantidade === true) return true;
     const aa = a.produtoIds || _idsComparacaoProduto(a.produto);
     const bb = b.produtoIds || _idsComparacaoProduto(b.produto);
     if (!aa.size || !bb.size) return false;
@@ -194,71 +209,9 @@
   // antigos. Cada rodada confirma quando produto E quantidade coincidem com o
   // sistema ou com qualquer contagem anterior.
   function _avaliarHistoricoContagens(obj){
-    const sistema = _parContagem(obj.qtd_esperada, obj.produto);
-    const primeira = _parContagem(
-      obj.qtd_primeira ?? obj.qtd_contada,
-      obj.produto_primeira || obj.produto_contado || obj.gtin_bipado || obj.produto,
-      obj.produto
-    );
-    const segunda = _parContagem(obj.qtd_segunda ?? obj.qtd_recontagem, obj.produto_segunda || obj.produto_recontagem, obj.produto);
-    const terceira = _parContagem(obj.qtd_terceira, obj.produto_terceira || obj.produto_recontagem, obj.produto);
-
-    const statusFluxo = String(obj?.status || '').trim().toUpperCase();
-    const statusRecontagem = String(obj?.status_recontagem || '').trim().toLowerCase();
-    const divergenciaPrimeiraAtiva =
-      ['ABERTA','DIVERGENTE','PENDENTE','EM_RECONTAGEM'].includes(statusFluxo) ||
-      ['pendente','em_andamento','aguardando_analista'].includes(statusRecontagem) ||
-      obj?.divergente === true || obj?.precisa_recontagem === true ||
-      (Number.isFinite(Number(obj?.diferenca)) && Number(obj.diferenca) !== 0) ||
-      Boolean(obj?.tipo_divergencia);
-
-    const somenteQuantidade = obj?.comparacao_somente_quantidade === true;
-    const fluxoConsolidado = obj?.fluxo_consolidado_endereco === true;
-    const rodadas = [primeira, segunda, terceira];
-    const rodadasQueBateram = rodadas.reduce((acc, rodada, indice) => {
-      if (_paresIguais(rodada, sistema, somenteQuantidade)) acc.push(indice + 1);
-      return acc;
-    }, []);
-    const resultado = (estado, referencia, rodada, parResultado) => ({
-      estado, referencia, rodada, resultado:parResultado,
-      rodadasQueBateram,
-      esperado:sistema?.qtd ?? null,
-      fluxoConsolidado
-    });
-
-    // ── Lógica de Consenso (Pontos 2 e 6) ──
-    // Se estiver em comparacao_somente_quantidade, as rodadas ignoram GTIN/Produto.
-    if (_paresIguais(primeira, sistema, somenteQuantidade) && !divergenciaPrimeiraAtiva) {
-      return resultado('RESOLVIDA','OK_PRIMEIRA_SISTEMA',1,primeira);
-    }
-    if (segunda) {
-      if (_paresIguais(segunda, sistema, somenteQuantidade)) return resultado('RESOLVIDA','OK_SEGUNDA_SISTEMA',2,segunda);
-      if (_paresIguais(segunda, primeira, somenteQuantidade)) return resultado('RESOLVIDA','OK_SEGUNDA_PRIMEIRA',2,segunda);
-    }
-    if (terceira) {
-      if (_paresIguais(terceira, sistema, somenteQuantidade)) return resultado('RESOLVIDA','OK_TERCEIRA_SISTEMA',3,terceira);
-      if (_paresIguais(terceira, primeira, somenteQuantidade)) return resultado('RESOLVIDA','OK_TERCEIRA_PRIMEIRA',3,terceira);
-      if (_paresIguais(terceira, segunda, somenteQuantidade)) return resultado('RESOLVIDA','OK_TERCEIRA_SEGUNDA',3,terceira);
-      
-      // Fallback Consenso 2ª=3ª (Ponto 2 / Cenário E)
-      if (segunda && _paresIguais(terceira, segunda, true)) {
-        return resultado('RESOLVIDA','OK_CONSENSO_2_3',3,terceira);
-      }
-      
-      // Se chegou na 3ª e nada bateu, é PERSISTENTE (Ponto 1)
-      return resultado('PERSISTENTE','TERCEIRA_SEM_CONSENSO',3,terceira);
-    }
-
-    // No fluxo consolidado (Ponto 2), se ainda não chegou na 3ª, aguarda analista.
-    if (fluxoConsolidado) {
-      return resultado('AGUARDANDO_ANALISTA',null,segunda ? 2 : 1,segunda || primeira);
-    }
-
-    // Fallback para persistência se as 3 rodadas existem mas não há consenso
-    if (primeira && segunda && terceira) {
-       return resultado('PERSISTENTE','FALTA_CONSENSO_3_RODADAS',3,terceira);
-    }
-    return resultado('AGUARDANDO_ANALISTA',null,segunda ? 2 : 1,segunda || primeira);
+    const motor = global.InventoryAddressState;
+    if (!motor) throw new Error('InventoryAddressState não carregado');
+    return motor.fromHistory(obj || {});
   }
 
   function _produtoOperacional(obj){
@@ -271,7 +224,7 @@
   }
 
   function _chaveOperacional(obj){
-    return `${_nd(_idInventarioRegistro(obj))}|${_nd(obj?.endereco)}|${_produtoOperacional(obj)}`;
+    return `${_nd(_idInventarioRegistro(obj))}|${_nd(obj?.endereco)}`;
   }
 
   function _mesmoProdutoOperacional(a,b){
@@ -281,57 +234,89 @@
   }
 
   function _historicoConsolidadoEndereco(div){
-    // Ponto 5: Única montagem de histórico baseada apenas no ENDEREÇO + INVENTÁRIO.
-    const divs = state().divergencias.filter(d =>
-      _mesmoIdInventario(_idInventarioRegistro(d), _idInventarioRegistro(div)) &&
-      _nd(d.endereco) === _nd(div.endereco)
-    );
-    const recs = state().recontagens
-      .filter(r => {
-        if (!_mesmoIdInventario(_idInventarioRegistro(r), _idInventarioRegistro(div))) return false;
-        if (_nd(r.endereco) !== _nd(div.endereco)) return false;
-        if (r.qtd_recontagem == null && r.qtd_segunda == null && r.qtd_terceira == null) return false;
-
-        // Só incorpora rodadas efetivamente concluídas. Os dois campos de status
-        // são avaliados separadamente porque registros antigos podem estar
-        // inconsistentes entre status e status_recontagem.
-        const status = String(r.status || '').toUpperCase();
-        const stRec = String(r.status_recontagem || '').toUpperCase();
-        const temConclusao = Boolean(
-          r.recontagem_concluida_em || r.concluida_em || r.data_conclusao || r.finalizada_em
-        );
-        const estadosConcluidos = ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA'];
-        const estadosInvalidos = ['CANCELADA','EXCLUIDA','PERSISTENTE'];
-        const concluida = estadosConcluidos.includes(status) || estadosConcluidos.includes(stRec);
-        if (estadosInvalidos.includes(status) || estadosInvalidos.includes(stRec)) return false;
-        if (!temConclusao && !concluida) return false;
-
-        if (r.divergencia_id && div.id && String(r.divergencia_id) !== String(div.id)) return false;
-        return true;
-      })
-      .sort((a,b) => {
-        const rodadaA = Number(a.numero_recontagem || 0);
-        const rodadaB = Number(b.numero_recontagem || 0);
-        if (rodadaA && rodadaB && rodadaA !== rodadaB) return rodadaA - rodadaB;
-        return String(a.recontagem_concluida_em || a.concluida_em || a.finalizada_em || '')
-          .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.finalizada_em || ''));
+    if (global.InventoryAddressState?.consolidate) {
+      const consolidado = global.InventoryAddressState.consolidate({ state: state(), record: div });
+      return Object.assign({}, div || {}, {
+        qtd_esperada: consolidado.esperado, qtd_primeira: consolidado.primeira, qtd_contada: consolidado.primeira,
+        produto_primeira: 'TOTAL_ENDERECO', qtd_segunda: consolidado.segunda,
+        produto_segunda: consolidado.segunda == null ? '' : 'TOTAL_ENDERECO',
+        qtd_terceira: consolidado.terceira, produto_terceira: consolidado.terceira == null ? '' : 'TOTAL_ENDERECO',
+        comparacao_somente_quantidade: true, fluxo_consolidado_endereco: true,
+        _divergencias: consolidado.divergencias, _recontagens: consolidado.recontagens, _contagens: consolidado.contagens,
+        _estado_consolidado: consolidado
       });
-    const primeiraDiv = [...divs].sort((a,b) =>
-      String(a.criada_em || '').localeCompare(String(b.criada_em || ''))
-    ).find(d => d.qtd_primeira != null || d.qtd_contada != null) || div;
-    const segunda = recs[0] || {};
-    const terceira = recs[1] || {};
+    }
+    const invId = _idInventarioRegistro(div);
+    const endereco = _nd(div?.endereco);
+    const mesmoEndereco = obj =>
+      _mesmoIdInventario(_idInventarioRegistro(obj), invId) &&
+      _nd(obj?.endereco) === endereco;
+    const numero = valor => {
+      if (valor === null || valor === undefined || String(valor).trim() === '') return 0;
+      const n = Number(String(valor).replace(',', '.'));
+      return Number.isFinite(n) ? n : 0;
+    };
+    const idRegistro = obj => String(obj?.uuid || obj?.id || obj?.contagem_uuid || '');
+    const unicos = lista => {
+      const vistos = new Set();
+      return (lista || []).filter(item => {
+        const id = idRegistro(item) || JSON.stringify([
+          item?.tipo_contagem, item?.numero_recontagem, item?.palete, item?.capa_palete,
+          item?.quantidade, item?.criado_em, item?.operador
+        ]);
+        if (vistos.has(id)) return false;
+        vistos.add(id); return true;
+      });
+    };
+    const contagensValidas = unicos((state().contagens || []).filter(c =>
+      mesmoEndereco(c) && !c?._excluida && String(c?.status || '').toUpperCase() !== 'ESTORNADA'
+    ));
+    const primeiras = contagensValidas.filter(c => String(c?.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM');
+    const recContagens = contagensValidas.filter(c => String(c?.tipo_contagem || '').toUpperCase() === 'RECONTAGEM');
+    const somaContagens = lista => lista.reduce((total, c) => total + numero(c?.quantidade ?? c?.qtd_caixas ?? c?.qtd), 0);
+
+    const divs = (state().divergencias || []).filter(mesmoEndereco);
+    const recs = (state().recontagens || []).filter(r => {
+      if (!mesmoEndereco(r)) return false;
+      const status = String(r.status || '').toUpperCase();
+      const stRec = String(r.status_recontagem || '').toUpperCase();
+      if (['CANCELADA','EXCLUIDA'].includes(status) || ['CANCELADA','EXCLUIDA'].includes(stRec)) return false;
+      return r.qtd_recontagem != null || r.qtd_segunda != null || r.qtd_terceira != null;
+    });
+
+    const inv = (state().inventarios || []).find(i => _mesmoIdInventario(_idInventarioRegistro(i), invId));
+    const totalEsperado = _snapshotEsperadoEndereco(inv, div?.endereco)
+      .reduce((total, item) => total + numero(item?.quantidade_esperada), 0);
+    const qtdPrimeira = primeiras.length
+      ? somaContagens(primeiras)
+      : divs.reduce((total, d) => total + numero(d?.qtd_primeira ?? d?.qtd_contada), 0);
+
+    const qtdRodada = rodada => {
+      const porContagem = recContagens.filter(c => Number(c?.numero_recontagem || 1) === rodada);
+      if (porContagem.length) return somaContagens(porContagem);
+      const docs = recs.filter(r => Number(r?.numero_recontagem || 1) === rodada);
+      if (!docs.length) return null;
+      return docs.reduce((total, r) => total + numero(
+        rodada === 1 ? (r?.qtd_segunda ?? r?.qtd_recontagem) : (r?.qtd_terceira ?? r?.qtd_recontagem)
+      ), 0);
+    };
+    const qtdSegunda = qtdRodada(1);
+    const qtdTerceira = qtdRodada(2);
+    const primeiraDiv = divs[0] || div || {};
     return Object.assign({}, primeiraDiv, {
-      qtd_segunda: segunda.qtd_segunda ?? segunda.qtd_recontagem ?? null,
-      produto_segunda: segunda.produto_segunda || segunda.produto_recontagem || '',
-      operador_segunda: segunda.operador_segunda || segunda.operador_recontagem || '',
-      data_segunda: segunda.data_segunda || segunda.recontagem_concluida_em || segunda.concluida_em || '',
-      qtd_terceira: terceira.qtd_terceira ?? terceira.qtd_recontagem ?? null,
-      produto_terceira: terceira.produto_terceira || terceira.produto_recontagem || '',
-      operador_terceira: terceira.operador_terceira || terceira.operador_recontagem || '',
-      data_terceira: terceira.data_terceira || terceira.recontagem_concluida_em || terceira.concluida_em || '',
+      qtd_esperada: totalEsperado,
+      qtd_primeira: qtdPrimeira,
+      qtd_contada: qtdPrimeira,
+      produto_primeira: 'TOTAL_ENDERECO',
+      qtd_segunda: qtdSegunda,
+      produto_segunda: qtdSegunda == null ? '' : 'TOTAL_ENDERECO',
+      qtd_terceira: qtdTerceira,
+      produto_terceira: qtdTerceira == null ? '' : 'TOTAL_ENDERECO',
+      comparacao_somente_quantidade: true,
+      fluxo_consolidado_endereco: true,
       _divergencias: divs,
-      _recontagens: recs
+      _recontagens: recs,
+      _contagens: contagensValidas
     });
   }
 
@@ -364,8 +349,7 @@
     const updated = state().contagens.map(c => {
       if (!_mesmoIdInventario(_idInventarioRegistro(c),_idInventarioRegistro(div))) return c;
       if (_nd(c.endereco)  !== _nd(div.endereco))  return c;
-      // Não altera contagens de outro produto existente no mesmo endereço.
-      if (!_mesmoProduto(c, div)) return c;
+      // Regra consolidada: todas as linhas/paletes do endereço recebem o mesmo status.
       if (c.status === novoStatus) return c;
       houve = true;
       return Object.assign({}, c, { status: novoStatus });
@@ -398,7 +382,7 @@
       const updatedDiv = Object.assign({}, div, {
         status:              'PERSISTENTE',
         status_bloqueio:     'PERSISTENTE_BLOQUEADO',
-        status_recontagem:   'persistente', // Ponto 1: Gravar persistente corretamente
+        status_recontagem:   'concluida',
         resolvida_em:        agora,
         qtd_resultado_final: qtdFinal,
         contagem_aceita:     'TERCEIRA_SEM_CONSENSO'
@@ -521,6 +505,8 @@
         if (candidatas.length) recebidas = candidatas;
       }
       // Último fallback seguro: chave canônica de inventário/endereço/produto.
+      // Útil para registros legados sem recontagem_id, sem misturar produtos
+      // diferentes existentes no mesmo endereço.
       if (!recebidas.length) {
         const chaveRec = window.InventoryFlowKey
           ? window.InventoryFlowKey.chave(rec, state().inventarios)
@@ -611,7 +597,7 @@
             qtd_resultado_final: avaliacao.resultado?.qtd ?? null,
             produto_resultado_final: avaliacao.resultado?.produto || '',
             status: avaliacao.estado,
-            status_recontagem: avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'persistente', // Ponto 1
+            status_recontagem: avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida',
             precisa_recontagem: false,
             contagem_aceita: avaliacao.referencia,
             divergencia_resolvida: avaliacao.estado === 'RESOLVIDA',
@@ -650,7 +636,7 @@
       hist._divergencias.forEach(item => {
         const atualizado = Object.assign({}, item, campos, final ? {
           status: avaliacao.estado,
-          status_recontagem: avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'persistente', // Ponto 1
+          status_recontagem: avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida',
           precisa_recontagem: false, contagem_aceita: avaliacao.referencia,
           qtd_resultado_final: avaliacao.resultado?.qtd ?? null,
           produto_resultado_final: avaliacao.resultado?.produto || '',
@@ -728,13 +714,12 @@
       const avaliacao = _avaliarHistoricoContagens(div);
       if (avaliacao.estado !== 'RESOLVIDA' && avaliacao.estado !== 'PERSISTENTE') return div;
       const statusRecFinal = avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida';
-      const statusRecFinalReal = avaliacao.estado === 'PERSISTENTE' ? 'persistente' : statusRecFinal;
-      if (div.status === avaliacao.estado && div.status_recontagem === statusRecFinalReal && div.precisa_recontagem === false) return div;
+      if (div.status === avaliacao.estado && div.status_recontagem === statusRecFinal && div.precisa_recontagem === false) return div;
       const atualizado = Object.assign({}, div, {
         qtd_resultado_final: avaliacao.resultado?.qtd ?? null,
         produto_resultado_final: avaliacao.resultado?.produto || '',
         status: avaliacao.estado,
-        status_recontagem: statusRecFinalReal, // Ponto 1
+        status_recontagem: statusRecFinal,
         precisa_recontagem: false,
         contagem_aceita: avaliacao.referencia,
         divergencia_resolvida: avaliacao.estado === 'RESOLVIDA',
@@ -1555,13 +1540,12 @@
     // ── PERSISTENTE (3ª rodada sem consenso) ──
     if (rodadaDestino === 3){
       updatedDiv = Object.assign({}, updatedDiv, {
-        status: 'PERSISTENTE', status_bloqueio: 'PERSISTENTE_BLOQUEADO', status_recontagem: 'persistente', // Ponto 1
+        status: 'PERSISTENTE', status_bloqueio: 'PERSISTENTE_BLOQUEADO', status_recontagem: 'concluida',
         divergencia_resolvida: false, encerrada_definitivamente: true,
         resolvida_em: agora, resolvida_por: _currentAnalistaUser?.email || 'Analista',
         qtd_resultado_final: qtd, contagem_aceita: 'TERCEIRA_SEM_CONSENSO'
       });
       updatedRec = Object.assign({}, updatedRec, {
-        status_recontagem: 'persistente', // Ponto 1
         divergencia_resolvida: false, encerrada_definitivamente: true, contagem_aceita: 'TERCEIRA_SEM_CONSENSO'
       });
 
@@ -1690,11 +1674,12 @@
 
   function _salvarBloqueioLeve(d, operador, recontagemId, agora){
     if (!global.FS_AN || !d?.inventario_id || !d?.endereco) return;
-    const chaveBloqueio = `${d.inventario_id}__${encodeURIComponent(String(d.endereco).trim().toUpperCase())}`;
+    const chaveBloqueio = encodeURIComponent(window.InventoryFlowKey.chave(d, state().inventarios));
     global.FS_AN.collection('dt_bloqueios_recontagem').doc(chaveBloqueio).set({
       ativo: true,
       inventario_id: d.inventario_id,
       endereco: d.endereco,
+      chave_fluxo: window.InventoryFlowKey.chave(d, state().inventarios),
       operador,
       recontagem_id: recontagemId || null,
       atualizado_em: agora
@@ -1707,23 +1692,24 @@
 
     const historicoAtual = _historicoConsolidadoEndereco(d);
     const avaliacaoAtual = _avaliarHistoricoContagens(historicoAtual);
-    if (avaliacaoAtual.estado === 'RESOLVIDA' || avaliacaoAtual.estado === 'PERSISTENTE' ||
-        historicoAtual._recontagens.length >= (MAX_CONTAGENS - 1)){
-      showToast(`🔒 ${d.endereco} já possui as três contagens e está finalizado. Não é possível atribuir novamente.`, 'e');
-      return null;
-    }
-    // A avaliação real prevalece sobre flags antigas. Um registro marcado
-    // incorretamente como encerrado, mas sem consenso após a 2ª contagem,
-    // precisa aceitar a atribuição da 3ª rodada.
-    if (DivSvc.isFluxoEncerrado(d) && avaliacaoAtual.estado !== 'AGUARDANDO_ANALISTA'){
-      showToast(`🔒 ${d.endereco} já está encerrado. Não é possível atribuir.`, 'e');
+    const statusAtual = String(d.status || '').toUpperCase();
+    const statusRecAtual = String(d.status_recontagem || '').toLowerCase();
+    const explicitamenteFinal =
+      ['RESOLVIDA','PERSISTENTE','CANCELADA','EXCLUIDA'].includes(statusAtual) ||
+      ['resolvida','sem_divergencia','persistente','cancelada','excluida'].includes(statusRecAtual) ||
+      d.qtd_terceira != null;
+
+    // Nao bloquear uma linha que a propria tela apresenta como ABERTA ou
+    // AGUARDANDO ANALISTA apenas por causa de historico antigo/duplicado.
+    if (explicitamenteFinal){
+      showToast(`🔒 ${d.endereco} já está finalizado. Não é possível atribuir novamente.`, 'e');
       return null;
     }
 
+    const chaveAtividade = window.InventoryFlowKey.chave(d, state().inventarios);
     const mesmaChaveOperacional = r =>
-      _mesmoIdInventario(_idInventarioRegistro(r), _idInventarioRegistro(d)) &&
-      _nd(r.endereco) === _nd(d.endereco) &&
-      (String(r.divergencia_id || '') === String(d.id || '') || _mesmoProduto(r, d));
+      String(r.divergencia_id || '') === String(d.id || '') ||
+      window.InventoryFlowKey.chave(r, state().inventarios) === chaveAtividade;
     // O bloqueio precisa ser por endereço. Registros antigos podem ter ids de
     // divergência diferentes para o mesmo endereço e, nesse caso, a verificação
     // apenas por divergencia_id permitia atribuições duplicadas.
@@ -1756,16 +1742,26 @@
       return null;
     }
 
-    const recConcluida = state().recontagens.find(r =>
-      mesmaChaveOperacional(r) && r.status === 'CONCLUIDA' && !DivSvc.isFluxoEncerrado(r)
-    );
-    if (recConcluida && d.status_recontagem !== 'aguardando_analista'){
+    const recsDaAtividade = state().recontagens.filter(mesmaChaveOperacional);
+    const recConcluida = recsDaAtividade.find(r => {
+      const st = String(r.status || '').toUpperCase();
+      const sr = String(r.status_recontagem || '').toLowerCase();
+      return st === 'CONCLUIDA' || sr === 'concluida' ||
+        Boolean(r.recontagem_concluida_em || r.concluida_em || r.finalizada_em);
+    });
+    if (recConcluida && String(d.status_recontagem || '').toLowerCase() !== 'aguardando_analista'){
       showToast(`🔒 ${d.endereco} já possui recontagem concluída. O analista deve decidir manualmente o próximo passo.`, 'e');
       return null;
     }
 
-    const numeroAtualRec = historicoAtual._recontagens.length;
-    if (numeroAtualRec >= (MAX_CONTAGENS - 1) || d.qtd_terceira != null){
+    // Não usar o tamanho do histórico bruto: sincronizações repetidas podem
+    // criar documentos duplicados e bloquear a próxima rodada indevidamente.
+    const numerosRodadas = recsDaAtividade
+      .map(r => Number(r.numero_recontagem || 1))
+      .filter(n => Number.isFinite(n) && n > 0);
+    const maiorRodada = numerosRodadas.length ? Math.max(...numerosRodadas) : 0;
+    const proximaRodada = maiorRodada + 1;
+    if (proximaRodada > (MAX_CONTAGENS - 1) || d.qtd_terceira != null){
       showToast(`🔒 ${d.endereco} já atingiu o limite de ${MAX_CONTAGENS} contagens.`, 'e');
       return null;
     }
@@ -1776,13 +1772,14 @@
       atribuido_em:          agora,
       status:                d.status === 'ABERTA' ? 'EM_RECONTAGEM' : d.status,
       status_recontagem:     'pendente',
-      observacao_atribuicao: obs || ''
+      observacao_atribuicao: obs || '',
+      chave_fluxo: chaveAtividade
     });
 
     const rec = {
       id: 'rec_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
       divergencia_id: d.id, inventario_id: d.inventario_id, inventario_nome: d.inventario_nome,
-      endereco: d.endereco, produto: d.produto, descricao: d.descricao,
+      endereco: d.endereco, produto: d.produto || d.produto_contado || d.codigo_produto || d.gtin, descricao: d.descricao || d.descricao_produto,
       qtd_esperada: d.qtd_esperada,
       qtd_primeira: d.qtd_contada,
       produto_primeira: _nd(d.produto_contado || d.produto),
@@ -1793,7 +1790,8 @@
       operador, atribuido_por: atribPor, atribuido_em: agora,
       status: 'PENDENTE', status_recontagem: 'pendente',
       observacao_atribuicao: obs || '',
-      criada_em: agora, numero_recontagem: numeroAtualRec + 1,
+      criada_em: agora, numero_recontagem: proximaRodada,
+      chave_fluxo: chaveAtividade,
     };
 
     Store.dispatch(Actions.batch([
@@ -1810,61 +1808,33 @@
   // ─────────────────────────────────────────────────────────────────────────────
   //  Registro do runtime — ativa o DivergenciaService.processarDivergencias
   // ─────────────────────────────────────────────────────────────────────────────
-  // Ponto 7: Única validação de fluxo encerrado.
-  function isFluxoEncerrado(obj){
-    const s = _nd(obj?.status);
-    const sr = _nd(obj?.status_recontagem);
-    return ['RESOLVIDA','PERSISTENTE','CANCELADA','EXCLUIDA','ESTORNADA'].includes(s) ||
-           ['SEM_DIVERGENCIA','RESOLVIDA','PERSISTENTE','CANCELADA'].includes(sr);
-  }
-  global.AnalistaDivergenciaService.isFluxoEncerrado = isFluxoEncerrado;
-
-  function _resolverFluxoEndereco(obj){
-    const historico = _historicoConsolidadoEndereco(obj || {});
-    const avaliacao = _avaliarHistoricoContagens(historico); // Ponto 2: Usar mesma lógica
-    const estado = avaliacao?.estado || 'AGUARDANDO_ANALISTA';
-    const rodada = Number(avaliacao?.rodada || (historico.qtd_terceira != null ? 3 : historico.qtd_segunda != null ? 2 : 1));
-    const referencia = String(avaliacao?.referencia || '');
-    let texto = 'Divergente — aguardando recontagem';
-    let classe = 'b-red';
-    let status = 'ABERTA';
-    let statusRecontagem = 'aguardando_analista';
-    let encerrado = false;
-    if (estado === 'RESOLVIDA') {
-      status = 'RESOLVIDA';
-      statusRecontagem = 'sem_divergencia';
-      encerrado = true;
-      classe = 'b-green';
-      if (referencia.includes('PRIMEIRA')) texto = 'OK 1ª — total do endereço';
-      else if (referencia.includes('SEGUNDA')) texto = 'OK 2ª — total do endereço';
-      else texto = 'OK 3ª — total do endereço';
-      if (referencia.includes('SEGUNDA_PRIMEIRA')) texto = 'Resolvida por consenso — 1ª = 2ª';
-      if (referencia.includes('TERCEIRA_PRIMEIRA')) texto = 'Resolvida por consenso — 1ª = 3ª';
-      if (referencia.includes('TERCEIRA_SEGUNDA')) texto = 'Resolvida por consenso — 2ª = 3ª';
-    } else if (estado === 'PERSISTENTE') {
-      status = 'PERSISTENTE';
-      statusRecontagem = 'persistente';
-      encerrado = true;
-      classe = 'b-red';
-      texto = 'Persistente (3 rodadas)';
-    } else if (historico.qtd_segunda != null) {
-      texto = 'Aguardando 3ª contagem';
-      classe = 'b-orange';
-    }
-    return {
-      historico, avaliacao, estado, rodada, referencia, texto, classe,
-      status, status_recontagem:statusRecontagem, encerrado,
-      qtd_final: avaliacao?.resultado?.qtd ?? null,
-      precisa_recontagem: !encerrado
+  function _avaliarResumoConsolidado(obj, totalEsperado){
+    const historico = {
+      ...(obj || {}),
+      qtd_esperada: totalEsperado ?? obj?.qtd_esperada,
+      qtd_primeira: obj?.qtd_primeira ?? obj?.qtd_contada,
+      qtd_segunda: obj?.qtd_segunda ?? obj?.qtd_recontagem,
+      qtd_terceira: obj?.qtd_terceira,
+      produto_primeira: 'TOTAL_ENDERECO',
+      produto_segunda: (obj?.qtd_segunda ?? obj?.qtd_recontagem) == null ? '' : 'TOTAL_ENDERECO',
+      produto_terceira: obj?.qtd_terceira == null ? '' : 'TOTAL_ENDERECO',
+      comparacao_somente_quantidade: true,
+      fluxo_consolidado_endereco: true
     };
+    return _avaliarHistoricoContagens(historico);
   }
 
   global.AnalistaDivergenciasRuntime = {
     processar:     processarDivergencias,
     corrigirOrfas: corrigirOrfas,
     avaliarHistorico: _avaliarHistoricoContagens,
-    avaliarEndereco: d => _avaliarHistoricoContagens(_historicoConsolidadoEndereco(d)),
-    resolverEndereco: _resolverFluxoEndereco
+    avaliarResumo: _avaliarResumoConsolidado,
+    historicoEndereco: _historicoConsolidadoEndereco,
+    snapshotEsperadoEndereco: (inventario, endereco) => _snapshotEsperadoEndereco(inventario, endereco),
+    totalEsperadoEndereco: (inventario, endereco) => _snapshotEsperadoEndereco(inventario, endereco)
+      .reduce((total, item) => total + _qtdEsperadaItem(item), 0),
+    avaliarEndereco: d => global.InventoryAddressState?.consolidate({ state: state(), record: d })?.avaliacao || _avaliarHistoricoContagens(_historicoConsolidadoEndereco(d)),
+    consolidarEndereco: d => global.InventoryAddressState?.consolidate({ state: state(), record: d }) || null
   };
 
   // Exportações globais para chamadas via onclick no HTML e outros módulos

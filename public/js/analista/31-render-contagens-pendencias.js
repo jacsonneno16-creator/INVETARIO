@@ -196,285 +196,47 @@ function _resultadoRodadaEndereco(c){
 // ───────────────────────────────────────────────────────────────────
 
 function renderContagens() {
-  const FK = window.InventoryFlowKey;
-  if (!FK) throw new Error('InventoryFlowKey não carregado');
-  const busca    = (document.getElementById('cont-busca')?.value || '').toLowerCase();
-  const fInv     = document.getElementById('cont-finv')?.value || '';
-  const fTipo    = document.getElementById('cont-ftipo')?.value || '';
-  const fStatus  = document.getElementById('cont-fstatus')?.value || '';
-  const fRua     = document.getElementById('cont-frua')?.value || '';
-  const fOp      = document.getElementById('cont-foperador')?.value || '';
-  const fPeriodo = document.getElementById('cont-fperiodo')?.value || '';
-
-  // Popular selects de inventários
-  const selInv = document.getElementById('cont-finv');
-  if (selInv && !selInv.options.length || (selInv && selInv.options.length === 1)) {
-    const cur = selInv.value;
-    selInv.innerHTML = '<option value="">Todos os inventários</option>' +
-      state().inventarios.map(i => `<option value="${i.id}" ${i.id === cur ? 'selected' : ''}>${i.codigo} — ${i.nome}</option>`).join('');
-    if (cur) selInv.value = cur;
-  }
-
-  let dados = state().contagens || [];
-  // Cada rodada de recontagem gerava sua própria linha aqui, então um endereço
-  // recontado 2x aparecia 3x na lista (1ª + 2ª + 3ª) — confuso e redundante,
-  // já que essas rodadas já são exibidas com detalhe na aba Recontagem. Por
-  // padrão mostramos só a 1ª contagem de cada endereço, com um badge dizendo
-  // em qual rodada ele finalmente bateu. Quem quiser ver as rodadas de
-  // recontagem em si pode filtrar explicitamente por Tipo = Recontagem.
-  if (!fTipo) {
-    dados = dados.filter(c => c.tipo_contagem !== 'RECONTAGEM');
-    const grupos = new Map();
-    const chaveContagem = c => {
-      const id=String(c.inventario_id || c.inventarioId || '');
-      const inv=(state().inventarios || []).find(i =>
-        [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
-          .filter(Boolean).map(String).includes(id));
-      return FK.chave(Object.assign({}, c, { inventario_id: inv?.id || id }), state().inventarios);
-    };
-    dados.forEach(c => {
-      // Um endereço pode ter vários paletes do mesmo produto. A lista de
-      // Contagens deve preservar uma linha por palete; consolidar apenas por
-      // inventário/endereço/produto escondia quatro de cinco paletes, por exemplo.
-      const palete=_paleteContagem(c);
-      const identidadePalete=palete || String(c.uuid || c.id || c.criado_em || c.dataHora || 'SEM_ID');
-      const chave=chaveContagem(c)+'||PALETE:'+identidadePalete;
-      const atual=grupos.get(chave);
-      const data=x=>String(x.timestamp || x.criado_em || x.dataHora || '');
-      if (!atual || data(c).localeCompare(data(atual)) < 0) grupos.set(chave,c);
-    });
-    dados=[...grupos.values()];
-  }
-  if (fInv)    dados = dados.filter(c => String(c.inventario_id || c.inventarioId || '') === String(fInv));
-  if (fTipo)   dados = dados.filter(c => c.tipo_contagem === fTipo);
-  if (fStatus) {
-    if (fStatus === 'DIVERGENTE') {
-      // c.divergente é o campo real (boolean) — status='DIVERGENTE' nunca é usado
-      dados = dados.filter(c => c.divergente === true);
-    } else {
-      dados = dados.filter(c => c.status === fStatus);
-    }
-  }
-  if (fOp)     dados = dados.filter(c => (c.operador || '') === fOp);
-
-  // Filtro por rua (baseado no endereço do cadastro)
-  if (fRua) dados = dados.filter(c => {
-    const info = getEnderecoInfo(c.endereco);
-    return (info?.rua || '—') === fRua;
-  });
-
-  // Filtro por período
-  if (fPeriodo) {
-    const hoje = new Date(); hoje.setHours(0,0,0,0);
-    const ontem = new Date(hoje); ontem.setDate(ontem.getDate()-1);
-    const set7 = new Date(hoje); set7.setDate(set7.getDate()-7);
-    dados = dados.filter(c => {
-      const valorData = c.timestamp || c.criado_em || c.dataHora || null;
-      const ts = valorData ? new Date(valorData) : null;
-      if (!ts) return false;
-      if (fPeriodo === 'hoje') return ts >= hoje;
-      if (fPeriodo === 'ontem') return ts >= ontem && ts < hoje;
-      if (fPeriodo === '7d') return ts >= set7;
-      return true;
-    });
-  }
-
-  if (busca) dados = dados.filter(c =>
-    (c.operador||'').toLowerCase().includes(busca) ||
-    (c.endereco||'').toLowerCase().includes(busca) ||
-    (c.codigo_produto||'').toLowerCase().includes(busca) ||
-    (c.descricao_produto||'').toLowerCase().includes(busca)
-  );
-  dados = [...dados].sort((a,b) => String(b.timestamp||b.criado_em||b.dataHora||'').localeCompare(String(a.timestamp||a.criado_em||a.dataHora||'')));
-
-  // A exportacao deve refletir exatamente a lista visivel, incluindo filtros,
-  // agrupamento por fluxo e a ultima rodada concluida usada na tela.
-  window.__contagensVisiveis = dados.slice();
-
-  // KPIs Contagens
-  const _allConts = state().contagens.filter(c => !c._excluida && c.status !== 'ESTORNADA');
-  const _setCK = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
-  _setCK('ck-total',       _allConts.length);
-  _setCK('ck-processadas', _allConts.filter(c => c.status === 'PROCESSADO').length);
-  _setCK('ck-divergentes', _allConts.filter(c => c.divergente === true).length);
-  _setCK('ck-pendentes',   _allConts.filter(c => !c.status || c.status === 'PENDENTE').length);
-  _setCK('ck-recontagens', _allConts.filter(c => c.tipo_contagem === 'RECONTAGEM').length);
-
-  // Atualizar selects dinâmicos (rua e operador)
-  const selRua = document.getElementById('cont-frua');
-  if (selRua) {
-    const ruas = [...new Set(state().contagens.map(c => { const i = getEnderecoInfo(c.endereco); return i?.rua || '—'; }).filter(Boolean))].sort();
-    selRua.innerHTML = '<option value="">Todas as ruas</option>' + ruas.map(r => `<option value="${r}" ${r===fRua?'selected':''}>${r}</option>`).join('');
-  }
-  const selOp = document.getElementById('cont-foperador');
-  if (selOp) {
-    const ops = [...new Set(state().contagens.map(c => c.operador).filter(Boolean))].sort();
-    selOp.innerHTML = '<option value="">Todos os operadores</option>' + ops.map(o => `<option value="${o}" ${o===fOp?'selected':''}>${o}</option>`).join('');
-  }
-
-  if (!dados.length) {
-    document.getElementById('cont-table-wrap').innerHTML = `<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma contagem encontrada</div><div class="empty-sub">As contagens dos coletores aparecem aqui automaticamente</div></div>`;
-    return;
-  }
-
-  document.getElementById('cont-table-wrap').innerHTML = `
-    <div class="tbl-wrap"><table>
-      <thead><tr>
-        <th>Data/Hora</th><th>Operador</th><th>Inventário</th>
-        <th>Endereço</th><th>Produto</th><th>Quantidade</th>
-        <th>Tipo</th><th>Status</th><th>Ações</th>
-      </tr></thead>
-      <tbody>
-        ${dados.map(c => {
-          const inv      = getInventarioPorId(c.inventario_id);
-          const excluida = c._excluida === true;
-          const rowStyle = excluida ? 'opacity:.45;background:#fafafa' : '';
-          const end      = getEnderecoInfo(c.endereco);
-          const capInfo  = end && end.capacidade_paletes !== null
-            ? `<span style="font-size:.65rem;color:var(--muted)"> · cap:${end.capacidade_paletes}</span>` : '';
-          const ruaInfo  = end?.rua ? `<div style="font-size:.65rem;color:var(--muted)">Rua: ${end.rua}</div>` : '';
-
-          const ultima=_ultimaRodadaContagem(c);
-          const prodExib=_produtoContagemExibicao(Object.assign({},c,{
-            codigo_produto:ultima.produto,
-            gtin:ultima.produto,
-            descricao_produto:ultima.descricao
-          }));
-          return `<tr style="${rowStyle}">
-            <td class="mono" style="white-space:nowrap;font-size:.75rem">${fmtTs(ultima.data || c.timestamp || c.criado_em || c.dataHora)}<div style="font-size:.62rem;color:var(--muted)">Última: ${ultima.rodada}ª rodada</div></td>
-            <td>
-              <div style="display:flex;align-items:center;gap:6px">
-                <div class="u-avatar" style="width:24px;height:24px;font-size:.65rem;flex-shrink:0">${(ultima.operador||c.operador||'?')[0].toUpperCase()}</div>
-                <span style="font-weight:600;font-size:.82rem">${ultima.operador || c.operador || '—'}</span>
-              </div>
-            </td>
-            <td style="font-size:.75rem;color:var(--muted)">${inv?.codigo || c.inventario_id}</td>
-            <td class="mono">${c.endereco || '—'}${capInfo}${ruaInfo}${(_paleteContagem(c)||ultima.palete) ? `<div style="font-size:.65rem;color:var(--muted);font-family:var(--font)">Palete: ${escHTML(ultima.palete || _paleteContagem(c))}</div>` : ''}</td>
-            <td>
-              <div style="font-weight:600;font-size:.82rem">${prodExib.codigo || '—'}</div>
-              <div style="font-size:.72rem;color:var(--muted)">${prodExib.descricao || ''}</div>
-            </td>
-            <td class="mono" style="font-weight:700;font-size:.9rem">${ultima.quantidade ?? '—'}<div style="font-size:.62rem;color:var(--muted);font-family:var(--font)">${ultima.rodada === 1 ? '1ª contagem' : ultima.rodada + 'ª contagem'}</div></td>
-            <td><span class="badge ${c.tipo_contagem === 'RECONTAGEM' ? 'b-purple' : 'b-blue'}">${c.tipo_contagem || 'PRIMEIRA'}</span></td>
-            <td>
-              ${excluida
-                ? `<span class="badge b-gray">🗑 Excluída</span>`
-                : (() => {
-                    const rodada = _resultadoRodadaEndereco(c);
-                    return rodada
-                      ? `<span class="badge ${rodada.cls}" title="Resultado final considerando as rodadas de recontagem">${rodada.texto}</span>`
-                      : `<span class="badge ${contStatusBadge(c.status)}">${c.status || 'PENDENTE'}</span>`;
-                  })()
-              }
-            </td>
-            <td>
-              ${excluida
-                ? `<button class="btn btn-ghost btn-sm" onclick="restaurarContagem('${c.id}')" title="Restaurar contagem">↩ Restaurar</button>`
-                : `<div style="display:flex;gap:4px">
-                     <button class="btn btn-danger btn-sm" onclick="abrirEstorno('${c.id}')" title="Estornar — libera endereço com registro">↩ Estornar</button>
-                   </div>`
-              }
-            </td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table></div>`;
- }
+  const motor=window.InventoryAddressState, selectors=window.InventoryAddressSelectors, view=window.InventoryAddressView;
+  if(!motor||!selectors||!view) throw new Error('Motor consolidado de endereços não carregado');
+  const busca=(document.getElementById('cont-busca')?.value||'').toLowerCase();
+  const fInv=document.getElementById('cont-finv')?.value||'', fStatus=document.getElementById('cont-fstatus')?.value||'';
+  const fRua=document.getElementById('cont-frua')?.value||'', fOp=document.getElementById('cont-foperador')?.value||'', fPeriodo=document.getElementById('cont-fperiodo')?.value||'';
+  const fTipo=document.getElementById('cont-ftipo')?.value||'';
+  const selInv=document.getElementById('cont-finv');
+  if(selInv){const cur=selInv.value;selInv.innerHTML='<option value="">Todos os inventários</option>'+state().inventarios.map(i=>`<option value="${i.id}">${escHTML(i.codigo||i.id)} — ${escHTML(i.nome||'')}</option>`).join('');selInv.value=cur;}
+  let dados=selectors.list(state()).filter(s=>s.primeira!=null);
+  if(fInv) dados=dados.filter(s=>String(s.inventario_id)===String(fInv));
+  if(fStatus) dados=dados.filter(s=>String(s.status).toUpperCase()===String(fStatus).toUpperCase());
+  if(fRua) dados=dados.filter(s=>(getEnderecoInfo(s.endereco)?.rua||'—')===fRua);
+  if(fOp) dados=dados.filter(s=>s.rodadas.some(r=>r?.operadores?.includes(fOp)));
+  if(fTipo){const n=fTipo==='RECONTAGEM'?2:1;dados=dados.filter(s=>s.ultimaRodada?.numero>=n);}
+  if(fPeriodo){const hoje=new Date();hoje.setHours(0,0,0,0);const ontem=new Date(hoje);ontem.setDate(ontem.getDate()-1);const set7=new Date(hoje);set7.setDate(set7.getDate()-7);dados=dados.filter(s=>{const d=s.atualizado_em?new Date(s.atualizado_em):null;if(!d||isNaN(d))return false;if(fPeriodo==='hoje')return d>=hoje;if(fPeriodo==='ontem')return d>=ontem&&d<hoje;if(fPeriodo==='7d')return d>=set7;return true;});}
+  if(busca) dados=dados.filter(s=>[s.endereco,s.inventario?.codigo,s.inventario?.nome,view.latestOperator(s),view.itemsText(s.itens_esperados,'quantidade_esperada'),...s.rodadas.filter(Boolean).map(r=>view.itemsText(r.itens))].join(' ').toLowerCase().includes(busca));
+  dados.sort((a,b)=>String(b.atualizado_em||'').localeCompare(String(a.atualizado_em||'')));
+  window.__contagensVisiveis=dados.slice();
+  const todos=selectors.list(state()).filter(s=>s.primeira!=null),setK=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+  setK('ck-total',todos.length);setK('ck-processadas',todos.filter(s=>s.status==='RESOLVIDA').length);setK('ck-divergentes',todos.filter(s=>['DIVERGENTE','EM_RECONTAGEM','PERSISTENTE','SEM_BASE'].includes(s.status)).length);setK('ck-pendentes',todos.filter(s=>['DIVERGENTE','EM_RECONTAGEM','SEM_BASE'].includes(s.status)).length);setK('ck-recontagens',todos.filter(s=>s.segunda!=null||s.terceira!=null).length);
+  const selRua=document.getElementById('cont-frua');if(selRua){const cur=selRua.value,ruas=[...new Set(todos.map(s=>getEnderecoInfo(s.endereco)?.rua||'—'))].sort();selRua.innerHTML='<option value="">Todas as ruas</option>'+ruas.map(r=>`<option value="${escHTML(r)}">${escHTML(r)}</option>`).join('');selRua.value=cur;}
+  const selOp=document.getElementById('cont-foperador');if(selOp){const cur=selOp.value,ops=[...new Set(todos.flatMap(s=>s.rodadas.filter(Boolean).flatMap(r=>r.operadores)))].sort();selOp.innerHTML='<option value="">Todos os operadores</option>'+ops.map(o=>`<option value="${escHTML(o)}">${escHTML(o)}</option>`).join('');selOp.value=cur;}
+  const wrap=document.getElementById('cont-table-wrap');if(!dados.length){wrap.innerHTML='<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma contagem encontrada</div></div>';return;}
+  wrap.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>Última atualização</th><th>Operador(es)</th><th>Inventário</th><th>Endereço</th><th>Produtos esperados</th><th>Totais das rodadas</th><th>Última etapa</th><th>Status consolidado</th><th>Ações</th></tr></thead><tbody>${dados.map(s=>{const src=view.sourceRecord(s),end=getEnderecoInfo(s.endereco),id=src?.id||src?.uuid||'';return `<tr><td class="mono" style="white-space:nowrap;font-size:.75rem">${fmtTs(s.atualizado_em)}</td><td style="font-size:.8rem;font-weight:600">${escHTML(view.latestOperator(s))}</td><td style="font-size:.75rem">${escHTML(s.inventario?.codigo||s.inventario_id)}<div style="color:var(--muted)">${escHTML(s.inventario?.nome||'')}</div></td><td class="mono">${escHTML(s.endereco)}${end?.rua?`<div style="font-size:.65rem;color:var(--muted)">Rua ${escHTML(end.rua)}</div>`:''}</td><td>${view.itemsHtml(s.itens_esperados,'quantidade_esperada')}</td><td><div><b>Sistema:</b> <span class="mono">${view.fmt(s.esperado)}</span></div><div><b>1ª:</b> <span class="mono">${view.fmt(s.primeira)}</span></div><div><b>2ª:</b> <span class="mono">${view.fmt(s.segunda)}</span></div><div><b>3ª:</b> <span class="mono">${view.fmt(s.terceira)}</span></div></td><td><span class="badge b-blue">${escHTML(view.roundType(s))}</span></td><td><span class="badge ${view.statusBadge(s)}">${escHTML(view.statusLabel(s))}</span>${s.status==='SEM_BASE'?'<div style="font-size:.65rem;color:var(--danger)">Comparação bloqueada: total esperado ausente.</div>':''}</td><td>${id?`<button class="btn btn-danger btn-sm" onclick="abrirEstorno('${escHTML(id)}')">↩ Estornar</button>`:'—'}</td></tr>`;}).join('')}</tbody></table></div>`;
+}
 
 // Exporta exatamente as linhas atualmente exibidas na aba Contagens.
 // A leitura original permanece no historico, mas os campos operacionais
 // (produto, quantidade, operador e horario) usam a ultima rodada concluida.
 function exportarContagens(){
-  const lista = Array.isArray(window.__contagensVisiveis)
-    ? window.__contagensVisiveis.slice()
-    : [];
-
-  if(!lista.length){
-    if(typeof toast === 'function') toast('Nenhuma contagem visivel para exportar.', 'w');
-    else alert('Nenhuma contagem visivel para exportar.');
-    return;
-  }
-
-  const st = state();
-  const textoStatus = c => {
-    const r = _resultadoRodadaEndereco(c);
-    return r?.texto ? String(r.texto).replace(/[✅❌⏳🔴⚠️]/g,'').trim() : String(c.status || 'PENDENTE');
-  };
-  const inventarioTexto = c => {
-    const inv = (st.inventarios || []).find(i =>
-      [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
-        .filter(Boolean).map(String)
-        .includes(String(c.inventario_id || c.inventarioId || ''))
-    );
-    return inv ? `${inv.codigo || inv.id || ''}${inv.nome ? ' - ' + inv.nome : ''}` : String(c.inventario_id || c.inventarioId || '');
-  };
-  const valorSeguro = v => {
-    const t = String(v ?? '');
-    return /^[=+@]/.test(t) || /^-\D/.test(t) ? "'" + t : t;
-  };
-
-  const linhas = lista.map(c => {
-    const ultima = _ultimaRodadaContagem(c);
-    const prod = _produtoContagemExibicao(Object.assign({}, c, {
-      codigo_produto: ultima.produto,
-      gtin: ultima.produto,
-      descricao_produto: ultima.descricao
-    }));
-    const primeiraProd = _produtoContagemExibicao(c);
-    return {
-      'Data/Hora ultima rodada': fmtTs(ultima.data || c.timestamp || c.criado_em || c.dataHora),
-      'Rodada exibida': `${ultima.rodada}a`,
-      'Operador ultima rodada': ultima.operador || c.operador || '',
-      'Inventario': inventarioTexto(c),
-      'Endereco': c.endereco || '',
-      // O codigo exportado deve ser exatamente o que o operador bipou.
-      // O cadastro do produto serve apenas para completar a descricao.
-      'Codigo bipado ultima rodada': valorSeguro(ultima.produto || prod.codigo || ''),
-      'Produto ultima rodada': valorSeguro(prod.descricao || ultima.descricao || ''),
-      'Quantidade ultima rodada': ultima.quantidade ?? '',
-      'Status do fluxo': textoStatus(c),
-      'Tipo registro original': c.tipo_contagem || 'PRIMEIRA',
-      'Data/Hora 1a contagem': fmtTs(c.timestamp || c.criado_em || c.dataHora),
-      'Operador 1a contagem': c.operador || c.operador_nome || '',
-      'Codigo bipado 1a contagem': valorSeguro(c.gtin_bipado || c.codigoLido || c.codigo_lido || c.dunLido || c.dun_lido || c.gtinLido || c.gtin_lido || primeiraProd.codigo || ''),
-      'Produto 1a contagem': valorSeguro(primeiraProd.descricao || ''),
-      'Quantidade 1a contagem': c.quantidade ?? c.qtd ?? c.qtd_contada ?? '',
-      'ID contagem': c.uuid || c.id || '',
-      'ID divergencia': c.divergencia_id || ''
-    };
-  });
-
-  const agora = new Date();
-  const carimbo = agora.toISOString().slice(0,19).replace(/[:T]/g,'-');
-  const nome = `contagens-${carimbo}.xlsx`;
-
-  if(window.XLSX?.utils?.json_to_sheet && window.XLSX?.writeFile){
-    const ws = XLSX.utils.json_to_sheet(linhas);
-    const larguras = Object.keys(linhas[0] || {}).map(chave => ({
-      wch: Math.min(48, Math.max(chave.length + 2, ...linhas.map(l => String(l[chave] ?? '').length + 2)))
-    }));
-    ws['!cols'] = larguras;
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Contagens');
-    XLSX.writeFile(wb, nome);
-  } else {
-    const colunas = Object.keys(linhas[0] || {});
-    const esc = v => `"${String(v ?? '').replace(/"/g,'""')}"`;
-    const csv = '\uFEFF' + [colunas.map(esc).join(';')]
-      .concat(linhas.map(l => colunas.map(k => esc(l[k])).join(';')))
-      .join('\r\n');
-    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = nome.replace(/\.xlsx$/i,'.csv');
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-
-  if(typeof toast === 'function') toast(`${linhas.length} contagem(ns) exportada(s).`, 's');
+  const view=window.InventoryAddressView,lista=Array.isArray(window.__contagensVisiveis)?window.__contagensVisiveis:[];
+  if(!lista.length){showToast?.('Nenhuma contagem visível para exportar.','w');return;}
+  const linhas=lista.map(s=>({
+    'Inventário':s.inventario?.codigo||s.inventario_id,'Endereço':s.endereco,'Rua':getEnderecoInfo(s.endereco)?.rua||'',
+    'Produtos esperados':view.itemsText(s.itens_esperados,'quantidade_esperada'),'Qtd sistema':s.esperado??'',
+    '1ª contagem':s.primeira??'','Itens 1ª':view.itemsText(s.rodadas[0]?.itens),'Operador 1ª':s.rodadas[0]?.operadores?.join(', ')||'',
+    '2ª contagem':s.segunda??'','Itens 2ª':view.itemsText(s.rodadas[1]?.itens),'Operador 2ª':s.rodadas[1]?.operadores?.join(', ')||'',
+    '3ª contagem':s.terceira??'','Itens 3ª':view.itemsText(s.rodadas[2]?.itens),'Operador 3ª':s.rodadas[2]?.operadores?.join(', ')||'',
+    'Status consolidado':view.statusLabel(s),'Última atualização':s.atualizado_em||''
+  }));
+  _exportarXlsxAnalista('contagens-consolidadas.xlsx','Contagens',linhas);
 }
 window.exportarContagens = exportarContagens;
 

@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v199-divergencias-total-layout';
+var CACHE='dt-inventario-v204-fonte-unica-colunas';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -36,6 +36,7 @@ var PRECACHE=[
   '/js-legacy/coletor/16-menu-atualizacao.js',
   '/js-legacy/coletor/17-auditoria-meta.js',
   '/js-legacy/coletor/18-auditoria-fluxo.js',
+  '/js-legacy/coletor/19-runtime-estavel-v15.js',
   '/js/legacy-ui-compat.js'
 ];
 self.addEventListener('install',function(e){

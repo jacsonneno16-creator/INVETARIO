@@ -44,39 +44,152 @@ function fmtTime(d) {
 // ── Init ──
 updateSteps();
 // ServiceWorker não necessário — Firebase SDK gerencia offline
-/** Botão manual para enviar fila (aba STATUS) */
-function enviarFilaManual() {
-    return __awaiter(this, void 0, void 0, function () {
-        var pendentes, qtd, restantes;
+// ── Sincronização unificada e silenciosa ────────────────────────────────────
+// Contagens e auditorias usam armazenamentos diferentes, mas para o operador
+// existe uma única fila lógica. A reconexão apenas dispara os envios; nunca
+// recarrega a página e nunca bloqueia a operação atual.
+var _syncTudoPromise = null;
+function sincronizarTudoEmSegundoPlano() {
+    return __awaiter(this, arguments, void 0, function (origem) {
+        if (origem === void 0) { origem = 'automatico'; }
         return __generator(this, function (_a) {
             switch (_a.label) {
                 case 0:
-                    if (!navigator.onLine) {
-                        toast('📶 Sem internet — contagens salvas localmente no aparelho', 'w');
-                        return [2 /*return*/];
-                    }
-                    return [4 /*yield*/, idbGetPendentes()];
+                    if (!navigator.onLine)
+                        return [2 /*return*/, { contagens: 0, auditorias: 0, offline: true }];
+                    if (_syncTudoPromise)
+                        return [2 /*return*/, _syncTudoPromise];
+                    _syncTudoPromise = (function () {
+                        return __awaiter(this, void 0, void 0, function () {
+                            var erros, pendentes, e_1, e_2, e_3;
+                            return __generator(this, function (_a) {
+                                switch (_a.label) {
+                                    case 0:
+                                        erros = [];
+                                        _a.label = 1;
+                                    case 1:
+                                        _a.trys.push([1, 5, , 6]);
+                                        if (!(typeof idbGetPendentes === 'function' && typeof enviarFilaPendente === 'function')) return [3 /*break*/, 4];
+                                        return [4 /*yield*/, idbGetPendentes()];
+                                    case 2:
+                                        pendentes = _a.sent();
+                                        FILA_ENVIO = Array.isArray(pendentes) ? pendentes : [];
+                                        filaSave(FILA_ENVIO);
+                                        if (!FILA_ENVIO.length) return [3 /*break*/, 4];
+                                        return [4 /*yield*/, enviarFilaPendente()];
+                                    case 3:
+                                        _a.sent();
+                                        _a.label = 4;
+                                    case 4: return [3 /*break*/, 6];
+                                    case 5:
+                                        e_1 = _a.sent();
+                                        erros.push(e_1);
+                                        console.warn('[SYNC] Contagens permanecem pendentes:', e_1);
+                                        return [3 /*break*/, 6];
+                                    case 6:
+                                        _a.trys.push([6, 9, , 10]);
+                                        if (!(typeof window.sincronizarFilaAuditoria === 'function')) return [3 /*break*/, 8];
+                                        return [4 /*yield*/, window.sincronizarFilaAuditoria()];
+                                    case 7:
+                                        _a.sent();
+                                        _a.label = 8;
+                                    case 8: return [3 /*break*/, 10];
+                                    case 9:
+                                        e_2 = _a.sent();
+                                        erros.push(e_2);
+                                        console.warn('[SYNC] Auditorias permanecem pendentes:', e_2);
+                                        return [3 /*break*/, 10];
+                                    case 10:
+                                        _a.trys.push([10, 12, , 13]);
+                                        return [4 /*yield*/, atualizarFilaStatus()];
+                                    case 11:
+                                        _a.sent();
+                                        return [3 /*break*/, 13];
+                                    case 12:
+                                        e_3 = _a.sent();
+                                        return [3 /*break*/, 13];
+                                    case 13:
+                                        try {
+                                            if (typeof atualizarBarraStatus === 'function')
+                                                atualizarBarraStatus();
+                                        }
+                                        catch (e) { }
+                                        return [2 /*return*/, { origem: origem, erros: erros.length }];
+                                }
+                            });
+                        });
+                    })();
+                    _a.label = 1;
                 case 1:
-                    pendentes = _a.sent();
-                    if (!pendentes.length) {
-                        toast('✅ Nenhuma contagem pendente', 's');
+                    _a.trys.push([1, , 3, 4]);
+                    return [4 /*yield*/, _syncTudoPromise];
+                case 2: return [2 /*return*/, _a.sent()];
+                case 3:
+                    _syncTudoPromise = null;
+                    return [7 /*endfinally*/];
+                case 4: return [2 /*return*/];
+            }
+        });
+    });
+}
+window.sincronizarTudoEmSegundoPlano = sincronizarTudoEmSegundoPlano;
+// Um único listener de reconexão para disparar todas as filas sem reload.
+window.addEventListener('online', function () {
+    setTimeout(function () { sincronizarTudoEmSegundoPlano('online').catch(function () { }); }, 250);
+});
+/** Botão manual para enviar fila (aba STATUS) */
+function enviarFilaManual() {
+    return __awaiter(this, void 0, void 0, function () {
+        var contagens, _a, auditorias, _b, e_4, total;
+        return __generator(this, function (_c) {
+            switch (_c.label) {
+                case 0:
+                    if (!navigator.onLine) {
+                        toast('📶 Sem internet — os registros continuam salvos no aparelho', 'w');
                         return [2 /*return*/];
                     }
-                    qtd = pendentes.length;
-                    FILA_ENVIO = pendentes;
-                    toast("\u2B06\uFE0F Enviando ".concat(qtd, " contagem(ns)\u2026"), 'w');
-                    return [4 /*yield*/, enviarFilaPendente()];
-                case 2:
-                    _a.sent();
+                    toast('⬆️ Sincronizando contagens e auditorias em segundo plano…', 'w');
+                    return [4 /*yield*/, sincronizarTudoEmSegundoPlano('manual')];
+                case 1:
+                    _c.sent();
                     updateStats();
-                    atualizarFilaStatus();
+                    return [4 /*yield*/, atualizarFilaStatus()];
+                case 2:
+                    _c.sent();
+                    if (!(typeof idbGetPendentes === 'function')) return [3 /*break*/, 4];
                     return [4 /*yield*/, idbGetPendentes()];
                 case 3:
-                    restantes = (_a.sent()).length;
-                    if (restantes === 0)
-                        toast("\u2705 ".concat(qtd, " contagem(ns) enviadas com sucesso!"), 's');
+                    _a = (_c.sent()).length;
+                    return [3 /*break*/, 5];
+                case 4:
+                    _a = 0;
+                    _c.label = 5;
+                case 5:
+                    contagens = _a;
+                    auditorias = 0;
+                    _c.label = 6;
+                case 6:
+                    _c.trys.push([6, 10, , 11]);
+                    if (!window.DTAuditoriaStorage) return [3 /*break*/, 8];
+                    return [4 /*yield*/, window.DTAuditoriaStorage.filaAll()];
+                case 7:
+                    _b = (_c.sent()).length;
+                    return [3 /*break*/, 9];
+                case 8:
+                    _b = 0;
+                    _c.label = 9;
+                case 9:
+                    auditorias = _b;
+                    return [3 /*break*/, 11];
+                case 10:
+                    e_4 = _c.sent();
+                    return [3 /*break*/, 11];
+                case 11:
+                    total = contagens + auditorias;
+                    if (total === 0)
+                        toast('✅ Contagens e auditorias enviadas com sucesso!', 's');
                     else
-                        toast("\u26A0\uFE0F ".concat(restantes, " contagem(ns) ainda pendentes"), 'w');
+                        toast("\u26A0\uFE0F ".concat(total, " registro(s) ainda pendente(s) \u2014 nova tentativa ser\u00E1 autom\u00E1tica"), 'w');
                     return [2 /*return*/];
             }
         });
@@ -85,31 +198,51 @@ function enviarFilaManual() {
 /** Atualiza o indicador de fila na aba STATUS */
 function atualizarFilaStatus() {
     return __awaiter(this, void 0, void 0, function () {
-        var el, n, pendentes, e_1, net;
-        return __generator(this, function (_a) {
-            switch (_a.label) {
+        var el, n, pendentes, e_5, auditorias, _a, e_6, total, net;
+        return __generator(this, function (_b) {
+            switch (_b.label) {
                 case 0:
                     el = document.getElementById('st-fila');
-                    if (!el) return [3 /*break*/, 5];
+                    if (!el) return [3 /*break*/, 11];
                     n = FILA_ENVIO.length;
-                    _a.label = 1;
+                    _b.label = 1;
                 case 1:
-                    _a.trys.push([1, 3, , 4]);
+                    _b.trys.push([1, 3, , 4]);
                     return [4 /*yield*/, idbGetPendentes()];
                 case 2:
-                    pendentes = _a.sent();
+                    pendentes = _b.sent();
                     n = pendentes.length;
                     FILA_ENVIO = pendentes;
                     filaSave(FILA_ENVIO);
                     return [3 /*break*/, 4];
                 case 3:
-                    e_1 = _a.sent();
+                    e_5 = _b.sent();
                     return [3 /*break*/, 4];
                 case 4:
-                    el.textContent = n > 0 ? n + ' pendente(s)' : '✓ Tudo enviado';
-                    el.style.color = n > 0 ? 'var(--warn)' : 'var(--success)';
-                    _a.label = 5;
+                    auditorias = 0;
+                    _b.label = 5;
                 case 5:
+                    _b.trys.push([5, 9, , 10]);
+                    if (!window.DTAuditoriaStorage) return [3 /*break*/, 7];
+                    return [4 /*yield*/, window.DTAuditoriaStorage.filaAll()];
+                case 6:
+                    _a = (_b.sent()).length;
+                    return [3 /*break*/, 8];
+                case 7:
+                    _a = 0;
+                    _b.label = 8;
+                case 8:
+                    auditorias = _a;
+                    return [3 /*break*/, 10];
+                case 9:
+                    e_6 = _b.sent();
+                    return [3 /*break*/, 10];
+                case 10:
+                    total = n + auditorias;
+                    el.textContent = total > 0 ? total + ' pendente(s) (' + n + ' contagem(ns), ' + auditorias + ' auditoria(s))' : '✓ Tudo enviado';
+                    el.style.color = total > 0 ? 'var(--warn)' : 'var(--success)';
+                    _b.label = 11;
+                case 11:
                     net = document.getElementById('net-status');
                     if (net)
                         net.textContent = navigator.onLine ? '🔥 Firebase' : '📵 Offline';
@@ -122,51 +255,3 @@ function atualizarFilaStatus() {
 }
 // Atualiza indicador a cada 5s
 setInterval(atualizarFilaStatus, 5000);
-
-
-// Sincronização unificada e silenciosa (ES5): nunca recarrega a página.
-(function () {
-    var syncPromise = null;
-    window.sincronizarTudoEmSegundoPlano = function (origem) {
-        if (!navigator.onLine)
-            return Promise.resolve({ offline: true });
-        if (syncPromise)
-            return syncPromise;
-        syncPromise = Promise.resolve().then(function () {
-            if (typeof idbGetPendentes !== 'function' || typeof enviarFilaPendente !== 'function')
-                return null;
-            return idbGetPendentes().then(function (pendentes) {
-                FILA_ENVIO = Array.isArray(pendentes) ? pendentes : [];
-                filaSave(FILA_ENVIO);
-                return FILA_ENVIO.length ? enviarFilaPendente() : null;
-            });
-        }).catch(function (e) {
-            console.warn('[SYNC] Contagens permanecem pendentes:', e);
-        }).then(function () {
-            if (typeof window.sincronizarFilaAuditoria === 'function')
-                return window.sincronizarFilaAuditoria();
-            return null;
-        }).catch(function (e) {
-            console.warn('[SYNC] Auditorias permanecem pendentes:', e);
-        }).then(function () {
-            try { atualizarBarraStatus(); } catch (e) { }
-            try { return atualizarFilaStatus(); } catch (e) { return null; }
-        }).then(function () { return { origem: origem || 'automatico' }; });
-        syncPromise.then(function () { syncPromise = null; }, function () { syncPromise = null; });
-        return syncPromise;
-    };
-    enviarFilaManual = function () {
-        if (!navigator.onLine) {
-            toast('📶 Sem internet — os registros continuam salvos no aparelho', 'w');
-            return Promise.resolve();
-        }
-        toast('⬆️ Sincronizando contagens e auditorias em segundo plano…', 'w');
-        return window.sincronizarTudoEmSegundoPlano('manual').then(function () {
-            try { updateStats(); } catch (e) { }
-            return atualizarFilaStatus();
-        });
-    };
-    window.addEventListener('online', function () {
-        setTimeout(function () { window.sincronizarTudoEmSegundoPlano('online').catch(function () { }); }, 250);
-    });
-})();

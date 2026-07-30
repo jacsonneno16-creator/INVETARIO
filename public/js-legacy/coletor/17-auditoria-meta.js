@@ -45,22 +45,6 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
     }
 };
-var __read = (this && this.__read) || function (o, n) {
-    var m = typeof Symbol === "function" && o[Symbol.iterator];
-    if (!m) return o;
-    var i = m.call(o), r, ar = [], e;
-    try {
-        while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
-    }
-    catch (error) { e = { error: error }; }
-    finally {
-        try {
-            if (r && !r.done && (m = i["return"])) m.call(i);
-        }
-        finally { if (e) throw e.error; }
-    }
-    return ar;
-};
 var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
     if (pack || arguments.length === 2) for (var i = 0, l = from.length, ar; i < l; i++) {
         if (ar || !(i in from)) {
@@ -465,7 +449,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                         rows_1 = [];
                         chunkSnap.docs.forEach(function (doc) {
                             var d = doc.data();
-                            rows_1.push.apply(rows_1, __spreadArray([], __read((d.dados || d.itens || d.registros || [])), false));
+                            rows_1.push.apply(rows_1, (d.dados || d.itens || d.registros || []));
                         });
                         _hidratarMapaProdutosAuditoria(rows_1);
                         rows_1.forEach(function (r) {
@@ -573,7 +557,7 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
             return;
         lista = lista || APP.auditoriasMenu || [];
         var select = document.getElementById('aud-loja-select');
-        var lojas = __spreadArray([], __read(new Set((lista || []).flatMap(function (x) { return _extrairLojasDaAuditoria(x); }).filter(Boolean))), false).sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
+        var lojas = __spreadArray([], new Set((lista || []).flatMap(function (x) { return _extrairLojasDaAuditoria(x); }).filter(Boolean)), true).sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
         if (select) {
             var atual = APP.lojaFiltroAuditoria || '';
             select.innerHTML = '<option value="">Todas as lojas</option>' + lojas.map(function (loja) { return "<option value=\"".concat(escHTML(loja), "\">").concat(escHTML(loja), "</option>"); }).join('');

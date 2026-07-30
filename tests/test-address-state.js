@@ -17,7 +17,7 @@ run('segunda bate esperado com pallets', {contagens:[
   {id:'r1',inventario_id:'INV-1',endereco:'A1',tipo_contagem:'RECONTAGEM',numero_recontagem:1,palete:'A',quantidade:150},
   {id:'r2',inventario_id:'INV-1',endereco:'A1',tipo_contagem:'RECONTAGEM',numero_recontagem:1,palete:'B',quantidade:1000}
 ], divergencias:[{id:'d1',inventario_id:'INV-1',endereco:'A1',status:'DIVERGENTE'}]}, {estado:'RESOLVIDA',rodada:2});
-run('segunda confirma primeira', {contagens:[{id:'c1',inventario_id:'INV-1',endereco:'A1',quantidade:900}],recontagens:[{id:'r1',inventario_id:'INV-1',endereco:'A1',numero_recontagem:1,qtd_recontagem:900,status:'CONCLUIDA'}]}, {estado:'RESOLVIDA',rodada:2});
+run('segunda confirma primeira', {contagens:[{id:'c1',inventario_id:'INV-1',endereco:'A1',quantidade:900}],recontagens:[{id:'r1',inventario_id:'INV-1',endereco:'A1',numero_recontagem:1,qtd_recontagem:900,status:'CONCLUIDA'}]}, {estado:'AGUARDANDO_RECONTAGEM',rodada:2});
 run('terceira sem consenso', {contagens:[{id:'c1',inventario_id:'INV-1',endereco:'A1',quantidade:900}],recontagens:[
 {id:'r1',inventario_id:'INV-1',endereco:'A1',numero_recontagem:1,qtd_recontagem:1000,status:'CONCLUIDA'},
 {id:'r2',inventario_id:'INV-1',endereco:'A1',numero_recontagem:2,qtd_recontagem:1100,status:'CONCLUIDA'}]}, {estado:'PERSISTENTE',rodada:3});

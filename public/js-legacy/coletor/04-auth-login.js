@@ -375,64 +375,66 @@ function doLogin() {
                                     window.DT_USUARIO_ACESSO_ATUAL = acessoGlobal || {
                                         uid: user.uid, email: user.email, acesso_todas_lojas: true, lojas_permitidas: []
                                     };
-                                    if (acessoGlobal && acessoGlobal.canais_acesso && acessoGlobal.canais_acesso.coletor !== true) {
-                                        _setBtn('ENTRAR', false);
-                                        AUTH.signOut().catch(function () { });
-                                        _setFb('Este login possui acesso somente ao painel Analista.', 'err');
-                                        return [2 /*return*/];
-                                    }
+                                    if (!((acessoGlobal === null || acessoGlobal === void 0 ? void 0 : acessoGlobal.canais_acesso) && acessoGlobal.canais_acesso.coletor !== true)) return [3 /*break*/, 6];
+                                    _setBtn('ENTRAR', false);
+                                    return [4 /*yield*/, AUTH.signOut().catch(function () { })];
+                                case 5:
+                                    _a.sent();
+                                    _setFb('Este login possui acesso somente ao painel Analista.', 'err');
+                                    return [2 /*return*/];
+                                case 6:
                                     // Carrega as lojas permitidas. Uma única loja entra direto; duas ou
                                     // mais exibem o seletor antes do menu principal.
                                     window.setDTLojaAtiva('');
                                     lojaSelecionada = '';
                                     lojasPermitidas = [];
-                                    _a.label = 5;
-                                case 5:
-                                    _a.trys.push([5, 10, , 12]);
+                                    _a.label = 7;
+                                case 7:
+                                    _a.trys.push([7, 12, , 14]);
                                     return [4 /*yield*/, window.DTLoja.listar(true)];
-                                case 6:
+                                case 8:
                                     lojasPermitidas = _a.sent();
                                     window.DT_LOJAS_USUARIO_ATUAL = lojasPermitidas;
                                     if (!lojasPermitidas.length)
                                         throw new Error('Este login não possui acesso a nenhuma loja.');
-                                    if (!(lojasPermitidas.length === 1)) return [3 /*break*/, 7];
+                                    if (!(lojasPermitidas.length === 1)) return [3 /*break*/, 9];
                                     lojaSelecionada = window.setDTLojaAtiva(lojasPermitidas[0].id);
-                                    return [3 /*break*/, 9];
-                                case 7: return [4 /*yield*/, window.DTLoja.selecionarInterativamente('Selecione a loja para trabalhar', true)];
-                                case 8:
-                                    lojaSelecionada = _a.sent();
-                                    _a.label = 9;
-                                case 9: return [3 /*break*/, 12];
+                                    return [3 /*break*/, 11];
+                                case 9: return [4 /*yield*/, window.DTLoja.selecionarInterativamente('Selecione a loja para trabalhar', true)];
                                 case 10:
-                                    e_4 = _a.sent();
-                                    _setBtn('ENTRAR', false);
-                                    return [4 /*yield*/, AUTH.signOut().catch(function () { })];
-                                case 11:
-                                    _a.sent();
-                                    _setFb('Não foi possível carregar as lojas: ' + e_4.message, 'err');
-                                    return [2 /*return*/];
+                                    lojaSelecionada = _a.sent();
+                                    _a.label = 11;
+                                case 11: return [3 /*break*/, 14];
                                 case 12:
-                                    if (!!lojaSelecionada) return [3 /*break*/, 14];
+                                    e_4 = _a.sent();
                                     _setBtn('ENTRAR', false);
                                     return [4 /*yield*/, AUTH.signOut().catch(function () { })];
                                 case 13:
                                     _a.sent();
-                                    _setFb('Selecione uma loja para continuar.', 'err');
+                                    _setFb('Não foi possível carregar as lojas: ' + e_4.message, 'err');
                                     return [2 /*return*/];
                                 case 14:
-                                    _setBtn('Verificando aparelho…', true);
-                                    _a.label = 15;
+                                    if (!!lojaSelecionada) return [3 /*break*/, 16];
+                                    _setBtn('ENTRAR', false);
+                                    return [4 /*yield*/, AUTH.signOut().catch(function () { })];
                                 case 15:
-                                    _a.trys.push([15, 17, , 18]);
-                                    return [4 /*yield*/, registrarColetorNoFirestore({ email: user.email, name: name, uid: user.uid })];
+                                    _a.sent();
+                                    _setFb('Selecione uma loja para continuar.', 'err');
+                                    return [2 /*return*/];
                                 case 16:
-                                    status = _a.sent();
-                                    return [3 /*break*/, 18];
+                                    _setBtn('Verificando aparelho…', true);
+                                    _a.label = 17;
                                 case 17:
+                                    _a.trys.push([17, 19, , 20]);
+                                    return [4 /*yield*/, registrarColetorNoFirestore({ email: user.email, name: name, uid: user.uid })];
+                                case 18:
+                                    status = _a.sent();
+                                    return [3 /*break*/, 20];
+                                case 19:
                                     e_5 = _a.sent();
                                     status = 'erro';
-                                    return [3 /*break*/, 18];
-                                case 18:
+                                    return [3 /*break*/, 20];
+                                case 20:
                                     if (status === 'bloqueado') {
                                         _setBtn('ENTRAR', false);
                                         _mostrarTelaBloqueado();
@@ -451,20 +453,20 @@ function doLogin() {
                                         return [2 /*return*/];
                                     }
                                     opDoc = acessoGlobal;
-                                    _a.label = 19;
-                                case 19:
-                                    _a.trys.push([19, 21, , 22]);
+                                    _a.label = 21;
+                                case 21:
+                                    _a.trys.push([21, 23, , 24]);
                                     return [4 /*yield*/, FS.collection('dt_operadores').doc(user.uid).get()];
-                                case 20:
+                                case 22:
                                     opSnap = _a.sent();
                                     if (opSnap.exists)
                                         opDoc = opSnap.data() || null;
-                                    return [3 /*break*/, 22];
-                                case 21:
+                                    return [3 /*break*/, 24];
+                                case 23:
                                     e_6 = _a.sent();
                                     console.warn('[Coletor] Falha ao carregar acesso do operador:', e_6.message);
-                                    return [3 /*break*/, 22];
-                                case 22:
+                                    return [3 /*break*/, 24];
+                                case 24:
                                     APP.operador = {
                                         email: user.email,
                                         name: name,
@@ -578,6 +580,19 @@ function _doLogoutConfirmado() {
         }
     });
 }
-
 // v91: não mantém telas operacionais abertas sem autenticação válida.
-(function(){try{AUTH.onAuthStateChanged(function(user){if(user)return;try{APP._auditoriaPronta=false;APP._auditoriaCarregando=false;APP.operador=null;}catch(e){}var ativa=document.querySelector('.screen.active');if(ativa&&ativa.id&&ativa.id!=='screen-login'){try{goScreen('login');}catch(e){}}});}catch(e){}})();
+(function () { try {
+    AUTH.onAuthStateChanged(function (user) { if (user)
+        return; try {
+        APP._auditoriaPronta = false;
+        APP._auditoriaCarregando = false;
+        APP.operador = null;
+    }
+    catch (e) { } var ativa = document.querySelector('.screen.active'); if (ativa && ativa.id && ativa.id !== 'screen-login') {
+        try {
+            goScreen('login');
+        }
+        catch (e) { }
+    } });
+}
+catch (e) { } })();

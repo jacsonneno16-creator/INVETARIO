@@ -232,98 +232,156 @@ function atualizarCacheLocais() {
         });
     });
 }
-
 // v156 — Status da Auditoria offline baseado na fila IndexedDB.
-(function(){
-  var _updateStatsBase = window.updateStats;
-  var _audStatsSeq = 0;
-  function _audDocId(r){ return String((r && (r.docId || r.id)) || '').trim(); }
-  function _audStatus(r){ return String((r && (r.status || (r.payload && r.payload.status))) || '').trim().toUpperCase(); }
-  function _atualizarStatsAuditoriaOffline(){
-    if (!window.APP || APP.modoAcesso !== 'auditoria' || !window.DTAuditoriaStorage) return Promise.resolve();
-    var seq = ++_audStatsSeq;
-    var audId = String((APP.inventario && (APP.inventario.auditoria_id || APP.inventario.id)) || '').trim();
-    if (!audId) return Promise.resolve();
-    return DTAuditoriaStorage.filaAll().catch(function(){ return []; }).then(function(fila){
-      if (seq !== _audStatsSeq) return;
-      var pendFila = fila.filter(function(x){ return String(x.auditoriaId || '') === audId && (x.subcolecao || 'enderecos') === 'enderecos'; });
-      var mapa = new Map();
-      (APP.contagens || []).forEach(function(r){
-        if (String(r.auditoriaId || r.auditoria_id || '') !== audId) return;
-        var id=_audDocId(r); if(id) mapa.set(id,r);
-      });
-      pendFila.forEach(function(x){ var id=_audDocId(x); if(id) mapa.set(id,Object.assign({id:id},x.payload||{})); });
-      var resultados=Array.from(mapa.values()).filter(function(r){ return ['OK','DIVERGENTE','ENDERECO_VAZIO'].indexOf(_audStatus(r))>=0; });
-      var pendIds=new Set(pendFila.map(_audDocId).filter(Boolean));
-      var total=resultados.length;
-      var pendentes=resultados.filter(function(r){ return pendIds.has(_audDocId(r)); }).length;
-      var enviadas=Math.max(0,total-pendentes);
-      var divergencias=resultados.filter(function(r){ return _audStatus(r)==='DIVERGENTE'; }).length;
-      function set(id,v){ var el=document.getElementById(id); if(el) el.textContent=String(v); }
-      set('st-total',total); set('st-enviadas',enviadas); set('st-pendentes',pendentes); set('st-div',divergencias);
-      window._dtAuditoriaPendentes=pendentes;
-      var bar=document.getElementById('sync-bar'),txt=document.getElementById('sync-bar-text'),spin=document.getElementById('sync-bar-spinner'),label=document.getElementById('conn-label');
-      if(!navigator.onLine){
-        if(bar){bar.style.display='flex';bar.style.background='linear-gradient(90deg,#7c2d12,#92400e)';}
-        if(txt)txt.textContent='📵 Sem internet — '+pendentes+' auditoria(s) salva(s) localmente e aguardando envio';
-        if(spin)spin.textContent='💾';
-        if(label)label.textContent=pendentes>0?'📵 '+pendentes+' na fila':'📵 Offline';
-      }else if(pendentes>0){
-        if(bar){bar.style.display='flex';bar.style.background='linear-gradient(90deg,#1e3a8a,#1d4ed8)';}
-        if(txt)txt.textContent='⬆️ Sincronizando '+pendentes+' auditoria(s) com Firebase…';
-        if(spin)spin.textContent='🔄';
-        if(label)label.textContent='⬆ '+pendentes+' pend.';
-      }
-    });
-  }
-  window.atualizarStatsAuditoriaOffline=_atualizarStatsAuditoriaOffline;
-  window.updateStats=function(){ if(typeof _updateStatsBase==='function')_updateStatsBase.apply(this,arguments); _atualizarStatsAuditoriaOffline().catch(function(e){console.warn('[AUDITORIA] Status offline:',e);}); };
-  window.addEventListener('dt-auditoria-salva',function(){window.updateStats();});
-  window.addEventListener('online',function(){setTimeout(function(){window.updateStats();},300);});
-  window.addEventListener('offline',function(){window.updateStats();});
-})();
-
-
-// v157 — Status do modo Inventário baseado na fila real do IndexedDB.
-(function(){
-  const _updateStatsAnterior = window.updateStats;
-  let _invStatsSeq = 0;
-  function _invAtiva(c){ return c && !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA'; }
-  function _invId(c){ return String((c && (c.inventario_id || c.inventarioId)) || '').trim(); }
-  function _invUuid(c){ return String((c && (c.uuid || c.id)) || '').trim(); }
-  function _invDivergenciaLocal(c){ return !!(c && (c._alertaQtd === true || c.divergencia_potencial === true || c.divergente === true)); }
-  window.updateStats = function(){
-    if (window.APP && APP.modoAcesso === 'auditoria') return _updateStatsAnterior.apply(this, arguments);
-    const seq = ++_invStatsSeq;
-    const invId = String(APP.inventario?.id || '').trim();
-    const ativas = (APP.contagens || []).filter(_invAtiva).filter(c => !invId || _invId(c) === invId);
-    const aplicar = (fila) => {
-      if (seq !== _invStatsSeq) return;
-      fila = Array.isArray(fila) ? fila : [];
-      const pendInv = fila.filter(_invAtiva).filter(c => !invId || _invId(c) === invId);
-      const pendIds = new Set(pendInv.map(_invUuid).filter(Boolean));
-      const total = ativas.length;
-      const pendentes = ativas.filter(c => pendIds.has(_invUuid(c))).length;
-      const enviadas = Math.max(0, total - pendentes);
-      const divs = ativas.filter(_invDivergenciaLocal).length;
-      const s = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
-      s('st-total', total); s('st-enviadas', enviadas); s('st-pendentes', pendentes); s('st-div', divs);
-      s('st-op', APP.operador?.name || '—'); s('st-inv', APP.inventario?.nome || '—');
-      s('st-base', APP.base.length ? APP.base.length + ' registros' : '—');
-      s('st-net', navigator.onLine ? '🟢 Online' : '🔴 Offline');
-      s('st-coletor', localStorage.getItem('dt_device_id')?.slice(0,20) || '—');
-      const locVer=localStorage.getItem('col_locais_ver');
-      s('st-locais-ver', locVer ? ('v'+locVer.slice(0,12)+(locVer.length>12?'…':'')) : 'sem cache');
-      const stAud=document.getElementById('st-aud'); if(stAud) stAud.textContent=(APP.auditorias||[]).length;
-      atualizarBarraStatus();
-    };
-    aplicar(FILA_ENVIO || []);
-    if (typeof idbGetPendentes === 'function') {
-      Promise.resolve(idbGetPendentes()).then(fila => {
-        FILA_ENVIO = Array.isArray(fila) ? fila : [];
-        filaSave(FILA_ENVIO);
-        aplicar(FILA_ENVIO);
-      }).catch(() => {});
+(function () {
+    var _updateStatsBase = window.updateStats;
+    var _audStatsSeq = 0;
+    function _audDocId(r) { return String((r && (r.docId || r.id)) || '').trim(); }
+    function _audStatus(r) { return String((r && (r.status || (r.payload && r.payload.status))) || '').trim().toUpperCase(); }
+    function _atualizarStatsAuditoriaOffline() {
+        return __awaiter(this, void 0, void 0, function () {
+            var seq, audId, fila, e_3, pendFila, mapa, resultados, pendIds, total, pendentes, enviadas, divergencias, set, bar, txt, spin, label;
+            var _a, _b;
+            return __generator(this, function (_c) {
+                switch (_c.label) {
+                    case 0:
+                        if (!window.APP || APP.modoAcesso !== 'auditoria' || !window.DTAuditoriaStorage)
+                            return [2 /*return*/];
+                        seq = ++_audStatsSeq;
+                        audId = String(((_a = APP.inventario) === null || _a === void 0 ? void 0 : _a.auditoria_id) || ((_b = APP.inventario) === null || _b === void 0 ? void 0 : _b.id) || '').trim();
+                        if (!audId)
+                            return [2 /*return*/];
+                        fila = [];
+                        _c.label = 1;
+                    case 1:
+                        _c.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, DTAuditoriaStorage.filaAll()];
+                    case 2:
+                        fila = _c.sent();
+                        return [3 /*break*/, 4];
+                    case 3:
+                        e_3 = _c.sent();
+                        fila = [];
+                        return [3 /*break*/, 4];
+                    case 4:
+                        if (seq !== _audStatsSeq)
+                            return [2 /*return*/];
+                        pendFila = fila.filter(function (x) { return String(x.auditoriaId || '') === audId && (x.subcolecao || 'enderecos') === 'enderecos'; });
+                        mapa = new Map();
+                        (APP.contagens || []).forEach(function (r) {
+                            if (String(r.auditoriaId || r.auditoria_id || '') !== audId)
+                                return;
+                            var id = _audDocId(r);
+                            if (id)
+                                mapa.set(id, r);
+                        });
+                        pendFila.forEach(function (x) { var id = _audDocId(x); if (id)
+                            mapa.set(id, Object.assign({ id: id }, x.payload || {})); });
+                        resultados = Array.from(mapa.values()).filter(function (r) { return ['OK', 'DIVERGENTE', 'ENDERECO_VAZIO'].includes(_audStatus(r)); });
+                        pendIds = new Set(pendFila.map(_audDocId).filter(Boolean));
+                        total = resultados.length;
+                        pendentes = resultados.filter(function (r) { return pendIds.has(_audDocId(r)); }).length;
+                        enviadas = Math.max(0, total - pendentes);
+                        divergencias = resultados.filter(function (r) { return _audStatus(r) === 'DIVERGENTE'; }).length;
+                        set = function (id, v) { var el = document.getElementById(id); if (el)
+                            el.textContent = String(v); };
+                        set('st-total', total);
+                        set('st-enviadas', enviadas);
+                        set('st-pendentes', pendentes);
+                        set('st-div', divergencias);
+                        window._dtAuditoriaPendentes = pendentes;
+                        bar = document.getElementById('sync-bar'), txt = document.getElementById('sync-bar-text'), spin = document.getElementById('sync-bar-spinner');
+                        label = document.getElementById('conn-label');
+                        if (!navigator.onLine) {
+                            if (bar) {
+                                bar.style.display = 'flex';
+                                bar.style.background = 'linear-gradient(90deg,#7c2d12,#92400e)';
+                            }
+                            if (txt)
+                                txt.textContent = "\uD83D\uDCF5 Sem internet \u2014 ".concat(pendentes, " auditoria(s) salva(s) localmente e aguardando envio");
+                            if (spin)
+                                spin.textContent = '💾';
+                            if (label)
+                                label.textContent = pendentes > 0 ? "\uD83D\uDCF5 ".concat(pendentes, " na fila") : '📵 Offline';
+                        }
+                        else if (pendentes > 0) {
+                            if (bar) {
+                                bar.style.display = 'flex';
+                                bar.style.background = 'linear-gradient(90deg,#1e3a8a,#1d4ed8)';
+                            }
+                            if (txt)
+                                txt.textContent = "\u2B06\uFE0F Sincronizando ".concat(pendentes, " auditoria(s) com Firebase\u2026");
+                            if (spin)
+                                spin.textContent = '🔄';
+                            if (label)
+                                label.textContent = "\u2B06 ".concat(pendentes, " pend.");
+                        }
+                        return [2 /*return*/];
+                }
+            });
+        });
     }
-  };
+    window.atualizarStatsAuditoriaOffline = _atualizarStatsAuditoriaOffline;
+    window.updateStats = function () {
+        if (typeof _updateStatsBase === 'function')
+            _updateStatsBase.apply(this, arguments);
+        _atualizarStatsAuditoriaOffline().catch(function (e) { console.warn('[AUDITORIA] Status offline:', e); });
+    };
+    window.addEventListener('dt-auditoria-salva', function () { window.updateStats(); });
+    window.addEventListener('online', function () { setTimeout(function () { window.updateStats(); }, 300); });
+    window.addEventListener('offline', function () { window.updateStats(); });
+})();
+// v157 — Status do modo Inventário baseado na fila real do IndexedDB.
+(function () {
+    var _updateStatsAnterior = window.updateStats;
+    var _invStatsSeq = 0;
+    function _invAtiva(c) { return c && !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA'; }
+    function _invId(c) { return String((c && (c.inventario_id || c.inventarioId)) || '').trim(); }
+    function _invUuid(c) { return String((c && (c.uuid || c.id)) || '').trim(); }
+    function _invDivergenciaLocal(c) { return !!(c && (c._alertaQtd === true || c.divergencia_potencial === true || c.divergente === true)); }
+    window.updateStats = function () {
+        var _a;
+        if (window.APP && APP.modoAcesso === 'auditoria')
+            return _updateStatsAnterior.apply(this, arguments);
+        var seq = ++_invStatsSeq;
+        var invId = String(((_a = APP.inventario) === null || _a === void 0 ? void 0 : _a.id) || '').trim();
+        var ativas = (APP.contagens || []).filter(_invAtiva).filter(function (c) { return !invId || _invId(c) === invId; });
+        var aplicar = function (fila) {
+            var _a, _b, _c;
+            if (seq !== _invStatsSeq)
+                return;
+            fila = Array.isArray(fila) ? fila : [];
+            var pendInv = fila.filter(_invAtiva).filter(function (c) { return !invId || _invId(c) === invId; });
+            var pendIds = new Set(pendInv.map(_invUuid).filter(Boolean));
+            var total = ativas.length;
+            var pendentes = ativas.filter(function (c) { return pendIds.has(_invUuid(c)); }).length;
+            var enviadas = Math.max(0, total - pendentes);
+            var divs = ativas.filter(_invDivergenciaLocal).length;
+            var s = function (id, v) { var el = document.getElementById(id); if (el)
+                el.textContent = v; };
+            s('st-total', total);
+            s('st-enviadas', enviadas);
+            s('st-pendentes', pendentes);
+            s('st-div', divs);
+            s('st-op', ((_a = APP.operador) === null || _a === void 0 ? void 0 : _a.name) || '—');
+            s('st-inv', ((_b = APP.inventario) === null || _b === void 0 ? void 0 : _b.nome) || '—');
+            s('st-base', APP.base.length ? APP.base.length + ' registros' : '—');
+            s('st-net', navigator.onLine ? '🟢 Online' : '🔴 Offline');
+            s('st-coletor', ((_c = localStorage.getItem('dt_device_id')) === null || _c === void 0 ? void 0 : _c.slice(0, 20)) || '—');
+            var locVer = localStorage.getItem('col_locais_ver');
+            s('st-locais-ver', locVer ? ('v' + locVer.slice(0, 12) + (locVer.length > 12 ? '…' : '')) : 'sem cache');
+            var stAud = document.getElementById('st-aud');
+            if (stAud)
+                stAud.textContent = (APP.auditorias || []).length;
+            atualizarBarraStatus();
+        };
+        aplicar(FILA_ENVIO || []);
+        if (typeof idbGetPendentes === 'function') {
+            Promise.resolve(idbGetPendentes()).then(function (fila) {
+                FILA_ENVIO = Array.isArray(fila) ? fila : [];
+                filaSave(FILA_ENVIO);
+                aplicar(FILA_ENVIO);
+            }).catch(function () { });
+        }
+    };
 })();

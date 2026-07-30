@@ -74,7 +74,8 @@ function _ultimaRodadaContagem(c){
   // A tarefa de recontagem guarda o TOTAL do endereço, mas a aba Contagens
   // precisa continuar exibindo cada palete bipado separadamente. Por isso,
   // buscamos as leituras brutas da rodada em dt_contagens e associamos cada
-  // leitura ao palete original apenas pelo número da capa/palete.
+  // leitura ao palete original (primeiro pelo número da capa/palete e, para
+  // dados antigos sem o mesmo identificador, pela posição ordenada).
   const recontagensBrutas=(st.contagens || []).filter(x => {
     if(String(x?.tipo_contagem || '').toUpperCase()!=='RECONTAGEM') return false;
     if(x?._excluida || ['ESTORNADA','EXCLUIDA'].includes(String(x?.status || '').toUpperCase())) return false;
@@ -83,6 +84,11 @@ function _ultimaRodadaContagem(c){
       String(x?.divergencia_id || '')===String(div?.id || '');
     const mesmaRodada=!x?.numero_recontagem || Number(x.numero_recontagem)===numeroRodada;
     return vinculada && mesmaRodada;
+  }).sort((a,b) => {
+    const oa=_ordemPaleteContagem(a), ob=_ordemPaleteContagem(b);
+    if(oa.grupo!==ob.grupo) return oa.grupo-ob.grupo;
+    if(oa.valor!==ob.valor) return oa.valor-ob.valor;
+    return oa.texto.localeCompare(ob.texto);
   });
 
   let leituraPalete=null;
@@ -90,21 +96,34 @@ function _ultimaRodadaContagem(c){
   if(paleteOriginal){
     leituraPalete=recontagensBrutas.find(x => _paleteContagem(x)===paleteOriginal) || null;
   }
-  // Ponto 4: Removida associação por posição/índice. Se não houver palete, não associa.
+  if(!leituraPalete && recontagensBrutas.length){
+    const originais=(st.contagens || []).filter(x =>
+      String(x?.tipo_contagem || 'PRIMEIRA').toUpperCase()!=='RECONTAGEM' &&
+      !x?._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(x?.status || '').toUpperCase()) &&
+      FK.inventario(x,st.inventarios)===inv && FK.endereco(x?.endereco)===end &&
+      FK.produto(x)===prod
+    ).sort((a,b) => {
+      const oa=_ordemPaleteContagem(a), ob=_ordemPaleteContagem(b);
+      if(oa.grupo!==ob.grupo) return oa.grupo-ob.grupo;
+      if(oa.valor!==ob.valor) return oa.valor-ob.valor;
+      return oa.texto.localeCompare(ob.texto);
+    });
+    const indice=originais.findIndex(x => String(x?.uuid || x?.id || '')===cid);
+    if(indice>=0 && recontagensBrutas[indice]) leituraPalete=recontagensBrutas[indice];
+  }
 
   const fonte=leituraPalete || r;
   return {
     rodada,
-    // Ponto 3: Nunca inventar quantidade (0 ou total). Retornar null se não houver leitura individual.
     quantidade:leituraPalete
       ? (leituraPalete?.quantidade ?? leituraPalete?.qtd ?? leituraPalete?.qtd_contada ?? primeira.quantidade)
-      : null,
+      : (r?.qtd_terceira ?? r?.qtd_segunda ?? r?.qtd_recontagem ?? r?.quantidade ?? primeira.quantidade),
     produto:leituraPalete
       ? (leituraPalete?.gtin_bipado || leituraPalete?.codigoLido || leituraPalete?.dunLido || leituraPalete?.gtinLido || leituraPalete?.gtin || leituraPalete?.codigo_produto || primeira.produto)
-      : (leituraPalete ? primeira.produto : null),
-    descricao:leituraPalete ? (fonte?.descricao_produto || fonte?.produto_descricao || fonte?.produtoLidoNome || fonte?.descricao || primeira.descricao) : null,
-    operador:leituraPalete ? (fonte?.operador_terceira || fonte?.operador_segunda || fonte?.operador_recontagem || fonte?.operador || fonte?.operador_nome || primeira.operador) : null,
-    data:leituraPalete ? (fonte?.data_terceira || fonte?.data_segunda || fonte?.recontagem_concluida_em || fonte?.concluida_em || fonte?.finalizada_em || fonte?.criado_em || fonte?.dataHora || primeira.data) : null,
+      : (r?.produto_terceira || r?.produto_segunda || r?.produto_recontagem || r?.gtin_bipado || r?.codigo_produto || r?.produto || primeira.produto),
+    descricao:fonte?.descricao_produto || fonte?.produto_descricao || fonte?.produtoLidoNome || fonte?.descricao || primeira.descricao,
+    operador:fonte?.operador_terceira || fonte?.operador_segunda || fonte?.operador_recontagem || fonte?.operador || fonte?.operador_nome || primeira.operador,
+    data:fonte?.data_terceira || fonte?.data_segunda || fonte?.recontagem_concluida_em || fonte?.concluida_em || fonte?.finalizada_em || fonte?.criado_em || fonte?.dataHora || primeira.data,
     palete:_paleteContagem(leituraPalete) || paleteOriginal,
     leitura_individual:Boolean(leituraPalete)
   };
@@ -113,6 +132,34 @@ function _ultimaRodadaContagem(c){
 
 function _avaliarDistribuicaoPaletes(c){
   return null; /* validacao autoritativa e somente pelo total do endereco */
+  /*
+  const st=state();
+  const FK=window.InventoryFlowKey;
+  if(!FK) return null;
+  const inv=FK.inventario(c,st.inventarios);
+  const end=FK.endereco(c?.endereco);
+  const prod=FK.produto(c);
+  const invObj=(st.inventarios||[]).find(i=>FK.inventario(i,st.inventarios)===inv);
+  const num=v=>{ if(v===null||v===undefined||String(v).trim()==='') return 0; const n=Number(String(v).replace(',','.')); return Number.isFinite(n)?n:0; };
+  const pal=x=>String(x?.palete ?? x?.pallet ?? x?.numero_palete ?? x?.numeroPalete ?? x?.palete_key ?? x?.capa_palete ?? x?.capa ?? '').trim();
+  const qtd=x=>num(x?.quantidade_esperada ?? x?.qtd_esperada ?? x?.quantidade_enderecada ?? x?.saldo_estoque ?? x?.qtd_sistema ?? x?.estoque ?? x?.quantidade ?? x?.qtd ?? x?.qtde);
+  const base=(invObj?.base||[]).filter(x=>FK.endereco(x?.endereco)===end && (!prod || FK.produto(x)===prod));
+  const esperado=new Map();
+  base.forEach(x=>{ const k=pal(x); if(k) esperado.set(k,(esperado.get(k)||0)+qtd(x)); });
+  if(esperado.size<2) return null;
+  const validas=(st.contagens||[]).filter(x=>!x?._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(x?.status||'').toUpperCase()) && FK.inventario(x,st.inventarios)===inv && FK.endereco(x?.endereco)===end && (!prod || FK.produto(x)===prod));
+  if(!validas.length) return null;
+  const rodada=x=>String(x?.tipo_contagem||'PRIMEIRA').toUpperCase()==='RECONTAGEM' ? Math.min(3,1+Math.max(1,Number(x?.numero_recontagem||1))) : 1;
+  const ultima=Math.max(...validas.map(rodada));
+  const atual=new Map();
+  validas.filter(x=>rodada(x)===ultima).forEach(x=>{ const k=pal(x); if(k) atual.set(k,(atual.get(k)||0)+num(x?.quantidade ?? x?.qtd ?? x?.qtd_contada)); });
+  if(!atual.size) return null;
+  const totalEsp=[...esperado.values()].reduce((a,b)=>a+b,0);
+  const totalAt=[...atual.values()].reduce((a,b)=>a+b,0);
+  const chaves=new Set([...esperado.keys(),...atual.keys()]);
+  const divergentes=[...chaves].filter(k=>Math.abs((esperado.get(k)||0)-(atual.get(k)||0))>1e-9);
+  return {rodada:ultima,totalEsperado:totalEsp,totalContado:totalAt,totalBate:Math.abs(totalEsp-totalAt)<1e-9,divergentes,quantidadeDivergente:divergentes.length};
+  */
 }
 window.avaliarDistribuicaoPaletes=_avaliarDistribuicaoPaletes;
 
@@ -131,300 +178,71 @@ window.contStatusBadge = window.contStatusBadge || contStatusBadge;
 // de Contagens. Usa a mesma regra de avaliação da aba Recontagem, então os
 // dois lugares sempre concordam sobre qual rodada "bateu".
 function _resultadoRodadaEndereco(c){
-  const st = state();
-  const FK = window.InventoryFlowKey;
-  if (!FK) return { texto:'⚠️ Status indisponível', cls:'b-orange' };
-  const inv = FK.inventario(c, st.inventarios);
-  const end = FK.endereco(c?.endereco);
-  const divs = (st.divergencias || []).filter(d =>
-    FK.inventario(d, st.inventarios) === inv &&
-    FK.endereco(d?.endereco) === end &&
-    !['CANCELADA','EXCLUIDA','ESTORNADA'].includes(String(d?.status || '').toUpperCase())
-  );
-  const div = divs[0] || null;
-
-  if (!div) {
-    // Não confiar em status legado. Recalcula o total da 1ª rodada do endereço.
-    const mesmas = (st.contagens || []).filter(x =>
-      FK.inventario(x, st.inventarios) === inv &&
-      FK.endereco(x?.endereco) === end &&
-      !['ESTORNADA','EXCLUIDA','CANCELADA'].includes(String(x?.status || '').toUpperCase()) &&
-      String(x?.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM'
-    );
-    const numero = v => {
-      const n = Number(String(v ?? '').replace(',', '.'));
-      return Number.isFinite(n) ? n : 0;
-    };
-    const totalPrimeira = mesmas.reduce((soma,x) => soma + numero(x?.quantidade ?? x?.qtd_contada ?? x?.qtd_primeira), 0);
-    const inventarioObj = (st.inventarios || []).find(i => FK.inventario(i, st.inventarios) === inv);
-    const baseEndereco = (inventarioObj?.base || []).filter(x => FK.endereco(x?.endereco) === end);
-    const totalEsperado = baseEndereco.reduce((soma,x) => soma + numero(
-      x?.quantidade_esperada ?? x?.qtd_esperada ?? x?.quantidade_enderecada ??
-      x?.saldo_estoque ?? x?.qtd_sistema ?? x?.estoque ?? x?.quantidade ?? x?.qtd
-    ), 0);
-    if (mesmas.length && Math.abs(totalPrimeira - totalEsperado) < 1e-9)
-      return { texto:'✅ OK 1ª — total do endereço', cls:'b-green' };
-    if (mesmas.length)
-      return { texto:'❌ Divergente — aguardando recontagem', cls:'b-red' };
-    return { texto:'⏳ Aguardando processamento', cls:'b-orange' };
+  const motor = window.InventoryAddressState;
+  if (!motor) return { texto:'⚠️ Status indisponível', cls:'b-orange' };
+  const consolidado = motor.consolidate({ state: state(), record: c });
+  const avaliacao = consolidado.avaliacao;
+  if (avaliacao.estado === 'RESOLVIDA') {
+    return { texto:`✅ OK ${Number(avaliacao.rodada || 1)}ª — total do endereço`, cls:'b-green' };
   }
-
-  // Fonte única: o mesmo avaliador usado na aba Recontagem.
-  // Unifica a lógica de status para que ambas as telas concordem.
-  const infoFluxo = window.AnalistaDivergenciasRuntime?.resolverEndereco?.(div);
-  if (!infoFluxo) return { texto:'❌ Divergente — aguardando decisão', cls:'b-red' };
-
-  return { texto: infoFluxo.texto, cls: infoFluxo.classe };
+  if (avaliacao.estado === 'PERSISTENTE') return { texto:'🔴 Persistente (3 rodadas)', cls:'b-red' };
+  if (consolidado.segunda != null) return { texto:'⏳ Aguardando 3ª contagem', cls:'b-orange' };
+  if (consolidado.contagens.length) return { texto:'❌ Divergente — aguardando recontagem', cls:'b-red' };
+  return { texto:'⏳ Aguardando processamento', cls:'b-orange' };
 }
-
-// O restante do arquivo renderContagens e renderPendencias deve ser mantido...
-// (Vou ler o resto para garantir que não quebrei nada)
 
 // ───────────────────────────────────────────────────────────────────
 //  14. RENDERIZAÇÃO — CONTAGENS
 // ───────────────────────────────────────────────────────────────────
 
 function renderContagens() {
-  const FK = window.InventoryFlowKey;
-  if (!FK) throw new Error('InventoryFlowKey não carregado');
-  const busca    = (document.getElementById('cont-busca')?.value || '').toLowerCase();
-  const fInv     = document.getElementById('cont-finv')?.value || '';
-  const fTipo    = document.getElementById('cont-ftipo')?.value || '';
-  const fStatus  = document.getElementById('cont-fstatus')?.value || '';
-  const fRua     = document.getElementById('cont-frua')?.value || '';
-  const fOp      = document.getElementById('cont-foperador')?.value || '';
-  const fPeriodo = document.getElementById('cont-fperiodo')?.value || '';
+  const motor=window.InventoryAddressState, view=window.InventoryAddressView;
+  if(!motor||!view) throw new Error('Motor consolidado de endereços não carregado');
+  const busca=(document.getElementById('cont-busca')?.value||'').toLowerCase();
+  const fInv=document.getElementById('cont-finv')?.value||'', fStatus=document.getElementById('cont-fstatus')?.value||'';
+  const fRua=document.getElementById('cont-frua')?.value||'', fOp=document.getElementById('cont-foperador')?.value||'', fPeriodo=document.getElementById('cont-fperiodo')?.value||'';
+  const fTipo=document.getElementById('cont-ftipo')?.value||'';
+  const selInv=document.getElementById('cont-finv');
+  if(selInv){const cur=selInv.value;selInv.innerHTML='<option value="">Todos os inventários</option>'+state().inventarios.map(i=>`<option value="${i.id}">${escHTML(i.codigo||i.id)} — ${escHTML(i.nome||'')}</option>`).join('');selInv.value=cur;}
+  let dados=motor.list(state()).filter(s=>s.primeira!=null);
+  if(fInv) dados=dados.filter(s=>String(s.inventario_id)===String(fInv));
+  if(fStatus) dados=dados.filter(s=>String(s.status).toUpperCase()===String(fStatus).toUpperCase());
+  if(fRua) dados=dados.filter(s=>(getEnderecoInfo(s.endereco)?.rua||'—')===fRua);
+  if(fOp) dados=dados.filter(s=>s.rodadas.some(r=>r?.operadores?.includes(fOp)));
+  if(fTipo){const n=fTipo==='RECONTAGEM'?2:1;dados=dados.filter(s=>s.ultimaRodada?.numero>=n);}
+  if(fPeriodo){const hoje=new Date();hoje.setHours(0,0,0,0);const ontem=new Date(hoje);ontem.setDate(ontem.getDate()-1);const set7=new Date(hoje);set7.setDate(set7.getDate()-7);dados=dados.filter(s=>{const d=s.atualizado_em?new Date(s.atualizado_em):null;if(!d||isNaN(d))return false;if(fPeriodo==='hoje')return d>=hoje;if(fPeriodo==='ontem')return d>=ontem&&d<hoje;if(fPeriodo==='7d')return d>=set7;return true;});}
+  if(busca) dados=dados.filter(s=>[s.endereco,s.inventario?.codigo,s.inventario?.nome,view.latestOperator(s),view.itemsText(s.itens_esperados,'quantidade_esperada'),...s.rodadas.filter(Boolean).map(r=>view.itemsText(r.itens))].join(' ').toLowerCase().includes(busca));
+  dados.sort((a,b)=>String(b.atualizado_em||'').localeCompare(String(a.atualizado_em||'')));
+  window.__contagensVisiveis=dados.slice();
+  const todos=motor.list(state()).filter(s=>s.primeira!=null),setK=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
+  setK('ck-total',todos.length);setK('ck-processadas',todos.filter(s=>s.status==='RESOLVIDA').length);setK('ck-divergentes',todos.filter(s=>['DIVERGENTE','EM_RECONTAGEM','PERSISTENTE','SEM_BASE'].includes(s.status)).length);setK('ck-pendentes',todos.filter(s=>['DIVERGENTE','EM_RECONTAGEM','SEM_BASE'].includes(s.status)).length);setK('ck-recontagens',todos.filter(s=>s.segunda!=null||s.terceira!=null).length);
+  const selRua=document.getElementById('cont-frua');if(selRua){const cur=selRua.value,ruas=[...new Set(todos.map(s=>getEnderecoInfo(s.endereco)?.rua||'—'))].sort();selRua.innerHTML='<option value="">Todas as ruas</option>'+ruas.map(r=>`<option value="${escHTML(r)}">${escHTML(r)}</option>`).join('');selRua.value=cur;}
+  const selOp=document.getElementById('cont-foperador');if(selOp){const cur=selOp.value,ops=[...new Set(todos.flatMap(s=>s.rodadas.filter(Boolean).flatMap(r=>r.operadores)))].sort();selOp.innerHTML='<option value="">Todos os operadores</option>'+ops.map(o=>`<option value="${escHTML(o)}">${escHTML(o)}</option>`).join('');selOp.value=cur;}
+  const wrap=document.getElementById('cont-table-wrap');if(!dados.length){wrap.innerHTML='<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma contagem encontrada</div></div>';return;}
+  wrap.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>Última atualização</th><th>Operador(es)</th><th>Inventário</th><th>Endereço</th><th>Produtos esperados</th><th>Totais das rodadas</th><th>Última etapa</th><th>Status consolidado</th><th>Ações</th></tr></thead><tbody>${dados.map(s=>{const src=view.sourceRecord(s),end=getEnderecoInfo(s.endereco),id=src?.id||src?.uuid||'';return `<tr><td class="mono" style="white-space:nowrap;font-size:.75rem">${fmtTs(s.atualizado_em)}</td><td style="font-size:.8rem;font-weight:600">${escHTML(view.latestOperator(s))}</td><td style="font-size:.75rem">${escHTML(s.inventario?.codigo||s.inventario_id)}<div style="color:var(--muted)">${escHTML(s.inventario?.nome||'')}</div></td><td class="mono">${escHTML(s.endereco)}${end?.rua?`<div style="font-size:.65rem;color:var(--muted)">Rua ${escHTML(end.rua)}</div>`:''}</td><td>${view.itemsHtml(s.itens_esperados,'quantidade_esperada')}</td><td><div><b>Sistema:</b> <span class="mono">${view.fmt(s.esperado)}</span></div><div><b>1ª:</b> <span class="mono">${view.fmt(s.primeira)}</span></div><div><b>2ª:</b> <span class="mono">${view.fmt(s.segunda)}</span></div><div><b>3ª:</b> <span class="mono">${view.fmt(s.terceira)}</span></div></td><td><span class="badge b-blue">${escHTML(view.roundType(s))}</span></td><td><span class="badge ${view.statusBadge(s)}">${escHTML(view.statusLabel(s))}</span>${s.status==='SEM_BASE'?'<div style="font-size:.65rem;color:var(--danger)">Comparação bloqueada: total esperado ausente.</div>':''}</td><td>${id?`<button class="btn btn-danger btn-sm" onclick="abrirEstorno('${escHTML(id)}')">↩ Estornar</button>`:'—'}</td></tr>`;}).join('')}</tbody></table></div>`;
+}
 
-  // Popular selects de inventários
-  const selInv = document.getElementById('cont-finv');
-  if (selInv && !selInv.options.length || (selInv && selInv.options.length === 1)) {
-    const cur = selInv.value;
-    selInv.innerHTML = '<option value="">Todos os inventários</option>' +
-      state().inventarios.map(i => `<option value="${i.id}" ${i.id === cur ? 'selected' : ''}>${i.codigo} — ${i.nome}</option>`).join('');
-    if (cur) selInv.value = cur;
-  }
-
-  let dados = state().contagens || [];
-  if (!fTipo) {
-    dados = dados.filter(c => c.tipo_contagem !== 'RECONTAGEM');
-    const grupos = new Map();
-    const chaveContagem = c => {
-      const id=String(c.inventario_id || c.inventarioId || '');
-      const inv=(state().inventarios || []).find(i =>
-        [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
-          .filter(Boolean).map(String).includes(id));
-      return FK.chave(Object.assign({}, c, { inventario_id: inv?.id || id }), state().inventarios);
-    };
-    dados.forEach(c => {
-      const palete=_paleteContagem(c);
-      const identidadePalete=palete || String(c.uuid || c.id || c.criado_em || c.dataHora || 'SEM_ID');
-      const chave=chaveContagem(c)+'||PALETE:'+identidadePalete;
-      const atual=grupos.get(chave);
-      const data=x=>String(x.timestamp || x.criado_em || x.dataHora || '');
-      if (!atual || data(c).localeCompare(data(atual)) < 0) grupos.set(chave,c);
-    });
-    dados=[...grupos.values()];
-  }
-  if (fInv)    dados = dados.filter(c => String(c.inventario_id || c.inventarioId || '') === String(fInv));
-  if (fTipo)   dados = dados.filter(c => c.tipo_contagem === fTipo);
-  if (fStatus) {
-    if (fStatus === 'DIVERGENTE') {
-      dados = dados.filter(c => c.divergente === true);
-    } else {
-      dados = dados.filter(c => c.status === fStatus);
-    }
-  }
-  if (fOp)     dados = dados.filter(c => (c.operador || '') === fOp);
-  if (fRua) dados = dados.filter(c => {
-    const info = getEnderecoInfo(c.endereco);
-    return (info?.rua || '—') === fRua;
-  });
-  if (fPeriodo) {
-    const hoje = new Date(); hoje.setHours(0,0,0,0);
-    const ontem = new Date(hoje); ontem.setDate(ontem.getDate()-1);
-    const set7 = new Date(hoje); set7.setDate(set7.getDate()-7);
-    dados = dados.filter(c => {
-      const valorData = c.timestamp || c.criado_em || c.dataHora || null;
-      const ts = valorData ? new Date(valorData) : null;
-      if (!ts) return false;
-      if (fPeriodo === 'hoje') return ts >= hoje;
-      if (fPeriodo === 'ontem') return ts >= ontem && ts < hoje;
-      if (fPeriodo === '7d') return ts >= set7;
-      return true;
-    });
-  }
-  if (busca) dados = dados.filter(c =>
-    (c.operador||'').toLowerCase().includes(busca) ||
-    (c.endereco||'').toLowerCase().includes(busca) ||
-    (c.codigo_produto||'').toLowerCase().includes(busca) ||
-    (c.descricao_produto||'').toLowerCase().includes(busca)
-  );
-  dados = [...dados].sort((a,b) => String(b.timestamp||b.criado_em||b.dataHora||'').localeCompare(String(a.timestamp||a.criado_em||a.dataHora||'')));
-  window.__contagensVisiveis = dados.slice();
-
-  // KPIs Contagens
-  const _allConts = state().contagens.filter(c => !c._excluida && c.status !== 'ESTORNADA');
-  const _setCK = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
-  _setCK('ck-total',       _allConts.length);
-  _setCK('ck-processadas', _allConts.filter(c => c.status === 'PROCESSADO').length);
-  _setCK('ck-divergentes', _allConts.filter(c => c.divergente === true).length);
-  _setCK('ck-pendentes',   _allConts.filter(c => !c.status || c.status === 'PENDENTE').length);
-  _setCK('ck-recontagens', _allConts.filter(c => c.tipo_contagem === 'RECONTAGEM').length);
-
-  // Atualizar selects dinâmicos
-  const selRua = document.getElementById('cont-frua');
-  if (selRua) {
-    const ruas = [...new Set(state().contagens.map(c => { const i = getEnderecoInfo(c.endereco); return i?.rua || '—'; }).filter(Boolean))].sort();
-    selRua.innerHTML = '<option value="">Todas as ruas</option>' + ruas.map(r => `<option value="${r}" ${r===fRua?'selected':''}>${r}</option>`).join('');
-  }
-  const selOp = document.getElementById('cont-foperador');
-  if (selOp) {
-    const ops = [...new Set(state().contagens.map(c => c.operador).filter(Boolean))].sort();
-    selOp.innerHTML = '<option value="">Todos os operadores</option>' + ops.map(o => `<option value="${o}" ${o===fOp?'selected':''}>${o}</option>`).join('');
-  }
-
-  if (!dados.length) {
-    document.getElementById('cont-table-wrap').innerHTML = `<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma contagem encontrada</div><div class="empty-sub">As contagens dos coletores aparecem aqui automaticamente</div></div>`;
-    return;
-  }
-
-  document.getElementById('cont-table-wrap').innerHTML = `
-    <div class="tbl-wrap"><table>
-      <thead><tr>
-        <th>Data/Hora</th><th>Operador</th><th>Inventário</th>
-        <th>Endereço</th><th>Produto</th><th>Quantidade</th>
-        <th>Tipo</th><th>Status</th><th>Ações</th>
-      </tr></thead>
-      <tbody>
-        ${dados.map(c => {
-          const inv      = getInventarioPorId(c.inventario_id);
-          const excluida = c._excluida === true;
-          const rowStyle = excluida ? 'opacity:.45;background:#fafafa' : '';
-          const end      = getEnderecoInfo(c.endereco);
-          const capInfo  = end && end.capacidade_paletes !== null
-            ? `<span style="font-size:.65rem;color:var(--muted)"> · cap:${end.capacidade_paletes}</span>` : '';
-          const ruaInfo  = end?.rua ? `<div style="font-size:.65rem;color:var(--muted)">Rua: ${end.rua}</div>` : '';
-
-          const ultima=_ultimaRodadaContagem(c);
-          const prodExib=_produtoContagemExibicao(Object.assign({},c,{
-            codigo_produto:ultima.produto,
-            gtin:ultima.produto,
-            descricao_produto:ultima.descricao
-          }));
-          return `<tr style="${rowStyle}">
-            <td class="mono" style="white-space:nowrap;font-size:.75rem">${fmtTs(ultima.data || c.timestamp || c.criado_em || c.dataHora)}<div style="font-size:.62rem;color:var(--muted)">Última: ${ultima.rodada}ª rodada</div></td>
-            <td>
-              <div style="display:flex;align-items:center;gap:6px">
-                <div class="u-avatar" style="width:24px;height:24px;font-size:.65rem;flex-shrink:0">${(ultima.operador||c.operador||'?')[0].toUpperCase()}</div>
-                <span style="font-weight:600;font-size:.82rem">${ultima.operador || c.operador || '—'}</span>
-              </div>
-            </td>
-            <td style="font-size:.75rem;color:var(--muted)">${inv?.codigo || c.inventario_id}</td>
-            <td class="mono">${c.endereco || '—'}${capInfo}${ruaInfo}${(_paleteContagem(c)||ultima.palete) ? `<div style="font-size:.65rem;color:var(--muted);font-family:var(--font)">Palete: ${escHTML(ultima.palete || _paleteContagem(c))}</div>` : ''}</td>
-            <td>
-              <div style="font-weight:600;font-size:.82rem">${prodExib.codigo || '—'}</div>
-              <div style="font-size:.72rem;color:var(--muted)">${prodExib.descricao || ''}</div>
-            </td>
-            <td class="mono" style="font-weight:700;font-size:.9rem">${ultima.quantidade ?? '—'}<div style="font-size:.62rem;color:var(--muted);font-family:var(--font)">${ultima.rodada === 1 ? '1ª contagem' : ultima.rodada + 'ª contagem'}</div></td>
-            <td><span class="badge ${c.tipo_contagem === 'RECONTAGEM' ? 'b-purple' : 'b-blue'}">${c.tipo_contagem || 'PRIMEIRA'}</span></td>
-            <td>
-              ${excluida
-                ? `<span class="badge b-gray">🗑 Excluída</span>`
-                : (() => {
-                    const rodada = _resultadoRodadaEndereco(c);
-                    return rodada
-                      ? `<span class="badge ${rodada.cls}" title="Resultado final considerando as rodadas de recontagem">${rodada.texto}</span>`
-                      : `<span class="badge ${contStatusBadge(c.status)}">${c.status || 'PENDENTE'}</span>`;
-                  })()
-              }
-            </td>
-            <td>
-              ${excluida
-                ? `<button class="btn btn-ghost btn-sm" onclick="restaurarContagem('${c.id}')" title="Restaurar contagem">↩ Restaurar</button>`
-                : `<div style="display:flex;gap:4px">
-                     <button class="btn btn-danger btn-sm" onclick="abrirEstorno('${c.id}')" title="Estornar — libera endereço com registro">↩ Estornar</button>
-                   </div>`
-              }
-            </td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table></div>`;
- }
-
+// Exporta exatamente as linhas atualmente exibidas na aba Contagens.
+// A leitura original permanece no historico, mas os campos operacionais
+// (produto, quantidade, operador e horario) usam a ultima rodada concluida.
 function exportarContagens(){
-  const lista = Array.isArray(window.__contagensVisiveis) ? window.__contagensVisiveis.slice() : [];
-  if(!lista.length){
-    if(typeof toast === 'function') toast('Nenhuma contagem visivel para exportar.', 'w');
-    else alert('Nenhuma contagem visivel para exportar.');
-    return;
-  }
-  const st = state();
-  const textoStatus = c => {
-    const r = _resultadoRodadaEndereco(c);
-    return r?.texto ? String(r.texto).replace(/[✅❌⏳🔴⚠️]/g,'').trim() : String(c.status || 'PENDENTE');
-  };
-  const inventarioTexto = c => {
-    const inv = (st.inventarios || []).find(i => [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId].filter(Boolean).map(String).includes(String(c.inventario_id || c.inventarioId || '')));
-    return inv ? `${inv.codigo || inv.id || ''}${inv.nome ? ' - ' + inv.nome : ''}` : String(c.inventario_id || c.inventarioId || '');
-  };
-  const valorSeguro = v => {
-    const t = String(v ?? '');
-    return /^[=+@]/.test(t) || /^-\D/.test(t) ? "'" + t : t;
-  };
-  const linhas = lista.map(c => {
-    const ultima = _ultimaRodadaContagem(c);
-    const prod = _produtoContagemExibicao(Object.assign({}, c, { codigo_produto: ultima.produto, gtin: ultima.produto, descricao_produto: ultima.descricao }));
-    const primeiraProd = _produtoContagemExibicao(c);
-    return {
-      'Data/Hora ultima rodada': fmtTs(ultima.data || c.timestamp || c.criado_em || c.dataHora),
-      'Rodada exibida': `${ultima.rodada}a`,
-      'Operador ultima rodada': ultima.operador || c.operador || '',
-      'Inventario': inventarioTexto(c),
-      'Endereco': c.endereco || '',
-      'Codigo bipado ultima rodada': valorSeguro(ultima.produto || prod.codigo || ''),
-      'Produto ultima rodada': valorSeguro(prod.descricao || ultima.descricao || ''),
-      'Quantidade ultima rodada': ultima.quantidade ?? '',
-      'Status do fluxo': textoStatus(c),
-      'Tipo registro original': c.tipo_contagem || 'PRIMEIRA',
-      'Data/Hora 1a contagem': fmtTs(c.timestamp || c.criado_em || c.dataHora),
-      'Operador 1a contagem': c.operador || c.operador_nome || '',
-      'Codigo bipado 1a contagem': valorSeguro(c.gtin_bipado || c.codigoLido || c.codigo_lido || c.dunLido || c.dun_lido || c.gtinLido || c.gtin_lido || primeiraProd.codigo || ''),
-      'Produto 1a contagem': valorSeguro(primeiraProd.descricao || ''),
-      'Quantidade 1a contagem': c.quantidade ?? c.qtd ?? c.qtd_contada ?? '',
-      'ID contagem': c.uuid || c.id || '',
-      'ID divergencia': c.divergencia_id || ''
-    };
-  });
-  const agora = new Date();
-  const carimbo = agora.toISOString().slice(0,19).replace(/[:T]/g,'-');
-  const nome = `contagens-${carimbo}.xlsx`;
-  if(window.XLSX?.utils?.json_to_sheet && window.XLSX?.writeFile){
-    const ws = XLSX.utils.json_to_sheet(linhas);
-    const larguras = Object.keys(linhas[0] || {}).map(chave => ({ wch: Math.min(48, Math.max(chave.length + 2, ...linhas.map(l => String(l[chave] ?? '').length + 2))) }));
-    ws['!cols'] = larguras;
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Contagens');
-    XLSX.writeFile(wb, nome);
-  } else {
-    const colunas = Object.keys(linhas[0] || {});
-    const esc = v => `"${String(v ?? '').replace(/"/g,'""')}"`;
-    const csv = '\uFEFF' + [colunas.map(esc).join(';')]
-      .concat(linhas.map(l => colunas.map(k => esc(l[k])).join(';')))
-      .join('\r\n');
-    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = nome.replace(/\.xlsx$/i,'.csv');
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-  if(typeof toast === 'function') toast(`${linhas.length} contagem(ns) exportada(s).`, 's');
+  const view=window.InventoryAddressView,lista=Array.isArray(window.__contagensVisiveis)?window.__contagensVisiveis:[];
+  if(!lista.length){showToast?.('Nenhuma contagem visível para exportar.','w');return;}
+  const linhas=lista.map(s=>({
+    'Inventário':s.inventario?.codigo||s.inventario_id,'Endereço':s.endereco,'Rua':getEnderecoInfo(s.endereco)?.rua||'',
+    'Produtos esperados':view.itemsText(s.itens_esperados,'quantidade_esperada'),'Qtd sistema':s.esperado??'',
+    '1ª contagem':s.primeira??'','Itens 1ª':view.itemsText(s.rodadas[0]?.itens),'Operador 1ª':s.rodadas[0]?.operadores?.join(', ')||'',
+    '2ª contagem':s.segunda??'','Itens 2ª':view.itemsText(s.rodadas[1]?.itens),'Operador 2ª':s.rodadas[1]?.operadores?.join(', ')||'',
+    '3ª contagem':s.terceira??'','Itens 3ª':view.itemsText(s.rodadas[2]?.itens),'Operador 3ª':s.rodadas[2]?.operadores?.join(', ')||'',
+    'Status consolidado':view.statusLabel(s),'Última atualização':s.atualizado_em||''
+  }));
+  _exportarXlsxAnalista('contagens-consolidadas.xlsx','Contagens',linhas);
 }
 window.exportarContagens = exportarContagens;
+
+// ───────────────────────────────────────────────────────────────────
+//  15. RENDERIZAÇÃO — PENDÊNCIAS
+// ───────────────────────────────────────────────────────────────────
 
 function renderPendencias() {
   const selInv = document.getElementById('pend-sel-inv');
@@ -434,6 +252,7 @@ function renderPendencias() {
   const fRua   = document.getElementById('pend-frua')?.value || '';
   const invId  = selInv?.value || '';
 
+  // Preencher select de inventários
   if (selInv) {
     const cur = selInv.value;
     selInv.innerHTML = '<option value="">Selecione um inventário...</option>' +
@@ -452,49 +271,64 @@ function renderPendencias() {
   const inv = getInventarioPorId(invId);
   if (!inv) return;
 
+  // Usar state().enderecosLista como base oficial de endereços
   const conts   = (state().contagens || []).filter(c => String(c.inventario_id || c.inventarioId || '') === String(invId) && !c._excluida && c.status !== 'ESTORNADA');
   const endsContadosSet = new Set(conts.filter(c => !_isVazio(c)).map(c => c.endereco));
   const endsVaziosConfSet = new Set(conts.filter(c => _isVazio(c) && c.status !== 'ESTORNADA').map(c => c.endereco));
 
+  // Usar somente os endereços pertencentes ao inventário selecionado.
   const selecionados = Array.isArray(inv.enderecos_selecionados) ? inv.enderecos_selecionados : [];
   const selecionadosSet = new Set(selecionados.map(x => String(typeof x === 'string' ? x : (x.endereco || x.id || ''))).filter(Boolean));
   const baseInventario = selecionadosSet.size
     ? (state().enderecosLista || []).filter(e => selecionadosSet.has(String(e.endereco || e.id || '')))
     : (Array.isArray(inv.base) && inv.base.length ? inv.base : (state().enderecosLista || []));
 
+  // Enriquecer a base do inventário com status de contagem
   const lista = baseInventario.map(e => {
+    const endInfo  = e; // já é o objeto completo do ENDDB
     const contado  = endsContadosSet.has(e.endereco);
     const vazioConf = endsVaziosConfSet.has(e.endereco);
     const inativo  = e.ativo === false;
     const cap      = e.capacidade_paletes ?? null;
     const usados   = getPaletesUsados(invId, e.endereco);
     const limiteTingido = !inativo && cap !== null && cap > 0 && usados >= cap;
+
     let status_pend;
-    if (contado) status_pend = 'CONTADO';
-    else if (vazioConf) status_pend = 'VAZIO_CONFIRMADO';
-    else if (inativo) status_pend = 'INATIVO';
-    else if (limiteTingido) status_pend = 'LIMITE_ATINGIDO';
-    else status_pend = 'PENDENTE';
+    if (contado)             status_pend = 'CONTADO';
+    else if (vazioConf)      status_pend = 'VAZIO_CONFIRMADO';
+    else if (inativo)        status_pend = 'INATIVO';
+    else if (limiteTingido)  status_pend = 'LIMITE_ATINGIDO';
+    else                     status_pend = 'PENDENTE';
+
     return { ...e, contado, vazioConf, inativo, limiteTingido, usados, status_pend };
   });
 
+  // Filtro de locais
   const locFlt = document.getElementById('pend-flocal');
   if (locFlt) {
     const locais = [...new Set(lista.map(e => e.setor || '—'))].sort();
     locFlt.innerHTML = '<option value="">Todos os locais</option>' + locais.map(l => `<option value="${l}" ${l === fLocal ? 'selected' : ''}>${l}</option>`).join('');
   }
+
+  // Filtro de ruas
   const ruaFlt = document.getElementById('pend-frua');
   if (ruaFlt) {
     const ruas = [...new Set(lista.map(e => e.rua || extrairRua(e.endereco) || '—'))].sort((a,b) => a.localeCompare(b,'pt-BR',{numeric:true}));
     ruaFlt.innerHTML = '<option value="">Todas as ruas</option>' + ruas.map(r => `<option value="${r}" ${r === fRua ? 'selected' : ''}>Rua ${r}</option>`).join('');
   }
 
+  // Filtros
   let filtrado = lista;
   if (fStatus) filtrado = filtrado.filter(e => e.status_pend === fStatus);
   if (fLocal)  filtrado = filtrado.filter(e => (e.setor || '—') === fLocal);
   if (fRua)    filtrado = filtrado.filter(e => (e.rua || extrairRua(e.endereco) || '—') === fRua);
-  if (busca)   filtrado = filtrado.filter(e => e.endereco.toLowerCase().includes(busca) || (e.setor || '').toLowerCase().includes(busca) || (e.rua || extrairRua(e.endereco) || '').toLowerCase().includes(busca));
+  if (busca)   filtrado = filtrado.filter(e =>
+    e.endereco.toLowerCase().includes(busca) ||
+    (e.setor || '').toLowerCase().includes(busca) ||
+    (e.rua || extrairRua(e.endereco) || '').toLowerCase().includes(busca)
+  );
 
+  // KPIs — conferidos = contados + vazios_confirmados (ambos saem das pendências)
   const total        = lista.length;
   const contados     = lista.filter(e => e.status_pend === 'CONTADO').length;
   const vaziosConf   = lista.filter(e => e.status_pend === 'VAZIO_CONFIRMADO').length;
@@ -502,7 +336,7 @@ function renderPendencias() {
   const pendentes    = lista.filter(e => e.status_pend === 'PENDENTE').length;
   const inativos     = lista.filter(e => e.status_pend === 'INATIVO').length;
   const limiteAting  = lista.filter(e => e.status_pend === 'LIMITE_ATINGIDO').length;
-  const elegíveis    = total - inativos;
+  const elegíveis    = total - inativos;  // base real para % de progresso
   const pct          = elegíveis > 0 ? Math.round((conferidos / elegíveis) * 100) : 0;
 
   document.getElementById('pk-total').textContent    = total.toLocaleString('pt-BR');
@@ -513,34 +347,47 @@ function renderPendencias() {
   if (!filtrado.length) {
     document.getElementById('pend-table-wrap').innerHTML = `<div class="empty"><div class="empty-icon">✅</div><div class="empty-title">Nenhum endereço encontrado com esses filtros</div></div>`;
   } else {
-    const statusLabel = { CONTADO: { cls: 'b-green', txt: '✓ Contado' }, VAZIO_CONFIRMADO: { cls: 'b-gray', txt: '🔲 Vazio' }, PENDENTE: { cls: 'b-yellow', txt: '⏳ Pendente' }, INATIVO: { cls: 'b-gray', txt: '⛔ Inativo' }, LIMITE_ATINGIDO: { cls: 'b-blocked', txt: '🔒 Limite' } };
-    document.getElementById('pend-table-wrap').innerHTML = `
-      ${inativos > 0 ? `<div class="alert warn" style="margin:12px 16px 0;border-radius:8px">⛔ ${inativos} endereço(s) inativo(s) não serão contabilizados no progresso.</div>` : ''}
-      ${limiteAting > 0 ? `<div class="alert warn" style="margin:8px 16px 0;border-radius:8px">🔒 ${limiteAting} endereço(s) com limite de paletes atingido.</div>` : ''}
-      <div class="tbl-wrap"><table>
-        <thead><tr><th>Endereço</th><th>Local/Área</th><th>Rua</th><th>Nível</th><th>Tipo</th><th>Paletes (usados/cap)</th><th>Status</th></tr></thead>
-        <tbody>
-          ${filtrado.map(e => {
-            const s = statusLabel[e.status_pend] || { cls:'b-gray', txt: e.status_pend };
-            const cap = e.capacidade_paletes !== null ? String(e.capacidade_paletes) : '∞';
-            return `<tr style="${e.inativo || e.limiteTingido ? 'opacity:.6' : ''}">
-              <td class="mono">${e.endereco}</td>
-              <td>${e.setor || '—'}</td>
-              <td>${e.rua || '—'}</td>
-              <td>${e.nivel || '—'}</td>
-              <td>${e.tipo || '—'}</td>
-              <td class="mono" style="font-weight:700;color:${e.limiteTingido?'var(--danger)':'inherit'}">${e.usados}/${cap}</td>
-              <td><span class="badge ${s.cls}">${s.txt}</span></td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table></div>`;
+
+  const statusLabel = {
+    CONTADO:          { cls: 'b-green',   txt: '✓ Contado' },
+    VAZIO_CONFIRMADO: { cls: 'b-gray',    txt: '🔲 Vazio' },
+    PENDENTE:         { cls: 'b-yellow',  txt: '⏳ Pendente' },
+    INATIVO:          { cls: 'b-gray',    txt: '⛔ Inativo' },
+    LIMITE_ATINGIDO:  { cls: 'b-blocked', txt: '🔒 Limite' },
+  };
+
+  document.getElementById('pend-table-wrap').innerHTML = `
+    ${inativos > 0 ? `<div class="alert warn" style="margin:12px 16px 0;border-radius:8px">⛔ ${inativos} endereço(s) inativo(s) não serão contabilizados no progresso.</div>` : ''}
+    ${limiteAting > 0 ? `<div class="alert warn" style="margin:8px 16px 0;border-radius:8px">🔒 ${limiteAting} endereço(s) com limite de paletes atingido.</div>` : ''}
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Endereço</th><th>Local/Área</th><th>Rua</th><th>Nível</th><th>Tipo</th><th>Paletes (usados/cap)</th><th>Status</th></tr></thead>
+      <tbody>
+        ${filtrado.map(e => {
+          const s = statusLabel[e.status_pend] || { cls:'b-gray', txt: e.status_pend };
+          const cap = e.capacidade_paletes !== null ? String(e.capacidade_paletes) : '∞';
+          return `<tr style="${e.inativo || e.limiteTingido ? 'opacity:.6' : ''}">
+            <td class="mono">${e.endereco}</td>
+            <td>${e.setor || '—'}</td>
+            <td>${e.rua || '—'}</td>
+            <td>${e.nivel || '—'}</td>
+            <td>${e.tipo || '—'}</td>
+            <td class="mono" style="font-weight:700;color:${e.limiteTingido?'var(--danger)':'inherit'}">${e.usados}/${cap}</td>
+            <td><span class="badge ${s.cls}">${s.txt}</span></td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table></div>`;
   }
+
+  // Update end count display
   const endCountEl = document.getElementById('pend-end-count');
   if (endCountEl) endCountEl.textContent = `${pendentes} endereço(s) aguardando de ${total} total`;
 
+  // ── SEÇÃO: Recontagens pendentes ──────────────────────────────────
   const recPend = (state().recontagens || []).filter(r => String(r.inventario_id || r.inventarioId || '') === String(invId) && String(r.status || '').toUpperCase() === 'PENDENTE');
   const recSec = document.getElementById('pend-rec-section');
+  const pkRecPend = document.getElementById('pk-rec-pend');
+  if (pkRecPend) pkRecPend.textContent = recPend.length.toLocaleString('pt-BR');
   if (recSec) {
     if (recPend.length > 0) {
       recSec.style.display = '';
@@ -556,19 +403,25 @@ function renderPendencias() {
                 <td style="font-size:.82rem">${r.produto}</td>
                 <td class="mono">${r.qtd_esperada}</td>
                 <td class="mono" style="color:var(--danger);font-weight:700">${r.qtd_primeira}</td>
-                <td class="mono" style="font-weight:800;color:${diff>0?'var(--warn)':'var(--danger)'}">${diff>0?'+':''}${diff}</td>
+                <td class="mono" style="font-weight:800;color:${diff>0?'var(--warn)':'var(--danger)'}">
+                  ${diff>0?'+':''}${diff}
+                </td>
                 <td><button class="btn btn-primary btn-sm" onclick="abrirRegistrarRecontagem('${r.id}')">📝 Registrar</button></td>
               </tr>`;
             }).join('')}
           </tbody>
-        </table></div>`;
+        </table></div>
+        ${recPend.length > 10 ? `<div style="padding:8px 16px;font-size:.75rem;color:var(--muted)">... e mais ${recPend.length-10}. Veja a aba Recontagem.</div>` : ''}`;
     } else {
       recSec.style.display = 'none';
     }
   }
 
+  // ── SEÇÃO: Divergências abertas ──────────────────────────────────
   const divAbertas = (state().divergencias || []).filter(d => String(d.inventario_id || d.inventarioId || '') === String(invId) && ['ABERTA','DIVERGENTE','PENDENTE','PERSISTENTE','EM_RECONTAGEM'].includes(String(d.status || '').toUpperCase()));
   const divSec = document.getElementById('pend-div-section');
+  const pkDivAbertas = document.getElementById('pk-div-abertas');
+  if (pkDivAbertas) pkDivAbertas.textContent = divAbertas.length.toLocaleString('pt-BR');
   if (divSec) {
     if (divAbertas.length > 0) {
       divSec.style.display = '';
@@ -589,10 +442,10 @@ function renderPendencias() {
               </tr>`;
             }).join('')}
           </tbody>
-        </table></div>`;
+        </table></div>
+        ${divAbertas.length > 10 ? `<div style="padding:8px 16px;font-size:.75rem;color:var(--muted)">... e mais ${divAbertas.length-10}. Veja a aba Recontagem.</div>` : ''}`;
     } else {
       divSec.style.display = 'none';
     }
   }
 }
-window.renderPendencias = renderPendencias;
