@@ -479,15 +479,32 @@ function confirmarAtribuicao() {
   // Caso a linha de recontagem nao tenha divergencia vinculada, atualiza a
   // propria tarefa em vez de fechar o modal informando 0 atribuicoes.
   if (_recAtribuirDireto) {
-    const recAtualizada = Object.assign({}, _recAtribuirDireto, {
-      operador, operador_responsavel: operador, atribuido_por: atribPor,
-      atribuido_em: agora, status: 'PENDENTE', status_recontagem: 'pendente',
-      observacao_atribuicao: obs || ''
-    });
-    fsSalvarRecontagem(recAtualizada).catch(() => {});
-    Store.dispatch(Actions.upsertEntity('recontagens', recAtualizada, { source: 'atribuirRecontagemDireto' }));
+    const iniciou = globalThis.RecontagemAssignmentPolicy?.foiIniciada
+      ? globalThis.RecontagemAssignmentPolicy.foiIniciada(_recAtribuirDireto)
+      : ['EM_ANDAMENTO'].includes(String(_recAtribuirDireto.status || '').toUpperCase()) ||
+        Boolean(_recAtribuirDireto.iniciada_em || _recAtribuirDireto.recontagem_iniciada_em);
+
+    if (iniciou) {
+      showToast(`🔒 ${_recAtribuirDireto.endereco} já foi iniciada. Não é possível trocar o operador.`, 'w');
+    } else {
+      const operadorAnterior = _recAtribuirDireto.operador || _recAtribuirDireto.operador_responsavel || null;
+      const recAtualizada = Object.assign({}, _recAtribuirDireto, {
+        operador,
+        operador_responsavel: operador,
+        operador_atribuido_anterior: operadorAnterior,
+        reatribuido_por: operadorAnterior ? atribPor : null,
+        reatribuido_em: operadorAnterior ? agora : null,
+        atribuido_por: atribPor,
+        atribuido_em: agora,
+        status: 'PENDENTE',
+        status_recontagem: 'pendente',
+        observacao_atribuicao: obs || _recAtribuirDireto.observacao_atribuicao || ''
+      });
+      fsSalvarRecontagem(recAtualizada).catch(() => {});
+      Store.dispatch(Actions.upsertEntity('recontagens', recAtualizada, { source: operadorAnterior ? 'reatribuirRecontagemDireto' : 'atribuirRecontagemDireto' }));
+      count = 1;
+    }
     _recAtribuirDireto = null;
-    count = 1;
   }
 
   const selecionadasNoModal = [..._divSelecionadas]
@@ -512,8 +529,9 @@ function confirmarAtribuicao() {
   logSistema('ATRIBUIÇÃO_RECONTAGEM', `${count} recontagem(s) atribuída(s) a ${operador}`, { count, operador, atribPor, ts: agora });
   if (count > 0) {
     showToast(`✅ ${count} recontagem${count!==1?'s':''} atribuída${count!==1?'s':''} para ${operador}`, 's');
-  } else {
-    showToast('Não foi possível atribuir. Verifique se a atividade já possui operador ou atingiu a 3ª contagem.', 'e');
+  } else if (!selecionadasNoModal.length) {
+    // A atribuição direta já informa o motivo específico quando estiver bloqueada.
+    showToast('Não foi possível atribuir esta atividade.', 'e');
   }
 }
 
@@ -953,7 +971,7 @@ function renderDivergencias() {
         </th>
         <th>Inventário</th><th>Rua</th><th>Endereço</th><th>Vezes contado</th>
         <th>Operador Contagem</th><th>Data</th><th>Tipo</th>
-        <th>Esperado no endereço</th><th>1ª Contagem</th>
+        <th>Produto esperado</th><th>Produto contado</th><th>Esperado no endereço</th><th>1ª Contagem</th>
         <th>2ª Contagem</th><th>3ª Contagem</th><th>Resultado</th>
         <th>Status</th><th>Status Recontagem</th><th>Atribuído para</th><th>Executado por</th><th>Ações</th>
       </tr></thead>
@@ -1020,6 +1038,27 @@ function renderDivergencias() {
           const produtoBipado = d.produto_contado || d.gtin_bipado || d.produto || '—';
           const descricaoBipada = d.descricao_contada || d.descricao || '';
 
+          // Colunas apenas visuais: não alteram a avaliação do fluxo.
+          // Produto esperado vem da base oficial do endereço; produto contado
+          // usa o produto da rodada mais recente disponível e é convertido para
+          // o nome cadastrado na Base de Produtos.
+          const _codigoProdutoItem = item => item?.codigo_produto || item?.codigoProduto ||
+            item?.codigo_interno || item?.codigoInterno || item?.gtin || item?.ean ||
+            item?.dun || item?.produto || '';
+          const _nomeProdutoItem = item => item?.descricao_produto || item?.descricaoProduto ||
+            item?.descricao || item?.nomeProduto || _nomeProdutoRec(_codigoProdutoItem(item)) ||
+            _codigoProdutoItem(item) || '—';
+          const produtosEsperadosNomes = [...new Set(esperadosEndereco
+            .map(_nomeProdutoItem).map(v => String(v || '').trim()).filter(Boolean))];
+          const produtoEsperadoNome = produtosEsperadosNomes.length
+            ? produtosEsperadosNomes.join(' / ')
+            : (_nomeProdutoRec(d.produto) || d.descricao || d.produto || '—');
+          const codigoContadoAtual = rec?.produto_terceira ?? d.produto_terceira ??
+            rec?.produto_segunda ?? d.produto_segunda ?? d.produto_primeira ??
+            d.produto_contado ?? d.gtin_bipado ?? d.produto ?? '';
+          const produtoContadoNome = _nomeProdutoRec(codigoContadoAtual) ||
+            d.descricao_contada || d.descricao || codigoContadoAtual || '—';
+
           // Status recontagem
           const statusRec = d.status_recontagem || (rec ? (rec.status==='CONCLUIDA' ? 'concluida' : 'pendente') : '');
           const atribPara = d.operador_responsavel || rec?.operador || '';
@@ -1041,13 +1080,11 @@ function renderDivergencias() {
             if (qtd == null) {
               return `<td><div style="color:var(--muted);font-size:.7rem;text-align:center">${aguardando ? 'Aguardando' : '—'}</div></td>`;
             }
-            const codigo = _produtoRodada(produto);
-            const nome = _nomeProdutoRec(codigo);
             const bateu = _qtdBateTotal(qtd);
             const estilo = bateu
               ? 'background:rgba(34,197,94,.12);box-shadow:inset 3px 0 0 var(--success);'
               : '';
-            return `<td style="${estilo}"><div style="font-weight:800;color:${bateu ? 'var(--success)' : 'inherit'}" title="Codigo: ${escHTML(codigo)}">${bateu ? '✅ ' : ''}${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px;font-weight:${bateu ? '900' : '600'};color:${bateu ? 'var(--success)' : 'inherit'}">Qtd ${escHTML(qtd)}${bateu ? ' · conferida' : ''}</div></td>`;
+            return `<td style="${estilo};text-align:center"><div class="mono" style="font-size:1.12rem;font-weight:950;color:${bateu ? 'var(--success)' : 'var(--text)'}">${escHTML(qtd)}</div></td>`;
           };
 
           return `<tr style="${selecionado ? 'background:rgba(232,117,26,.06)' : ''}">
@@ -1064,14 +1101,14 @@ function renderDivergencias() {
             <td style="font-size:.8rem">${operador}</td>
             <td class="mono" style="font-size:.72rem;color:var(--muted);white-space:nowrap">${fmtTs(d.criada_em)}</td>
             <td><span class="badge ${tipoCls}">${tipoTxt}</span></td>
+            <td><div style="font-weight:700;font-size:.78rem;min-width:170px" title="${escHTML(produtoEsperadoNome)}">${escHTML(produtoEsperadoNome)}</div></td>
+            <td><div style="font-weight:700;font-size:.78rem;min-width:170px" title="${escHTML(produtoContadoNome)}">${escHTML(produtoContadoNome)}</div></td>
             <td>${esperadoHtml}</td>
             ${(() => {
-              // Reutilizável: renderiza célula de contagem com produto e cor
-              const _qtdC1 = d.qtd_contada != null ? d.qtd_contada : '—';
-              const codigo = _produtoRodada(produtoBipado);
-              const nome = _nomeProdutoRec(codigo);
+              const _qtdC1 = d.qtd_contada != null ? d.qtd_contada : null;
+              if (_qtdC1 == null) return '<td><div style="color:var(--muted);font-size:.7rem;text-align:center">—</div></td>';
               const bateu = _qtdBateTotal(_qtdC1);
-              return `<td style="${bateu ? 'background:rgba(34,197,94,.12);box-shadow:inset 3px 0 0 var(--success);' : ''}"><div style="font-weight:800;color:${bateu ? 'var(--success)' : 'inherit'}" title="Codigo: ${escHTML(codigo)}">${bateu ? '✅ ' : ''}${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px;font-weight:${bateu ? '900' : '600'};color:${bateu ? 'var(--success)' : 'inherit'}">Qtd ${escHTML(_qtdC1)}${bateu ? ' · conferida' : ''}</div></td>`;
+              return `<td style="${bateu ? 'background:rgba(34,197,94,.12);box-shadow:inset 3px 0 0 var(--success);' : ''};text-align:center"><div class="mono" style="font-size:1.12rem;font-weight:950;color:${bateu ? 'var(--success)' : 'var(--text)'}">${escHTML(_qtdC1)}</div></td>`;
             })()}
             ${_cellRodada(
               rec?.qtd_segunda ?? d.qtd_segunda,
@@ -1550,9 +1587,53 @@ function abrirDetalhePaletesEsperados(divId) {
   const endCanonico = _FK.endereco(bruto.endereco);
   const mesmoEndereco = obj =>
     _inventarioCanonicoRec(obj) === invCanonico && _FK.endereco(obj?.endereco) === endCanonico;
-  const inventario = state().inventarios.find(i => _inventarioCanonicoRec(i) === invCanonico);
-  let itens = (inventario?.base || []).filter(item => _FK.endereco(item?.endereco) === endCanonico);
-  if (!itens.length && Array.isArray(bruto.itens_esperados)) itens = bruto.itens_esperados;
+
+  // Usa primeiro a base oficial completa do inventário. A resolução aceita
+  // qualquer alias do inventário para não cair no snapshot agrupado, que
+  // contém apenas o total do produto e não cada palete individual.
+  const aliasesBruto = [
+    bruto.inventario_id, bruto.inventarioId, bruto.inventario,
+    bruto.codigo_inventario, bruto.inventario_nome, invCanonico
+  ].filter(Boolean).map(v => _normRec(v));
+  const inventario = (state().inventarios || []).find(i => {
+    const aliasesInv = [i.id, i.codigo, i.nome, i.inventario_id, _inventarioCanonicoRec(i)]
+      .filter(Boolean).map(v => _normRec(v));
+    return aliasesBruto.some(a => aliasesInv.includes(a));
+  });
+
+  const expandirPaletes = lista => {
+    const saida = [];
+    (Array.isArray(lista) ? lista : []).forEach(item => {
+      const filhos = item?.paletes || item?.pallets || item?.itens_paletes ||
+        item?.itensPaletes || item?.detalhes_paletes || item?.detalhesPaletes;
+      if (Array.isArray(filhos) && filhos.length) {
+        filhos.forEach((filho, indice) => saida.push({
+          ...item,
+          ...filho,
+          palete: filho?.palete ?? filho?.pallet ?? filho?.numero_palete ?? filho?.numeroPalete ??
+            filho?.sscc ?? filho?.lote ?? `Palete ${indice + 1}`,
+          quantidade_esperada: filho?.quantidade_esperada ?? filho?.quantidadeEsperada ??
+            filho?.qtd_esperada ?? filho?.qtdEsperada ?? filho?.quantidade ?? filho?.qtd ?? filho?.qtde
+        }));
+      } else {
+        saida.push(item);
+      }
+    });
+    return saida;
+  };
+
+  const baseOficial = expandirPaletes((inventario?.base || []).filter(item =>
+    _FK.endereco(item?.endereco) === endCanonico
+  ));
+
+  // Para registros antigos, escolhe o snapshot mais detalhado disponível no
+  // endereço. Não mistura snapshots de várias divergências para não duplicar.
+  const snapshots = [bruto, ...(state().divergencias || []).filter(mesmoEndereco)]
+    .map(d => expandirPaletes(d?.itens_esperados))
+    .filter(lista => lista.length)
+    .sort((a, b) => b.length - a.length);
+
+  let itens = baseOficial.length ? baseOficial : (snapshots[0] || []);
   if (!itens.length) itens = [{ produto: bruto.produto, descricao: bruto.descricao, quantidade_esperada: bruto.qtd_esperada }];
 
   const obterQtd = item => {
@@ -1620,18 +1701,20 @@ function abrirDetalhePaletesEsperados(divId) {
     const bateuSistema = qtd !== null && qtd === total;
     const aceitaPorFluxo = avaliacaoModal?.estado === 'RESOLVIDA' && rodadasConsenso.has(numeroRodada);
     const ok = bateuSistema || aceitaPorFluxo;
-    const codigo = String(r.produto || '').split(/[,;|]+/).map(x => x.trim()).filter(Boolean)[0] || '';
-    const nome = codigo ? _nomeProdutoRec(codigo) : 'Sem contagem';
     const badge = qtd === null
       ? '<span class="badge b-gray">Sem registro</span>'
       : ok
-        ? `<span class="badge b-green">✅ ${bateuSistema ? 'Bateu total' : 'Consenso'}</span>`
+        ? '<span class="badge b-green">Conferido</span>'
         : '<span class="badge b-red">Divergente</span>';
+    const operadorRodada = [
+      primeiraDiv.operador_primeira || primeiraDiv.operador || primeiraDiv.operador_nome || '',
+      consolidada.operador_segunda || segundaRec.operador_segunda || segundaRec.operador_recontagem || segundaRec.operador || '',
+      consolidada.operador_terceira || terceiraRec.operador_terceira || terceiraRec.operador_recontagem || terceiraRec.operador || ''
+    ][idx] || '';
     return `<div style="border:1px solid ${ok ? 'rgba(34,197,94,.45)' : 'var(--border)'};background:${ok ? 'rgba(34,197,94,.11)' : 'var(--surface)'};border-radius:12px;padding:12px;min-width:0;box-shadow:${ok ? 'inset 0 0 0 1px rgba(34,197,94,.12)' : 'none'}">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${r.titulo}</strong>${badge}</div>
-      <div style="font-size:.72rem;color:var(--muted);margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHTML(nome)}">${escHTML(nome)}</div>
-      <div class="mono" style="font-size:1.05rem;font-weight:950;margin-top:4px;color:${ok ? 'var(--success)' : 'inherit'}">${qtd === null ? '—' : `Qtd ${escHTML(qtd)}`}</div>
-      <div style="font-size:.66rem;color:var(--muted);margin-top:3px">Esperado consolidado: ${escHTML(total)}</div>
+      <div class="mono" style="font-size:1.45rem;font-weight:950;margin-top:14px;text-align:center;color:${ok ? 'var(--success)' : 'var(--text)'}">${qtd === null ? '—' : escHTML(qtd)}</div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:9px;text-align:center;min-height:1em">${operadorRodada ? `Contado por ${escHTML(operadorRodada)}` : ''}</div>
     </div>`;
   }).join('');
 

@@ -1835,11 +1835,31 @@
     // O bloqueio precisa ser por endereço. Registros antigos podem ter ids de
     // divergência diferentes para o mesmo endereço e, nesse caso, a verificação
     // apenas por divergencia_id permitia atribuições duplicadas.
-    const recAtiva = state().recontagens.find(r =>
-      mesmaChaveOperacional(r) &&
-      String(r.status || '').toUpperCase() === 'PENDENTE' &&
-      !DivSvc.isFluxoEncerrado(r)
-    ) || null;
+    // Localiza a tarefa atual pelo fluxo/endereço, não apenas pelo status
+    // literal "PENDENTE". Documentos antigos podem usar ATRIBUIDA,
+    // AGUARDANDO, status vazio ou somente status_recontagem=pendente.
+    // Se a tarefa ainda não foi concluída/cancelada, ela deve ser reaproveitada
+    // para a reatribuição, evitando criar uma nova rodada ou bloquear por engano.
+    const recAtiva = state().recontagens
+      .filter(r => mesmaChaveOperacional(r) && !DivSvc.isFluxoEncerrado(r))
+      .filter(r => {
+        const st = String(r.status || '').toUpperCase();
+        const sr = String(r.status_recontagem || '').toLowerCase();
+        const concluida =
+          st === 'CONCLUIDA' || sr === 'concluida' ||
+          Boolean(r.recontagem_concluida_em || r.concluida_em || r.finalizada_em);
+        const cancelada =
+          ['CANCELADA','EXCLUIDA','ESTORNADA'].includes(st) ||
+          ['cancelada','excluida','estornada'].includes(sr);
+        return !concluida && !cancelada;
+      })
+      .sort((a, b) => {
+        const ra = Number(a.numero_recontagem || 0);
+        const rb = Number(b.numero_recontagem || 0);
+        if (ra !== rb) return rb - ra;
+        return String(b.atualizado_em || b.atribuido_em || b.criada_em || '')
+          .localeCompare(String(a.atualizado_em || a.atribuido_em || a.criada_em || ''));
+      })[0] || null;
     if (recAtiva){
       if (!recAtiva.operador){
         const updatedRecAtiva = Object.assign({}, recAtiva, {
