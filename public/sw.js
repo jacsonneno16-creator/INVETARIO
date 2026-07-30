@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v221-produtos-operadores-recontagem';
+var CACHE='dt-inventario-v223-cards-scroll-firestore';
 var PRECACHE=[
   '/',
   '/index.html',

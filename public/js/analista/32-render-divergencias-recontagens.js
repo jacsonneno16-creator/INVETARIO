@@ -673,6 +673,7 @@ function _contagemOrigemExataRec(divergencia) {
 }
 
 function renderDivergencias() {
+  const scrollAnterior=document.querySelector('#div-table-wrap .tbl-wrap')?.scrollLeft || 0;
   const busca     = (document.getElementById('div-busca')?.value || '').toLowerCase();
   const fInv      = document.getElementById('div-sel-inv')?.value || '';
   const fStatus   = document.getElementById('div-fstatus')?.value || '';
@@ -907,6 +908,11 @@ function renderDivergencias() {
 
   // A seleção deve obedecer ao resultado consolidado que o usuário está vendo,
   // e não ao documento bruto possivelmente desatualizado em dt_divergencias.
+  requestAnimationFrame(() => {
+    const sc=document.querySelector('#div-table-wrap .tbl-wrap');
+    if(sc) sc.scrollLeft=scrollAnterior;
+  });
+
   _divSelecionaveisRender = new Map(
     dados.filter(d => divPodeSelecionar(d)).map(d => [String(d.id), d])
   );

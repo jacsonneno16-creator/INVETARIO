@@ -28,11 +28,7 @@ function _linhasFisicasAtuais(inventarioId){
   });
   const etapa=c => String(c?.tipo_contagem || 'PRIMEIRA').toUpperCase()==='RECONTAGEM'
     ? Math.min(3,1+Math.max(1,Number(c?.numero_recontagem || 1))) : 1;
-  const chaveEndereco=c => {
-    const id=String(c?.inventario_id || c?.inventarioId || '');
-    const inv=(st.inventarios || []).find(i => [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId].filter(Boolean).map(String).includes(id));
-    return `${String(inv?.id || id)}|${FK.endereco(c?.endereco)}`;
-  };
+  const chaveEndereco=c => `${FK.inventario(c,st.inventarios)}|${FK.endereco(c?.endereco)}`;
   const grupos=new Map();
   validas.forEach(c => { const k=chaveEndereco(c); if(!grupos.has(k)) grupos.set(k,[]); grupos.get(k).push(c); });
   const saida=[];
@@ -41,8 +37,15 @@ function _linhasFisicasAtuais(inventarioId){
     const unicos=new Map();
     grupo.filter(c => etapa(c)===ultima).forEach((c,indice) => {
       const id=String(c?.uuid || c?.id || c?.contagem_uuid || '').trim();
-      const fallback=JSON.stringify([ultima,_paleteContagem(c),c?.quantidade ?? c?.qtd ?? c?.qtd_contada,c?.gtin_bipado || c?.codigoLido || c?.codigo_lido || c?.codigo_produto,c?.timestamp || c?.criado_em || c?.dataHora || indice]);
-      if(!unicos.has(id || fallback)) unicos.set(id || fallback,c);
+      const palete=_paleteContagem(c);
+      // Na visão física, um palete só pode existir uma vez na rodada atual.
+      // Quando o mesmo documento chega duplicado pelo cache/snapshot, prevalece
+      // a leitura mais recente, sem inflar cards ou exportações.
+      const chave=id || (palete ? `PAL:${palete}` : JSON.stringify([ultima,c?.quantidade ?? c?.qtd ?? c?.qtd_contada,c?.gtin_bipado || c?.codigoLido || c?.codigo_lido || c?.codigo_produto,c?.timestamp || c?.criado_em || c?.dataHora || indice]));
+      const anterior=unicos.get(chave);
+      const dataAtual=String(c?.timestamp || c?.criado_em || c?.dataHora || '');
+      const dataAnterior=String(anterior?.timestamp || anterior?.criado_em || anterior?.dataHora || '');
+      if(!anterior || dataAtual >= dataAnterior) unicos.set(chave,c);
     });
     saida.push(...unicos.values());
   });
@@ -237,6 +240,7 @@ function _resultadoRodadaEndereco(c){
 // ───────────────────────────────────────────────────────────────────
 
 function renderContagens() {
+  const scrollAnterior=document.querySelector('#cont-table-wrap .cont-table-scroll')?.scrollLeft || 0;
   const FK = window.InventoryFlowKey;
   if (!FK) throw new Error('InventoryFlowKey não carregado');
   const busca    = (document.getElementById('cont-busca')?.value || '').toLowerCase();
@@ -411,6 +415,10 @@ function renderContagens() {
         }).join('')}
       </tbody>
     </table></div>`;
+  requestAnimationFrame(() => {
+    const sc=document.querySelector('#cont-table-wrap .cont-table-scroll');
+    if(sc) sc.scrollLeft=scrollAnterior;
+  });
  }
 
 // Exporta exatamente as linhas atualmente exibidas na aba Contagens.

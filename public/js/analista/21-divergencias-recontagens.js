@@ -15,10 +15,32 @@
   // Persistência canônica. Estas funções eram chamadas em todo o fluxo, mas não
   // possuíam implementação carregada, fazendo o processamento parar justamente
   // quando encontrava a primeira divergência real.
+  // Firestore aceita apenas objetos JSON simples. O motor de avaliação usa Set
+  // internamente (ex.: resultado.produtoIds), mas esses campos calculados não
+  // devem ser gravados no documento. Removemos propriedades privadas e
+  // normalizamos qualquer Set/Map restante antes da persistência.
+  function _payloadFirestoreSeguro(valor, raiz=true){
+    if(valor === null || valor === undefined) return valor;
+    if(valor instanceof Date) return valor;
+    if(valor instanceof Set) return Array.from(valor).map(v => _payloadFirestoreSeguro(v,false));
+    if(valor instanceof Map) return Object.fromEntries(Array.from(valor.entries()).map(([k,v]) => [String(k), _payloadFirestoreSeguro(v,false)]));
+    if(Array.isArray(valor)) return valor.map(v => _payloadFirestoreSeguro(v,false));
+    if(typeof valor === 'object'){
+      const out={};
+      Object.keys(valor).forEach(k => {
+        if(k.startsWith('_')) return; // estado de tela / avaliação derivada
+        const v=_payloadFirestoreSeguro(valor[k],false);
+        if(v !== undefined) out[k]=v;
+      });
+      return out;
+    }
+    return valor;
+  }
+
   async function fsSalvarDivergencia(div){
     if(!div || !div.id) return false;
     if(!navigator.onLine || !global.FS_AN) return false;
-    const payload=Object.assign({},div,{ atualizado_em:new Date().toISOString() });
+    const payload=_payloadFirestoreSeguro(Object.assign({},div,{ atualizado_em:new Date().toISOString() }));
     await global.FS_AN.collection('dt_divergencias').doc(String(div.id)).set(payload,{merge:true});
     return true;
   }
@@ -26,7 +48,7 @@
   async function fsSalvarRecontagem(rec){
     if(!rec || !rec.id) return false;
     if(!navigator.onLine || !global.FS_AN) return false;
-    const payload=Object.assign({},rec,{ atualizado_em:new Date().toISOString() });
+    const payload=_payloadFirestoreSeguro(Object.assign({},rec,{ atualizado_em:new Date().toISOString() }));
     await global.FS_AN.collection('dt_recontagens').doc(String(rec.id)).set(payload,{merge:true});
     return true;
   }
