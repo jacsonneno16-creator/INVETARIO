@@ -125,8 +125,18 @@ const _avaliarTotalConsolidadoRec = (obj, totalEsperado) => {
 // Único tradutor da avaliação consolidada para os campos exibidos em todas as telas.
 // Divergências e Recontagens devem chamar esta função, sem reinterpretar estados.
 const _aplicarAvaliacaoConsolidadaRec = (principal, totalEsperado) => {
-  const resolvido = window.AnalistaDivergenciasRuntime?.resolverEndereco?.(principal);
-  const avaliacao = resolvido?.avaliacao || _avaliarTotalConsolidadoRec(principal, totalEsperado);
+  // O total esperado exibido na linha e no modal deve ser a mesma referencia
+  // usada para decidir o status. Nao chamar resolverEndereco(principal) aqui,
+  // pois ele recompunha o esperado a partir do snapshot legado e podia usar um
+  // total duplicado (ex.: 302), enquanto a tabela mostrava o total correto
+  // (ex.: 151). Isso fazia uma 3a contagem de 151 aparecer como PERSISTENTE.
+  const avaliacao = _avaliarTotalConsolidadoRec({
+    ...(principal || {}),
+    qtd_esperada: totalEsperado,
+    comparacao_somente_quantidade: true,
+    fluxo_consolidado_endereco: true
+  }, totalEsperado);
+  const resolvido = null;
   if (!avaliacao) return { principal, avaliacao:null };
   Object.assign(principal, {
     status: resolvido?.status || (avaliacao.estado === 'RESOLVIDA' ? 'RESOLVIDA' : avaliacao.estado === 'PERSISTENTE' ? 'PERSISTENTE' : 'ABERTA'),
