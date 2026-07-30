@@ -133,23 +133,15 @@ function onGtinInput() {
     if (reg) {
       APP.atual.produtoAtual = reg;
 
-      // Verificar divergência de endereço usando somente uma base de endereço válida.
-      // Na retomada da internet o cache pode estar sendo reidratado por alguns instantes.
-      // Nesse intervalo, ausência de linhas do endereço NÃO significa produto incorreto.
+      // Verificar divergência de endereço usando _end
       const endNorm = APP.atual._endNorm || _normStr(APP.atual.endereco);
-      const registrosEndereco = endNorm ? APP.base.filter(r => r._end === endNorm) : [];
-      const baseEnderecoDisponivel = registrosEndereco.length > 0;
-      const pertenceAoEnd = baseEnderecoDisponivel && registrosEndereco.some(_match);
-      APP.atual.produtoDivergenteEnd = !!(endNorm && baseEnderecoDisponivel && !pertenceAoEnd);
-      APP.atual.validacaoEnderecoPendente = !!(endNorm && !baseEnderecoDisponivel);
+      const pertenceAoEnd = APP.base.some(r => r._end === endNorm && _match(r));
+      APP.atual.produtoDivergenteEnd = endNorm && !pertenceAoEnd;
 
       if (APP.atual.produtoDivergenteEnd) {
         fb.innerHTML = `<div class="fb warn">⚠ Produto fora deste endereço — será avaliado pelo analista</div>`;
         document.getElementById('f-gtin').className = 'field icon-r field-warn';
         // ► SEM SOM AQUI — o som forte toca em confirmarGtin() quando Enter chega
-      } else if (APP.atual.validacaoEnderecoPendente) {
-        fb.innerHTML = `<div class="fb warn">⏳ Base do endereço em recuperação — registro será validado na sincronização</div>`;
-        document.getElementById('f-gtin').className = 'field icon-r field-warn';
       } else {
         fb.innerHTML = `<div class="fb ok">✓ Produto encontrado na base</div>`;
         document.getElementById('f-gtin').className = 'field icon-r field-ok';

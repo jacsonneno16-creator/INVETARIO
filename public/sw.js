@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v205-fonte-unica-colunas';
+var CACHE='dt-inventario-v170-fluxo-unificado-r191';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -36,7 +36,6 @@ var PRECACHE=[
   '/js-legacy/coletor/16-menu-atualizacao.js',
   '/js-legacy/coletor/17-auditoria-meta.js',
   '/js-legacy/coletor/18-auditoria-fluxo.js',
-  '/js-legacy/coletor/19-runtime-estavel-v15.js',
   '/js/legacy-ui-compat.js'
 ];
 self.addEventListener('install',function(e){

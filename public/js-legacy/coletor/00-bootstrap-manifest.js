@@ -281,9 +281,6 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                             throw new Error('Auditoria do inventário não identificada.');
                         if (!((_e = window.DTAuditoriaStorage) === null || _e === void 0 ? void 0 : _e.filaPut))
                             throw new Error('Armazenamento offline da auditoria indisponível.');
-                        // Offline-first: confirma no IndexedDB antes de qualquer tentativa no Firebase.
-                        // A chave canônica faz novas confirmações do mesmo endereço substituírem a
-                        // versão anterior na fila, sem criar duplicidade.
                         return [4 /*yield*/, window.DTAuditoriaStorage.filaPut({
                                 chave: [String(auditoriaId), 'enderecos', String(id)].join('::'),
                                 docId: String(id),
@@ -293,17 +290,12 @@ var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
                                 criadoEm: agora
                             })];
                     case 2:
-                        // Offline-first: confirma no IndexedDB antes de qualquer tentativa no Firebase.
-                        // A chave canônica faz novas confirmações do mesmo endereço substituírem a
-                        // versão anterior na fila, sem criar duplicidade.
                         _f.sent();
                         APP.auditorias = (APP.auditorias || []).filter(function (a) { return a.id !== id; });
                         renderAuditoriaColetor();
                         toast(semAjuste
                             ? (navigator.onLine ? '✅ Confirmado sem ajuste' : '📥 Confirmado sem ajuste — aguardando sincronização')
                             : (navigator.onLine ? '✅ Confirmado com ajuste' : '📥 Confirmado com ajuste — aguardando sincronização'), 's');
-                        // Não bloqueia a interface. Em caso de falha, o registro permanece na fila
-                        // e será reenviado pelos retries e pelo evento online já existentes.
                         if (navigator.onLine && typeof window.sincronizarFilaAuditoria === 'function') {
                             window.sincronizarFilaAuditoria().catch(function (e) {
                                 console.warn('[AUDITORIA] Confirmação salva localmente; sincronização pendente:', e);

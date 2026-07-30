@@ -92,9 +92,6 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
             }).catch(function (e) { console.warn('[Produtos] Falha ao persistir no IndexedDB:', e); });
             return;
         }
-        // O módulo de produtos é carregado antes do módulo da auditoria. Em vez de
-        // voltar a gravar a base grande no localStorage, aguarda o IndexedDB ficar
-        // disponível e então migra a cópia antiga.
         if (tentativa < 50)
             setTimeout(function () { persistirBaseLocal(lista, tentativa + 1); }, 100);
     }
@@ -172,11 +169,10 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
         });
     }
     function carregar() {
-        return __awaiter(this, arguments, void 0, function (force, strict) {
+        return __awaiter(this, arguments, void 0, function (force) {
             var loja;
             var _this = this;
             if (force === void 0) { force = false; }
-            if (strict === void 0) { strict = false; }
             return __generator(this, function (_a) {
                 switch (_a.label) {
                     case 0:
@@ -192,7 +188,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                     case 2: return [2 /*return*/, cache.lista];
                     case 3:
                         cache.carregando = (function () { return __awaiter(_this, void 0, void 0, function () {
-                            var fs, versaoKey, versaoServidor, meta, metaServidor, _e_1, versaoLocal, chunks, docs, rows_1, esperadoChunks, esperadoProdutos, result, e_2;
+                            var fs, versaoKey, versaoServidor, meta, _e_1, versaoLocal, chunks, docs, rows_1, result, e_2;
                             return __generator(this, function (_a) {
                                 switch (_a.label) {
                                     case 0:
@@ -208,13 +204,9 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                                         meta = _a.sent();
                                         if (meta.exists)
                                             versaoServidor = texto(meta.data().versao || meta.data().atualizadoEm || '');
-                                        if (meta.exists)
-                                            metaServidor = meta.data() || {};
                                         return [3 /*break*/, 4];
                                     case 3:
                                         _e_1 = _a.sent();
-                                        if (strict)
-                                            throw new Error('Não foi possível ler o metadado da base de produtos: ' + (_e_1.message || _e_1));
                                         return [3 /*break*/, 4];
                                     case 4:
                                         versaoLocal = localStorage.getItem(versaoKey) || cache.versao || '';
@@ -225,8 +217,6 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                                         }
                                         if (!!versaoServidor) return [3 /*break*/, 7];
                                         console.warn('[Produtos] Metadado de versão ausente; mantendo cache local.');
-                                        if (strict)
-                                            throw new Error('A base de produtos não possui uma versão publicada em chunks.');
                                         if (!(!cache.carregado || cache.loja !== loja)) return [3 /*break*/, 6];
                                         return [4 /*yield*/, carregarLocal()];
                                     case 5:
@@ -242,12 +232,6 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                                         docs = (chunks.docs || []).slice().sort(function (a, b) { return Number((a.data() || {}).parte || 0) - Number((b.data() || {}).parte || 0); });
                                         rows_1 = [];
                                         docs.forEach(function (d) { var x = d.data() || {}; var itens = x.itens || x.dados || x.registros || []; rows_1 = rows_1.concat(itens); });
-                                        esperadoChunks = Number((metaServidor || {}).totalChunks || (metaServidor || {}).chunks || 0);
-                                        esperadoProdutos = Number((metaServidor || {}).totalProdutos || (metaServidor || {}).total || 0);
-                                        if (esperadoChunks && docs.length !== esperadoChunks)
-                                            throw new Error('Base de produtos incompleta: ' + docs.length + ' de ' + esperadoChunks + ' chunks recebidos.');
-                                        if (esperadoProdutos && rows_1.length !== esperadoProdutos)
-                                            throw new Error('Base de produtos incompleta: ' + rows_1.length + ' de ' + esperadoProdutos + ' produtos recebidos.');
                                         console.log('[Produtos] Base atualizada somente por chunks:', docs.length, 'documentos /', rows_1.length, 'produtos / versão', versaoServidor);
                                         result = indexar(rows_1);
                                         cache.versao = versaoServidor;
@@ -265,10 +249,7 @@ var __generator = (this && this.__generator) || function (thisArg, body) {
                                     case 10:
                                         _a.sent();
                                         _a.label = 11;
-                                    case 11:
-                                        if (strict)
-                                            throw e_2;
-                                        return [2 /*return*/, cache.lista];
+                                    case 11: return [2 /*return*/, cache.lista];
                                     case 12:
                                         cache.carregando = null;
                                         return [7 /*endfinally*/];

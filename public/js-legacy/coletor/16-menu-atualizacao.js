@@ -55,11 +55,11 @@ function toggleMenu3pts() {
 }
 function toggleMenu3ptsMode() {
     var menu = document.getElementById('menu3pts-dropdown-mode');
-    if (!menu)
-        return;
+    if (!menu) return;
     var abrir = menu.style.display === 'none' || !menu.style.display;
     menu.style.display = abrir ? 'block' : 'none';
 }
+
 function toggleMenu3ptsLogin() {
     var dd = document.getElementById('menu3pts-dropdown-login');
     var btn = document.getElementById('btn-menu3pts-login');
