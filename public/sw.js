@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v204-fonte-unica-colunas';
+var CACHE='dt-inventario-v205-fonte-unica-colunas';
 var PRECACHE=[
   '/',
   '/index.html',

@@ -191,6 +191,43 @@ function _resultadoRodadaEndereco(c){
   return { texto:'⏳ Aguardando processamento', cls:'b-orange' };
 }
 
+function _gtinBipadoRegistro(row){
+  const candidatos=[row?.gtin_bipado,row?.codigoLido,row?.codigo_lido,row?.gtinLido,row?.gtin_lido,row?.dunLido,row?.dun_lido,row?.codigo_bipado,row?.barcode_lido,row?.gtin,row?.ean,row?.dun];
+  return String(candidatos.find(v=>v!=null&&String(v).trim())||'').trim();
+}
+
+function _gtinsRodada(rodada){
+  const valores=[...new Set((rodada?.origens||[]).map(_gtinBipadoRegistro).filter(Boolean))];
+  return valores;
+}
+
+function _gtinsRodadaTexto(rodada){
+  const valores=_gtinsRodada(rodada);
+  return valores.length?valores.join(', '):'—';
+}
+
+function _gtinsRodadasHtml(snapshot){
+  return [0,1,2].map((idx)=>{
+    const valores=_gtinsRodada(snapshot?.rodadas?.[idx]);
+    if(!valores.length) return `<div><b>${idx+1}ª:</b> <span class="mono">—</span></div>`;
+    return `<div><b>${idx+1}ª:</b> ${valores.map(v=>`<span class="mono" style="display:inline-block">${escHTML(v)}</span>`).join('<br>')}</div>`;
+  }).join('');
+}
+
+function _csvCampo(valor){
+  const texto=String(valor??'').replace(/\r?\n/g,' ');
+  return `"${texto.replace(/"/g,'""')}"`;
+}
+
+function _baixarCsvContagens(nome,linhas){
+  const colunas=Object.keys(linhas[0]||{});
+  const csv=[colunas.map(_csvCampo).join(';'),...linhas.map(l=>colunas.map(c=>_csvCampo(l[c])).join(';'))].join('\r\n');
+  const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download=nome;document.body.appendChild(a);a.click();a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
 // ───────────────────────────────────────────────────────────────────
 //  14. RENDERIZAÇÃO — CONTAGENS
 // ───────────────────────────────────────────────────────────────────
@@ -211,7 +248,7 @@ function renderContagens() {
   if(fOp) dados=dados.filter(s=>s.rodadas.some(r=>r?.operadores?.includes(fOp)));
   if(fTipo){const n=fTipo==='RECONTAGEM'?2:1;dados=dados.filter(s=>s.ultimaRodada?.numero>=n);}
   if(fPeriodo){const hoje=new Date();hoje.setHours(0,0,0,0);const ontem=new Date(hoje);ontem.setDate(ontem.getDate()-1);const set7=new Date(hoje);set7.setDate(set7.getDate()-7);dados=dados.filter(s=>{const d=s.atualizado_em?new Date(s.atualizado_em):null;if(!d||isNaN(d))return false;if(fPeriodo==='hoje')return d>=hoje;if(fPeriodo==='ontem')return d>=ontem&&d<hoje;if(fPeriodo==='7d')return d>=set7;return true;});}
-  if(busca) dados=dados.filter(s=>[s.endereco,s.inventario?.codigo,s.inventario?.nome,view.latestOperator(s),view.itemsText(s.itens_esperados,'quantidade_esperada'),...s.rodadas.filter(Boolean).map(r=>view.itemsText(r.itens))].join(' ').toLowerCase().includes(busca));
+  if(busca) dados=dados.filter(s=>[s.endereco,s.inventario?.codigo,s.inventario?.nome,view.latestOperator(s),view.itemsText(s.itens_esperados,'quantidade_esperada'),...s.rodadas.filter(Boolean).flatMap(r=>[view.itemsText(r.itens),_gtinsRodadaTexto(r)])].join(' ').toLowerCase().includes(busca));
   dados.sort((a,b)=>String(b.atualizado_em||'').localeCompare(String(a.atualizado_em||'')));
   window.__contagensVisiveis=dados.slice();
   const todos=selectors.list(state()).filter(s=>s.primeira!=null),setK=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};
@@ -219,7 +256,7 @@ function renderContagens() {
   const selRua=document.getElementById('cont-frua');if(selRua){const cur=selRua.value,ruas=[...new Set(todos.map(s=>getEnderecoInfo(s.endereco)?.rua||'—'))].sort();selRua.innerHTML='<option value="">Todas as ruas</option>'+ruas.map(r=>`<option value="${escHTML(r)}">${escHTML(r)}</option>`).join('');selRua.value=cur;}
   const selOp=document.getElementById('cont-foperador');if(selOp){const cur=selOp.value,ops=[...new Set(todos.flatMap(s=>s.rodadas.filter(Boolean).flatMap(r=>r.operadores)))].sort();selOp.innerHTML='<option value="">Todos os operadores</option>'+ops.map(o=>`<option value="${escHTML(o)}">${escHTML(o)}</option>`).join('');selOp.value=cur;}
   const wrap=document.getElementById('cont-table-wrap');if(!dados.length){wrap.innerHTML='<div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma contagem encontrada</div></div>';return;}
-  wrap.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>Última atualização</th><th>Operador(es)</th><th>Inventário</th><th>Endereço</th><th>Produtos esperados</th><th>Totais das rodadas</th><th>Última etapa</th><th>Status consolidado</th><th>Ações</th></tr></thead><tbody>${dados.map(s=>{const src=view.sourceRecord(s),end=getEnderecoInfo(s.endereco),id=src?.id||src?.uuid||'';return `<tr><td class="mono" style="white-space:nowrap;font-size:.75rem">${fmtTs(s.atualizado_em)}</td><td style="font-size:.8rem;font-weight:600">${escHTML(view.latestOperator(s))}</td><td style="font-size:.75rem">${escHTML(s.inventario?.codigo||s.inventario_id)}<div style="color:var(--muted)">${escHTML(s.inventario?.nome||'')}</div></td><td class="mono">${escHTML(s.endereco)}${end?.rua?`<div style="font-size:.65rem;color:var(--muted)">Rua ${escHTML(end.rua)}</div>`:''}</td><td>${view.itemsHtml(s.itens_esperados,'quantidade_esperada')}</td><td><div><b>Sistema:</b> <span class="mono">${view.fmt(s.esperado)}</span></div><div><b>1ª:</b> <span class="mono">${view.fmt(s.primeira)}</span></div><div><b>2ª:</b> <span class="mono">${view.fmt(s.segunda)}</span></div><div><b>3ª:</b> <span class="mono">${view.fmt(s.terceira)}</span></div></td><td><span class="badge b-blue">${escHTML(view.roundType(s))}</span></td><td><span class="badge ${view.statusBadge(s)}">${escHTML(view.statusLabel(s))}</span>${s.status==='SEM_BASE'?'<div style="font-size:.65rem;color:var(--danger)">Comparação bloqueada: total esperado ausente.</div>':''}</td><td>${id?`<button class="btn btn-danger btn-sm" onclick="abrirEstorno('${escHTML(id)}')">↩ Estornar</button>`:'—'}</td></tr>`;}).join('')}</tbody></table></div>`;
+  wrap.innerHTML=`<div class="tbl-wrap"><table><thead><tr><th>Última atualização</th><th>Operador(es)</th><th>Inventário</th><th>Endereço</th><th>Produtos esperados</th><th>GTIN(s) bipado(s)</th><th>Totais das rodadas</th><th>Última etapa</th><th>Status consolidado</th><th>Ações</th></tr></thead><tbody>${dados.map(s=>{const src=view.sourceRecord(s),end=getEnderecoInfo(s.endereco),id=src?.id||src?.uuid||'';return `<tr><td class="mono" style="white-space:nowrap;font-size:.75rem">${fmtTs(s.atualizado_em)}</td><td style="font-size:.8rem;font-weight:600">${escHTML(view.latestOperator(s))}</td><td style="font-size:.75rem">${escHTML(s.inventario?.codigo||s.inventario_id)}<div style="color:var(--muted)">${escHTML(s.inventario?.nome||'')}</div></td><td class="mono">${escHTML(s.endereco)}${end?.rua?`<div style="font-size:.65rem;color:var(--muted)">Rua ${escHTML(end.rua)}</div>`:''}</td><td>${view.itemsHtml(s.itens_esperados,'quantidade_esperada')}</td><td>${_gtinsRodadasHtml(s)}</td><td><div><b>Sistema:</b> <span class="mono">${view.fmt(s.esperado)}</span></div><div><b>1ª:</b> <span class="mono">${view.fmt(s.primeira)}</span></div><div><b>2ª:</b> <span class="mono">${view.fmt(s.segunda)}</span></div><div><b>3ª:</b> <span class="mono">${view.fmt(s.terceira)}</span></div></td><td><span class="badge b-blue">${escHTML(view.roundType(s))}</span></td><td><span class="badge ${view.statusBadge(s)}">${escHTML(view.statusLabel(s))}</span>${s.status==='SEM_BASE'?'<div style="font-size:.65rem;color:var(--danger)">Comparação bloqueada: total esperado ausente.</div>':''}</td><td>${id?`<button class="btn btn-danger btn-sm" onclick="abrirEstorno('${escHTML(id)}')">↩ Estornar</button>`:'—'}</td></tr>`;}).join('')}</tbody></table></div>`;
 }
 
 // Exporta exatamente as linhas atualmente exibidas na aba Contagens.
@@ -229,14 +266,29 @@ function exportarContagens(){
   const view=window.InventoryAddressView,lista=Array.isArray(window.__contagensVisiveis)?window.__contagensVisiveis:[];
   if(!lista.length){showToast?.('Nenhuma contagem visível para exportar.','w');return;}
   const linhas=lista.map(s=>({
-    'Inventário':s.inventario?.codigo||s.inventario_id,'Endereço':s.endereco,'Rua':getEnderecoInfo(s.endereco)?.rua||'',
-    'Produtos esperados':view.itemsText(s.itens_esperados,'quantidade_esperada'),'Qtd sistema':s.esperado??'',
-    '1ª contagem':s.primeira??'','Itens 1ª':view.itemsText(s.rodadas[0]?.itens),'Operador 1ª':s.rodadas[0]?.operadores?.join(', ')||'',
-    '2ª contagem':s.segunda??'','Itens 2ª':view.itemsText(s.rodadas[1]?.itens),'Operador 2ª':s.rodadas[1]?.operadores?.join(', ')||'',
-    '3ª contagem':s.terceira??'','Itens 3ª':view.itemsText(s.rodadas[2]?.itens),'Operador 3ª':s.rodadas[2]?.operadores?.join(', ')||'',
-    'Status consolidado':view.statusLabel(s),'Última atualização':s.atualizado_em||''
+    'Inventário':s.inventario?.codigo||s.inventario_id,
+    'Endereço':s.endereco,
+    'Rua':getEnderecoInfo(s.endereco)?.rua||'',
+    'Produtos esperados':view.itemsText(s.itens_esperados,'quantidade_esperada'),
+    'GTIN bipado 1ª':_gtinsRodadaTexto(s.rodadas?.[0]),
+    'GTIN bipado 2ª':_gtinsRodadaTexto(s.rodadas?.[1]),
+    'GTIN bipado 3ª':_gtinsRodadaTexto(s.rodadas?.[2]),
+    'Qtd sistema':s.esperado??'',
+    '1ª contagem':s.primeira??'',
+    'Itens 1ª':view.itemsText(s.rodadas?.[0]?.itens),
+    'Operador 1ª':s.rodadas?.[0]?.operadores?.join(', ')||'',
+    '2ª contagem':s.segunda??'',
+    'Itens 2ª':view.itemsText(s.rodadas?.[1]?.itens),
+    'Operador 2ª':s.rodadas?.[1]?.operadores?.join(', ')||'',
+    '3ª contagem':s.terceira??'',
+    'Itens 3ª':view.itemsText(s.rodadas?.[2]?.itens),
+    'Operador 3ª':s.rodadas?.[2]?.operadores?.join(', ')||'',
+    'Status consolidado':view.statusLabel(s),
+    'Última atualização':s.atualizado_em||''
   }));
-  _exportarXlsxAnalista('contagens-consolidadas.xlsx','Contagens',linhas);
+  const data=new Date().toISOString().slice(0,10);
+  _baixarCsvContagens(`contagens-consolidadas-${data}.csv`,linhas);
+  showToast?.('CSV de contagens exportado com sucesso.','s');
 }
 window.exportarContagens = exportarContagens;
 
