@@ -4,6 +4,7 @@
 
   const state = {
     started: false,
+    startPromise: null,
     currentInventoryIds: [],
     unsubscribers: { contagens: [], vazios: [], divergencias: [], recontagens: [], coletores: null, enderecos: null }
   };
@@ -336,38 +337,49 @@
   // As coleções operacionais (contagens, divergências e recontagens) continuam
   // fora desta rotina e só são consultadas pelo botão Atualizar, evitando
   // reintroduzir as leituras excessivas que motivaram o modo manual.
+  function _aguardar(ms){
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async function _executarComRetry(nome, tarefa, tentativas){
+    const total = Math.max(1, Number(tentativas || 2));
+    let ultimoErro = null;
+    for (let tentativa = 1; tentativa <= total; tentativa += 1) {
+      try {
+        return { ok: true, valor: await tarefa(), nome, tentativas: tentativa };
+      } catch (erro) {
+        ultimoErro = erro;
+        if (!navigator.onLine || tentativa >= total) break;
+        await _aguardar(700 * tentativa);
+      }
+    }
+    console.warn(`[FirebaseService] ${nome} indisponível; mantendo cache local:`, ultimoErro?.message || ultimoErro);
+    return { ok: false, valor: null, nome, erro: ultimoErro, tentativas: total };
+  }
+
   async function _carregarBasesEssenciaisLogin(){
-    const resultados = await Promise.allSettled([
-      _carregarInventariosSeNecessario(),
-      _carregarEnderecosManual(),
-      global.DTProdutos?.carregar?.(true, true)
+    // Cada base é independente. Uma oscilação em produtos ou endereços não pode
+    // derrubar todo o painel nem gerar rejeição não tratada no console.
+    const resultados = await Promise.all([
+      _executarComRetry('inventários', () => _carregarInventariosSeNecessario(), 2),
+      _executarComRetry('endereços', () => _carregarEnderecosManual(), 2),
+      _executarComRetry('produtos', () => {
+        if (typeof global.DTProdutos?.carregar !== 'function') return [];
+        return global.DTProdutos.carregar(true, true);
+      }, 2)
     ]);
-    const nomes = ['inventários', 'endereços', 'produtos'];
-    const falhas = resultados
-      .map((resultado, indice) => ({ resultado, nome: nomes[indice] }))
-      .filter(item => item.resultado.status === 'rejected');
 
-    falhas.forEach(item => {
-      console.warn(
-        `[FirebaseService] Falha ao carregar ${item.nome} no login:`,
-        item.resultado.reason?.message || item.resultado.reason
-      );
-    });
-
-    const enderecos = resultados[1].status === 'fulfilled'
-      ? (resultados[1].value || []).length
+    const falhas = resultados.filter(item => !item.ok).map(item => item.nome);
+    const enderecosResultado = resultados[1];
+    const enderecos = enderecosResultado.ok
+      ? (enderecosResultado.valor || []).length
       : (global.AnalistaStore.getState().enderecosLista || []).length;
     const inventarios = (global.AnalistaStore.getState().inventarios || []).length;
     const produtos = global.DTProdutos?.cache?.lista?.length || 0;
 
     global.AnalistaBootstrap?.saveAll?.();
-    // O Store/AppController consolida a renderizacao; nao redesenhar dashboard,
-    // enderecos e pagina atual tres vezes no mesmo ciclo.
 
-    if (falhas.length) {
-      throw new Error(`Não foi possível carregar: ${falhas.map(item => item.nome).join(', ')}.`);
-    }
-    return { inventarios, enderecos, produtos };
+    return { inventarios, enderecos, produtos, falhas };
   }
 
   async function _carregarEnderecosManual(){
@@ -470,28 +482,47 @@
   }
 
   async function start(){
-    if (!navigator.onLine) {
-      _emitSync(false, 'Offline — usando cache local', { started: false, source: 'cache' });
-      return false;
-    }
+    if (state.startPromise) return state.startPromise;
 
-    // Carrega as bases estruturais também em computadores sem cache. O histórico
-    // operacional permanece no fluxo manual para controlar o volume de leituras.
-    _emitSync(true, 'Carregando dados da loja...', { started: false, source: 'firebase-bootstrap' });
-    const essenciais = await _carregarBasesEssenciaisLogin();
+    state.startPromise = (async function(){
+      if (!navigator.onLine) {
+        _emitSync(false, 'Offline — usando os dados salvos neste computador.', { started: false, source: 'cache' });
+        return false;
+      }
 
-    // Coletores continuam com status próprio.
-    if (!state.unsubscribers.coletores) {
-      state.unsubscribers.coletores = _listenColetores();
-    }
-    state.started=false;
-    state.currentInventoryIds=[];
-    _emitSync(
-      true,
-      `${essenciais.enderecos} endereços, ${essenciais.produtos} produtos e ${essenciais.inventarios} inventários carregados. Clique em Atualizar para consultar novas contagens.`,
-      {started:false,source:'firebase-bootstrap'}
-    );
-    return true;
+      try {
+        // Carrega as bases estruturais também em computadores sem cache. O histórico
+        // operacional permanece no fluxo manual para controlar o volume de leituras.
+        _emitSync(true, 'Carregando dados da loja...', { started: false, source: 'firebase-bootstrap' });
+        const essenciais = await _carregarBasesEssenciaisLogin();
+
+        // Coletores continuam com status próprio.
+        if (!state.unsubscribers.coletores) {
+          state.unsubscribers.coletores = _listenColetores();
+        }
+        state.started=false;
+        state.currentInventoryIds=[];
+
+        const complemento = essenciais.falhas.length
+          ? ` Algumas bases não responderam (${essenciais.falhas.join(', ')}); os dados salvos foram mantidos e uma nova tentativa será feita na próxima atualização.`
+          : ' Clique em Atualizar para consultar novas contagens.';
+        _emitSync(
+          essenciais.falhas.length === 0,
+          `${essenciais.enderecos} endereços, ${essenciais.produtos} produtos e ${essenciais.inventarios} inventários disponíveis.${complemento}`,
+          {started:false,source:essenciais.falhas.length ? 'cache-parcial' : 'firebase-bootstrap'}
+        );
+        return essenciais.falhas.length === 0;
+      } catch (erro) {
+        // Última barreira: nunca deixar a inicialização produzir "Uncaught (in promise)".
+        console.warn('[FirebaseService] Inicialização parcial; usando cache local:', erro?.message || erro);
+        _emitSync(false, 'Não foi possível atualizar agora. O sistema continuará com os dados salvos neste computador.', { started: false, source: 'cache' });
+        return false;
+      } finally {
+        state.startPromise = null;
+      }
+    })();
+
+    return state.startPromise;
   }
 
   function refreshFromCache(){

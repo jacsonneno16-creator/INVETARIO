@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v208-status-unificado';
+var CACHE='dt-inventario-v210-inicializacao-resiliente';
 var PRECACHE=[
   '/',
   '/index.html',

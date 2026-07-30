@@ -360,6 +360,15 @@ function divFiltroRapido(tipo) {
   renderDivergencias();
 }
 
+// Exibe somente primeiro nome + primeiro sobrenome na lista de atribuição.
+// O valor real da opção continua sendo o nome completo/login para não alterar
+// a identificação, a gravação no Firebase nem o histórico da recontagem.
+function _nomeCurtoOperador(nomeCompleto) {
+  const partes = String(nomeCompleto || '').trim().split(/\s+/).filter(Boolean);
+  if (!partes.length) return '';
+  return partes.slice(0, 2).join(' ');
+}
+
 // ── Popula o select de operadores a partir da lista carregada do Firestore ──
 async function divPopularSelectOperadores(selectId) {
   const sel = document.getElementById(selectId);
@@ -417,8 +426,8 @@ async function divPopularSelectOperadores(selectId) {
     return;
   }
   sel.innerHTML = '<option value="">Selecione o usuário...</option>' + ops.map(o => {
-    const detalhe = o.logins.length ? ` — ${o.logins.join(' / ')}` : '';
-    return `<option value="${escHTML(o.valor)}" ${o.valor===cur?'selected':''}>${escHTML(o.nome + detalhe)}</option>`;
+    const nomeExibicao = _nomeCurtoOperador(o.nome) || _nomeCurtoOperador(o.valor) || o.valor;
+    return `<option value="${escHTML(o.valor)}" ${o.valor===cur?'selected':''}>${escHTML(nomeExibicao)}</option>`;
   }).join('');
   if (cur) sel.value = cur;
 }
