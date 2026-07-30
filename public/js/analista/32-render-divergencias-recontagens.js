@@ -20,52 +20,9 @@ const _nomeProdutoRec = valor => {
 };
 
 const _totalEsperadoEnderecoRec = obj => {
-  const texto = valor => String(valor ?? '').trim().toUpperCase();
-  const endereco = _FK.endereco(obj?.endereco);
-  const aliasesObjeto = [obj?.inventario_id, obj?.inventarioId, obj?.inventario, obj?.codigo_inventario]
-    .filter(Boolean).map(texto);
-  const inventario = (state().inventarios || []).find(i => {
-    const aliasesInv = [i?.id, i?.codigo, i?.nome, i?.inventario_id, i?.inventarioId]
-      .filter(Boolean).map(texto);
-    return aliasesObjeto.some(alias => aliasesInv.includes(alias));
-  }) || (state().inventarios || []).find(i => _inventarioCanonicoRec(i) === _inventarioCanonicoRec(obj));
-
-  const qtd = item => {
-    const bruto = item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ??
-      item?.quantidade_enderecada ?? item?.qtd_enderecada ?? item?.saldo_estoque ?? item?.saldo ??
-      item?.saldo_erp ?? item?.qtd_sistema ?? item?.qtd_estoque ?? item?.estoque_total ??
-      item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde;
-    if (bruto === null || bruto === undefined || String(bruto).trim() === '') return 0;
-    const txt = String(bruto).trim().replace(/\s/g, '');
-    const n = Number(txt.includes(',') ? txt.replace(/\./g, '').replace(',', '.') : txt);
-    return Number.isFinite(n) ? n : 0;
-  };
-
-  // Fonte principal: base oficial do inventario. Cada linha real da base conta uma vez.
-  const itensBase = (inventario?.base || []).filter(item => _FK.endereco(item?.endereco) === endereco);
-  if (itensBase.length) return itensBase.reduce((total, item) => total + qtd(item), 0);
-
-  // Fallback para registros antigos: snapshots podem estar repetidos em varias divergencias
-  // do mesmo endereco. Deduplicar antes da soma para nao transformar 151 em 302.
-  const snap = Array.isArray(obj?.itens_esperados) ? obj.itens_esperados : [];
-  if (snap.length) {
-    const unicos = new Map();
-    snap.forEach((item, indice) => {
-      const produto = _FK.produto(item);
-      const palete = texto(item?.palete || item?.pallet || item?.numero_palete || item?.numeroPalete || item?.sscc || item?.lote || '');
-      const quantidade = qtd(item);
-      const chave = palete
-        ? `${produto}|${palete}`
-        : `${produto}|QTD:${quantidade}|${texto(item?.descricao_produto || item?.descricaoProduto || item?.descricao || '')}`;
-      if (!unicos.has(chave)) unicos.set(chave, item);
-    });
-    return [...unicos.values()].reduce((total, item) => total + qtd(item), 0);
-  }
-
-  const fallback = qtd({ quantidade_esperada: obj?.qtd_esperada });
-  return obj?.qtd_esperada === null || obj?.qtd_esperada === undefined || String(obj.qtd_esperada).trim() === ''
-    ? null
-    : fallback;
+  const runtime = window.AnalistaDivergenciasRuntime;
+  if (runtime?.totalEsperadoEndereco) return runtime.totalEsperadoEndereco(obj);
+  return null;
 };
 
 

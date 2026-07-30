@@ -105,8 +105,8 @@
   }
 
   function _snapshotEsperadoEndereco(inv,endereco){
-    // A base pode trazer uma linha por palete. Para a conferência operacional,
-    // o esperado deve ser o total do produto no endereço, não cada linha isolada.
+    // A base pode trazer uma linha por palete. Cada linha real da base entra uma
+    // única vez no total; o agrupamento por produto serve apenas para exibição.
     const grupos = new Map();
     (inv?.base||[]).filter(item=>_nd(item.endereco)===_nd(endereco)).forEach(item=>{
       const codigo = _idPrincipalBase(item) || _idsProduto(item)[0] || 'SEM_PRODUTO';
@@ -123,6 +123,49 @@
       grupos.set(chave, atual);
     });
     return [...grupos.values()];
+  }
+
+  // Fonte única do total esperado por endereço, compartilhada por Contagens e
+  // Recontagem. Primeiro resolve o inventário por qualquer alias conhecido;
+  // depois usa a base oficial. Somente para dados antigos sem base usa o
+  // snapshot da divergência, deduplicado para impedir 151 virar 302.
+  function _totalEsperadoEnderecoCentral(obj){
+    const endereco=_nd(obj?.endereco);
+    const aliasesObj=[obj?.inventario_id,obj?.inventarioId,obj?.inventario,obj?.codigo_inventario]
+      .filter(Boolean).map(_nd);
+    const inv=(state().inventarios||[]).find(i=>{
+      const aliases=_inventarioAliases(i);
+      return aliasesObj.some(a=>aliases.includes(a));
+    }) || _inventarioPorAlias(_idInventarioRegistro(obj));
+
+    const itensBase=(inv?.base||[]).filter(item=>_nd(item?.endereco)===endereco);
+    if(itensBase.length){
+      return itensBase.reduce((total,item)=>total+_qtdEsperadaItem(item),0);
+    }
+
+    const snapshots=[];
+    if(Array.isArray(obj?.itens_esperados)) snapshots.push(...obj.itens_esperados);
+    (state().divergencias||[]).filter(d=>
+      _mesmoIdInventario(_idInventarioRegistro(d),_idInventarioRegistro(obj)) &&
+      _nd(d?.endereco)===endereco
+    ).forEach(d=>{ if(Array.isArray(d?.itens_esperados)) snapshots.push(...d.itens_esperados); });
+
+    if(snapshots.length){
+      const unicos=new Map();
+      snapshots.forEach((item,indice)=>{
+        const produto=_idPrincipalBase(item)||_idsProduto(item)[0]||'SEM_PRODUTO';
+        const palete=_nd(item?.palete||item?.pallet||item?.numero_palete||item?.numeroPalete||item?.capa_palete||item?.capa||item?.sscc||'');
+        const qtd=_qtdEsperadaItem(item);
+        const descricao=_nd(item?.descricao_produto||item?.descricaoProduto||item?.descricao||'');
+        const chave=palete ? `${_nd(produto)}|${palete}` : `${_nd(produto)}|QTD:${qtd}|${descricao}`;
+        if(!unicos.has(chave)) unicos.set(chave,item);
+      });
+      return [...unicos.values()].reduce((total,item)=>total+_qtdEsperadaItem(item),0);
+    }
+
+    const fallback=obj?.qtd_esperada;
+    if(fallback===null||fallback===undefined||String(fallback).trim()==='') return null;
+    return _qtdEsperadaItem({quantidade_esperada:fallback});
   }
 
   function _produtoGeral(obj){
@@ -345,9 +388,7 @@
       return r.qtd_recontagem != null || r.qtd_segunda != null || r.qtd_terceira != null;
     });
 
-    const inv = (state().inventarios || []).find(i => _mesmoIdInventario(_idInventarioRegistro(i), invId));
-    const totalEsperado = _snapshotEsperadoEndereco(inv, div?.endereco)
-      .reduce((total, item) => total + numero(item?.quantidade_esperada), 0);
+    const totalEsperado = _totalEsperadoEnderecoCentral(div);
     const qtdPrimeira = primeiras.length
       ? somaContagens(primeiras)
       : divs.reduce((total, d) => total + numero(d?.qtd_primeira ?? d?.qtd_contada), 0);
@@ -1930,6 +1971,7 @@
     corrigirOrfas: corrigirOrfas,
     avaliarHistorico: _avaliarHistoricoContagens,
     avaliarResumo: _avaliarResumoConsolidado,
+    totalEsperadoEndereco: _totalEsperadoEnderecoCentral,
     historicoEndereco: _historicoConsolidadoEndereco,
     avaliarEndereco: d => _avaliarHistoricoContagens(_historicoConsolidadoEndereco(d)),
     resolverEndereco: _resolverFluxoEndereco
