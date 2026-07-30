@@ -1,5 +1,20 @@
 'use strict';
 // Utilitários compartilhados
+
+// Debounce global usado pelos campos de busca das telas do Analista.
+// Evita renderizar a tabela a cada tecla e mantém um temporizador separado por campo.
+(function(global){
+  var timers = Object.create(null);
+  global._debounce = global._debounce || function(chave, callback, atraso){
+    var id = String(chave || 'default');
+    if (timers[id]) clearTimeout(timers[id]);
+    timers[id] = setTimeout(function(){
+      delete timers[id];
+      if (typeof callback === 'function') callback();
+    }, Number.isFinite(Number(atraso)) ? Number(atraso) : 180);
+  };
+})(window);
+
 function escHTML(str) {
   if (str == null) return '';
   return String(str)

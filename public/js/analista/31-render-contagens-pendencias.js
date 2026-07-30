@@ -228,27 +228,69 @@ function renderContagens() {
   // em qual rodada ele finalmente bateu. Quem quiser ver as rodadas de
   // recontagem em si pode filtrar explicitamente por Tipo = Recontagem.
   if (!fTipo) {
-    dados = dados.filter(c => c.tipo_contagem !== 'RECONTAGEM');
-    const grupos = new Map();
-    const chaveContagem = c => {
+    // A aba Contagens representa a rodada mais recente de cada endereço.
+    // Se uma nova rodada tiver 10 paletes, ela substitui visualmente os 20
+    // paletes da rodada anterior. O histórico permanece preservado no estado e
+    // continua disponível na aba Recontagem; aqui não misturamos rodadas.
+    const validas = dados.filter(c =>
+      !c?._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(c?.status || '').toUpperCase())
+    );
+    const chaveEndereco = c => {
       const id=String(c.inventario_id || c.inventarioId || '');
       const inv=(state().inventarios || []).find(i =>
         [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
           .filter(Boolean).map(String).includes(id));
-      return FK.chave(Object.assign({}, c, { inventario_id: inv?.id || id }), state().inventarios);
+      return `${String(inv?.id || id)}|${FK.endereco(c?.endereco)}`;
     };
-    dados.forEach(c => {
-      // Um endereço pode ter vários paletes do mesmo produto. A lista de
-      // Contagens deve preservar uma linha por palete; consolidar apenas por
-      // inventário/endereço/produto escondia quatro de cinco paletes, por exemplo.
-      const palete=_paleteContagem(c);
-      const identidadePalete=palete || String(c.uuid || c.id || c.criado_em || c.dataHora || 'SEM_ID');
-      const chave=chaveContagem(c)+'||PALETE:'+identidadePalete;
-      const atual=grupos.get(chave);
-      const data=x=>String(x.timestamp || x.criado_em || x.dataHora || '');
-      if (!atual || data(c).localeCompare(data(atual)) < 0) grupos.set(chave,c);
+    const numeroEtapa = c => String(c?.tipo_contagem || 'PRIMEIRA').toUpperCase()==='RECONTAGEM'
+      ? Math.min(3, 1 + Math.max(1, Number(c?.numero_recontagem || 1)))
+      : 1;
+    const gruposEndereco = new Map();
+    validas.forEach(c => {
+      const chave=chaveEndereco(c);
+      if(!gruposEndereco.has(chave)) gruposEndereco.set(chave,[]);
+      gruposEndereco.get(chave).push(c);
     });
-    dados=[...grupos.values()];
+    const visiveis=[];
+    gruposEndereco.forEach(grupo => {
+      const etapaAtual=Math.max(...grupo.map(numeroEtapa));
+      const rodada=grupo.filter(c => numeroEtapa(c)===etapaAtual);
+      const unicos=new Map();
+      rodada.forEach((c,indice) => {
+        const id=String(c?.uuid || c?.id || c?.contagem_uuid || '').trim();
+        const palete=_paleteContagem(c);
+        const fallback=JSON.stringify([
+          etapaAtual,palete,c?.quantidade ?? c?.qtd ?? c?.qtd_contada,
+          c?.gtin_bipado || c?.codigoLido || c?.codigo_lido || c?.codigo_produto,
+          c?.timestamp || c?.criado_em || c?.dataHora || indice
+        ]);
+        const chave=id || fallback;
+        if(!unicos.has(chave)) unicos.set(chave,c);
+      });
+      [...unicos.values()]
+        .sort((a,b) => {
+          const oa=_ordemPaleteContagem(a), ob=_ordemPaleteContagem(b);
+          if(oa.grupo!==ob.grupo) return oa.grupo-ob.grupo;
+          if(oa.valor!==ob.valor) return oa.valor-ob.valor;
+          return oa.texto.localeCompare(ob.texto);
+        })
+        .forEach(c => {
+          const produto=_produtoContagemExibicao(c);
+          visiveis.push(Object.assign({},c,{
+            _ultima_visao:{
+              rodada:etapaAtual,
+              quantidade:c?.quantidade ?? c?.qtd ?? c?.qtd_contada ?? null,
+              produto:c?.gtin_bipado || c?.gtinLido || c?.gtin_lido || c?.codigo_lido || c?.codigoLido || c?.dunLido || c?.codigo_produto || c?.codigoProduto || c?.gtin || c?.ean || c?.dun || produto.codigo || '',
+              descricao:c?.descricao_produto || c?.descricaoProduto || c?.produto_descricao || c?.descricao || produto.descricao || '',
+              operador:c?.operador || c?.operador_nome || '',
+              data:c?.timestamp || c?.criado_em || c?.dataHora || '',
+              palete:_paleteContagem(c),
+              leitura_individual:true
+            }
+          }));
+        });
+    });
+    dados=visiveis;
   }
   if (fInv)    dados = dados.filter(c => String(c.inventario_id || c.inventarioId || '') === String(fInv));
   if (fTipo)   dados = dados.filter(c => c.tipo_contagem === fTipo);
@@ -343,7 +385,7 @@ function renderContagens() {
           const inv      = getInventarioPorId(c.inventario_id);
           const excluida = c._excluida === true;
           const rowStyle = excluida ? 'opacity:.45;background:#fafafa' : '';
-          const ultima=_ultimaRodadaContagem(c);
+          const ultima=c?._ultima_visao || _ultimaRodadaContagem(c);
           const codigoBipado=String(ultima.produto || '').trim();
           const cadastro=window.DTProdutos?.buscarSync?.(codigoBipado);
           const codigoInterno=String(cadastro?.codigoInterno || cadastro?.codigo_interno || cadastro?.codigoProduto || c?.codigo_produto || c?.codigoProduto || '').trim();
@@ -595,13 +637,85 @@ window.abrirAtribuirPendencias = abrirAtribuirPendencias;
 window.confirmarAtribuicaoPendencias = confirmarAtribuicaoPendencias;
 window.desvincularPendencia = desvincularPendencia;
 
+
+// ───────────────────────────────────────────────────────────────────
+//  PRODUTOS / PALETES ESPERADOS NAS PENDÊNCIAS
+// ───────────────────────────────────────────────────────────────────
+function _pendNumero(valor) {
+  if (valor === null || valor === undefined || String(valor).trim() === '') return 0;
+  const n = Number(String(valor).replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
+}
+function _pendQtdBase(item) {
+  return _pendNumero(item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ??
+    item?.quantidade_enderecada ?? item?.qtd_enderecada ?? item?.saldo_estoque ?? item?.saldo ?? item?.saldo_erp ??
+    item?.qtd_sistema ?? item?.qtd_estoque ?? item?.estoque_total ?? item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde);
+}
+function _pendCodigoProdutoBase(item) {
+  return String(item?.codigo_produto ?? item?.codigoProduto ?? item?.codigo_interno ?? item?.codigoInterno ??
+    item?.produto_codigo ?? item?.produtoCodigo ?? item?.gtin ?? item?.ean ?? item?.dun ?? item?.produto ?? 'SEM_PRODUTO').trim();
+}
+function _pendDescricaoProdutoBase(item, codigo) {
+  const propria = String(item?.descricao_produto ?? item?.descricaoProduto ?? item?.produto_descricao ??
+    item?.nomeProduto ?? item?.nome_produto ?? item?.descricao ?? '').trim();
+  if (propria) return propria;
+  const ach = window.DTProdutos?.buscarSync?.(codigo);
+  return ach?.encontrado ? String(ach.nomeProduto || ach.descricao || '').trim() : '';
+}
+function _pendIdPaleteBase(item, indice) {
+  return String(item?.palete ?? item?.pallet ?? item?.numero_palete ?? item?.numeroPalete ?? item?.capa_palete ??
+    item?.capa ?? item?.sscc ?? item?.lote ?? `Palete ${indice + 1}`).trim();
+}
+function _pendProdutosEndereco(inv, endereco) {
+  const norm = v => String(v ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const itens = (Array.isArray(inv?.base) ? inv.base : []).filter(item => norm(item?.endereco) === norm(endereco));
+  const grupos = new Map();
+  itens.forEach((item, indice) => {
+    const codigo = _pendCodigoProdutoBase(item);
+    const descricao = _pendDescricaoProdutoBase(item, codigo);
+    const chave = `${String(codigo).toUpperCase()}|${String(descricao).toUpperCase()}`;
+    if (!grupos.has(chave)) grupos.set(chave, { chave, codigo, descricao, quantidade_total:0, paletes:[] });
+    const grupo = grupos.get(chave);
+    const quantidade = _pendQtdBase(item);
+    grupo.quantidade_total += quantidade;
+    grupo.paletes.push({ identificador:_pendIdPaleteBase(item, indice), quantidade, item });
+  });
+  return [...grupos.values()].sort((a,b) => String(a.codigo).localeCompare(String(b.codigo), 'pt-BR', {numeric:true}));
+}
+function abrirDetalheProdutoPendencia(invId, endereco, produtoChave) {
+  const inv = getInventarioPorId(invId);
+  if (!inv) return showToast('Inventário não encontrado.', 'e');
+  const produto = _pendProdutosEndereco(inv, endereco).find(p => p.chave === produtoChave);
+  if (!produto) return showToast('Produto não encontrado na base desse endereço.', 'e');
+  document.getElementById('modal-pend-produto-bg')?.remove();
+  const linhas = produto.paletes.map((p, i) => `<div style="display:grid;grid-template-columns:minmax(120px,1fr) minmax(110px,.45fr);gap:14px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--border)">
+    <div><div style="font-size:.65rem;color:var(--muted);font-weight:700">PALETE ${i+1}</div><div class="mono" style="font-weight:850;margin-top:2px">${escHTML(p.identificador)}</div></div>
+    <div style="text-align:right"><div style="font-size:.65rem;color:var(--muted);font-weight:700">QUANTIDADE</div><div class="mono" style="font-size:1.05rem;font-weight:900">${escHTML(p.quantidade)}</div></div>
+  </div>`).join('');
+  document.body.insertAdjacentHTML('beforeend', `<div id="modal-pend-produto-bg" class="modal-bg open" style="display:flex;z-index:99999" onclick="if(event.target===this)this.remove()">
+    <div class="modal" style="width:min(720px,94vw);max-height:88vh;overflow:hidden;display:flex;flex-direction:column">
+      <div class="modal-head"><div><div class="modal-title">📦 Paletes do produto</div><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Endereço <span class="mono">${escHTML(endereco)}</span></div></div><button class="modal-x" onclick="document.getElementById('modal-pend-produto-bg')?.remove()">×</button></div>
+      <div style="padding:14px 16px;background:rgba(59,130,246,.06);border-bottom:1px solid var(--border)">
+        <div class="mono" style="font-weight:900">${escHTML(produto.codigo)}</div>
+        <div style="font-size:.82rem;margin-top:3px">${escHTML(produto.descricao || 'Produto sem descrição')}</div>
+        <div style="display:flex;gap:18px;margin-top:10px;font-size:.78rem"><strong>${produto.paletes.length} palete${produto.paletes.length===1?'':'s'}</strong><strong>Total: <span class="mono">${escHTML(produto.quantidade_total)}</span></strong></div>
+      </div>
+      <div style="overflow:auto">${linhas || '<div class="empty"><div class="empty-title">Nenhum palete cadastrado</div></div>'}</div>
+    </div>
+  </div>`);
+}
+window.abrirDetalheProdutoPendencia = abrirDetalheProdutoPendencia;
+
 // ───────────────────────────────────────────────────────────────────
 //  15. RENDERIZAÇÃO — PENDÊNCIAS
 // ───────────────────────────────────────────────────────────────────
 
 function renderPendencias() {
   const selInv = document.getElementById('pend-sel-inv');
-  const busca  = (document.getElementById('pend-busca')?.value || '').toLowerCase();
+  const buscaBruta = String(document.getElementById('pend-busca')?.value || '').trim().toLowerCase();
+  const normalizarBuscaPend = v => String(v ?? '').trim().toLowerCase();
+  const normalizarEnderecoPend = v => normalizarBuscaPend(v).replace(/[^a-z0-9]/g, '');
+  const buscaEndereco = normalizarEnderecoPend(buscaBruta);
   const fStatus= document.getElementById('pend-fstatus')?.value || '';
   const fLocal = document.getElementById('pend-flocal')?.value || '';
   const fRua   = document.getElementById('pend-frua')?.value || '';
@@ -657,7 +771,8 @@ function renderPendencias() {
     else                     status_pend = 'PENDENTE';
 
     const atribuicao = _pendAtribuicao(invId, e.endereco);
-    return { ...e, contado, vazioConf, inativo, limiteTingido, usados, status_pend, atribuicao };
+    const produtos = _pendProdutosEndereco(inv, e.endereco);
+    return { ...e, contado, vazioConf, inativo, limiteTingido, usados, status_pend, atribuicao, produtos };
   });
 
   // Filtro de locais
@@ -679,11 +794,18 @@ function renderPendencias() {
   if (fStatus) filtrado = filtrado.filter(e => e.status_pend === fStatus);
   if (fLocal)  filtrado = filtrado.filter(e => (e.setor || '—') === fLocal);
   if (fRua)    filtrado = filtrado.filter(e => (e.rua || extrairRua(e.endereco) || '—') === fRua);
-  if (busca)   filtrado = filtrado.filter(e =>
-    e.endereco.toLowerCase().includes(busca) ||
-    (e.setor || '').toLowerCase().includes(busca) ||
-    (e.rua || extrairRua(e.endereco) || '').toLowerCase().includes(busca)
-  );
+  if (buscaBruta) filtrado = filtrado.filter(e => {
+    const endereco = normalizarBuscaPend(e.endereco);
+    const enderecoNormalizado = normalizarEnderecoPend(e.endereco);
+    const setor = normalizarBuscaPend(e.setor);
+    const rua = normalizarBuscaPend(e.rua || extrairRua(e.endereco));
+    const produtosTexto = normalizarBuscaPend((e.produtos || []).map(p => `${p.codigo} ${p.descricao}`).join(' '));
+    return endereco.includes(buscaBruta) ||
+      (buscaEndereco && enderecoNormalizado.includes(buscaEndereco)) ||
+      setor.includes(buscaBruta) ||
+      rua.includes(buscaBruta) ||
+      produtosTexto.includes(buscaBruta);
+  });
 
   // KPIs — conferidos = contados + vazios_confirmados (ambos saem das pendências)
   const total        = lista.length;
@@ -718,26 +840,30 @@ function renderPendencias() {
     ${limiteAting > 0 ? `<div class="alert warn" style="margin:8px 16px 0;border-radius:8px">🔒 ${limiteAting} endereço(s) com limite de paletes atingido.</div>` : ''}
     <div id="pend-selection-bar" style="display:${_pendSelecionados.size?'flex':'none'};align-items:center;justify-content:space-between;gap:12px;margin:12px 16px 0;padding:10px 12px;border:1px solid rgba(232,117,26,.28);background:rgba(232,117,26,.06);border-radius:10px"><strong id="pend-selection-count">${_pendSelecionados.size} endereço(s) selecionado(s)</strong><button class="btn btn-primary btn-sm" onclick="abrirAtribuirPendencias()">👥 Atribuir selecionados</button></div>
     <div class="tbl-wrap"><table>
-      <thead><tr><th style="width:38px"><input type="checkbox" onchange="pendToggleTodos(this.checked)" title="Selecionar pendentes"></th><th>Endereço</th><th>Local/Área</th><th>Rua</th><th>Nível</th><th>Tipo</th><th>Paletes (usados/cap)</th><th>Operador atribuído</th><th>Status</th><th>Ação</th></tr></thead>
+      <thead><tr><th style="width:38px"><input type="checkbox" onchange="pendToggleTodos(this.checked)" title="Selecionar pendentes"></th><th>Endereço</th><th>Produto</th><th>Quantidade total</th><th>Paletes do produto</th><th>Local/Área</th><th>Rua</th><th>Nível</th><th>Tipo</th><th>Paletes (usados/cap)</th><th>Operador atribuído</th><th>Status</th><th>Ação</th></tr></thead>
       <tbody>
-        ${filtrado.map(e => {
+        ${filtrado.flatMap(e => {
           const s = statusLabel[e.status_pend] || { cls:'b-gray', txt: e.status_pend };
           const cap = e.capacidade_paletes !== null ? String(e.capacidade_paletes) : '∞';
           const podeAtribuir = e.status_pend === 'PENDENTE';
           const op = e.atribuicao?.operador || e.atribuicao?.operador_responsavel || '';
           const opCurto = typeof _nomeCurtoOperador === 'function' ? _nomeCurtoOperador(op) : op;
-          return `<tr style="${e.inativo || e.limiteTingido ? 'opacity:.6' : ''}">
+          const produtos = e.produtos?.length ? e.produtos : [{chave:'SEM_PRODUTO',codigo:'—',descricao:'Nenhum produto cadastrado',quantidade_total:0,paletes:[]}];
+          return produtos.map((produto, indiceProduto) => `<tr style="${e.inativo || e.limiteTingido ? 'opacity:.6' : ''}">
             <td><input class="pend-row-check" data-endereco="${escHTML(e.endereco)}" type="checkbox" ${_pendSelecionados.has(e.endereco)?'checked':''} ${podeAtribuir?'':'disabled'} onchange="pendToggleEndereco('${escHTML(e.endereco)}',this.checked)"></td>
-            <td class="mono">${e.endereco}</td>
-            <td>${e.setor || '—'}</td>
-            <td>${e.rua || '—'}</td>
-            <td>${e.nivel || '—'}</td>
-            <td>${e.tipo || '—'}</td>
+            <td class="mono">${escHTML(e.endereco)}</td>
+            <td><button type="button" class="btn btn-ghost btn-sm" style="text-align:left;white-space:normal;justify-content:flex-start;padding:5px 7px" onclick="abrirDetalheProdutoPendencia('${escHTML(invId)}','${escHTML(e.endereco)}',${JSON.stringify(produto.chave)})"><span><span class="mono" style="font-weight:850">${escHTML(produto.codigo)}</span>${produto.descricao?`<span style="display:block;font-size:.69rem;color:var(--muted);margin-top:2px">${escHTML(produto.descricao)}</span>`:''}</span></button></td>
+            <td class="mono" style="font-weight:900">${escHTML(produto.quantidade_total)}</td>
+            <td><button type="button" class="btn btn-ghost btn-sm" onclick="abrirDetalheProdutoPendencia('${escHTML(invId)}','${escHTML(e.endereco)}',${JSON.stringify(produto.chave)})">📦 ${produto.paletes.length} — detalhar</button></td>
+            <td>${escHTML(e.setor || '—')}</td>
+            <td>${escHTML(e.rua || '—')}</td>
+            <td>${escHTML(e.nivel || '—')}</td>
+            <td>${escHTML(e.tipo || '—')}</td>
             <td class="mono" style="font-weight:700;color:${e.limiteTingido?'var(--danger)':'inherit'}">${e.usados}/${cap}</td>
             <td>${op ? `<span class="badge b-purple">👤 ${escHTML(opCurto)}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
             <td><span class="badge ${s.cls}">${s.txt}</span></td>
             <td>${podeAtribuir ? (op ? `<button class="btn btn-ghost btn-sm" onclick="desvincularPendencia('${escHTML(e.endereco)}')">Desvincular</button>` : `<button class="btn btn-primary btn-sm" onclick="abrirAtribuirPendencias('${escHTML(e.endereco)}')">👥 Atribuir</button>`) : '—'}</td>
-          </tr>`;
+          </tr>`);
         }).join('')}
       </tbody>
     </table></div>`;

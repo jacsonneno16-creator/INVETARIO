@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v213-recontagem-capacidade-paletes';
+var CACHE='dt-inventario-v216-produtos-pendencias';
 var PRECACHE=[
   '/',
   '/index.html',

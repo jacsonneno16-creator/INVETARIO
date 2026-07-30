@@ -785,9 +785,27 @@ function renderDivergencias() {
     // coincidem com o sistema ou com uma contagem anterior.
     const totalEsperadoEndereco = _totalEsperadoEnderecoRec(principal);
     principal._qtd_esperada_endereco = totalEsperadoEndereco;
-    // A linha consolidada representa o endereco inteiro. Para decidir o consenso,
-    // comparar o total contado com o total esperado do endereco, sem exigir que
-    // todas as rodadas tenham repetido o mesmo codigo de produto.
+
+    // A fonte autoritativa das quantidades de cada rodada é o motor central.
+    // Ele soma TODAS as leituras/paletes de dt_contagens por endereço e rodada.
+    // Nunca usar somente a contagem que originou a divergência, pois em uma
+    // contagem em lote ela representa apenas um palete (ex.: 60), enquanto o
+    // total real da rodada pode ser 15 x 60 = 900.
+    const historicoCentral = window.AnalistaDivergenciasRuntime?.historicoEndereco?.(principal);
+    if (historicoCentral) {
+      principal.qtd_primeira = historicoCentral.qtd_primeira;
+      principal.qtd_contada = historicoCentral.qtd_primeira;
+      principal.qtd_segunda = historicoCentral.qtd_segunda;
+      principal.qtd_terceira = historicoCentral.qtd_terceira;
+      principal.produto_primeira = historicoCentral.qtd_primeira == null ? '' : 'TOTAL_ENDERECO';
+      principal.produto_segunda = historicoCentral.qtd_segunda == null ? '' : 'TOTAL_ENDERECO';
+      principal.produto_terceira = historicoCentral.qtd_terceira == null ? '' : 'TOTAL_ENDERECO';
+      principal._historico_total_endereco = historicoCentral;
+      principal._vezes_contado = 1 + (historicoCentral.qtd_segunda != null ? 1 : 0) + (historicoCentral.qtd_terceira != null ? 1 : 0);
+    }
+
+    // A linha consolidada representa o endereço inteiro. Para decidir o consenso,
+    // comparar os totais completos das rodadas com o total esperado do endereço.
     _aplicarAvaliacaoConsolidadaRec(principal, totalEsperadoEndereco);
     return principal;
   });
