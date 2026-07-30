@@ -13,6 +13,42 @@ function _ordemPaleteContagem(c){
   return {grupo:1, valor:0, texto:pal || String(c?.criado_em || c?.dataHora || c?.timestamp || '')};
 }
 
+
+// Fonte única da visão física atual: para cada inventário/endereço, retorna
+// somente os paletes da rodada mais recente. Rodadas anteriores ficam apenas
+// no histórico e nunca entram nos totais ou exportações operacionais.
+function _linhasFisicasAtuais(inventarioId){
+  const st=state();
+  const FK=window.InventoryFlowKey;
+  if(!FK) return [];
+  const validas=(st.contagens || []).filter(c => {
+    if(c?._excluida || ['ESTORNADA','EXCLUIDA'].includes(String(c?.status || '').toUpperCase())) return false;
+    const id=String(c?.inventario_id || c?.inventarioId || '');
+    return !inventarioId || id===String(inventarioId);
+  });
+  const etapa=c => String(c?.tipo_contagem || 'PRIMEIRA').toUpperCase()==='RECONTAGEM'
+    ? Math.min(3,1+Math.max(1,Number(c?.numero_recontagem || 1))) : 1;
+  const chaveEndereco=c => {
+    const id=String(c?.inventario_id || c?.inventarioId || '');
+    const inv=(st.inventarios || []).find(i => [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId].filter(Boolean).map(String).includes(id));
+    return `${String(inv?.id || id)}|${FK.endereco(c?.endereco)}`;
+  };
+  const grupos=new Map();
+  validas.forEach(c => { const k=chaveEndereco(c); if(!grupos.has(k)) grupos.set(k,[]); grupos.get(k).push(c); });
+  const saida=[];
+  grupos.forEach(grupo => {
+    const ultima=Math.max(...grupo.map(etapa));
+    const unicos=new Map();
+    grupo.filter(c => etapa(c)===ultima).forEach((c,indice) => {
+      const id=String(c?.uuid || c?.id || c?.contagem_uuid || '').trim();
+      const fallback=JSON.stringify([ultima,_paleteContagem(c),c?.quantidade ?? c?.qtd ?? c?.qtd_contada,c?.gtin_bipado || c?.codigoLido || c?.codigo_lido || c?.codigo_produto,c?.timestamp || c?.criado_em || c?.dataHora || indice]);
+      if(!unicos.has(id || fallback)) unicos.set(id || fallback,c);
+    });
+    saida.push(...unicos.values());
+  });
+  return saida;
+}
+window.DTContagemFisicaAtual={linhas:_linhasFisicasAtuais};
 function _produtoContagemExibicao(c){
   const codigo=c?.codigo_produto||c?.codigoProduto||c?.gtin||c?.ean||c?.dun||c?.codigo_lido||c?.codigoLido||'';
   const atual=String(c?.descricao_produto||c?.descricaoProduto||c?.descricao||'').trim();
@@ -221,76 +257,22 @@ function renderContagens() {
   }
 
   let dados = state().contagens || [];
-  // Cada rodada de recontagem gerava sua própria linha aqui, então um endereço
-  // recontado 2x aparecia 3x na lista (1ª + 2ª + 3ª) — confuso e redundante,
-  // já que essas rodadas já são exibidas com detalhe na aba Recontagem. Por
-  // padrão mostramos só a 1ª contagem de cada endereço, com um badge dizendo
-  // em qual rodada ele finalmente bateu. Quem quiser ver as rodadas de
-  // recontagem em si pode filtrar explicitamente por Tipo = Recontagem.
   if (!fTipo) {
-    // A aba Contagens representa a rodada mais recente de cada endereço.
-    // Se uma nova rodada tiver 10 paletes, ela substitui visualmente os 20
-    // paletes da rodada anterior. O histórico permanece preservado no estado e
-    // continua disponível na aba Recontagem; aqui não misturamos rodadas.
-    const validas = dados.filter(c =>
-      !c?._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(c?.status || '').toUpperCase())
-    );
-    const chaveEndereco = c => {
-      const id=String(c.inventario_id || c.inventarioId || '');
-      const inv=(state().inventarios || []).find(i =>
-        [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
-          .filter(Boolean).map(String).includes(id));
-      return `${String(inv?.id || id)}|${FK.endereco(c?.endereco)}`;
-    };
-    const numeroEtapa = c => String(c?.tipo_contagem || 'PRIMEIRA').toUpperCase()==='RECONTAGEM'
-      ? Math.min(3, 1 + Math.max(1, Number(c?.numero_recontagem || 1)))
-      : 1;
-    const gruposEndereco = new Map();
-    validas.forEach(c => {
-      const chave=chaveEndereco(c);
-      if(!gruposEndereco.has(chave)) gruposEndereco.set(chave,[]);
-      gruposEndereco.get(chave).push(c);
+    dados=_linhasFisicasAtuais().map(c => {
+      const produto=_produtoContagemExibicao(c);
+      const rodada=String(c?.tipo_contagem || 'PRIMEIRA').toUpperCase()==='RECONTAGEM'
+        ? Math.min(3,1+Math.max(1,Number(c?.numero_recontagem || 1))) : 1;
+      return Object.assign({},c,{_ultima_visao:{
+        rodada,
+        quantidade:c?.quantidade ?? c?.qtd ?? c?.qtd_contada ?? null,
+        produto:c?.gtin_bipado || c?.gtinLido || c?.gtin_lido || c?.codigo_lido || c?.codigoLido || c?.dunLido || c?.codigo_produto || c?.codigoProduto || c?.gtin || c?.ean || c?.dun || produto.codigo || '',
+        descricao:c?.descricao_produto || c?.descricaoProduto || c?.produto_descricao || c?.descricao || produto.descricao || '',
+        operador:c?.operador || c?.operador_nome || '',
+        data:c?.timestamp || c?.criado_em || c?.dataHora || '',
+        palete:_paleteContagem(c),
+        leitura_individual:true
+      }});
     });
-    const visiveis=[];
-    gruposEndereco.forEach(grupo => {
-      const etapaAtual=Math.max(...grupo.map(numeroEtapa));
-      const rodada=grupo.filter(c => numeroEtapa(c)===etapaAtual);
-      const unicos=new Map();
-      rodada.forEach((c,indice) => {
-        const id=String(c?.uuid || c?.id || c?.contagem_uuid || '').trim();
-        const palete=_paleteContagem(c);
-        const fallback=JSON.stringify([
-          etapaAtual,palete,c?.quantidade ?? c?.qtd ?? c?.qtd_contada,
-          c?.gtin_bipado || c?.codigoLido || c?.codigo_lido || c?.codigo_produto,
-          c?.timestamp || c?.criado_em || c?.dataHora || indice
-        ]);
-        const chave=id || fallback;
-        if(!unicos.has(chave)) unicos.set(chave,c);
-      });
-      [...unicos.values()]
-        .sort((a,b) => {
-          const oa=_ordemPaleteContagem(a), ob=_ordemPaleteContagem(b);
-          if(oa.grupo!==ob.grupo) return oa.grupo-ob.grupo;
-          if(oa.valor!==ob.valor) return oa.valor-ob.valor;
-          return oa.texto.localeCompare(ob.texto);
-        })
-        .forEach(c => {
-          const produto=_produtoContagemExibicao(c);
-          visiveis.push(Object.assign({},c,{
-            _ultima_visao:{
-              rodada:etapaAtual,
-              quantidade:c?.quantidade ?? c?.qtd ?? c?.qtd_contada ?? null,
-              produto:c?.gtin_bipado || c?.gtinLido || c?.gtin_lido || c?.codigo_lido || c?.codigoLido || c?.dunLido || c?.codigo_produto || c?.codigoProduto || c?.gtin || c?.ean || c?.dun || produto.codigo || '',
-              descricao:c?.descricao_produto || c?.descricaoProduto || c?.produto_descricao || c?.descricao || produto.descricao || '',
-              operador:c?.operador || c?.operador_nome || '',
-              data:c?.timestamp || c?.criado_em || c?.dataHora || '',
-              palete:_paleteContagem(c),
-              leitura_individual:true
-            }
-          }));
-        });
-    });
-    dados=visiveis;
   }
   if (fInv)    dados = dados.filter(c => String(c.inventario_id || c.inventarioId || '') === String(fInv));
   if (fTipo)   dados = dados.filter(c => c.tipo_contagem === fTipo);
@@ -339,7 +321,7 @@ function renderContagens() {
   window.__contagensVisiveis = dados.slice();
 
   // KPIs Contagens
-  const _allConts = state().contagens.filter(c => !c._excluida && c.status !== 'ESTORNADA');
+  const _allConts = _linhasFisicasAtuais();
   const _setCK = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
   _setCK('ck-total',       _allConts.length);
   _setCK('ck-processadas', _allConts.filter(c => c.status === 'PROCESSADO').length);

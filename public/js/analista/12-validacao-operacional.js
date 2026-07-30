@@ -297,3 +297,129 @@ function salvarCapacidade(endCod, novaCap) {
   if (!result.ok) { showToast('Capacidade inválida', 'e'); return; }
 }
 
+
+// ───────────────────────────────────────────────────────────────────
+// ESTORNO COMPLETO DO ENDEREÇO
+// O botão da aba Contagens estorna a fotografia física inteira do endereço,
+// incluindo 1ª/2ª/3ª rodadas, preservando o histórico e liberando uma nova
+// primeira contagem. Não remove documentos do Firebase.
+// ───────────────────────────────────────────────────────────────────
+let _estornoContagemSelecionadaId = '';
+
+function abrirEstorno(contId) {
+  const cont = state().contagens.find(c => String(c.id || c.uuid) === String(contId));
+  if (!cont) {
+    showToast('Contagem não encontrada para estorno.', 'e');
+    return;
+  }
+  _estornoContagemSelecionadaId = String(cont.id || cont.uuid || contId);
+  const info = document.getElementById('estorno-info');
+  if (info) info.innerHTML = `<b>Endereço:</b> ${escHTML(cont.endereco || '—')}<br><span>O estorno será aplicado a todas as rodadas e paletes ativos deste endereço. O histórico será mantido.</span>`;
+  const operador = document.getElementById('estorno-operador');
+  if (operador && !operador.value) operador.value = _currentAnalistaUser?.displayName || _currentAnalistaUser?.email || '';
+  const motivo = document.getElementById('estorno-motivo');
+  const obs = document.getElementById('estorno-obs');
+  if (motivo) motivo.value = '';
+  if (obs) obs.value = '';
+  openModal('modal-estorno');
+}
+
+async function confirmarEstorno() {
+  const cont = state().contagens.find(c => String(c.id || c.uuid) === String(_estornoContagemSelecionadaId));
+  if (!cont) return showToast('Contagem não encontrada para estorno.', 'e');
+  const operador = String(document.getElementById('estorno-operador')?.value || '').trim();
+  const motivo = String(document.getElementById('estorno-motivo')?.value || '').trim();
+  const observacao = String(document.getElementById('estorno-obs')?.value || '').trim();
+  if (!operador) return showToast('Informe o operador responsável pelo estorno.', 'w');
+  if (!motivo) return showToast('Selecione o motivo do estorno.', 'w');
+
+  const invId = String(cont.inventario_id || cont.inventarioId || '');
+  const endereco = String(cont.endereco || '').trim().toUpperCase();
+  const agora = new Date().toISOString();
+  const analistaEmail = _currentAnalistaUser?.email || '';
+  const mesmas = state().contagens.filter(c =>
+    String(c.inventario_id || c.inventarioId || '') === invId &&
+    String(c.endereco || '').trim().toUpperCase() === endereco &&
+    !c._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(c.status || '').toUpperCase())
+  );
+  if (!mesmas.length) return showToast('Não há contagens ativas neste endereço.', 'w');
+
+  mesmas.forEach(c => {
+    c.status = 'ESTORNADA';
+    c._excluida = true;
+    c._excluida_em = agora;
+    c._excluida_por = operador;
+    c._excluida_por_email = analistaEmail;
+    c._motivo_estorno = motivo;
+    c.estorno_observacao = observacao;
+    c.estorno_origem = 'ANALISTA';
+  });
+
+  const divs = (state().divergencias || []).filter(d =>
+    String(d.inventario_id || d.inventarioId || '') === invId &&
+    String(d.endereco || '').trim().toUpperCase() === endereco &&
+    !['CANCELADA','EXCLUIDA','ESTORNADA','RESOLVIDA'].includes(String(d.status || '').toUpperCase())
+  );
+  divs.forEach(d => {
+    d.status = 'CANCELADA';
+    d.status_recontagem = 'CANCELADA';
+    d.cancelada_em = agora;
+    d.cancelada_motivo = 'CONTAGEM_ESTORNADA_ANALISTA';
+  });
+  const divIds = new Set(divs.map(d => String(d.id || d.divergencia_id || '')));
+  const recs = (state().recontagens || []).filter(r =>
+    (String(r.inventario_id || r.inventarioId || '') === invId && String(r.endereco || '').trim().toUpperCase() === endereco) ||
+    divIds.has(String(r.divergencia_id || ''))
+  ).filter(r => !['CONCLUIDA','CONCLUÍDA','CANCELADA','EXCLUIDA'].includes(String(r.status || r.status_recontagem || '').toUpperCase()));
+  recs.forEach(r => {
+    r.status = 'CANCELADA';
+    r.status_recontagem = 'CANCELADA';
+    r.cancelada_em = agora;
+    r.cancelada_motivo = 'CONTAGEM_ESTORNADA_ANALISTA';
+  });
+
+  saveAll();
+  try {
+    if (navigator.onLine && window.FS_AN) {
+      const updates = [];
+      mesmas.forEach(c => {
+        const docId = String(c.uuid || c.id || '');
+        if (!docId) return;
+        const col = String(c.tipo_contagem || '').toUpperCase() === 'VAZIO' ? 'dt_vazios' : 'dt_contagens';
+        updates.push(FS_AN.collection(col).doc(docId).set({
+          status:'ESTORNADA', _excluida:true, _excluida_em:agora,
+          _excluida_por:operador, _excluida_por_email:analistaEmail,
+          _motivo_estorno:motivo, estorno_observacao:observacao,
+          estorno_origem:'ANALISTA'
+        }, {merge:true}));
+      });
+      divs.forEach(d => {
+        const id = String(d.id || d.divergencia_id || '');
+        if (id) updates.push(FS_AN.collection('dt_divergencias').doc(id).set({status:'CANCELADA',status_recontagem:'CANCELADA',cancelada_em:agora,cancelada_motivo:'CONTAGEM_ESTORNADA_ANALISTA'}, {merge:true}));
+      });
+      recs.forEach(r => {
+        const id = String(r.id || r.recontagem_id || '');
+        if (id) updates.push(FS_AN.collection('dt_recontagens').doc(id).set({status:'CANCELADA',status_recontagem:'CANCELADA',cancelada_em:agora,cancelada_motivo:'CONTAGEM_ESTORNADA_ANALISTA'}, {merge:true}));
+      });
+      await Promise.all(updates);
+    }
+  } catch (e) {
+    console.warn('[Estorno] Persistência parcial:', e);
+    showToast('Estorno aplicado localmente, mas houve falha ao sincronizar parte dos dados.', 'w');
+  }
+
+  closeModal('modal-estorno');
+  _estornoContagemSelecionadaId = '';
+  renderContagens();
+  if (typeof renderRecontagens === 'function') renderRecontagens();
+  atualizarBadgesNav();
+  logSistema('ESTORNO_ENDERECO', `Endereço ${cont.endereco} estornado pelo analista`, {
+    inventario_id:invId, endereco:cont.endereco, registros:mesmas.length,
+    divergencias_canceladas:divs.length, recontagens_canceladas:recs.length,
+    motivo, observacao, operador
+  });
+  showToast(`Endereço ${cont.endereco} liberado para uma nova contagem.`, 's');
+}
+
+window.abrirEstorno = abrirEstorno;
+window.confirmarEstorno = confirmarEstorno;

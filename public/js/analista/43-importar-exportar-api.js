@@ -195,29 +195,38 @@
     };
   }
   function consolidatedRows(id) {
-    var firstByFlow = {};
-    inventoryRows(id).forEach(function (row) {
-      if (row._excluida || String(row.status || '').toUpperCase() === 'ESTORNADA') return;
-      if (String(row.tipo_contagem || 'PRIMEIRA').toUpperCase() === 'RECONTAGEM') return;
-      var key = flowKey(row);
-      var current = firstByFlow[key];
-      var date = String(row.timestamp || row.criado_em || row.dataHora || '');
-      var currentDate = current ? String(current.timestamp || current.criado_em || current.dataHora || '') : '';
-      if (!current || date.localeCompare(currentDate) < 0) firstByFlow[key] = row;
-    });
-    return Object.keys(firstByFlow).map(function (flow) {
-      var first = firstByFlow[flow], finalRow = finalPhysicalRow(first);
-      if (!finalRow) return null;
+    // Exporta exclusivamente a fotografia física mais recente de cada endereço.
+    // Se uma recontagem registrou menos paletes, os paletes das rodadas anteriores
+    // não permanecem no arquivo e não são somados novamente.
+    var source = global.DTContagemFisicaAtual && typeof global.DTContagemFisicaAtual.linhas === 'function'
+      ? global.DTContagemFisicaAtual.linhas(id)
+      : inventoryRows(id).filter(function(row){
+          return !row._excluida && ['ESTORNADA','EXCLUIDA'].indexOf(String(row.status || '').toUpperCase()) < 0;
+        });
+    var seen = {};
+    return source.map(function (row, index) {
+      var code = scannedCode(row);
+      var found = global.DTProdutos && global.DTProdutos.buscarSync ? global.DTProdutos.buscarSync(code) : null;
+      var key = String(row.uuid || row.id || row.contagem_uuid || '') || [
+        inventoryId(row), String(row.endereco || '').trim().toUpperCase(),
+        String(row.palete || row.palete_key || row.capa_palete || row.capa || ''),
+        code, countedQty(row), String(row.timestamp || row.criado_em || row.dataHora || index)
+      ].join('|');
+      if (seen[key]) return null;
+      seen[key] = true;
+      var rodada = String(row.tipo_contagem || 'PRIMEIRA').toUpperCase() === 'RECONTAGEM'
+        ? Math.min(3, 1 + Math.max(1, Number(row.numero_recontagem || 1))) : 1;
       return {
-        endereco:String(first.endereco || '').trim(),
-        gtin:String(finalRow.codigo || '').trim(),
-        descricao_produto:finalRow.descricao || '',
-        quantidade:Number(finalRow.quantidade) || 0,
-        lote_produto:String(finalRow.lote_produto || '').trim(),
-        validade:String(finalRow.validade || '').trim(),
-        palete:String(finalRow.palete || '').trim(),
-        rodada_resultado:finalRow.rodada,
-        motivo_resultado:finalRow.motivo
+        endereco:String(row.endereco || '').trim(),
+        gtin:String(code || '').trim(),
+        descricao_produto:row.descricao_produto || row.produtoLidoNome || row.produto_descricao || row.descricao ||
+          (found && found.encontrado ? found.nomeProduto : ''),
+        quantidade:countedQty(row),
+        lote_produto:String(row.lote_produto || row.lote || row.numero_lote_produto || '').trim(),
+        validade:String(row.validade || row.data_validade || '').trim(),
+        palete:String(row.palete || row.palete_key || row.capa_palete || row.capa || '').trim(),
+        rodada_resultado:rodada,
+        motivo_resultado:rodada === 1 ? 'PRIMEIRA_CONTAGEM' : 'RECONTAGEM_' + (rodada - 1)
       };
     }).filter(Boolean);
   }
