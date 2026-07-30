@@ -105,11 +105,22 @@
   }
 
   function _snapshotEsperadoEndereco(inv,endereco){
+    if (global.InventoryAddressState?.snapshotExpected) return global.InventoryAddressState.snapshotExpected(inv, endereco);
     // A base pode trazer uma linha por palete. Para a conferência operacional,
     // o esperado deve ser o total do produto no endereço, não cada linha isolada.
     const grupos = new Map();
+    const vistos = new Set();
     (inv?.base||[]).filter(item=>_nd(item.endereco)===_nd(endereco)).forEach(item=>{
       const codigo = _idPrincipalBase(item) || _idsProduto(item)[0] || 'SEM_PRODUTO';
+      const palete = item?.palete_id ?? item?.pallet_id ?? item?.palete ?? item?.pallet ?? item?.numero_palete ?? item?.palete_numero ?? item?.sequencia_palete ?? '';
+      // A sincronizacao pode recriar a mesma linha com outro id de documento.
+      // Por isso a deduplicacao deve usar a identidade operacional da linha,
+      // e nao o id tecnico do cache/Firestore.
+      const lote = item?.lote ?? item?.lote_id ?? item?.numero_lote ?? '';
+      const validade = item?.validade ?? item?.data_validade ?? '';
+      const chaveRegistro = ['BASE', _nd(endereco), _nd(palete), _nd(codigo), _nd(lote), _nd(validade), String(_qtdEsperadaItem(item))].join('|');
+      if (vistos.has(chaveRegistro)) return;
+      vistos.add(chaveRegistro);
       const chave = _nd(codigo);
       const atual = grupos.get(chave) || {
         codigo_produto: codigo,
@@ -198,6 +209,7 @@
   // antigos. Cada rodada confirma quando produto E quantidade coincidem com o
   // sistema ou com qualquer contagem anterior.
   function _avaliarHistoricoContagens(obj){
+    if (global.InventoryAddressState?.fromHistory) return global.InventoryAddressState.fromHistory(obj);
     const sistema = _parContagem(obj.qtd_esperada, obj.produto);
     const primeira = _parContagem(
       obj.qtd_primeira ?? obj.qtd_contada,
@@ -307,6 +319,18 @@
   }
 
   function _historicoConsolidadoEndereco(div){
+    if (global.InventoryAddressState?.consolidate) {
+      const consolidado = global.InventoryAddressState.consolidate({ state: state(), record: div });
+      return Object.assign({}, div || {}, {
+        qtd_esperada: consolidado.esperado, qtd_primeira: consolidado.primeira, qtd_contada: consolidado.primeira,
+        produto_primeira: 'TOTAL_ENDERECO', qtd_segunda: consolidado.segunda,
+        produto_segunda: consolidado.segunda == null ? '' : 'TOTAL_ENDERECO',
+        qtd_terceira: consolidado.terceira, produto_terceira: consolidado.terceira == null ? '' : 'TOTAL_ENDERECO',
+        comparacao_somente_quantidade: true, fluxo_consolidado_endereco: true,
+        _divergencias: consolidado.divergencias, _recontagens: consolidado.recontagens, _contagens: consolidado.contagens,
+        _estado_consolidado: consolidado
+      });
+    }
     const invId = _idInventarioRegistro(div);
     const endereco = _nd(div?.endereco);
     const mesmoEndereco = obj =>
@@ -1891,6 +1915,9 @@
     avaliarHistorico: _avaliarHistoricoContagens,
     avaliarResumo: _avaliarResumoConsolidado,
     historicoEndereco: _historicoConsolidadoEndereco,
+    snapshotEsperadoEndereco: (inventario, endereco) => _snapshotEsperadoEndereco(inventario, endereco),
+    totalEsperadoEndereco: (inventario, endereco) => _snapshotEsperadoEndereco(inventario, endereco)
+      .reduce((total, item) => total + _qtdEsperadaItem(item), 0),
     avaliarEndereco: d => _avaliarHistoricoContagens(_historicoConsolidadoEndereco(d))
   };
 
