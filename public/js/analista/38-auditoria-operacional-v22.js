@@ -470,6 +470,49 @@
   function rotuloStatus(s){ return ({PENDENTE:'Pendente',OK:'OK',DIVERGENTE:'Divergente',ENDERECO_VAZIO:'Endereço vazio'})[s] || s; }
   function classeStatus(s){ return s==='OK'?'ok':s==='DIVERGENTE'?'err':s==='ENDERECO_VAZIO'?'warn':'pending'; }
 
+  const COLUNAS_AUDITORIA = [
+    {chave:'endereco', rotulo:'Endereço', classe:'mono', valor:i=>i.endereco || '—'},
+    {chave:'dunEsperado', rotulo:'DUN esperado', classe:'mono', valor:i=>i.dunEsperado || '—'},
+    {chave:'produtoEsperado', rotulo:'Produto esperado', classe:'auditoria-produto', valor:i=>i.produtoEsperado || '—'},
+    {chave:'dunLido', rotulo:'DUN lido', classe:'mono', valor:i=>i.dunLido || '—'},
+    {chave:'produtoLido', rotulo:'Produto lido', classe:'auditoria-produto', valor:i=>i.produtoLido || '—'},
+    {chave:'status', rotulo:'Resultado', classe:'auditoria-resultado', valor:i=>rotuloStatus(i.status)},
+    {chave:'operadorNome', rotulo:'Operador', classe:'auditoria-operador', valor:i=>i.operadorNome || '—'},
+    {chave:'lidoEm', rotulo:'Data/Hora', classe:'auditoria-data', valor:i=>fmt(i.lidoEm)}
+  ];
+
+  function criarLinhaAuditoria(item){
+    const tr=document.createElement('tr');
+    tr.className='auditoria-linha';
+    tr.dataset.itemId=txt(item.id);
+    COLUNAS_AUDITORIA.forEach(function(coluna){
+      const td=document.createElement('td');
+      td.className=txt(coluna.classe);
+      td.dataset.coluna=coluna.chave;
+      td.setAttribute('aria-label',coluna.rotulo);
+      if(coluna.chave==='status'){
+        const badge=document.createElement('span');
+        badge.className='badge '+classeStatus(item.status);
+        badge.textContent=coluna.valor(item);
+        td.appendChild(badge);
+      }else{
+        td.textContent=coluna.valor(item);
+      }
+      tr.appendChild(td);
+    });
+    return tr;
+  }
+
+  function mostrarMensagemTabela(tbody,mensagem){
+    const tr=document.createElement('tr');
+    const td=document.createElement('td');
+    td.colSpan=COLUNAS_AUDITORIA.length;
+    td.className='auditoria-tabela-mensagem';
+    td.textContent=mensagem;
+    tr.appendChild(td);
+    tbody.replaceChildren(tr);
+  }
+
   function renderizar(){
     const r = resumo();
     const set = (id,v) => { const e=document.getElementById(id); if(e)e.textContent=v; };
@@ -482,16 +525,13 @@
     paginaAtual=Math.min(paginaAtual,paginas);
     const inicio=(paginaAtual-1)*ITENS_POR_PAGINA;
     const pagina=lista.slice(inicio,inicio+ITENS_POR_PAGINA);
-    tbody.innerHTML = pagina.length ? pagina.map(i => `<tr>
-      <td class="mono">${esc(i.endereco)}</td>
-      <td class="mono">${esc(i.dunEsperado)}</td>
-      <td>${esc(i.produtoEsperado)}</td>
-      <td class="mono">${esc(i.dunLido || '—')}</td>
-      <td>${esc(i.produtoLido || '—')}</td>
-      <td><span class="badge ${classeStatus(i.status)}">${esc(rotuloStatus(i.status))}</span></td>
-      <td>${esc(i.operadorNome || '—')}</td>
-      <td>${esc(fmt(i.lidoEm))}</td>
-    </tr>`).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px">Nenhum item encontrado.</td></tr>';
+    if(pagina.length){
+      const fragmento=document.createDocumentFragment();
+      pagina.forEach(function(item){ fragmento.appendChild(criarLinhaAuditoria(item)); });
+      tbody.replaceChildren(fragmento);
+    }else{
+      mostrarMensagemTabela(tbody,'Nenhum item encontrado.');
+    }
     const nav=document.getElementById('auditoria-paginacao');
     if(nav){
       nav.innerHTML=lista.length?`<button type="button" class="btn btn-ghost btn-sm" data-aud-pagina="${paginaAtual-1}" ${paginaAtual<=1?'disabled':''}>Anterior</button><span>Página ${paginaAtual} de ${paginas} · ${lista.length} registro(s)</span><button type="button" class="btn btn-ghost btn-sm" data-aud-pagina="${paginaAtual+1}" ${paginaAtual>=paginas?'disabled':''}>Próxima</button>`:'';
