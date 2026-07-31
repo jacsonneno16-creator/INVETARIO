@@ -8,7 +8,7 @@ const ler = p => fs.readFileSync(path.join(raiz, p), 'utf8');
 const analista = ler('public/js/analista/38-auditoria-operacional-v22.js');
 const coletorMeta = ler('public/js/coletor/17-auditoria-meta.js');
 const coletorFluxo = ler('public/js/coletor/18-auditoria-fluxo.js');
-const rules = ler('public/firestore.rules');
+const rules = ler('firestore.rules');
 const html = ler('public/analista.html');
 const coletorHtml = ler('public/coletor.html');
 const sw = ler('public/sw.js');
