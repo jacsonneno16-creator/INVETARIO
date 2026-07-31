@@ -1,0 +1,40 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "dt_recontagens",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "inventario_id", "order": "ASCENDING" },
+        { "fieldPath": "operador", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "dt_contagens",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "inventario_id", "order": "ASCENDING" },
+        { "fieldPath": "endereco", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "dt_divergencias",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "inventario_id", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "atualizado_em", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "dt_atribuicoes_contagem",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "inventario_id", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
