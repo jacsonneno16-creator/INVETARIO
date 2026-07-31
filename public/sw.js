@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v224-fluxo-canonico';
+var CACHE='dt-inventario-v225-colunas-recontagem';
 var PRECACHE=[
   '/',
   '/index.html',

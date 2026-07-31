@@ -1007,11 +1007,10 @@ function renderDivergencias() {
             style="width:15px;height:15px;cursor:pointer;accent-color:var(--orange)"
             onchange="divToggleTodos(this.checked)">
         </th>
-        <th>Inventário</th><th>Rua</th><th>Endereço</th><th>Vezes contado</th>
-        <th>Operador Contagem</th><th>Data</th><th>Tipo</th>
+        <th>Inventário</th><th>Rua</th><th>Endereço</th><th>Data</th>
         <th>Produto esperado</th><th>Produto contado</th><th>Esperado no endereço</th><th>1ª Contagem</th>
         <th>2ª Contagem</th><th>3ª Contagem</th><th>Resultado</th>
-        <th>Status</th><th>Status Recontagem</th><th>Atribuído para</th><th>Executado por</th><th>Ações</th>
+        <th>Atribuído para</th><th>Executado por</th><th>Ações</th>
       </tr></thead>
       <tbody>
         ${dados.map(d => {
@@ -1135,10 +1134,7 @@ function renderDivergencias() {
             <td style="font-size:.75rem;color:var(--muted)">${d.inventario_nome || d.inventario_id}</td>
             <td class="mono" style="font-weight:600">${rua}</td>
             <td class="mono">${escHTML(d.endereco)}${d.endereco_correto ? `<br><span style="font-size:.65rem;color:var(--muted)">→ ${escHTML(d.endereco_correto)}</span>` : ''}</td>
-            <td style="text-align:center"><span class="badge b-purple" style="font-size:.76rem">${d._vezes_contado || 1}x</span></td>
-            <td style="font-size:.8rem">${operador}</td>
             <td class="mono" style="font-size:.72rem;color:var(--muted);white-space:nowrap">${fmtTs(d.criada_em)}</td>
-            <td><span class="badge ${tipoCls}">${tipoTxt}</span></td>
             <td><div style="font-weight:700;font-size:.78rem;min-width:170px" title="${escHTML(produtoEsperadoNome)}">${escHTML(produtoEsperadoNome)}</div></td>
             <td><div style="font-weight:700;font-size:.78rem;min-width:170px" title="${escHTML(produtoContadoNome)}">${escHTML(produtoContadoNome)}</div></td>
             <td>${esperadoHtml}</td>
@@ -1167,12 +1163,6 @@ function renderDivergencias() {
                 String(d.status_recontagem || '').toLowerCase() === 'sem_divergencia';
               return `<td><div style="font-family:var(--mono);font-weight:800;color:${resolvida ? 'var(--success)' : 'var(--danger)'}">${resolvida ? '✅ Conferido' : '❌ Divergente'}</div></td>`;
             })()}
-                        <td><span class="badge ${divStatusBadge(d.status)}">${d.status}</span></td>
-            <td>
-              ${statusRec
-                ? `<span class="badge ${recStatusBadge(statusRec)}" style="font-size:.68rem">${recStatusLabel(statusRec)}</span>`
-                : `<span style="font-size:.72rem;color:var(--muted-2)">—</span>`}
-            </td>
             <td>
               ${atribPara
                 ? `<div style="font-size:.78rem;font-weight:600;color:var(--text)">${escHTML(atribPara)}</div>
