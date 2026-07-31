@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v223-cards-scroll-firestore';
+var CACHE='dt-inventario-v224-fluxo-canonico';
 var PRECACHE=[
   '/',
   '/index.html',

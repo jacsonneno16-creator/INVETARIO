@@ -2065,6 +2065,81 @@
     };
   }
 
+
+  // Fotografia física canônica do inventário. Esta é a única fonte operacional
+  // para tela de Contagens, cards, relatórios, CSV/XLSX e integração. Cada
+  // recontagem concluída SUBSTITUI integralmente a rodada anterior do endereço.
+  function _rodadaFisica(c){
+    if(_nd(c?.tipo_contagem || 'PRIMEIRA') !== 'RECONTAGEM') return 1;
+    return Math.min(3, 1 + Math.max(1, Number(c?.numero_recontagem || 1)));
+  }
+
+  function _recontagemConcluida(rec){
+    if(!rec) return false;
+    const status=_nd(rec?.status_recontagem || rec?.status);
+    if(['CANCELADA','EXCLUIDA','ESTORNADA','PENDENTE','ATRIBUIDA','ATRIBUÍDA','EM_ANDAMENTO','ABERTA'].includes(status)) return false;
+    return Boolean(rec?.recontagem_concluida_em || rec?.concluida_em || rec?.finalizada_em || rec?.data_segunda || rec?.data_terceira) ||
+      ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA','AGUARDANDO_ANALISTA','SEM_DIVERGENCIA'].includes(status);
+  }
+
+  function _linhaRecontagemConcluida(c){
+    if(_rodadaFisica(c)===1) return true;
+    const st=state();
+    const rid=String(c?.recontagem_id || '').trim();
+    const did=String(c?.divergencia_id || '').trim();
+    const rodada=Math.max(1,Number(c?.numero_recontagem || 1));
+    const rec=(st.recontagens||[]).find(r=>{
+      if(rid && String(r?.id||r?.recontagem_id||'')===rid) return true;
+      if(did && String(r?.divergencia_id||'')===did && Number(r?.numero_recontagem||rodada)===rodada) return true;
+      return _idInventarioRegistro(r)===_idInventarioRegistro(c) && _nd(r?.endereco)===_nd(c?.endereco) && Number(r?.numero_recontagem||0)===rodada;
+    });
+    if(rec) return _recontagemConcluida(rec);
+    const status=_nd(c?.status_recontagem || c?.status);
+    return Boolean(c?.recontagem_concluida_em || c?.concluida_em || c?.finalizada_em) ||
+      ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA','AGUARDANDO_ANALISTA','SEM_DIVERGENCIA'].includes(status);
+  }
+
+  function _idPaleteFisico(c,indice){
+    const pal=_nd(c?.palete ?? c?.pallet ?? c?.numero_palete ?? c?.numeroPalete ?? c?.palete_key ?? c?.capa_palete ?? c?.capa ?? c?.sscc);
+    if(pal) return 'PAL:'+pal;
+    const id=String(c?.uuid || c?.id || c?.contagem_uuid || '').trim();
+    if(id) return 'DOC:'+id;
+    return 'LINHA:'+[
+      _nd(c?.gtin_bipado||c?.codigoLido||c?.codigo_lido||c?.dunLido||c?.codigo_produto),
+      c?.quantidade??c?.qtd??c?.qtd_contada??'',
+      c?.timestamp||c?.criado_em||c?.dataHora||indice
+    ].join('|');
+  }
+
+  function _fotografiaFisicaAtual(inventarioId){
+    const st=state();
+    const grupos=new Map();
+    (st.contagens||[]).forEach((c,indice)=>{
+      if(c?._excluida || ['ESTORNADA','EXCLUIDA','CANCELADA'].includes(_nd(c?.status))) return;
+      const inv=_idInventarioRegistro(c);
+      if(inventarioId && !_mesmoIdInventario(inv,inventarioId)) return;
+      const end=_nd(c?.endereco);
+      if(!inv || !end || !_linhaRecontagemConcluida(c)) return;
+      const k=inv+'|'+end;
+      if(!grupos.has(k)) grupos.set(k,[]);
+      grupos.get(k).push({c,indice,rodada:_rodadaFisica(c)});
+    });
+    const saida=[];
+    grupos.forEach(itens=>{
+      const rodada=Math.max(...itens.map(x=>x.rodada));
+      const unicos=new Map();
+      itens.filter(x=>x.rodada===rodada).forEach(x=>{
+        const chave=_idPaleteFisico(x.c,x.indice);
+        const ant=unicos.get(chave);
+        const da=String(ant?.timestamp||ant?.criado_em||ant?.dataHora||'');
+        const dn=String(x.c?.timestamp||x.c?.criado_em||x.c?.dataHora||'');
+        if(!ant || dn>=da) unicos.set(chave,x.c);
+      });
+      unicos.forEach(c=>saida.push(c));
+    });
+    return saida;
+  }
+
   global.AnalistaDivergenciasRuntime = {
     processar:     processarDivergencias,
     corrigirOrfas: corrigirOrfas,
@@ -2073,7 +2148,8 @@
     totalEsperadoEndereco: _totalEsperadoEnderecoCentral,
     historicoEndereco: _historicoConsolidadoEndereco,
     avaliarEndereco: d => _avaliarHistoricoContagens(_historicoConsolidadoEndereco(d)),
-    resolverEndereco: _resolverFluxoEndereco
+    resolverEndereco: _resolverFluxoEndereco,
+    fotografiaFisicaAtual: _fotografiaFisicaAtual
   };
 
   // Exportações globais para chamadas via onclick no HTML e outros módulos

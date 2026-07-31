@@ -133,33 +133,65 @@ function marcarDivergenciaResolvida(divId) {
   showConfirm(`Marcar a divergência do endereço ${escHTML(div.endereco)} como RESOLVIDA?`, () => _marcarDivResolvida(divId), { title: '✅ Resolver divergência', icon: '✅', okLabel: 'Marcar resolvida', okClass: 'btn-success' }); return;
 }
 
-function _marcarDivResolvida(divId) {
+async function _marcarDivResolvida(divId) {
   const div = _obterDivSelecionada(divId);
   if (!div) return;
-  div.status        = 'RESOLVIDA';
-  div.resolvida_em  = new Date().toISOString();
-  div.resolvida_por = _currentAnalistaUser?.email || 'Analista';
-  // Marcar recontagem associada também
-  const rec = state().recontagens.find(r =>
-    r.divergencia_id === divId ||
-    (r.endereco === div.endereco && r.inventario_id === div.inventario_id)
+  const agora = new Date().toISOString();
+  const analista = _currentAnalistaUser?.displayName || _currentAnalistaUser?.email || 'Analista';
+  const runtime = window.AnalistaDivergenciasRuntime;
+  const fluxo = runtime?.resolverEndereco?.(div);
+  const rodadaFinal = Number(fluxo?.rodada || 1);
+  const qtdFinal = fluxo?.historico
+    ? (rodadaFinal===3 ? fluxo.historico.qtd_terceira : rodadaFinal===2 ? fluxo.historico.qtd_segunda : fluxo.historico.qtd_primeira)
+    : (div.qtd_terceira ?? div.qtd_segunda ?? div.qtd_recontagem ?? div.qtd_primeira ?? div.qtd_contada ?? null);
+
+  const divAtualizada = Object.assign({}, div, {
+    status:'RESOLVIDA',
+    status_recontagem:'sem_divergencia',
+    resultado:'RESOLVIDO_ANALISTA',
+    divergencia_resolvida:true,
+    encerrada_definitivamente:true,
+    precisa_recontagem:false,
+    contagem_aceita:'RESOLVIDA_ANALISTA_RODADA_'+rodadaFinal,
+    qtd_resultado_final:qtdFinal,
+    resolvida_em:agora,
+    finalizada_em:agora,
+    resolvida_por:analista,
+    resolucao_manual:true
+  });
+
+  const recs = (state().recontagens||[]).filter(r =>
+    String(r?.divergencia_id||'')===String(divId) ||
+    (_FK.inventario(r,state().inventarios)===_FK.inventario(div,state().inventarios) && _FK.endereco(r?.endereco)===_FK.endereco(div?.endereco))
   );
-  if (rec) {
-    rec.status             = 'CONCLUIDA';
-    rec.status_recontagem  = 'concluida';  // ← campo que o coletor usa para filtrar
-    rec.concluida_em       = div.resolvida_em;
-    rec.resolvida_por      = div.resolvida_por;
-    // ✅ Persistir recontagem no Firestore
-    fsSalvarRecontagem(rec);
+  const recAtualizada = recs.sort((a,b)=>Number(b?.numero_recontagem||0)-Number(a?.numero_recontagem||0))[0];
+  let recPayload=null;
+  if(recAtualizada){
+    recPayload=Object.assign({},recAtualizada,{
+      status:'CONCLUIDA', status_recontagem:'concluida',
+      concluida_em:recAtualizada.concluida_em||agora,
+      resolvida_em:agora, resolvida_por:analista,
+      resolucao_manual:true
+    });
   }
-  saveAll();
-  // ✅ Persistir divergência atualizada no Firestore
-  fsSalvarDivergencia(div);
-  renderDivergencias();
-  renderRecontagens();
-  atualizarBadgesNav();
-  logSistema('DIVERGENCIA', `Divergência ${divId} marcada como resolvida pelo analista`, { divId, endereco: div.endereco, inventario_id: div.inventario_id });
-  showToast('✅ Divergência marcada como resolvida!', 's');
+
+  try {
+    const gravacoes=[fsSalvarDivergencia(divAtualizada)];
+    if(recPayload) gravacoes.push(fsSalvarRecontagem(recPayload));
+    await Promise.all(gravacoes);
+    window.AnalistaStore.dispatch(window.AnalistaActions.upsertEntity('divergencias', divAtualizada, {source:'resolverDivergenciaAnalista'}));
+    if(recPayload) window.AnalistaStore.dispatch(window.AnalistaActions.upsertEntity('recontagens', recPayload, {source:'resolverDivergenciaAnalista'}));
+    saveAll();
+    renderDivergencias();
+    renderRecontagens();
+    if(typeof renderContagens==='function') renderContagens();
+    atualizarBadgesNav();
+    logSistema('DIVERGENCIA_RESOLVIDA', `Divergência ${divId} resolvida pelo analista`, {divId,endereco:div.endereco,inventario_id:div.inventario_id,rodadaFinal,qtdFinal});
+    showToast('✅ Divergência resolvida e salva no Firestore.', 's');
+  } catch(error) {
+    console.error('[resolver divergência]',error);
+    showToast('Não foi possível salvar a resolução: '+(error?.message||error), 'e');
+  }
 }
 
 // ── Estado de seleção de divergências ──────────────────────────────────────

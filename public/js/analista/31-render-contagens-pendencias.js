@@ -18,38 +18,14 @@ function _ordemPaleteContagem(c){
 // somente os paletes da rodada mais recente. Rodadas anteriores ficam apenas
 // no histórico e nunca entram nos totais ou exportações operacionais.
 function _linhasFisicasAtuais(inventarioId){
-  const st=state();
-  const FK=window.InventoryFlowKey;
-  if(!FK) return [];
-  const validas=(st.contagens || []).filter(c => {
-    if(c?._excluida || ['ESTORNADA','EXCLUIDA'].includes(String(c?.status || '').toUpperCase())) return false;
-    const id=String(c?.inventario_id || c?.inventarioId || '');
+  const runtime=window.AnalistaDivergenciasRuntime;
+  if(runtime?.fotografiaFisicaAtual) return runtime.fotografiaFisicaAtual(inventarioId);
+  // Fallback de segurança apenas durante o carregamento inicial do runtime.
+  return (state().contagens||[]).filter(c=>{
+    if(c?._excluida || ['ESTORNADA','EXCLUIDA','CANCELADA'].includes(String(c?.status||'').toUpperCase())) return false;
+    const id=String(c?.inventario_id||c?.inventarioId||'');
     return !inventarioId || id===String(inventarioId);
   });
-  const etapa=c => String(c?.tipo_contagem || 'PRIMEIRA').toUpperCase()==='RECONTAGEM'
-    ? Math.min(3,1+Math.max(1,Number(c?.numero_recontagem || 1))) : 1;
-  const chaveEndereco=c => `${FK.inventario(c,st.inventarios)}|${FK.endereco(c?.endereco)}`;
-  const grupos=new Map();
-  validas.forEach(c => { const k=chaveEndereco(c); if(!grupos.has(k)) grupos.set(k,[]); grupos.get(k).push(c); });
-  const saida=[];
-  grupos.forEach(grupo => {
-    const ultima=Math.max(...grupo.map(etapa));
-    const unicos=new Map();
-    grupo.filter(c => etapa(c)===ultima).forEach((c,indice) => {
-      const id=String(c?.uuid || c?.id || c?.contagem_uuid || '').trim();
-      const palete=_paleteContagem(c);
-      // Na visão física, um palete só pode existir uma vez na rodada atual.
-      // Quando o mesmo documento chega duplicado pelo cache/snapshot, prevalece
-      // a leitura mais recente, sem inflar cards ou exportações.
-      const chave=id || (palete ? `PAL:${palete}` : JSON.stringify([ultima,c?.quantidade ?? c?.qtd ?? c?.qtd_contada,c?.gtin_bipado || c?.codigoLido || c?.codigo_lido || c?.codigo_produto,c?.timestamp || c?.criado_em || c?.dataHora || indice]));
-      const anterior=unicos.get(chave);
-      const dataAtual=String(c?.timestamp || c?.criado_em || c?.dataHora || '');
-      const dataAnterior=String(anterior?.timestamp || anterior?.criado_em || anterior?.dataHora || '');
-      if(!anterior || dataAtual >= dataAnterior) unicos.set(chave,c);
-    });
-    saida.push(...unicos.values());
-  });
-  return saida;
 }
 window.DTContagemFisicaAtual={linhas:_linhasFisicasAtuais};
 function _produtoContagemExibicao(c){

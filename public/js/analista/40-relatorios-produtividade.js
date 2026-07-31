@@ -104,7 +104,7 @@
   global.limparFiltroProdutividadeGrafico=function(){produtividadeHoraSelecionada=null;produtividadeOperadorSelecionado='';global.renderProdutividade();};
 
   global.renderProdutividade = function(){
-    const s=st(); let cont=(s.contagens||[]).slice(); const inv=val('prod-inv'), r=val('prod-rua'), l=val('prod-local'), periodo=val('prod-periodo');
+    const s=st(); let cont=(global.AnalistaDivergenciasRuntime?.fotografiaFisicaAtual?.() || (s.contagens||[])).slice(); const inv=val('prod-inv'), r=val('prod-rua'), l=val('prod-local'), periodo=val('prod-periodo');
     fillSelect('prod-inv',(s.inventarios||[]).map(function(i){return i.id;}),'Todos os inventários');
     fillSelect('prod-rua',cont.map(rua),'Todas as ruas'); fillSelect('prod-local',cont.map(local),'Todos os locais');
     const now=Date.now(), days=periodo==='hoje'?1:periodo==='7d'?7:periodo==='30d'?30:0;
@@ -121,7 +121,7 @@
   };
 
   global.renderCapasDuplicadas = function(){
-    const s=st(), inv=val('cd-fil-inv'), q=val('cd-busca').toLowerCase(); let cont=(s.contagens||[]).filter(function(c){return norm(c.capa||c.capa_palete||c.capaPalete);});
+    const s=st(), inv=val('cd-fil-inv'), q=val('cd-busca').toLowerCase(); let cont=(global.AnalistaDivergenciasRuntime?.fotografiaFisicaAtual?.() || (s.contagens||[])).filter(function(c){return norm(c.capa||c.capa_palete||c.capaPalete);});
     fillSelect('cd-fil-inv',(s.inventarios||[]).map(function(i){return i.id;}),'Todos os inventários');
     const groups={}; cont.forEach(function(c){const capa=norm(c.capa||c.capa_palete||c.capaPalete);(groups[capa]||(groups[capa]=[])).push(c);});
     let rows=Object.keys(groups).map(function(c){return {capa:c,itens:groups[c]};}).filter(function(g){return new Set(g.itens.map(function(x){return [x.inventario_id,x.endereco].join('|');})).size>1;});
@@ -152,5 +152,5 @@
     global.renderProdutividade();
     exportXlsx('produtividade-operadores-filtrada.xlsx','Produtividade',produtividadeRowsFiltradas.map(function(x,i){return {'Posição':i+1,'Operador':x.nome,'Endereços':x.enderecos.size,'Contagens':x.contagens,'Produtos':x.produtos.size,'Conflitos':x.divs,'Recontagens':x.recontagens};}));
   };
-  global.exportarCapasDuplicadas=global.exportarCapasDuplicadas||function(){const s=st(),groups={};(s.contagens||[]).forEach(function(c){const cp=norm(c.capa||c.capa_palete||c.capaPalete);if(cp)(groups[cp]||(groups[cp]=[])).push(c);});const rows=[];Object.keys(groups).forEach(function(cp){if(new Set(groups[cp].map(function(x){return x.inventario_id+'|'+x.endereco;})).size>1)groups[cp].forEach(function(x){rows.push([cp,invName(x.inventario_id),x.endereco,operador(x)]);});});exportSimple('capas-duplicadas.csv',['Capa','Inventário','Endereço','Operador'],rows);};
+  global.exportarCapasDuplicadas=global.exportarCapasDuplicadas||function(){const s=st(),groups={};(global.AnalistaDivergenciasRuntime?.fotografiaFisicaAtual?.() || (s.contagens||[])).forEach(function(c){const cp=norm(c.capa||c.capa_palete||c.capaPalete);if(cp)(groups[cp]||(groups[cp]=[])).push(c);});const rows=[];Object.keys(groups).forEach(function(cp){if(new Set(groups[cp].map(function(x){return x.inventario_id+'|'+x.endereco;})).size>1)groups[cp].forEach(function(x){rows.push([cp,invName(x.inventario_id),x.endereco,operador(x)]);});});exportSimple('capas-duplicadas.csv',['Capa','Inventário','Endereço','Operador'],rows);};
 })(window);

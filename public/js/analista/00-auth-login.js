@@ -372,7 +372,7 @@ function logSistema(tipo, desc, dados) { return logAuditoria(tipo, desc, dados);
 function atualizarBadgesNav(){
   try {
     const st = window.AnalistaStore?.getState?.() || {};
-    const conts = (st.contagens || []).filter(c => !c._excluida && c.status !== 'ESTORNADA');
+    const conts = window.AnalistaDivergenciasRuntime?.fotografiaFisicaAtual?.() || (st.contagens || []).filter(c => !c._excluida && c.status !== 'ESTORNADA');
     const divs  = (st.divergencias || []).filter(d => !['RESOLVIDA','CANCELADA'].includes(String(d.status||'').toUpperCase()));
     const recs  = (st.recontagens || []).filter(r => !['CONCLUIDA','CANCELADA','RESOLVIDA'].includes(String(r.status||'').toUpperCase()));
     const invs  = st.inventarios || [];

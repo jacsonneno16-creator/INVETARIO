@@ -288,14 +288,14 @@
   function dataset(type) {
     var st = state();
     var rows = [];
-    if (type === 'contagens') rows = st.contagens || [];
+    if (type === 'contagens') rows = consolidatedRows();
     else if (type === 'enderecos') rows = st.enderecosLista || [];
     else if (type === 'divergencias') rows = st.divergencias || [];
     else if (type === 'recontagens') rows = st.recontagens || [];
     else if (type === 'auditoria') rows = st.logs || [];
     else if (type === 'produtividade') {
       var byOperator = {};
-      (st.contagens || []).forEach(function (row) {
+      consolidatedRows().forEach(function (row) {
         var name = row.operador_nome || row.operador || 'Sem operador';
         if (!byOperator[name]) byOperator[name] = {operador:name, leituras:0, quantidade:0};
         byOperator[name].leituras++;
