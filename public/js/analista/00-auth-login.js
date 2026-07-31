@@ -358,6 +358,7 @@ function logAuditoria(tipo, descricao, dados) {
         descricao:  descricao || '',
         dados:      dados !== undefined ? dados : null,
         usuario:    user ? (user.displayName || user.email) : null,
+        usuario_uid:user ? user.uid : null,
         criado_em:  new Date().toISOString(),
       }).catch(e => console.warn('[logAuditoria]', e.message));
     }

@@ -398,9 +398,14 @@
   window.selecionarAuditoriaMenu = async function(auditoriaId){
     if(APP._auditoriaCarregando) return;
     if(!window.AUTH || !AUTH.currentUser){
-      APP._auditoriaPronta=false; APP._auditoriaCarregando=false; APP.operador=null;
-      try{ toast('Sua sessão expirou. Entre novamente para baixar a auditoria.','e'); }catch(_){ console.warn("[Erro tratado]", _); }
-      goScreen('login'); return;
+      // AUTH.currentUser pode ficar momentaneamente nulo enquanto o Firebase
+      // restaura/renova a sessão. Abrir uma auditoria nunca deve apagar o
+      // operador nem forçar logout do sistema por causa desse estado transitório.
+      APP._auditoriaPronta=false;
+      APP._auditoriaCarregando=false;
+      try{ toast('Não foi possível confirmar a sessão agora. Aguarde alguns segundos e tente abrir a auditoria novamente.','e'); }catch(_){ console.warn("[Erro tratado]", _); }
+      goScreen('auditorias');
+      return;
     }
     const meta = (APP.auditoriasMenu || []).find(x => x.id === auditoriaId);
     if (!meta) { toast('Auditoria não encontrada', 'e'); return; }
