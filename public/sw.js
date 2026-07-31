@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v228-auditoria-sessao-20260731';
+var CACHE='dt-inventario-v231-20260731-1';
 var PRECACHE=[
   '/',
   '/index.html',

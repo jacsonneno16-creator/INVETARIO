@@ -349,20 +349,21 @@ function showConfirm(msg, onOk, opts) {
 // Firestore já ter sido atualizado com sucesso, e esse erro caía no catch()
 // da própria função, fazendo aparecer "Erro ao aprovar" mesmo quando a
 // aprovação tinha funcionado.
-function logAuditoria(tipo, descricao, dados) {
+async function logAuditoria(tipo, descricao, dados) {
   try {
     if (window.FS_AN) {
-      const user = window._currentAnalistaUser;
-      window.FS_AN.collection('dt_logs_analista').add({
+      const user = window.AUTH_AN?.currentUser || window._currentAnalistaUser;
+      if(!user?.uid) throw new Error('Usuário autenticado ainda não está disponível para registrar o log.');
+      return await window.FS_AN.collection('dt_logs_analista').add({
         tipo:       tipo || 'SISTEMA',
         descricao:  descricao || '',
         dados:      dados !== undefined ? dados : null,
         usuario:    user ? (user.displayName || user.email) : null,
         usuario_uid:user ? user.uid : null,
         criado_em:  new Date().toISOString(),
-      }).catch(e => console.warn('[logAuditoria]', e.message));
+      });
     }
-  } catch (e) { console.warn('[logAuditoria]', e); }
+  } catch (e) { console.error('[logAuditoria]', e); return null; }
   console.log('[LOG]', tipo, descricao, dados);
 }
 function logSistema(tipo, desc, dados) { return logAuditoria(tipo, desc, dados); }

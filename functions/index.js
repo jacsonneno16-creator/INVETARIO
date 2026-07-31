@@ -270,3 +270,200 @@ exports.excluirUsuario = functions
 
     return {ok: true, uid, uids};
   });
+
+// Auditorias v231: todas as decisões que dependem da base esperada são feitas
+// no servidor. O coletor recebe apenas um identificador opaco e o endereço.
+const AUDITORIA_STATUS_FINAIS = new Set(['OK', 'DIVERGENTE', 'ENDERECO_VAZIO']);
+
+function textoSeguro(valor, maximo = 500) {
+  const texto = String(valor == null ? '' : valor).trim();
+  if (texto.length > maximo) {
+    throw new functions.https.HttpsError('invalid-argument', 'Campo maior que o permitido.');
+  }
+  return texto;
+}
+
+function lojaAutorizada(acesso, lojaId) {
+  return acessoAtivo(acesso) && (
+    administrador(acesso) || acesso?.acesso_todas_lojas === true ||
+    lojasPermitidas(acesso).has(String(lojaId))
+  );
+}
+
+function podeEditarAuditoria(acesso) {
+  return administrador(acesso) || (
+    acessoAtivo(acesso) && acesso?.permissoes?.auditoria?.editar === true
+  );
+}
+
+function podeUsarColetor(acesso) {
+  return acessoAtivo(acesso) && (
+    administrador(acesso) || acesso?.perfil === 'operador' ||
+    acesso?.canais_acesso?.coletor === true
+  );
+}
+
+function refsAuditoria(lojaId, auditoriaId) {
+  const auditoria = db.collection('lojas').doc(lojaId)
+    .collection('dt_auditorias').doc(auditoriaId);
+  return {auditoria, esperados: auditoria.collection('enderecos'),
+    cegos: auditoria.collection('itens_coletor'), resultados: auditoria.collection('resultados')};
+}
+
+exports.registrarResultadoAuditoria = functions.region('southamerica-east1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const lojaId = textoSeguro(data?.lojaId, 120);
+    const auditoriaId = textoSeguro(data?.auditoriaId, 180);
+    const itemId = textoSeguro(data?.itemId, 220);
+    const dunLido = textoSeguro(data?.dunLido, 120);
+    const produtoLido = textoSeguro(data?.produtoLido, 500);
+    const vazio = data?.vazio === true;
+    if (!lojaId || !auditoriaId || !itemId) {
+      throw new functions.https.HttpsError('invalid-argument', 'Auditoria ou item inválido.');
+    }
+    const acesso = await acessoSolicitante(context);
+    if (!lojaAutorizada(acesso, lojaId) || !podeUsarColetor(acesso)) {
+      throw new functions.https.HttpsError('permission-denied', 'Coletor sem acesso a esta auditoria.');
+    }
+    const refs = refsAuditoria(lojaId, auditoriaId);
+    const esperadoRef = refs.esperados.doc(itemId);
+    const cegoRef = refs.cegos.doc(itemId);
+    const resultadoRef = refs.resultados.doc(itemId);
+    return db.runTransaction(async tx => {
+      const [metaSnap, esperadoSnap, cegoSnap, resultadoSnap] = await Promise.all([
+        tx.get(refs.auditoria), tx.get(esperadoRef), tx.get(cegoRef), tx.get(resultadoRef)
+      ]);
+      if (!metaSnap.exists || metaSnap.data().status !== 'LIBERADA') {
+        throw new functions.https.HttpsError('failed-precondition', 'Auditoria não está liberada.');
+      }
+      if (!esperadoSnap.exists || !cegoSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Item da auditoria não encontrado.');
+      }
+      if (resultadoSnap.exists && AUDITORIA_STATUS_FINAIS.has(resultadoSnap.data().status)) {
+        return {ok: true, status: resultadoSnap.data().status, repetido: true};
+      }
+      const esperado = esperadoSnap.data();
+      const normalizar = valor => String(valor || '').replace(/\D/g, '').replace(/^0+/, '');
+      const status = vazio ? 'ENDERECO_VAZIO' :
+        (normalizar(dunLido) && normalizar(dunLido) === normalizar(esperado.dunEsperado) ? 'OK' : 'DIVERGENTE');
+      const agora = admin.firestore.FieldValue.serverTimestamp();
+      const resultado = {
+        auditoriaId, itemId, endereco: cegoSnap.data().endereco,
+        dunLido: vazio ? null : dunLido, produtoLido: vazio ? null : produtoLido,
+        status, operador_uid: context.auth.uid,
+        operador_id: context.auth.token.email || context.auth.uid,
+        operador_nome: acesso?.nome || context.auth.token.name || context.auth.token.email || 'Coletor',
+        dispositivo_id: textoSeguro(data?.dispositivoId, 180), loja: lojaId,
+        lidoEm: agora, atualizadoEm: agora
+      };
+      tx.set(resultadoRef, resultado);
+      tx.update(cegoRef, {disponivel_coletor: false, status: 'CONCLUIDO', atualizadoEm: agora});
+      tx.update(esperadoRef, resultado);
+      const campoTotal = status === 'OK' ? 'totalOk' :
+        (status === 'DIVERGENTE' ? 'totalDivergentes' : 'totalVazios');
+      tx.update(refs.auditoria, {
+        status: 'EM_ANDAMENTO', totalPendentes: admin.firestore.FieldValue.increment(-1),
+        [campoTotal]: admin.firestore.FieldValue.increment(1), atualizadoEm: agora
+      });
+      return {ok: true, status};
+    });
+  });
+
+exports.registrarOcorrenciaAuditoria = functions.region('southamerica-east1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const lojaId = textoSeguro(data?.lojaId, 120);
+    const auditoriaId = textoSeguro(data?.auditoriaId, 180);
+    const ocorrenciaId = textoSeguro(data?.ocorrenciaId, 220);
+    const acesso = await acessoSolicitante(context);
+    if (!lojaAutorizada(acesso, lojaId) || !podeUsarColetor(acesso)) {
+      throw new functions.https.HttpsError('permission-denied', 'Coletor sem acesso a esta auditoria.');
+    }
+    const refs = refsAuditoria(lojaId, auditoriaId);
+    const meta = await refs.auditoria.get();
+    if (!meta.exists || meta.data().status !== 'LIBERADA') {
+      throw new functions.https.HttpsError('failed-precondition', 'Auditoria não está liberada.');
+    }
+    await refs.auditoria.collection('ocorrencias').doc(ocorrenciaId).set({
+      auditoriaId, tipo: 'PRODUTO_FORA_AUDITORIA', status: 'PRODUTO_FORA_AUDITORIA',
+      endereco: textoSeguro(data?.endereco, 220), dunLido: textoSeguro(data?.dunLido, 120),
+      produtoLido: textoSeguro(data?.produtoLido, 500), loja: lojaId,
+      operador_uid: context.auth.uid, operador_id: context.auth.token.email || context.auth.uid,
+      operador_nome: acesso?.nome || context.auth.token.name || context.auth.token.email || 'Coletor',
+      dispositivo_id: textoSeguro(data?.dispositivoId, 180),
+      criadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }, {merge: false});
+    return {ok: true};
+  });
+
+exports.finalizarAuditoria = functions.region('southamerica-east1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const lojaId = textoSeguro(data?.lojaId, 120);
+    const auditoriaId = textoSeguro(data?.auditoriaId, 180);
+    const acesso = await acessoSolicitante(context);
+    if (!lojaAutorizada(acesso, lojaId) || !podeEditarAuditoria(acesso)) {
+      throw new functions.https.HttpsError('permission-denied', 'Sem permissão para finalizar.');
+    }
+    const refs = refsAuditoria(lojaId, auditoriaId);
+    const [cegosSnap, resultadosSnap] = await Promise.all([refs.cegos.get(), refs.resultados.get()]);
+    const pendentes = cegosSnap.docs.filter(d => d.data().disponivel_coletor === true).length;
+    if (!cegosSnap.size || pendentes) {
+      throw new functions.https.HttpsError('failed-precondition', `Existem ${pendentes || 'itens'} pendentes.`);
+    }
+    const totais = {OK: 0, DIVERGENTE: 0, ENDERECO_VAZIO: 0};
+    resultadosSnap.docs.forEach(d => { if (totais[d.data().status] != null) totais[d.data().status]++; });
+    if (resultadosSnap.size !== cegosSnap.size) {
+      throw new functions.https.HttpsError('failed-precondition', 'Existem sincronizações pendentes.');
+    }
+    await db.runTransaction(async tx => {
+      const meta = await tx.get(refs.auditoria);
+      if (!meta.exists || !['LIBERADA', 'EM_ANDAMENTO'].includes(meta.data().status)) {
+        throw new functions.https.HttpsError('failed-precondition', 'Estado inválido para finalização.');
+      }
+      tx.update(refs.auditoria, {
+        status: 'FINALIZADA', liberada_coletor: false, totalItens: cegosSnap.size,
+        totalPendentes: 0, totalOk: totais.OK, totalDivergentes: totais.DIVERGENTE,
+        totalVazios: totais.ENDERECO_VAZIO, finalizadaPorUid: context.auth.uid,
+        finalizadaEm: admin.firestore.FieldValue.serverTimestamp()
+      });
+    });
+    return {ok: true, total: cegosSnap.size, totais};
+  });
+
+async function apagarConsultaEmLotes(query) {
+  let apagados = 0;
+  while (true) {
+    const snap = await query.limit(400).get();
+    if (snap.empty) return apagados;
+    const batch = db.batch();
+    snap.docs.forEach(doc => batch.delete(doc.ref));
+    await batch.commit();
+    apagados += snap.size;
+  }
+}
+
+exports.excluirAuditoriaCompleta = functions.region('southamerica-east1')
+  .runWith({timeoutSeconds: 540, memory: '512MB'}).https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const lojaId = textoSeguro(data?.lojaId, 120);
+    const auditoriaId = textoSeguro(data?.auditoriaId, 180);
+    const acesso = await acessoSolicitante(context);
+    if (!lojaAutorizada(acesso, lojaId) || !podeEditarAuditoria(acesso)) {
+      throw new functions.https.HttpsError('permission-denied', 'Sem permissão para excluir.');
+    }
+    const refs = refsAuditoria(lojaId, auditoriaId);
+    await refs.auditoria.set({status: 'EXCLUSAO_PENDENTE', exclusaoPorUid: context.auth.uid,
+      exclusaoIniciadaEm: admin.firestore.FieldValue.serverTimestamp()}, {merge: true});
+    const subcolecoes = ['resultados', 'ocorrencias', 'itens_coletor', 'enderecos', 'base_chunks', 'importacoes'];
+    let apagados = 0;
+    try {
+      for (const nome of subcolecoes) apagados += await apagarConsultaEmLotes(refs.auditoria.collection(nome));
+      await refs.auditoria.delete();
+    } catch (error) {
+      await refs.auditoria.set({status: 'ERRO_EXCLUSAO', exclusaoErro: String(error.message || error).slice(0, 500)}, {merge: true});
+      throw new functions.https.HttpsError('internal', 'A exclusão não foi concluída; a auditoria foi preservada para nova tentativa.');
+    }
+    return {ok: true, apagados};
+  });

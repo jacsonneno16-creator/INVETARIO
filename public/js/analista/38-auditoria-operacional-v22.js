@@ -13,13 +13,13 @@
   let metaAtual = null;
   let itensAtuais = [];
   let itensBrutosAtuais = [];
-  let unsubscribeItens = null;
-  let unsubscribeMetas = null;
   let assinaturaAnterior = '';
   let importacaoPendente = null;
   let criacaoToken = 0;
   let criacaoAberta = false;
   let criacaoPromise = null;
+  let paginaAtual = 1;
+  const ITENS_POR_PAGINA = 150;
   const origemAuditoria = new Map();
 
   function colecaoAuditorias(){ return DB().collection('dt_auditorias'); }
@@ -33,11 +33,29 @@
     return colecaoAuditorias().doc(String(id));
   }
 
-  function comTimeout(promise, ms, fallback){
+  function comTimeout(promise, ms, rotulo){
+    let timer;
     return Promise.race([
-      Promise.resolve(promise).catch(function(){ return fallback; }),
-      new Promise(function(resolve){ setTimeout(function(){ resolve(fallback); }, ms); })
-    ]);
+      Promise.resolve(promise),
+      new Promise(function(_,reject){
+        timer=setTimeout(function(){
+          const erro=new Error('Tempo excedido ao carregar '+(rotulo||'os dados')+'.');
+          erro.code='auditoria/timeout';
+          reject(erro);
+        },ms);
+      })
+    ]).finally(function(){ clearTimeout(timer); });
+  }
+
+  function callable(nome){
+    return firebase.app().functions('southamerica-east1').httpsCallable(nome);
+  }
+
+  function bloquearInterface(bloqueada, mensagem){
+    const ids=['aud-op-auditoria','btn-aud-atualizar','btn-aud-atualizar-base','btn-aud-finalizar','btn-aud-excluir','btn-aud-exportar'];
+    ids.forEach(function(id){const el=document.getElementById(id);if(el)el.disabled=!!bloqueada;});
+    const tbody=document.getElementById('auditoria-op-tbody');
+    if(bloqueada && tbody) tbody.innerHTML='<tr><td colspan="8" class="auditoria-loading" aria-live="polite">⏳ '+esc(mensagem||'Carregando auditoria…')+'</td></tr>';
   }
 
   let configuracaoNova = null;
@@ -94,11 +112,11 @@
       // Nunca deixa a criação presa esperando Firebase. Primeiro tenta usar o cache
       // já carregado e limita cada consulta a poucos segundos.
       if(window.DTProdutos && typeof window.DTProdutos.carregar==='function'){
-        await comTimeout(window.DTProdutos.carregar(false), 8000, []);
+        await comTimeout(window.DTProdutos.carregar(false), 8000, 'a base de produtos');
       }
       if(meuToken!==criacaoToken) return;
       const familias=(window.DTProdutos?.familias?.()||[]).filter(function(f){ return f && f.produtos && f.produtos.length; });
-      const ends=await comTimeout(enderecosGerais(), 8000, []);
+      const ends=await comTimeout(enderecosGerais(), 8000, 'a base de endereços');
       if(meuToken!==criacaoToken) return;
       const ruas=[...new Set(ends.map(e=>ruaDoEndereco(e.endereco||e.codigo||e.id)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
       carregando.remove();
@@ -263,6 +281,7 @@
     const atual=txt(loja());
     origemAuditoria.clear();
     const docs=[];
+    const falhas=[];
     const vistos=new Set();
     async function adicionarColecao(ref, origem){
       try{
@@ -274,24 +293,29 @@
           origemAuditoria.set(d.id,origem);
           docs.push({id:d.id,...data,_origemAuditoria:origem});
         });
-      }catch(e){ console.warn('[AUDITORIA] falha ao listar '+origem+':',e); }
+      }catch(e){ falhas.push({origem:origem,code:e.code||'unknown',message:e.message||String(e)}); }
     }
     // 1) Loja atualmente selecionada.
     await adicionarColecao(colecaoAuditorias(),'loja:'+atual);
+    const falhaPrincipal=falhas.find(f=>f.origem==='loja:'+atual);
+    if(falhaPrincipal){const erro=new Error('Falha ao consultar a loja atual: '+falhaPrincipal.message);erro.code=falhaPrincipal.code;throw erro;}
     if(raw){
+      const acesso=window.DT_USUARIO_ACESSO_ATUAL||{};
+      const acessoGlobal=acesso.acesso_todas_lojas===true || acesso.perfil==='administrador' || acesso.admin_mestre===true || acesso.administrador_mestre===true;
       // 2) Procura também em todas as lojas cadastradas. Isso recupera auditorias
       // criadas antes da padronização de IDs (ex.: matriz x loja_matriz).
-      try{
+      if(acessoGlobal) try{
         const lojasSnap=await raw.collection('lojas').get();
-        for(const ld of lojasSnap.docs){
+        await Promise.all(lojasSnap.docs.map(async function(ld){
           const lid=ld.id;
-          if(lid===atual) continue;
+          if(lid===atual) return;
           await adicionarColecao(raw.collection('lojas').doc(lid).collection('dt_auditorias'),'loja:'+lid);
-        }
+        }));
       }catch(e){ console.warn('[AUDITORIA] falha ao procurar nas lojas:',e); }
       // 3) Auditorias antigas salvas na raiz.
-      await adicionarColecao(raw.collection('dt_auditorias'),'raiz');
+      if(acessoGlobal) await adicionarColecao(raw.collection('dt_auditorias'),'raiz');
     }
+    if(falhas.length) toast('Algumas origens administrativas não puderam ser consultadas: '+falhas.map(f=>f.origem).join(', ')+'.','w');
     return docs.sort(function(a,b){
       const av=a.criadoEm?.toMillis?.()||a.criadoEm?.seconds*1000||Date.parse(a.criadoEm||a.criado_em||a.importado_em||0)||0;
       const bv=b.criadoEm?.toMillis?.()||b.criadoEm?.seconds*1000||Date.parse(b.criadoEm||b.criado_em||b.importado_em||0)||0;
@@ -361,10 +385,6 @@
   }
 
   function encerrarListener(){
-    if (unsubscribeMetas) { try { unsubscribeMetas(); } catch(e){ console.warn("[Erro tratado]", e); } }
-    unsubscribeMetas=null;
-    if (unsubscribeItens) { try { unsubscribeItens(); } catch(e){ console.warn("[Erro tratado]", e); } }
-    unsubscribeItens = null;
     assinaturaAnterior = '';
   }
 
@@ -389,14 +409,17 @@
     }
     atualizarAcoesAuditoria();
     try{
-      const snap=await ref.collection('enderecos').get();
-      itensBrutosAtuais=snap.docs.map(d=>({id:d.id,raw:d.data()}));
+      const [esperadosSnap,resultadosSnap]=await Promise.all([
+        ref.collection('enderecos').get(), ref.collection('resultados').get()
+      ]);
+      const resultados=new Map(resultadosSnap.docs.map(d=>[d.id,d.data()||{}]));
+      itensBrutosAtuais=esperadosSnap.docs.map(d=>({id:d.id,raw:{...d.data(),...(resultados.get(d.id)||{})}}));
       itensAtuais=itensBrutosAtuais.map(x=>normalizarItem(x.raw,x.id));
       assinaturaAnterior=assinatura(itensAtuais);
       renderizar();
     }catch(error){
       console.error('[AUDITORIA] leitura manual:',error);
-      toast('Não foi possível atualizar os resultados da auditoria.','e');
+      throw error;
     }
   }
 
@@ -431,7 +454,10 @@
       if (f.operador && !txt(i.operadorNome).toLowerCase().includes(f.operador)) return false;
       if (f.data && i.lidoEm) {
         const d = i.lidoEm?.toDate ? i.lidoEm.toDate() : new Date(i.lidoEm);
-        if (!isNaN(d) && d.toISOString().slice(0,10) !== f.data) return false;
+        if (!isNaN(d)) {
+          const dataLocal=[d.getFullYear(),String(d.getMonth()+1).padStart(2,'0'),String(d.getDate()).padStart(2,'0')].join('-');
+          if(dataLocal !== f.data) return false;
+        }
       } else if (f.data && !i.lidoEm) return false;
       if (f.busca) {
         const hay = [i.endereco,i.dunEsperado,i.produtoEsperado,i.dunLido,i.produtoLido,i.operadorNome,i.status].join(' ').toLowerCase();
@@ -452,7 +478,11 @@
     const tbody = document.getElementById('auditoria-op-tbody');
     if (!tbody) return;
     const lista = aplicarFiltros(itensAtuais);
-    tbody.innerHTML = lista.length ? lista.map(i => `<tr>
+    const paginas=Math.max(1,Math.ceil(lista.length/ITENS_POR_PAGINA));
+    paginaAtual=Math.min(paginaAtual,paginas);
+    const inicio=(paginaAtual-1)*ITENS_POR_PAGINA;
+    const pagina=lista.slice(inicio,inicio+ITENS_POR_PAGINA);
+    tbody.innerHTML = pagina.length ? pagina.map(i => `<tr>
       <td class="mono">${esc(i.endereco)}</td>
       <td class="mono">${esc(i.dunEsperado)}</td>
       <td>${esc(i.produtoEsperado)}</td>
@@ -462,6 +492,11 @@
       <td>${esc(i.operadorNome || '—')}</td>
       <td>${esc(fmt(i.lidoEm))}</td>
     </tr>`).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:20px">Nenhum item encontrado.</td></tr>';
+    const nav=document.getElementById('auditoria-paginacao');
+    if(nav){
+      nav.innerHTML=lista.length?`<button type="button" class="btn btn-ghost btn-sm" data-aud-pagina="${paginaAtual-1}" ${paginaAtual<=1?'disabled':''}>Anterior</button><span>Página ${paginaAtual} de ${paginas} · ${lista.length} registro(s)</span><button type="button" class="btn btn-ghost btn-sm" data-aud-pagina="${paginaAtual+1}" ${paginaAtual>=paginas?'disabled':''}>Próxima</button>`:'';
+      nav.querySelectorAll('[data-aud-pagina]').forEach(function(btn){btn.onclick=function(){paginaAtual=Number(btn.dataset.audPagina)||1;renderizar();};});
+    }
     const resumoFinal = document.getElementById('auditoria-resumo-finalizacao');
     if (resumoFinal) resumoFinal.textContent = `Total ${r.total} · OK ${r.OK} · Divergentes ${r.DIVERGENTE} · Vazios ${r.ENDERECO_VAZIO} · Pendentes ${r.PENDENTE}`;
   }
@@ -530,6 +565,16 @@
       const gerais=await enderecosGerais();
       gerais.forEach(e=>{const endereco=txt(e.endereco||e.codigo||e.id);if(endereco&&ruasSet.has(ruaDoEndereco(endereco))&&!existentes.has(endNorm(endereco)))selecionados.push({endereco,dunEsperado:'',produtoEsperado:'ENDEREÇO PREVISTO VAZIO',previstoVazio:true});});
     }
+    const chaves=new Map();
+    selecionados=selecionados.filter(function(row){
+      const chave=endNorm(row.endereco)+'|'+dun(row.dunEsperado);
+      if(chaves.has(chave)){
+        erros.push({linha:row._linha||'—',endereco:row.endereco,dunEsperado:row.dunEsperado,produtoEsperado:row.produtoEsperado,motivo:'Duplicidade lógica com a linha '+chaves.get(chave)});
+        return false;
+      }
+      chaves.set(chave,row._linha||'—');
+      return true;
+    });
     if(!selecionados.length) erros.push({linha:'—',endereco:'—',dunEsperado:'',produtoEsperado:'',motivo:'Nenhum item da base corresponde ao tipo selecionado para esta auditoria'});
     return {validos:selecionados,erros};
   }
@@ -551,21 +596,26 @@
     if(!auditoriaAtual) throw new Error('Nenhuma auditoria selecionada.');
     const ref=referenciaAuditoria(auditoriaAtual);
     const itensRef=ref.collection('enderecos');
-    const old=await itensRef.get();
-    for(let i=0;i<old.docs.length;i+=350){const b=DB().batch();old.docs.slice(i,i+350).forEach(d=>b.delete(d.ref));await b.commit();}
+    const cegosRef=ref.collection('itens_coletor');
+    const versaoBase='base_'+Date.now().toString(36);
+    const [oldEsperados,oldCegos]=await Promise.all([itensRef.get(),cegosRef.get()]);
     const lista=importacaoPendente.validos;
     for(let i=0;i<lista.length;i+=350){
       const b=DB().batch();
       lista.slice(i,i+350).forEach(row=>{
-        const id=docId(auditoriaAtual,row.endereco,row.dunEsperado,String(row._seq==null?'':row._seq));
+        const id=docId(auditoriaAtual,row.endereco,row.dunEsperado,versaoBase+'_'+String(row._seq==null?'':row._seq));
         b.set(itensRef.doc(id),{
           auditoriaId:auditoriaAtual,endereco:row.endereco,dunEsperado:row.dunEsperado,produtoEsperado:row.produtoEsperado,
-          previstoVazio:row.previstoVazio===true,dunLido:null,produtoLido:null,status:'PENDENTE',operadorId:null,operadorNome:null,lidoEm:null,loja:loja(),disponivel_coletor:false
+          previstoVazio:row.previstoVazio===true,status:'PENDENTE',loja:loja(),versaoBase:versaoBase
         });
+        b.set(cegosRef.doc(id),{auditoriaId:auditoriaAtual,itemId:id,endereco:row.endereco,status:'PENDENTE',disponivel_coletor:false,loja:loja(),ordem:Number(row._seq||0),versaoBase:versaoBase,atualizadoEm:agora()});
       });
       await b.commit();
     }
-    await ref.set({status:'RASCUNHO',totalItens:lista.length,totalPendentes:lista.length,totalOk:0,totalDivergentes:0,totalVazios:0,arquivo:importacaoPendente.file.name,importadoEm:agora(),importadoPor:usuario()},{merge:true});
+    await ref.set({status:'RASCUNHO',liberada_coletor:false,versaoBase:versaoBase,totalItens:lista.length,totalPendentes:lista.length,totalOk:0,totalDivergentes:0,totalVazios:0,arquivo:importacaoPendente.file.name,importadoEm:agora(),importadoPor:usuario()},{merge:true});
+    await DB().collection('dt_auditorias_coletor').doc(auditoriaAtual).delete().catch(function(e){if(e.code!=='not-found')throw e;});
+    const antigos=[...oldEsperados.docs,...oldCegos.docs].filter(d=>txt((d.data()||{}).versaoBase)!==versaoBase);
+    for(let i=0;i<antigos.length;i+=350){const b=DB().batch();antigos.slice(i,i+350).forEach(d=>b.delete(d.ref));await b.commit();}
     importacaoPendente=null;
     const status=document.getElementById('auditoria-import-status'); if(status) status.innerHTML='';
     const preview=document.getElementById('auditoria-import-preview'); if(preview){preview.innerHTML='';preview.style.display='none';}
@@ -585,9 +635,10 @@
     if(id!==auditoriaAtual || !metaAtual) await selecionarAuditoria(id);
     if(!itensAtuais.length) return toast('Importe uma base válida antes de liberar.','w');
     const ref=referenciaAuditoria(auditoriaAtual);
-    const snap=await ref.collection('enderecos').get();
-    for(let i=0;i<snap.docs.length;i+=350){const b=DB().batch();snap.docs.slice(i,i+350).forEach(d=>b.set(d.ref,{disponivel_coletor:true},{merge:true}));await b.commit();}
+    const snap=await ref.collection('itens_coletor').get();
+    for(let i=0;i<snap.docs.length;i+=350){const b=DB().batch();snap.docs.slice(i,i+350).forEach(d=>b.set(d.ref,{disponivel_coletor:true,status:'PENDENTE',atualizadoEm:agora()},{merge:true}));await b.commit();}
     await ref.set({status:'LIBERADA',liberada_coletor:true,liberadaEm:agora(),liberadaPor:usuario()},{merge:true});
+    await DB().collection('dt_auditorias_coletor').doc(auditoriaAtual).set({id:auditoriaAtual,auditoria_nome:metaAtual?.nome||metaAtual?.auditoria_nome||auditoriaAtual,status:'LIBERADA',loja:loja(),lojas:[loja()],total_registros:snap.size,totalItens:snap.size,tipoAuditoria:metaAtual?.tipoAuditoria||'',versaoBase:metaAtual?.versaoBase||'',liberadaEm:agora(),atualizadoEm:agora()});
     metaAtual={...metaAtual,status:'LIBERADA'};
     toast('Auditoria liberada para os coletores.','s');
   }
@@ -595,14 +646,20 @@
   async function finalizar(){
     const id=resolverAuditoriaSelecionada();
     if(!id) return toast('Selecione uma auditoria na lista acima.','w');
-    if(id!==auditoriaAtual || !metaAtual) await selecionarAuditoria(id);
-    const r=resumo();
-    if(r.PENDENTE>0) return toast(`Não é possível finalizar. Ainda faltam ${r.PENDENTE} item(ns).`,'w');
-    if(!r.total) return toast('A auditoria não possui itens.','w');
-    if(!confirm(`Finalizar auditoria?\nTotal: ${r.total}\nOK: ${r.OK}\nDivergentes: ${r.DIVERGENTE}\nVazios: ${r.ENDERECO_VAZIO}`)) return;
-    await referenciaAuditoria(auditoriaAtual).set({status:'FINALIZADA',finalizadaEm:agora(),finalizadaPor:usuario(),liberada_coletor:false},{merge:true});
-    metaAtual={...metaAtual,status:'FINALIZADA'};
-    toast('Auditoria finalizada.','s');
+    bloquearInterface(true,'Validando pendências no servidor…');
+    try{
+      await selecionarAuditoria(id);
+      const r=resumo();
+      const filaLocal=Number(localStorage.getItem('dt_auditoria_sync_pendente')||0);
+      if(filaLocal>0) throw new Error('Existem sincronizações pendentes neste navegador.');
+      if(!confirm(`Finalizar auditoria?\nTotal: ${r.total}\nOK: ${r.OK}\nDivergentes: ${r.DIVERGENTE}\nVazios: ${r.ENDERECO_VAZIO}`)) return;
+      const resposta=await callable('finalizarAuditoria')({lojaId:loja(),auditoriaId:id});
+      await DB().collection('dt_auditorias_coletor').doc(id).delete().catch(function(e){if(e.code!=='not-found')throw e;});
+      await selecionarAuditoria(id);
+      toast('Auditoria finalizada com validação do servidor.','s');
+      return resposta.data;
+    }catch(e){console.error('[AUDITORIA] finalizar:',e);toast('Não foi possível finalizar: '+(e.message||e),'e');}
+    finally{bloquearInterface(false);}
   }
 
   async function excluir(){
@@ -618,24 +675,14 @@
     if(!window.confirm(mensagem)) return;
     const btn=document.getElementById('btn-aud-excluir');
     if(btn){ btn.disabled=true; btn.dataset.textoOriginal=btn.textContent; btn.textContent='Excluindo...'; }
-    const ref=referenciaAuditoria(id);
     try{
       encerrarListener();
-      // Excluir o documento principal primeiro remove a auditoria dos coletores e
-      // libera a interface imediatamente. A subcoleção é limpa em seguida.
-      await ref.delete();
+      await callable('excluirAuditoriaCompleta')({lojaId:loja(),auditoriaId:id});
+      await DB().collection('dt_auditorias_coletor').doc(id).delete().catch(function(e){if(e.code!=='not-found')throw e;});
       auditoriaAtual=''; metaAtual=null; itensAtuais=[]; itensBrutosAtuais=[]; assinaturaAnterior='';
       if(sel) sel.value='';
       await popularSelect();renderizar();atualizarAcoesAuditoria();
-      toast(`Auditoria “${nome}” removida. Limpando os itens em segundo plano…`,'s');
-      (async function(){
-        try{
-          const snap=await ref.collection('enderecos').get();
-          const commits=[];
-          for(let i=0;i<snap.docs.length;i+=350){const b=DB().batch();snap.docs.slice(i,i+350).forEach(d=>b.delete(d.ref));commits.push(b.commit());if(commits.length===3){await Promise.all(commits.splice(0));}}
-          if(commits.length)await Promise.all(commits);
-        }catch(cleanErr){console.warn('[AUDITORIA] limpeza posterior:',cleanErr.message);}
-      })();
+      toast(`Auditoria “${nome}” e todos os dados filhos foram removidos.`,'s');
     }catch(e){
       console.error('[AUDITORIA] excluir:',e);
       toast('Falha ao excluir a auditoria: '+(e.message||e),'e');
@@ -715,21 +762,32 @@
     if(window.__auditoriaOperacionalV22Eventos) return;
     window.__auditoriaOperacionalV22Eventos=true;
     const sel=document.getElementById('aud-op-auditoria');
-    if(sel){ sel.onchange=function(){
-      encerrarListener();
-      auditoriaAtual=txt(sel.value);
-      metaAtual=null;
-      itensAtuais=[];
-      itensBrutosAtuais=[];
-      assinaturaAnterior='';
-      atualizarAcoesAuditoria();
-      renderizar();
+    if(sel){ sel.onchange=async function(){
+      const anterior=auditoriaAtual;
+      const proxima=txt(sel.value);
+      bloquearInterface(true,'Carregando a auditoria selecionada…');
+      try{
+        await selecionarAuditoria(proxima);
+      }catch(error){
+        console.error('[AUDITORIA] seleção:',error);
+        sel.value=anterior;
+        try{ await selecionarAuditoria(anterior); }catch(restauracao){ console.error('[AUDITORIA] restauração:',restauracao); }
+        toast('Não foi possível carregar a auditoria selecionada: '+(error.message||error),'e');
+      }finally{
+        bloquearInterface(false);
+        atualizarAcoesAuditoria();
+      }
     }; }
+    let filtroTimer=null;
     ['aud-op-status','aud-op-busca','aud-f-dun-esperado','aud-f-dun-lido','aud-f-operador','aud-f-data'].forEach(function(id){
       const e=document.getElementById(id);
       if(e && e.dataset.auditoriaEvento!=='1'){
         e.dataset.auditoriaEvento='1';
-        e.addEventListener(e.tagName==='SELECT'?'change':'input',renderizar);
+        e.addEventListener(e.tagName==='SELECT'?'change':'input',function(){
+          paginaAtual=1;
+          clearTimeout(filtroTimer);
+          filtroTimer=setTimeout(renderizar,e.tagName==='SELECT'?0:180);
+        });
       }
     });
     // Não consultar o Firestore na tela de login. A lista será carregada somente

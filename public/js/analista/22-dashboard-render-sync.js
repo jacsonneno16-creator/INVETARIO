@@ -798,8 +798,10 @@ async function carregarDashboardAuditoria(forcar){
     async function add(ref,origem){try{const snap=await ref.get();snap.docs.forEach(d=>{if(vistos.has(d.id))return;vistos.add(d.id);metas.push({id:d.id,...d.data(),_origem:origem,_ref:d.ref});});}catch(e){console.warn('[Dashboard Auditoria] '+origem,e);}}
     if(window.getDTRawFirestore){
       if(lojaAtual)await add(raw.collection('lojas').doc(lojaAtual).collection('dt_auditorias'),'loja:'+lojaAtual);
-      try{const ls=await raw.collection('lojas').get();for(const ld of ls.docs){if(ld.id!==lojaAtual)await add(raw.collection('lojas').doc(ld.id).collection('dt_auditorias'),'loja:'+ld.id);}}catch(e){ console.warn("[Erro tratado]", e); }
-      await add(raw.collection('dt_auditorias'),'raiz');
+      const acesso=window.DT_USUARIO_ACESSO_ATUAL||{};
+      const acessoGlobal=acesso.acesso_todas_lojas===true || acesso.perfil==='administrador' || acesso.admin_mestre===true || acesso.administrador_mestre===true;
+      if(acessoGlobal){try{const ls=await raw.collection('lojas').get();for(const ld of ls.docs){if(ld.id!==lojaAtual)await add(raw.collection('lojas').doc(ld.id).collection('dt_auditorias'),'loja:'+ld.id);}}catch(e){ console.warn("[Erro tratado]", e); }}
+      if(acessoGlobal) await add(raw.collection('dt_auditorias'),'raiz');
     }else await add(raw.collection('dt_auditorias'),'loja');
     _dashAudMetas=metas;
     const escolhido=document.getElementById('dash-faud')?.value||'';

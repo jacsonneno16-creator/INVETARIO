@@ -128,6 +128,9 @@ window._auditoriaListaAtiva = function(){
 
 
 window.iniciarListenerAuditoria = function(invId){
+  // Fluxo legado desativado na v231. A lista e os eventos pertencem somente aos
+  // módulos 17-auditoria-meta e 18-auditoria-fluxo.
+  return;
   if (_auditoriaListener) { try { _auditoriaListener(); } catch(e){ console.warn("[Erro tratado]", e); } _auditoriaListener = null; }
   if (!invId) return;
 
@@ -309,4 +312,3 @@ window.iniciarListenerAuditoria = function(invId){
     return false;
   };
 })();
-

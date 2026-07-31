@@ -33,7 +33,7 @@
   function operadorNome(){ return APP.operador?.name || APP.operador?.nome || ''; }
   function operadorUsuario(){ return APP.operador?.email || APP.operador?.usuario || APP.operador?.login || ''; }
   function lojaAtual(){
-    return APP.lojaAtual?.id || APP.lojaAtual?.nome || APP.lojaId || APP.inventario?.loja || '';
+    return APP.lojaAtual?.id || APP.lojaAtual?.nome || APP.lojaId || APP.inventario?.loja || window.getDTLojaAtiva?.() || '';
   }
   function auditoriaId(){ return APP.inventario?.auditoria_id || APP.inventario?.id || ''; }
 
@@ -64,59 +64,10 @@
     });
   }
 
-  function dunEsperado(item){
-    return texto(item?.gtinEsperado || item?.gtin_esperado || item?.eanEsperado || item?.ean_esperado || item?.ean || item?.gtin || item?.dunEsperado || item?.dun_esperado || item?.dun || item?.codigoProduto || item?.codigo_produto);
-  }
-
-  function descricaoEsperada(item){
-    return texto(item?.produtoEsperado || item?.produto_esperado || item?.descricaoProdutoEsperado || item?.produto_nome || item?.descricao || item?.produto);
-  }
-
-  function codigosEsperados(item){
-    const valores=[item?.gtinEsperado,item?.gtin_esperado,item?.eanEsperado,item?.ean_esperado,item?.ean,item?.gtin,item?.dunEsperado,item?.dun_esperado,item?.dun,item?.codigoProduto,item?.codigo_produto,item?.codigoInterno,item?.codigo_interno];
-    return Array.from(new Set(valores.map(normalizarCodigo).filter(Boolean)));
-  }
-  function mesmoProdutoDaBase(lido,item){
-    const prodLido=window.DTProdutos?.buscarSync?.(lido)||{encontrado:false};
-    if(!prodLido.encontrado)return false;
-    const esperados=codigosEsperados(item);
-    for(let i=0;i<esperados.length;i++){
-      const prodEsp=window.DTProdutos?.buscarSync?.(esperados[i]);
-      if(!prodEsp?.encontrado)continue;
-      if(prodLido.id&&prodEsp.id&&prodLido.id===prodEsp.id)return true;
-      const famL=normalizarCodigo(prodLido.familiaCodigo||prodLido.familiaNome||prodLido.produtoPrincipal);
-      const famE=normalizarCodigo(prodEsp.familiaCodigo||prodEsp.familiaNome||prodEsp.produtoPrincipal);
-      if(famL&&famE&&famL===famE&&texto(prodLido.embalagem).toUpperCase()===texto(prodEsp.embalagem).toUpperCase())return true;
-    }
-    const nomeEsperado=normalizarCodigo(descricaoEsperada(item));
-    const nomeLido=normalizarCodigo(prodLido.nomeProduto);
-    return !!(nomeEsperado&&nomeLido&&(nomeEsperado===nomeLido||nomeEsperado.includes(nomeLido)||nomeLido.includes(nomeEsperado)));
-  }
-
   function localizarProdutoLido(codigoLido){
     const globalProduto = window.DTProdutos?.buscarSync(codigoLido);
     if (globalProduto?.encontrado) return texto(globalProduto.nomeProduto);
-    const alvo = normalizarCodigo(codigoLido);
-    const nomeMapeado = APP.auditoriaProdutosMap?.[alvo];
-    if (nomeMapeado) return texto(nomeMapeado);
-    const encontrado = (APP.auditorias || []).find(item => normalizarCodigo(dunEsperado(item)) === alvo);
-    return encontrado ? descricaoEsperada(encontrado) : 'Produto não identificado';
-  }
-
-  function produtoCompativelOffline(lido,item){
-    const alvo=normalizarCodigo(lido);
-    if(!alvo)return false;
-    const esperados=codigosEsperados(item);
-    if(esperados.indexOf(alvo)>=0)return true;
-
-    // O mapa é criado durante o download e permanece em memória quando a rede
-    // cai. Compara também pelo nome canônico para reconhecer códigos alternativos
-    // do mesmo produto sem consultar o Firebase.
-    const nomeLido=normalizarCodigo(APP.auditoriaProdutosMap?.[alvo]||'');
-    const nomeEsperado=normalizarCodigo(descricaoEsperada(item));
-    if(nomeLido&&nomeEsperado&&(nomeLido===nomeEsperado||nomeLido.includes(nomeEsperado)||nomeEsperado.includes(nomeLido)))return true;
-
-    return mesmoProdutoDaBase(lido,item);
+    return 'Produto não identificado';
   }
 
   function encontrarEndereco(valor){
@@ -124,7 +75,7 @@
     if (!alvo) return null;
     const previsto=listaAuditoria().find(function(item){return normalizarEndereco(item.endereco||item.endereco_norm)===alvo;});
     if(previsto)return previsto;
-    if(APP.locaisAtivos&&APP.locaisAtivos.has(alvo))return {id:auditoriaId()+'__'+alvo,endereco:texto(valor),dunEsperado:'',produtoEsperado:'ENDEREÇO PREVISTO VAZIO',previstoVazio:true,disponivel_coletor:true};
+    if(APP.locaisAtivos&&APP.locaisAtivos.has(alvo))return {id:auditoriaId()+'__'+alvo,endereco:texto(valor),foraAuditoria:true,disponivel_coletor:true};
     return null;
   }
 
@@ -253,8 +204,6 @@
           item = {
             id: 'OCORRENCIA__' + auditoriaId() + '__' + normalizarEndereco(valor) + '__' + Date.now(),
             endereco: valor,
-            dunEsperado: texto(meta.produtoCodigo || meta.produto_codigo || meta.gtin || meta.dun || meta.familiaId || ''),
-            produtoEsperado: texto(meta.produtoNome || meta.produto_nome || meta.familiaNome || meta.nomeProduto || 'PRODUTO DA AUDITORIA'),
             foraAuditoria: true,
             disponivel_coletor: true
           };
@@ -373,10 +322,12 @@
       for(let i=0;i<fila.length;i++){
         const x=fila[i];
         try {
-          await comTimeoutAuditoria(
-            FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload,{merge:true}),
-            AUDITORIA_SYNC_TIMEOUT_MS
-          );
+          const ocorrencia=(x.subcolecao||'enderecos')==='ocorrencias';
+          const enviar=firebase.app().functions('southamerica-east1').httpsCallable(ocorrencia?'registrarOcorrenciaAuditoria':'registrarResultadoAuditoria');
+          const dados=ocorrencia?
+            {lojaId:x.payload.loja,auditoriaId:x.auditoriaId,ocorrenciaId:x.docId,endereco:x.payload.endereco,dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',dispositivoId:x.payload.dispositivo_id||''}:
+            {lojaId:x.payload.loja,auditoriaId:x.auditoriaId,itemId:x.docId,dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',vazio:x.payload.vazio===true,dispositivoId:x.payload.dispositivo_id||''};
+          await comTimeoutAuditoria(enviar(dados),AUDITORIA_SYNC_TIMEOUT_MS);
           await window.DTAuditoriaStorage.filaDelete(x.chave);
         } catch(e) {
           console.warn('[AUDITORIA] Item permanece na fila offline:',x.docId,e);
@@ -405,29 +356,6 @@
     const item = estado.item;
     const momento = agoraISO();
     const lido = texto(produtoLido);
-    const prod = window.DTProdutos && window.DTProdutos.buscarSync ? window.DTProdutos.buscarSync(lido) : {encontrado:false};
-    const meta = (APP.auditoriasMenu || []).find(function(x){ return x.id === auditoriaId(); }) || {};
-    let produtoCorreto = false;
-    if (prod.encontrado) {
-      const famProd = normalizarCodigo(prod.familiaCodigo || prod.familiaNome || prod.produtoPrincipal);
-      const famMeta = normalizarCodigo(meta.familiaId || meta.familiaNome || meta.produtoCodigo || meta.produtoNome || '');
-      produtoCorreto = !!(famProd && famMeta && famProd === famMeta);
-      if (!produtoCorreto) {
-        const alvo = normalizarCodigo(meta.produtoCodigo || meta.gtin || meta.dun || '');
-        produtoCorreto = !!(alvo && (normalizarCodigo(lido) === alvo || normalizarCodigo(prod.id) === alvo));
-      }
-    }
-    if (!produtoCorreto) {
-      const nomeOffline=normalizarCodigo(APP.auditoriaProdutosMap?.[normalizarCodigo(lido)]||'');
-      const nomeMeta=normalizarCodigo(meta.produtoNome||meta.produto_nome||meta.familiaNome||'');
-      produtoCorreto=!!(nomeOffline&&nomeMeta&&(nomeOffline===nomeMeta||nomeOffline.includes(nomeMeta)||nomeMeta.includes(nomeOffline)));
-    }
-    if (!produtoCorreto) {
-      mostrarResultado('O produto bipado não é o produto selecionado nesta auditoria. Bipe o produto correto.', 'erro');
-      tocar('erro');
-      const el = elementos(); if (el.produto) { el.produto.select(); el.produto.focus(); }
-      return;
-    }
     setProcessando(true);
     const docId = 'fora__' + normalizarEndereco(item.endereco) + '__' + Date.now();
     const payload = {
@@ -440,7 +368,6 @@
       codigoLido: lido,
       dunLido: lido,
       gtinLido: lido,
-      produtoEsperado: texto(meta.produtoNome || meta.produto_nome || meta.familiaNome || 'PRODUTO DA AUDITORIA'),
       operador_id: operadorUsuario(),
       operador_nome: operadorNome(),
       dispositivo_id: dispositivoId(),
@@ -475,36 +402,16 @@
 
     setProcessando(true);
     const momento = agoraISO();
-    const esperado = dunEsperado(item);
     const lido = status === STATUS_VAZIO ? null : texto(produtoLido);
     const nomeLido = status === STATUS_VAZIO ? null : localizarProdutoLido(lido);
     const payload = {
       auditoriaId: auditoriaId(),
-      endereco: texto(item.endereco),
-      dunEsperado: esperado,
-      produtoEsperado: descricaoEsperada(item),
-      gtinLido: lido,
-      gtin_lido: lido,
-      eanLido: lido,
-      ean_lido: lido,
       dunLido: lido,
-      dun_lido: lido,
-      codigoLido: lido,
       produtoLido: nomeLido,
-      produto_lido: nomeLido,
-      produtoNaoCadastrado: status !== STATUS_VAZIO && !(window.DTProdutos && window.DTProdutos.buscarSync && window.DTProdutos.buscarSync(lido).encontrado),
-      status,
-      operador_id: operadorUsuario(),
-      operador_nome: operadorNome(),
-      lidoEm: momento,
-      lido_em: momento,
       loja: lojaAtual(),
-      observacao: '',
-      disponivel_coletor: false,
-      em_andamento: false,
       dispositivo_id: dispositivoId(),
-      finalizado_em: momento,
-      atualizadoEm: momento
+      vazio: status === STATUS_VAZIO,
+      criadoEm: momento
     };
 
     try {
@@ -517,16 +424,8 @@
       atualizarContadorTitulo();
       try { window.dispatchEvent(new CustomEvent('dt-auditoria-salva',{detail:{id:docId,payload:payload}})); } catch(e){ console.warn("[Erro tratado]", e); }
 
-      if (status === STATUS_OK) {
-        mostrarResultado('Auditoria concluída.', 'ok');
-        tocar('ok');
-      } else if (status === STATUS_DIVERGENTE) {
-        mostrarResultado('Produto divergente.', 'erro');
-        tocar('erro');
-      } else {
-        mostrarResultado('Endereço registrado como vazio.', 'vazio');
-        tocar('vazio');
-      }
+      mostrarResultado('Leitura registrada. A comparação será feita com segurança no servidor.',status===STATUS_VAZIO?'vazio':'ok');
+      tocar(status===STATUS_VAZIO?'vazio':'ok');
 
       if(navigator.onLine) sincronizarFilaAuditoria().catch(function(error){ console.warn("[Falha assíncrona]", error); });
       estado.timerRetorno = setTimeout(irParaEndereco, 900);
@@ -555,21 +454,11 @@
       el.produto.focus();
       return;
     }
-    const prod=window.DTProdutos&&window.DTProdutos.buscarSync?window.DTProdutos.buscarSync(lido):{encontrado:false};
-    const esperados=codigosEsperados(estado.item);
-    let correto=produtoCompativelOffline(lido,estado.item);
-    const meta=(APP.auditoriasMenu||[]).find(function(x){return x.id===auditoriaId();})||{};
-    if(meta.tipoAuditoria==='produto'&&meta.familiaId&&prod.encontrado){const famProd=normalizarCodigo(prod.familiaCodigo||prod.familiaNome);correto=famProd===normalizarCodigo(meta.familiaId)||famProd===normalizarCodigo(meta.familiaNome);}
-    // Não invalida uma correspondência já confirmada pela base baixada só porque
-    // o serviço global de produtos ficou momentaneamente indisponível offline.
-    if(!prod.encontrado&&!produtoCompativelOffline(lido,estado.item))correto=false;
-    if(estado.item.previstoVazio===true||!esperados.length)correto=false;
     if (estado.foraAuditoria || estado.item.foraAuditoria === true) {
       salvarOcorrenciaForaAuditoria(lido);
       return;
     }
-    if(!prod.encontrado) mostrarResultado('Produto não cadastrado. Será registrado como divergente.','erro');
-    salvarResultado(correto?STATUS_OK:STATUS_DIVERGENTE,lido);
+    salvarResultado('PENDENTE_SERVIDOR',lido);
   }
 
   function registrarEnderecoVazio(){

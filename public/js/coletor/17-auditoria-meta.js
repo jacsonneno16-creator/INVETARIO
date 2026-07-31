@@ -108,10 +108,6 @@
       importado_em: a.importado_em || '',
       liberada: a.status === 'LIBERADA' || a.status === 'EM_ANDAMENTO' || !!a.liberada_coletor,
       tipoAuditoria: a.tipoAuditoria || a.tipo_auditoria || '',
-      ruas: Array.isArray(a.ruas) ? a.ruas : [],
-      familiaId: a.familiaId || a.familia_id || '',
-      familiaNome: a.familiaNome || a.familia_nome || '',
-      familiaCodigos: Array.isArray(a.familiaCodigos) ? a.familiaCodigos : [],
       disponivel_coletor: a.disponivel_coletor !== false
     })).filter(a => a.id && a.disponivel_coletor !== false && a.liberada);
   }
@@ -121,30 +117,8 @@
     return window.DTEnderecos?.chave(valor) || String(valor == null ? '' : valor).trim().toUpperCase();
   }
 
-  // Mantém no aparelho um índice simples dos códigos presentes na própria
-  // auditoria. Ele é usado quando a conexão cai e a Base Geral de Produtos não
-  // consegue responder naquele instante. Assim, um GTIN/EAN/DUN já baixado não
-  // passa a ser tratado como produto errado apenas por falta de rede.
   function _hidratarMapaProdutosAuditoria(rows){
-    APP.auditoriaProdutosMap = APP.auditoriaProdutosMap || {};
-    (Array.isArray(rows) ? rows : []).forEach(function(r){
-      const nome = String(r?.produtoEsperado || r?.produto_esperado || r?.produto_nome || r?.descricao || r?.produto || '').trim();
-      const codigos = [
-        r?.gtinEsperado,r?.gtin_esperado,r?.eanEsperado,r?.ean_esperado,r?.ean,r?.gtin,
-        r?.dunEsperado,r?.dun_esperado,r?.dun,r?.codigoProduto,r?.codigo_produto,
-        r?.codigoInterno,r?.codigo_interno,r?.sku
-      ].map(function(v){ return String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]/g,''); }).filter(Boolean);
-      codigos.forEach(function(codigo){
-        if (nome) APP.auditoriaProdutosMap[codigo] = nome;
-        const geral = window.DTProdutos?.buscarSync?.(codigo);
-        if (geral?.encontrado) {
-          [geral.id,geral.gtin,geral.ean,geral.dun,geral.codigoInterno,geral.codigo_interno,geral.sku]
-            .map(function(v){ return String(v == null ? '' : v).trim().toUpperCase().replace(/[^A-Z0-9]/g,''); })
-            .filter(Boolean)
-            .forEach(function(alias){ if (nome) APP.auditoriaProdutosMap[alias] = nome; });
-        }
-      });
-    });
+    APP.auditoriaProdutosMap = {};
     return APP.auditoriaProdutosMap;
   }
   window._hidratarMapaProdutosAuditoria = _hidratarMapaProdutosAuditoria;
@@ -223,60 +197,11 @@
       if(Array.isArray(cache) && cache.length) return cache;
     }
     const audRef = FS.collection(FCOL.auditorias).doc(auditoriaId);
-    // v15: auditoria também lê por chunks de 1000 para reduzir leituras.
-    const chunkSnap = await audRef.collection('base_chunks').orderBy('parte').get();
-    if (!chunkSnap.empty) {
-      const rows = [];
-      chunkSnap.docs.forEach(doc => {
-        const d = doc.data();
-        rows.push(...(d.dados || d.itens || d.registros || []));
-      });
-      _hidratarMapaProdutosAuditoria(rows);
-      rows.forEach(r => {
-        const codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
-        const nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
-        if (codigo && nome) APP.auditoriaProdutosMap[codigo] = nome;
-      });
-      const resultadosSnap = await audRef.collection('enderecos').where('disponivel_coletor', '==', false).get();
-      const finalizados = new Set();
-      resultadosSnap.docs.forEach(doc => {
-        const d = doc.data() || {};
-        const status = String(d.status || '').toUpperCase();
-        if (['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(status) || d.disponivel_coletor === false) {
-          finalizados.add(String(doc.id));
-          finalizados.add((window.DTEnderecos?.chave(d.endereco) || String(d.endereco || '').trim().toUpperCase()));
-        }
-      });
-      const pendentes = rows.filter(a => {
-        const status = String(a.status || '').toUpperCase();
-        const id = String(a.id || '');
-        const endereco = (window.DTEnderecos?.chave(a.endereco) || String(a.endereco || '').trim().toUpperCase());
-        return a.disponivel_coletor !== false &&
-          !['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(status) &&
-          !finalizados.has(id) && !finalizados.has(endereco);
-      });
-      try {
-        await window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes);
-        localStorage.removeItem(cacheKey);
-      } catch(e) {
-        console.warn('[AUDITORIA] Não foi possível persistir a base da auditoria:',e);
-      }
-      return pendentes;
-    }
-    // Fallback para auditorias antigas sem chunks.
-    const snap = await audRef.collection('enderecos').get();
-    const todos = snap.docs.map(d => ({ id:d.id, ...d.data() }));
+    const snap = await audRef.collection('itens_coletor').where('disponivel_coletor','==',true).get();
+    const pendentes = snap.docs.map(d => ({id:d.id,...d.data()}));
+    // A base cega contém somente endereço e identificador opaco. Nenhum código,
+    // produto ou critério esperado é persistido no dispositivo.
     APP.auditoriaProdutosMap = {};
-    _hidratarMapaProdutosAuditoria(todos);
-    todos.forEach(r => {
-      const codigo = String(r.gtinEsperado || r.gtin_esperado || r.eanEsperado || r.ean_esperado || r.ean || r.gtin || r.dunEsperado || r.dun_esperado || r.dun || r.codigo_produto || '').trim().toUpperCase().replace(/[^A-Z0-9]/g,'');
-      const nome = String(r.produtoEsperado || r.produto_esperado || r.produto_nome || r.descricao || r.produto || '').trim();
-      if (codigo && nome) APP.auditoriaProdutosMap[codigo] = nome;
-    });
-    const pendentes = todos.filter(a => {
-      const status = String(a.status || '').toUpperCase();
-      return a.disponivel_coletor !== false && !['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(status);
-    });
     try { await window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes); } catch(e){ console.warn("[Erro tratado]", e); }
     return pendentes;
   }
@@ -292,8 +217,8 @@
       renderListaAuditorias(cache);
     };
     if (!navigator.onLine) { fromCache(); return; }
-    FS.collection(FCOL.auditorias)
-      .where('liberada_coletor', '==', true)
+    FS.collection('dt_auditorias_coletor')
+      .where('status', '==', 'LIBERADA')
       .get()
       .then(snap => {
         const docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));

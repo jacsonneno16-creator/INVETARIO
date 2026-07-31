@@ -55,7 +55,9 @@
     }
     // O coletor grava em dt_auditorias na raiz. Leia essa origem primeiro e
     // consulte apenas a loja ativa como compatibilidade com instalações novas.
-    await add(raw.collection('dt_auditorias'),'raiz');
+    const acesso=window.DT_USUARIO_ACESSO_ATUAL||{};
+    const acessoGlobal=acesso.acesso_todas_lojas===true || acesso.perfil==='administrador' || acesso.admin_mestre===true || acesso.administrador_mestre===true;
+    if(acessoGlobal) await add(raw.collection('dt_auditorias'),'raiz');
     if(loja) await add(raw.collection('lojas').doc(loja).collection('dt_auditorias'),'loja:'+loja);
     acompAudMetas=[...porId.values()].sort((a,b)=>{
       const av=a.criadoEm?.toMillis?.()||a.criadoEm?.seconds*1000||Date.parse(a.criadoEm||a.criado_em||0)||0;

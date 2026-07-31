@@ -75,9 +75,16 @@ window.DTLoja = {
   },
   async listar(apenasAtivas=true){
     const raw = window.getDTRawFirestore();
-    const snap = await raw.collection('lojas').get();
     const acesso = window.DT_USUARIO_ACESSO_ATUAL || null;
-    return snap.docs.map(d=>({id:d.id,...d.data()}))
+    let docs=[];
+    if (acesso && acesso.acesso_todas_lojas !== true && Array.isArray(acesso.lojas_permitidas)) {
+      const permitidas=[...new Set(acesso.lojas_permitidas.map(String).filter(Boolean))];
+      const snaps=await Promise.all(permitidas.map(id=>raw.collection('lojas').doc(id).get()));
+      docs=snaps.filter(d=>d.exists);
+    } else {
+      docs=(await raw.collection('lojas').get()).docs;
+    }
+    return docs.map(d=>({id:d.id,...d.data()}))
       .filter(x=>!apenasAtivas || x.ativa !== false)
       .filter(x=>!acesso || acesso.acesso_todas_lojas === true || (Array.isArray(acesso.lojas_permitidas) && acesso.lojas_permitidas.includes(x.id)))
       .sort((a,b)=>String(a.nome||a.id).localeCompare(String(b.nome||b.id),'pt-BR'));
