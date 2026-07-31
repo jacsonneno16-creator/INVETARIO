@@ -1,28 +1,298 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn(){ return request.auth != null; }
-    match /usuarios_acessos/{userId} { allow read, write: if signedIn(); }
-    match /lojas/{lojaId} {
-      allow read, create, update: if signedIn();
-      allow delete: if false;
-      match /{document=**} { allow read, write: if signedIn(); }
+    function signedIn() {
+      return request.auth != null;
     }
-    // Base de produtos: catálogo global compartilhado entre todas as lojas
-    // (fica fora de lojas/{lojaId} de propósito, para o coletor carregar uma
-    // única base). Antes só tinha leitura liberada, o que bloqueava a
-    // importação/edição/publicação da base com "Missing or insufficient permissions".
-    match /dt_produtos/{document=**} { allow read, write: if signedIn(); }
-    match /dt_produtos_chunks/{document=**} { allow read, write: if signedIn(); }
-    match /dt_produtos_meta/{document=**} { allow read, write: if signedIn(); }
-    // Coletores (aparelhos): cadastro global também fora de lojas/{lojaId},
-    // pois um mesmo aparelho pode ser usado em mais de uma loja. Sem escrita
-    // aqui o app nem consegue registrar o aparelho no primeiro login.
-    match /dt_coletores/{document=**} { allow read, write: if signedIn(); }
-    match /dt_atribuicoes_contagem/{document=**} { allow read, write: if signedIn(); }
-    // Coleções antigas: somente leitura para permitir migração para lojas/{lojaId}.
+    function accessExists() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/usuarios_acessos/$(request.auth.uid));
+    }
+    function access() {
+      return get(/databases/$(database)/documents/usuarios_acessos/$(request.auth.uid)).data;
+    }
+    function active() {
+      return accessExists() && access().ativo != false;
+    }
+    function admin() {
+      return active() && (
+        access().perfil == 'administrador' ||
+        access().admin_mestre == true ||
+        access().administrador_mestre == true
+      );
+    }
+    function canUseAnalista() {
+      return active() && (
+        admin() ||
+        access().perfil == 'analista' ||
+        access().canais_acesso.analista == true
+      );
+    }
+    function canUseColetor() {
+      return active() && (
+        admin() ||
+        access().canais_acesso.coletor == true ||
+        access().perfil == 'operador'
+      );
+    }
+    function hasPermission(area, operation) {
+      return admin() || (
+        canUseAnalista() &&
+        access().permissoes[area][operation] == true
+      );
+    }
+    function canAccessStore(lojaId) {
+      return active() && (
+        access().acesso_todas_lojas == true ||
+        lojaId in access().lojas_permitidas
+      );
+    }
+    function validText(value, maxLength) {
+      return value is string && value.size() <= maxLength;
+    }
+    function validOperationalWrite() {
+      return request.resource.data.keys().hasAny(['inventario_id', 'inventarioId']) &&
+        (!request.resource.data.keys().hasAny(['quantidade']) ||
+          (request.resource.data.quantidade is number &&
+           request.resource.data.quantidade >= 0 &&
+           request.resource.data.quantidade <= 999999999));
+    }
+    function inventoryId(data) {
+      return data.inventario_id != null ? data.inventario_id : data.inventarioId;
+    }
+    function inventoryOpen(lojaId, data) {
+      return inventoryId(data) is string &&
+        exists(/databases/$(database)/documents/lojas/$(lojaId)/dt_inventarios/$(inventoryId(data))) &&
+        get(/databases/$(database)/documents/lojas/$(lojaId)/dt_inventarios/$(inventoryId(data))).data.status
+          in ['ATIVO', 'ABERTO', 'EM_ANDAMENTO'];
+    }
+    function sameOperator(data) {
+      return data.operador_uid == request.auth.uid ||
+        data.coletor_uid == request.auth.uid ||
+        data.uid == request.auth.uid;
+    }
+    function assignedToCurrentUser(data) {
+      return sameOperator(data) ||
+        (
+          data.keys().hasAny(['operador']) &&
+          access().keys().hasAny(['nome']) &&
+          data.operador == access().nome
+        ) ||
+        (
+          data.keys().hasAny(['operador_responsavel']) &&
+          access().keys().hasAny(['nome']) &&
+          data.operador_responsavel == access().nome
+        ) ||
+        (
+          data.keys().hasAny(['operador']) &&
+          access().keys().hasAny(['email']) &&
+          data.operador == access().email
+        );
+    }
+    function safeUserScope() {
+      return request.resource.data.perfil != 'administrador' &&
+        request.resource.data.admin_mestre != true &&
+        request.resource.data.administrador_mestre != true &&
+        (
+          access().acesso_todas_lojas == true ||
+          (
+            request.resource.data.acesso_todas_lojas != true &&
+            request.resource.data.lojas_permitidas is list &&
+            request.resource.data.lojas_permitidas.hasOnly(access().lojas_permitidas)
+          )
+        );
+    }
+
+    match /usuarios_acessos/{userId} {
+      allow read: if active() && (
+        request.auth.uid == userId ||
+        admin() ||
+        hasPermission('operadores', 'visualizar')
+      );
+      allow create: if request.auth.uid != userId &&
+        hasPermission('operadores', 'criar') && safeUserScope();
+      allow update: if request.auth.uid != userId &&
+        hasPermission('operadores', 'editar') && safeUserScope();
+      allow delete: if request.auth.uid != userId &&
+        hasPermission('operadores', 'excluir') &&
+        resource.data.admin_mestre != true &&
+        resource.data.administrador_mestre != true;
+    }
+
+    match /lojas/{lojaId} {
+      allow read: if canAccessStore(lojaId);
+      allow create, update: if admin() &&
+        validText(request.resource.data.nome, 120);
+      allow delete: if false;
+
+      match /dt_contagens/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow create: if canAccessStore(lojaId) && canUseColetor() &&
+          sameOperator(request.resource.data) &&
+          validOperationalWrite() && inventoryOpen(lojaId, request.resource.data);
+        allow update, delete: if canAccessStore(lojaId) && canUseAnalista();
+      }
+      match /dt_vazios/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow create: if canAccessStore(lojaId) && canUseColetor() &&
+          sameOperator(request.resource.data) &&
+          validOperationalWrite() && inventoryOpen(lojaId, request.resource.data);
+        allow update, delete: if canAccessStore(lojaId) && canUseAnalista();
+      }
+      match /dt_recontagens/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow create, delete: if canAccessStore(lojaId) &&
+          hasPermission('recontagens', 'editar');
+        allow update: if canAccessStore(lojaId) &&
+          (
+            hasPermission('recontagens', 'editar') ||
+            (
+              canUseColetor() &&
+              assignedToCurrentUser(resource.data) &&
+              (
+                !request.resource.data.keys().hasAny(['operador_uid']) ||
+                request.resource.data.operador_uid == request.auth.uid
+              ) &&
+              inventoryOpen(lojaId, request.resource.data) &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'status', 'quantidade', 'quantidade_contada', 'itens',
+                'concluida_em', 'recontagem_concluida_em', 'atualizado_em',
+                'sincronizado_em', 'status_recontagem', 'iniciada_em',
+                'recontagem_iniciada_em', 'operador_recontagem', 'operador_uid'
+              ])
+            )
+          );
+      }
+      match /dt_divergencias/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('recontagens', 'editar');
+      }
+      match /dt_inventarios/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow create: if canAccessStore(lojaId) &&
+          hasPermission('inventarios', 'criar');
+        allow update: if canAccessStore(lojaId) &&
+          hasPermission('inventarios', 'editar') &&
+          (
+            (
+              !resource.data.keys().hasAny(['versao']) &&
+              request.resource.data.versao == 1
+            ) ||
+            request.resource.data.versao == resource.data.versao + 1
+          );
+        allow delete: if false;
+      }
+      match /dt_locais/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('enderecos', 'editar');
+      }
+      match /dt_locais_chunks/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('enderecos', 'editar');
+      }
+      match /dt_locais_meta/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('enderecos', 'editar');
+      }
+      match /dt_operadores/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow create: if canAccessStore(lojaId) &&
+          hasPermission('operadores', 'criar');
+        allow update: if canAccessStore(lojaId) &&
+          hasPermission('operadores', 'editar');
+        allow delete: if canAccessStore(lojaId) &&
+          hasPermission('operadores', 'excluir');
+      }
+      match /dt_atribuicoes_contagem/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('recontagens', 'editar');
+      }
+      match /dt_auditorias/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('auditoria', 'editar');
+      }
+      match /dt_auditoria_imports/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('auditoria', 'editar');
+      }
+      match /dt_bloqueios_recontagem/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) && (
+          hasPermission('recontagens', 'editar') ||
+          (
+            canUseColetor() &&
+            request.resource.data.operador_uid == request.auth.uid &&
+            inventoryOpen(lojaId, request.resource.data)
+          )
+        );
+      }
+      match /dt_logs_analista/{docId} {
+        allow read: if canAccessStore(lojaId) && canUseAnalista();
+        allow create: if canAccessStore(lojaId) && canUseAnalista() &&
+          request.resource.data.usuario_uid == request.auth.uid;
+        allow update, delete: if false;
+      }
+      match /{collectionId}/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if false;
+        match /{nested=**} {
+          allow read: if canAccessStore(lojaId);
+          allow write: if canAccessStore(lojaId) &&
+            hasPermission('inventarios', 'editar') &&
+            collectionId in ['dt_inventarios'];
+        }
+      }
+    }
+
+    match /dt_coletores/{deviceId} {
+      allow read: if active() && (
+        canUseAnalista() ||
+        resource.data.uid == request.auth.uid
+      );
+      allow create: if canUseColetor() &&
+        request.resource.data.uid == request.auth.uid;
+      allow update: if hasPermission('coletores', 'editar') ||
+        (canUseColetor() &&
+         resource.data.uid == request.auth.uid &&
+         request.resource.data.uid == request.auth.uid &&
+         request.resource.data.aprovado == resource.data.aprovado);
+      allow delete: if hasPermission('coletores', 'excluir');
+    }
+
+    match /dt_produtos/{docId} {
+      allow read: if active();
+      allow write: if hasPermission('produtos', 'editar') ||
+        hasPermission('produtos', 'importar');
+    }
+    match /dt_produtos_chunks/{docId} {
+      allow read: if active();
+      allow write: if hasPermission('produtos', 'editar') ||
+        hasPermission('produtos', 'importar');
+    }
+    match /dt_produtos_meta/{docId} {
+      allow read: if active();
+      allow write: if hasPermission('produtos', 'editar') ||
+        hasPermission('produtos', 'importar');
+    }
+
+    match /dt_atribuicoes_contagem/{docId} {
+      allow read: if active() && (
+        canUseAnalista() ||
+        resource.data.operador_uid == request.auth.uid ||
+        resource.data.uid == request.auth.uid
+      );
+      allow create, update, delete: if hasPermission('recontagens', 'editar');
+    }
+
     match /{legacyCollection}/{document=**} {
-      allow read: if signedIn() && legacyCollection != 'lojas';
+      allow read: if false;
       allow write: if false;
     }
   }

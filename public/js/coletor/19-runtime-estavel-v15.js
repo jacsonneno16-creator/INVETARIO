@@ -3,7 +3,7 @@
   var lastInstallPrompt=null;
   var diag=[];
   function addDiag(msg){
-    try{diag.push(new Date().toLocaleTimeString('pt-BR')+' — '+msg); if(diag.length>20)diag.shift(); localStorage.setItem('dt_diag_coletor_v15',JSON.stringify(diag));}catch(e){}
+    try{diag.push(new Date().toLocaleTimeString('pt-BR')+' — '+msg); if(diag.length>20)diag.shift(); localStorage.setItem('dt_diag_coletor_v15',JSON.stringify(diag));}catch(e){ console.warn("[Erro tratado]", e); }
   }
   window.addEventListener('error',function(e){addDiag('JS: '+(e.message||'erro')+' @ '+(e.filename||'')+':'+(e.lineno||''));});
   window.addEventListener('unhandledrejection',function(e){addDiag('Promise: '+((e.reason&&e.reason.message)||e.reason||'erro'));});

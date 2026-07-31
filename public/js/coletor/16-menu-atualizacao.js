@@ -262,7 +262,9 @@ function _hideUpdateModal() {
       // Como é um arquivo .html, o SW não pode ser registrado normalmente.
       // Para instalação PWA, tentamos via importScripts workaround.
       dbg('[SW] arquivo HTML — instalação via "Adicionar à tela inicial" disponível');
-    }).catch(() => {});
+    }).catch((erro) => {
+      console.warn('[PWA] Não foi possível consultar o registro do Service Worker', erro);
+    });
   });
 
   // Mostrar instruções de instalação manual para iOS (Safari não tem beforeinstallprompt)

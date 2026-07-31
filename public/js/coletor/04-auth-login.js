@@ -10,13 +10,13 @@ function _carregarLoginColetorLembrado(){
     if(!salvo?.login)return;
     const l=document.getElementById('l-login'),p=document.getElementById('l-pass'),r=document.getElementById('l-remember');
     if(l)l.value=salvo.login;if(p)p.value='';if(r)r.checked=true;
-  }catch(_){}
+  }catch(_){ console.warn("[Erro tratado]", _); }
 }
 function _salvarOuLimparLoginColetor(login,senha){
   try{
     if(document.getElementById('l-remember')?.checked) localStorage.setItem(DT_COLETOR_LOGIN_MEM_KEY,JSON.stringify({login}));
     else localStorage.removeItem(DT_COLETOR_LOGIN_MEM_KEY);
-  }catch(_){}
+  }catch(_){ console.warn("[Erro tratado]", _); }
 }
 window.addEventListener('DOMContentLoaded',_carregarLoginColetorLembrado);
 
@@ -42,7 +42,9 @@ function doCriarConta() {
   AUTH.createUserWithEmailAndPassword(email, pass)
     .then(async cred => {
       const displayName = _nomeDisplay(login);
-      await cred.user.updateProfile({ displayName }).catch(() => {});
+      await cred.user.updateProfile({ displayName }).catch((erro) => {
+        console.warn('[Autenticação] Conta criada, mas o nome de exibição não foi atualizado', { uid: cred.user.uid, erro });
+      });
 
       // Primeiro acesso também precisa registrar e aguardar aprovação do aparelho.
       // Antes, a criação de conta entrava direto no sistema e nunca criava o
@@ -228,7 +230,7 @@ async function doLogin() {
     _setFb('⏱ Conexão lenta — verifique a internet e tente novamente', 'warn');
   }, 15000);
 
-  try { await (window.DT_AUTH_READY || Promise.resolve()); } catch(_) {}
+  try { await (window.DT_AUTH_READY || Promise.resolve()); } catch(_){ console.warn("[Erro tratado]", _); }
 
   AUTH.signInWithEmailAndPassword(email, pass)
     .then(async cred => {
@@ -250,7 +252,7 @@ async function doLogin() {
       };
       if (acessoGlobal?.canais_acesso && acessoGlobal.canais_acesso.coletor !== true) {
         _setBtn('ENTRAR', false);
-        await AUTH.signOut().catch(()=>{});
+        await AUTH.signOut().catch((erro) => console.error('[Autenticação] Falha ao encerrar sessão sem acesso ao Coletor', erro));
         _setFb('Este login possui acesso somente ao painel Analista.', 'err');
         return;
       }
@@ -271,13 +273,13 @@ async function doLogin() {
         }
       } catch (e) {
         _setBtn('ENTRAR', false);
-        await AUTH.signOut().catch(()=>{});
+        await AUTH.signOut().catch((erroLogout) => console.error('[Autenticação] Falha ao encerrar sessão após erro de lojas', erroLogout));
         _setFb('Não foi possível carregar as lojas: ' + e.message, 'err');
         return;
       }
       if (!lojaSelecionada) {
         _setBtn('ENTRAR', false);
-        await AUTH.signOut().catch(()=>{});
+        await AUTH.signOut().catch((erro) => console.error('[Autenticação] Falha ao encerrar sessão sem loja selecionada', erro));
         _setFb('Selecione uma loja para continuar.', 'err');
         return;
       }
@@ -397,6 +399,7 @@ function _doLogoutConfirmado() {
   if (_syncInterval) { clearInterval(_syncInterval); _syncInterval = null; }
   if (_invListener)    { _invListener(); _invListener = null; }      // cancela polling
   if (_invPollInterval){ clearInterval(_invPollInterval); _invPollInterval = null; }
+  if (typeof removerListenersConectividade === 'function') removerListenersConectividade();
   // Marca coletor offline e limpa sessão antes de sair
   marcarColetorOffline().finally(() => {
     if (FILA_ENVIO.length > 0 && navigator.onLine) {
@@ -412,4 +415,4 @@ function _doLogoutConfirmado() {
 
 
 // v91: não mantém telas operacionais abertas sem autenticação válida.
-(function(){try{AUTH.onAuthStateChanged(function(user){if(user)return;try{APP._auditoriaPronta=false;APP._auditoriaCarregando=false;APP.operador=null;}catch(e){}var ativa=document.querySelector('.screen.active');if(ativa&&ativa.id&&ativa.id!=='screen-login'){try{goScreen('login');}catch(e){}}});}catch(e){}})();
+(function(){try{AUTH.onAuthStateChanged(function(user){if(user)return;try{APP._auditoriaPronta=false;APP._auditoriaCarregando=false;APP.operador=null;}catch(e){ console.warn("[Erro tratado]", e); }var ativa=document.querySelector('.screen.active');if(ativa&&ativa.id&&ativa.id!=='screen-login'){try{goScreen('login');}catch(e){ console.warn("[Erro tratado]", e); }}});}catch(e){ console.warn("[Erro tratado]", e); }})();

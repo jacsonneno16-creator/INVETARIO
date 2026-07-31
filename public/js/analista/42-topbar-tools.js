@@ -89,9 +89,9 @@
       console.log('[SYNC] Loja dos endereços:',lojaAtiva,'|',lojaInfo.nome||'', '| código',lojaInfo.codigo||'');
       var listaEstado=arr(st.enderecosLista);
       var listaStorage=[];
-      try{ if(global.storageLoad&&global.KEYS) listaStorage=arr(global.storageLoad(global.KEYS.enderecos)); }catch(_e){}
+      try{ if(global.storageLoad&&global.KEYS) listaStorage=arr(global.storageLoad(global.KEYS.enderecos)); }catch(_e){ console.warn("[Erro tratado]", _e); }
       var listaEnddb=[];
-      try{ listaEnddb=global.ENDDB&&Array.isArray(global.ENDDB.lista)?global.ENDDB.lista:[]; }catch(_e2){}
+      try{ listaEnddb=global.ENDDB&&Array.isArray(global.ENDDB.lista)?global.ENDDB.lista:[]; }catch(_e2){ console.warn("[Erro tratado]", _e2); }
       var listaEnderecos=listaEstado;
       if(listaStorage.length>listaEnderecos.length) listaEnderecos=listaStorage;
       if(listaEnddb.length>listaEnderecos.length) listaEnderecos=listaEnddb;

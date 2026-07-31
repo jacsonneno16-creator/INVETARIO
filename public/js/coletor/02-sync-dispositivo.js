@@ -50,7 +50,7 @@ function _gerarFingerprint() {
   // 2. Resolução + color depth
   parts.push(screen.width + 'x' + screen.height + ':' + screen.colorDepth);
   // 3. Fuso horário
-  try { parts.push(Intl.DateTimeFormat().resolvedOptions().timeZone); } catch(e) {}
+  try { parts.push(Intl.DateTimeFormat().resolvedOptions().timeZone); } catch(e){ console.warn("[Erro tratado]", e); }
   // 4. Idioma
   parts.push(navigator.language || '');
   // 5. Número de núcleos lógicos (hardware)
@@ -68,7 +68,7 @@ function _gerarFingerprint() {
     parts.push(cv.toDataURL().slice(-32));
   } catch(e) { parts.push('nocanvas'); }
   // 7. Plugins (browsers desktop)
-  try { parts.push(String(navigator.plugins?.length || 0)); } catch(e) {}
+  try { parts.push(String(navigator.plugins?.length || 0)); } catch(e){ console.warn("[Erro tratado]", e); }
 
   return 'dt_' + _djb2(parts.join('|'));
 }
@@ -83,24 +83,24 @@ function obterDeviceId() {
     let did = localStorage.getItem(_LS_KEY);
     if (did && did.startsWith('dt_')) {
       // Espelhar no sessionStorage como backup
-      try { sessionStorage.setItem(_SS_KEY, did); } catch(e) {}
+      try { sessionStorage.setItem(_SS_KEY, did); } catch(e){ console.warn("[Erro tratado]", e); }
       return did;
     }
-  } catch(e) {}
+  } catch(e){ console.warn("[Erro tratado]", e); }
 
   // 2. Tentar sessionStorage (caso LS bloqueado)
   try {
     let did = sessionStorage.getItem(_SS_KEY);
     if (did && did.startsWith('dt_')) {
-      try { localStorage.setItem(_LS_KEY, did); } catch(e) {}
+      try { localStorage.setItem(_LS_KEY, did); } catch(e){ console.warn("[Erro tratado]", e); }
       return did;
     }
-  } catch(e) {}
+  } catch(e){ console.warn("[Erro tratado]", e); }
 
   // 3. Gerar fingerprint e persistir
   const did = _gerarFingerprint();
-  try { localStorage.setItem(_LS_KEY, did); } catch(e) {}
-  try { sessionStorage.setItem(_SS_KEY, did); } catch(e) {}
+  try { localStorage.setItem(_LS_KEY, did); } catch(e){ console.warn("[Erro tratado]", e); }
+  try { sessionStorage.setItem(_SS_KEY, did); } catch(e){ console.warn("[Erro tratado]", e); }
   dbg('[DeviceID] Novo ID gerado e salvo:', did);
   return did;
 }
@@ -201,7 +201,9 @@ async function registrarColetorNoFirestore(operadorInfo) {
       // aprovação antiga. O aparelho reaparece agora como pendente e precisa
       // ser aprovado novamente pelo analista.
       // IP é enriquecimento opcional e assíncrono; nunca bloqueia o login.
-      obterIPPublico().then(v => v && ref.set({ip:v},{merge:true})).catch(()=>{});
+      obterIPPublico().then(v => v && ref.set({ip:v},{merge:true})).catch((erro) => {
+        console.warn('[Coletor] Não foi possível registrar o IP do aparelho pendente', erro);
+      });
       dbg('[Coletor] Novo aparelho registrado como Coletor', numero, '— pendente — ID:', deviceId);
       return 'pendente';
     }
@@ -234,7 +236,9 @@ async function registrarColetorNoFirestore(operadorInfo) {
         login_em:        ST(),
       },
     }, { merge: true });
-    obterIPPublico().then(v => v && ref.set({ip:v},{merge:true})).catch(()=>{});
+    obterIPPublico().then(v => v && ref.set({ip:v},{merge:true})).catch((erro) => {
+      console.warn('[Coletor] Não foi possível atualizar o IP do aparelho aprovado', erro);
+    });
     dbg('[Coletor] Sessao atualizada —', operadorInfo.name, '— aprovado — ID:', deviceId);
     return 'aprovado';
 
@@ -248,7 +252,7 @@ async function registrarColetorNoFirestore(operadorInfo) {
 
 let _aprovacaoListener = null;
 function iniciarListenerAprovacaoColetor(operadorInfo) {
-  if (_aprovacaoListener) { try { _aprovacaoListener(); } catch(_){} }
+  if (_aprovacaoListener) { try { _aprovacaoListener(); } catch(_){ console.warn("[Erro tratado]", _); } }
   const ref = FS.collection(FCOL.coletores).doc(obterDeviceId());
   _aprovacaoListener = ref.onSnapshot(async snap => {
     if (!snap.exists) return;
@@ -269,10 +273,10 @@ function iniciarListenerAprovacaoColetor(operadorInfo) {
       // A aprovação ou a volta da conexão nunca deve recarregar a página.
       // Mantém inventário, endereço, produto e auditoria atuais e sincroniza tudo em segundo plano.
       if (typeof window.sincronizarTudoEmSegundoPlano === 'function') {
-        window.sincronizarTudoEmSegundoPlano('aprovacao').catch(function(){});
+        window.sincronizarTudoEmSegundoPlano('aprovacao').catch(function(error){ console.warn("[Falha assíncrona]", error); });
       } else {
-        if (typeof window.sincronizarFilaAuditoria === 'function') window.sincronizarFilaAuditoria().catch(function(){});
-        if (typeof enviarFilaPendente === 'function') enviarFilaPendente().catch(function(){});
+        if (typeof window.sincronizarFilaAuditoria === 'function') window.sincronizarFilaAuditoria().catch(function(error){ console.warn("[Falha assíncrona]", error); });
+        if (typeof enviarFilaPendente === 'function') enviarFilaPendente().catch(function(error){ console.warn("[Falha assíncrona]", error); });
       }
       atualizarBarraStatus();
     } catch(e) { console.error('[Aprovação] Falha ao liberar coletor:', e); }
@@ -338,7 +342,7 @@ function iniciarListenerColetor() {
         if (dados.aprovado === 'bloqueado') {
           // Analista bloqueou — forçar logout e mostrar tela de bloqueio
           console.warn('[Coletor] Bloqueado pelo analista em tempo real.');
-          AUTH.signOut().catch(() => {});
+          AUTH.signOut().catch((erro) => console.error('[Coletor] Falha ao encerrar sessão de aparelho bloqueado', erro));
           APP.operador = null;
           if (_heartbeatInterval) { clearInterval(_heartbeatInterval); _heartbeatInterval = null; }
   if (typeof _coletorListener === 'function') { _coletorListener(); _coletorListener = null; }
@@ -356,7 +360,7 @@ function iniciarListenerColetor() {
         } else if (dados.aprovado === 'pendente') {
           // Analista removeu aprovação (edge case) — forçar logout e tela amarela
           console.warn('[Coletor] Aprovação revogada — retornando para tela de espera.');
-          AUTH.signOut().catch(() => {});
+          AUTH.signOut().catch((erro) => console.error('[Coletor] Falha ao encerrar sessão após revogação', erro));
           APP.operador = null;
           if (_heartbeatInterval) { clearInterval(_heartbeatInterval); _heartbeatInterval = null; }
           if (_coletorListener)   { _coletorListener(); _coletorListener = null; }
@@ -455,12 +459,22 @@ async function encerrarTurnoColetor() {
   }, { title: 'Encerrar Turno', icon: '🔒', okLabel: 'Encerrar Agora', okColor: 'var(--danger)' });
 }
 
+var _onColetorOnline = null;
+var _onColetorOffline = null;
+
+function removerListenersConectividade() {
+  if (_onColetorOnline) window.removeEventListener('online', _onColetorOnline);
+  if (_onColetorOffline) window.removeEventListener('offline', _onColetorOffline);
+  _onColetorOnline = null;
+  _onColetorOffline = null;
+}
+
 function iniciarSyncBackground() {
   // ── Inicializar IDB e migrar dados legados ──────────────────
   idbInit().then(() => {
     // Após IDB pronto, tentar enviar imediatamente se online
     if (navigator.onLine && FILA_ENVIO.length > 0) {
-      enviarFilaPendente().catch(() => {});
+      enviarFilaPendente().catch((err) => console.warn('[Sync] Envio inicial pendente:', err));
     }
     atualizarBarraStatus();
   });
@@ -476,19 +490,25 @@ function iniciarSyncBackground() {
   iniciarListenerColetor();
 
   // Tenta imediatamente ao entrar online
-  window.addEventListener('online', async () => {
+  removerListenersConectividade();
+  _onColetorOnline = async function () {
     atualizarBarraStatus();
     // ⚠️ Verificar inventário ANTES de enviar a fila.
     // Se o analista fechou o inventário enquanto o operador estava offline,
     // as contagens pendentes não devem ser enviadas (evita poluir inventário fechado).
     await verificarInventarioAtivo();
     if (APP.inventario) {
-      enviarFilaPendente().catch(() => {});
+      const sincronizar = typeof window.sincronizarTudoEmSegundoPlano === 'function'
+        ? window.sincronizarTudoEmSegundoPlano('online')
+        : enviarFilaPendente();
+      Promise.resolve(sincronizar).catch((err) => console.warn('[Sync] Falha ao enviar filas após reconexão:', err));
     }
-  });
-  window.addEventListener('offline', () => {
+  };
+  _onColetorOffline = function () {
     atualizarBarraStatus();
-  });
+  };
+  window.addEventListener('online', _onColetorOnline);
+  window.addEventListener('offline', _onColetorOffline);
 
   // Loop a cada 30 segundos — sync robusto automático
   // [OTIMIZADO] Intervalo aumentado de 10s → 30s: reduz leituras em 3× sem impacto operacional.
@@ -501,13 +521,13 @@ function iniciarSyncBackground() {
       const pendentes = await idbGetPendentes();
       if (pendentes.length > 0) {
         FILA_ENVIO = pendentes;
-        enviarFilaPendente().catch(() => {});
+        enviarFilaPendente().catch((err) => console.warn('[Sync] Falha no envio periódico:', err));
       }
       // Verifica inventário ativo só a cada ~10 min (20 ciclos × 30s)
       _syncCiclo++;
       if (_syncCiclo >= 20) {
         _syncCiclo = 0;
-        verificarInventarioAtivo().catch(() => {});
+        verificarInventarioAtivo().catch((err) => console.warn('[Sync] Falha ao validar inventário:', err));
       }
     }
     atualizarBarraStatus(); // mantém UI atualizada
@@ -697,8 +717,10 @@ async function enviarFilaPendente() {
         contagens_enviadas:  firebase.firestore.FieldValue.increment(enviados.length),
         contagens_pendentes: FILA_ENVIO.length,
         ultimo_ping:         firebase.firestore.FieldValue.serverTimestamp(),
-      }).catch(() => {});
-    } catch(e) {}
+      }).catch((erro) => {
+        console.warn('[Sincronização] Contagens foram enviadas, mas o resumo do coletor não foi atualizado', erro);
+      });
+    } catch(e){ console.warn("[Erro tratado]", e); }
 
     if (FILA_ENVIO.length === 0) {
       const bar = document.getElementById('sync-bar');
@@ -744,7 +766,9 @@ async function enfileirarContagem(contagem) {
 
   // 4️⃣ Tentar enviar em background (sem bloquear o fluxo do operador)
   if (navigator.onLine) {
-    enviarFilaPendente().catch(() => {});
+    enviarFilaPendente().catch((erro) => {
+      console.error('[Sincronização] Falha no envio em segundo plano; item mantido na fila', { uuid, erro });
+      atualizarBarraStatus();
+    });
   }
 }
-

@@ -34,6 +34,46 @@ window.escapeHtml = window.escapeHtml || escHTML;
 window.esc = window.esc || escHTML;
 window.escAttr = window.escAttr || escAttr;
 
+// Defesa central para as renderizações legadas que ainda usam innerHTML.
+// O conteúdo é analisado em um documento inerte antes de chegar ao DOM ativo.
+(function instalarRenderizacaoSegura(global){
+  if (!global.Element || !global.DOMParser || global.__dtInnerHTMLProtegido) return;
+  var descriptor = Object.getOwnPropertyDescriptor(global.Element.prototype, 'innerHTML');
+  if (!descriptor || !descriptor.configurable || !descriptor.get || !descriptor.set) return;
+  var tagsBloqueadas = 'script,iframe,object,embed,base,meta,link,foreignObject';
+  function limpar(html) {
+    var parsed = new global.DOMParser().parseFromString(
+      '<!doctype html><html><body>' + String(html == null ? '' : html) + '</body></html>',
+      'text/html'
+    );
+    parsed.querySelectorAll(tagsBloqueadas).forEach(function(node){ node.remove(); });
+    parsed.body.querySelectorAll('*').forEach(function(node){
+      Array.from(node.attributes).forEach(function(attribute){
+        var name = attribute.name.toLowerCase();
+        var value = String(attribute.value || '').trim()
+          .replace(/[\u0000-\u001f\u007f\s]+/g, '')
+          .toLowerCase();
+        if (name.indexOf('on') === 0 || name === 'srcdoc' ||
+            ((name === 'href' || name === 'src' || name === 'xlink:href' ||
+              name === 'formaction' || name === 'action') &&
+             (value.indexOf('javascript:') === 0 || value.indexOf('vbscript:') === 0 ||
+              value.indexOf('data:text/html') === 0))) {
+          node.removeAttribute(attribute.name);
+        }
+      });
+    });
+    return descriptor.get.call(parsed.body);
+  }
+  Object.defineProperty(global.Element.prototype, 'innerHTML', {
+    configurable: descriptor.configurable,
+    enumerable: descriptor.enumerable,
+    get: descriptor.get,
+    set: function(value){ descriptor.set.call(this, limpar(value)); }
+  });
+  global.__dtInnerHTMLProtegido = true;
+  global.DTSanitizeHTML = limpar;
+})(window);
+
 function fmtData(valor) {
   if (!valor) return '—';
   try {
@@ -147,7 +187,7 @@ window._agruparCapasDuplicadas = window._agruparCapasDuplicadas || _agruparCapas
           if (achado && achado.encontrado) {
             return texto(achado.codigoInterno || achado.codigo_interno || achado.gtin || ids[i]);
           }
-        } catch(e) {}
+        } catch(e){ console.warn("[Erro tratado]", e); }
       }
     }
     return ids[0] || 'SEM_PRODUTO';

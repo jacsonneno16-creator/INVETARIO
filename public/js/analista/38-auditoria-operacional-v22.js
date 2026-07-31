@@ -46,7 +46,7 @@
       if (window.DTEnderecos && typeof window.DTEnderecos.partes === 'function') {
         return txt(window.DTEnderecos.partes(v).rua);
       }
-    } catch (e) {}
+    } catch(e){ console.warn("[Erro tratado]", e); }
     const partes = txt(v).split('.').map(function(parte){ return parte.trim(); }).filter(Boolean);
     return partes.length >= 4 ? partes[3] : (partes[0] || '');
   }
@@ -361,9 +361,9 @@
   }
 
   function encerrarListener(){
-    if (unsubscribeMetas) { try { unsubscribeMetas(); } catch(e){} }
+    if (unsubscribeMetas) { try { unsubscribeMetas(); } catch(e){ console.warn("[Erro tratado]", e); } }
     unsubscribeMetas=null;
-    if (unsubscribeItens) { try { unsubscribeItens(); } catch(e){} }
+    if (unsubscribeItens) { try { unsubscribeItens(); } catch(e){ console.warn("[Erro tratado]", e); } }
     unsubscribeItens = null;
     assinaturaAnterior = '';
   }
@@ -611,7 +611,7 @@
     if(!id) return toast('Selecione a auditoria que deseja excluir.','w');
     let meta=metaAtual;
     if(!meta || txt(meta.id)!==id){
-      try{ const ms=await referenciaAuditoria(id).get(); meta=ms.exists?{id:ms.id,...ms.data()}:null; }catch(e){}
+      try{ const ms=await referenciaAuditoria(id).get(); meta=ms.exists?{id:ms.id,...ms.data()}:null; }catch(e){ console.warn("[Erro tratado]", e); }
     }
     const nome=txt(meta?.nome || meta?.auditoria_nome || (sel?.selectedOptions?.[0]?.textContent||id).split(' — ')[0] || id);
     const mensagem=`Excluir definitivamente a auditoria “${nome}”?\n\nTodos os endereços e resultados dessa auditoria serão apagados, e ela deixará de aparecer nos coletores.`;

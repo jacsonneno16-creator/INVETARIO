@@ -798,7 +798,7 @@ async function carregarDashboardAuditoria(forcar){
     async function add(ref,origem){try{const snap=await ref.get();snap.docs.forEach(d=>{if(vistos.has(d.id))return;vistos.add(d.id);metas.push({id:d.id,...d.data(),_origem:origem,_ref:d.ref});});}catch(e){console.warn('[Dashboard Auditoria] '+origem,e);}}
     if(window.getDTRawFirestore){
       if(lojaAtual)await add(raw.collection('lojas').doc(lojaAtual).collection('dt_auditorias'),'loja:'+lojaAtual);
-      try{const ls=await raw.collection('lojas').get();for(const ld of ls.docs){if(ld.id!==lojaAtual)await add(raw.collection('lojas').doc(ld.id).collection('dt_auditorias'),'loja:'+ld.id);}}catch(e){}
+      try{const ls=await raw.collection('lojas').get();for(const ld of ls.docs){if(ld.id!==lojaAtual)await add(raw.collection('lojas').doc(ld.id).collection('dt_auditorias'),'loja:'+ld.id);}}catch(e){ console.warn("[Erro tratado]", e); }
       await add(raw.collection('dt_auditorias'),'raiz');
     }else await add(raw.collection('dt_auditorias'),'loja');
     _dashAudMetas=metas;

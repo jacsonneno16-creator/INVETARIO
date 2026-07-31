@@ -173,7 +173,7 @@
       try {
         const meta = await FS.collection('dt_locais_meta').doc('versao').get();
         if (meta.exists) versaoServidor = String((meta.data() || {}).versao || '');
-      } catch(e) {}
+      } catch(e){ console.warn("[Erro tratado]", e); }
       if (!versaoServidor) throw new Error('Versão da Base Geral de Endereços não encontrada.');
       const chunks = await FS.collection('dt_locais_chunks').where('versao','==',versaoServidor).get();
       if (chunks.empty) throw new Error('Base Geral de Endereços em chunks não publicada para a versão atual.');
@@ -277,7 +277,7 @@
       const status = String(a.status || '').toUpperCase();
       return a.disponivel_coletor !== false && !['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(status);
     });
-    try { await window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes); } catch(e) {}
+    try { await window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes); } catch(e){ console.warn("[Erro tratado]", e); }
     return pendentes;
   }
   window._carregarEnderecoAuditoria = _carregarEnderecoAuditoria;
@@ -381,7 +381,7 @@
     if(APP._auditoriaCarregando) return;
     if(!window.AUTH || !AUTH.currentUser){
       APP._auditoriaPronta=false; APP._auditoriaCarregando=false; APP.operador=null;
-      try{ toast('Sua sessão expirou. Entre novamente para baixar a auditoria.','e'); }catch(_){ }
+      try{ toast('Sua sessão expirou. Entre novamente para baixar a auditoria.','e'); }catch(_){ console.warn("[Erro tratado]", _); }
       goScreen('login'); return;
     }
     const meta = (APP.auditoriasMenu || []).find(x => x.id === auditoriaId);

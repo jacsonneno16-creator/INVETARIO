@@ -33,7 +33,7 @@
     tentativa=Number(tentativa||0);
     if(global.DTAuditoriaStorage){
       global.DTAuditoriaStorage.cacheSet('dt_produtos_cache__GLOBAL',lista).then(function(){
-        try{localStorage.removeItem('dt_produtos_cache__GLOBAL');}catch(_e){}
+        try{localStorage.removeItem('dt_produtos_cache__GLOBAL');}catch(_e){ console.warn("[Erro tratado]", _e); }
       }).catch(function(e){console.warn('[Produtos] Falha ao persistir no IndexedDB:',e);});
       return;
     }
@@ -122,7 +122,7 @@
         console.log('[Produtos] Base atualizada somente por chunks:',docs.length,'documentos /',rows.length,'produtos / versão',versaoServidor);
         const result=indexar(rows);
         cache.versao=versaoServidor;
-        if(versaoServidor)try{localStorage.setItem(versaoKey,versaoServidor);}catch(_e){}
+        if(versaoServidor)try{localStorage.setItem(versaoKey,versaoServidor);}catch(_e){ console.warn("[Erro tratado]", _e); }
         return result;
       }catch(e){
         console.warn('[Produtos] Falha ao atualizar base:',e);

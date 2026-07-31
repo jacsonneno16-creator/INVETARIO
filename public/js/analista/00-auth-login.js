@@ -43,22 +43,24 @@ function _normalizarEmailAnalista(valor) {
 function _carregarLoginLembrado() {
   try {
     const salvo = JSON.parse(localStorage.getItem(DT_LOGIN_MEM_KEY) || 'null');
-    if (!salvo || !salvo.email || !salvo.senha) return;
+    if (!salvo || !salvo.email) return;
     const email = document.getElementById('an-email');
-    const senha = document.getElementById('an-pass');
     const lembrar = document.getElementById('an-remember');
     if (email) email.value = salvo.email;
-    if (senha) senha.value = salvo.senha;
     if (lembrar) lembrar.checked = true;
-  } catch (_) {}
+  } catch (err) {
+    console.warn('[Login Analista] Não foi possível recuperar o e-mail lembrado:', err);
+  }
 }
 
-function _salvarOuLimparLogin(email, senha) {
+function _salvarOuLimparLogin(email) {
   const lembrar = document.getElementById('an-remember')?.checked === true;
   try {
-    if (lembrar) localStorage.setItem(DT_LOGIN_MEM_KEY, JSON.stringify({ email, senha }));
+    if (lembrar) localStorage.setItem(DT_LOGIN_MEM_KEY, JSON.stringify({ email }));
     else localStorage.removeItem(DT_LOGIN_MEM_KEY);
-  } catch (_) {}
+  } catch (err) {
+    console.warn('[Login Analista] Não foi possível atualizar a preferência de login:', err);
+  }
 }
 
 // ── LOGIN ────────────────────────────────────────────────────────────
@@ -82,7 +84,7 @@ async function doLoginAnalista(event) {
     if (!_prepararFirebaseAnalista()) throw new Error('Firebase não iniciou. Atualize a página e tente novamente.');
     _registrarListenerAuthAnalista();
 
-    _salvarOuLimparLogin(email, senha);
+    _salvarOuLimparLogin(email);
     _loginSolicitadoPeloUsuario = true;
     await AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE);
     await AUTH_AN.signInWithEmailAndPassword(email, senha);
@@ -186,15 +188,10 @@ async function _onAnalistaLogado(user) {
     const acc = await raw.collection('usuarios_acessos').doc(user.uid).get();
     let acesso = acc.exists ? { uid:user.uid, ...acc.data() } : null;
 
-    // Bootstrap e autorrecuperação do administrador mestre.
-    // Em instalação nova cria Loja Matriz e a própria permissão automaticamente.
-    acesso = await window.DTLoja.bootstrapAdministrador(user, acesso);
-
-    // Usuários antigos sem cadastro continuam compatíveis; usuários comuns já
-    // cadastrados continuam obedecendo às lojas definidas pelo administrador.
-    window.DT_USUARIO_ACESSO_ATUAL = acesso || {
-      uid:user.uid, email:user.email, acesso_todas_lojas:true, lojas_permitidas:[]
-    };
+    if (!acesso || acesso.ativo === false) {
+      throw new Error('Este login não possui acesso ativo. Solicite o provisionamento ao administrador.');
+    }
+    window.DT_USUARIO_ACESSO_ATUAL = acesso;
 
     // Quando o administrador definiu os canais, o painel só aceita usuários
     // com acesso explícito ao Analista. Cadastros antigos continuam compatíveis.
@@ -242,11 +239,11 @@ async function _onAnalistaLogado(user) {
       window.sincronizarDadosLegadosAutomaticamente().then(function(migracao){
         if (migracao && migracao.executado) {
           console.info('[Multiloja] Migração legada concluída:', migracao.total);
-          try { showToast('Dados antigos carregados na loja atual.', 'success'); } catch (_) {}
+          try { showToast('Dados antigos carregados na loja atual.', 'success'); } catch(_){ console.warn("[Erro tratado]", _); }
         }
       }).catch(function(error){
         console.error('[Multiloja] Falha na migração controlada:', error);
-        try { showToast('Não foi possível concluir a migração dos dados antigos. Tente novamente pela Gestão de Lojas.', 'error'); } catch (_) {}
+        try { showToast('Não foi possível concluir a migração dos dados antigos. Tente novamente pela Gestão de Lojas.', 'error'); } catch(_){ console.warn("[Erro tratado]", _); }
       });
     }, 1200);
   }

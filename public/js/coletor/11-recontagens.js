@@ -4,7 +4,7 @@
 
 function recarregarRecontagens() {
   if (!APP.inventario?.id) { renderRecontagensAtribuidas(); return; }
-  if (_recListener) { try { _recListener(); } catch(e){} _recListener = null; }
+  if (_recListener) { try { _recListener(); } catch(e){ console.warn("[Erro tratado]", e); } _recListener = null; }
   iniciarListenerRecontagens(APP.inventario.id);
   toast('🔄 Sincronizando…', 's');
 }
@@ -51,7 +51,7 @@ function _atualizarBadgeRecontagens() {
 }
 
 function iniciarListenerRecontagens(invId) {
-  if (_recListener) { try { _recListener(); } catch(e){} _recListener = null; }
+  if (_recListener) { try { _recListener(); } catch(e){ console.warn("[Erro tratado]", e); } _recListener = null; }
   if (!invId) return;
   let _unsubRec = null, _unsubDiv = null;
   if (!APP.recontagens?.length) _recCarregando = true;
@@ -101,8 +101,11 @@ function iniciarListenerRecontagens(invId) {
             produto: r.produto || r.codigo_produto || '',
             chave_fluxo: chaveFluxo,
             operador: operadorAtual, recontagem_id: r.id,
+            operador_uid: AUTH?.currentUser?.uid || null,
             atualizado_em: new Date().toISOString()
-          }, { merge: true }).catch(() => {});
+          }, { merge: true }).catch((erro) => {
+            console.error('[Recontagem] Falha ao registrar bloqueio da tarefa', { recontagemId: r.id, chaveFluxo, erro });
+          });
         });
         _recCarregando = false;
         _atualizarBadgeRecontagens();
@@ -120,8 +123,8 @@ function iniciarListenerRecontagens(invId) {
     APP.divergenciasAtribuidas = [];
 
     _recListener = () => {
-      try { if (_unsubRec) _unsubRec(); } catch(e) {}
-      try { if (_unsubDiv) _unsubDiv(); } catch(e) {}
+      try { if (_unsubRec) _unsubRec(); } catch(e){ console.warn("[Erro tratado]", e); }
+      try { if (_unsubDiv) _unsubDiv(); } catch(e){ console.warn("[Erro tratado]", e); }
       _recListener = null;
     };
   } catch(e) {
@@ -216,7 +219,8 @@ function _marcarRecontagemIniciada(item) {
     status_recontagem: 'em_andamento',
     iniciada_em: item.iniciada_em || agora,
     recontagem_iniciada_em: item.recontagem_iniciada_em || agora,
-    operador_recontagem: operador
+    operador_recontagem: operador,
+    operador_uid: AUTH?.currentUser?.uid || null
   };
 
   Object.assign(item, upd);
@@ -227,14 +231,6 @@ function _marcarRecontagemIniciada(item) {
   FS.collection('dt_recontagens').doc(item.id).set(upd, { merge: true }).catch(e =>
     console.warn('[Rec] Não foi possível marcar início:', e.message)
   );
-  if (item.divergencia_id) {
-    FS.collection('dt_divergencias').doc(item.divergencia_id).set({
-      status: 'EM_RECONTAGEM',
-      status_recontagem: 'em_andamento',
-      operador_responsavel: operador,
-      recontagem_iniciada_em: upd.recontagem_iniciada_em
-    }, { merge: true }).catch(e => console.warn('[Div] Não foi possível marcar início:', e.message));
-  }
 }
 
 function _ativarModoRecontagem(item) {
@@ -346,6 +342,7 @@ function _concluirRecontagem() {
       status_recontagem:'concluida', 
       recontagem_concluida_em: agora, 
       operador_recontagem: APP.operador?.name || '',
+      operador_uid: AUTH?.currentUser?.uid || null,
       status: 'CONCLUIDA' 
     };
     
@@ -355,16 +352,8 @@ function _concluirRecontagem() {
     if (idRecontagemReal) {
       FS.collection('dt_recontagens').doc(idRecontagemReal).update(upd).catch(e=>console.warn('[Rec]',e.message));
     }
-    // Sempre devolver o conflito ao Analista imediatamente. Assim, mesmo se o
-    // coletor for reaberto antes do próximo "Atualizar", a rodada concluída não
-    // reaparece para o operador e não fica atribuída por engano.
-    const divFsId = item.divergencia_id || (item._col === 'divergencia' ? item.id : null);
-    if (divFsId) {
-      FS.collection('dt_divergencias').doc(divFsId).update({
-        status_recontagem:'aguardando_analista',
-        operador_responsavel:null
-      }).catch(e=>console.warn('[Div]',e.message));
-    }
+    // A divergência pertence ao Analista. O processamento da nova contagem
+    // consolida a rodada e atualiza a divergência sem ampliar a permissão do Coletor.
   }
   // Marcar recontagem como concluída e encerrada na lista local
   // encerrada_definitivamente=true garante que o listener do Firebase não desfaça o estado
@@ -486,7 +475,7 @@ function renderRecontagensAtribuidas() {
     const isDiv           = grupo._col === 'divergencia';
     const nProdutos       = grupo.itens.length;
     let dataStr = '';
-    try { if (grupo.data) dataStr = new Date(grupo.data).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); } catch(e){}
+    try { if (grupo.data) dataStr = new Date(grupo.data).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); } catch(e){ console.warn("[Erro tratado]", e); }
 
     // Listar produtos distintos do grupo
     const produtosUnicos = [...new Map(grupo.itens.map(i => [i.barcode||i.descricao, i])).values()];

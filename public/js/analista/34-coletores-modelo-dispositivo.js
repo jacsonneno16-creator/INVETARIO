@@ -20,7 +20,7 @@ function salvarDB_coletores() {
   localStorage.setItem('dt_db_coletores', JSON.stringify(Array.isArray(state().coletores) ? state().coletores : []));
 }
 function carregarDB_coletores() {
-  try { const r = localStorage.getItem('dt_db_coletores'); if (r) window.AnalistaState.replaceSlice('coletores', JSON.parse(r), { source: 'coletores-cache-load' }); } catch(e){}
+  try { const r = localStorage.getItem('dt_db_coletores'); if (r) window.AnalistaState.replaceSlice('coletores', JSON.parse(r), { source: 'coletores-cache-load' }); } catch(e){ console.warn("[Erro tratado]", e); }
 }
 carregarDB_coletores();
 
@@ -178,9 +178,9 @@ async function _removerColetorConfirmado(coletorId) {
     try {
       const lojasSnap = await raw.collection('lojas').get();
       for (const lojaDoc of lojasSnap.docs) {
-        await raw.collection('lojas').doc(lojaDoc.id).collection(FS_COL_COLETORES).doc(coletorId).delete().catch(function(){});
+        await raw.collection('lojas').doc(lojaDoc.id).collection(FS_COL_COLETORES).doc(coletorId).delete().catch(function(error){ console.warn("[Falha assíncrona]", error); });
       }
-    } catch (_) {}
+    } catch(_){ console.warn("[Erro tratado]", _); }
 
     showToast('🗑️ Coletor removido. O aparelho precisará de nova aprovação.', 'i');
     logAuditoria('SISTEMA', 'Coletor removido e aprovação revogada', coletorId);

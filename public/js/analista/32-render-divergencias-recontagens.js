@@ -12,7 +12,7 @@ const _nomeProdutoRec = valor => {
     if (ach?.encontrado) {
       return String(ach.nomeProduto || ach.descricao || ach.descricaoProduto || ach.produto_nome || codigo).trim();
     }
-  } catch(e) {}
+  } catch(e){ console.warn("[Erro tratado]", e); }
   const produtoEstado = (state().produtos || []).find(p =>
     [p.codigo, p.codigo_produto, p.codigoInterno, p.codigo_interno, p.gtin, p.ean, p.dun]
       .filter(Boolean).map(String).includes(codigo));
@@ -532,7 +532,10 @@ function confirmarAtribuicao() {
         status_recontagem: 'pendente',
         observacao_atribuicao: obs || _recAtribuirDireto.observacao_atribuicao || ''
       });
-      fsSalvarRecontagem(recAtualizada).catch(() => {});
+      fsSalvarRecontagem(recAtualizada).catch((erro) => {
+        console.error('[Recontagem] Falha ao persistir atribuição direta', { recontagemId: recAtualizada.id, operador, erro });
+        showToast('Não foi possível salvar a atribuição. Atualize os dados antes de continuar.', 'e');
+      });
       Store.dispatch(Actions.upsertEntity('recontagens', recAtualizada, { source: operadorAnterior ? 'reatribuirRecontagemDireto' : 'atribuirRecontagemDireto' }));
       count = 1;
     }

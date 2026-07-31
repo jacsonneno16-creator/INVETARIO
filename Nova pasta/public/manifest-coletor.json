@@ -1,0 +1,26 @@
+{
+  "id": "/coletor.html",
+  "name": "DT Inventário — Coletor",
+  "short_name": "DT Coletor",
+  "description": "Coletor de inventário Da Terrinha Alimentos",
+  "start_url": "/coletor.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#060d1a",
+  "theme_color": "#1E6F4E",
+  "icons": [
+    {
+      "src": "/icons/coletor-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/coletor-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

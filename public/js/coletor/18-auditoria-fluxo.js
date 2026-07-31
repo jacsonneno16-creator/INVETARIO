@@ -186,7 +186,7 @@
   function irParaEndereco(){
     if (estado.timerRetorno) clearTimeout(estado.timerRetorno);
     const itemAnterior = estado.etapa === 'produto' ? estado.item : null;
-    if (itemAnterior) liberarLockAuditoria(itemAnterior).catch(function(){});
+    if (itemAnterior) liberarLockAuditoria(itemAnterior).catch(function(error){ console.warn("[Falha assíncrona]", error); });
     estado = { etapa: 'endereco', item: null, processando: false, timerRetorno: null, foraAuditoria: false };
     const el = elementos();
     if (el.etapaEndereco) el.etapaEndereco.style.display = '';
@@ -341,7 +341,7 @@
     if(_timerRetryAuditoria || !navigator.onLine)return;
     _timerRetryAuditoria=setTimeout(function(){
       _timerRetryAuditoria=null;
-      sincronizarFilaAuditoria().catch(function(){});
+      sincronizarFilaAuditoria().catch(function(error){ console.warn("[Falha assíncrona]", error); });
     },15000);
   }
   async function migrarFilaAuditoriaLegada(){
@@ -353,7 +353,7 @@
     for(let i=0;i<chaves.length;i++){
       const chaveLS=chaves[i];
       let fila=[];
-      try{ fila=JSON.parse(localStorage.getItem(chaveLS)||'[]'); }catch(e){}
+      try{ fila=JSON.parse(localStorage.getItem(chaveLS)||'[]'); }catch(e){ console.warn("[Erro tratado]", e); }
       for(let j=0;j<fila.length;j++){
         const x=fila[j]||{};
         if(!x.docId||!x.auditoriaId) continue;
@@ -362,7 +362,7 @@
         x.criadoEm=x.criadoEm||agoraISO();
         await window.DTAuditoriaStorage.filaPut(x);
       }
-      try{localStorage.removeItem(chaveLS);}catch(e){}
+      try{localStorage.removeItem(chaveLS);}catch(e){ console.warn("[Erro tratado]", e); }
     }
   }
   async function sincronizarFilaAuditoria(){
@@ -391,7 +391,7 @@
   window.sincronizarFilaAuditoria=sincronizarFilaAuditoria;
   window.addEventListener('online',function(){
     if(_timerRetryAuditoria){ clearTimeout(_timerRetryAuditoria); _timerRetryAuditoria=null; }
-    sincronizarFilaAuditoria().catch(function(){});
+    sincronizarFilaAuditoria().catch(function(error){ console.warn("[Falha assíncrona]", error); });
   });
   window.addEventListener('offline',function(){
     if(_timerRetryAuditoria){ clearTimeout(_timerRetryAuditoria); _timerRetryAuditoria=null; }
@@ -458,8 +458,8 @@
     }
     mostrarResultado(navigator.onLine?'Ocorrência registrada no aparelho e aguardando sincronização.':'Ocorrência salva no coletor. Será enviada quando houver conexão.','vazio');
     tocar('vazio');
-    try { window.dispatchEvent(new CustomEvent('dt-auditoria-ocorrencia',{detail:{id:docId,payload:payload}})); } catch(e) {}
-    if(navigator.onLine) sincronizarFilaAuditoria().catch(function(){});
+    try { window.dispatchEvent(new CustomEvent('dt-auditoria-ocorrencia',{detail:{id:docId,payload:payload}})); } catch(e){ console.warn("[Erro tratado]", e); }
+    if(navigator.onLine) sincronizarFilaAuditoria().catch(function(error){ console.warn("[Falha assíncrona]", error); });
     estado.timerRetorno=setTimeout(irParaEndereco,1100);
   }
 
@@ -515,7 +515,7 @@
       APP.contagens = (APP.contagens || []).filter(a => texto(a.id) !== docId);
       APP.contagens.unshift({id:docId,...payload});
       atualizarContadorTitulo();
-      try { window.dispatchEvent(new CustomEvent('dt-auditoria-salva',{detail:{id:docId,payload:payload}})); } catch(e) {}
+      try { window.dispatchEvent(new CustomEvent('dt-auditoria-salva',{detail:{id:docId,payload:payload}})); } catch(e){ console.warn("[Erro tratado]", e); }
 
       if (status === STATUS_OK) {
         mostrarResultado('Auditoria concluída.', 'ok');
@@ -528,7 +528,7 @@
         tocar('vazio');
       }
 
-      if(navigator.onLine) sincronizarFilaAuditoria().catch(function(){});
+      if(navigator.onLine) sincronizarFilaAuditoria().catch(function(error){ console.warn("[Falha assíncrona]", error); });
       estado.timerRetorno = setTimeout(irParaEndereco, 900);
     } catch(error) {
       console.error('[AUDITORIA] Falha ao persistir resultado no aparelho:', error);
@@ -599,7 +599,7 @@
     document.addEventListener('click', event => {
       const outraAba = event.target.closest('.nav-tab');
       if (outraAba && outraAba.id !== 'tab-auditoria' && APP.modoAcesso === 'auditoria' && estado.etapa === 'produto') {
-        liberarLockAuditoria(estado.item).catch(function(){});
+        liberarLockAuditoria(estado.item).catch(function(error){ console.warn("[Falha assíncrona]", error); });
       }
       if (event.target.closest('#auditoria-confirmar-endereco')) confirmarEnderecoAuditoria();
       else if (event.target.closest('#auditoria-confirmar-produto')) confirmarProdutoAuditoria();

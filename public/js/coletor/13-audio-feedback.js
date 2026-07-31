@@ -97,7 +97,7 @@ function _beepErrSintese() {
       g.gain.exponentialRampToValueAtTime(0.001, t + i*0.12 + 0.11);
       o.start(t + i*0.12); o.stop(t + i*0.12 + 0.13);
     });
-  } catch(e) {}
+  } catch(e){ console.warn("[Erro tratado]", e); }
 }
 
 // ── beepOk — síntese Web Audio (sem CDN, mais rápido) ────────────
@@ -116,7 +116,7 @@ function beepOk() {
         src.connect(g); g.connect(ctx.destination);
         src.start(ctx.currentTime);
         return;
-      } catch(e) {}
+      } catch(e){ console.warn("[Erro tratado]", e); }
     }
   }
 
@@ -134,7 +134,7 @@ function beepOk() {
     g.gain.linearRampToValueAtTime(0.22, t + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.20);
     o.start(t); o.stop(t + 0.22);
-  } catch(e) {}
+  } catch(e){ console.warn("[Erro tratado]", e); }
 }
 
 function beepSuave()     { beepOk(); }

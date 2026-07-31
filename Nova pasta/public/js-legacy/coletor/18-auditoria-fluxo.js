@@ -1,0 +1,873 @@
+var __assign = (this && this.__assign) || function () {
+    __assign = Object.assign || function(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+            s = arguments[i];
+            for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p))
+                t[p] = s[p];
+        }
+        return t;
+    };
+    return __assign.apply(this, arguments);
+};
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __generator = (this && this.__generator) || function (thisArg, body) {
+    var _ = { label: 0, sent: function() { if (t[0] & 1) throw t[1]; return t[1]; }, trys: [], ops: [] }, f, y, t, g = Object.create((typeof Iterator === "function" ? Iterator : Object).prototype);
+    return g.next = verb(0), g["throw"] = verb(1), g["return"] = verb(2), typeof Symbol === "function" && (g[Symbol.iterator] = function() { return this; }), g;
+    function verb(n) { return function (v) { return step([n, v]); }; }
+    function step(op) {
+        if (f) throw new TypeError("Generator is already executing.");
+        while (g && (g = 0, op[0] && (_ = 0)), _) try {
+            if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
+            if (y = 0, t) op = [op[0] & 2, t.value];
+            switch (op[0]) {
+                case 0: case 1: t = op; break;
+                case 4: _.label++; return { value: op[1], done: false };
+                case 5: _.label++; y = op[1]; op = [0]; continue;
+                case 7: op = _.ops.pop(); _.trys.pop(); continue;
+                default:
+                    if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) { _ = 0; continue; }
+                    if (op[0] === 3 && (!t || (op[1] > t[0] && op[1] < t[3]))) { _.label = op[1]; break; }
+                    if (op[0] === 6 && _.label < t[1]) { _.label = t[1]; t = op; break; }
+                    if (t && _.label < t[2]) { _.label = t[2]; _.ops.push(op); break; }
+                    if (t[2]) _.ops.pop();
+                    _.trys.pop(); continue;
+            }
+            op = body.call(thisArg, _);
+        } catch (e) { op = [6, e]; y = 0; } finally { f = t = 0; }
+        if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
+    }
+};
+// ═══════════════════════════════════════════════════════════════
+// AUDITORIA DO COLETOR — FLUXO ISOLADO E SIMPLIFICADO
+// Endereço -> Produto OU Endereço vazio -> gravação -> próximo endereço
+// Este arquivo não usa nem altera as funções de contagem do Inventário.
+// ═══════════════════════════════════════════════════════════════
+(function () {
+    'use strict';
+    var STATUS_OK = 'OK';
+    var STATUS_DIVERGENTE = 'DIVERGENTE';
+    var STATUS_VAZIO = 'ENDERECO_VAZIO';
+    var STATUS_FINAIS = new Set([STATUS_OK, STATUS_DIVERGENTE, STATUS_VAZIO]);
+    var estado = {
+        etapa: 'endereco',
+        item: null,
+        processando: false,
+        timerRetorno: null,
+        foraAuditoria: false
+    };
+    function texto(v) { return String(v == null ? '' : v).trim(); }
+    function normalizarEndereco(v) {
+        var _a;
+        return ((_a = window.DTEnderecos) === null || _a === void 0 ? void 0 : _a.chave(v)) || texto(v).toUpperCase();
+    }
+    function normalizarCodigo(v) {
+        return texto(v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    }
+    function escapar(v) {
+        return texto(v).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]); });
+    }
+    function agoraISO() { return new Date().toISOString(); }
+    function operadorNome() { var _a, _b; return ((_a = APP.operador) === null || _a === void 0 ? void 0 : _a.name) || ((_b = APP.operador) === null || _b === void 0 ? void 0 : _b.nome) || ''; }
+    function operadorUsuario() { var _a, _b, _c; return ((_a = APP.operador) === null || _a === void 0 ? void 0 : _a.email) || ((_b = APP.operador) === null || _b === void 0 ? void 0 : _b.usuario) || ((_c = APP.operador) === null || _c === void 0 ? void 0 : _c.login) || ''; }
+    function lojaAtual() {
+        var _a, _b, _c;
+        return ((_a = APP.lojaAtual) === null || _a === void 0 ? void 0 : _a.id) || ((_b = APP.lojaAtual) === null || _b === void 0 ? void 0 : _b.nome) || APP.lojaId || ((_c = APP.inventario) === null || _c === void 0 ? void 0 : _c.loja) || '';
+    }
+    function auditoriaId() { var _a, _b; return ((_a = APP.inventario) === null || _a === void 0 ? void 0 : _a.auditoria_id) || ((_b = APP.inventario) === null || _b === void 0 ? void 0 : _b.id) || ''; }
+    var LOCK_TTL_MS = 10 * 60 * 1000;
+    function dispositivoId() { return localStorage.getItem('dt_device_id') || operadorUsuario() || 'SEM_DISPOSITIVO'; }
+    function lockExpirado(dados) {
+        var bruto = (dados === null || dados === void 0 ? void 0 : dados.lock_iniciado_em) || (dados === null || dados === void 0 ? void 0 : dados.iniciado_em) || '';
+        var data = (bruto === null || bruto === void 0 ? void 0 : bruto.toDate) ? bruto.toDate() : new Date(bruto || 0);
+        return !data.getTime() || (Date.now() - data.getTime()) > LOCK_TTL_MS;
+    }
+    function reservarEnderecoAuditoria(item) {
+        return __awaiter(this, void 0, void 0, function () {
+            return __generator(this, function (_a) {
+                // A operação do coletor não pode depender de uma transação de rede.
+                // navigator.onLine também permanece true em vários Androids quando o Wi-Fi
+                // perdeu acesso, fazendo a transação ficar pendurada por tempo indefinido.
+                // A lista baixada e a fila local são a fonte de verdade durante a leitura.
+                return [2 /*return*/, !!item];
+            });
+        });
+    }
+    function liberarLockAuditoria(item) {
+        return __awaiter(this, void 0, void 0, function () {
+            return __generator(this, function (_a) {
+                return [2 /*return*/];
+            });
+        });
+    }
+    window.liberarLockAuditoriaAtual = function () { return liberarLockAuditoria(estado.item); };
+    function listaAuditoria() {
+        return (APP.auditorias || []).filter(function (item) {
+            var status = texto(item.status).toUpperCase();
+            return item.disponivel_coletor !== false && !STATUS_FINAIS.has(status);
+        });
+    }
+    function dunEsperado(item) {
+        return texto((item === null || item === void 0 ? void 0 : item.gtinEsperado) || (item === null || item === void 0 ? void 0 : item.gtin_esperado) || (item === null || item === void 0 ? void 0 : item.eanEsperado) || (item === null || item === void 0 ? void 0 : item.ean_esperado) || (item === null || item === void 0 ? void 0 : item.ean) || (item === null || item === void 0 ? void 0 : item.gtin) || (item === null || item === void 0 ? void 0 : item.dunEsperado) || (item === null || item === void 0 ? void 0 : item.dun_esperado) || (item === null || item === void 0 ? void 0 : item.dun) || (item === null || item === void 0 ? void 0 : item.codigoProduto) || (item === null || item === void 0 ? void 0 : item.codigo_produto));
+    }
+    function descricaoEsperada(item) {
+        return texto((item === null || item === void 0 ? void 0 : item.produtoEsperado) || (item === null || item === void 0 ? void 0 : item.produto_esperado) || (item === null || item === void 0 ? void 0 : item.descricaoProdutoEsperado) || (item === null || item === void 0 ? void 0 : item.produto_nome) || (item === null || item === void 0 ? void 0 : item.descricao) || (item === null || item === void 0 ? void 0 : item.produto));
+    }
+    function codigosEsperados(item) {
+        var valores = [item === null || item === void 0 ? void 0 : item.gtinEsperado, item === null || item === void 0 ? void 0 : item.gtin_esperado, item === null || item === void 0 ? void 0 : item.eanEsperado, item === null || item === void 0 ? void 0 : item.ean_esperado, item === null || item === void 0 ? void 0 : item.ean, item === null || item === void 0 ? void 0 : item.gtin, item === null || item === void 0 ? void 0 : item.dunEsperado, item === null || item === void 0 ? void 0 : item.dun_esperado, item === null || item === void 0 ? void 0 : item.dun, item === null || item === void 0 ? void 0 : item.codigoProduto, item === null || item === void 0 ? void 0 : item.codigo_produto, item === null || item === void 0 ? void 0 : item.codigoInterno, item === null || item === void 0 ? void 0 : item.codigo_interno];
+        return Array.from(new Set(valores.map(normalizarCodigo).filter(Boolean)));
+    }
+    function mesmoProdutoDaBase(lido, item) {
+        var _a, _b, _c, _d;
+        var prodLido = ((_b = (_a = window.DTProdutos) === null || _a === void 0 ? void 0 : _a.buscarSync) === null || _b === void 0 ? void 0 : _b.call(_a, lido)) || { encontrado: false };
+        if (!prodLido.encontrado)
+            return false;
+        var esperados = codigosEsperados(item);
+        for (var i = 0; i < esperados.length; i++) {
+            var prodEsp = (_d = (_c = window.DTProdutos) === null || _c === void 0 ? void 0 : _c.buscarSync) === null || _d === void 0 ? void 0 : _d.call(_c, esperados[i]);
+            if (!(prodEsp === null || prodEsp === void 0 ? void 0 : prodEsp.encontrado))
+                continue;
+            if (prodLido.id && prodEsp.id && prodLido.id === prodEsp.id)
+                return true;
+            var famL = normalizarCodigo(prodLido.familiaCodigo || prodLido.familiaNome || prodLido.produtoPrincipal);
+            var famE = normalizarCodigo(prodEsp.familiaCodigo || prodEsp.familiaNome || prodEsp.produtoPrincipal);
+            if (famL && famE && famL === famE && texto(prodLido.embalagem).toUpperCase() === texto(prodEsp.embalagem).toUpperCase())
+                return true;
+        }
+        var nomeEsperado = normalizarCodigo(descricaoEsperada(item));
+        var nomeLido = normalizarCodigo(prodLido.nomeProduto);
+        return !!(nomeEsperado && nomeLido && (nomeEsperado === nomeLido || nomeEsperado.includes(nomeLido) || nomeLido.includes(nomeEsperado)));
+    }
+    function localizarProdutoLido(codigoLido) {
+        var _a, _b;
+        var globalProduto = (_a = window.DTProdutos) === null || _a === void 0 ? void 0 : _a.buscarSync(codigoLido);
+        if (globalProduto === null || globalProduto === void 0 ? void 0 : globalProduto.encontrado)
+            return texto(globalProduto.nomeProduto);
+        var alvo = normalizarCodigo(codigoLido);
+        var nomeMapeado = (_b = APP.auditoriaProdutosMap) === null || _b === void 0 ? void 0 : _b[alvo];
+        if (nomeMapeado)
+            return texto(nomeMapeado);
+        var encontrado = (APP.auditorias || []).find(function (item) { return normalizarCodigo(dunEsperado(item)) === alvo; });
+        return encontrado ? descricaoEsperada(encontrado) : 'Produto não identificado';
+    }
+    function produtoCompativelOffline(lido, item) {
+        var _a;
+        var alvo = normalizarCodigo(lido);
+        if (!alvo)
+            return false;
+        var esperados = codigosEsperados(item);
+        if (esperados.indexOf(alvo) >= 0)
+            return true;
+        // O mapa é criado durante o download e permanece em memória quando a rede
+        // cai. Compara também pelo nome canônico para reconhecer códigos alternativos
+        // do mesmo produto sem consultar o Firebase.
+        var nomeLido = normalizarCodigo(((_a = APP.auditoriaProdutosMap) === null || _a === void 0 ? void 0 : _a[alvo]) || '');
+        var nomeEsperado = normalizarCodigo(descricaoEsperada(item));
+        if (nomeLido && nomeEsperado && (nomeLido === nomeEsperado || nomeLido.includes(nomeEsperado) || nomeEsperado.includes(nomeLido)))
+            return true;
+        return mesmoProdutoDaBase(lido, item);
+    }
+    function encontrarEndereco(valor) {
+        var alvo = normalizarEndereco(valor);
+        if (!alvo)
+            return null;
+        var previsto = listaAuditoria().find(function (item) { return normalizarEndereco(item.endereco || item.endereco_norm) === alvo; });
+        if (previsto)
+            return previsto;
+        if (APP.locaisAtivos && APP.locaisAtivos.has(alvo))
+            return { id: auditoriaId() + '__' + alvo, endereco: texto(valor), dunEsperado: '', produtoEsperado: 'ENDEREÇO PREVISTO VAZIO', previstoVazio: true, disponivel_coletor: true };
+        return null;
+    }
+    function elementos() {
+        return {
+            titulo: document.getElementById('auditoria-titulo'),
+            etapaEndereco: document.getElementById('auditoria-etapa-endereco'),
+            etapaProduto: document.getElementById('auditoria-etapa-produto'),
+            endereco: document.getElementById('auditoria-endereco'),
+            produto: document.getElementById('auditoria-produto'),
+            enderecoConfirmado: document.getElementById('auditoria-endereco-confirmado'),
+            feedbackEndereco: document.getElementById('auditoria-feedback-endereco'),
+            feedbackFinal: document.getElementById('auditoria-feedback-final'),
+            btnEndereco: document.getElementById('auditoria-confirmar-endereco'),
+            btnProduto: document.getElementById('auditoria-confirmar-produto'),
+            btnVazio: document.getElementById('auditoria-endereco-vazio')
+        };
+    }
+    function tocar(tipo) {
+        try {
+            if (tipo === 'erro' && typeof beepErr === 'function')
+                beepErr();
+            else if (tipo === 'vazio' && typeof beepSuave === 'function')
+                beepSuave();
+            else if (typeof beepOk === 'function')
+                beepOk();
+        }
+        catch (e) {
+            console.warn('[AUDITORIA] Falha ao tocar som:', e);
+        }
+    }
+    function mostrarFeedbackEndereco(mensagem, erro) {
+        var el = elementos().feedbackEndereco;
+        if (!el)
+            return;
+        el.style.display = '';
+        el.className = erro ? 'fb err' : 'fb ok';
+        el.textContent = mensagem;
+    }
+    function mostrarResultado(mensagem, tipo) {
+        var el = elementos().feedbackFinal;
+        if (!el)
+            return;
+        el.style.display = '';
+        el.className = tipo === 'erro' ? 'fb err' : (tipo === 'vazio' ? 'fb warn' : 'fb ok');
+        el.textContent = mensagem;
+    }
+    function setProcessando(valor) {
+        estado.processando = !!valor;
+        var el = elementos();
+        [el.btnEndereco, el.btnProduto, el.btnVazio].forEach(function (btn) { if (btn)
+            btn.disabled = estado.processando; });
+        if (el.endereco)
+            el.endereco.disabled = estado.processando || estado.etapa !== 'endereco';
+        if (el.produto)
+            el.produto.disabled = estado.processando || estado.etapa !== 'produto';
+    }
+    function atualizarContadorTitulo() {
+        var _a, _b;
+        var el = elementos().titulo;
+        if (!el)
+            return;
+        var nome = ((_a = APP.inventario) === null || _a === void 0 ? void 0 : _a.auditoria_nome) || ((_b = APP.inventario) === null || _b === void 0 ? void 0 : _b.nome) || auditoriaId() || 'Auditoria';
+        el.textContent = "".concat(nome, " \u00B7 ").concat(listaAuditoria().length, " pendente(s)");
+    }
+    function irParaEndereco() {
+        if (estado.timerRetorno)
+            clearTimeout(estado.timerRetorno);
+        var itemAnterior = estado.etapa === 'produto' ? estado.item : null;
+        if (itemAnterior)
+            liberarLockAuditoria(itemAnterior).catch(function () { });
+        estado = { etapa: 'endereco', item: null, processando: false, timerRetorno: null, foraAuditoria: false };
+        var el = elementos();
+        if (el.etapaEndereco)
+            el.etapaEndereco.style.display = '';
+        if (el.etapaProduto)
+            el.etapaProduto.style.display = 'none';
+        if (el.endereco) {
+            el.endereco.disabled = false;
+            el.endereco.value = '';
+        }
+        if (el.produto) {
+            el.produto.disabled = true;
+            el.produto.value = '';
+        }
+        if (el.feedbackEndereco) {
+            el.feedbackEndereco.style.display = 'none';
+            el.feedbackEndereco.textContent = '';
+        }
+        if (el.feedbackFinal) {
+            el.feedbackFinal.style.display = 'none';
+            el.feedbackFinal.textContent = '';
+        }
+        atualizarContadorTitulo();
+        setTimeout(function () { var _a; return (_a = el.endereco) === null || _a === void 0 ? void 0 : _a.focus(); }, 60);
+    }
+    function irParaProduto(item) {
+        estado.etapa = 'produto';
+        estado.item = item;
+        var el = elementos();
+        if (el.etapaEndereco)
+            el.etapaEndereco.style.display = 'none';
+        if (el.etapaProduto)
+            el.etapaProduto.style.display = '';
+        if (el.enderecoConfirmado)
+            el.enderecoConfirmado.textContent = texto(item.endereco);
+        if (el.produto) {
+            el.produto.disabled = false;
+            el.produto.value = '';
+        }
+        if (el.feedbackFinal) {
+            el.feedbackFinal.style.display = 'none';
+            el.feedbackFinal.textContent = '';
+        }
+        setProcessando(false);
+        setTimeout(function () { var _a; return (_a = el.produto) === null || _a === void 0 ? void 0 : _a.focus(); }, 60);
+    }
+    function consultarEnderecoNaBaseGeral(valor) {
+        return __awaiter(this, void 0, void 0, function () {
+            var alvo;
+            return __generator(this, function (_a) {
+                alvo = normalizarEndereco(valor);
+                if (!alvo)
+                    return [2 /*return*/, false];
+                if (APP.locaisAtivos && APP.locaisAtivos.has(alvo))
+                    return [2 /*return*/, true];
+                // A Base Geral já foi baixada antes de entrar na auditoria. Não consultar
+                // Firebase durante o bip: isso mantém a etapa instantânea mesmo quando o
+                // Android ainda reporta conexão após a queda do sinal.
+                return [2 /*return*/, false];
+            });
+        });
+    }
+    function confirmarEnderecoAuditoria() {
+        return __awaiter(this, void 0, void 0, function () {
+            var el, valor, item, foraAuditoria, existeNaBaseGeral, meta, tipoProduto, confirmar, reservado;
+            var _a, _b;
+            return __generator(this, function (_c) {
+                switch (_c.label) {
+                    case 0:
+                        if (estado.processando || estado.etapa !== 'endereco')
+                            return [2 /*return*/];
+                        el = elementos();
+                        valor = texto((_a = el.endereco) === null || _a === void 0 ? void 0 : _a.value);
+                        if (!valor) {
+                            mostrarFeedbackEndereco('Bipe o endereço.', true);
+                            tocar('erro');
+                            (_b = el.endereco) === null || _b === void 0 ? void 0 : _b.focus();
+                            return [2 /*return*/];
+                        }
+                        item = encontrarEndereco(valor);
+                        foraAuditoria = false;
+                        if (!!item) return [3 /*break*/, 2];
+                        mostrarFeedbackEndereco('Verificando a Base Geral de Endereços baixada…', false);
+                        return [4 /*yield*/, consultarEnderecoNaBaseGeral(valor)];
+                    case 1:
+                        existeNaBaseGeral = _c.sent();
+                        if (existeNaBaseGeral) {
+                            meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId(); }) || {};
+                            tipoProduto = texto(meta.tipoAuditoria || meta.tipo_auditoria).toLowerCase() === 'produto';
+                            if (tipoProduto) {
+                                confirmar = window.confirm('Este endereço não faz parte da auditoria por produto. Deseja registrar uma ocorrência de produto encontrado fora dos endereços previstos?');
+                                if (!confirmar) {
+                                    mostrarFeedbackEndereco('Endereço fora da auditoria. Ocorrência não registrada.', true);
+                                    tocar('erro');
+                                    if (el.endereco) {
+                                        el.endereco.select();
+                                        el.endereco.focus();
+                                    }
+                                    return [2 /*return*/];
+                                }
+                                foraAuditoria = true;
+                                item = {
+                                    id: 'OCORRENCIA__' + auditoriaId() + '__' + normalizarEndereco(valor) + '__' + Date.now(),
+                                    endereco: valor,
+                                    dunEsperado: texto(meta.produtoCodigo || meta.produto_codigo || meta.gtin || meta.dun || meta.familiaId || ''),
+                                    produtoEsperado: texto(meta.produtoNome || meta.produto_nome || meta.familiaNome || meta.nomeProduto || 'PRODUTO DA AUDITORIA'),
+                                    foraAuditoria: true,
+                                    disponivel_coletor: true
+                                };
+                            }
+                            else {
+                                mostrarFeedbackEndereco('Este endereço existe na base, mas não faz parte desta auditoria.', true);
+                                tocar('erro');
+                                if (el.endereco) {
+                                    el.endereco.select();
+                                    el.endereco.focus();
+                                }
+                                return [2 /*return*/];
+                            }
+                        }
+                        _c.label = 2;
+                    case 2:
+                        if (!item) {
+                            mostrarFeedbackEndereco('Endereço não cadastrado na Base Geral de Endereços desta loja.', true);
+                            tocar('erro');
+                            if (el.endereco) {
+                                el.endereco.select();
+                                el.endereco.focus();
+                            }
+                            return [2 /*return*/];
+                        }
+                        estado.foraAuditoria = foraAuditoria || item.foraAuditoria === true;
+                        if (estado.foraAuditoria) {
+                            mostrarFeedbackEndereco('Endereço fora da auditoria confirmado. Bipe o produto encontrado.', false);
+                            tocar('ok');
+                            irParaProduto(item);
+                            return [2 /*return*/];
+                        }
+                        mostrarFeedbackEndereco('Reservando endereço para este coletor…', false);
+                        return [4 /*yield*/, reservarEnderecoAuditoria(item)];
+                    case 3:
+                        reservado = _c.sent();
+                        if (!reservado) {
+                            mostrarFeedbackEndereco('Este endereço já está em conferência em outro coletor ou já foi finalizado.', true);
+                            tocar('erro');
+                            if (el.endereco) {
+                                el.endereco.select();
+                                el.endereco.focus();
+                            }
+                            return [2 /*return*/];
+                        }
+                        mostrarFeedbackEndereco('Endereço confirmado.', false);
+                        tocar('ok');
+                        irParaProduto(item);
+                        return [2 /*return*/];
+                }
+            });
+        });
+    }
+    function documentoId(item) {
+        return texto((item === null || item === void 0 ? void 0 : item.id) || "".concat(auditoriaId(), "__").concat(normalizarEndereco(item === null || item === void 0 ? void 0 : item.endereco)));
+    }
+    function chaveRegistroAuditoria(audId, subcolecao, docId) { return [audId, subcolecao || 'enderecos', docId].join('::'); }
+    function enfileirarAuditoria(docId, payload, subcolecao) {
+        return __awaiter(this, void 0, void 0, function () {
+            var audId, registro;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        audId = auditoriaId();
+                        registro = {
+                            chave: chaveRegistroAuditoria(audId, subcolecao, docId),
+                            docId: docId,
+                            auditoriaId: audId,
+                            subcolecao: subcolecao || 'enderecos',
+                            payload: payload,
+                            criadoEm: agoraISO()
+                        };
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaPut(registro)];
+                    case 1:
+                        _a.sent();
+                        return [2 /*return*/, registro];
+                }
+            });
+        });
+    }
+    var _sincronizandoAuditoria = false;
+    var _timerRetryAuditoria = null;
+    var AUDITORIA_SYNC_TIMEOUT_MS = 12000;
+    function comTimeoutAuditoria(promise, ms) {
+        return new Promise(function (resolve, reject) {
+            var finalizado = false;
+            var timer = setTimeout(function () {
+                if (finalizado)
+                    return;
+                finalizado = true;
+                var erro = new Error('Tempo limite de sincronização excedido');
+                erro.code = 'auditoria/offline-timeout';
+                reject(erro);
+            }, ms);
+            Promise.resolve(promise).then(function (valor) {
+                if (finalizado)
+                    return;
+                finalizado = true;
+                clearTimeout(timer);
+                resolve(valor);
+            }, function (erro) {
+                if (finalizado)
+                    return;
+                finalizado = true;
+                clearTimeout(timer);
+                reject(erro);
+            });
+        });
+    }
+    function agendarSyncAuditoria() {
+        if (_timerRetryAuditoria || !navigator.onLine)
+            return;
+        _timerRetryAuditoria = setTimeout(function () {
+            _timerRetryAuditoria = null;
+            sincronizarFilaAuditoria().catch(function () { });
+        }, 15000);
+    }
+    function migrarFilaAuditoriaLegada() {
+        return __awaiter(this, void 0, void 0, function () {
+            var chaves, i, chave, i, chaveLS, fila, j, x;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        chaves = [];
+                        for (i = 0; i < localStorage.length; i++) {
+                            chave = localStorage.key(i);
+                            if (chave && chave.indexOf('dt_auditoria_fila_') === 0)
+                                chaves.push(chave);
+                        }
+                        i = 0;
+                        _a.label = 1;
+                    case 1:
+                        if (!(i < chaves.length)) return [3 /*break*/, 7];
+                        chaveLS = chaves[i];
+                        fila = [];
+                        try {
+                            fila = JSON.parse(localStorage.getItem(chaveLS) || '[]');
+                        }
+                        catch (e) { }
+                        j = 0;
+                        _a.label = 2;
+                    case 2:
+                        if (!(j < fila.length)) return [3 /*break*/, 5];
+                        x = fila[j] || {};
+                        if (!x.docId || !x.auditoriaId)
+                            return [3 /*break*/, 4];
+                        x.subcolecao = x.subcolecao || 'enderecos';
+                        x.chave = chaveRegistroAuditoria(x.auditoriaId, x.subcolecao, x.docId);
+                        x.criadoEm = x.criadoEm || agoraISO();
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaPut(x)];
+                    case 3:
+                        _a.sent();
+                        _a.label = 4;
+                    case 4:
+                        j++;
+                        return [3 /*break*/, 2];
+                    case 5:
+                        try {
+                            localStorage.removeItem(chaveLS);
+                        }
+                        catch (e) { }
+                        _a.label = 6;
+                    case 6:
+                        i++;
+                        return [3 /*break*/, 1];
+                    case 7: return [2 /*return*/];
+                }
+            });
+        });
+    }
+    function sincronizarFilaAuditoria() {
+        return __awaiter(this, void 0, void 0, function () {
+            var fila, i, x, e_1;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        if (_sincronizandoAuditoria || !navigator.onLine)
+                            return [2 /*return*/];
+                        _sincronizandoAuditoria = true;
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, , 10, 11]);
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaAll()];
+                    case 2:
+                        fila = _a.sent();
+                        i = 0;
+                        _a.label = 3;
+                    case 3:
+                        if (!(i < fila.length)) return [3 /*break*/, 9];
+                        x = fila[i];
+                        _a.label = 4;
+                    case 4:
+                        _a.trys.push([4, 7, , 8]);
+                        return [4 /*yield*/, comTimeoutAuditoria(FS.collection(FCOL.auditorias).doc(x.auditoriaId).collection(x.subcolecao || 'enderecos').doc(x.docId).set(x.payload, { merge: true }), AUDITORIA_SYNC_TIMEOUT_MS)];
+                    case 5:
+                        _a.sent();
+                        return [4 /*yield*/, window.DTAuditoriaStorage.filaDelete(x.chave)];
+                    case 6:
+                        _a.sent();
+                        return [3 /*break*/, 8];
+                    case 7:
+                        e_1 = _a.sent();
+                        console.warn('[AUDITORIA] Item permanece na fila offline:', x.docId, e_1);
+                        agendarSyncAuditoria();
+                        return [3 /*break*/, 9];
+                    case 8:
+                        i++;
+                        return [3 /*break*/, 3];
+                    case 9: return [3 /*break*/, 11];
+                    case 10:
+                        _sincronizandoAuditoria = false;
+                        return [7 /*endfinally*/];
+                    case 11: return [2 /*return*/];
+                }
+            });
+        });
+    }
+    window.sincronizarFilaAuditoria = sincronizarFilaAuditoria;
+    window.addEventListener('online', function () {
+        if (_timerRetryAuditoria) {
+            clearTimeout(_timerRetryAuditoria);
+            _timerRetryAuditoria = null;
+        }
+        sincronizarFilaAuditoria().catch(function () { });
+    });
+    window.addEventListener('offline', function () {
+        if (_timerRetryAuditoria) {
+            clearTimeout(_timerRetryAuditoria);
+            _timerRetryAuditoria = null;
+        }
+    });
+    migrarFilaAuditoriaLegada().then(function () {
+        if (navigator.onLine)
+            sincronizarFilaAuditoria();
+    }).catch(function (e) { console.warn('[AUDITORIA] Falha ao migrar fila antiga:', e); });
+    function salvarOcorrenciaForaAuditoria(produtoLido) {
+        return __awaiter(this, void 0, void 0, function () {
+            var item, momento, lido, prod, meta, produtoCorreto, famProd, famMeta, alvo, nomeOffline, nomeMeta, el, docId, payload, error_1;
+            var _a;
+            return __generator(this, function (_b) {
+                switch (_b.label) {
+                    case 0:
+                        if (estado.processando || !estado.item)
+                            return [2 /*return*/];
+                        item = estado.item;
+                        momento = agoraISO();
+                        lido = texto(produtoLido);
+                        prod = window.DTProdutos && window.DTProdutos.buscarSync ? window.DTProdutos.buscarSync(lido) : { encontrado: false };
+                        meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId(); }) || {};
+                        produtoCorreto = false;
+                        if (prod.encontrado) {
+                            famProd = normalizarCodigo(prod.familiaCodigo || prod.familiaNome || prod.produtoPrincipal);
+                            famMeta = normalizarCodigo(meta.familiaId || meta.familiaNome || meta.produtoCodigo || meta.produtoNome || '');
+                            produtoCorreto = !!(famProd && famMeta && famProd === famMeta);
+                            if (!produtoCorreto) {
+                                alvo = normalizarCodigo(meta.produtoCodigo || meta.gtin || meta.dun || '');
+                                produtoCorreto = !!(alvo && (normalizarCodigo(lido) === alvo || normalizarCodigo(prod.id) === alvo));
+                            }
+                        }
+                        if (!produtoCorreto) {
+                            nomeOffline = normalizarCodigo(((_a = APP.auditoriaProdutosMap) === null || _a === void 0 ? void 0 : _a[normalizarCodigo(lido)]) || '');
+                            nomeMeta = normalizarCodigo(meta.produtoNome || meta.produto_nome || meta.familiaNome || '');
+                            produtoCorreto = !!(nomeOffline && nomeMeta && (nomeOffline === nomeMeta || nomeOffline.includes(nomeMeta) || nomeMeta.includes(nomeOffline)));
+                        }
+                        if (!produtoCorreto) {
+                            mostrarResultado('O produto bipado não é o produto selecionado nesta auditoria. Bipe o produto correto.', 'erro');
+                            tocar('erro');
+                            el = elementos();
+                            if (el.produto) {
+                                el.produto.select();
+                                el.produto.focus();
+                            }
+                            return [2 /*return*/];
+                        }
+                        setProcessando(true);
+                        docId = 'fora__' + normalizarEndereco(item.endereco) + '__' + Date.now();
+                        payload = {
+                            auditoriaId: auditoriaId(),
+                            tipo: 'PRODUTO_FORA_AUDITORIA',
+                            status: 'PRODUTO_FORA_AUDITORIA',
+                            endereco: texto(item.endereco),
+                            produtoLido: localizarProdutoLido(lido),
+                            produto_lido: localizarProdutoLido(lido),
+                            codigoLido: lido,
+                            dunLido: lido,
+                            gtinLido: lido,
+                            produtoEsperado: texto(meta.produtoNome || meta.produto_nome || meta.familiaNome || 'PRODUTO DA AUDITORIA'),
+                            operador_id: operadorUsuario(),
+                            operador_nome: operadorNome(),
+                            dispositivo_id: dispositivoId(),
+                            loja: lojaAtual(),
+                            encontradoForaAuditoria: true,
+                            encontrado_em: momento,
+                            criadoEm: momento,
+                            atualizadoEm: momento
+                        };
+                        _b.label = 1;
+                    case 1:
+                        _b.trys.push([1, 3, , 4]);
+                        return [4 /*yield*/, enfileirarAuditoria(docId, payload, 'ocorrencias')];
+                    case 2:
+                        _b.sent();
+                        return [3 /*break*/, 4];
+                    case 3:
+                        error_1 = _b.sent();
+                        console.error('[AUDITORIA] Falha ao persistir ocorrência no aparelho:', error_1);
+                        mostrarResultado('Não foi possível salvar no aparelho. Não prossiga e tente novamente.', 'erro');
+                        tocar('erro');
+                        setProcessando(false);
+                        return [2 /*return*/];
+                    case 4:
+                        mostrarResultado(navigator.onLine ? 'Ocorrência registrada no aparelho e aguardando sincronização.' : 'Ocorrência salva no coletor. Será enviada quando houver conexão.', 'vazio');
+                        tocar('vazio');
+                        try {
+                            window.dispatchEvent(new CustomEvent('dt-auditoria-ocorrencia', { detail: { id: docId, payload: payload } }));
+                        }
+                        catch (e) { }
+                        if (navigator.onLine)
+                            sincronizarFilaAuditoria().catch(function () { });
+                        estado.timerRetorno = setTimeout(irParaEndereco, 1100);
+                        return [2 /*return*/];
+                }
+            });
+        });
+    }
+    function salvarResultado(status, produtoLido) {
+        return __awaiter(this, void 0, void 0, function () {
+            var item, docId, momento, esperado, lido, nomeLido, payload, error_2;
+            return __generator(this, function (_a) {
+                switch (_a.label) {
+                    case 0:
+                        if (estado.processando || !estado.item)
+                            return [2 /*return*/];
+                        item = estado.item;
+                        docId = documentoId(item);
+                        if (!docId || !auditoriaId()) {
+                            mostrarResultado('Não foi possível identificar a auditoria.', 'erro');
+                            tocar('erro');
+                            return [2 /*return*/];
+                        }
+                        setProcessando(true);
+                        momento = agoraISO();
+                        esperado = dunEsperado(item);
+                        lido = status === STATUS_VAZIO ? null : texto(produtoLido);
+                        nomeLido = status === STATUS_VAZIO ? null : localizarProdutoLido(lido);
+                        payload = {
+                            auditoriaId: auditoriaId(),
+                            endereco: texto(item.endereco),
+                            dunEsperado: esperado,
+                            produtoEsperado: descricaoEsperada(item),
+                            gtinLido: lido,
+                            gtin_lido: lido,
+                            eanLido: lido,
+                            ean_lido: lido,
+                            dunLido: lido,
+                            dun_lido: lido,
+                            codigoLido: lido,
+                            produtoLido: nomeLido,
+                            produto_lido: nomeLido,
+                            produtoNaoCadastrado: status !== STATUS_VAZIO && !(window.DTProdutos && window.DTProdutos.buscarSync && window.DTProdutos.buscarSync(lido).encontrado),
+                            status: status,
+                            operador_id: operadorUsuario(),
+                            operador_nome: operadorNome(),
+                            lidoEm: momento,
+                            lido_em: momento,
+                            loja: lojaAtual(),
+                            observacao: '',
+                            disponivel_coletor: false,
+                            em_andamento: false,
+                            dispositivo_id: dispositivoId(),
+                            finalizado_em: momento,
+                            atualizadoEm: momento
+                        };
+                        _a.label = 1;
+                    case 1:
+                        _a.trys.push([1, 3, , 4]);
+                        // Confirma primeiro no armazenamento durável do aparelho. A operação nunca
+                        // fica esperando o timeout da internet; a sincronização ocorre em paralelo.
+                        return [4 /*yield*/, enfileirarAuditoria(docId, payload, 'enderecos')];
+                    case 2:
+                        // Confirma primeiro no armazenamento durável do aparelho. A operação nunca
+                        // fica esperando o timeout da internet; a sincronização ocorre em paralelo.
+                        _a.sent();
+                        APP.auditorias = (APP.auditorias || []).filter(function (a) { return documentoId(a) !== docId; });
+                        APP.contagens = (APP.contagens || []).filter(function (a) { return texto(a.id) !== docId; });
+                        APP.contagens.unshift(__assign({ id: docId }, payload));
+                        atualizarContadorTitulo();
+                        try {
+                            window.dispatchEvent(new CustomEvent('dt-auditoria-salva', { detail: { id: docId, payload: payload } }));
+                        }
+                        catch (e) { }
+                        if (status === STATUS_OK) {
+                            mostrarResultado('Auditoria concluída.', 'ok');
+                            tocar('ok');
+                        }
+                        else if (status === STATUS_DIVERGENTE) {
+                            mostrarResultado('Produto divergente.', 'erro');
+                            tocar('erro');
+                        }
+                        else {
+                            mostrarResultado('Endereço registrado como vazio.', 'vazio');
+                            tocar('vazio');
+                        }
+                        if (navigator.onLine)
+                            sincronizarFilaAuditoria().catch(function () { });
+                        estado.timerRetorno = setTimeout(irParaEndereco, 900);
+                        return [3 /*break*/, 4];
+                    case 3:
+                        error_2 = _a.sent();
+                        console.error('[AUDITORIA] Falha ao persistir resultado no aparelho:', error_2);
+                        mostrarResultado('Não foi possível salvar no aparelho. Não prossiga e tente novamente.', 'erro');
+                        tocar('erro');
+                        setProcessando(false);
+                        return [3 /*break*/, 4];
+                    case 4: return [2 /*return*/];
+                }
+            });
+        });
+    }
+    function confirmarProdutoAuditoria() {
+        var _a, _b;
+        if (estado.processando || estado.etapa !== 'produto' || !estado.item)
+            return;
+        var el = elementos();
+        var lido = texto((_a = el.produto) === null || _a === void 0 ? void 0 : _a.value);
+        if (!lido) {
+            mostrarResultado('Bipe o produto.', 'erro');
+            tocar('erro');
+            (_b = el.produto) === null || _b === void 0 ? void 0 : _b.focus();
+            return;
+        }
+        if (!/^\d+$/.test(lido)) {
+            mostrarResultado('Código inválido. Bipe somente números, sem pontos, barras, espaços ou letras.', 'erro');
+            tocar('erro');
+            el.produto.select();
+            el.produto.focus();
+            return;
+        }
+        var prod = window.DTProdutos && window.DTProdutos.buscarSync ? window.DTProdutos.buscarSync(lido) : { encontrado: false };
+        var esperados = codigosEsperados(estado.item);
+        var correto = produtoCompativelOffline(lido, estado.item);
+        var meta = (APP.auditoriasMenu || []).find(function (x) { return x.id === auditoriaId(); }) || {};
+        if (meta.tipoAuditoria === 'produto' && meta.familiaId && prod.encontrado) {
+            var famProd = normalizarCodigo(prod.familiaCodigo || prod.familiaNome);
+            correto = famProd === normalizarCodigo(meta.familiaId) || famProd === normalizarCodigo(meta.familiaNome);
+        }
+        // Não invalida uma correspondência já confirmada pela base baixada só porque
+        // o serviço global de produtos ficou momentaneamente indisponível offline.
+        if (!prod.encontrado && !produtoCompativelOffline(lido, estado.item))
+            correto = false;
+        if (estado.item.previstoVazio === true || !esperados.length)
+            correto = false;
+        if (estado.foraAuditoria || estado.item.foraAuditoria === true) {
+            salvarOcorrenciaForaAuditoria(lido);
+            return;
+        }
+        if (!prod.encontrado)
+            mostrarResultado('Produto não cadastrado. Será registrado como divergente.', 'erro');
+        salvarResultado(correto ? STATUS_OK : STATUS_DIVERGENTE, lido);
+    }
+    function registrarEnderecoVazio() {
+        if (estado.processando || estado.etapa !== 'produto' || !estado.item)
+            return;
+        salvarResultado(STATUS_VAZIO, '');
+    }
+    function renderAuditoriaColetor() {
+        atualizarContadorTitulo();
+        irParaEndereco();
+    }
+    window.renderAuditoriaColetor = renderAuditoriaColetor;
+    window.confirmarEnderecoAuditoria = confirmarEnderecoAuditoria;
+    window.confirmarProdutoAuditoria = confirmarProdutoAuditoria;
+    window.registrarEnderecoVazioAuditoria = registrarEnderecoVazio;
+    // Substitui somente a abertura de Auditoria. Não chama resetContagem(),
+    // Não chama nenhuma rotina de confirmação ou gravação do Inventário.
+    // A seleção e o carregamento obrigatório da Auditoria pertencem exclusivamente
+    // ao módulo 17-auditoria-meta.js. Não sobrescrever selecionarAuditoriaMenu aqui.
+    function registrarEventosUmaVez() {
+        if (window.__auditoriaFluxoEventosRegistrados)
+            return;
+        window.__auditoriaFluxoEventosRegistrados = true;
+        document.addEventListener('click', function (event) {
+            var outraAba = event.target.closest('.nav-tab');
+            if (outraAba && outraAba.id !== 'tab-auditoria' && APP.modoAcesso === 'auditoria' && estado.etapa === 'produto') {
+                liberarLockAuditoria(estado.item).catch(function () { });
+            }
+            if (event.target.closest('#auditoria-confirmar-endereco'))
+                confirmarEnderecoAuditoria();
+            else if (event.target.closest('#auditoria-confirmar-produto'))
+                confirmarProdutoAuditoria();
+            else if (event.target.closest('#auditoria-endereco-vazio'))
+                registrarEnderecoVazio();
+        });
+        document.addEventListener('keydown', function (event) {
+            var _a;
+            if (APP.modoAcesso !== 'auditoria' || event.key !== 'Enter')
+                return;
+            var id = (_a = document.activeElement) === null || _a === void 0 ? void 0 : _a.id;
+            if (id === 'auditoria-endereco') {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                confirmarEnderecoAuditoria();
+            }
+            else if (id === 'auditoria-produto') {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                confirmarProdutoAuditoria();
+            }
+        }, true);
+    }
+    registrarEventosUmaVez();
+})();

@@ -299,7 +299,34 @@ function abrirFecharInventario(id) {
   openModal('modal-fechar-inv');
 }
 
-function confirmarFecharInventario() {
+async function fsAtualizarStatusInventario(inv) {
+  if (!inv || !inv.id) throw new Error('Inventário inválido para atualização.');
+  const raw = window.getDTRawFirestore?.() || FS_AN;
+  const ref = FS_AN.collection(FS_COL).doc(inv.id);
+  const resultado = await raw.runTransaction(async transaction => {
+    const snapshot = await transaction.get(ref);
+    if (!snapshot.exists) throw new Error('Inventário não encontrado no servidor.');
+    const remoto = snapshot.data() || {};
+    const versaoAtual = Number(remoto.versao || 0);
+    const payload = {
+      status: inv.status,
+      oculto_coletor: inv.oculto_coletor === true,
+      fechado_em: inv.fechado_em || null,
+      fechado_por: inv.fechado_por || null,
+      fechado_por_nome: inv.fechado_por_nome || null,
+      snapshot_fechamento: inv.snapshot_fechamento || null,
+      atualizado_em: firebase.firestore.FieldValue.serverTimestamp(),
+      versao: versaoAtual + 1
+    };
+    transaction.update(ref, payload);
+    return payload.versao;
+  });
+  inv.versao = resultado;
+  return resultado;
+}
+window.fsAtualizarStatusInventario = fsAtualizarStatusInventario;
+
+async function confirmarFecharInventario() {
   const inv = getInventarioPorId(state().ui.inventarioFecharId);
   if (!inv) return;
 
@@ -316,7 +343,9 @@ function confirmarFecharInventario() {
   state().coletores.forEach(c => {
     if (c.sessao?.inventario_id === inv.id || c.ultimo_inventario_id === inv.id) {
       c.turno_encerrado = false;
-      FS_AN.collection(FS_COL_COLETORES).doc(c.id).update({ turno_encerrado: false }).catch(() => {});
+      FS_AN.collection(FS_COL_COLETORES).doc(c.id).update({ turno_encerrado: false }).catch((erro) => {
+        console.error('[Inventário] Falha ao liberar turno do coletor após fechamento', { coletorId: c.id, inventarioId: inv.id, erro });
+      });
     }
   });
 
@@ -358,12 +387,19 @@ function confirmarFecharInventario() {
 
   showToast(`🔒 Inventário "${inv.codigo}" encerrado! Novas contagens bloqueadas.`, 'w');
   // Atualizar status + snapshot no Firestore
-  fsAtualizarStatusInventario(inv);
+  try {
+    await fsAtualizarStatusInventario(inv);
+  } catch (error) {
+    console.error('[Inventário] Falha ao encerrar no servidor:', error);
+    showToast('O fechamento não foi confirmado no servidor. Atualize os dados e tente novamente.', 'e');
+    await window.AnalistaFirebaseService?.restart?.();
+    return;
+  }
   // Salvar ranking final do inventário encerrado
   setTimeout(() => fsSalvarRankingOperadores(), 1000);
 }
 
-function pausarInventario(id) {
+async function pausarInventario(id) {
   const inv = getInventarioPorId(id);
   if (!inv) return;
   inv.status = inv.status === 'PAUSADO' ? 'ATIVO' : 'PAUSADO';
@@ -372,7 +408,15 @@ function pausarInventario(id) {
   logSistema('INVENTARIO', `Inventário ${inv.codigo} ${inv.status === 'ATIVO' ? 'reativado' : 'pausado'}`, { id });
   showToast(inv.status === 'ATIVO' ? '▶️ Inventário reativado' : '⏸ Inventário pausado', 'w');
   // Sincronizar status no Firestore
-  fsAtualizarStatusInventario(inv);
+  try {
+    await fsAtualizarStatusInventario(inv);
+  } catch (error) {
+    inv.status = inv.status === 'PAUSADO' ? 'ATIVO' : 'PAUSADO';
+    saveAll();
+    renderInvTable();
+    console.error('[Inventário] Falha ao alterar status:', error);
+    showToast('A alteração não foi confirmada no servidor.', 'e');
+  }
   window.AnalistaFirebaseService?.start?.();
 }
 
@@ -413,4 +457,3 @@ function exportarBaseAtual() {
   if (!inv || !inv.base?.length) return;
   exportCSVData(inv.base, `base_${inv.codigo}.csv`);
 }
-

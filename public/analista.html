@@ -7,12 +7,12 @@
 <title>DT Inventário — Da Terrinha Alimentos</title>
 <link href="https://fonts.googleapis.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;1,400&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js">
+<script src="vendor/xlsx-0.18.5/xlsx.full.min.js">
 </script>
 <!-- Firebase SDK v10 compat -->
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script src="vendor/firebase-10.12.2/firebase-app-compat.js"></script>
+<script src="vendor/firebase-10.12.2/firebase-auth-compat.js"></script>
+<script src="vendor/firebase-10.12.2/firebase-firestore-compat.js"></script>
 <style>
     /* ═══════════════════════════════════════════════════
        DT INVENTÁRIO — Da Terrinha Alimentos
@@ -1727,9 +1727,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div style="display:flex;gap:8px;flex-wrap:wrap">
 <button class="btn btn-ghost btn-sm" onclick="openModal('modal-end-manual')">＋ Manual</button>
 <button class="btn btn-primary btn-sm" onclick="openModal('modal-end-import')">⬆ Importar CSV/XLSX</button>
-<button class="btn btn-warn btn-sm" onclick="openModal('modal-reatrib-local')" title="Carregar planilha para reatribuir nomes dos locais">🏭 Corrigir Locais</button>
 <button class="btn btn-export btn-sm" onclick="exportarEnderecos()">⬇ Exportar</button>
-<button class="btn btn-ghost btn-sm" onclick="endVincularLojaMassa()" style="border-color:rgba(245,158,11,.5);color:#92400e" title="Vincular todos os endereços sem loja a uma loja">🏪 Vincular Loja em Massa</button>
 <button class="btn btn-danger btn-sm" onclick="excluirTodosEnderecos()" title="Excluir todos os endereços">🗑 Excluir Todos</button>
 </div>
 </div>
@@ -2214,8 +2212,6 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div style="font-size:.73rem;color:var(--muted);margin-top:2px">Base de endereços vinculada a esta loja</div>
 </div>
 <div style="display:flex;gap:8px;flex-wrap:wrap">
-<button class="btn btn-ghost btn-sm" onclick="lojaAdicionarEndereco()">＋ Endereço Manual</button>
-<button class="btn btn-primary btn-sm" onclick="lojaImportarEnderecos()">📥 Importar CSV/XLSX</button>
 </div>
 </div>
 <div class="tc-toolbar">
@@ -3014,18 +3010,17 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
     </div>
 <div style="border:1px solid var(--border);border-radius:10px;padding:14px">
 <div style="font-weight:700;font-size:.88rem;margin-bottom:10px">📂 Selecione o arquivo CSV ou XLSX</div>
-<div class="import-zone" id="reimp-drop-zone" ondragover="event.preventDefault()" ondrop="event.preventDefault();reimpHandleFile(event.dataTransfer.files[0])" style="position:relative;cursor:pointer">
+<div class="import-zone" id="reimp-drop-zone" style="position:relative">
 <div class="import-zone-icon">📂</div>
 <div class="import-zone-text">Clique ou arraste o arquivo da base</div>
 <div class="import-zone-sub">Mesmo arquivo CSV/XLSX usado ao criar o inventário</div>
-<input accept=".csv,.xlsx,.xls" id="reimp-file" onchange="reimpHandleFile(this.files[0])" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:5" type="file"/>
+<input accept=".csv,.xlsx,.xls" disabled id="reimp-file" style="display:none" type="file"/>
 </div>
 <div id="reimp-mapper-zone" style="display:none;margin-top:14px"></div>
 <div id="reimp-fb" style="margin-top:12px"></div>
 </div>
 <div class="modal-footer">
 <button class="btn btn-ghost" onclick="closeModal('modal-reimportar-base')">Cancelar</button>
-<button class="btn btn-success" disabled="" id="btn-reimp-confirmar" onclick="reimpConfirmar()" style="opacity:.4">🔥 Importar e Publicar</button>
 </div>
 </div>
 </div>
@@ -3093,25 +3088,25 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
       ℹ️ Carregue uma planilha com as colunas <strong>Endereço</strong> e <strong>Nome do Local</strong> para corrigir o agrupamento dos endereços já importados.
     </div>
 <div id="reatrib-upload-zone">
-<div class="import-zone" id="reatrib-drop-zone" ondragleave="this.classList.remove('drag')" ondragover="this.classList.add('drag')" ondrop="event.preventDefault();this.classList.remove('drag');if(event.dataTransfer.files[0])processFileReatrib(event.dataTransfer.files[0])" style="position:relative;cursor:pointer">
+<div class="import-zone" id="reatrib-drop-zone" style="position:relative">
 <div class="import-zone-icon">📂</div>
 <div class="import-zone-text">Clique ou arraste a planilha</div>
 <div class="import-zone-sub">CSV ou XLSX — precisa ter coluna de endereço e coluna com nome do local</div>
-<input accept=".csv,.xlsx,.xls" id="file-reatrib" onchange="processFileReatrib(this.files[0])" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:5" type="file"/>
+<input accept=".csv,.xlsx,.xls" disabled id="file-reatrib" style="display:none" type="file"/>
 </div>
 </div>
 <div id="reatrib-mapper-zone" style="display:none">
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
 <div>
 <div class="fl" style="margin-bottom:5px">🔗 Coluna do Endereço <span style="color:var(--danger)">*</span></div>
-<select class="mapper-select" id="reatrib-sel-end" onchange="reatribPreview()" style="width:100%">
+<select class="mapper-select" disabled id="reatrib-sel-end" style="width:100%">
 <option value="">— selecione —</option>
 </select>
 <div id="reatrib-ex-end" style="font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:3px">—</div>
 </div>
 <div>
 <div class="fl" style="margin-bottom:5px;color:#166534">🏭 Coluna do Nome do Local <span style="color:var(--danger)">*</span></div>
-<select class="mapper-select" id="reatrib-sel-local" onchange="reatribPreview()" style="width:100%;border-color:#86efac">
+<select class="mapper-select" disabled id="reatrib-sel-local" style="width:100%;border-color:#86efac">
 <option value="">— selecione —</option>
 </select>
 <div id="reatrib-ex-local" style="font-family:var(--mono);font-size:.7rem;color:#16a34a;margin-top:3px">—</div>
@@ -3122,7 +3117,6 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div id="reatrib-fb" style="margin-top:8px"></div>
 <div class="modal-footer">
 <button class="btn btn-ghost" onclick="closeModal('modal-reatrib-local')">Cancelar</button>
-<button class="btn btn-success" disabled="" id="btn-conf-reatrib" onclick="confirmarReatribLocal()">✓ Aplicar Correção</button>
 </div>
 </div>
 </div>
@@ -3326,7 +3320,6 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 <div class="modal-footer">
 <button class="btn btn-ghost" onclick="closeModal('modal-demo')">Cancelar</button>
-<button class="btn btn-primary" onclick="gerarDadosDemo()">🧪 Gerar Dados</button>
 </div>
 </div>
 </div>
@@ -3347,7 +3340,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <!-- ══════════ JAVASCRIPT ══════════ -->
 
 
-</div><script src="js/shared/common-utils.js?v=20260730-215"></script><script src="js/shared/firebase-shared.js?v=20260729-196"></script><script src="js/shared/enderecos-service.js?v=20260729-196"></script><script src="js/shared/produtos-service.js?v=20260729-196"></script><script src="js/analista/actions.js?v=20260729-196"></script><script src="js/analista/reducers.js?v=20260729-196"></script><script src="js/analista/store.js?v=20260729-196"></script><script src="js/analista/00-auth-login.js?v=20260730-224"></script><script src="js/analista/01-core-base-storage.js?v=20260729-196"></script><script src="js/analista/services/inventarioService.js?v=20260729-196"></script><script src="js/analista/services/auditoriaService.js?v=20260729-196"></script><script src="js/analista/services/divergenciaService.js?v=20260729-196"></script><script src="js/analista/firebaseService.js?v=20260730-210"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260729-196"></script><script src="js/analista/03-core-navigation.js?v=20260729-196"></script><script src="js/analista/04-compat-pages.js?v=20260729-196"></script><script src="js/analista/09-fs-publicar.js?v=20260729-196"></script><script src="js/analista/10-inventarios-negocio.js?v=20260729-196"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260729-196"></script><script src="js/analista/12-validacao-operacional.js?v=20260730-222"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260729-196"></script><script src="js/analista/20-sync-contagens.js?v=20260729-196"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260730-224"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260729-196"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260729-196"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260730-224"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260730-225"></script><script src="js/analista/33-render-enderecos.js?v=20260729-196"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260729-196"></script><script src="js/analista/35-coletores-render.js?v=20260729-196"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260729-196"></script><script src="js/analista/39-base-produtos.js?v=20260730-217"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260730-224"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260729-196"></script>
+</div><script src="js/shared/common-utils.js?v=20260730-228"></script><script src="js/shared/address-state-engine.js?v=20260730-228"></script><script src="js/shared/address-state-selectors.js?v=20260730-228"></script><script src="js/shared/address-state-view.js?v=20260730-228"></script><script src="js/shared/firebase-shared.js?v=20260730-228"></script><script src="js/shared/enderecos-service.js?v=20260730-228"></script><script src="js/shared/produtos-service.js?v=20260730-228"></script><script src="js/analista/actions.js?v=20260730-228"></script><script src="js/analista/reducers.js?v=20260730-228"></script><script src="js/analista/store.js?v=20260730-228"></script><script src="js/analista/00-auth-login.js?v=20260730-228"></script><script src="js/analista/01-core-base-storage.js?v=20260730-228"></script><script src="js/analista/services/inventarioService.js?v=20260730-228"></script><script src="js/analista/services/auditoriaService.js?v=20260730-228"></script><script src="js/analista/services/divergenciaService.js?v=20260730-228"></script><script src="js/analista/firebaseService.js?v=20260730-228"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260730-228"></script><script src="js/analista/03-core-navigation.js?v=20260730-228"></script><script src="js/analista/04-compat-pages.js?v=20260730-228"></script><script src="js/analista/09-fs-publicar.js?v=20260730-228"></script><script src="js/analista/10-inventarios-negocio.js?v=20260730-228"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260730-228"></script><script src="js/analista/12-validacao-operacional.js?v=20260730-228"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260730-228"></script><script src="js/analista/20-sync-contagens.js?v=20260730-228"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260730-228"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260730-228"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260730-228"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260730-228"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260730-228"></script><script src="js/analista/33-render-enderecos.js?v=20260730-228"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260730-228"></script><script src="js/analista/35-coletores-render.js?v=20260730-228"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260730-228"></script><script src="js/analista/39-base-produtos.js?v=20260730-228"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260730-228"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260730-228"></script>
 <div class="modal-bg" id="modal-loja-cadastro"><div class="modal" style="max-width:480px">
   <div class="modal-title">🏪 <span id="ml-title">Cadastrar loja</span></div>
   <input type="hidden" id="ml-id"/>
@@ -3356,7 +3349,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260729-196"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260729-196"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260729-196"></script><script src="js/analista/42-topbar-tools.js?v=20260729-196"></script><script src="js/analista/43-importar-exportar-api.js?v=20260730-224"></script><script src="js/analista/app-controller.js?v=20260729-196"></script>
+<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260730-228"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260730-228"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260730-228"></script><script src="js/analista/42-topbar-tools.js?v=20260730-228"></script><script src="js/analista/43-importar-exportar-api.js?v=20260730-228"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260730-228"></script><script src="js/analista/app-controller.js?v=20260730-228"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}

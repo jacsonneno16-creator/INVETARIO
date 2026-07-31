@@ -62,7 +62,6 @@ function renderInvTable() {
                     ${inv.oculto_coletor ? '🙈 Oculto' : '👁 Visível'}
                   </button>
                   ${inv.status === 'ATIVO' ? `
-                    <button class="btn btn-sm" onclick="abrirReimportarBase('${inv.id}')" title="Reimportar o CSV da base e publicar para os coletores" style="background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.3);padding:4px 8px;font-size:.72rem">📂 Reimportar Base</button>
                     <button class="btn btn-sm" onclick="republicarBaseInventario('${inv.id}')" title="Publicar base no Firebase para que os coletores possam baixar" style="background:rgba(59,130,246,.12);color:#60a5fa;border:1px solid rgba(59,130,246,.3);padding:4px 8px;font-size:.72rem">🔥 Publicar Base</button>
                     <button class="btn btn-ghost btn-sm" onclick="pausarInventario('${inv.id}')">⏸</button>
                     <button class="btn btn-danger btn-sm" onclick="abrirFecharInventario('${inv.id}')">Fechar</button>

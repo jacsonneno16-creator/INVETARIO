@@ -232,7 +232,7 @@ function baseMetaLoad(invId) {
 
 // ── Versão da base salva localmente ──
 function bVerSave(invId, ver) {
-  try { localStorage.setItem(LS_BVER + invId, String(ver || '')); } catch(e) {}
+  try { localStorage.setItem(LS_BVER + invId, String(ver || '')); } catch(e){ console.warn("[Erro tratado]", e); }
 }
 function bVerLoad(invId) {
   return localStorage.getItem(LS_BVER + invId) || '';
@@ -273,7 +273,7 @@ function _recalcularEndCap(base) {
 }
 
 function endCapSave(invId, mapa) {
-  try { localStorage.setItem(LS_ENDCAP + invId, JSON.stringify(mapa)); } catch(e) {}
+  try { localStorage.setItem(LS_ENDCAP + invId, JSON.stringify(mapa)); } catch(e){ console.warn("[Erro tratado]", e); }
 }
 function endCapLoad(invId) {
   try {
@@ -443,7 +443,7 @@ async function idbExists(uuid) {
 
 // ── localStorage: espelho de emergência + compatibilidade ──
 function filaSave(fila) {
-  try { localStorage.setItem(LS_FILA, JSON.stringify(fila)); } catch(e) {}
+  try { localStorage.setItem(LS_FILA, JSON.stringify(fila)); } catch(e){ console.warn("[Erro tratado]", e); }
 }
 function filaLoad() {
   try {
@@ -486,7 +486,7 @@ async function idbInit() {
         await idbPut(record);
       }
       // Limpa espelho após migração bem-sucedida
-      try { localStorage.removeItem(LS_FILA); } catch(e) {}
+      try { localStorage.removeItem(LS_FILA); } catch(e){ console.warn("[Erro tratado]", e); }
     }
 
     // Rebuild FILA_ENVIO a partir do IDB
@@ -507,7 +507,7 @@ function invCacheLoad() {
   } catch(e) { return []; }
 }
 function invCacheSave(list) {
-  try { localStorage.setItem(LS_INV, JSON.stringify(list)); } catch(e) {}
+  try { localStorage.setItem(LS_INV, JSON.stringify(list)); } catch(e){ console.warn("[Erro tratado]", e); }
 }
 
 /**
@@ -552,7 +552,7 @@ function limparInventariosObsoletos(idsAtivos) {
 
   if (keysToDelete.length > 0) {
     keysToDelete.forEach(k => {
-      try { localStorage.removeItem(k); } catch(e) {}
+      try { localStorage.removeItem(k); } catch(e){ console.warn("[Erro tratado]", e); }
     });
     dbg('[cache] Limpos', keysToDelete.length, 'chaves de inventários obsoletos');
   }

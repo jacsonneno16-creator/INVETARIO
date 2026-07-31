@@ -68,7 +68,7 @@
                 sd.data()
               );
             }
-          }catch(_){ }
+          }catch(_){ console.warn("[Erro tratado]", _); }
         }
       }
       if(progresso) progresso(nome,total);
@@ -86,7 +86,7 @@
       const lojaId=global.getDTLojaAtiva();
       const acesso=global.DT_USUARIO_ACESSO_ATUAL||{};
       let usuario=null;
-      try { usuario=global.firebase && global.firebase.auth ? global.firebase.auth().currentUser : null; } catch (_) {}
+      try { usuario=global.firebase && global.firebase.auth ? global.firebase.auth().currentUser : null; } catch(_){ console.warn("[Erro tratado]", _); }
       if(!usuario || !lojaId || (acesso.perfil!=='administrador' && acesso.admin_mestre!==true && acesso.administrador_mestre!==true)) {
         return {executado:false,total:0};
       }
@@ -156,7 +156,7 @@
           migracao_legada_status:'ERRO',
           migracao_legada_erro:String(error&&error.message||error),
           migracao_atualizada_em:new Date().toISOString()
-        },{merge:true}).catch(function(){});
+        },{merge:true}).catch(function(error){ console.warn("[Falha assíncrona]", error); });
         throw error;
       }
     })();
@@ -182,7 +182,7 @@
                 for(const sd of ss.docs){ sb.delete(sd.ref); n++; if(n>=100){await sb.commit();await _pausarMigracao(100);sb=raw().batch();n=0;} }
                 if(n) await sb.commit();
               }
-            }catch(_){ }
+            }catch(_){ console.warn("[Erro tratado]", _); }
           }
         }
         batch.delete(d.ref); total++;
@@ -224,7 +224,7 @@
       Object.values(global.KEYS||{}).forEach(function(k){localStorage.removeItem(k+'__'+lojaId);});
       localStorage.removeItem('invcount_auditoria_metas__'+lojaId);
       localStorage.removeItem('dt_produtos_cache__'+lojaId);
-    }catch(_){ }
+    }catch(_){ console.warn("[Erro tratado]", _); }
     return {corrigido:true,total:total};
   }
 

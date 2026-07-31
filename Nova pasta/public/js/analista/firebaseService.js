@@ -1,0 +1,548 @@
+(function(global){
+  const Actions           = global.AnalistaActions;
+  const InventarioService = global.AnalistaInventarioService;
+
+  const state = {
+    started: false,
+    startPromise: null,
+    currentInventoryIds: [],
+    unsubscribers: { contagens: [], vazios: [], divergencias: [], recontagens: [], coletores: null, enderecos: null }
+  };
+
+  function _emitSync(ok, message, extra){
+    global.AnalistaStore.dispatch(Actions.setSyncStatus(Object.assign({
+      ok,
+      message:    message || '',
+      started:    state.started,
+      lastSyncAt: new Date().toISOString(),
+      source:     ok ? 'firebase' : 'cache'
+    }, extra || {})));
+
+    const updateUI = global.AnalistaBootstrap?.updateSyncUI;
+    if (typeof updateUI === 'function') {
+      updateUI(ok, message || new Date().toLocaleTimeString('pt-BR'));
+    }
+  }
+
+  function _getActiveInventoryIds(){
+    return InventarioService.getInventariosAtivosIds(global.AnalistaStore.getState().inventarios);
+  }
+
+  function _normalizarMudanca(collection, change){
+    const raw = { id: change.doc.id, ...change.doc.data() };
+    const normalized = (collection === 'recontagens' || collection === 'divergencias')
+      ? raw
+      : InventarioService.normalizarContagem(raw);
+    return { type: change.type, entity: normalized };
+  }
+
+  function _persistirSlice(slice){
+    try {
+      const Storage = global.AnalistaStorage;
+      const st = global.AnalistaStore.getState();
+      if (!Storage?.storageSave) return;
+      if (slice === 'contagens') Storage.storageSave(Storage.KEYS.contagens, st.contagens || []);
+      if (slice === 'recontagens') Storage.storageSave(Storage.KEYS.recontagens, st.recontagens || []);
+      if (slice === 'divergencias') Storage.storageSave(Storage.KEYS.divergencias, st.divergencias || []);
+    } catch (err) {
+      console.warn('[FirebaseService] cache da coleção:', err?.message || err);
+    }
+  }
+
+  // Aplica todo o snapshot em uma única ação. O subscriber do AppController é o
+  // único responsável por solicitar renderização e atualização dos badges.
+  function _applyCollectionChanges(collection, docChanges){
+    const changes = (docChanges || []).map(change => _normalizarMudanca(collection, change));
+    if (!changes.length) return false;
+
+    const slice = collection === 'vazios' ? 'contagens' : collection;
+    const atual = Array.isArray(global.AnalistaStore.getState()[slice])
+      ? global.AnalistaStore.getState()[slice]
+      : [];
+    const byId = new Map(atual.map(item => [String(item?.id || ''), item]));
+
+    changes.forEach(({ type, entity }) => {
+      const id = String(entity?.id || '');
+      if (!id) return;
+      if (type === 'removed') byId.delete(id);
+      else byId.set(id, entity);
+    });
+
+    global.AnalistaStore.dispatch(Actions.replaceSlice(slice, Array.from(byId.values()), {
+      source: 'firebase-batch',
+      collection,
+      changes: changes.length
+    }));
+    _persistirSlice(slice);
+    return true;
+  }
+
+
+  
+  function _listenEnderecos(){
+    if (!navigator.onLine) return null;
+
+    const aplicar = docs => {
+      global.AnalistaStore.dispatch(
+        Actions.replaceSlice('enderecosLista', docs, { source: 'firebase' })
+      );
+      const agrupados = global.AnalistaBootstrap?.agruparEnderecosPorSetor
+        ? global.AnalistaBootstrap.agruparEnderecosPorSetor(docs)
+        : docs.reduce((acc, item) => {
+            const setor = item?.setor || item?.local || item?.nome_local || 'SEM_SETOR';
+            if (!acc[setor]) acc[setor] = [];
+            acc[setor].push(item);
+            return acc;
+          }, {});
+      global.AnalistaStore.dispatch(
+        Actions.setPath('enderecosPorSetor', agrupados, { source: 'firebase' })
+      );
+      const Storage = global.AnalistaStorage;
+      if (Storage?.storageSave && Storage?.KEYS?.enderecos) {
+        Storage.storageSave(Storage.KEYS.enderecos, docs);
+      }
+      if (typeof global.atualizarEnderecos === 'function') global.atualizarEnderecos();
+      _emitSync(true, `${docs.length} endereços carregados do Firebase`);
+    };
+
+    // Escuta somente o metadado (1 leitura). Quando a versão muda, baixa os
+    // chunks correspondentes, com no máximo 1.000 endereços por documento.
+    return global.FS_AN.collection('dt_locais_meta').doc('versao')
+      .onSnapshot(async metaSnap => {
+        try {
+          if (!metaSnap.exists) { aplicar([]); return; }
+          const meta = metaSnap.data() || {};
+          const versao = String(meta.versao || '');
+          if (!versao || Number(meta.total || 0) === 0) { aplicar([]); return; }
+          const snapshot = await global.FS_AN.collection('dt_locais_chunks').where('versao', '==', versao).get();
+          const ordenados = (snapshot.docs || []).slice().sort((a,b) => Number((a.data()||{}).parte||0) - Number((b.data()||{}).parte||0));
+          const docs = [];
+          ordenados.forEach(doc => {
+            const data = doc.data() || {};
+            const itens = Array.isArray(data.dados) ? data.dados : Array.isArray(data.itens) ? data.itens : [];
+            itens.forEach((item, index) => docs.push({ id: item.id || `${doc.id}_${index}`, ...item }));
+          });
+          aplicar(docs);
+        } catch (err) {
+          console.warn('[FirebaseService] Falha ao carregar chunks de endereços:', err.message);
+          _emitSync(false, 'Falha ao carregar endereços em chunks');
+        }
+      }, err => {
+        console.warn('[FirebaseService] dt_locais_meta:', err.message);
+        _emitSync(false, 'Falha ao acompanhar versão dos endereços');
+      });
+  }
+
+
+  function _listenCollection(collection, path){
+    const ids = _getActiveInventoryIds();
+    if (!ids.length || !navigator.onLine) return [];
+    const chunks = InventarioService.chunkIds(ids, 10);
+    return chunks.map(chunk =>
+      global.FS_AN.collection(path)
+        .where('inventario_id', 'in', chunk)
+        .onSnapshot(snapshot => {
+          const changed = _applyCollectionChanges(collection, snapshot.docChanges());
+          if (changed) _emitSync(true, 'Tempo real ativo');
+        }, err => {
+          console.warn(`[FirebaseService] ${collection}:`, err.message);
+          _emitSync(false, `Falha na escuta de ${collection}`);
+        })
+    );
+  }
+
+  // Listener sem filtro de inventário — usado quando nenhum inventário está ativo no cache
+  function _listenCollectionAll(collection, path){
+    if (!navigator.onLine) return [];
+    // Nem todas as coleções usam o mesmo campo de data (criado_em/criada_em).
+    // Evitar orderBy aqui impede que a escuta falhe por campo ausente ou índice.
+    const unsub = global.FS_AN.collection(path)
+      .limit(1000)
+      .onSnapshot(snapshot => {
+        const changed = _applyCollectionChanges(collection, snapshot.docChanges());
+        if (changed) _emitSync(true, 'Tempo real ativo');
+      }, err => {
+        console.warn(`[FirebaseService] ${collection} (all):`, err.message);
+      });
+    return [unsub];
+  }
+
+  // ── Listener de coletores (sem filtro por inventario_id) ─────────────────────
+  let _coletoresFingerprint = '';
+
+  function _normalizarColetores(snapshot){
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => d.excluido !== true && d.aprovado !== 'revogado');
+  }
+
+  function _fingerprintColetores(docs){
+    return JSON.stringify(docs.map(item => ({
+      id: item.id,
+      aprovado: item.aprovado || 'pendente',
+      bloqueado: item.bloqueado === true,
+      ativo: item.ativo !== false,
+      status: item.status || 'offline',
+      nome_exibicao: item.nome_exibicao || item.nome_coletor || '',
+      operador_atual: item.operador_atual || '',
+      ultimo_ping: item.ultimo_ping || '',
+      sessao: item.sessao || null,
+      contagens_enviadas: item.contagens_enviadas || 0,
+      contagens_pendentes: item.contagens_pendentes || 0
+    })));
+  }
+
+  function _aplicarSnapshotColetores(snapshot, source){
+    const docs = _normalizarColetores(snapshot);
+    const fingerprint = _fingerprintColetores(docs);
+
+    // Um mesmo snapshot chegava por refresh + onSnapshot e era renderizado duas
+    // vezes: diretamente aqui e novamente pelo subscriber do Store. Agora o
+    // Store é o único responsável por solicitar a renderização e snapshots
+    // idênticos são ignorados.
+    if (fingerprint === _coletoresFingerprint) return docs;
+    _coletoresFingerprint = fingerprint;
+
+    global.AnalistaStore.dispatch(Actions.replaceSlice('coletores', docs, {
+      source: source || 'firebase', collection: 'coletores'
+    }));
+    const Storage = global.AnalistaStorage;
+    if (Storage?.storageSave && Storage?.KEYS?.coletores) {
+      Storage.storageSave(Storage.KEYS.coletores, docs);
+    }
+    return docs;
+  }
+
+  async function refreshColetores(){
+    if (!navigator.onLine) return global.AnalistaStore.getState().coletores || [];
+    try {
+      const snapshot = await global.FS_AN.collection('dt_coletores').get();
+      return _aplicarSnapshotColetores(snapshot, 'firebase-refresh-coletores');
+    } catch (err) {
+      console.warn('[FirebaseService] refresh coletores:', err.message);
+      throw err;
+    }
+  }
+
+  function _listenColetores(){
+    if (!navigator.onLine) return null;
+    return global.FS_AN.collection('dt_coletores')
+      .onSnapshot(snapshot => {
+        _aplicarSnapshotColetores(snapshot, 'firebase-listener-coletores');
+      }, err => {
+        console.warn('[FirebaseService] coletores:', err.message);
+      });
+  }
+
+  function _normalizarItemBase(item){
+    const x=Object.assign({},item||{});
+    const qtd=x.quantidade_esperada ?? x.quantidadeEsperada ?? x.qtd_esperada ?? x.qtdEsperada ??
+      x.quantidade_sistema ?? x.quantidadeSistema ?? x.quantidade_enderecada ?? x.qtd_enderecada ??
+      x.saldo_estoque ?? x.saldo ?? x.saldo_erp ?? x.qtd_sistema ?? x.qtd_estoque ??
+      x.estoque_total ?? x.estoque ?? x.quantidade ?? x.qtd ?? x.qtde;
+    const cod=x.codigo_produto ?? x.codigoProduto ?? x.codigo_interno ?? x.codigoInterno ?? x.sku ?? x.gtin ?? x.ean ?? x.dun ?? '';
+    const desc=x.descricao_produto ?? x.descricaoProduto ?? x.descricao ?? x.produto_nome ?? x.nomeProduto ?? x.produto ?? '';
+    return Object.assign({},x,{
+      endereco:String(x.endereco ?? x.localizacao ?? x.posicao ?? '').trim(),
+      codigo_produto:String(cod??'').trim(),
+      descricao_produto:String(desc??'').trim(),
+      quantidade_esperada:(()=>{
+        const texto=String(qtd??'').trim().replace(/\s/g,'');
+        const normalizado=texto.includes(',') ? texto.replace(/\./g,'').replace(',','.') : texto;
+        const numero=Number(normalizado);
+        return Number.isFinite(numero)?numero:0;
+      })()
+    });
+  }
+
+  async function _carregarBaseInventario(inv, force=false){
+    if (!inv || !inv.id) return inv;
+    if (!force && Array.isArray(inv.base) && inv.base.length) return inv;
+    try{
+      const snap = await global.FS_AN.collection('dt_inventarios').doc(String(inv.id))
+        .collection('base_chunks').orderBy('parte').get();
+      let base=[];
+      snap.docs.forEach(d=>{
+        const x=d.data()||{};
+        const itens=Array.isArray(x.itens)?x.itens:(Array.isArray(x.dados)?x.dados:[]);
+        base=base.concat(itens.map(_normalizarItemBase));
+      });
+      return Object.assign({},inv,{base,base_carregada_em:new Date().toISOString(),base_total:base.length});
+    }catch(e){
+      console.warn('[FirebaseService] Falha ao carregar base do inventário',inv.id,e.message);
+      return inv;
+    }
+  }
+
+  // Carrega os metadados e enriquece os inventários com os base_chunks reais.
+  // Isso não depende mais do localStorage, que possui quota pequena.
+  async function _carregarInventariosSeNecessario(){
+    try {
+      const snap = await global.FS_AN.collection('dt_inventarios').get();
+      if (snap.empty) {
+        global.AnalistaStore.dispatch(Actions.batch([
+          Actions.replaceSlice('inventarios', [], {source:'firebase-no-inventories'}),
+          Actions.replaceSlice('contagens', [], {source:'firebase-no-inventories'}),
+          Actions.replaceSlice('vazios', [], {source:'firebase-no-inventories'}),
+          Actions.replaceSlice('divergencias', [], {source:'firebase-no-inventories'}),
+          Actions.replaceSlice('recontagens', [], {source:'firebase-no-inventories'})
+        ], {source:'firebase-no-inventories'}));
+        const Storage=global.AnalistaStorage;
+        ['inventarios','contagens','divergencias','recontagens'].forEach(function(k){
+          if(Storage?.storageSave&&Storage?.KEYS?.[k])Storage.storageSave(Storage.KEYS[k],[]);
+        });
+        return [];
+      }
+      const atuais = global.AnalistaStore.getState().inventarios || [];
+      const atuaisPorId = new Map(atuais.map(i=>[String(i.id),i]));
+      let docs = snap.docs.map(d => Object.assign({},atuaisPorId.get(String(d.id))||{},d.data(),{id:d.id}));
+      const statusAtivos=new Set(['ATIVO','ABERTO','PUBLICADO','LIBERADO','EM_ANDAMENTO','PAUSADO']);
+      const idsNecessarios=new Set();
+      const st=global.AnalistaStore.getState();
+      ['contagens','divergencias','recontagens'].forEach(slice=>(st[slice]||[]).forEach(x=>{
+        const id=x.inventario_id||x.inventarioId||x.inventario||x.inv_id;
+        if(id!=null&&String(id))idsNecessarios.add(String(id));
+      }));
+      docs = await Promise.all(docs.map(inv=>{
+        const aliases=[inv.id,inv.codigo,inv.nome,inv.inventario_id,inv.inventarioId].filter(v=>v!=null).map(v=>String(v));
+        const precisa=statusAtivos.has(String(inv.status||'').toUpperCase())||aliases.some(a=>idsNecessarios.has(a));
+        return precisa?_carregarBaseInventario(inv,true):inv;
+      }));
+      global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-init-bases' }));
+      const aliasesValidos=new Set();
+      docs.forEach(function(inv){[inv.id,inv.codigo,inv.nome,inv.inventario_id,inv.inventarioId].filter(function(v){return v!=null&&String(v).trim();}).forEach(function(v){aliasesValidos.add(String(v).trim());});});
+      ['contagens','vazios','divergencias','recontagens'].forEach(function(slice){
+        const atual=global.AnalistaStore.getState()[slice]||[];
+        const limpo=atual.filter(function(x){const id=x.inventario_id??x.inventarioId??x.inventario??x.inv_id;return id!=null&&aliasesValidos.has(String(id).trim());});
+        if(limpo.length!==atual.length)global.AnalistaStore.dispatch(Actions.replaceSlice(slice,limpo,{source:'firebase-prune-orfaos'}));
+      });
+      const Storage = global.AnalistaStorage;
+      if (Storage?.storageSave && Storage?.KEYS?.inventarios) {
+        const metadados=docs.map(inv=>{const c=Object.assign({},inv);delete c.base;return c;});
+        Storage.storageSave(Storage.KEYS.inventarios, metadados);
+      }
+      global.dispatchEvent(new CustomEvent('dt-inventarios-bases-atualizadas',{detail:{total:docs.length}}));
+    } catch(e) {
+      console.warn('[FirebaseService] Falha ao carregar inventários:', e.message);
+    }
+  }
+
+  async function refreshBasesRelacionadas(){
+    await _carregarInventariosSeNecessario();
+    try{ await global.DTProdutos?.carregar?.(true); }catch(e){ console.warn('[FirebaseService] Atualização de produtos:',e.message); }
+    try{ global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'bases-refresh',force:true}); }catch(e){ console.warn('[FirebaseService] Reprocessamento de bases:',e.message); }
+    return true;
+  }
+
+  // Um navegador novo não possui o cache local usado pelo painel. Portanto,
+  // após o login carregamos uma vez apenas as bases estruturais da loja atual.
+  // As coleções operacionais (contagens, divergências e recontagens) continuam
+  // fora desta rotina e só são consultadas pelo botão Atualizar, evitando
+  // reintroduzir as leituras excessivas que motivaram o modo manual.
+  function _aguardar(ms){
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async function _executarComRetry(nome, tarefa, tentativas){
+    const total = Math.max(1, Number(tentativas || 2));
+    let ultimoErro = null;
+    for (let tentativa = 1; tentativa <= total; tentativa += 1) {
+      try {
+        return { ok: true, valor: await tarefa(), nome, tentativas: tentativa };
+      } catch (erro) {
+        ultimoErro = erro;
+        if (!navigator.onLine || tentativa >= total) break;
+        await _aguardar(700 * tentativa);
+      }
+    }
+    console.warn(`[FirebaseService] ${nome} indisponível; mantendo cache local:`, ultimoErro?.message || ultimoErro);
+    return { ok: false, valor: null, nome, erro: ultimoErro, tentativas: total };
+  }
+
+  async function _carregarBasesEssenciaisLogin(){
+    // Cada base é independente. Uma oscilação em produtos ou endereços não pode
+    // derrubar todo o painel nem gerar rejeição não tratada no console.
+    const resultados = await Promise.all([
+      _executarComRetry('inventários', () => _carregarInventariosSeNecessario(), 2),
+      _executarComRetry('endereços', () => _carregarEnderecosManual(), 2),
+      _executarComRetry('produtos', () => {
+        if (typeof global.DTProdutos?.carregar !== 'function') return [];
+        return global.DTProdutos.carregar(true, true);
+      }, 2)
+    ]);
+
+    const falhas = resultados.filter(item => !item.ok).map(item => item.nome);
+    const enderecosResultado = resultados[1];
+    const enderecos = enderecosResultado.ok
+      ? (enderecosResultado.valor || []).length
+      : (global.AnalistaStore.getState().enderecosLista || []).length;
+    const inventarios = (global.AnalistaStore.getState().inventarios || []).length;
+    const produtos = global.DTProdutos?.cache?.lista?.length || 0;
+
+    global.AnalistaBootstrap?.saveAll?.();
+
+    return { inventarios, enderecos, produtos, falhas };
+  }
+
+  async function _carregarEnderecosManual(){
+    const metaSnap=await global.FS_AN.collection('dt_locais_meta').doc('versao').get();
+    if(!metaSnap.exists)return [];
+    const meta=metaSnap.data()||{},versao=String(meta.versao||'');
+    if(!versao||Number(meta.total||0)===0)return [];
+    const snapshot=await global.FS_AN.collection('dt_locais_chunks').where('versao','==',versao).get();
+    const docs=[];
+    (snapshot.docs||[]).slice().sort((a,b)=>Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0)).forEach(doc=>{
+      const data=doc.data()||{};
+      const itens=Array.isArray(data.dados)?data.dados:(Array.isArray(data.itens)?data.itens:[]);
+      itens.forEach((item,index)=>docs.push({id:item.id||`${doc.id}_${index}`,...item}));
+    });
+    global.AnalistaStore.dispatch(Actions.replaceSlice('enderecosLista',docs,{source:'firebase-manual'}));
+    const agrupados=global.AnalistaBootstrap?.agruparEnderecosPorSetor?.(docs)||{};
+    global.AnalistaStore.dispatch(Actions.setPath('enderecosPorSetor',agrupados,{source:'firebase-manual'}));
+    const Storage=global.AnalistaStorage;
+    if(Storage?.storageSave&&Storage?.KEYS?.enderecos)Storage.storageSave(Storage.KEYS.enderecos,docs);
+    return docs;
+  }
+
+  async function _lerColecaoInventariosManual(path,ids,collection){
+    if(!ids.length)return [];
+    const grupos=InventarioService.chunkIds(ids,10);
+    const snaps=await Promise.all(grupos.map(grupo=>global.FS_AN.collection(path).where('inventario_id','in',grupo).get()));
+    const docs=[];
+    snaps.forEach(snap=>snap.docs.forEach(doc=>{
+      const raw={id:doc.id,...doc.data()};
+      docs.push((collection==='divergencias'||collection==='recontagens')?raw:InventarioService.normalizarContagem(raw));
+    }));
+    return docs;
+  }
+
+  // Único ponto de leitura das quatro bases operacionais do Inventário.
+  // Não cria listeners: uma nova consulta só ocorre em outro clique em Atualizar.
+  async function refreshInventarioManual(){
+    if(!navigator.onLine)throw new Error('Sem conexão com a internet.');
+    await _carregarInventariosSeNecessario();
+    const ids=_getActiveInventoryIds();
+    const [enderecos,contagens,vazios,divergencias,recontagens]=await Promise.all([
+      _carregarEnderecosManual(),
+      _lerColecaoInventariosManual('dt_contagens',ids,'contagens'),
+      _lerColecaoInventariosManual('dt_vazios',ids,'vazios'),
+      _lerColecaoInventariosManual('dt_divergencias',ids,'divergencias'),
+      _lerColecaoInventariosManual('dt_recontagens',ids,'recontagens')
+    ]);
+    const contagensUnificadas=new Map();
+    contagens.concat(vazios).forEach(item=>contagensUnificadas.set(String(item.id),item));
+    global.AnalistaStore.dispatch(Actions.batch([
+      Actions.replaceSlice('contagens',Array.from(contagensUnificadas.values()),{source:'firebase-manual'}),
+      Actions.replaceSlice('divergencias',divergencias,{source:'firebase-manual'}),
+      Actions.replaceSlice('recontagens',recontagens,{source:'firebase-manual'})
+    ],{source:'firebase-manual-inventario'}));
+    ['contagens','divergencias','recontagens'].forEach(_persistirSlice);
+    // O clique em Atualizar é o momento canônico de cruzar as contagens recebidas.
+    // Processar apenas a divergência. A 2ª ou 3ª contagem somente nasce quando
+    // o Analista clicar em Atribuir e escolher o operador.
+    try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'manual-refresh',force:true});}catch(e){console.warn('[FirebaseService] Processamento manual:',e.message);}
+    global.AnalistaBootstrap?.saveAll?.();
+    // O Store/AppController consolida a renderizacao; nao redesenhar dashboard,
+    // enderecos e pagina atual tres vezes no mesmo ciclo.
+    _emitSync(true,`Atualização manual concluída: ${contagens.length+vazios.length} contagens, ${divergencias.length} conflitos e ${recontagens.length} recontagens.`,{started:false,source:'firebase-manual'});
+    return {enderecos:enderecos.length,contagens:contagens.length+vazios.length,divergencias:divergencias.length,recontagens:recontagens.length};
+  }
+
+  if(!global.__dtBasesProdutoListener){
+    global.__dtBasesProdutoListener=true;
+    global.addEventListener('dt-produtos-atualizados',function(){
+      // Recalcula somente o instantâneo local. Atualizar produtos não deve
+      // iniciar uma leitura silenciosa das bases do Inventário.
+      try{global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'produtos-atualizados-cache',force:true});}catch(e){console.warn('[FirebaseService] Reprocessar produtos:',e.message);}
+    });
+  }
+
+  function _pararColetores(){
+    if (state.unsubscribers.coletores) {
+      try { state.unsubscribers.coletores(); } catch(_) {}
+      state.unsubscribers.coletores = null;
+    }
+  }
+
+  function stop(){
+    Object.keys(state.unsubscribers).forEach(collection => {
+      if (collection === 'coletores') return;
+      if (collection === 'enderecos') {
+        if (typeof state.unsubscribers.enderecos === 'function') {
+          try { state.unsubscribers.enderecos(); } catch(_) {}
+        }
+        state.unsubscribers.enderecos = null;
+        return;
+      }
+      (state.unsubscribers[collection] || []).forEach(unsub => { try { unsub(); } catch(_) {} });
+      state.unsubscribers[collection] = [];
+    });
+    _pararColetores();
+    state.started = false;
+    state.currentInventoryIds = [];
+    _emitSync(false, 'Escutas pausadas', { started: false });
+  }
+
+  async function start(){
+    if (state.startPromise) return state.startPromise;
+
+    state.startPromise = (async function(){
+      if (!navigator.onLine) {
+        _emitSync(false, 'Offline — usando os dados salvos neste computador.', { started: false, source: 'cache' });
+        return false;
+      }
+
+      try {
+        // Carrega as bases estruturais também em computadores sem cache. O histórico
+        // operacional permanece no fluxo manual para controlar o volume de leituras.
+        _emitSync(true, 'Carregando dados da loja...', { started: false, source: 'firebase-bootstrap' });
+        const essenciais = await _carregarBasesEssenciaisLogin();
+
+        // Coletores continuam com status próprio.
+        if (!state.unsubscribers.coletores) {
+          state.unsubscribers.coletores = _listenColetores();
+        }
+        state.started=false;
+        state.currentInventoryIds=[];
+
+        const complemento = essenciais.falhas.length
+          ? ` Algumas bases não responderam (${essenciais.falhas.join(', ')}); os dados salvos foram mantidos e uma nova tentativa será feita na próxima atualização.`
+          : ' Clique em Atualizar para consultar novas contagens.';
+        _emitSync(
+          essenciais.falhas.length === 0,
+          `${essenciais.enderecos} endereços, ${essenciais.produtos} produtos e ${essenciais.inventarios} inventários disponíveis.${complemento}`,
+          {started:false,source:essenciais.falhas.length ? 'cache-parcial' : 'firebase-bootstrap'}
+        );
+        return essenciais.falhas.length === 0;
+      } catch (erro) {
+        // Última barreira: nunca deixar a inicialização produzir "Uncaught (in promise)".
+        console.warn('[FirebaseService] Inicialização parcial; usando cache local:', erro?.message || erro);
+        _emitSync(false, 'Não foi possível atualizar agora. O sistema continuará com os dados salvos neste computador.', { started: false, source: 'cache' });
+        return false;
+      } finally {
+        state.startPromise = null;
+      }
+    })();
+
+    return state.startPromise;
+  }
+
+  function refreshFromCache(){
+    const Storage = global.AnalistaStorage;
+    global.AnalistaStore.dispatch(Actions.hydrateCache({
+      inventarios:       Storage.storageLoad(Storage.KEYS.inventarios)      || [],
+      contagens:         Storage.storageLoad(Storage.KEYS.contagens)        || [],
+      divergencias:      Storage.storageLoad(Storage.KEYS.divergencias)     || [],
+      recontagens:       Storage.storageLoad(Storage.KEYS.recontagens)      || [],
+      logs:              Storage.storageLoad(Storage.KEYS.logs)             || [],
+      auditorias:        Storage.storageLoad(Storage.KEYS.auditorias)       || [],
+      auditoria_imports: Storage.storageLoad(Storage.KEYS.auditoria_imports) || [],
+      coletores:         Storage.storageLoad(Storage.KEYS.coletores)        || [],
+      enderecosLista:    Storage.storageLoad(Storage.KEYS.enderecos)        || [],
+      enderecosPorSetor: {},
+      enderecosExpandidos: new Set(),
+      enderecosTemp:     []
+    }));
+    _emitSync(true, 'Cache local recarregado', { started: false, source: 'cache' });
+  }
+
+  global.AnalistaFirebaseService = { start, stop, refreshFromCache, refreshColetores, refreshBasesRelacionadas, refreshInventarioManual, state };
+})(window);

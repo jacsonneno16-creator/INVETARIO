@@ -234,7 +234,7 @@
           [ach.codigoInterno, ach.codigo_interno, ach.gtin, ach.ean, ach.dun, ach.codigo]
             .map(_nd).filter(Boolean).forEach(x => ids.add(x));
         }
-      } catch(e) {}
+      } catch(e){ console.warn("[Erro tratado]", e); }
     });
     return ids;
   }
@@ -1006,7 +1006,9 @@
             descricao: updated.descricao,
             descricao_produto: updated.descricao_produto,
             codigo_produto: updated.codigo_produto
-          }, {merge:true}).catch(() => {});
+          }, {merge:true}).catch((erro) => {
+            console.error('[Divergências] Falha ao atualizar status da contagem principal', { docId, novoStatus, erro });
+          });
         }
       });
 
@@ -1029,7 +1031,9 @@
         if (c.status !== novoStatus){
           contagensMap.set(c.uuid || c.id, Object.assign({}, c, { status: novoStatus }));
           const docId = c.uuid || String(c.id);
-          if (navigator.onLine) FS_AN.collection('dt_contagens').doc(docId).update({ status: novoStatus }).catch(() => {});
+          if (navigator.onLine) FS_AN.collection('dt_contagens').doc(docId).update({ status: novoStatus }).catch((erro) => {
+            console.error('[Divergências] Falha ao atualizar status da recontagem', { docId, novoStatus, erro });
+          });
         }
       });
 
@@ -1650,7 +1654,9 @@
       fsSalvarRecontagem(updatedRec);
       if (global.FS_AN && div.inventario_id && div.endereco) {
         const chaveBloqueio = `${div.inventario_id}__${encodeURIComponent(String(div.endereco).trim().toUpperCase())}`;
-        global.FS_AN.collection('dt_bloqueios_recontagem').doc(chaveBloqueio).delete().catch(() => {});
+        global.FS_AN.collection('dt_bloqueios_recontagem').doc(chaveBloqueio).delete().catch((erro) => {
+          console.error('[Recontagem] Falha ao remover bloqueio após resolução', { chaveBloqueio, erro });
+        });
       }
       Store.dispatch(Actions.batch([
         Actions.upsertEntity('divergencias', updatedDiv, BIZMETA),
@@ -1807,7 +1813,9 @@
       operador,
       recontagem_id: recontagemId || null,
       atualizado_em: agora
-    }, { merge: true }).catch(() => {});
+    }, { merge: true }).catch((erro) => {
+      console.error('[Recontagem] Falha ao persistir bloqueio de atribuição', { chaveBloqueio, recontagemId, operador, erro });
+    });
   }
 
   function _recontagemFoiIniciada(rec){
@@ -1892,8 +1900,12 @@
           operador_responsavel: operador, atribuido_por: atribPor,
           atribuido_em: agora, status_recontagem: 'pendente'
         });
-        fsSalvarRecontagem(updatedRecAtiva).catch(() => {});
-        fsSalvarDivergencia(updatedD).catch(() => {});
+        fsSalvarRecontagem(updatedRecAtiva).catch((erro) => {
+          console.error('[Recontagem] Falha ao salvar operador em tarefa existente', { recontagemId: updatedRecAtiva.id, operador, erro });
+        });
+        fsSalvarDivergencia(updatedD).catch((erro) => {
+          console.error('[Divergência] Falha ao salvar operador responsável', { divergenciaId: updatedD.id, operador, erro });
+        });
         _salvarBloqueioLeve(d, operador, updatedRecAtiva.id, agora);
         Store.dispatch(Actions.batch([
           Actions.upsertEntity('recontagens', updatedRecAtiva, { source: 'atribuirRecontagemSegura' }),
@@ -1928,8 +1940,12 @@
           atribuido_em: agora,
           status_recontagem: 'pendente'
         });
-        fsSalvarRecontagem(updatedRecAtiva).catch(() => {});
-        fsSalvarDivergencia(updatedD).catch(() => {});
+        fsSalvarRecontagem(updatedRecAtiva).catch((erro) => {
+          console.error('[Recontagem] Falha ao persistir reatribuição', { recontagemId: updatedRecAtiva.id, operador, erro });
+        });
+        fsSalvarDivergencia(updatedD).catch((erro) => {
+          console.error('[Divergência] Falha ao persistir reatribuição', { divergenciaId: updatedD.id, operador, erro });
+        });
         _salvarBloqueioLeve(d, operador, updatedRecAtiva.id, agora);
         Store.dispatch(Actions.batch([
           Actions.upsertEntity('recontagens', updatedRecAtiva, { source: 'reatribuirRecontagemSegura' }),
@@ -1999,8 +2015,12 @@
       Actions.upsertEntity('divergencias', updatedD, { source: 'atribuirRecontagemSegura' }),
       Actions.upsertEntity('recontagens', rec,        { source: 'atribuirRecontagemSegura' })
     ], { source: 'atribuirRecontagemSegura' }));
-    fsSalvarDivergencia(updatedD).catch(() => {});
-    fsSalvarRecontagem(rec).catch(() => {});
+    fsSalvarDivergencia(updatedD).catch((erro) => {
+      console.error('[Divergência] Falha ao persistir nova atribuição', { divergenciaId: updatedD.id, operador, erro });
+    });
+    fsSalvarRecontagem(rec).catch((erro) => {
+      console.error('[Recontagem] Falha ao persistir nova tarefa', { recontagemId: rec.id, operador, erro });
+    });
     _salvarBloqueioLeve(d, operador, rec.id, agora);
 
     return rec;

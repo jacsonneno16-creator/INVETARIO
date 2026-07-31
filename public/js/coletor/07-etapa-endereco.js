@@ -557,7 +557,7 @@ function _prosseguirComEndereco(valNorm) {
   // Garantir explicitamente que o botão VAZIO está visível após confirmar endereço
   const _vaziow = document.getElementById('btn-vazio-wrap');
   if (_vaziow && !APP.lote) _vaziow.style.display = '';
-  setTimeout(() => { try { document.getElementById('f-capa').focus(); } catch(e){} }, 100);
+  setTimeout(() => { try { document.getElementById('f-capa').focus(); } catch(e){ console.warn("[Erro tratado]", e); } }, 100);
 }
 
 /** Modal de bloqueio quando outro operador já coletou */

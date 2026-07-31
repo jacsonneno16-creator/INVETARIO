@@ -164,7 +164,7 @@ async function atualizarCacheLocais() {
       localStorage.setItem('col_locais',     JSON.stringify(endCapMapa));
       localStorage.setItem('col_locais_set', JSON.stringify([...locaisSet]));
       if (versaoServidor) localStorage.setItem('col_locais_ver', versaoServidor);
-    } catch(e) {}
+    } catch(e){ console.warn("[Erro tratado]", e); }
     // Atualizar APP em memória (sem precisar recarregar inventário)
     APP.locaisAtivos = locaisSet;
     APP._locaisDoFirebase = true;
@@ -278,7 +278,10 @@ async function atualizarCacheLocais() {
         FILA_ENVIO = Array.isArray(fila) ? fila : [];
         filaSave(FILA_ENVIO);
         aplicar(FILA_ENVIO);
-      }).catch(() => {});
+      }).catch((erro) => {
+        console.warn('[Histórico] Não foi possível carregar a fila pendente do IndexedDB', erro);
+        aplicar(FILA_ENVIO || []);
+      });
     }
   };
 })();

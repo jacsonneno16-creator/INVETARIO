@@ -38,8 +38,8 @@ async function sincronizarTudoEmSegundoPlano(origem = 'automatico') {
       }
     } catch (e) { erros.push(e); console.warn('[SYNC] Auditorias permanecem pendentes:', e); }
 
-    try { await atualizarFilaStatus(); } catch(e) {}
-    try { if (typeof atualizarBarraStatus === 'function') atualizarBarraStatus(); } catch(e) {}
+    try { await atualizarFilaStatus(); } catch(e){ console.warn("[Erro tratado]", e); }
+    try { if (typeof atualizarBarraStatus === 'function') atualizarBarraStatus(); } catch(e){ console.warn("[Erro tratado]", e); }
     return { origem, erros: erros.length };
   })();
 
@@ -47,11 +47,6 @@ async function sincronizarTudoEmSegundoPlano(origem = 'automatico') {
   finally { _syncTudoPromise = null; }
 }
 window.sincronizarTudoEmSegundoPlano = sincronizarTudoEmSegundoPlano;
-
-// Um único listener de reconexão para disparar todas as filas sem reload.
-window.addEventListener('online', function(){
-  setTimeout(function(){ sincronizarTudoEmSegundoPlano('online').catch(function(){}); }, 250);
-});
 
 /** Botão manual para enviar fila (aba STATUS) */
 async function enviarFilaManual() {
@@ -62,7 +57,7 @@ async function enviarFilaManual() {
   await atualizarFilaStatus();
   const contagens = typeof idbGetPendentes === 'function' ? (await idbGetPendentes()).length : 0;
   let auditorias = 0;
-  try { auditorias = window.DTAuditoriaStorage ? (await window.DTAuditoriaStorage.filaAll()).length : 0; } catch(e) {}
+  try { auditorias = window.DTAuditoriaStorage ? (await window.DTAuditoriaStorage.filaAll()).length : 0; } catch(e){ console.warn("[Erro tratado]", e); }
   const total = contagens + auditorias;
   if (total === 0) toast('✅ Contagens e auditorias enviadas com sucesso!', 's');
   else toast(`⚠️ ${total} registro(s) ainda pendente(s) — nova tentativa será automática`, 'w');
@@ -79,9 +74,9 @@ async function atualizarFilaStatus() {
       n = pendentes.length;
       FILA_ENVIO = pendentes;
       filaSave(FILA_ENVIO);
-    } catch(e) {}
+    } catch(e){ console.warn("[Erro tratado]", e); }
     let auditorias = 0;
-    try { auditorias = window.DTAuditoriaStorage ? (await window.DTAuditoriaStorage.filaAll()).length : 0; } catch(e) {}
+    try { auditorias = window.DTAuditoriaStorage ? (await window.DTAuditoriaStorage.filaAll()).length : 0; } catch(e){ console.warn("[Erro tratado]", e); }
     const total = n + auditorias;
     el.textContent = total > 0 ? total + ' pendente(s) (' + n + ' contagem(ns), ' + auditorias + ' auditoria(s))' : '✓ Tudo enviado';
     el.style.color = total > 0 ? 'var(--warn)' : 'var(--success)';
@@ -95,4 +90,3 @@ async function atualizarFilaStatus() {
 
 // Atualiza indicador a cada 5s
 setInterval(atualizarFilaStatus, 5000);
-

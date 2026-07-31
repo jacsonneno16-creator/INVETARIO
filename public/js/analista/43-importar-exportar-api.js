@@ -100,7 +100,7 @@
   function flowKey(row) {
     var FK = global.InventoryFlowKey;
     if (FK && typeof FK.chave === 'function') {
-      try { return FK.chave(row, state().inventarios || []); } catch (_) {}
+      try { return FK.chave(row, state().inventarios || []); } catch(_){ console.warn("[Erro tratado]", _); }
     }
     return [inventoryId(row), String(row.endereco || '').trim().toUpperCase(),
       String(row.codigo_produto || row.codigoProduto || row.gtin || row.ean || row.dun || '').trim().toUpperCase()].join('|');
@@ -127,7 +127,7 @@
       try {
         var prod = FK.produto(first);
         div = divergences.find(function (d) { return FK.produto(d) === prod; });
-      } catch (_) {}
+      } catch(_){ console.warn("[Erro tratado]", _); }
     }
     if (!div && divergences.length === 1) div = divergences[0];
 
@@ -149,7 +149,7 @@
     var recs = (st.recontagens || []).filter(function (r) {
       var same = String(r.divergencia_id || '') === String(div.id || '');
       if (!same && FK && typeof FK.mesmo === 'function') {
-        try { same = FK.mesmo(r, div, st.inventarios || []); } catch (_) {}
+        try { same = FK.mesmo(r, div, st.inventarios || []); } catch(_){ console.warn("[Erro tratado]", _); }
       }
       return same && completedRecount(r);
     }).sort(function (a,b) {

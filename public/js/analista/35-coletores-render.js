@@ -151,7 +151,7 @@ function renderColetores() {
                 tempoMedio = avgSec < 60 ? Math.round(avgSec) + 's' : Math.round(avgSec/60) + 'min';
               }
             }
-          } catch(e){}
+          } catch(e){ console.warn("[Erro tratado]", e); }
           const recOp = state().recontagens.filter(r => r.operador === op).length;
           return `<tr>
             <td><div style="display:flex;align-items:center;gap:8px">

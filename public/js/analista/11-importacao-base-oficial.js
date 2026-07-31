@@ -313,7 +313,7 @@ function renderInvMapper() {
         mapperZone.insertBefore(aviso, mapperZone.firstChild);
       }
     }
-  } catch(e) {}
+  } catch(e){ console.warn("[Erro tratado]", e); }
 
   // Popular prévias com o auto-mapeamento
   invMapperPreview();
@@ -399,7 +399,7 @@ function confirmarInvMapper() {
     const entries = Object.entries(savedMaps).sort((a,b) => (b[1].ts||0)-(a[1].ts||0)).slice(0,5);
     localStorage.setItem('inv_col_map', JSON.stringify(Object.fromEntries(entries)));
     dbg('[Mapper] Mapeamento salvo para', headers.length, 'colunas');
-  } catch(e) {}
+  } catch(e){ console.warn("[Erro tratado]", e); }
 
   // Ocultar mapeador e mostrar resultado
   document.getElementById('inv-mapper-zone').style.display = 'none';

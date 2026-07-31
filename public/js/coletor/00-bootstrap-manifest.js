@@ -128,7 +128,7 @@ window._auditoriaListaAtiva = function(){
 
 
 window.iniciarListenerAuditoria = function(invId){
-  if (_auditoriaListener) { try { _auditoriaListener(); } catch(e){} _auditoriaListener = null; }
+  if (_auditoriaListener) { try { _auditoriaListener(); } catch(e){ console.warn("[Erro tratado]", e); } _auditoriaListener = null; }
   if (!invId) return;
 
   const atualizarBadge = function(){

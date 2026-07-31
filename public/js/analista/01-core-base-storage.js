@@ -65,7 +65,7 @@
             const k=localStorage.key(i); if(k&&k.indexOf(prefix)===0) apagar.push(k);
           }
           apagar.forEach(k=>localStorage.removeItem(k));
-        } catch(_e){}
+        } catch(_e){ console.warn("[Erro tratado]", _e); }
         return;
       }
       localStorage.setItem(scopedKey(key), JSON.stringify({ v: data, ts: Date.now() }));
@@ -78,7 +78,7 @@
             const k=localStorage.key(i); if(k&&k.indexOf('invcount_base_')===0) apagar.push(k);
           }
           apagar.forEach(k=>localStorage.removeItem(k));
-        }catch(_e){}
+        }catch(_e){ console.warn("[Erro tratado]", _e); }
       } else console.error('[Storage] Erro ao salvar', key, e);
     }
   }

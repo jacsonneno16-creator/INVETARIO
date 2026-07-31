@@ -151,22 +151,6 @@
     );
   }
 
-  // Listener sem filtro de inventário — usado quando nenhum inventário está ativo no cache
-  function _listenCollectionAll(collection, path){
-    if (!navigator.onLine) return [];
-    // Nem todas as coleções usam o mesmo campo de data (criado_em/criada_em).
-    // Evitar orderBy aqui impede que a escuta falhe por campo ausente ou índice.
-    const unsub = global.FS_AN.collection(path)
-      .limit(1000)
-      .onSnapshot(snapshot => {
-        const changed = _applyCollectionChanges(collection, snapshot.docChanges());
-        if (changed) _emitSync(true, 'Tempo real ativo');
-      }, err => {
-        console.warn(`[FirebaseService] ${collection} (all):`, err.message);
-      });
-    return [unsub];
-  }
-
   // ── Listener de coletores (sem filtro por inventario_id) ─────────────────────
   let _coletoresFingerprint = '';
 
@@ -457,7 +441,7 @@
 
   function _pararColetores(){
     if (state.unsubscribers.coletores) {
-      try { state.unsubscribers.coletores(); } catch(_) {}
+      try { state.unsubscribers.coletores(); } catch(_){ console.warn("[Erro tratado]", _); }
       state.unsubscribers.coletores = null;
     }
   }
@@ -467,12 +451,12 @@
       if (collection === 'coletores') return;
       if (collection === 'enderecos') {
         if (typeof state.unsubscribers.enderecos === 'function') {
-          try { state.unsubscribers.enderecos(); } catch(_) {}
+          try { state.unsubscribers.enderecos(); } catch(_){ console.warn("[Erro tratado]", _); }
         }
         state.unsubscribers.enderecos = null;
         return;
       }
-      (state.unsubscribers[collection] || []).forEach(unsub => { try { unsub(); } catch(_) {} });
+      (state.unsubscribers[collection] || []).forEach(unsub => { try { unsub(); } catch(_){ console.warn("[Erro tratado]", _); } });
       state.unsubscribers[collection] = [];
     });
     _pararColetores();

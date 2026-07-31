@@ -1,57 +1,42 @@
-Projeto refatorado v6
-=====================
+Da Terrinha — Inventário v228
+=============================
 
-CORREÇÕES CRÍTICAS nesta versão (v5 → v6):
+Versão candidata à homologação gerada em 30/07/2026.
 
-1. [CRÍTICO] Criado js/analista/09-fs-publicar.js
-   Funções fsPublicarInventario(), fsPublicarEnderecos() e fsPublicarProdutos()
-   estavam sendo chamadas em 10-inventarios-negocio.js mas NUNCA definidas.
-   Resultado: analista criava inventários apenas no localStorage local — o
-   coletor NUNCA os via no Firestore. Esta era a causa raiz da "falta de
-   ligação entre coletor e analista".
+ÁRVORE OFICIAL
 
-2. [CRÍTICO] firestore.rules: regras faltando para coleções principais
-   dt_inventarios, dt_contagens, dt_vazios, dt_divergencias, dt_analistas,
-   dt_auditoria_meta e dt_locais_meta não tinham regras de acesso.
-   Resultado: coletor recebia "permission-denied" ao tentar ler inventários
-   e ao salvar contagens.
+- Analista: public/js/analista
+- Coletor: public/js/coletor
+- Compartilhado: public/js/shared
+- Service Worker único: public/sw.js
 
-3. [ALTO] Analista não iniciava listeners Firebase no boot (02-core-state-bootstrap.js)
-   initApp() chamava apenas loadAll() do localStorage. Os onSnapshot de
-   dt_contagens/dt_vazios/dt_recontagens só eram ativados ao navegar para
-   a aba "Contagens" e somente se o DB estivesse vazio. Contagens novas
-   do coletor não chegavam em tempo real se o analista já tinha dados em cache.
-   Correção: initApp() agora chama os três listeners após 800ms do boot.
+REGRAS OPERACIONAIS
 
-4. [ALTO] sincronizarContagens() só lia localStorage (20-sync-contagens.js)
-   O botão de sync manual do analista recarregava apenas o cache local, sem
-   buscar dados novos do Firestore. Agora reinicia os onSnapshot quando online.
+- O estado de Contagem × Recontagem é consolidado por endereço pelos módulos
+  address-state-engine.js, address-state-selectors.js e address-state-view.js.
+- A fotografia física atual é a fonte usada pelas telas e exportações.
+- Inventários são arquivados logicamente; histórico operacional não é apagado.
+- Alterações de status do inventário usam transação e versão.
+- A fila offline utiliza UUID como identidade idempotente e é sincronizada
+  novamente após reconexão.
 
-5. [MÉDIO] Scripts duplicados no coletor.html
-   common-utils.js e firebase-shared.js eram carregados duas vezes seguidas,
-   causando redefinições de funções globais (window.esc, window.dbg, etc.).
+SEGURANÇA
 
-6. [MÉDIO] inventario_id com fallback 'local' no coletor (08-etapas-produto-quantidade-salvamento.js)
-   Se APP.inventario não estivesse definido, a contagem era salva com
-   inventario_id: 'local'. O analista filtra por inventários ativos, então
-   essas contagens nunca apareciam. Agora o salvamento é bloqueado com toast
-   de erro antes de criar o objeto de contagem.
+- Senhas não são persistidas no navegador.
+- O Firestore exige usuário ativo, canal, perfil, permissão e loja autorizada.
+- Operações administrativas de Authentication são executadas por Cloud
+  Functions com verificação de permissão e escopo.
+- Renderizações HTML passam por sanitização central, além do escape de campos.
 
-7. [MÉDIO] Aba Contagens sempre garante listener ativo (03-core-navigation.js)
-   Antes só ativava listener se DB.contagens estivesse vazio. Agora ativa
-   sempre que houver inventários ativos ao abrir a aba.
+DEPLOY
 
-Estrutura:
-- js/shared/............. utilitários e serviços compartilhados
-- js/analista/.......... módulos do painel analista
-  - 09-fs-publicar.js .. NOVO: publicação Firestore (inventários, endereços, produtos)
-- js/coletor/........... módulos do aplicativo coletor
-- js/ajuda/............. scripts da central de ajuda
+O firebase.json referencia:
 
+- public/firestore.rules
+- public/firestore.indexes.json
+- functions/ em Node.js 20
+- public/ para Hosting
 
-VERSAO 191 - VALIDACAO CONSOLIDADA POR ENDERECO
-- Status definido exclusivamente pela soma total esperada x soma total contada do endereco.
-- Distribuicao entre paletes e quantidade de paletes nao geram divergencia.
-- Todas as linhas/paletes do endereco recebem o mesmo status.
-- Recontagens e consenso entre rodadas usam os totais consolidados do endereco.
-- Removido alerta de divergencia entre paletes.
+Antes de produção, execute a homologação com um projeto Firebase separado,
+publique regras, índices e Functions, e valide os cenários descritos no
+RELATORIO_IMPLEMENTACAO_V227.md.

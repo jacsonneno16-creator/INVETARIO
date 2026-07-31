@@ -772,6 +772,15 @@ function renderPendencias() {
       rua.includes(buscaBruta) ||
       produtosTexto.includes(buscaBruta);
   });
+  window.__pendenciasVisiveis = filtrado.map(e => ({
+    inventario: inv.codigo || inv.nome || inv.id,
+    endereco: e.endereco || '',
+    produto: (e.produtos || []).map(p => `${p.codigo || ''} ${p.descricao || ''}`.trim()).join(' | '),
+    quantidade: (e.produtos || []).reduce((total, p) => total + Number(p.quantidade_total || 0), 0),
+    local: e.setor || e.local || '',
+    rua: e.rua || extrairRua(e.endereco) || '',
+    status: e.status_pend || ''
+  }));
 
   // KPIs — conferidos = contados + vazios_confirmados (ambos saem das pendências)
   const total        = lista.length;

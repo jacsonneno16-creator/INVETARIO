@@ -36,6 +36,7 @@
     ]
   },
   "firestore": {
-    "rules": "public/firestore.rules"
+    "rules": "public/firestore.rules",
+    "indexes": "public/firestore.indexes.json"
   }
 }

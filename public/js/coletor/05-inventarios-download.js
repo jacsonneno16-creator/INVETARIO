@@ -254,7 +254,7 @@ async function selecionarInventario(id, modo = 'inventario') {
         Object.entries(locaisMap).forEach(([k, v]) => { if (v > 0) capMapa[k] = v; });
         dbg('[dt_locais cache] mesclado:', Object.values(capMapa).filter(v=>v>0).length, 'com cap');
       }
-    } catch(e) {}
+    } catch(e){ console.warn("[Erro tratado]", e); }
     APP.endCapacidade = capMapa;
     endCapSave(id, capMapa);
 
@@ -615,7 +615,7 @@ async function _executarDownload(inv) {
 
   // ── Passo 2: ler versão salva localmente ──────────────────────────────────
   let versaoLocal = null;
-  try { versaoLocal = localStorage.getItem(LS_LOCAIS_VER); } catch(e) {}
+  try { versaoLocal = localStorage.getItem(LS_LOCAIS_VER); } catch(e){ console.warn("[Erro tratado]", e); }
 
   // ── Passo 3: cache válido? ────────────────────────────────────────────────
   // _forceLocaisRefresh ignora a comparação de versão e força o download
@@ -628,7 +628,7 @@ async function _executarDownload(inv) {
     try {
       const raw = localStorage.getItem(LS_LOCAIS);
       if (raw) Object.assign(endCapMapa, JSON.parse(raw));
-    } catch(e) {}
+    } catch(e){ console.warn("[Erro tratado]", e); }
     try {
       const rawSet = localStorage.getItem(LS_LOCAIS_SET);
       if (rawSet) {
@@ -671,7 +671,7 @@ async function _executarDownload(inv) {
         localStorage.setItem(LS_LOCAIS,     JSON.stringify(endCapMapa));
         localStorage.setItem(LS_LOCAIS_SET, JSON.stringify([...locaisSet]));
         if (versaoServidor) localStorage.setItem(LS_LOCAIS_VER, versaoServidor);
-      } catch(e) {}
+      } catch(e){ console.warn("[Erro tratado]", e); }
       APP.locaisAtivos = locaisSet;
       APP._locaisDoFirebase = true;
       dbg('[dt_locais] baixado:', locaisSet.size, 'endereços | cap:', Object.keys(endCapMapa).length, '| ver:', versaoServidor);
@@ -680,7 +680,7 @@ async function _executarDownload(inv) {
       try {
         const raw = localStorage.getItem(LS_LOCAIS);
         if (raw) Object.assign(endCapMapa, JSON.parse(raw));
-      } catch(e2) {}
+      } catch(e2){ console.warn("[Erro tratado]", e2); }
       try {
         const rawSet = localStorage.getItem(LS_LOCAIS_SET);
         APP.locaisAtivos = rawSet
@@ -773,8 +773,8 @@ function voltarInventarios() {
 }
 
 function _voltarInventarioConfirmado() {
-  if (_recListener) { try { _recListener(); } catch(e){} _recListener = null; }
-  if (_auditoriaListener) { try { _auditoriaListener(); } catch(e){} _auditoriaListener = null; }
+  if (_recListener) { try { _recListener(); } catch(e){ console.warn("[Erro tratado]", e); } _recListener = null; }
+  if (_auditoriaListener) { try { _auditoriaListener(); } catch(e){ console.warn("[Erro tratado]", e); } _auditoriaListener = null; }
   APP.inventario             = null;
   APP.base                   = [];
   APP.auditorias             = [];

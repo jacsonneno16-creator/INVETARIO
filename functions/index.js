@@ -7,31 +7,40 @@ admin.initializeApp();
 
 const db = admin.firestore();
 
-function podeExcluir(acesso) {
-  if (!acesso) return false;
-  return acesso.admin_mestre === true ||
-    acesso.administrador_mestre === true ||
-    acesso.perfil === 'administrador' ||
-    (acesso.perfil === 'analista' && !acesso.permissoes) ||
-    acesso.permissoes?.operadores?.excluir === true;
+const PERFIS_ADMIN = new Set(['administrador']);
+const MAX_NOME = 120;
+const MAX_EMAIL = 254;
+const MAX_UIDS = 20;
+
+function acessoAtivo(acesso) {
+  return Boolean(acesso && acesso.ativo !== false);
+}
+
+function adminMestre(acesso) {
+  return acessoAtivo(acesso) &&
+    (acesso.admin_mestre === true || acesso.administrador_mestre === true);
+}
+
+function administrador(acesso) {
+  return acessoAtivo(acesso) &&
+    (adminMestre(acesso) || PERFIS_ADMIN.has(String(acesso.perfil || '').toLowerCase()));
+}
+
+function permissao(acesso, operacao) {
+  return administrador(acesso) ||
+    (acessoAtivo(acesso) && acesso.permissoes?.operadores?.[operacao] === true);
 }
 
 function podeEditarUsuarios(acesso) {
-  if (!acesso) return false;
-  return acesso.admin_mestre === true ||
-    acesso.administrador_mestre === true ||
-    acesso.perfil === 'administrador' ||
-    (acesso.perfil === 'analista' && !acesso.permissoes) ||
-    acesso.permissoes?.operadores?.editar === true;
+  return permissao(acesso, 'editar');
 }
 
 function podeCriarUsuarios(acesso) {
-  if (!acesso) return false;
-  return acesso.admin_mestre === true ||
-    acesso.administrador_mestre === true ||
-    acesso.perfil === 'administrador' ||
-    (acesso.perfil === 'analista' && !acesso.permissoes) ||
-    acesso.permissoes?.operadores?.criar === true;
+  return permissao(acesso, 'criar');
+}
+
+function podeExcluir(acesso) {
+  return permissao(acesso, 'excluir');
 }
 
 async function acessoSolicitante(context) {
@@ -40,7 +49,36 @@ async function acessoSolicitante(context) {
 }
 
 function emailNormalizado(valor) {
-  return String(valor || '').trim().toLowerCase();
+  const email = String(valor || '').trim().toLowerCase();
+  if (!email || email.length > MAX_EMAIL ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new functions.https.HttpsError('invalid-argument', 'E-mail inválido.');
+  }
+  return email;
+}
+
+function lojasPermitidas(acesso) {
+  return new Set((Array.isArray(acesso?.lojas_permitidas) ?
+    acesso.lojas_permitidas : []).map(String));
+}
+
+function podeGerirAlvo(solicitante, alvo) {
+  if (adminMestre(alvo)) return false;
+  if (adminMestre(solicitante) || solicitante?.acesso_todas_lojas === true) return true;
+  if (alvo?.acesso_todas_lojas === true) return false;
+  const permitidas = lojasPermitidas(solicitante);
+  const alvoLojas = Array.isArray(alvo?.lojas_permitidas) ? alvo.lojas_permitidas : [];
+  return alvoLojas.length > 0 && alvoLojas.every(lojaId => permitidas.has(String(lojaId)));
+}
+
+function validarSenha(senha) {
+  if (typeof senha !== 'string' || senha.length < 8 || senha.length > 128 ||
+      !/[A-Za-z]/.test(senha) || !/\d/.test(senha)) {
+    throw new functions.https.HttpsError(
+      'invalid-argument',
+      'A senha deve ter entre 8 e 128 caracteres e conter letras e números.'
+    );
+  }
 }
 
 async function obterOuCriarUsuario(email, password, displayName) {
@@ -48,11 +86,13 @@ async function obterOuCriarUsuario(email, password, displayName) {
     const existente = await admin.auth().getUserByEmail(email);
     const acesso = await db.collection('usuarios_acessos').doc(existente.uid).get();
     const dados = acesso.exists ? acesso.data() : null;
-    if (dados?.admin_mestre === true || dados?.administrador_mestre === true) {
+    if (adminMestre(dados)) {
       throw new functions.https.HttpsError('failed-precondition', 'O login do administrador mestre é protegido.');
     }
-    await admin.auth().updateUser(existente.uid, {password, displayName, disabled: false});
-    return {user: await admin.auth().getUser(existente.uid), existente: true};
+    throw new functions.https.HttpsError(
+      'already-exists',
+      'Já existe uma conta com este e-mail. Use a edição de usuário.'
+    );
   } catch (error) {
     if (error?.code !== 'auth/user-not-found') throw error;
     const user = await admin.auth().createUser({email, password, displayName, disabled: false});
@@ -76,16 +116,26 @@ exports.criarUsuarioVinculado = functions
     const emailAnalista = emailNormalizado(data?.emailAnalista);
     const emailColetor = emailNormalizado(data?.emailColetor);
     const criarAnalista = data?.criarAnalista === true;
-    if (!nome || senha.length < 6 || !emailColetor || (criarAnalista && !emailAnalista)) {
+    if (!nome || nome.length > MAX_NOME || !emailColetor || (criarAnalista && !emailAnalista)) {
       throw new functions.https.HttpsError('invalid-argument', 'Nome, login e senha são obrigatórios.');
     }
+    validarSenha(senha);
 
     const coletor = await obterOuCriarUsuario(emailColetor, senha, nome);
     let analista = null;
     try {
       if (criarAnalista) analista = await obterOuCriarUsuario(emailAnalista, senha, nome);
     } catch (error) {
-      if (!coletor.existente) await admin.auth().deleteUser(coletor.user.uid).catch(() => {});
+      if (!coletor.existente) {
+        try {
+          await admin.auth().deleteUser(coletor.user.uid);
+        } catch (rollbackError) {
+          console.error('Falha no rollback da conta de coletor', {
+            uid: coletor.user.uid,
+            error: rollbackError
+          });
+        }
+      }
       throw error;
     }
     return {
@@ -110,7 +160,8 @@ exports.alterarSenhaUsuario = functions
     const senha = String(data?.senha || '');
     const uids = [...new Set((Array.isArray(data?.uids) ? data.uids : [data?.uid])
       .map(uid => String(uid || '').trim()).filter(Boolean))];
-    if (senha.length < 6 || !uids.length) {
+    validarSenha(senha);
+    if (!uids.length || uids.length > MAX_UIDS) {
       throw new functions.https.HttpsError('invalid-argument', 'Informe uma senha com no mínimo 6 caracteres.');
     }
     if (uids.includes(context.auth.uid)) {
@@ -119,7 +170,13 @@ exports.alterarSenhaUsuario = functions
     for (const uid of uids) {
       const alvoSnap = await db.collection('usuarios_acessos').doc(uid).get();
       const alvo = alvoSnap.exists ? alvoSnap.data() : null;
-      if (alvo?.admin_mestre === true || alvo?.administrador_mestre === true) {
+      if (!alvo || !podeGerirAlvo(solicitante, alvo)) {
+        throw new functions.https.HttpsError(
+          'permission-denied',
+          'O usuário-alvo não pertence ao seu escopo de lojas.'
+        );
+      }
+      if (adminMestre(alvo)) {
         throw new functions.https.HttpsError('failed-precondition', 'O administrador mestre é protegido.');
       }
     }
@@ -152,7 +209,13 @@ exports.excluirUsuario = functions
     if (!podeExcluir(solicitante)) {
       throw new functions.https.HttpsError('permission-denied', 'Seu login não pode excluir usuários.');
     }
-    if (alvo?.admin_mestre === true || alvo?.administrador_mestre === true) {
+    if (!alvo || !podeGerirAlvo(solicitante, alvo)) {
+      throw new functions.https.HttpsError(
+        'permission-denied',
+        'O usuário-alvo não pertence ao seu escopo de lojas.'
+      );
+    }
+    if (adminMestre(alvo)) {
       throw new functions.https.HttpsError('failed-precondition', 'O administrador mestre é protegido.');
     }
 
@@ -173,7 +236,14 @@ exports.excluirUsuario = functions
       }
     }
 
-    const lojasSnap = await db.collection('lojas').get();
+    const lojasEscopo = [...lojasPermitidas(solicitante)].slice(0, 30);
+    const lojasSnap = solicitante.acesso_todas_lojas === true || adminMestre(solicitante)
+      ? await db.collection('lojas').get()
+      : lojasEscopo.length
+        ? await db.collection('lojas')
+          .where(admin.firestore.FieldPath.documentId(), 'in', lojasEscopo)
+          .get()
+        : {docs: []};
     const refs = [
       ...uids.map(alvoUid => db.collection('usuarios_acessos').doc(alvoUid)),
       ...lojasSnap.docs.flatMap(loja => uids.map(alvoUid => loja.ref.collection('dt_operadores').doc(alvoUid)))
@@ -191,7 +261,12 @@ exports.excluirUsuario = functions
       executado_por_uid: context.auth.uid,
       executado_por_email: context.auth.token.email || null,
       criado_em: admin.firestore.FieldValue.serverTimestamp()
-    }).catch(error => console.warn('Falha ao registrar log da exclusão:', error.message));
+    }).catch(error => console.warn('Falha ao registrar log da exclusão:', {
+      message: error.message,
+      code: error.code,
+      usuario_uid: uid,
+      executado_por_uid: context.auth.uid
+    }));
 
     return {ok: true, uid, uids};
   });

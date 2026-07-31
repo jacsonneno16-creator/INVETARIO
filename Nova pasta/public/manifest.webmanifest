@@ -1,0 +1,10 @@
+{
+  "name": "DT Inventário - Coletor",
+  "short_name": "DT Inventário",
+  "start_url": "/coletor.html",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f5b3a",
+  "theme_color": "#0f5b3a",
+  "icons": []
+}

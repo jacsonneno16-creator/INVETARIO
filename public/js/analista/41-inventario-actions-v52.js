@@ -8,11 +8,11 @@
   function toast(m,t){ if(typeof global.showToast==='function') global.showToast(m,t||'i'); else alert(m); }
   function invById(id){ return (state().inventarios||[]).find(function(i){return i.id===id;}) || null; }
   function refresh(){
-    try{ global.saveAll && global.saveAll(); }catch(e){}
-    try{ global.renderInvTable && global.renderInvTable(); }catch(e){}
-    try{ global.renderDashboard && global.renderDashboard(); }catch(e){}
-    try{ global.atualizarBadgesNav && global.atualizarBadgesNav(); }catch(e){}
-    try{ global.popularSelects && global.popularSelects(); }catch(e){}
+    try{ global.saveAll && global.saveAll(); }catch(e){ console.warn("[Erro tratado]", e); }
+    try{ global.renderInvTable && global.renderInvTable(); }catch(e){ console.warn("[Erro tratado]", e); }
+    try{ global.renderDashboard && global.renderDashboard(); }catch(e){ console.warn("[Erro tratado]", e); }
+    try{ global.atualizarBadgesNav && global.atualizarBadgesNav(); }catch(e){ console.warn("[Erro tratado]", e); }
+    try{ global.popularSelects && global.popularSelects(); }catch(e){ console.warn("[Erro tratado]", e); }
   }
   async function apagarColecaoEmLotes(ref){
     var snap=await ref.get().catch(function(){return null;});
@@ -105,33 +105,38 @@
           });
           if(global.AnalistaState&&global.AnalistaState.replaceSlice)global.AnalistaState.replaceSlice(chave,arr,{source:'excluirInventario-v80'});
         });
-        refresh();toast('Removendo inventário e dados relacionados…','i');
+        refresh();toast('Arquivando inventário…','i');
         var raw=db();
         if(raw&&navigator.onLine){
           var ref=raw.collection(coll()).doc(id);
-          // Excluir o documento principal primeiro tira o inventário dos coletores.
-          await ref.delete().catch(function(e){if(e&&e.code!=='not-found')throw e;});
-          await Promise.all([
-            apagarColecaoEmLotes(ref.collection('base_chunks')),
-            apagarColecaoEmLotes(ref.collection('contagens')),
-            apagarColecaoEmLotes(ref.collection('resultados')),
-            apagarDocumentosRelacionados(inv)
-          ]);
+          await raw.runTransaction(async function(transaction){
+            var snapshot=await transaction.get(ref);
+            if(!snapshot.exists) throw new Error('Inventário não encontrado no servidor.');
+            var remoto=snapshot.data()||{}, versao=Number(remoto.versao||0);
+            transaction.update(ref,{
+              status:'ARQUIVADO',
+              oculto_coletor:true,
+              excluido_logicamente:true,
+              arquivado_em:firebase.firestore.FieldValue.serverTimestamp(),
+              arquivado_por:global._currentAnalistaUser?.uid||global._currentAnalistaUser?.email||'',
+              versao:versao+1
+            });
+          });
         }
-        try{global.AnalistaFirebaseService&&global.AnalistaFirebaseService.restart&&await global.AnalistaFirebaseService.restart();}catch(_e){}
-        refresh();toast('🗑 Inventário e registros relacionados excluídos.','s');
+        try{global.AnalistaFirebaseService&&global.AnalistaFirebaseService.restart&&await global.AnalistaFirebaseService.restart();}catch(_e){ console.warn("[Erro tratado]", _e); }
+        refresh();toast('📦 Inventário arquivado. O histórico foi preservado.','s');
         return true;
       }catch(e){
         console.error('[v80 excluirInventario]',e);
         // Recarrega do Firebase para restaurar a verdade do servidor se algo falhar.
-        try{global.AnalistaFirebaseService&&global.AnalistaFirebaseService.restart&&await global.AnalistaFirebaseService.restart();}catch(_e){}
+        try{global.AnalistaFirebaseService&&global.AnalistaFirebaseService.restart&&await global.AnalistaFirebaseService.restart();}catch(_e){ console.warn("[Erro tratado]", _e); }
         toast('Não foi possível concluir a exclusão: '+(e.message||e),'e');
         return false;
       }
     };
-    var msg='Excluir permanentemente o inventário “'+(inv.nome||inv.codigo||id)+'”? Esta ação remove também contagens, pendências, conflitos e recontagens relacionadas.';
+    var msg='Arquivar o inventário “'+(inv.nome||inv.codigo||id)+'”? Ele sairá da operação, mas o histórico continuará disponível para auditoria e recuperação.';
     if(typeof global.showConfirm==='function'){
-      global.showConfirm(msg,executar,{title:'Excluir inventário',icon:'🗑️',okLabel:'Excluir',okClass:'btn-danger'});return true;
+      global.showConfirm(msg,executar,{title:'Arquivar inventário',icon:'📦',okLabel:'Arquivar',okClass:'btn-danger'});return true;
     }
     if(confirm(msg))return executar();return false;
   }

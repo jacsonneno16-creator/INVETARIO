@@ -177,7 +177,10 @@ function onGtinInput() {
         window.DTProdutos.carregar().then(() => {
           const campo = document.getElementById('f-gtin');
           if (campo && campo.value.trim() === codigoConsultado) onGtinInput();
-        }).catch(() => {});
+        }).catch((erro) => {
+          console.warn('[Produtos] Falha ao atualizar a base durante a consulta', { codigo: codigoConsultado, erro });
+          if (fb) fb.innerHTML = '<div class="fb err">✗ Não foi possível consultar a Base Geral de Produtos</div>';
+        });
       }
       // ► SEM SOM AQUI — o som toca em confirmarGtin() quando Enter chega
     }
@@ -812,7 +815,7 @@ function finalizarEnderecoAtual() {
   if (vaziow) vaziow.style.display = 'none';
 
   updateSteps();
-  setTimeout(() => { try { document.getElementById('f-endereco').focus(); } catch(e){} }, 100);
+  setTimeout(() => { try { document.getElementById('f-endereco').focus(); } catch(e){ console.warn("[Erro tratado]", e); } }, 100);
 }
 
 
@@ -899,7 +902,7 @@ function _manterEnderecoAtivo(endereco, endNorm, cap, somentesDun) {
   if (btnReset) btnReset.style.display = 'none';
 
   updateSteps();
-  setTimeout(() => { try { document.getElementById('f-rebipar-endereco').focus(); } catch(e){} }, 100);
+  setTimeout(() => { try { document.getElementById('f-rebipar-endereco').focus(); } catch(e){ console.warn("[Erro tratado]", e); } }, 100);
 }
 
 /** Confirma o rebipar do endereço no estado travado */
