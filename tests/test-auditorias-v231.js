@@ -44,8 +44,12 @@ const cabecalho = html.match(/<thead><tr><th>Endereço<\/th>[\s\S]*?<\/tr><\/the
 assert.strictEqual((cabecalho.match(/<th>/g) || []).length, 8, 'cabeçalho deve ter oito colunas');
 const linha = analista.match(/pagina\.map\(i => `<tr>[\s\S]*?<\/tr>`\)\.join/)?.[0] || '';
 assert.strictEqual((linha.match(/<td/g) || []).length, 8, 'renderer deve gerar oito células');
-assert.ok(html.includes('v231 · 20260731.1') && coletorHtml.includes('v231 · 20260731.1'), 'versão visível ausente');
-assert.ok(!html.match(/\?v=(?!20260731-231)/) && !coletorHtml.match(/\?v=(?!20260731-231)/), 'assets com versões misturadas');
-assert.ok(sw.includes("dt-inventario-v231-20260731-1"), 'cache não versionado');
+assert.ok(html.includes('v232.1 · 20260731.2') && coletorHtml.includes('v232.1 · 20260731.2'), 'versão visível ausente');
+assert.ok(!html.match(/\?v=(?!20260731-2321)/) && !coletorHtml.match(/\?v=(?!20260731-2321)/), 'assets com versões misturadas');
+assert.ok(sw.includes("dt-inventario-v2321-20260731-2"), 'cache não versionado');
+assert.doesNotMatch(sw, /\.addAll\(/, 'instalação do cache não pode falhar de forma atômica');
+const blocoColetores = rules.match(/match \/dt_coletores\/{deviceId}[\s\S]*?\n\s*}\n\n\s*match \/dt_produtos/)?.[0] || '';
+assert.match(blocoColetores, /resource\.data\.operador_uid == request\.auth\.uid/, 'documentos legados do coletor devem reconhecer operador_uid');
+assert.match(blocoColetores, /request\.resource\.data\.operador_uid == request\.auth\.uid/, 'coletor não pode assumir identidade de outro usuário');
 
 console.log('Auditorias v231: testes de caracterização, segurança, layout e cache aprovados.');

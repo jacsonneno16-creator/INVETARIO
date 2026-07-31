@@ -179,6 +179,7 @@ async function registrarColetorNoFirestore(operadorInfo) {
       const numero = deviceId.slice(-4).toUpperCase();
 
       await ref.set({
+        uid:                 operadorInfo.uid || null,
         device_id:           deviceId,
         nome_coletor:        'Coletor ' + numero,
         numero:              numero,
@@ -218,13 +219,15 @@ async function registrarColetorNoFirestore(operadorInfo) {
 
     if (dados.aprovado !== 'aprovado') {
       // Atualiza operador_atual e ping mesmo estando pendente (analista vê quem tentou)
-      await ref.set({ operador_atual: operadorInfo.name, operador_email: operadorInfo.email || null, operador_uid: operadorInfo.uid || null, ultimo_ping: ST() }, {merge:true});
+      await ref.set({ uid: operadorInfo.uid || null, operador_atual: operadorInfo.name, operador_email: operadorInfo.email || null, operador_uid: operadorInfo.uid || null, ultimo_ping: ST() }, {merge:true});
       dbg('[Coletor] Aparelho pendente — acesso aguardando aprovacao.');
       return 'pendente';
     }
 
     // APROVADO: atualizar operador e sessão (nunca cria novo doc)
     await ref.set({
+      uid:              operadorInfo.uid || null,
+      operador_uid:     operadorInfo.uid || null,
       operador_atual:   operadorInfo.name,
       ultimo_ping:      ST(),
       status:           'online',
@@ -263,7 +266,7 @@ function iniciarListenerAprovacaoColetor(operadorInfo) {
     }
     if (d.aprovado !== 'aprovado') return;
     try {
-      await ref.set({status:'online', operador_atual:operadorInfo.name, operador_email:operadorInfo.email, operador_uid:operadorInfo.uid, ultimo_ping:ST()}, {merge:true});
+      await ref.set({uid:operadorInfo.uid, status:'online', operador_atual:operadorInfo.name, operador_email:operadorInfo.email, operador_uid:operadorInfo.uid, ultimo_ping:ST()}, {merge:true});
       if (_aprovacaoListener) { _aprovacaoListener(); _aprovacaoListener=null; }
 
       // Ao recuperar a conexão durante uma operação já iniciada, não recarrega a

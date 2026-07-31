@@ -1,4 +1,14 @@
 function state(){ return window.AnalistaStore.getState(); }
+function _inventarioContagensFisicas(inventarioId){
+  const st=state();
+  if(window.InventoryAddressState?.latestPhysicalRows){
+    return window.InventoryAddressState.latestPhysicalRows(st,inventarioId);
+  }
+  return (st.contagens||[]).filter(c=>
+    String(c.inventario_id||c.inventarioId||'')===String(inventarioId) &&
+    !c._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(c.status||'').toUpperCase())
+  );
+}
 //  12. RENDERIZAÇÃO — INVENTÁRIOS
 // ───────────────────────────────────────────────────────────────────
 
@@ -32,8 +42,8 @@ function renderInvTable() {
         </tr></thead>
         <tbody>
           ${dados.map(inv => {
-            const contagens = Array.isArray(st.contagens) ? st.contagens : [];
-            const contados = [...new Set(contagens.filter(c => c && c.inventario_id === inv.id && !c._excluida).map(c => c.endereco).filter(Boolean))];
+            const contagens = _inventarioContagensFisicas(inv.id);
+            const contados = [...new Set(contagens.map(c => c.endereco).filter(Boolean))];
             const selecionados = Array.isArray(inv?.enderecos_selecionados) ? inv.enderecos_selecionados : [];
             const base = Array.isArray(inv?.base) ? inv.base : [];
             const endsInv = selecionados.length
@@ -134,7 +144,7 @@ function renderAcompanhamento() {
   // REGRA: progresso sempre baseado em state().enderecosLista (endereços cadastrados)
   // conferidos = contados com produto + vazios_confirmados
   // ──────────────────────────────────────────────────────────────────
-  const contsInv = state().contagens.filter(c => c.inventario_id === inv.id && !c._excluida);
+  const contsInv = _inventarioContagensFisicas(inv.id);
   const endsContados = new Set(contsInv.filter(c => !_isVazio(c)).map(c => c.endereco));
   // Vazios confirmados (não estornados)
   const endsVaziosConf = new Set(

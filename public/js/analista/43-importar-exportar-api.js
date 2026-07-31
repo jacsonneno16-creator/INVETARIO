@@ -198,7 +198,9 @@
     // Exporta exclusivamente a fotografia física mais recente de cada endereço.
     // Se uma recontagem registrou menos paletes, os paletes das rodadas anteriores
     // não permanecem no arquivo e não são somados novamente.
-    var source = global.DTContagemFisicaAtual && typeof global.DTContagemFisicaAtual.linhas === 'function'
+    var source = global.InventoryAddressState && typeof global.InventoryAddressState.latestPhysicalRows === 'function'
+      ? global.InventoryAddressState.latestPhysicalRows(state(),id)
+      : global.DTContagemFisicaAtual && typeof global.DTContagemFisicaAtual.linhas === 'function'
       ? global.DTContagemFisicaAtual.linhas(id)
       : inventoryRows(id).filter(function(row){
           return !row._excluida && ['ESTORNADA','EXCLUIDA'].indexOf(String(row.status || '').toUpperCase()) < 0;

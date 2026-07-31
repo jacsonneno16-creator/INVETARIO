@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v231-20260731-1';
+var CACHE='dt-inventario-v2321-20260731-2';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -80,7 +80,19 @@ var PRECACHE=[
 ];
 self.addEventListener('install',function(e){
   e.waitUntil(caches.open(CACHE).then(function(c){
-    return c.addAll(PRECACHE);
+    return Promise.all(PRECACHE.map(function(url){
+      return fetch(url,{cache:'no-store'}).then(function(response){
+        if(!response||!response.ok){
+          throw new Error('HTTP '+(response?response.status:'sem resposta'));
+        }
+        return c.put(url,response);
+      }).catch(function(error){
+        // Um recurso opcional indisponível não deve invalidar toda a instalação.
+        // O fetch handler tentará buscá-lo novamente quando ele for solicitado.
+        console.warn('[SW] Falha no pré-cache de '+url+':',error.message||error);
+        return null;
+      });
+    }));
   }).then(function(){ return self.skipWaiting(); }));
 });
 self.addEventListener('activate',function(e){e.waitUntil(caches.keys().then(function(ks){return Promise.all(ks.filter(function(k){return k!==CACHE;}).map(function(k){return caches.delete(k);}));}).then(function(){return self.clients.claim();}));});

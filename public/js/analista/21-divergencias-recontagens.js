@@ -53,8 +53,26 @@
     return true;
   }
 
+  // Resolver é uma única operação lógica. O batch impede que a divergência
+  // seja encerrada sem que a recontagem correspondente também seja atualizada.
+  async function fsResolverDivergencia(div,rec){
+    if(!div || !div.id) throw new Error('Divergência inválida para resolução.');
+    if(!navigator.onLine || !global.FS_AN) throw new Error('Conecte-se à internet antes de resolver a divergência.');
+    const agora=new Date().toISOString();
+    const batch=global.FS_AN.batch();
+    batch.set(global.FS_AN.collection('dt_divergencias').doc(String(div.id)),
+      _payloadFirestoreSeguro(Object.assign({},div,{atualizado_em:agora})),{merge:true});
+    if(rec?.id){
+      batch.set(global.FS_AN.collection('dt_recontagens').doc(String(rec.id)),
+        _payloadFirestoreSeguro(Object.assign({},rec,{atualizado_em:agora})),{merge:true});
+    }
+    await batch.commit();
+    return true;
+  }
+
   global.fsSalvarDivergencia=fsSalvarDivergencia;
   global.fsSalvarRecontagem=fsSalvarRecontagem;
+  global.fsResolverDivergencia=fsResolverDivergencia;
 
   // ── Helpers de normalização ─────────────────────────────────────────────────
   const _nd = v => String(v || '').trim().toUpperCase();
@@ -2132,6 +2150,9 @@
   }
 
   function _fotografiaFisicaAtual(inventarioId){
+    if(global.InventoryAddressState?.latestPhysicalRows){
+      return global.InventoryAddressState.latestPhysicalRows(state(),inventarioId);
+    }
     const st=state();
     const grupos=new Map();
     (st.contagens||[]).forEach((c,indice)=>{

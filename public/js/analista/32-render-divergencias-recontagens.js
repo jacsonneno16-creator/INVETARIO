@@ -176,9 +176,8 @@ async function _marcarDivResolvida(divId) {
   }
 
   try {
-    const gravacoes=[fsSalvarDivergencia(divAtualizada)];
-    if(recPayload) gravacoes.push(fsSalvarRecontagem(recPayload));
-    await Promise.all(gravacoes);
+    if(typeof fsResolverDivergencia!=='function') throw new Error('Persistência atômica de resolução indisponível. Recarregue a aplicação.');
+    await fsResolverDivergencia(divAtualizada,recPayload);
     window.AnalistaStore.dispatch(window.AnalistaActions.upsertEntity('divergencias', divAtualizada, {source:'resolverDivergenciaAnalista'}));
     if(recPayload) window.AnalistaStore.dispatch(window.AnalistaActions.upsertEntity('recontagens', recPayload, {source:'resolverDivergenciaAnalista'}));
     saveAll();

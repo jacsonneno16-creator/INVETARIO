@@ -18,6 +18,9 @@ function _ordemPaleteContagem(c){
 // somente os paletes da rodada mais recente. Rodadas anteriores ficam apenas
 // no histórico e nunca entram nos totais ou exportações operacionais.
 function _linhasFisicasAtuais(inventarioId){
+  if(window.InventoryAddressState?.latestPhysicalRows){
+    return window.InventoryAddressState.latestPhysicalRows(state(),inventarioId);
+  }
   const runtime=window.AnalistaDivergenciasRuntime;
   if(runtime?.fotografiaFisicaAtual) return runtime.fotografiaFisicaAtual(inventarioId);
   // Fallback de segurança apenas durante o carregamento inicial do runtime.

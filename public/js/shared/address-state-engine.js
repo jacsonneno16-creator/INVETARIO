@@ -152,5 +152,60 @@
   }
   function fromHistory(h) { return evaluateTotals(number(h?.qtd_esperada),number(h?.qtd_primeira??h?.qtd_contada),number(h?.qtd_segunda??h?.qtd_recontagem),number(h?.qtd_terceira)); }
 
-  global.InventoryAddressState=Object.freeze({consolidate,decorate,list,evaluateTotals,fromHistory,snapshotExpected,number,text});
+  // Fotografia operacional canônica. O histórico preserva todas as rodadas,
+  // mas tela, totais e exportações recebem somente a rodada concluída mais
+  // recente de cada inventário/endereço. Uma recontagem nunca é somada à
+  // primeira contagem: ela a substitui integralmente, inclusive quando possui
+  // menos paletes.
+  function physicalRound(row) {
+    return isRecountReading(row) ? Math.min(3, 1 + Math.max(1, Number(row?.numero_recontagem || 1))) : 1;
+  }
+  function recountCompleted(row,state) {
+    if(physicalRound(row)===1) return true;
+    const status=text(row?.status_recontagem || row?.status);
+    if(['CANCELADA','CANCELADO','EXCLUIDA','EXCLUIDO','ESTORNADA','ESTORNADO','PENDENTE','ATRIBUIDA','ATRIBUÍDA','EM_ANDAMENTO','ABERTA'].includes(status)) return false;
+    const rid=String(row?.recontagem_id || '').trim(), did=String(row?.divergencia_id || '').trim();
+    const round=Math.max(1,Number(row?.numero_recontagem || 1));
+    const task=(state?.recontagens||[]).find(rec=>{
+      if(rid && String(rec?.id||rec?.recontagem_id||'')===rid) return true;
+      if(did && String(rec?.divergencia_id||'')===did && Number(rec?.numero_recontagem||round)===round) return true;
+      return canonicalInventoryId(rec,state?.inventarios||[])===canonicalInventoryId(row,state?.inventarios||[]) &&
+        address(rec)===address(row) && Number(rec?.numero_recontagem||0)===round;
+    });
+    const source=task||row, taskStatus=text(source?.status_recontagem||source?.status);
+    if(['CANCELADA','CANCELADO','EXCLUIDA','EXCLUIDO','ESTORNADA','ESTORNADO','PENDENTE','ATRIBUIDA','ATRIBUÍDA','EM_ANDAMENTO','ABERTA'].includes(taskStatus)) return false;
+    return Boolean(source?.recontagem_concluida_em||source?.concluida_em||source?.finalizada_em||source?.data_segunda||source?.data_terceira) ||
+      ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA','AGUARDANDO_ANALISTA','SEM_DIVERGENCIA'].includes(taskStatus);
+  }
+  function physicalPalletKey(row,index) {
+    const pallet=text(row?.palete??row?.pallet??row?.numero_palete??row?.numeroPalete??row?.palete_key??row?.capa_palete??row?.capa??row?.sscc);
+    if(pallet) return `PAL:${pallet}`;
+    const explicit=String(row?.uuid||row?.id||row?.contagem_uuid||'').trim();
+    if(explicit) return `DOC:${explicit}`;
+    return `LINHA:${productCode(row)}|${readingQuantity(row)??''}|${timestamp(row)||index}`;
+  }
+  function latestPhysicalRows(state,inventoryId) {
+    const inventories=state?.inventarios||[], groups=new Map();
+    (state?.contagens||[]).forEach((row,index)=>{
+      if(isClosed(row)||!address(row)||!recountCompleted(row,state)) return;
+      const inv=canonicalInventoryId(row,inventories);
+      if(inventoryId && inv!==canonicalInventoryId({inventario_id:inventoryId},inventories)) return;
+      const key=`${inv}|${address(row)}`;
+      if(!groups.has(key)) groups.set(key,[]);
+      groups.get(key).push({row,index,round:physicalRound(row)});
+    });
+    const output=[];
+    groups.forEach(entries=>{
+      const latest=Math.max(...entries.map(entry=>entry.round));
+      const unique=new Map();
+      entries.filter(entry=>entry.round===latest).forEach(entry=>{
+        const key=physicalPalletKey(entry.row,entry.index), previous=unique.get(key);
+        if(!previous || timestamp(entry.row)>=timestamp(previous)) unique.set(key,entry.row);
+      });
+      unique.forEach(row=>output.push(row));
+    });
+    return output;
+  }
+
+  global.InventoryAddressState=Object.freeze({consolidate,decorate,list,evaluateTotals,fromHistory,snapshotExpected,latestPhysicalRows,number,text});
 })(window);

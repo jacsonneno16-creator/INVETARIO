@@ -1,4 +1,19 @@
 function state(){ return window.AnalistaStore.getState(); }
+// Fonte operacional única: mantém o histórico bruto no Store, mas todos os
+// indicadores do Dashboard enxergam apenas a última rodada física concluída.
+// Assim, uma recontagem substitui integralmente a rodada anterior também nos
+// cards, gráficos, progresso e rankings.
+function _dashContagens(inventarioId){
+  const st=state();
+  if(window.InventoryAddressState?.latestPhysicalRows){
+    return window.InventoryAddressState.latestPhysicalRows(st,inventarioId);
+  }
+  // Falha segura durante bootstrap: não quebra a tela antes do motor carregar.
+  return (st.contagens||[]).filter(c=>
+    (!inventarioId || String(c.inventario_id||c.inventarioId||'')===String(inventarioId)) &&
+    !c._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(c.status||'').toUpperCase())
+  );
+}
 // ───────────────────────────────────────────────────────────────────
 //  11. RENDERIZAÇÃO — DASHBOARD
 // ───────────────────────────────────────────────────────────────────
@@ -62,12 +77,13 @@ function renderDashboardInventario() {
   const endsFilteredSet = new Set(endsFiltered.map(e => e.endereco));
 
   const totalEnds  = state().enderecosLista.length;
-  const totalConts = state().contagens.filter(c => !c._excluida).length;
+  const contagensFisicas = _dashContagens();
+  const totalConts = contagensFisicas.length;
 
   let endContadosTotal = 0;
   let pendentesTotal   = 0;
   invsConsiderados.forEach(inv => {
-    const contsInv = state().contagens.filter(c => c.inventario_id === inv.id && !c._excluida);
+    const contsInv = _dashContagens(inv.id);
     const contados = new Set(contsInv.filter(c => !_isVazio(c)).map(c => c.endereco));
     const vaziosConf = new Set(contsInv.filter(c => _isVazio(c) && c.status !== 'ESTORNADA').map(c => c.endereco));
     endsFiltered.forEach(e => {
@@ -89,7 +105,7 @@ function renderDashboardInventario() {
   const pctGeral = base4Pct > 0 && invsConsiderados.length > 0
     ? Math.round((endContadosTotal / (base4Pct * invsConsiderados.length)) * 100) : 0;
 
-  const contagensConsideradas = state().contagens.filter(c => {
+  const contagensConsideradas = contagensFisicas.filter(c => {
     if (c._excluida) return false;
     if (fInvId && c.inventario_id !== fInvId) return false;
     if (fRua || fLocal) {
@@ -105,7 +121,7 @@ function renderDashboardInventario() {
   // Operadores ativos
   const opsAtivos = new Set();
   invsConsiderados.forEach(inv => {
-    state().contagens.filter(c => c.inventario_id === inv.id && !c._excluida && c.operador).forEach(c => opsAtivos.add(c.operador));
+    _dashContagens(inv.id).filter(c => c.operador).forEach(c => opsAtivos.add(c.operador));
   });
 
   document.getElementById('kd-inventarios').textContent  = invsConsiderados.length;
@@ -152,7 +168,7 @@ function renderDashboardInventario() {
     alertas += `<div class="alert warn" style="margin-bottom:8px">🔄 <strong>${recPend}</strong> rodada(s) pendente(s) aguardando execução. <a href="#" onclick="goPage('recontagens',document.getElementById('nav-recontagens'))" style="color:var(--accent)">Ver rodadas →</a></div>`;
   }
   // Alerta: contagens com inventario_id='local' — coletor salvou sem inventário definido
-  const contagensLocais = state().contagens.filter(c => c.inventario_id === 'local' && !c._excluida);
+  const contagensLocais = contagensFisicas.filter(c => c.inventario_id === 'local');
   if (contagensLocais.length > 0) {
     alertas += `<div class="alert warn" style="margin-bottom:8px">⚠️ <strong>${contagensLocais.length} contagem(ns)</strong> chegaram sem vínculo de inventário (operador contou antes de selecionar o inventário corretamente). <a href="#" onclick="goPage('contagens',document.getElementById('nav-contagens'))" style="color:var(--accent)">Ver contagens →</a></div>`;
   }
@@ -169,7 +185,7 @@ function renderDashboardInventario() {
   const endsBase = endsFiltered.length ? endsFiltered : endsBaseAtivos;
   let progressHtml = '';
   invsConsiderados.slice(0,3).forEach(inv => {
-    const contsInv2 = state().contagens.filter(c => c.inventario_id === inv.id && !c._excluida);
+    const contsInv2 = _dashContagens(inv.id);
     const contados2 = new Set(contsInv2.filter(c => !_isVazio(c)).map(c => c.endereco));
     const vaziosConf2 = new Set(contsInv2.filter(c => _isVazio(c) && c.status !== 'ESTORNADA').map(c => c.endereco));
     const conferidos2 = cod => contados2.has(cod) || vaziosConf2.has(cod);
@@ -207,7 +223,7 @@ function renderDashboardInventario() {
         <thead><tr><th>Código</th><th>Nome</th><th>Data</th><th>Status</th><th>Progresso</th><th>Ações</th></tr></thead>
         <tbody>
           ${state().inventarios.slice(0,8).map(inv => {
-            const contsInv3 = state().contagens.filter(c => c.inventario_id === inv.id && !c._excluida);
+            const contsInv3 = _dashContagens(inv.id);
             const contadosSet3 = new Set(contsInv3.filter(c => !_isVazio(c)).map(c => c.endereco));
             const vaziosConfSet3 = new Set(contsInv3.filter(c => _isVazio(c) && c.status !== 'ESTORNADA').map(c => c.endereco));
             const conferidos3 = new Set([...contadosSet3, ...vaziosConfSet3]);
@@ -246,7 +262,7 @@ function _renderDashRuas(endsBase, invsConsiderados) {
   const contadosSet = new Set();
   const vaziosConfSet = new Set();
   invs.forEach(inv => {
-    state().contagens.filter(c => c.inventario_id === inv.id && !c._excluida).forEach(c => {
+    _dashContagens(inv.id).forEach(c => {
       if (_isVazio(c) && c.status !== 'ESTORNADA') vaziosConfSet.add(c.endereco);
       else contadosSet.add(c.endereco);
     });
@@ -293,7 +309,7 @@ function _renderDashLocais(endsBase, invsConsiderados) {
   const contadosSet = new Set();
   const vaziosConfSet = new Set();
   invs.forEach(inv => {
-    state().contagens.filter(c => c.inventario_id === inv.id && !c._excluida).forEach(c => {
+    _dashContagens(inv.id).forEach(c => {
       if (_isVazio(c) && c.status !== 'ESTORNADA') vaziosConfSet.add(c.endereco);
       else contadosSet.add(c.endereco);
     });
@@ -342,7 +358,7 @@ function _dashBuildBreakdown(endsBase, invsConsiderados, keyFn) {
   const contadosSet = new Set();
   const vaziosConfSet = new Set();
   invs.forEach(inv => {
-    state().contagens.filter(c => c.inventario_id === inv.id && !c._excluida).forEach(c => {
+    _dashContagens(inv.id).forEach(c => {
       if (_isVazio(c) && c.status !== 'ESTORNADA') vaziosConfSet.add(c.endereco);
       else contadosSet.add(c.endereco);
     });
