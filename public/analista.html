@@ -943,6 +943,11 @@ table td{padding:8px 10px!important;vertical-align:middle}
 .col-resizer:hover,.col-resizer.dragging{background:rgba(249,115,22,.45)}
 body.col-resizing{cursor:col-resize!important;user-select:none!important}
 #page-contagens td .badge,#page-recontagens td .badge{max-width:none!important;white-space:normal!important;display:inline-flex!important;line-height:1.2}
+.auditoria-tbl-wrap{display:block;width:100%;overflow-x:auto!important;padding-bottom:8px}
+.auditoria-tabela{width:max-content!important;min-width:1420px!important;table-layout:fixed!important}
+.auditoria-tabela .aud-col-end{width:145px}.auditoria-tabela .aud-col-dun{width:170px}.auditoria-tabela .aud-col-prod{width:245px}.auditoria-tabela .aud-col-status{width:130px}.auditoria-tabela .aud-col-oper{width:155px}.auditoria-tabela .aud-col-data{width:165px}
+.auditoria-tabela th,.auditoria-tabela td{white-space:nowrap!important;overflow:hidden;text-overflow:ellipsis}
+.auditoria-tabela th:nth-child(3),.auditoria-tabela td:nth-child(3),.auditoria-tabela th:nth-child(5),.auditoria-tabela td:nth-child(5){white-space:normal!important;overflow-wrap:anywhere;line-height:1.3}
 </style>
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
@@ -1901,7 +1906,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
           <input class="search" id="aud-f-operador" placeholder="Operador">
           <input class="search" id="aud-f-data" type="date">
         </div>
-        <div class="tbl-wrap"><table><thead><tr><th>Endereço</th><th>DUN esperado</th><th>Produto esperado</th><th>DUN lido</th><th>Produto lido</th><th>Resultado</th><th>Operador</th><th>Data/Hora</th></tr></thead><tbody id="auditoria-op-tbody"><tr><td colspan="8" style="text-align:center;color:var(--muted);padding:18px">Selecione uma auditoria.</td></tr></tbody></table></div>
+        <div class="tbl-wrap auditoria-tbl-wrap"><table class="auditoria-tabela"><colgroup><col class="aud-col-end"><col class="aud-col-dun"><col class="aud-col-prod"><col class="aud-col-dun"><col class="aud-col-prod"><col class="aud-col-status"><col class="aud-col-oper"><col class="aud-col-data"></colgroup><thead><tr><th>Endereço</th><th>DUN esperado</th><th>Produto esperado</th><th>DUN lido</th><th>Produto lido</th><th>Resultado</th><th>Operador</th><th>Data/Hora</th></tr></thead><tbody id="auditoria-op-tbody"><tr><td colspan="8" style="text-align:center;color:var(--muted);padding:18px">Selecione uma auditoria.</td></tr></tbody></table></div>
       </div>
       <div id="auditoria-resumo-finalizacao" style="margin-top:12px;font-size:.78rem;color:var(--muted)"></div>
     </div>

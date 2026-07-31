@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v228-homologacao';
+var CACHE='dt-inventario-v228-auditoria-clique-20260731';
 var PRECACHE=[
   '/',
   '/index.html',

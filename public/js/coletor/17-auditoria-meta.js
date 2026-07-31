@@ -324,7 +324,7 @@
       return;
     }
     el.innerHTML = lista.map(aud => `
-      <div class="inv-card" onclick="selecionarAuditoriaMenu('${aud.id}')">
+      <button type="button" class="inv-card aud-card-menu" data-auditoria-id="${escHTML(aud.id)}" style="width:100%;text-align:left">
         <div class="inv-card-code">${escHTML(aud.id)}</div>
         <div class="inv-card-name">Auditoria — ${escHTML(aud.auditoria_nome || aud.id)}</div>
         <div class="inv-card-meta">
@@ -332,9 +332,27 @@
           <span class="badge badge-muted">${aud.total_registros || 0} endereços</span>
           ${aud.lojas?.[0] ? `<span class="badge badge-muted">${escHTML(aud.lojas[0])}</span>` : ''}
         </div>
-      </div>
+      </button>
     `).join('');
   };
+
+  document.addEventListener('click', function(event){
+    const card=event.target.closest('.aud-card-menu[data-auditoria-id]');
+    if(!card || !document.getElementById('aud-list-menu')?.contains(card)) return;
+    event.preventDefault();
+    if(card.disabled || APP._auditoriaCarregando) return;
+    const auditoriaId=String(card.dataset.auditoriaId||'').trim();
+    if(!auditoriaId){ toast('Não foi possível identificar esta auditoria. Atualize a lista e tente novamente.','e'); return; }
+    card.disabled=true;
+    card.setAttribute('aria-busy','true');
+    window.selecionarAuditoriaMenu(auditoriaId).catch(function(error){
+      console.error('[AUDITORIA] Erro ao abrir cartão:',error);
+      toast('Erro ao abrir auditoria: '+(error?.message||error),'e');
+    }).finally(function(){
+      card.disabled=false;
+      card.removeAttribute('aria-busy');
+    });
+  });
 
   window.aplicarFiltroLojaAuditoria = function(loja) {
     APP.lojaFiltroAuditoria = String(loja || '').trim();
