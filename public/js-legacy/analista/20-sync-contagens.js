@@ -1,85 +1,472 @@
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
-var __generator = (this && this.__generator) || function (thisArg, body) {
-    var _ = { label: 0, sent: function() { if (t[0] & 1) throw t[1]; return t[1]; }, trys: [], ops: [] }, f, y, t, g = Object.create((typeof Iterator === "function" ? Iterator : Object).prototype);
-    return g.next = verb(0), g["throw"] = verb(1), g["return"] = verb(2), typeof Symbol === "function" && (g[Symbol.iterator] = function() { return this; }), g;
-    function verb(n) { return function (v) { return step([n, v]); }; }
-    function step(op) {
-        if (f) throw new TypeError("Generator is already executing.");
-        while (g && (g = 0, op[0] && (_ = 0)), _) try {
-            if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
-            if (y = 0, t) op = [op[0] & 2, t.value];
-            switch (op[0]) {
-                case 0: case 1: t = op; break;
-                case 4: _.label++; return { value: op[1], done: false };
-                case 5: _.label++; y = op[1]; op = [0]; continue;
-                case 7: op = _.ops.pop(); _.trys.pop(); continue;
-                default:
-                    if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) { _ = 0; continue; }
-                    if (op[0] === 3 && (!t || (op[1] > t[0] && op[1] < t[3]))) { _.label = op[1]; break; }
-                    if (op[0] === 6 && _.label < t[1]) { _.label = t[1]; t = op; break; }
-                    if (t && _.label < t[2]) { _.label = t[2]; _.ops.push(op); break; }
-                    if (t[2]) _.ops.pop();
-                    _.trys.pop(); continue;
-            }
-            op = body.call(thisArg, _);
-        } catch (e) { op = [6, e]; y = 0; } finally { f = t = 0; }
-        if (op[0] & 5) throw op[1]; return { value: op[0] ? op[1] : void 0, done: true };
-    }
-};
+/* ============================================================================
+ * ANALISTA — SINCRONIZACAO CANONICA
+ * ----------------------------------------------------------------------------
+ * Substitui sincronizarContagens().
+ *
+ * Requisitos do AnalistaFirebaseService:
+ * - start() deve ser idempotente OU expor isStarted()/started.
+ * - Preferencialmente deve retornar uma Promise resolvida apos o primeiro
+ *   snapshot consistente das colecoes obrigatorias.
+ * - refreshFromCache() pode retornar payload ou atualizar a Store internamente.
+ *
+ * Este modulo:
+ * - aguarda operacoes assincronas;
+ * - impede cliques concorrentes;
+ * - nao cria listeners repetidos quando o servico informa que ja esta ativo;
+ * - diferencia Firebase confirmado de cache local;
+ * - nao informa sucesso antes da conclusao;
+ * - sempre restaura o indicador visual;
+ * - retorna um resultado estruturado para testes e logs.
+ * ========================================================================== */
+
 (function (global) {
-    // ── 8. SINCRONIZAÇÃO DE CONTAGENS ──────────────────────────────────────────
-    var Storage = global.AnalistaStorage;
-    var Actions = global.AnalistaActions;
-    /** Recarrega contagens do Firestore (se online) ou do cache local */
-    function sincronizarContagens() {
-        return __awaiter(this, void 0, void 0, function () {
-            var dotEl;
-            var _a, _b, _c, _d, _e, _f;
-            return __generator(this, function (_g) {
-                dotEl = document.getElementById('sync-dot');
-                if (dotEl)
-                    dotEl.className = 'sync-dot sync';
-                if (navigator.onLine && ((_a = global.AnalistaFirebaseService) === null || _a === void 0 ? void 0 : _a.start)) {
-                    try {
-                        global.AnalistaFirebaseService.start();
-                        (_c = (_b = global.AnalistaNavigation) === null || _b === void 0 ? void 0 : _b.renderCurrentPage) === null || _c === void 0 ? void 0 : _c.call(_b);
-                        if (typeof global.atualizarBadgesNav === 'function')
-                            global.atualizarBadgesNav();
-                        global.AnalistaBootstrap.updateSyncUI(true, new Date().toLocaleTimeString('pt-BR'));
-                        showToast('🔄 Sincronização em tempo real reativada!', 's');
-                        return [2 /*return*/];
-                    }
-                    catch (e) {
-                        dbg('[sync] Falha ao reativar realtime Firebase:', e.message);
-                    }
-                }
-                if ((_d = global.AnalistaFirebaseService) === null || _d === void 0 ? void 0 : _d.refreshFromCache) {
-                    global.AnalistaFirebaseService.refreshFromCache();
-                }
-                else {
-                    global.AnalistaState.batch([
-                        Actions.replaceSlice('contagens', Storage.storageLoad(Storage.KEYS.contagens) || [], { source: 'manual-cache-refresh' }),
-                        Actions.replaceSlice('divergencias', Storage.storageLoad(Storage.KEYS.divergencias) || [], { source: 'manual-cache-refresh' }),
-                        Actions.replaceSlice('recontagens', Storage.storageLoad(Storage.KEYS.recontagens) || [], { source: 'manual-cache-refresh' })
-                    ]);
-                    (_f = (_e = global.AnalistaNavigation) === null || _e === void 0 ? void 0 : _e.renderCurrentPage) === null || _f === void 0 ? void 0 : _f.call(_e);
-                    if (typeof global.atualizarBadgesNav === 'function')
-                        global.atualizarBadgesNav();
-                    global.AnalistaBootstrap.updateSyncUI(true, new Date().toLocaleTimeString('pt-BR'));
-                }
-                showToast('🔄 Cache local recarregado.', 'i');
-                return [2 /*return*/];
-            });
-        });
+  'use strict';
+
+  var Storage = global.AnalistaStorage;
+  var Actions = global.AnalistaActions;
+
+  var syncInFlight = null;
+  var localRealtimeStarted = false;
+
+  function getStore() {
+    return global.AnalistaStore || global.AnalistaState || null;
+  }
+
+  function getState() {
+    var store = getStore();
+    if (store && typeof store.getState === 'function') return store.getState();
+    return {};
+  }
+
+  function nowIso() {
+    return new Date().toISOString();
+  }
+
+  function nowLabel() {
+    return new Date().toLocaleTimeString('pt-BR');
+  }
+
+  function debug() {
+    if (typeof global.dbg === 'function') {
+      global.dbg.apply(global, arguments);
+    } else {
+      console.debug.apply(console, arguments);
     }
-    // Exportar para chamadas de botões na UI
-    global.sincronizarContagens = sincronizarContagens;
+  }
+
+  function toast(message, type) {
+    if (typeof global.showToast === 'function') {
+      global.showToast(message, type || 'i');
+    } else {
+      console.log(message);
+    }
+  }
+
+  function setSyncDot(mode) {
+    var dot = document.getElementById('sync-dot');
+    if (!dot) return;
+
+    if (mode === 'syncing') dot.className = 'sync-dot sync';
+    else if (mode === 'error') dot.className = 'sync-dot error';
+    else if (mode === 'offline') dot.className = 'sync-dot offline';
+    else dot.className = 'sync-dot online';
+  }
+
+  function setSyncButtonsDisabled(disabled) {
+    var selectors = [
+      '[data-action="sync"]',
+      '#btn-sync',
+      '#btn-sincronizar',
+      'button[onclick*="sincronizarContagens"]'
+    ];
+
+    document.querySelectorAll(selectors.join(',')).forEach(function (button) {
+      button.disabled = Boolean(disabled);
+      button.setAttribute('aria-busy', disabled ? 'true' : 'false');
+    });
+  }
+
+  function updateSyncUI(status, label, source) {
+    var bootstrap = global.AnalistaBootstrap;
+    if (!bootstrap || typeof bootstrap.updateSyncUI !== 'function') return;
+
+    /*
+     * Compatibilidade:
+     * - true somente para dados remotos confirmados;
+     * - false para cache/offline/erro.
+     */
+    bootstrap.updateSyncUI(status === 'remote', label || nowLabel(), source || status);
+  }
+
+  function normalizeArray(value, name) {
+    if (value === undefined || value === null) {
+      throw new Error('Cache ausente para ' + name + '.');
+    }
+    if (!Array.isArray(value)) {
+      throw new Error('Cache invalido para ' + name + '.');
+    }
+    return value;
+  }
+
+  function loadCachePayload() {
+    if (!Storage || typeof Storage.storageLoad !== 'function' || !Storage.KEYS) {
+      throw new Error('AnalistaStorage indisponivel.');
+    }
+
+    var contagens = Storage.storageLoad(Storage.KEYS.contagens);
+    var divergencias = Storage.storageLoad(Storage.KEYS.divergencias);
+    var recontagens = Storage.storageLoad(Storage.KEYS.recontagens);
+
+    return {
+      contagens: normalizeArray(contagens, 'contagens'),
+      divergencias: normalizeArray(divergencias, 'divergencias'),
+      recontagens: normalizeArray(recontagens, 'recontagens')
+    };
+  }
+
+  function dispatchActions(actions) {
+    var store = getStore();
+
+    if (global.AnalistaState && typeof global.AnalistaState.batch === 'function') {
+      global.AnalistaState.batch(actions);
+      return;
+    }
+
+    if (store && typeof store.dispatch === 'function') {
+      if (Actions && typeof Actions.batch === 'function') {
+        store.dispatch(Actions.batch(actions, { source: 'manual-sync-cache' }));
+      } else {
+        actions.forEach(function (action) {
+          store.dispatch(action);
+        });
+      }
+      return;
+    }
+
+    throw new Error('Store sem suporte a batch ou dispatch.');
+  }
+
+  function replaceSlicesFromCache(payload) {
+    if (!Actions || typeof Actions.replaceSlice !== 'function') {
+      throw new Error('AnalistaActions.replaceSlice indisponivel.');
+    }
+
+    dispatchActions([
+      Actions.replaceSlice('contagens', payload.contagens, {
+        source: 'manual-cache-refresh'
+      }),
+      Actions.replaceSlice('divergencias', payload.divergencias, {
+        source: 'manual-cache-refresh'
+      }),
+      Actions.replaceSlice('recontagens', payload.recontagens, {
+        source: 'manual-cache-refresh'
+      })
+    ]);
+  }
+
+  function renderCurrentState() {
+    var navigation = global.AnalistaNavigation;
+
+    if (navigation && typeof navigation.renderCurrentPage === 'function') {
+      navigation.renderCurrentPage();
+    } else {
+      /*
+       * Fallback seguro. Executa apenas a tela visivel quando possivel.
+       */
+      var active = document.querySelector('[data-page].active, .page.active');
+      var page = active && active.dataset ? active.dataset.page : '';
+
+      if (page === 'contagens' && typeof global.renderContagens === 'function') {
+        global.renderContagens();
+      } else if (page === 'pendencias' && typeof global.renderPendencias === 'function') {
+        global.renderPendencias();
+      } else if (page === 'divergencias' && typeof global.renderDivergencias === 'function') {
+        global.renderDivergencias();
+      } else if (page === 'recontagens' && typeof global.renderRecontagens === 'function') {
+        global.renderRecontagens();
+      }
+    }
+
+    if (typeof global.atualizarBadgesNav === 'function') {
+      global.atualizarBadgesNav();
+    }
+  }
+
+  function serviceAlreadyStarted(service) {
+    if (!service) return false;
+
+    if (typeof service.isStarted === 'function') {
+      try {
+        return Boolean(service.isStarted());
+      } catch (error) {
+        debug('[sync] isStarted falhou:', error);
+      }
+    }
+
+    if (typeof service.isRunning === 'function') {
+      try {
+        return Boolean(service.isRunning());
+      } catch (error) {
+        debug('[sync] isRunning falhou:', error);
+      }
+    }
+
+    return Boolean(
+      service.started ||
+      service.running ||
+      service.active ||
+      localRealtimeStarted
+    );
+  }
+
+  function signature() {
+    var st = getState();
+    return [
+      Array.isArray(st.contagens) ? st.contagens.length : -1,
+      Array.isArray(st.divergencias) ? st.divergencias.length : -1,
+      Array.isArray(st.recontagens) ? st.recontagens.length : -1,
+      st.lastFirebaseSync || st._lastFirebaseSync || ''
+    ].join('|');
+  }
+
+  function waitForFirstConfirmedUpdate(before, timeoutMs) {
+    var store = getStore();
+    timeoutMs = timeoutMs || 12000;
+
+    return new Promise(function (resolve, reject) {
+      var finished = false;
+      var unsubscribe = null;
+      var timer = null;
+
+      function cleanup() {
+        if (typeof unsubscribe === 'function') unsubscribe();
+        if (timer) clearTimeout(timer);
+      }
+
+      function done() {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        resolve();
+      }
+
+      function fail() {
+        if (finished) return;
+        finished = true;
+        cleanup();
+        reject(new Error('Tempo limite aguardando dados do Firebase.'));
+      }
+
+      if (store && typeof store.subscribe === 'function') {
+        unsubscribe = store.subscribe(function () {
+          if (signature() !== before) done();
+        });
+      }
+
+      timer = setTimeout(fail, timeoutMs);
+
+      /*
+       * Caso start() tenha atualizado sincronicamente.
+       */
+      if (signature() !== before) done();
+    });
+  }
+
+  async function startRemoteAndWait() {
+    var service = global.AnalistaFirebaseService;
+
+    if (!service || typeof service.start !== 'function') {
+      throw new Error('AnalistaFirebaseService.start indisponivel.');
+    }
+
+    var before = signature();
+    var alreadyStarted = serviceAlreadyStarted(service);
+    var startResult;
+
+    if (!alreadyStarted) {
+      startResult = service.start();
+      if (startResult && typeof startResult.then === 'function') {
+        await startResult;
+      }
+      localRealtimeStarted = true;
+    } else if (typeof service.refresh === 'function') {
+      var refreshResult = service.refresh();
+      if (refreshResult && typeof refreshResult.then === 'function') {
+        await refreshResult;
+      }
+    } else if (typeof service.requestSnapshot === 'function') {
+      var snapshotResult = service.requestSnapshot();
+      if (snapshotResult && typeof snapshotResult.then === 'function') {
+        await snapshotResult;
+      }
+    }
+
+    /*
+     * Se o proprio servico declara que o primeiro snapshot foi recebido,
+     * nao precisamos aguardar mudanca de assinatura.
+     */
+    if (
+      service.firstSnapshotReady === true ||
+      service.synced === true ||
+      service.ready === true
+    ) {
+      return;
+    }
+
+    /*
+     * Se start/refresh retornou um resultado explicito de sincronizacao,
+     * considera confirmado.
+     */
+    if (
+      startResult &&
+      typeof startResult === 'object' &&
+      (startResult.synced === true || startResult.ready === true)
+    ) {
+      return;
+    }
+
+    /*
+     * Aguarda uma mudanca efetiva na Store. Se o servico ja estava ativo e
+     * nao possui metodo refresh/requestSnapshot, nao cria listener novo.
+     */
+    await waitForFirstConfirmedUpdate(before, 12000);
+  }
+
+  async function refreshCacheSafely() {
+    var service = global.AnalistaFirebaseService;
+
+    if (service && typeof service.refreshFromCache === 'function') {
+      var result = service.refreshFromCache();
+      if (result && typeof result.then === 'function') {
+        result = await result;
+      }
+
+      /*
+       * Se o servico devolveu payload, aplica atomicamente.
+       * Se devolveu undefined, presume que atualizou a Store internamente.
+       */
+      if (result && typeof result === 'object') {
+        var payload = {
+          contagens: normalizeArray(result.contagens, 'contagens'),
+          divergencias: normalizeArray(result.divergencias, 'divergencias'),
+          recontagens: normalizeArray(result.recontagens, 'recontagens')
+        };
+        replaceSlicesFromCache(payload);
+      }
+
+      return;
+    }
+
+    replaceSlicesFromCache(loadCachePayload());
+  }
+
+  async function performSync(options) {
+    options = options || {};
+    var allowCacheFallback = options.allowCacheFallback !== false;
+    var remoteError = null;
+
+    setSyncDot('syncing');
+    setSyncButtonsDisabled(true);
+
+    try {
+      if (navigator.onLine) {
+        try {
+          await startRemoteAndWait();
+
+          renderCurrentState();
+          setSyncDot('online');
+          updateSyncUI('remote', nowLabel(), 'firebase');
+
+          toast('Dados atualizados pelo Firebase.', 's');
+
+          return {
+            sucesso: true,
+            origem: 'firebase',
+            remotoConfirmado: true,
+            cache: false,
+            atualizadoEm: nowIso(),
+            erro: null
+          };
+        } catch (error) {
+          remoteError = error;
+          debug('[sync] Falha na sincronizacao remota:', error);
+        }
+      } else {
+        remoteError = new Error('Navegador offline.');
+      }
+
+      if (!allowCacheFallback) {
+        throw remoteError || new Error('Sincronizacao remota indisponivel.');
+      }
+
+      await refreshCacheSafely();
+      renderCurrentState();
+
+      setSyncDot('offline');
+      updateSyncUI('cache', nowLabel(), 'cache');
+
+      toast(
+        remoteError
+          ? 'Firebase indisponivel. Exibindo o ultimo cache local valido.'
+          : 'Cache local carregado.',
+        'i'
+      );
+
+      return {
+        sucesso: true,
+        origem: 'cache',
+        remotoConfirmado: false,
+        cache: true,
+        atualizadoEm: nowIso(),
+        erroRemoto: remoteError ? String(remoteError.message || remoteError) : null,
+        erro: null
+      };
+    } catch (error) {
+      setSyncDot('error');
+      updateSyncUI('error', nowLabel(), 'error');
+
+      debug('[sync] Falha total:', error);
+      toast(
+        'Nao foi possivel atualizar os dados nem carregar um cache local valido.',
+        'e'
+      );
+
+      return {
+        sucesso: false,
+        origem: 'nenhuma',
+        remotoConfirmado: false,
+        cache: false,
+        atualizadoEm: nowIso(),
+        erroRemoto: remoteError ? String(remoteError.message || remoteError) : null,
+        erro: String(error && (error.message || error))
+      };
+    } finally {
+      setSyncButtonsDisabled(false);
+    }
+  }
+
+  function sincronizarContagens(options) {
+    if (syncInFlight) {
+      return syncInFlight;
+    }
+
+    syncInFlight = performSync(options)
+      .finally(function () {
+        syncInFlight = null;
+      });
+
+    return syncInFlight;
+  }
+
+  global.sincronizarContagens = sincronizarContagens;
+
+  global.AnalistaSyncModule = Object.freeze({
+    sincronizarContagens: sincronizarContagens,
+    isSyncing: function () {
+      return Boolean(syncInFlight);
+    },
+    resetRealtimeState: function () {
+      localRealtimeStarted = false;
+    }
+  });
 })(window);

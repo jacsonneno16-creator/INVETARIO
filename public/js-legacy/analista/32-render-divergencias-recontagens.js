@@ -1,1583 +1,2761 @@
-function state(){ return window.AnalistaStore.getState(); }
-const _FK = window.InventoryFlowKey;
-const _normRec = v => _FK.texto(v);
-const _inventarioCanonicoRec = obj => _FK.inventario(obj, state().inventarios);
-const _produtoCanonicoRec = obj => _FK.produto(obj);
+/* ============================================================================
+ * ANALISTA — MODULO CANONICO DE DIVERGENCIAS E RECONTAGENS
+ * ----------------------------------------------------------------------------
+ * Substitui as antigas secoes de renderizacao, selecao, atribuicao,
+ * desvinculacao, resolucao, indicadores e exportacao.
+ *
+ * Premissas mantidas:
+ * - window.AnalistaStore.getState()
+ * - window.InventoryFlowKey
+ * - window.AnalistaDivergenciasRuntime (opcional)
+ * - window.Store / window.Actions (opcionais)
+ * - fsSalvarDivergencia / fsSalvarRecontagem (fallback)
+ * - FS_AN ou firebase.firestore() para transacoes
+ * - helpers existentes: escHTML, fmtTs, showToast, openModal, closeModal,
+ *   showConfirm, getEnderecoInfo, logSistema
+ *
+ * IMPORTANTE:
+ * - Renderizacao nao grava e nao processa divergencias.
+ * - A unidade operacional e inventario canonico + endereco canonico.
+ * - Produto nao compoe a chave do fluxo consolidado.
+ * - Tela, KPIs e exportacoes usam a mesma ViewModel.
+ * ========================================================================== */
 
-const _nomeProdutoRec = valor => {
-  const codigo = String(valor || '').trim();
-  if (!codigo) return 'Produto nao informado';
-  try {
-    const ach = window.DTProdutos?.buscarSync?.(codigo);
-    if (ach?.encontrado) {
-      return String(ach.nomeProduto || ach.descricao || ach.descricaoProduto || ach.produto_nome || codigo).trim();
+(() => {
+  'use strict';
+
+  const G = window;
+  const FK = G.InventoryFlowKey;
+
+  if (!G.AnalistaStore?.getState) {
+    console.error('[DivergenciasModule] AnalistaStore nao encontrado.');
+    return;
+  }
+  if (!FK) {
+    console.error('[DivergenciasModule] InventoryFlowKey nao encontrado.');
+    return;
+  }
+
+  const state = () => G.AnalistaStore.getState();
+
+  const STATUS = Object.freeze({
+    ABERTA: 'ABERTA',
+    EM_RECONTAGEM: 'EM_RECONTAGEM',
+    AGUARDANDO_ANALISTA: 'AGUARDANDO_ANALISTA',
+    RESOLVIDA: 'RESOLVIDA',
+    PERSISTENTE: 'PERSISTENTE',
+    CANCELADA: 'CANCELADA',
+    EXCLUIDA: 'EXCLUIDA'
+  });
+
+  const STATUS_REC = Object.freeze({
+    PENDENTE: 'pendente',
+    EM_ANDAMENTO: 'em_andamento',
+    AGUARDANDO_ANALISTA: 'aguardando_analista',
+    CONCLUIDA: 'concluida',
+    SEM_DIVERGENCIA: 'sem_divergencia',
+    RESOLVIDA: 'resolvida',
+    PERSISTENTE: 'persistente',
+    CANCELADA: 'cancelada',
+    EXCLUIDA: 'excluida'
+  });
+
+  const ENCERRADOS = new Set([
+    STATUS.RESOLVIDA,
+    STATUS.PERSISTENTE,
+    STATUS.CANCELADA,
+    STATUS.EXCLUIDA
+  ]);
+
+  const REC_ENCERRADOS = new Set([
+    STATUS_REC.SEM_DIVERGENCIA,
+    STATUS_REC.RESOLVIDA,
+    STATUS_REC.PERSISTENTE,
+    STATUS_REC.CANCELADA,
+    STATUS_REC.EXCLUIDA
+  ]);
+
+  const operacoesEmAndamento = new Set();
+  const selecao = new Set();
+
+  let visaoDivergencias = [];
+  let visaoRecontagens = [];
+  let mapaFluxosVisiveis = new Map();
+  let filtroRapidoAtivo = '';
+  let recAtribuirDireto = null;
+
+  /* ------------------------------------------------------------------------
+   * UTILITARIOS
+   * --------------------------------------------------------------------- */
+
+  const texto = value => String(value ?? '').trim();
+  const upper = value => texto(value).toUpperCase();
+  const lower = value => texto(value).toLowerCase();
+
+  function escapeHtml(value) {
+    if (typeof G.escHTML === 'function') return G.escHTML(value);
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function formatarData(value) {
+    if (!value) return '—';
+    if (typeof G.fmtTs === 'function') return G.fmtTs(value);
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR');
+  }
+
+  function toast(message, type = 'w') {
+    if (typeof G.showToast === 'function') G.showToast(message, type);
+    else console[type === 'e' ? 'error' : 'log'](message);
+  }
+
+  function normalizarNumero(value) {
+    if (value === null || value === undefined || texto(value) === '') return null;
+    const normalized = typeof value === 'string'
+      ? value.replace(/\s/g, '').replace(',', '.')
+      : value;
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function quantidadesIguais(a, b, tolerancia = 1e-9) {
+    const x = normalizarNumero(a);
+    const y = normalizarNumero(b);
+    if (x === null || y === null) return false;
+    return Math.abs(x - y) <= tolerancia;
+  }
+
+  function timestampValue(value) {
+    if (!value) return 0;
+    if (typeof value?.toMillis === 'function') return value.toMillis();
+    if (typeof value?.toDate === 'function') return value.toDate().getTime();
+    const t = new Date(value).getTime();
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  function compararMaisRecente(a, b) {
+    const ta = timestampValue(
+      a?.updated_at || a?.atualizado_em || a?.recontagem_concluida_em ||
+      a?.concluida_em || a?.criada_em || a?.created_at
+    );
+    const tb = timestampValue(
+      b?.updated_at || b?.atualizado_em || b?.recontagem_concluida_em ||
+      b?.concluida_em || b?.criada_em || b?.created_at
+    );
+    return tb - ta;
+  }
+
+  function obterUsuarioAtual() {
+    const u = G._currentAnalistaUser || {};
+    return {
+      uid: texto(u.uid),
+      email: texto(u.email),
+      nome: texto(u.displayName || u.nome || u.email || 'Analista')
+    };
+  }
+
+  function inventarioCanonico(obj) {
+    return texto(FK.inventario(obj || {}, state().inventarios || []));
+  }
+
+  function enderecoCanonico(value) {
+    return texto(FK.endereco(value));
+  }
+
+  function produtoCanonico(obj) {
+    return texto(FK.produto(obj || {}));
+  }
+
+  function lojaCanonica(obj) {
+    return texto(
+      obj?.loja_id ??
+      obj?.lojaId ??
+      state().lojaAtual?.id ??
+      state().loja_id ??
+      state().lojaId ??
+      ''
+    );
+  }
+
+  function chaveFluxo(obj) {
+    const loja = lojaCanonica(obj);
+    const inventario = inventarioCanonico(obj);
+    const endereco = enderecoCanonico(obj?.endereco);
+
+    if (!inventario || !endereco) return null;
+    return [loja, inventario, endereco].join('|');
+  }
+
+  function chaveDomId(prefix, key) {
+    let hash = 2166136261;
+    const input = `${prefix}|${key}`;
+    for (let i = 0; i < input.length; i += 1) {
+      hash ^= input.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
     }
-  } catch(e) {}
-  const produtoEstado = (state().produtos || []).find(p =>
-    [p.codigo, p.codigo_produto, p.codigoInterno, p.codigo_interno, p.gtin, p.ean, p.dun]
-      .filter(Boolean).map(String).includes(codigo));
-  return String(produtoEstado?.descricao || produtoEstado?.nome || produtoEstado?.descricao_produto || codigo).trim();
-};
+    return `${prefix}-${(hash >>> 0).toString(36)}`;
+  }
 
-const _totalEsperadoEnderecoRec = obj => {
-  const invCanonico = _inventarioCanonicoRec(obj);
-  const endereco = _FK.endereco(obj?.endereco);
-  const inventario = (state().inventarios || []).find(i => _inventarioCanonicoRec(i) === invCanonico);
-  const itens = (inventario?.base || []).filter(item => _FK.endereco(item?.endereco) === endereco);
-  const qtd = item => {
-    const bruto = item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ??
-      item?.quantidade_enderecada ?? item?.qtd_enderecada ?? item?.saldo_estoque ?? item?.saldo ??
-      item?.saldo_erp ?? item?.qtd_sistema ?? item?.qtd_estoque ?? item?.estoque_total ??
-      item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde;
-    const n = Number(String(bruto ?? '').replace(',', '.'));
-    return Number.isFinite(n) ? n : 0;
-  };
-  if (itens.length) return itens.reduce((total, item) => total + qtd(item), 0);
-  const snap = Array.isArray(obj?.itens_esperados) ? obj.itens_esperados : [];
-  if (snap.length) return snap.reduce((total, item) => total + qtd(item), 0);
-  const fallback = Number(String(obj?.qtd_esperada ?? '').replace(',', '.'));
-  return Number.isFinite(fallback) ? fallback : null;
-};
+  function getInventarioByCanonical(canonicalId) {
+    return (state().inventarios || []).find(i => inventarioCanonico(i) === canonicalId) || null;
+  }
 
+  function obterNomeProduto(value) {
+    const codigo = texto(value);
+    if (!codigo) return 'Produto nao informado';
 
+    try {
+      const found = G.DTProdutos?.buscarSync?.(codigo);
+      if (found?.encontrado) {
+        return texto(
+          found.nomeProduto ||
+          found.descricao ||
+          found.descricaoProduto ||
+          found.produto_nome ||
+          codigo
+        );
+      }
+    } catch (error) {
+      console.warn('[DivergenciasModule] DTProdutos.buscarSync:', error);
+    }
 
-// Regra autoritativa da visao consolidada por endereco:
-// se uma recontagem concluida totaliza exatamente o total esperado do endereco,
-// o fluxo esta resolvido. Nao reutilizar a qtd_esperada individual da divergencia.
-const _avaliarTotalConsolidadoRec = (obj, totalEsperado) => {
-  // Primeiro usa o motor central. O fallback abaixo protege a tela caso o
-  // runtime ainda não tenha carregado ou retorne nulo, mantendo as mesmas
-  // regras de total consolidado e consenso entre rodadas.
-  const runtime = window.AnalistaDivergenciasRuntime;
-  const peloRuntime = runtime?.avaliarResumo?.(obj, totalEsperado) ||
-    runtime?.avaliarHistorico?.({
-      ...(obj || {}),
+    const p = (state().produtos || []).find(item =>
+      [
+        item.codigo,
+        item.codigo_produto,
+        item.codigoInterno,
+        item.codigo_interno,
+        item.gtin,
+        item.ean,
+        item.dun
+      ].filter(Boolean).map(String).includes(codigo)
+    );
+
+    return texto(p?.descricao || p?.nome || p?.descricao_produto || codigo);
+  }
+
+  function obterQuantidadeEsperadaItem(item) {
+    const raw =
+      item?.quantidade_esperada ??
+      item?.quantidadeEsperada ??
+      item?.qtd_esperada ??
+      item?.qtdEsperada ??
+      item?.quantidade_enderecada ??
+      item?.qtd_enderecada ??
+      item?.saldo_estoque ??
+      item?.saldo ??
+      item?.saldo_erp ??
+      item?.qtd_sistema ??
+      item?.qtd_estoque ??
+      item?.estoque_total ??
+      item?.estoque ??
+      item?.quantidade ??
+      item?.qtd ??
+      item?.qtde;
+
+    return normalizarNumero(raw) ?? 0;
+  }
+
+  function obterItensEsperadosFluxo(obj) {
+    const inv = getInventarioByCanonical(inventarioCanonico(obj));
+    const endereco = enderecoCanonico(obj?.endereco);
+
+    const base = (inv?.base || []).filter(item =>
+      enderecoCanonico(item?.endereco) === endereco
+    );
+
+    if (base.length) return base;
+
+    if (Array.isArray(obj?.itens_esperados) && obj.itens_esperados.length) {
+      return obj.itens_esperados;
+    }
+
+    return [];
+  }
+
+  function obterTotalEsperadoFluxo(obj) {
+    const itens = obterItensEsperadosFluxo(obj);
+    if (itens.length) {
+      return itens.reduce((sum, item) => sum + obterQuantidadeEsperadaItem(item), 0);
+    }
+
+    return normalizarNumero(
+      obj?.qtd_esperada ??
+      obj?.quantidade_esperada ??
+      obj?.qtd_sistema
+    );
+  }
+
+  function obterStatusCanonico(obj) {
+    const status = upper(obj?.status);
+    const statusRec = lower(obj?.status_recontagem);
+
+    if (status === STATUS.PERSISTENTE || statusRec === STATUS_REC.PERSISTENTE) {
+      return STATUS.PERSISTENTE;
+    }
+    if (
+      status === STATUS.RESOLVIDA ||
+      statusRec === STATUS_REC.RESOLVIDA ||
+      statusRec === STATUS_REC.SEM_DIVERGENCIA
+    ) {
+      return STATUS.RESOLVIDA;
+    }
+    if (status === STATUS.CANCELADA || statusRec === STATUS_REC.CANCELADA) {
+      return STATUS.CANCELADA;
+    }
+    if (status === STATUS.EXCLUIDA || statusRec === STATUS_REC.EXCLUIDA) {
+      return STATUS.EXCLUIDA;
+    }
+    if (statusRec === STATUS_REC.AGUARDANDO_ANALISTA) {
+      return STATUS.AGUARDANDO_ANALISTA;
+    }
+    if (
+      status === STATUS.EM_RECONTAGEM ||
+      statusRec === STATUS_REC.PENDENTE ||
+      statusRec === STATUS_REC.EM_ANDAMENTO
+    ) {
+      return STATUS.EM_RECONTAGEM;
+    }
+    return STATUS.ABERTA;
+  }
+
+  function statusPersistencia(statusFluxo) {
+    switch (statusFluxo) {
+      case STATUS.ABERTA:
+        return { status: STATUS.ABERTA, status_recontagem: null };
+      case STATUS.EM_RECONTAGEM:
+        return { status: STATUS.EM_RECONTAGEM, status_recontagem: STATUS_REC.PENDENTE };
+      case STATUS.AGUARDANDO_ANALISTA:
+        return { status: STATUS.ABERTA, status_recontagem: STATUS_REC.AGUARDANDO_ANALISTA };
+      case STATUS.RESOLVIDA:
+        return { status: STATUS.RESOLVIDA, status_recontagem: STATUS_REC.SEM_DIVERGENCIA };
+      case STATUS.PERSISTENTE:
+        return { status: STATUS.PERSISTENTE, status_recontagem: STATUS_REC.PERSISTENTE };
+      case STATUS.CANCELADA:
+        return { status: STATUS.CANCELADA, status_recontagem: STATUS_REC.CANCELADA };
+      case STATUS.EXCLUIDA:
+        return { status: STATUS.EXCLUIDA, status_recontagem: STATUS_REC.EXCLUIDA };
+      default:
+        throw new Error(`Status de fluxo desconhecido: ${statusFluxo}`);
+    }
+  }
+
+  function isRecontagemConcluida(rec) {
+    return (
+      upper(rec?.status) === 'CONCLUIDA' ||
+      lower(rec?.status_recontagem) === STATUS_REC.CONCLUIDA ||
+      Boolean(rec?.recontagem_concluida_em || rec?.concluida_em || rec?.finalizada_em)
+    );
+  }
+
+  function isRecontagemIniciada(rec) {
+    if (G.RecontagemAssignmentPolicy?.foiIniciada) {
+      return Boolean(G.RecontagemAssignmentPolicy.foiIniciada(rec));
+    }
+    return (
+      upper(rec?.status) === 'EM_ANDAMENTO' ||
+      lower(rec?.status_recontagem) === STATUS_REC.EM_ANDAMENTO ||
+      Boolean(rec?.iniciada_em || rec?.recontagem_iniciada_em)
+    );
+  }
+
+  function numeroRodada(rec, fallbackIndex = null) {
+    const explicit = normalizarNumero(
+      rec?.numero_recontagem ??
+      rec?.rodada ??
+      rec?.numero_rodada
+    );
+
+    if (explicit === 1 || explicit === 2) return explicit;
+
+    if (
+      rec?.qtd_terceira != null ||
+      rec?.produto_terceira ||
+      rec?.operador_terceira
+    ) return 2;
+
+    if (
+      rec?.qtd_segunda != null ||
+      rec?.produto_segunda ||
+      rec?.operador_segunda
+    ) return 1;
+
+    return fallbackIndex;
+  }
+
+  function consolidarRodadas(recontagens) {
+    const validas = (recontagens || [])
+      .filter(rec => {
+        const st = upper(rec?.status);
+        const sr = lower(rec?.status_recontagem);
+        return !['CANCELADA', 'EXCLUIDA'].includes(st) &&
+          ![STATUS_REC.CANCELADA, STATUS_REC.EXCLUIDA].includes(sr);
+      })
+      .sort((a, b) => {
+        const na = numeroRodada(a, 999);
+        const nb = numeroRodada(b, 999);
+        return na - nb || -compararMaisRecente(a, b);
+      });
+
+    const porRodada = new Map();
+
+    validas.forEach((rec, index) => {
+      let rodada = numeroRodada(rec, null);
+
+      if (rodada !== 1 && rodada !== 2) {
+        if (!isRecontagemConcluida(rec)) return;
+        rodada = porRodada.has(1) ? 2 : 1;
+      }
+
+      const atual = porRodada.get(rodada);
+      if (!atual || compararMaisRecente(rec, atual) < 0) {
+        porRodada.set(rodada, rec);
+      }
+    });
+
+    return {
+      segunda: porRodada.get(1) || null,
+      terceira: porRodada.get(2) || null,
+      todas: validas
+    };
+  }
+
+  function extrairPrimeiraContagem(fluxoKey, divergencias) {
+    const contagens = (state().contagens || [])
+      .filter(c =>
+        chaveFluxo(c) === fluxoKey &&
+        upper(c.tipo_contagem) !== 'RECONTAGEM' &&
+        !c._excluida &&
+        !['ESTORNADA', 'EXCLUIDA'].includes(upper(c.status))
+      )
+      .sort((a, b) => timestampValue(a.criado_em || a.dataHora || a.timestamp) -
+        timestampValue(b.criado_em || b.dataHora || b.timestamp));
+
+    const primeiraContagem = contagens[0] || null;
+
+    const divComPrimeira = (divergencias || []).find(d =>
+      d.qtd_primeira != null || d.qtd_contada != null || d.quantidade_contada != null
+    ) || divergencias?.[0] || null;
+
+    const origem = divComPrimeira || primeiraContagem || {};
+
+    return {
+      documento: origem,
+      quantidade:
+        origem.qtd_primeira ??
+        origem.qtd_contada ??
+        origem.quantidade_contada ??
+        origem.quantidade ??
+        origem.qtd_caixas ??
+        null,
+      produto:
+        origem.produto_primeira ||
+        origem.produto_contado ||
+        origem.gtin_bipado ||
+        origem.gtin ||
+        origem.codigo_produto ||
+        origem.codigoLido ||
+        origem.produto ||
+        '',
+      operador:
+        origem.operador_primeira ||
+        origem.operador ||
+        origem.operador_nome ||
+        '',
+      data:
+        origem.data_primeira ||
+        origem.criada_em ||
+        origem.criado_em ||
+        origem.dataHora ||
+        origem.timestamp ||
+        ''
+    };
+  }
+
+  function extrairRodada(rec, numero) {
+    if (!rec) {
+      return { documento: null, quantidade: null, produto: '', operador: '', data: '' };
+    }
+
+    const segunda = numero === 2;
+
+    return {
+      documento: rec,
+      quantidade: segunda
+        ? (rec.qtd_segunda ?? rec.qtd_recontagem ?? rec.quantidade_recontagem ?? rec.quantidade)
+        : (rec.qtd_terceira ?? rec.qtd_recontagem ?? rec.quantidade_recontagem ?? rec.quantidade),
+      produto: segunda
+        ? (rec.produto_segunda || rec.produto_recontagem || rec.produto || rec.gtin || '')
+        : (rec.produto_terceira || rec.produto_recontagem || rec.produto || rec.gtin || ''),
+      operador: segunda
+        ? (rec.operador_segunda || rec.operador_recontagem || rec.operador || '')
+        : (rec.operador_terceira || rec.operador_recontagem || rec.operador || ''),
+      data: segunda
+        ? (rec.data_segunda || rec.recontagem_concluida_em || rec.concluida_em || '')
+        : (rec.data_terceira || rec.recontagem_concluida_em || rec.concluida_em || '')
+    };
+  }
+
+  function avaliarFluxo(fluxo, totalEsperado) {
+    const payload = {
+      ...fluxo.principal,
+      qtd_primeira: fluxo.primeira.quantidade,
+      produto_primeira: fluxo.primeira.produto,
+      qtd_segunda: fluxo.segunda.quantidade,
+      produto_segunda: fluxo.segunda.produto,
+      qtd_terceira: fluxo.terceira.quantidade,
+      produto_terceira: fluxo.terceira.produto,
       qtd_esperada: totalEsperado,
       comparacao_somente_quantidade: true,
       fluxo_consolidado_endereco: true
+    };
+
+    const runtime = G.AnalistaDivergenciasRuntime;
+    const result =
+      runtime?.avaliarResumo?.(payload, totalEsperado) ||
+      runtime?.avaliarHistorico?.(payload);
+
+    if (result) return result;
+
+    const primeira = normalizarNumero(fluxo.primeira.quantidade);
+    const segunda = normalizarNumero(fluxo.segunda.quantidade);
+    const terceira = normalizarNumero(fluxo.terceira.quantidade);
+    const esperado = normalizarNumero(totalEsperado);
+
+    const resposta = (estado, referencia, rodada, qtd) => ({
+      estado,
+      referencia,
+      rodada,
+      resultado: qtd == null ? null : { qtd, produto: 'TOTAL_ENDERECO' },
+      esperado,
+      fluxoConsolidado: true
     });
-  if (peloRuntime) return peloRuntime;
 
-  const numero = valor => {
-    if (valor === null || valor === undefined || String(valor).trim() === '') return null;
-    const n = Number(String(valor).replace(',', '.'));
-    return Number.isFinite(n) ? n : null;
-  };
-  const primeira = numero(obj?.qtd_primeira ?? obj?.qtd_contada);
-  const segunda = numero(obj?.qtd_segunda ?? obj?.qtd_recontagem);
-  const terceira = numero(obj?.qtd_terceira);
-  const esperado = numero(totalEsperado ?? obj?.qtd_esperada);
-  const resposta = (estado, referencia, rodada, qtd) => ({
-    estado, referencia, rodada,
-    resultado: qtd == null ? null : { qtd, produto:'TOTAL_ENDERECO' },
-    esperado, fluxoConsolidado:true
-  });
+    if (primeira != null && esperado != null && quantidadesIguais(primeira, esperado)) {
+      return resposta(STATUS.RESOLVIDA, 'OK_PRIMEIRA_TOTAL_ENDERECO', 1, primeira);
+    }
 
-  if (primeira != null && esperado != null && primeira === esperado)
-    return resposta('RESOLVIDA','OK_PRIMEIRA_TOTAL_ENDERECO',1,primeira);
-  if (segunda != null) {
-    if (esperado != null && segunda === esperado)
-      return resposta('RESOLVIDA','OK_SEGUNDA_TOTAL_ENDERECO',2,segunda);
-    if (primeira != null && segunda === primeira)
-      return resposta('RESOLVIDA','OK_SEGUNDA_PRIMEIRA_TOTAL_ENDERECO',2,segunda);
+    if (segunda != null) {
+      if (esperado != null && quantidadesIguais(segunda, esperado)) {
+        return resposta(STATUS.RESOLVIDA, 'OK_SEGUNDA_TOTAL_ENDERECO', 2, segunda);
+      }
+      if (primeira != null && quantidadesIguais(segunda, primeira)) {
+        return resposta(STATUS.RESOLVIDA, 'OK_SEGUNDA_PRIMEIRA_TOTAL_ENDERECO', 2, segunda);
+      }
+    }
+
+    if (terceira != null) {
+      if (esperado != null && quantidadesIguais(terceira, esperado)) {
+        return resposta(STATUS.RESOLVIDA, 'OK_TERCEIRA_TOTAL_ENDERECO', 3, terceira);
+      }
+      if (primeira != null && quantidadesIguais(terceira, primeira)) {
+        return resposta(STATUS.RESOLVIDA, 'OK_TERCEIRA_PRIMEIRA_TOTAL_ENDERECO', 3, terceira);
+      }
+      if (segunda != null && quantidadesIguais(terceira, segunda)) {
+        return resposta(STATUS.RESOLVIDA, 'OK_TERCEIRA_SEGUNDA_TOTAL_ENDERECO', 3, terceira);
+      }
+      return resposta(STATUS.PERSISTENTE, 'TERCEIRA_SEM_CONSENSO_TOTAL_ENDERECO', 3, terceira);
+    }
+
+    return resposta(
+      STATUS.AGUARDANDO_ANALISTA,
+      null,
+      segunda != null ? 2 : 1,
+      segunda ?? primeira
+    );
   }
-  if (terceira != null) {
-    if (esperado != null && terceira === esperado)
-      return resposta('RESOLVIDA','OK_TERCEIRA_TOTAL_ENDERECO',3,terceira);
-    if (primeira != null && terceira === primeira)
-      return resposta('RESOLVIDA','OK_TERCEIRA_PRIMEIRA_TOTAL_ENDERECO',3,terceira);
-    if (segunda != null && terceira === segunda)
-      return resposta('RESOLVIDA','OK_TERCEIRA_SEGUNDA_TOTAL_ENDERECO',3,terceira);
-    return resposta('PERSISTENTE','TERCEIRA_SEM_CONSENSO_TOTAL_ENDERECO',3,terceira);
-  }
-  return resposta('AGUARDANDO_ANALISTA',null,segunda != null ? 2 : 1,segunda ?? primeira);
-};
 
-const _chaveEndereco = obj => {
-  const x = Object.assign({}, obj || {});
-  // Nao reutiliza chave_fluxo antiga: ela pode ter sido gravada sem produto.
-  delete x.chave_fluxo;
-  return _FK.chave(x, state().inventarios);
-};
-// ───────────────────────────────────────────────────────────────────
-//  16. RENDERIZAÇÃO — DIVERGÊNCIAS
-// ───────────────────────────────────────────────────────────────────
+  function escolherDocumentoPrincipal(divergencias, recontagens) {
+    const candidatos = [...(divergencias || [])].sort((a, b) => {
+      const sa = obterStatusCanonico(a);
+      const sb = obterStatusCanonico(b);
 
-function marcarDivergenciaResolvida(divId) {
-  const div = _obterDivSelecionada(divId);
-  if (!div) return;
-  showConfirm(`Marcar a divergência do endereço ${escHTML(div.endereco)} como RESOLVIDA?`, () => _marcarDivResolvida(divId), { title: '✅ Resolver divergência', icon: '✅', okLabel: 'Marcar resolvida', okClass: 'btn-success' }); return;
-}
+      const peso = status => {
+        if (status === STATUS.AGUARDANDO_ANALISTA) return 50;
+        if (status === STATUS.EM_RECONTAGEM) return 40;
+        if (status === STATUS.ABERTA) return 30;
+        if (status === STATUS.PERSISTENTE) return 20;
+        if (status === STATUS.RESOLVIDA) return 10;
+        return 0;
+      };
 
-function _marcarDivResolvida(divId) {
-  div.status        = 'RESOLVIDA';
-  div.resolvida_em  = new Date().toISOString();
-  div.resolvida_por = _currentAnalistaUser?.email || 'Analista';
-  // Marcar recontagem associada também
-  const rec = state().recontagens.find(r =>
-    r.divergencia_id === divId ||
-    (r.endereco === div.endereco && r.inventario_id === div.inventario_id)
-  );
-  if (rec) {
-    rec.status             = 'CONCLUIDA';
-    rec.status_recontagem  = 'concluida';  // ← campo que o coletor usa para filtrar
-    rec.concluida_em       = div.resolvida_em;
-    rec.resolvida_por      = div.resolvida_por;
-    // ✅ Persistir recontagem no Firestore
-    fsSalvarRecontagem(rec);
-  }
-  saveAll();
-  // ✅ Persistir divergência atualizada no Firestore
-  fsSalvarDivergencia(div);
-  renderDivergencias();
-  renderRecontagens();
-  atualizarBadgesNav();
-  logSistema('DIVERGENCIA', `Divergência ${divId} marcada como resolvida pelo analista`, { divId, endereco: div.endereco, inventario_id: div.inventario_id });
-  showToast('✅ Divergência marcada como resolvida!', 's');
-}
-
-// ── Estado de seleção de divergências ──────────────────────────────────────
-let _divSelecionadas = new Set();
-let _divDadosFiltradosExport = [];
-let _recDadosFiltradosExport = [];
-// Mantém a mesma visão consolidada usada pela tabela. Sem isso, o clique no
-// checkbox voltava ao documento bruto de divergência, que podia estar com flags
-// antigas de encerramento mesmo quando o histórico atual ainda era divergente.
-let _divSelecionaveisRender = new Map();
-
-function _obterDivSelecionada(id) {
-  return _divSelecionaveisRender.get(String(id)) ||
-    state().divergencias.find(d => String(d.id) === String(id)) || null;
-}
-
-function divPodeSelecionar(div) {
-  if (!div) return false;
-
-  const status = String(div.status || '').trim().toUpperCase();
-  const statusRec = String(div.status_recontagem || '').trim().toLowerCase();
-
-  // A mesma regra deve valer no checkbox, no modal e na confirmação.
-  // Bloquear somente quando o fluxo estiver realmente encerrado.
-  if (['RESOLVIDA','PERSISTENTE','CANCELADA','EXCLUIDA'].includes(status)) return false;
-  if (['resolvida','sem_divergencia','cancelada','persistente','excluida'].includes(statusRec)) return false;
-  if (div.qtd_terceira != null) return false;
-
-  const recs = (state().recontagens || []).filter(r => {
-    const mesmoId = String(r.divergencia_id || '') === String(div.id || '');
-    const mesmaAtividade = _FK.mesmo(r, div, state().inventarios);
-    if (!mesmoId && !mesmaAtividade) return false;
-    const st = String(r.status || '').toUpperCase();
-    const sr = String(r.status_recontagem || '').toLowerCase();
-    return !['CANCELADA','EXCLUIDA'].includes(st) && !['cancelada','excluida'].includes(sr);
-  });
-
-  // Uma tarefa atribuída pode ser selecionada novamente enquanto ainda não
-  // tiver sido iniciada no coletor. Nesse caso, a confirmação apenas troca o
-  // responsável na mesma tarefa. Depois do início, a troca fica bloqueada.
-  const pendenteAtribuidaIniciada = recs.some(r => {
-    const st = String(r.status || '').toUpperCase();
-    const sr = String(r.status_recontagem || '').toLowerCase();
-    const ativa = ['PENDENTE','EM_ANDAMENTO'].includes(st) || ['pendente','em_andamento'].includes(sr);
-    const atribuida = Boolean(r.operador || r.operador_responsavel);
-    const iniciou = globalThis.RecontagemAssignmentPolicy?.foiIniciada
-      ? globalThis.RecontagemAssignmentPolicy.foiIniciada(r)
-      : (st === 'EM_ANDAMENTO' || sr === 'em_andamento' || Boolean(r.iniciada_em || r.recontagem_iniciada_em));
-    return ativa && atribuida && iniciou;
-  });
-  if (pendenteAtribuidaIniciada) return false;
-
-  // Aguardando analista significa que a rodada anterior terminou e pode ser
-  // enviada novamente, desde que ainda não exista terceira contagem.
-  if (statusRec === 'aguardando_analista') return true;
-
-  // Conta rodadas reais, eliminando documentos duplicados da mesma rodada.
-  const rodadasConcluidas = new Set();
-  recs.forEach(r => {
-    const st = String(r.status || '').toUpperCase();
-    const sr = String(r.status_recontagem || '').toLowerCase();
-    const concluida = st === 'CONCLUIDA' || sr === 'concluida' ||
-      Boolean(r.recontagem_concluida_em || r.concluida_em || r.finalizada_em);
-    if (concluida) rodadasConcluidas.add(Number(r.numero_recontagem || 1));
-  });
-  if (rodadasConcluidas.size >= 2) return false;
-
-  return ['ABERTA','EM_RECONTAGEM','DIVERGENTE'].includes(status) ||
-    ['','pendente','aguardando_recontagem'].includes(statusRec);
-}
-
-function divStatusBadge(status) {
-  switch (String(status || '').toUpperCase()) {
-    case 'ABERTA':        return 'b-red';
-    case 'EM_RECONTAGEM': return 'b-orange';
-    case 'RESOLVIDA':     return 'b-green';
-    case 'PERSISTENTE':   return 'b-gray';
-    default:              return 'b-gray';
-  }
-}
-
-
-function divAtualizarBarraSel() {
-  const bar = document.getElementById('div-sel-bar');
-  const cnt = document.getElementById('div-sel-count');
-  if (!bar) return;
-  if (_divSelecionadas.size > 0) {
-    bar.style.display = 'flex';
-    cnt.textContent = `${_divSelecionadas.size} endereço${_divSelecionadas.size !== 1 ? 's' : ''} selecionado${_divSelecionadas.size !== 1 ? 's' : ''}`;
-  } else {
-    bar.style.display = 'none';
-  }
-}
-
-function divToggleSel(id, checked) {
-  const div = _obterDivSelecionada(id);
-  if (checked && divPodeSelecionar(div)) _divSelecionadas.add(id);
-  else _divSelecionadas.delete(id);
-  divAtualizarBarraSel();
-  // Atualizar checkbox master
-  const chkAll = document.getElementById('div-chk-all');
-  if (chkAll) {
-    const total = document.querySelectorAll('.div-row-chk:not(:disabled)').length;
-    chkAll.indeterminate = _divSelecionadas.size > 0 && _divSelecionadas.size < total;
-    chkAll.checked = total > 0 && _divSelecionadas.size === total;
-  }
-}
-
-function divToggleTodos(checked) {
-  document.querySelectorAll('.div-row-chk:not(:disabled)').forEach(chk => {
-    chk.checked = checked;
-    const id = chk.dataset.id;
-    if (checked) _divSelecionadas.add(id);
-    else _divSelecionadas.delete(id);
-  });
-  divAtualizarBarraSel();
-}
-
-function divDeselecionarTodos() {
-  _divSelecionadas.clear();
-  document.querySelectorAll('.div-row-chk').forEach(c => c.checked = false);
-  const chkAll = document.getElementById('div-chk-all');
-  if (chkAll) { chkAll.checked = false; chkAll.indeterminate = false; }
-  divAtualizarBarraSel();
-}
-
-function divAtribuirRapido(divId) {
-  const div = state().divergencias.find(d => d.id === divId);
-  const recontagensValidas = state().recontagens.filter(r =>
-    r.divergencia_id === divId &&
-    !['CANCELADA','EXCLUIDA'].includes(String(r.status || '').toUpperCase()) &&
-    !['cancelada','excluida'].includes(String(r.status_recontagem || '').toLowerCase())
-  );
-  const concluidas = recontagensValidas.filter(r =>
-    String(r.status || '').toUpperCase() === 'CONCLUIDA' ||
-    String(r.status_recontagem || '').toLowerCase() === 'concluida' ||
-    Boolean(r.recontagem_concluida_em || r.concluida_em || r.finalizada_em)
-  ).length;
-  if (!div || !divPodeSelecionar(div) || div.qtd_terceira != null || concluidas >= 2) {
-    showToast('🔒 Esta atividade já atingiu o limite de contagens ou está encerrada.', 'e');
-    return;
-  }
-  _divSelecionadas.clear();
-  _divSelecionadas.add(divId);
-  divAtualizarBarraSel();
-  abrirAtribuirRecontagem();
-}
-
-// Atribuir a partir da aba Recontagens (recebe rec.id, localiza divergência correspondente)
-function divAtribuirPorRec(recId) {
-  const rec = state().recontagens.find(r => r.id === recId);
-  if (!rec) { showToast('Recontagem não encontrada', 'e'); return; }
-  // Encontrar ou criar divergência correspondente
-  let divId = rec.divergencia_id;
-  if (!divId) {
-    // Fallback: usar o id da recontagem como referência temporária
-    divId = recId;
-  }
-  _divSelecionadas.clear();
-  if (divId && state().divergencias.find(d => d.id === divId)) {
-    _divSelecionadas.add(divId);
-  } else {
-    // Sem divergência vinculada: atribuir direto na recontagem
-    _recAtribuirDireto = rec;
-    abrirAtribuirRecontagemDireto(rec);
-    return;
-  }
-  divAtualizarBarraSel();
-  abrirAtribuirRecontagem();
-}
-
-// Atribuição direta quando não há divergência vinculada (caso edge)
-let _recAtribuirDireto = null;
-async function abrirAtribuirRecontagemDireto(rec) {
-  const resumo = document.getElementById('atrib-resumo');
-  if (resumo) {
-    resumo.innerHTML = `<div style="font-weight:700;margin-bottom:8px;color:var(--text)">📍 Recontagem: <span class="badge b-orange" style="font-size:.72rem">${rec.endereco}</span></div>
-      <div style="font-size:.78rem;color:var(--muted)">${rec.produto}</div>`;
-  }
-  openModal('modal-atribuir-recontagem');
-  document.getElementById('atrib-obs').value = '';
-  await divPopularSelectOperadores('atrib-operador');
-}
-
-// ── Filtros rápidos ─────────────────────────────────────────────────────────
-let _divFiltroRapidoAtivo = '';
-function divFiltroRapido(tipo) {
-  _divFiltroRapidoAtivo = _divFiltroRapidoAtivo === tipo ? '' : tipo;
-  // Atualizar visual dos botões
-  ['nao_atribuidas','minhas','pendentes','aguardando_analista','concluidas'].forEach(t => {
-    const btn = document.getElementById('fq-' + t);
-    if (btn) btn.style.background = _divFiltroRapidoAtivo === t ? 'var(--orange)' : '';
-    if (btn) btn.style.color = _divFiltroRapidoAtivo === t ? '#fff' : '';
-    if (btn) btn.style.borderColor = _divFiltroRapidoAtivo === t ? 'var(--orange)' : '';
-  });
-  if (tipo === 'limpar') {
-    _divFiltroRapidoAtivo = '';
-    // Limpar todos os filtros
-    ['div-busca','div-frua','div-fnivel','div-fsetor','div-fproduto','div-foperador','div-fstatus-rec','div-fdata','div-ftipo','div-fstatus','div-ford','div-sel-inv'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.value = '';
+      return peso(sb) - peso(sa) || compararMaisRecente(a, b);
     });
-  }
-  renderDivergencias();
-}
 
-// ── Popula o select de operadores a partir da lista carregada do Firestore ──
-async function divPopularSelectOperadores(selectId) {
-  const sel = document.getElementById(selectId);
-  if (!sel) return;
-  const cur = sel.value;
+    if (candidatos.length) return candidatos[0];
 
-  // Mostrar loading
-  sel.innerHTML = `<option value="">⏳ Carregando operadores...</option>`;
-  sel.disabled = true;
-
-  let ops = [];
-
-  // 1. Tentar usar _opListaCompleta já carregada
-  if (typeof _opListaCompleta !== 'undefined' && _opListaCompleta.length) {
-    ops = _opListaCompleta
-      .filter(o => o.ativo !== false && o.tipo !== 'analista')
-      .map(o => ({ id: o.id, nome: o.nome, cargo: o.cargo }));
+    return [...(recontagens || [])].sort(compararMaisRecente)[0] || null;
   }
 
-  // 2. Se vazia, buscar direto do Firestore
-  if (!ops.length && typeof FS_AN !== 'undefined') {
-    try {
-      const snap = await FS_AN.collection('dt_operadores')
-        .where('ativo', '==', true)
-        .orderBy('nome')
-        .get();
-      if (!snap.empty) {
-        ops = snap.docs.map(d => {
-          const data = d.data();
-          return { id: d.id, nome: data.nome, cargo: data.cargo };
-        }).filter(o => o.nome);
-        // Atualiza cache
-        if (typeof _opListaCompleta !== 'undefined') {
-          snap.docs.forEach(d => {
-            const existing = _opListaCompleta.find(x => x.id === d.id);
-            if (!existing) _opListaCompleta.push({ id: d.id, ...d.data() });
-          });
+  /* ------------------------------------------------------------------------
+   * PROJECAO CANONICA
+   * --------------------------------------------------------------------- */
+
+  function construirFluxosCanonicos() {
+    const grupos = new Map();
+
+    const adicionar = (obj, tipo) => {
+      const key = chaveFluxo(obj);
+      if (!key) return;
+
+      const group = grupos.get(key) || {
+        chaveFluxo: key,
+        divergencias: [],
+        recontagens: []
+      };
+
+      group[tipo].push(obj);
+      grupos.set(key, group);
+    };
+
+    (state().divergencias || []).forEach(d => adicionar(d, 'divergencias'));
+    (state().recontagens || []).forEach(r => adicionar(r, 'recontagens'));
+
+    return [...grupos.values()].map(group => {
+      const principal = escolherDocumentoPrincipal(group.divergencias, group.recontagens);
+      if (!principal) return null;
+
+      const rodadas = consolidarRodadas(group.recontagens);
+      const primeira = extrairPrimeiraContagem(group.chaveFluxo, group.divergencias);
+      const segunda = extrairRodada(rodadas.segunda, 2);
+      const terceira = extrairRodada(rodadas.terceira, 3);
+
+      const inventarioId = inventarioCanonico(principal);
+      const inventario = getInventarioByCanonical(inventarioId);
+      const totalEsperado = obterTotalEsperadoFluxo(principal);
+      const avaliacao = avaliarFluxo(
+        { principal, primeira, segunda, terceira },
+        totalEsperado
+      );
+
+      const statusPersistido = obterStatusCanonico(principal);
+      const statusCalculado = avaliacao?.estado || statusPersistido;
+
+      const tarefaAtiva = [...group.recontagens]
+        .filter(r => {
+          const st = upper(r.status);
+          const sr = lower(r.status_recontagem);
+          return (
+            ['PENDENTE', 'EM_ANDAMENTO'].includes(st) ||
+            [STATUS_REC.PENDENTE, STATUS_REC.EM_ANDAMENTO].includes(sr)
+          ) && !REC_ENCERRADOS.has(sr);
+        })
+        .sort(compararMaisRecente)[0] || null;
+
+      const motivos = [...new Set(
+        group.divergencias.flatMap(d =>
+          Array.isArray(d.motivos_divergencia)
+            ? d.motivos_divergencia
+            : [d.tipo_divergencia]
+        ).filter(Boolean)
+      )];
+
+      const tipoDivergencia = texto(
+        principal.tipo_divergencia ||
+        motivos[0] ||
+        'DIVERGENCIA_QUANTIDADE'
+      );
+
+      const diferenca = (
+        primeira.quantidade != null && totalEsperado != null
+      ) ? normalizarNumero(primeira.quantidade) - normalizarNumero(totalEsperado) : null;
+
+      const statusEfetivo = statusCalculado;
+      const statusRecEfetivo = statusPersistencia(statusEfetivo).status_recontagem;
+
+      const inconsistencias = [];
+
+      if (statusPersistido !== statusCalculado) {
+        inconsistencias.push({
+          codigo: 'STATUS_DIVERGENTE',
+          persistido: statusPersistido,
+          calculado: statusCalculado
+        });
+      }
+
+      if (!group.divergencias.length && group.recontagens.length) {
+        inconsistencias.push({ codigo: 'RECONTAGEM_ORFA' });
+      }
+
+      if (group.divergencias.length > 1) {
+        const statuses = new Set(group.divergencias.map(obterStatusCanonico));
+        if (statuses.size > 1) {
+          inconsistencias.push({ codigo: 'STATUS_DIVERGENCIAS_INCONSISTENTE' });
         }
       }
-    } catch(e) {
-      console.warn('[divPopularSelectOperadores] Firestore:', e.message);
+
+      return {
+        chaveFluxo: group.chaveFluxo,
+        domId: chaveDomId('fluxo', group.chaveFluxo),
+        lojaId: lojaCanonica(principal),
+        inventarioId,
+        inventarioNome: texto(
+          principal.inventario_nome ||
+          inventario?.nome ||
+          inventario?.codigo ||
+          inventarioId
+        ),
+        endereco: enderecoCanonico(principal.endereco),
+        rua: texto(G.getEnderecoInfo?.(principal.endereco)?.rua || '—'),
+        nivel: texto(
+          G.getEnderecoInfo?.(principal.endereco)?.nivel ||
+          G.getEnderecoInfo?.(principal.endereco)?.andar ||
+          ''
+        ),
+        setor: texto(
+          G.getEnderecoInfo?.(principal.endereco)?.setor ||
+          G.getEnderecoInfo?.(principal.endereco)?.local ||
+          G.getEnderecoInfo?.(principal.endereco)?.nome_local ||
+          ''
+        ),
+        produto: texto(principal.produto || primeira.produto),
+        descricao: texto(
+          principal.descricao ||
+          principal.descricao_produto ||
+          obterNomeProduto(principal.produto || primeira.produto)
+        ),
+        tipoDivergencia,
+        motivos,
+        diferenca,
+        itensEsperados: obterItensEsperadosFluxo(principal),
+        totalEsperado,
+        primeira,
+        segunda,
+        terceira,
+        vezesContado:
+          (primeira.quantidade != null ? 1 : 0) +
+          (segunda.quantidade != null ? 1 : 0) +
+          (terceira.quantidade != null ? 1 : 0),
+        avaliacao,
+        statusPersistido,
+        status: statusEfetivo,
+        statusRecontagem: statusRecEfetivo,
+        resolvida: statusEfetivo === STATUS.RESOLVIDA,
+        persistente: statusEfetivo === STATUS.PERSISTENTE,
+        encerrada: ENCERRADOS.has(statusEfetivo),
+        tarefaAtiva,
+        operadorResponsavel: texto(
+          tarefaAtiva?.operador_responsavel ||
+          tarefaAtiva?.operador_nome ||
+          tarefaAtiva?.operador ||
+          principal.operador_responsavel ||
+          ''
+        ),
+        operadorId: texto(
+          tarefaAtiva?.operador_id ||
+          tarefaAtiva?.operador_uid ||
+          principal.operador_id ||
+          principal.operador_uid ||
+          ''
+        ),
+        atribuidoEm: tarefaAtiva?.atribuido_em || principal.atribuido_em || '',
+        atribuidoPor: texto(
+          tarefaAtiva?.atribuido_por ||
+          principal.atribuido_por ||
+          ''
+        ),
+        executadoPor: texto(
+          terceira.operador ||
+          segunda.operador ||
+          principal.operador_recontagem ||
+          ''
+        ),
+        executadoEm:
+          terceira.data ||
+          segunda.data ||
+          principal.recontagem_concluida_em ||
+          '',
+        criadaEm: principal.criada_em || principal.created_at || '',
+        divergenciaIds: group.divergencias.map(d => texto(d.id)).filter(Boolean),
+        recontagemIds: group.recontagens.map(r => texto(r.id)).filter(Boolean),
+        documentosDivergencia: group.divergencias,
+        documentosRecontagem: group.recontagens,
+        principal,
+        inconsistente: inconsistencias.length > 0,
+        inconsistencias,
+        bloqueadaParaEdicao:
+          inconsistencias.some(i => i.codigo === 'RECONTAGEM_ORFA')
+      };
+    }).filter(Boolean);
+  }
+
+  function podeSelecionarFluxo(fluxo) {
+    if (!fluxo || fluxo.bloqueadaParaEdicao || fluxo.encerrada) return false;
+    if (fluxo.terceira.quantidade != null) return false;
+
+    const ativaIniciada = fluxo.documentosRecontagem.some(rec => {
+      const st = upper(rec.status);
+      const sr = lower(rec.status_recontagem);
+      const ativa =
+        ['PENDENTE', 'EM_ANDAMENTO'].includes(st) ||
+        [STATUS_REC.PENDENTE, STATUS_REC.EM_ANDAMENTO].includes(sr);
+
+      const atribuida = Boolean(
+        rec.operador_id ||
+        rec.operador_uid ||
+        rec.operador_responsavel ||
+        rec.operador
+      );
+
+      return ativa && atribuida && isRecontagemIniciada(rec);
+    });
+
+    if (ativaIniciada) return false;
+
+    const concluidas = new Set();
+    fluxo.documentosRecontagem.forEach(rec => {
+      if (!isRecontagemConcluida(rec)) return;
+      const rodada = numeroRodada(rec, null);
+      if (rodada === 1 || rodada === 2) concluidas.add(rodada);
+    });
+
+    if (concluidas.size >= 2) return false;
+
+    return [
+      STATUS.ABERTA,
+      STATUS.EM_RECONTAGEM,
+      STATUS.AGUARDANDO_ANALISTA
+    ].includes(fluxo.status);
+  }
+
+  function aplicarFiltrosDivergencias(fluxos) {
+    const value = id => texto(document.getElementById(id)?.value);
+    const busca = lower(value('div-busca'));
+    const fInv = value('div-sel-inv');
+    const fStatus = value('div-fstatus');
+    const fTipo = value('div-ftipo');
+    const fRua = value('div-frua');
+    const fNivel = value('div-fnivel');
+    const fSetor = value('div-fsetor');
+    const fProduto = value('div-fproduto');
+    const fOperador = value('div-foperador');
+    const fStatusRec = value('div-fstatus-rec');
+    const fData = value('div-fdata');
+    const ford = value('div-ford');
+
+    let result = fluxos.slice();
+
+    if (fInv) result = result.filter(f => f.inventarioId === fInv);
+    if (fStatus) result = result.filter(f => f.status === fStatus);
+    if (fRua) result = result.filter(f => f.rua === fRua);
+    if (fNivel) result = result.filter(f => f.nivel === fNivel);
+    if (fSetor) result = result.filter(f => f.setor === fSetor);
+    if (fProduto) result = result.filter(f => f.produto === fProduto);
+    if (fOperador) result = result.filter(f =>
+      f.operadorResponsavel === fOperador ||
+      f.primeira.operador === fOperador ||
+      f.segunda.operador === fOperador ||
+      f.terceira.operador === fOperador
+    );
+
+    if (fTipo === 'FALTA') result = result.filter(f => f.diferenca != null && f.diferenca < 0);
+    else if (fTipo === 'SOBRA') result = result.filter(f => f.diferenca != null && f.diferenca > 0);
+    else if (fTipo) result = result.filter(f => f.tipoDivergencia === fTipo);
+
+    if (fStatusRec === 'nao_atribuida') {
+      result = result.filter(f => !f.operadorResponsavel);
+    } else if (fStatusRec) {
+      result = result.filter(f => f.statusRecontagem === fStatusRec);
+    }
+
+    if (fData) {
+      const now = new Date();
+      result = result.filter(f => {
+        const dt = new Date(f.criadaEm);
+        if (Number.isNaN(dt.getTime())) return false;
+        if (fData === 'hoje') return dt.toDateString() === now.toDateString();
+        if (fData === '7d') return now - dt <= 7 * 86400000;
+        if (fData === '30d') return now - dt <= 30 * 86400000;
+        return true;
+      });
+    }
+
+    if (filtroRapidoAtivo === 'nao_atribuidas') {
+      result = result.filter(f => !f.operadorResponsavel);
+    } else if (filtroRapidoAtivo === 'minhas') {
+      const me = obterUsuarioAtual();
+      result = result.filter(f =>
+        f.atribuidoPor === me.nome ||
+        f.atribuidoPor === me.email ||
+        f.principal?.atribuido_por_uid === me.uid
+      );
+    } else if (filtroRapidoAtivo === 'pendentes') {
+      result = result.filter(f => f.statusRecontagem === STATUS_REC.PENDENTE);
+    } else if (filtroRapidoAtivo === 'aguardando_analista') {
+      result = result.filter(f => f.status === STATUS.AGUARDANDO_ANALISTA);
+    } else if (filtroRapidoAtivo === 'concluidas') {
+      result = result.filter(f => f.encerrada);
+    }
+
+    if (busca) {
+      result = result.filter(f =>
+        [
+          f.endereco,
+          f.produto,
+          f.descricao,
+          f.inventarioNome,
+          f.operadorResponsavel,
+          f.primeira.operador,
+          f.segunda.operador,
+          f.terceira.operador
+        ].some(item => lower(item).includes(busca))
+      );
+    }
+
+    if (ford === 'maior_diff') {
+      result.sort((a, b) => Math.abs(b.diferenca ?? 0) - Math.abs(a.diferenca ?? 0));
+    } else if (ford === 'menor_diff') {
+      result.sort((a, b) => Math.abs(a.diferenca ?? 0) - Math.abs(b.diferenca ?? 0));
+    } else if (ford === 'endereco') {
+      result.sort((a, b) => a.endereco.localeCompare(b.endereco, 'pt-BR'));
+    } else {
+      result.sort((a, b) => timestampValue(b.criadaEm) - timestampValue(a.criadaEm));
+    }
+
+    return result;
+  }
+
+  function aplicarFiltrosRecontagens(fluxos) {
+    const value = id => texto(document.getElementById(id)?.value);
+    const busca = lower(value('rec-busca'));
+    const fInv = value('rec-sel-inv');
+    const fStatus = value('rec-fstatus');
+    const fStatusRec = value('rec-fstatus-rec');
+    const fOperador = value('rec-foperador');
+    const fRua = value('rec-frua');
+    const ford = value('rec-ford');
+
+    let result = fluxos.filter(f =>
+      ![STATUS.RESOLVIDA, STATUS.CANCELADA, STATUS.EXCLUIDA].includes(f.status)
+    );
+
+    if (fInv) result = result.filter(f => f.inventarioId === fInv);
+    if (fStatus) result = result.filter(f => f.status === fStatus);
+    if (fRua) result = result.filter(f => f.rua === fRua);
+
+    if (fStatusRec === 'nao_atribuida') {
+      result = result.filter(f => !f.operadorResponsavel);
+    } else if (fStatusRec) {
+      result = result.filter(f => f.statusRecontagem === fStatusRec);
+    }
+
+    if (fOperador) {
+      result = result.filter(f =>
+        f.operadorResponsavel === fOperador ||
+        f.executadoPor === fOperador
+      );
+    }
+
+    if (busca) {
+      result = result.filter(f =>
+        [
+          f.endereco,
+          f.produto,
+          f.descricao,
+          f.inventarioNome,
+          f.operadorResponsavel,
+          f.executadoPor
+        ].some(item => lower(item).includes(busca))
+      );
+    }
+
+    if (ford === 'maior_diff') {
+      result.sort((a, b) => Math.abs(b.diferenca ?? 0) - Math.abs(a.diferenca ?? 0));
+    } else if (ford === 'endereco') {
+      result.sort((a, b) => a.endereco.localeCompare(b.endereco, 'pt-BR'));
+    } else if (ford === 'atribuicao') {
+      result.sort((a, b) => timestampValue(b.atribuidoEm) - timestampValue(a.atribuidoEm));
+    } else {
+      result.sort((a, b) => timestampValue(b.criadaEm) - timestampValue(a.criadaEm));
+    }
+
+    return result;
+  }
+
+  /* ------------------------------------------------------------------------
+   * FIRESTORE / SERVICOS
+   * --------------------------------------------------------------------- */
+
+  function firestoreDb() {
+    if (G.FS_AN?.runTransaction) return G.FS_AN;
+    if (G.firebase?.firestore) return G.firebase.firestore();
+    return null;
+  }
+
+  function serverTimestamp() {
+    return (
+      G.firebase?.firestore?.FieldValue?.serverTimestamp?.() ||
+      new Date().toISOString()
+    );
+  }
+
+  function increment(value = 1) {
+    return G.firebase?.firestore?.FieldValue?.increment?.(value) ?? value;
+  }
+
+  function divergenciaRef(id) {
+    const db = firestoreDb();
+    return db?.collection?.('dt_divergencias')?.doc?.(id) || null;
+  }
+
+  function recontagemRef(id) {
+    const db = firestoreDb();
+    return db?.collection?.('dt_recontagens')?.doc?.(id) || null;
+  }
+
+  async function executarOperacao(chave, callback) {
+    if (operacoesEmAndamento.has(chave)) {
+      throw new Error('Esta atividade ja esta sendo atualizada.');
+    }
+
+    operacoesEmAndamento.add(chave);
+    try {
+      return await callback();
+    } finally {
+      operacoesEmAndamento.delete(chave);
     }
   }
 
-  // 3. Fallback: operadores únicos das contagens locais
-  if (!ops.length) {
-    const nomes = [...new Set([
-      ...state().contagens.map(c => c.operador),
-      ...state().recontagens.map(r => r.operador),
-    ].filter(Boolean))].sort();
-    ops = nomes.map(n => ({ id: n, nome: n }));
-  }
-
-  sel.disabled = false;
-
-  if (!ops.length) {
-    sel.innerHTML = `<option value="">⚠️ Nenhum operador cadastrado</option>`;
-    return;
-  }
-
-  sel.innerHTML = `<option value="">Selecione o operador...</option>` +
-    ops.map(o => `<option value="${o.nome || o.id}" ${(o.nome||o.id)===cur?'selected':''}>${o.nome}${o.cargo ? ` — ${o.cargo}` : ''}</option>`).join('');
-  if (cur) sel.value = cur;
-}
-
-// ── Abrir modal de atribuição ────────────────────────────────────────────────
-async function abrirAtribuirRecontagem() {
-  _divSelecionadas = new Set([..._divSelecionadas].filter(id =>
-    divPodeSelecionar(_obterDivSelecionada(id))
-  ));
-  divAtualizarBarraSel();
-  if (!_divSelecionadas.size) { showToast('Selecione pelo menos um endereço', 'w'); return; }
-
-  // Resumo dos endereços selecionados
-  const resumo = document.getElementById('atrib-resumo');
-  if (resumo) {
-    const lista = [..._divSelecionadas].map(id => {
-      const d = _obterDivSelecionada(id);
-      return d ? `<span class="badge b-orange" style="font-size:.72rem">${escHTML(d.endereco)}</span>` : '';
-    }).join(' ');
-    resumo.innerHTML = `<div style="font-weight:700;margin-bottom:8px;color:var(--text)">📍 ${_divSelecionadas.size} endereço${_divSelecionadas.size!==1?'s':''} selecionado${_divSelecionadas.size!==1?'s':''}:</div><div style="display:flex;flex-wrap:wrap;gap:4px">${lista}</div>`;
-  }
-
-  // Abrir modal primeiro para feedback visual imediato
-  openModal('modal-atribuir-recontagem');
-
-  const obs = document.getElementById('atrib-obs');
-  if (obs) obs.value = '';
-
-  // Popular operadores de forma assíncrona (pode buscar do Firestore)
-  await divPopularSelectOperadores('atrib-operador');
-}
-
-// ── Confirmar atribuição ──────────────────────────────────────────────────────
-function confirmarAtribuicao() {
-  const operador = document.getElementById('atrib-operador')?.value?.trim();
-  const obs      = document.getElementById('atrib-obs')?.value?.trim();
-  if (!operador) { showToast('Selecione um operador', 'e'); return; }
-
-  const agora    = new Date().toISOString();
-  const atribPor = _currentAnalistaUser?.displayName || _currentAnalistaUser?.email || 'Analista';
-  let count = 0;
-
-  // Caso a linha de recontagem nao tenha divergencia vinculada, atualiza a
-  // propria tarefa em vez de fechar o modal informando 0 atribuicoes.
-  if (_recAtribuirDireto) {
-    const recAtualizada = Object.assign({}, _recAtribuirDireto, {
-      operador, operador_responsavel: operador, atribuido_por: atribPor,
-      atribuido_em: agora, status: 'PENDENTE', status_recontagem: 'pendente',
-      observacao_atribuicao: obs || ''
-    });
-    fsSalvarRecontagem(recAtualizada).catch(() => {});
-    Store.dispatch(Actions.upsertEntity('recontagens', recAtualizada, { source: 'atribuirRecontagemDireto' }));
-    _recAtribuirDireto = null;
-    count = 1;
-  }
-
-  const selecionadasNoModal = [..._divSelecionadas]
-    .map(id => _obterDivSelecionada(id))
-    .filter(Boolean);
-
-  selecionadasNoModal.forEach(d => {
-    // A linha já foi validada ao ser selecionada e ao abrir o modal. A função
-    // de serviço faz apenas os bloqueios finais e a gravação da tarefa.
-    const rec = atribuirRecontagemSegura(d, operador, atribPor, obs, agora);
-    if (!rec) return;
-    count++;
-  });
-
-  saveAll();
-  renderDivergencias();
-  renderRecontagens();
-  closeModal('modal-atribuir-recontagem');
-  _divSelecionadas.clear();
-  divAtualizarBarraSel();
-
-  logSistema('ATRIBUIÇÃO_RECONTAGEM', `${count} recontagem(s) atribuída(s) a ${operador}`, { count, operador, atribPor, ts: agora });
-  if (count > 0) {
-    showToast(`✅ ${count} recontagem${count!==1?'s':''} atribuída${count!==1?'s':''} para ${operador}`, 's');
-  } else {
-    showToast('Não foi possível atribuir. Verifique se a atividade já possui operador ou atingiu a 3ª contagem.', 'e');
-  }
-}
-
-// ── Desvincular recontagem — remove o operador, mantém divergência ABERTA ────
-async function desvincularRecontagem(divId) {
-  const div = state().divergencias.find(d => d.id === divId);
-  if (!div) return;
-
-  // Bloqueio PERSISTENTE — não é possível desvincular fluxo encerrado
-  if (_isPersistenteBloqueado(div)) {
-    showToast('🔒 Endereço PERSISTENTE — fluxo encerrado. Não é possível desvincular.', 'e');
-    return;
-  }
-
-  const operadorAnterior = div.operador_responsavel || '—';
-
-  // Confirmar com o analista
-  const ok = await new Promise(resolve => {
-    const modal = document.createElement('div');
-    modal.className = 'modal-bg';
-    modal.style.cssText = 'display:flex;position:fixed;inset:0;z-index:9999;align-items:center;justify-content:center;background:rgba(0,0,0,.65)';
-    modal.innerHTML = `
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;
-        padding:24px 28px;max-width:420px;width:90%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
-        <div style="font-size:1rem;font-weight:700;margin-bottom:8px;color:var(--text)">
-          🔓 Desvincular recontagem
-        </div>
-        <div style="font-size:.82rem;color:var(--muted);line-height:1.6;margin-bottom:16px">
-          O operador <b style="color:var(--text)">${operadorAnterior}</b> será removido da recontagem do endereço
-          <b style="color:var(--accent);font-family:var(--mono)">${div.endereco}</b>.
-          <br><br>
-          A divergência permanece <b style="color:var(--orange)">ABERTA</b> e pode ser reatribuída a outro operador.
-        </div>
-        <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button id="btn-desvincular-cancel" style="padding:9px 18px;border-radius:8px;border:1px solid var(--border);
-            background:transparent;color:var(--muted);cursor:pointer;font-weight:600;font-size:.85rem">
-            Cancelar
-          </button>
-          <button id="btn-desvincular-ok" style="padding:9px 18px;border-radius:8px;border:none;
-            background:var(--danger,#ef4444);color:#fff;cursor:pointer;font-weight:700;font-size:.85rem">
-            🔓 Desvincular
-          </button>
-        </div>
-      </div>`;
-    document.body.appendChild(modal);
-    modal.querySelector('#btn-desvincular-ok').onclick     = () => { modal.remove(); resolve(true);  };
-    modal.querySelector('#btn-desvincular-cancel').onclick = () => { modal.remove(); resolve(false); };
-    modal.onclick = e => { if (e.target === modal) { modal.remove(); resolve(false); } };
-  });
-
-  if (!ok) return;
-
-  // Limpar campos de atribuição na divergência local
-  div.operador_responsavel = null;
-  div.atribuido_por        = null;
-  div.atribuido_em         = null;
-  div.status_recontagem    = null;
-  div.observacao_atribuicao = null;
-  // Status volta para ABERTA se estava EM_RECONTAGEM
-  if (div.status === 'EM_RECONTAGEM') div.status = 'ABERTA';
-
-  // Persistir no Firestore
-  await fsSalvarDivergencia(div);
-
-  // Se houver recontagem vinculada, cancelá-la também
-  const recVinculada = state().recontagens.find(r =>
-    r.divergencia_id === divId ||
-    (r.endereco === div.endereco && r.inventario_id === div.inventario_id &&
-      (r.status_recontagem === 'pendente' || r.status === 'PENDENTE'))
-  );
-  if (recVinculada) {
-    recVinculada.status_recontagem = 'cancelada';
-    recVinculada.status            = 'CANCELADA';
-    recVinculada.cancelada_em      = new Date().toISOString();
-    recVinculada.cancelada_por     = _currentAnalistaUser?.email || 'Analista';
-    await fsSalvarRecontagem(recVinculada);
-  }
-
-  await saveAll();
-  renderDivergencias();
-  logSistema('DESVINCULAÇÃO_RECONTAGEM', `Recontagem desvinculada de ${operadorAnterior}`, {
-    divergencia_id: divId, endereco: div.endereco, operadorAnterior
-  });
-  showToast(`🔓 Recontagem desvinculada de ${operadorAnterior}. Divergência continua ABERTA.`, 's');
-}
-
-// ── Badge de status de recontagem ────────────────────────────────────────────
-function recStatusBadge(statusRec) {
-  switch((statusRec||'').toLowerCase()) {
-    case 'pendente':              return 'b-yellow';
-    case 'em_andamento':          return 'b-orange';
-    case 'concluida':             return 'b-green';
-    case 'sem_divergencia':       return 'b-green';
-    case 'resolvida':             return 'b-green';
-    case 'persistente':           return 'b-red';
-    case 'cancelada':             return 'b-gray';
-    case 'aguardando_analista':   return 'b-purple';
-    default:                      return 'b-gray';
-  }
-}
-function recStatusLabel(statusRec) {
-  switch((statusRec||'').toLowerCase()) {
-    case 'pendente':              return '⏳ Pendente';
-    case 'em_andamento':          return '🔄 Em andamento';
-    case 'concluida':             return '✅ Concluída';
-    case 'sem_divergencia':       return '✅ Sem divergência';
-    case 'resolvida':             return '✅ Sem divergência';
-    case 'persistente':           return '🔴 Persistente';
-    case 'cancelada':             return '❌ Cancelada';
-    case 'aguardando_analista':   return '🔒 Aguard. analista';
-    default:                      return '—';
-  }
-}
-
-function renderDivergencias() {
-  const busca     = (document.getElementById('div-busca')?.value || '').toLowerCase();
-  const fInv      = document.getElementById('div-sel-inv')?.value || '';
-  const fStatus   = document.getElementById('div-fstatus')?.value || '';
-  const fTipo     = document.getElementById('div-ftipo')?.value || '';
-  const ford      = document.getElementById('div-ford')?.value || '';
-  const fRua      = document.getElementById('div-frua')?.value || '';
-  const fNivel    = document.getElementById('div-fnivel')?.value || '';
-  const fSetor    = document.getElementById('div-fsetor')?.value || '';
-  const fProduto  = document.getElementById('div-fproduto')?.value || '';
-  const fOperador = document.getElementById('div-foperador')?.value || '';
-  const fStatusRec= document.getElementById('div-fstatus-rec')?.value || '';
-  const fData     = document.getElementById('div-fdata')?.value || '';
-
-  // Popular select inventários
-  const selInv = document.getElementById('div-sel-inv');
-  if (selInv) {
-    const cur = selInv.value;
-    selInv.innerHTML = '<option value="">Todos os inventários</option>' +
-      state().inventarios.map(i => `<option value="${i.id}" ${i.id===cur?'selected':''}>${i.codigo} — ${i.nome}</option>`).join('');
-    if (cur) selInv.value = cur;
-  }
-
-  // A Recontagem é um processo por endereço. Motivos diferentes detectados
-  // no mesmo inventário/endereço devem ocupar uma única linha, sem esconder
-  // o histórico das rodadas nem inflar os indicadores.
-  const gruposPorEndereco = new Map();
-  const divergenciasVisiveis = [...state().divergencias];
-
-  // Uma rodada pode continuar existindo no Firebase mesmo quando a divergência
-  // vinculada foi removida/arquivada por versões anteriores. O menu contava essa
-  // rodada, mas a tela renderizava apenas divergências e, por isso, ficava vazia.
-  // Recompõe um caso visual a partir da própria recontagem para não esconder a
-  // atividade pendente do Analista.
-  state().recontagens.forEach(r => {
-      const vinculada = divergenciasVisiveis.some(d => {
-        return (
-          (r.divergencia_id && String(d.id) === String(r.divergencia_id)) ||
-          (String(d.inventario_id || '') === String(r.inventario_id || r.inventarioId || '') &&
-           _FK.endereco(d.endereco) === _FK.endereco(r.endereco))
-        );
-      });
-      if (vinculada) return;
-      const statusRec = String(r.status_recontagem || r.status || '').toLowerCase();
-      const concluida = ['concluida','resolvida'].includes(statusRec);
-      const persistente = statusRec === 'persistente' ||
-        String(r.status_bloqueio || '').toUpperCase() === 'PERSISTENTE_BLOQUEADO';
-      divergenciasVisiveis.push({
-        ...r,
-        id: r.divergencia_id || `recontagem-${r.id}`,
-        _recontagem_orfa_id: r.id,
-        inventario_id: r.inventario_id || r.inventarioId || '',
-        status: persistente ? 'PERSISTENTE' : (concluida ? 'RESOLVIDA' :
-          (statusRec === 'aguardando_analista' ? 'ABERTA' : 'EM_RECONTAGEM')),
-        status_recontagem: concluida ? 'concluida' : statusRec,
-        operador_responsavel: r.operador_responsavel || r.operador || '',
-        criada_em: r.criada_em || r.atribuido_em || r.data || '',
-        tipo_divergencia: r.tipo_divergencia || 'RECONTAGEM_PENDENTE',
-        motivos_divergencia: r.motivos_divergencia || ['Recontagem pendente'],
-        produto: r.produto || r.gtin || r.codigo || '',
-        quantidade_contada: r.quantidade_contada ?? r.quantidade ?? r.qtd ?? null
-      });
-    });
-
-  const _invCanonicoHist = obj => {
-    const bruto = String(obj?.inventario_id || obj?.inventarioId || obj?.inventario || '').trim();
-    const inv = (state().inventarios || []).find(i =>
-      [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId].filter(Boolean).map(String).includes(bruto));
-    return String(inv?.id || bruto);
-  };
-  const _chaveHist = obj =>
-    `${_invCanonicoHist(obj)}|${String(obj?.endereco || '').trim().toUpperCase()}`;
-  divergenciasVisiveis.forEach(d => {
-    const chave = _chaveHist(d);
-    const grupo = gruposPorEndereco.get(chave) || [];
-    grupo.push(d);
-    gruposPorEndereco.set(chave, grupo);
-  });
-  let dados = [...gruposPorEndereco.values()].map(grupo => {
-    const ordenado = [...grupo].sort((a,b) => {
-      const ativaA = !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(String(a.status || '').toUpperCase());
-      const ativaB = !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(String(b.status || '').toUpperCase());
-      const pa = (ativaA ? 10 : 0) + (String(a.status_recontagem || '').toLowerCase() === 'aguardando_analista' ? 3
-        : (a.operador_responsavel ? 2 : 1));
-      const pb = (ativaB ? 10 : 0) + (String(b.status_recontagem || '').toLowerCase() === 'aguardando_analista' ? 3
-        : (b.operador_responsavel ? 2 : 1));
-      return pb - pa || String(b.criada_em || '').localeCompare(String(a.criada_em || ''));
-    });
-    const principal = Object.assign({}, ordenado[0]);
-    const recsEndereco = (state().recontagens || [])
-      .filter(r => _chaveHist(r) === _chaveHist(principal))
-      .sort((a,b) => String(a.recontagem_concluida_em || a.concluida_em || a.criada_em || '')
-        .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.criada_em || '')));
-    const recsExecutadas = recsEndereco.filter(r =>
-      r.qtd_recontagem != null || r.qtd_segunda != null || r.qtd_terceira != null ||
-      ['CONCLUIDA','RESOLVIDA'].includes(String(r.status || '').toUpperCase()));
-    const segunda = recsExecutadas[0] || {};
-    const terceira = recsExecutadas[1] || {};
-    principal._divergencias_agrupadas = grupo.map(x => x.id);
-    principal.motivos_divergencia = [...new Set(grupo.flatMap(x =>
-      Array.isArray(x.motivos_divergencia) ? x.motivos_divergencia : [x.tipo_divergencia]
-    ).filter(Boolean))];
-    principal.itens_esperados = grupo.flatMap(x => Array.isArray(x.itens_esperados) ? x.itens_esperados : []);
-    ['qtd_segunda','produto_segunda','operador_segunda','data_segunda',
-     'qtd_terceira','produto_terceira','operador_terceira','data_terceira',
-     'qtd_resultado_final','produto_recontagem','operador_recontagem'].forEach(campo => {
-      const origem = ordenado.find(x => x[campo] != null && x[campo] !== '');
-      if (origem) principal[campo] = origem[campo];
-    });
-    principal.qtd_segunda = principal.qtd_segunda ?? segunda.qtd_segunda ?? segunda.qtd_recontagem;
-    principal.produto_segunda = principal.produto_segunda || segunda.produto_segunda || segunda.produto_recontagem || segunda.produto || '';
-    principal.operador_segunda = principal.operador_segunda || segunda.operador_segunda || segunda.operador_recontagem || segunda.operador || '';
-    principal.data_segunda = principal.data_segunda || segunda.data_segunda || segunda.recontagem_concluida_em || segunda.concluida_em || '';
-    principal.qtd_terceira = principal.qtd_terceira ?? terceira.qtd_terceira ?? terceira.qtd_recontagem;
-    principal.produto_terceira = principal.produto_terceira || terceira.produto_terceira || terceira.produto_recontagem || terceira.produto || '';
-    principal.operador_terceira = principal.operador_terceira || terceira.operador_terceira || terceira.operador_recontagem || terceira.operador || '';
-    principal.data_terceira = principal.data_terceira || terceira.data_terceira || terceira.recontagem_concluida_em || terceira.concluida_em || '';
-    principal._recontagens_endereco = recsEndereco;
-    principal._vezes_contado = 1 + (principal.qtd_segunda != null ? 1 : 0) + (principal.qtd_terceira != null ? 1 : 0);
-    // Nunca confiar cegamente no status legado. O resultado deve ser
-    // recalculado pelas rodadas reais: só há OK quando produto e quantidade
-    // coincidem com o sistema ou com uma contagem anterior.
-    const totalEsperadoEndereco = _totalEsperadoEnderecoRec(principal);
-    principal._qtd_esperada_endereco = totalEsperadoEndereco;
-    // A linha consolidada representa o endereco inteiro. Para decidir o consenso,
-    // comparar o total contado com o total esperado do endereco, sem exigir que
-    // todas as rodadas tenham repetido o mesmo codigo de produto.
-    const avaliacaoAtual = _avaliarTotalConsolidadoRec(principal, totalEsperadoEndereco) ||
-      window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
-        ...principal,
-        qtd_esperada: totalEsperadoEndereco ?? principal.qtd_esperada,
-        comparacao_somente_quantidade: true
-      });
-    if (avaliacaoAtual?.estado === 'RESOLVIDA' || avaliacaoAtual?.estado === 'PERSISTENTE') {
-      principal.status = avaliacaoAtual.estado;
-      principal.status_recontagem = avaliacaoAtual.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida';
-      principal.contagem_aceita = avaliacaoAtual.referencia;
-      principal.qtd_resultado_final = avaliacaoAtual.resultado?.qtd ?? null;
-      principal.produto_resultado_final = avaliacaoAtual.resultado?.produto || '';
-      principal.divergencia_resolvida = avaliacaoAtual.estado === 'RESOLVIDA';
-      principal.encerrada_definitivamente = true;
-      principal.operador_responsavel = null;
-    } else if (avaliacaoAtual?.estado === 'AGUARDANDO_ANALISTA') {
-      principal.status = 'ABERTA';
-      principal.status_recontagem = 'aguardando_analista';
-      principal.precisa_recontagem = true;
-      principal.contagem_aceita = null;
-      principal.qtd_resultado_final = null;
-      principal.produto_resultado_final = '';
-      principal.divergencia_resolvida = false;
-      principal.encerrada_definitivamente = false;
-      principal.resolvida_em = null;
-      principal.finalizada_em = null;
-      principal.operador_responsavel = null;
+  async function persistirFallback(updates) {
+    for (const item of updates) {
+      if (item.tipo === 'divergencia') {
+        const original = (state().divergencias || []).find(d => texto(d.id) === item.id) || {};
+        await G.fsSalvarDivergencia?.({ ...original, ...item.data, id: item.id });
+      } else {
+        const original = (state().recontagens || []).find(r => texto(r.id) === item.id) || {};
+        await G.fsSalvarRecontagem?.({ ...original, ...item.data, id: item.id });
+      }
     }
-    return principal;
-  });
-  // Snapshot sem filtros da mesma visão consolidada usada pela tabela. Os cards
-  // não podem contar documentos brutos com status legado diferente do exibido.
-  const dadosConsolidados = dados.slice();
-  if (fInv)    dados = dados.filter(d => d.inventario_id === fInv);
-  if (fStatus) {
-    dados = dados.filter(d => d.status === fStatus);
   }
-  if (fTipo === 'FALTA')                  dados = dados.filter(d => d.diferenca != null && d.diferenca < 0);
-  else if (fTipo === 'SOBRA')             dados = dados.filter(d => d.diferenca != null && d.diferenca > 0);
-  else if (fTipo === 'PRODUTO_NAO_IDENTIFICADO') dados = dados.filter(d => d.tipo_divergencia === 'PRODUTO_NAO_IDENTIFICADO');
-  else if (fTipo === 'PRODUTO_FORA_ENDERECO')    dados = dados.filter(d => d.tipo_divergencia === 'PRODUTO_FORA_ENDERECO');
-  else if (fTipo === 'VAZIO_COM_PRODUTO_NA_BASE') dados = dados.filter(d => d.tipo_divergencia === 'VAZIO_COM_PRODUTO_NA_BASE');
 
-  // Filtrar por rua
-  if (fRua)    dados = dados.filter(d => { const ei = getEnderecoInfo(d.endereco); return (ei?.rua||'') === fRua; });
-  // Filtrar por nível
-  if (fNivel)  dados = dados.filter(d => { const ei = getEnderecoInfo(d.endereco); return (ei?.nivel||ei?.andar||'') === fNivel; });
-  // Filtrar por setor
-  if (fSetor)  dados = dados.filter(d => { const ei = getEnderecoInfo(d.endereco); return (ei?.setor||ei?.local||ei?.nome_local||'') === fSetor; });
-  // Filtrar por produto
-  if (fProduto) dados = dados.filter(d => (d.produto||'') === fProduto);
-  // Filtrar por operador
-  if (fOperador) dados = dados.filter(d => {
-    const cont = state().contagens.find(c => _FK.mesmo(c, d, state().inventarios) && !c._excluida);
-    const op = d.operador || cont?.operador || '';
-    return op === fOperador;
-  });
-  // Filtrar por status de recontagem
-  if (fStatusRec) {
-    if (fStatusRec === 'nao_atribuida') dados = dados.filter(d => !d.atribuido_em && !d.operador_responsavel);
-    else dados = dados.filter(d => (d.status_recontagem||'') === fStatusRec);
-  }
-  // Filtrar por data
-  if (fData) {
-    const agora = new Date();
-    dados = dados.filter(d => {
-      if (!d.criada_em) return false;
-      const dt = new Date(d.criada_em);
-      if (fData === 'hoje') return dt.toDateString() === agora.toDateString();
-      if (fData === '7d')  return (agora - dt) <= 7*24*3600*1000;
-      if (fData === '30d') return (agora - dt) <= 30*24*3600*1000;
-      return true;
+  async function atualizarDocumentosAtomicamente(updates) {
+    const db = firestoreDb();
+
+    if (!db?.runTransaction) {
+      await persistirFallback(updates);
+      return;
+    }
+
+    await db.runTransaction(async transaction => {
+      const reads = [];
+
+      for (const item of updates) {
+        const ref = item.tipo === 'divergencia'
+          ? divergenciaRef(item.id)
+          : recontagemRef(item.id);
+
+        if (!ref) throw new Error(`Referencia Firestore invalida: ${item.tipo}/${item.id}`);
+        reads.push({ item, ref, snap: await transaction.get(ref) });
+      }
+
+      for (const { item, ref, snap } of reads) {
+        if (!snap.exists) {
+          if (item.allowCreate) transaction.set(ref, item.data, { merge: true });
+          else throw new Error(`Documento nao encontrado: ${item.tipo}/${item.id}`);
+          continue;
+        }
+
+        const atual = snap.data() || {};
+        if (
+          item.revisionEsperada != null &&
+          Number(atual.revision || 0) !== Number(item.revisionEsperada)
+        ) {
+          const error = new Error('O fluxo foi atualizado por outro usuario. Atualize a tela.');
+          error.code = 'REVISION_CONFLICT';
+          throw error;
+        }
+
+        transaction.update(ref, item.data);
+      }
     });
   }
 
-  // Filtros rápidos
-  if (_divFiltroRapidoAtivo === 'nao_atribuidas') dados = dados.filter(d => !d.atribuido_em && !d.operador_responsavel);
-  else if (_divFiltroRapidoAtivo === 'minhas') {
-    const eu = _currentAnalistaUser?.displayName || _currentAnalistaUser?.email || '';
-    dados = dados.filter(d => (d.atribuido_por||'') === eu);
-  }
-  else if (_divFiltroRapidoAtivo === 'pendentes')          dados = dados.filter(d => (d.status_recontagem||'') === 'pendente');
-  else if (_divFiltroRapidoAtivo === 'aguardando_analista') dados = dados.filter(d => (d.status_recontagem||'') === 'aguardando_analista');
-  else if (_divFiltroRapidoAtivo === 'concluidas')         dados = dados.filter(d => (d.status_recontagem||'') === 'concluida');
-
-  if (busca) dados = dados.filter(d =>
-    (d.endereco||'').toLowerCase().includes(busca) ||
-    (d.produto||'').toLowerCase().includes(busca) ||
-    (d.descricao||'').toLowerCase().includes(busca) ||
-    (d.inventario_nome||'').toLowerCase().includes(busca) ||
-    (d.operador||'').toLowerCase().includes(busca) ||
-    (d.operador_responsavel||'').toLowerCase().includes(busca)
-  );
-
-  // Ordenação
-  if (ford === 'maior_diff') dados = [...dados].sort((a,b) => Math.abs(b.diferenca) - Math.abs(a.diferenca));
-  else if (ford === 'menor_diff') dados = [...dados].sort((a,b) => Math.abs(a.diferenca) - Math.abs(b.diferenca));
-  else if (ford === 'endereco') dados = [...dados].sort((a,b) => (a.endereco||'').localeCompare(b.endereco||''));
-  else dados = [...dados].sort((a,b) => (b.criada_em||'').localeCompare(a.criada_em||''));
-
-  _divDadosFiltradosExport = dados.slice();
-
-  // A seleção deve obedecer ao resultado consolidado que o usuário está vendo,
-  // e não ao documento bruto possivelmente desatualizado em dt_divergencias.
-  _divSelecionaveisRender = new Map(
-    dados.filter(d => divPodeSelecionar(d)).map(d => [String(d.id), d])
-  );
-  for (const id of [..._divSelecionadas]) {
-    if (!_divSelecionaveisRender.has(String(id))) _divSelecionadas.delete(id);
+  function dispatchUpsert(collection, entity, source) {
+    if (G.Store?.dispatch && G.Actions?.upsertEntity) {
+      G.Store.dispatch(G.Actions.upsertEntity(collection, entity, { source }));
+    }
   }
 
-  // Populat filtros dinâmicos (rua, nível, setor, produto, operador)
-  const _popSel = (id, valores, cur, emptyLabel) => {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.innerHTML = `<option value="">${emptyLabel}</option>` +
-      valores.map(v => `<option value="${v}" ${v===cur?'selected':''}>${v}</option>`).join('');
-    if (cur) el.value = cur;
-  };
-  const todasRuas   = [...new Set(state().divergencias.map(d => getEnderecoInfo(d.endereco)?.rua).filter(Boolean))].sort();
-  const todosNiveis = [...new Set(state().divergencias.map(d => { const i=getEnderecoInfo(d.endereco); return i?.nivel||i?.andar||''; }).filter(Boolean))].sort();
-  const todosSetores= [...new Set(state().divergencias.map(d => { const i=getEnderecoInfo(d.endereco); return i?.setor||i?.local||i?.nome_local||''; }).filter(Boolean))].sort();
-  const todosProds  = [...new Set(state().divergencias.map(d => d.produto).filter(Boolean))].sort();
-  const todosOps    = [...new Set(state().divergencias.map(d => {
-    const cont = state().contagens.find(c => _FK.mesmo(c, d, state().inventarios) && !c._excluida);
-    return d.operador || cont?.operador || '';
-  }).filter(Boolean))].sort();
-  _popSel('div-frua',      todasRuas,    fRua,      'Todas as ruas');
-  _popSel('div-fnivel',    todosNiveis,  fNivel,    'Todos os níveis');
-  _popSel('div-fsetor',    todosSetores, fSetor,    'Todos os setores');
-  _popSel('div-fproduto',  todosProds,   fProduto,  'Todos os produtos');
-  _popSel('div-foperador', todosOps,     fOperador, 'Todos os operadores');
-
-  // KPIs
-  // Os indicadores usam a mesma fonte consolidada da tabela, inclusive
-  // recontagens órfãs recuperadas acima.
-  const all        = dadosConsolidados.filter(d => !fInv || String(d.inventario_id) === String(fInv));
-  const abertas    = all.filter(d => d.status === 'ABERTA').length;
-  const emRec      = all.filter(d => d.status === 'EM_RECONTAGEM').length;
-  const resolvidas = all.filter(d => d.status === 'RESOLVIDA').length;
-  const persistentes = all.filter(d => d.status === 'PERSISTENTE').length;
-  const naoIdent   = all.filter(d => d.tipo_divergencia === 'PRODUTO_NAO_IDENTIFICADO').length;
-  const foraEnd    = all.filter(d => d.tipo_divergencia === 'PRODUTO_FORA_ENDERECO').length;
-  const pendentes       = all.filter(d => (d.status_recontagem||'') === 'pendente').length;
-  const aguardAnalista  = all.filter(d => (d.status_recontagem||'') === 'aguardando_analista').length;
-  const total      = all.length;
-  const pctRes     = total > 0 ? Math.round((resolvidas/total)*100) : 0;
-  const setEl = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
-  setEl('dk-abertas', abertas); setEl('dk-em-rec', emRec); setEl('dk-resolvidas', resolvidas);
-  setEl('dk-pct', pctRes+'%'); setEl('dk-nao-ident', naoIdent); setEl('dk-fora-end', foraEnd);
-  setEl('dk-persistente', persistentes); setEl('dk-pendentes', pendentes);
-  setEl('dk-aguard-analista', aguardAnalista);
-
-  if (!dados.length) {
-    document.getElementById('div-table-wrap').innerHTML = `<div class="empty"><div class="empty-icon">✅</div><div class="empty-title">Nenhum conflito encontrado</div><div class="empty-sub">Clique em "Processar Contagens" para cruzar a base com as contagens recebidas</div></div>`;
-    return;
+  function atualizarStoreLocal(updates, source) {
+    updates.forEach(item => {
+      const collection = item.tipo === 'divergencia' ? 'divergencias' : 'recontagens';
+      const list = state()[collection] || [];
+      const original = list.find(x => texto(x.id) === item.id) || { id: item.id };
+      dispatchUpsert(collection, { ...original, ...item.data, id: item.id }, source);
+    });
   }
 
-  document.getElementById('div-table-wrap').innerHTML = `
-    <div class="tbl-wrap"><table>
-      <thead><tr>
-        <th style="width:36px;padding:8px 10px">
-          <input type="checkbox" id="div-chk-all" title="Selecionar todos"
-            style="width:15px;height:15px;cursor:pointer;accent-color:var(--orange)"
-            onchange="divToggleTodos(this.checked)">
-        </th>
-        <th>Inventário</th><th>Rua</th><th>Endereço</th><th>Vezes contado</th>
-        <th>Operador Contagem</th><th>Data</th><th>Tipo</th>
-        <th>Esperado no endereço</th><th>1ª Contagem</th>
-        <th>2ª Contagem</th><th>3ª Contagem</th><th>Resultado</th>
-        <th>Status</th><th>Status Recontagem</th><th>Atribuído para</th><th>Executado por</th><th>Ações</th>
-      </tr></thead>
-      <tbody>
-        ${dados.map(d => {
-          const difColor = d.diferenca > 0 ? 'var(--warn)' : d.diferenca < 0 ? 'var(--danger)' : 'var(--success)';
-          const idsAgrupados = d._divergencias_agrupadas || [d.id];
-          const rec = state().recontagens
-            .filter(r => idsAgrupados.includes(r.divergencia_id))
-            .sort((a,b) => (b.numero_recontagem||1) - (a.numero_recontagem||1))[0] || null;
-          const endInfo = getEnderecoInfo(d.endereco);
-          const rua = endInfo?.rua || '—';
-          const cont = state().contagens.find(c => _FK.mesmo(c, d, state().inventarios) && !c._excluida);
-          const operador = d.operador || cont?.operador || '—';
-          const podeSelecionar = divPodeSelecionar(d);
-          if (!podeSelecionar) _divSelecionadas.delete(d.id);
-          const selecionado = podeSelecionar && _divSelecionadas.has(d.id);
+  async function atribuirFluxos(chaves, operador, observacao) {
+    const usuario = obterUsuarioAtual();
+    const now = new Date().toISOString();
+    const updates = [];
 
-          let tipoCls, tipoTxt;
-          switch(d.tipo_divergencia) {
-            case 'PRODUTO_NAO_IDENTIFICADO':  tipoCls='b-red';    tipoTxt='❓ Prod. não ident.'; break;
-            case 'PRODUTO_FORA_ENDERECO':     tipoCls='b-purple'; tipoTxt='📦 Fora endereço'; break;
-            case 'VAZIO_COM_PRODUTO_NA_BASE': tipoCls='b-yellow'; tipoTxt='📭 Vazio c/ produto'; break;
-            default:
-              tipoCls = d.diferenca > 0 ? 'b-yellow' : 'b-red';
-              tipoTxt = d.diferenca > 0 ? '📈 Sobra' : '📉 Falta';
+    for (const key of chaves) {
+      const fluxo = mapaFluxosVisiveis.get(key);
+      if (!fluxo || !podeSelecionarFluxo(fluxo)) {
+        throw new Error(`Fluxo indisponivel para atribuicao: ${fluxo?.endereco || key}`);
+      }
+
+      const tarefa = fluxo.tarefaAtiva;
+      const numeroProximaRodada = fluxo.segunda.quantidade == null ? 1 : 2;
+
+      if (tarefa) {
+        updates.push({
+          tipo: 'recontagem',
+          id: texto(tarefa.id),
+          revisionEsperada: tarefa.revision,
+          data: {
+            operador_id: operador.id,
+            operador_uid: operador.uid || null,
+            operador_nome: operador.nome,
+            operador: operador.nome,
+            operador_responsavel: operador.nome,
+            atribuido_por: usuario.nome,
+            atribuido_por_uid: usuario.uid || null,
+            atribuido_em: serverTimestamp(),
+            observacao_atribuicao: observacao || '',
+            status: 'PENDENTE',
+            status_recontagem: STATUS_REC.PENDENTE,
+            numero_recontagem: numeroRodada(tarefa, numeroProximaRodada),
+            chave_fluxo: key,
+            revision: increment(1),
+            updated_at: serverTimestamp()
           }
+        });
+      } else {
+        const id = `rec_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+        updates.push({
+          tipo: 'recontagem',
+          id,
+          allowCreate: true,
+          data: {
+            id,
+            divergencia_id: fluxo.divergenciaIds[0] || null,
+            divergencia_ids: fluxo.divergenciaIds,
+            chave_fluxo: key,
+            loja_id: fluxo.lojaId || null,
+            inventario_id: fluxo.inventarioId,
+            inventario_nome: fluxo.inventarioNome,
+            endereco: fluxo.endereco,
+            produto: fluxo.produto,
+            descricao: fluxo.descricao,
+            qtd_esperada: fluxo.totalEsperado,
+            numero_recontagem: numeroProximaRodada,
+            operador_id: operador.id,
+            operador_uid: operador.uid || null,
+            operador_nome: operador.nome,
+            operador: operador.nome,
+            operador_responsavel: operador.nome,
+            atribuido_por: usuario.nome,
+            atribuido_por_uid: usuario.uid || null,
+            atribuido_em: serverTimestamp(),
+            observacao_atribuicao: observacao || '',
+            status: 'PENDENTE',
+            status_recontagem: STATUS_REC.PENDENTE,
+            criada_em: serverTimestamp(),
+            updated_at: serverTimestamp(),
+            revision: 1
+          }
+        });
+      }
 
-          const qtdEspTxt  = d.qtd_esperada  != null ? d.qtd_esperada  : '—';
-          const qtdContTxt = d.qtd_contada   != null ? d.qtd_contada   : '—';
-          const difTxt     = d.diferenca     != null ? (d.diferenca > 0 ? '+'+d.diferenca : String(d.diferenca)) : '—';
-          const difColorTxt= d.diferenca     != null ? difColor : 'var(--muted)';
-          const inventario = state().inventarios.find(i =>
-            String(i.id || '') === String(d.inventario_id || '') ||
-            String(i.codigo || '') === String(d.inventario_id || '') ||
-            String(i.nome || '') === String(d.inventario_id || '')
-          );
-          const esperadosDaBase = (inventario?.base || []).filter(item =>
-            _FK.mesmo(item, d, state().inventarios)
-          );
-          const esperadosEndereco = esperadosDaBase.length
-            ? esperadosDaBase
-            : (Array.isArray(d.itens_esperados) ? d.itens_esperados : []);
-          const _qtdEsperadaItem = item => {
-            const bruto = item.quantidade_esperada ?? item.quantidadeEsperada ?? item.qtd_esperada ?? item.qtdEsperada ??
-              item.quantidade_enderecada ?? item.qtd_enderecada ?? item.saldo_estoque ?? item.saldo ??
-              item.saldo_erp ?? item.qtd_sistema ?? item.qtd_estoque ?? item.estoque_total ??
-              item.estoque ?? item.quantidade ?? item.qtd ?? item.qtde;
-            const numero = Number(String(bruto ?? '').replace(',', '.'));
-            return Number.isFinite(numero) ? numero : 0;
-          };
-          const totalEsperadoEndereco = d._qtd_esperada_endereco != null
-            ? d._qtd_esperada_endereco
-            : (esperadosEndereco.length
-              ? esperadosEndereco.reduce((total, item) => total + _qtdEsperadaItem(item), 0)
-              : Number(qtdEspTxt) || 0);
-          const quantidadePaletes = esperadosEndereco.length || 1;
-          const esperadoHtml = `<button type="button" onclick="abrirDetalhePaletesEsperados(decodeURIComponent('${encodeURIComponent(String(d.id || ''))}'))"
-            title="Clique para visualizar os paletes"
-            style="width:100%;min-width:145px;text-align:left;border:1px solid rgba(59,130,246,.28);background:rgba(59,130,246,.07);border-radius:10px;padding:8px 10px;cursor:pointer;color:inherit">
-              <div class="mono" style="font-weight:850;font-size:.78rem">Total esperado: ${escHTML(totalEsperadoEndereco)}</div>
-              <div style="font-size:.66rem;color:var(--muted);margin-top:3px">📦 ${quantidadePaletes} ${quantidadePaletes === 1 ? 'palete' : 'paletes'} · clique para detalhar</div>
-            </button>`;
-          const produtoBipado = d.produto_contado || d.gtin_bipado || d.produto || '—';
-          const descricaoBipada = d.descricao_contada || d.descricao || '';
+      for (const d of fluxo.documentosDivergencia) {
+        updates.push({
+          tipo: 'divergencia',
+          id: texto(d.id),
+          revisionEsperada: d.revision,
+          data: {
+            status: STATUS.EM_RECONTAGEM,
+            status_recontagem: STATUS_REC.PENDENTE,
+            operador_id: operador.id,
+            operador_uid: operador.uid || null,
+            operador_responsavel: operador.nome,
+            atribuido_por: usuario.nome,
+            atribuido_por_uid: usuario.uid || null,
+            atribuido_em: serverTimestamp(),
+            observacao_atribuicao: observacao || '',
+            chave_fluxo: key,
+            revision: increment(1),
+            updated_at: serverTimestamp()
+          }
+        });
+      }
+    }
 
-          // Status recontagem
-          const statusRec = d.status_recontagem || (rec ? (rec.status==='CONCLUIDA' ? 'concluida' : 'pendente') : '');
-          const atribPara = d.operador_responsavel || rec?.operador || '';
-          const executadoPor = rec?.operador_recontagem || d.operador_recontagem || '';
-          const _produtoRodada = valor => {
-            const partes = Array.isArray(valor) ? valor : String(valor || '').split(/[,;|]+/);
-            const esperado = _produtoCanonicoRec(d);
-            const limpas = partes.map(v => String(v || '').trim()).filter(Boolean);
-            const correspondente = limpas.find(v => _produtoCanonicoRec({ produto:v }) === esperado);
-            return correspondente || limpas[0] || d.produto_contado || d.produto || '—';
-          };
-          const _qtdBateTotal = qtd => {
-            if (qtd === null || qtd === undefined || String(qtd).trim() === '') return false;
-            const n = Number(String(qtd).replace(',', '.'));
-            const esperado = Number(String(totalEsperadoEndereco).replace(',', '.'));
-            return Number.isFinite(n) && Number.isFinite(esperado) && n === esperado;
-          };
-          const _cellRodada = (qtd, produto, operadorRodada, dataRodada, aguardando) => {
-            if (qtd == null) {
-              return `<td><div style="color:var(--muted);font-size:.7rem;text-align:center">${aguardando ? 'Aguardando' : '—'}</div></td>`;
-            }
-            const codigo = _produtoRodada(produto);
-            const nome = _nomeProdutoRec(codigo);
-            const bateu = _qtdBateTotal(qtd);
-            const estilo = bateu
-              ? 'background:rgba(34,197,94,.12);box-shadow:inset 3px 0 0 var(--success);'
-              : '';
-            return `<td style="${estilo}"><div style="font-weight:800;color:${bateu ? 'var(--success)' : 'inherit'}" title="Codigo: ${escHTML(codigo)}">${bateu ? '✅ ' : ''}${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px;font-weight:${bateu ? '900' : '600'};color:${bateu ? 'var(--success)' : 'inherit'}">Qtd ${escHTML(qtd)}${bateu ? ' · conferida' : ''}</div></td>`;
-          };
-
-          return `<tr style="${selecionado ? 'background:rgba(232,117,26,.06)' : ''}">
-            <td style="padding:8px 10px">
-              ${podeSelecionar ? `<input type="checkbox" class="div-row-chk" data-id="${d.id}"
-                style="width:15px;height:15px;cursor:pointer;accent-color:var(--orange)"
-                ${selecionado ? 'checked' : ''}
-                onchange="divToggleSel('${d.id}', this.checked)">` : ''}
-            </td>
-            <td style="font-size:.75rem;color:var(--muted)">${d.inventario_nome || d.inventario_id}</td>
-            <td class="mono" style="font-weight:600">${rua}</td>
-            <td class="mono">${escHTML(d.endereco)}${d.endereco_correto ? `<br><span style="font-size:.65rem;color:var(--muted)">→ ${escHTML(d.endereco_correto)}</span>` : ''}</td>
-            <td style="text-align:center"><span class="badge b-purple" style="font-size:.76rem">${d._vezes_contado || 1}x</span></td>
-            <td style="font-size:.8rem">${operador}</td>
-            <td class="mono" style="font-size:.72rem;color:var(--muted);white-space:nowrap">${fmtTs(d.criada_em)}</td>
-            <td><span class="badge ${tipoCls}">${tipoTxt}</span></td>
-            <td>${esperadoHtml}</td>
-            ${(() => {
-              // Reutilizável: renderiza célula de contagem com produto e cor
-              const _qtdC1 = d.qtd_contada != null ? d.qtd_contada : '—';
-              const codigo = _produtoRodada(produtoBipado);
-              const nome = _nomeProdutoRec(codigo);
-              const bateu = _qtdBateTotal(_qtdC1);
-              return `<td style="${bateu ? 'background:rgba(34,197,94,.12);box-shadow:inset 3px 0 0 var(--success);' : ''}"><div style="font-weight:800;color:${bateu ? 'var(--success)' : 'inherit'}" title="Codigo: ${escHTML(codigo)}">${bateu ? '✅ ' : ''}${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px;font-weight:${bateu ? '900' : '600'};color:${bateu ? 'var(--success)' : 'inherit'}">Qtd ${escHTML(_qtdC1)}${bateu ? ' · conferida' : ''}</div></td>`;
-            })()}
-            ${_cellRodada(
-              rec?.qtd_segunda ?? d.qtd_segunda,
-              rec?.produto_segunda ?? d.produto_segunda,
-              rec?.operador_segunda ?? d.operador_segunda,
-              rec?.data_segunda ?? d.data_segunda,
-              statusRec === 'aguardando_analista' && (rec?.qtd_segunda ?? d.qtd_segunda) == null
-            )}
-            ${_cellRodada(
-              rec?.qtd_terceira ?? d.qtd_terceira,
-              rec?.produto_terceira ?? d.produto_terceira,
-              rec?.operador_terceira ?? d.operador_terceira,
-              rec?.data_terceira ?? d.data_terceira,
-              false
-            )}
-            ${(() => {
-              const resolvida = String(d.status || '').toUpperCase() === 'RESOLVIDA' ||
-                String(d.status_recontagem || '').toLowerCase() === 'sem_divergencia';
-              return `<td><div style="font-family:var(--mono);font-weight:800;color:${resolvida ? 'var(--success)' : 'var(--danger)'}">${resolvida ? '✅ Conferido' : '❌ Divergente'}</div></td>`;
-            })()}
-                        <td><span class="badge ${divStatusBadge(d.status)}">${d.status}</span></td>
-            <td>
-              ${statusRec
-                ? `<span class="badge ${recStatusBadge(statusRec)}" style="font-size:.68rem">${recStatusLabel(statusRec)}</span>`
-                : `<span style="font-size:.72rem;color:var(--muted-2)">—</span>`}
-            </td>
-            <td>
-              ${atribPara
-                ? `<div style="font-size:.78rem;font-weight:600;color:var(--text)">${escHTML(atribPara)}</div>
-                   ${d.atribuido_em ? `<div style="font-size:.65rem;color:var(--muted)">${fmtTs(d.atribuido_em)}</div>` : ''}`
-                : `<span style="font-size:.72rem;color:var(--muted-2)">Não atribuído</span>`}
-            </td>
-            <td>
-              ${executadoPor
-                ? `<div style="font-size:.78rem;font-weight:700;color:var(--success)">${escHTML(executadoPor)}</div>
-                   ${rec?.recontagem_concluida_em ? `<div style="font-size:.65rem;color:var(--muted)">${fmtTs(rec.recontagem_concluida_em)}</div>` : ''}`
-                : `<span style="font-size:.72rem;color:var(--muted-2)">—</span>`}
-            </td>
-            <td style="white-space:nowrap">
-              <div style="display:flex;gap:4px;flex-wrap:wrap">
-                ${d.status === 'PERSISTENTE'
-                  ? `<span style="font-size:.68rem;color:var(--danger);font-weight:700;padding:3px 8px;background:rgba(217,32,32,.10);border-radius:6px;border:1px solid rgba(217,32,32,.25)">🔒 Encerrado</span>`
-                  : d.status !== 'RESOLVIDA'
-                    ? `<button class="btn btn-success btn-sm" onclick="marcarDivergenciaResolvida('${d.id}')" title="Marcar como resolvida" style="font-size:.7rem">✓ Resolver</button>`
-                    : `<span style="font-size:.7rem;color:var(--muted)">${fmtTs(d.resolvida_em)}</span>`
-                }
-                ${(d.status !== 'RESOLVIDA' && d.status !== 'PERSISTENTE')
-                  ? (atribPara
-                      ? `<button class="btn btn-ghost btn-sm" style="font-size:.7rem;color:var(--danger);border-color:var(--danger)" onclick="desvincularRecontagem('${d.id}')" title="Desvincular operador">🔓 Desvincular</button>`
-                      : (!_isFluxoEncerrado(d) ? `<button class="btn btn-ghost btn-sm" style="font-size:.7rem" onclick="divAtribuirRapido('${d.id}')" title="Atribuir recontagem">👤 Atribuir</button>` : ''))
-                  : ''}
-              </div>
-            </td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table></div>`;
-}
-
-// ───────────────────────────────────────────────────────────────────
-//  17. RENDERIZAÇÃO — RECONTAGENS
-// ───────────────────────────────────────────────────────────────────
-
-function renderRecontagens() {
-  // Recria automaticamente vínculos ausentes antes de montar a fila. O botão
-  // "Processar Contagens" continua disponível, mas não é mais necessário para
-  // uma primeira divergência aparecer e poder ser atribuída.
-  const faltaVinculo = (state().contagens || []).some(c => {
-    if (String(c.tipo_contagem || '').toUpperCase() === 'RECONTAGEM' ||
-        c.divergente !== true || c._excluida ||
-        ['ESTORNADA','EXCLUIDA'].includes(String(c.status || '').toUpperCase())) return false;
-    const id=String(c.inventario_id || c.inventarioId || '');
-    const inv=(state().inventarios || []).find(i =>
-      [i.id,i.codigo,i.nome,i.inventario_id,i.inventarioId]
-        .filter(Boolean).map(String).includes(id));
-    const aliases=inv
-      ? [inv.id,inv.codigo,inv.nome,inv.inventario_id,inv.inventarioId].filter(Boolean).map(String)
-      : [id];
-    const end=_FK.endereco(c.endereco);
-    const prod=_normRec(c.gtin || c.codigo_produto || c.codigoLido || c.produto || '');
-    return !(state().divergencias || []).some(d =>
-      aliases.includes(String(d.inventario_id || d.inventarioId || '')) &&
-      _FK.endereco(d.endereco) === end &&
-      (!prod || _produtoCanonicoRec(d) === prod));
-  });
-  if (faltaVinculo && typeof processarDivergencias === 'function') {
-    processarDivergencias({ criarRecontagens:false, source:'render-recontagens', force:true });
-  }
-  const busca      = (document.getElementById('rec-busca')?.value || '').toLowerCase();
-  const fInv       = document.getElementById('rec-sel-inv')?.value || '';
-  const fStatus    = document.getElementById('rec-fstatus')?.value || '';
-  const fStatusRec = document.getElementById('rec-fstatus-rec')?.value || '';
-  const fOperador  = document.getElementById('rec-foperador')?.value || '';
-  const fRua       = document.getElementById('rec-frua')?.value || '';
-  const ford       = document.getElementById('rec-ford')?.value || '';
-
-  // Popular select inventários
-  const selInv = document.getElementById('rec-sel-inv');
-  if (selInv) {
-    const cur = selInv.value;
-    selInv.innerHTML = '<option value="">Todos os inventários</option>' +
-      state().inventarios.map(i => `<option value="${i.id}" ${i.id===cur?'selected':''}>${i.codigo} — ${i.nome}</option>`).join('');
-    if (cur) selInv.value = cur;
+    await atualizarDocumentosAtomicamente(updates);
+    atualizarStoreLocal(updates, 'atribuirFluxos');
+    return updates;
   }
 
-  // A unidade operacional é inventário + endereço + produto, usando a mesma
-  // normalização da aba Contagens e da rotina de atribuição.
-  const _gruposRec = new Map();
-  const _adicionarGrupo = (obj, tipo) => {
-    if (!obj || !_normRec(obj.endereco)) return;
-    const chave = _chaveEndereco(obj);
-    const grupo = _gruposRec.get(chave) || { divergencias:[], recontagens:[] };
-    grupo[tipo].push(obj);
-    _gruposRec.set(chave, grupo);
-  };
-  state().divergencias.forEach(d => _adicionarGrupo(d, 'divergencias'));
-  state().recontagens.forEach(r => _adicionarGrupo(r, 'recontagens'));
-  state().contagens.filter(c =>
-    String(c.tipo_contagem || '').toUpperCase() !== 'RECONTAGEM' &&
-    c.divergente === true && !c._excluida &&
-    !['ESTORNADA','EXCLUIDA'].includes(String(c.status || '').toUpperCase())
-  ).forEach(c => {
-    const chave=_chaveEndereco(c);
-    const grupo=_gruposRec.get(chave) || { divergencias:[], recontagens:[] };
-    if (!grupo.divergencias.length) {
-      grupo.divergencias.push({
-        id:`contagem-${c.uuid || c.id || chave}`,
-        inventario_id:_inventarioCanonicoRec(c), endereco:c.endereco,
-        produto:c.gtin || c.codigo_produto || c.codigoLido || '',
-        descricao:c.descricao_produto || c.descricao || '',
-        qtd_esperada:c.qtd_esperada ?? c.quantidade_esperada ?? c.qtd_sistema ?? null,
-        qtd_contada:c.quantidade ?? c.qtd_caixas ?? null,
-        qtd_primeira:c.quantidade ?? c.qtd_caixas ?? null,
-        produto_primeira:c.gtin || c.codigo_produto || c.codigoLido || '',
-        operador_primeira:c.operador || c.operador_nome || '',
-        data_primeira:c.timestamp || c.criado_em || c.dataHora || '',
-        status:'EM_RECONTAGEM', status_recontagem:'aguardando_analista',
-        precisa_recontagem:true, chave_fluxo:_chaveEndereco(c), _virtual_de_contagem:true
+  async function desvincularFluxo(key) {
+    const fluxo = mapaFluxosVisiveis.get(key);
+    if (!fluxo) throw new Error('Fluxo nao encontrado.');
+    if (fluxo.encerrada) throw new Error('Fluxo encerrado nao pode ser desvinculado.');
+
+    const usuario = obterUsuarioAtual();
+    const updates = [];
+
+    fluxo.documentosDivergencia.forEach(d => {
+      updates.push({
+        tipo: 'divergencia',
+        id: texto(d.id),
+        revisionEsperada: d.revision,
+        data: {
+          operador_id: null,
+          operador_uid: null,
+          operador_responsavel: null,
+          atribuido_por: null,
+          atribuido_por_uid: null,
+          atribuido_em: null,
+          observacao_atribuicao: null,
+          status: STATUS.ABERTA,
+          status_recontagem: null,
+          revision: increment(1),
+          updated_at: serverTimestamp()
+        }
+      });
+    });
+
+    fluxo.documentosRecontagem
+      .filter(rec => {
+        const st = upper(rec.status);
+        const sr = lower(rec.status_recontagem);
+        return ['PENDENTE', 'EM_ANDAMENTO'].includes(st) ||
+          [STATUS_REC.PENDENTE, STATUS_REC.EM_ANDAMENTO].includes(sr);
+      })
+      .forEach(rec => {
+        if (isRecontagemIniciada(rec)) {
+          throw new Error('A recontagem ja foi iniciada e nao pode ser desvinculada.');
+        }
+
+        updates.push({
+          tipo: 'recontagem',
+          id: texto(rec.id),
+          revisionEsperada: rec.revision,
+          data: {
+            status: 'CANCELADA',
+            status_recontagem: STATUS_REC.CANCELADA,
+            cancelada_em: serverTimestamp(),
+            cancelada_por: usuario.nome,
+            cancelada_por_uid: usuario.uid || null,
+            revision: increment(1),
+            updated_at: serverTimestamp()
+          }
+        });
+      });
+
+    await atualizarDocumentosAtomicamente(updates);
+    atualizarStoreLocal(updates, 'desvincularFluxo');
+    return updates;
+  }
+
+  async function resolverFluxoManual(key, justificativa) {
+    const fluxo = mapaFluxosVisiveis.get(key);
+    if (!fluxo) throw new Error('Fluxo nao encontrado.');
+    if (fluxo.encerrada) throw new Error('Fluxo ja encerrado.');
+    if (!texto(justificativa)) throw new Error('Informe a justificativa da resolucao manual.');
+
+    if (fluxo.documentosRecontagem.some(isRecontagemIniciada)) {
+      throw new Error('Existe recontagem em andamento.');
+    }
+
+    const usuario = obterUsuarioAtual();
+    const updates = [];
+
+    fluxo.documentosDivergencia.forEach(d => {
+      updates.push({
+        tipo: 'divergencia',
+        id: texto(d.id),
+        revisionEsperada: d.revision,
+        data: {
+          status: STATUS.RESOLVIDA,
+          status_recontagem: STATUS_REC.SEM_DIVERGENCIA,
+          resolucao_tipo: 'MANUAL_ANALISTA',
+          resolucao_justificativa: justificativa,
+          resolvida_em: serverTimestamp(),
+          resolvida_por: usuario.nome,
+          resolvida_por_uid: usuario.uid || null,
+          operador_id: null,
+          operador_uid: null,
+          operador_responsavel: null,
+          encerrada_definitivamente: true,
+          revision: increment(1),
+          updated_at: serverTimestamp()
+        }
+      });
+    });
+
+    fluxo.documentosRecontagem
+      .filter(rec => !REC_ENCERRADOS.has(lower(rec.status_recontagem)))
+      .forEach(rec => {
+        updates.push({
+          tipo: 'recontagem',
+          id: texto(rec.id),
+          revisionEsperada: rec.revision,
+          data: {
+            status: 'CONCLUIDA',
+            status_recontagem: STATUS_REC.SEM_DIVERGENCIA,
+            resolucao_tipo: 'MANUAL_ANALISTA',
+            resolucao_justificativa: justificativa,
+            concluida_em: serverTimestamp(),
+            resolvida_por: usuario.nome,
+            resolvida_por_uid: usuario.uid || null,
+            operador_id: null,
+            operador_uid: null,
+            operador_responsavel: null,
+            revision: increment(1),
+            updated_at: serverTimestamp()
+          }
+        });
+      });
+
+    await atualizarDocumentosAtomicamente(updates);
+    atualizarStoreLocal(updates, 'resolverFluxoManual');
+    return updates;
+  }
+
+  /* ------------------------------------------------------------------------
+   * SELECTS / FILTROS
+   * --------------------------------------------------------------------- */
+
+  function setSelectOptions(id, values, emptyLabel, labelFn = value => value) {
+    const select = document.getElementById(id);
+    if (!select) return;
+
+    const current = select.value;
+    select.replaceChildren();
+
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = emptyLabel;
+    select.appendChild(empty);
+
+    values.forEach(value => {
+      const option = document.createElement('option');
+      option.value = typeof value === 'object' ? value.value : value;
+      option.textContent = labelFn(value);
+      select.appendChild(option);
+    });
+
+    if ([...select.options].some(option => option.value === current)) {
+      select.value = current;
+    }
+  }
+
+  function popularFiltros(fluxos) {
+    setSelectOptions(
+      'div-sel-inv',
+      (state().inventarios || []).map(i => ({
+        value: inventarioCanonico(i),
+        label: `${texto(i.codigo)} — ${texto(i.nome)}`
+      })),
+      'Todos os inventarios',
+      item => item.label
+    );
+
+    setSelectOptions(
+      'rec-sel-inv',
+      (state().inventarios || []).map(i => ({
+        value: inventarioCanonico(i),
+        label: `${texto(i.codigo)} — ${texto(i.nome)}`
+      })),
+      'Todos os inventarios',
+      item => item.label
+    );
+
+    const unique = selector => [...new Set(fluxos.map(selector).filter(Boolean))]
+      .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'));
+
+    setSelectOptions('div-frua', unique(f => f.rua), 'Todas as ruas');
+    setSelectOptions('div-fnivel', unique(f => f.nivel), 'Todos os niveis');
+    setSelectOptions('div-fsetor', unique(f => f.setor), 'Todos os setores');
+    setSelectOptions('div-fproduto', unique(f => f.produto), 'Todos os produtos');
+    setSelectOptions(
+      'div-foperador',
+      unique(f => f.operadorResponsavel || f.primeira.operador),
+      'Todos os operadores'
+    );
+
+    setSelectOptions('rec-frua', unique(f => f.rua), 'Todas as ruas');
+    setSelectOptions(
+      'rec-foperador',
+      unique(f => f.operadorResponsavel || f.executadoPor),
+      'Todos os operadores'
+    );
+  }
+
+  async function carregarOperadores() {
+    const result = new Map();
+
+    if (Array.isArray(G._opListaCompleta)) {
+      G._opListaCompleta
+        .filter(o => o.ativo !== false && lower(o.tipo) !== 'analista')
+        .forEach(o => {
+          const id = texto(o.id || o.uid || o.email || o.nome);
+          if (!id) return;
+          result.set(id, {
+            id,
+            uid: texto(o.uid),
+            nome: texto(o.nome),
+            cargo: texto(o.cargo)
+          });
+        });
+    }
+
+    if (!result.size && G.FS_AN?.collection) {
+      try {
+        const snap = await G.FS_AN.collection('dt_operadores')
+          .where('ativo', '==', true)
+          .get();
+
+        snap.docs.forEach(doc => {
+          const data = doc.data() || {};
+          if (lower(data.tipo) === 'analista') return;
+          result.set(doc.id, {
+            id: doc.id,
+            uid: texto(data.uid),
+            nome: texto(data.nome),
+            cargo: texto(data.cargo)
+          });
+        });
+      } catch (error) {
+        console.warn('[DivergenciasModule] carregar operadores:', error);
+      }
+    }
+
+    if (!result.size) {
+      [
+        ...(state().contagens || []).map(c => c.operador),
+        ...(state().recontagens || []).map(r => r.operador)
+      ].filter(Boolean).forEach(name => {
+        result.set(texto(name), {
+          id: texto(name),
+          uid: '',
+          nome: texto(name),
+          cargo: ''
+        });
       });
     }
-    _gruposRec.set(chave,grupo);
-  });
 
-  let dados = [..._gruposRec.values()].map(grupo => {
-    const divs = [...grupo.divergencias].sort((a,b) =>
-      String(b.criada_em || '').localeCompare(String(a.criada_em || ''))
-    );
-    const recs = [...grupo.recontagens].sort((a,b) =>
-      Number(a.numero_recontagem || 1) - Number(b.numero_recontagem || 1) ||
-      String(a.criada_em || '').localeCompare(String(b.criada_em || ''))
-    );
-    const principal = Object.assign({}, recs[recs.length - 1] || divs[0] || {});
-    const divPrincipal = divs.find(d =>
-      !['RESOLVIDA','PERSISTENTE','CANCELADA'].includes(String(d.status || '').toUpperCase())
-    ) || divs[0] || {};
+    return [...result.values()].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  }
 
-    // A primeira contagem nasce em dt_contagens/dt_divergencias. Ela precisa
-    // aparecer mesmo antes de o Analista criar a segunda rodada.
-    const contPrimeira = state().contagens
-      .filter(c =>
-        _chaveEndereco(c) === _chaveEndereco(principal) &&
-        String(c.tipo_contagem || '').toUpperCase() !== 'RECONTAGEM' &&
-        !c._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(c.status || '').toUpperCase())
-      )
-      .sort((a,b) => String(a.criado_em || a.dataHora || '').localeCompare(String(b.criado_em || b.dataHora || '')))[0];
+  async function popularSelectOperadores(selectId) {
+    const select = document.getElementById(selectId);
+    if (!select) return;
 
-    const recsConcluidas = recs.filter(r => r.qtd_recontagem != null)
-      .sort((a,b) => String(a.recontagem_concluida_em || a.concluida_em || a.criada_em || '')
-        .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.criada_em || '')));
-    const recSegunda = recsConcluidas[0] || {};
-    const recTerceira = recsConcluidas[1] || {};
-    Object.assign(principal, {
-      divergencia_id: divPrincipal.id || principal.divergencia_id,
-      chave_fluxo: _chaveEndereco(divPrincipal.id ? divPrincipal : principal),
-      inventario_id: divPrincipal.inventario_id || principal.inventario_id,
-      inventario_nome: divPrincipal.inventario_nome || principal.inventario_nome,
-      endereco: divPrincipal.endereco || principal.endereco,
-      produto: divPrincipal.produto || principal.produto || contPrimeira?.gtin || contPrimeira?.codigo_produto || '',
-      descricao: divPrincipal.descricao || divPrincipal.descricao_produto || principal.descricao || contPrimeira?.descricao_produto || '',
-      qtd_esperada: divPrincipal.qtd_esperada ?? principal.qtd_esperada,
-      qtd_primeira: divPrincipal.qtd_primeira ?? divPrincipal.qtd_contada ?? principal.qtd_primeira ??
-        contPrimeira?.quantidade ?? contPrimeira?.qtd_caixas,
-      produto_primeira: divPrincipal.produto_primeira || divPrincipal.produto_contado ||
-        principal.produto_primeira || contPrimeira?.gtin || contPrimeira?.codigo_produto || '',
-      operador_primeira: divPrincipal.operador_primeira || divPrincipal.operador ||
-        principal.operador_primeira || contPrimeira?.operador || '',
-      data_primeira: divPrincipal.data_primeira || divPrincipal.criada_em ||
-        principal.data_primeira || contPrimeira?.criado_em || contPrimeira?.dataHora || '',
-      qtd_segunda: recSegunda.qtd_segunda ?? recSegunda.qtd_recontagem ?? divPrincipal.qtd_segunda ?? principal.qtd_segunda,
-      produto_segunda: recSegunda.produto_segunda || recSegunda.produto_recontagem || divPrincipal.produto_segunda || principal.produto_segunda || '',
-      operador_segunda: recSegunda.operador_segunda || recSegunda.operador_recontagem || divPrincipal.operador_segunda || principal.operador_segunda || '',
-      data_segunda: recSegunda.data_segunda || recSegunda.recontagem_concluida_em || divPrincipal.data_segunda || principal.data_segunda || '',
-      qtd_terceira: recTerceira.qtd_terceira ?? recTerceira.qtd_recontagem ?? divPrincipal.qtd_terceira ?? principal.qtd_terceira,
-      produto_terceira: recTerceira.produto_terceira || recTerceira.produto_recontagem || divPrincipal.produto_terceira || principal.produto_terceira || '',
-      operador_terceira: recTerceira.operador_terceira || recTerceira.operador_recontagem || divPrincipal.operador_terceira || principal.operador_terceira || '',
-      data_terceira: recTerceira.data_terceira || recTerceira.recontagem_concluida_em || divPrincipal.data_terceira || principal.data_terceira || '',
-      status: divPrincipal.status || principal.status || 'ABERTA',
-      status_recontagem: divPrincipal.status_recontagem || principal.status_recontagem || 'aguardando_analista',
-      _somente_divergencia: recs.length === 0,
-      _divergencias_agrupadas: divs.map(d => d.id),
-      _recontagens_agrupadas: recs.map(r => r.id)
+    const current = select.value;
+    select.disabled = true;
+    select.replaceChildren();
+
+    const loading = document.createElement('option');
+    loading.value = '';
+    loading.textContent = 'Carregando operadores...';
+    select.appendChild(loading);
+
+    const operadores = await carregarOperadores();
+
+    select.replaceChildren();
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = operadores.length
+      ? 'Selecione o operador...'
+      : 'Nenhum operador cadastrado';
+    select.appendChild(empty);
+
+    operadores.forEach(op => {
+      const option = document.createElement('option');
+      option.value = op.id;
+      option.dataset.uid = op.uid;
+      option.dataset.nome = op.nome;
+      option.textContent = op.cargo ? `${op.nome} — ${op.cargo}` : op.nome;
+      select.appendChild(option);
     });
-    const totalEsperadoEndereco = _totalEsperadoEnderecoRec(principal);
-    principal._qtd_esperada_endereco = totalEsperadoEndereco;
-    const avaliacao = _avaliarTotalConsolidadoRec(principal, totalEsperadoEndereco) ||
-      window.AnalistaDivergenciasRuntime?.avaliarHistorico?.({
-        ...principal,
-        qtd_esperada: totalEsperadoEndereco ?? principal.qtd_esperada,
-        comparacao_somente_quantidade: true
-      });
-    if (avaliacao && (avaliacao.estado === 'RESOLVIDA' || avaliacao.estado === 'PERSISTENTE')) {
-      principal.status = avaliacao.estado;
-      principal.status_recontagem = avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'concluida';
-      principal.contagem_aceita = avaliacao.referencia;
-      principal.qtd_resultado_final = avaliacao.resultado?.qtd ?? null;
-      principal.produto_resultado_final = avaliacao.resultado?.produto || '';
-      principal.encerrada_definitivamente = true;
-      principal.operador_responsavel = null;
+
+    select.disabled = false;
+    if ([...select.options].some(option => option.value === current)) {
+      select.value = current;
     }
-    return principal;
-  });
-  dados = dados.filter(r => {
-    const status=String(r.status || '').toUpperCase();
-    const statusRec=String(r.status_recontagem || '').toLowerCase();
-    return !['RESOLVIDA','CANCELADA'].includes(status) &&
-      !['sem_divergencia','resolvida','cancelada'].includes(statusRec);
-  });
-  if (fInv)    dados = dados.filter(r => String(r.inventario_id || r.inventarioId || '') === String(fInv));
-  if (fStatus) dados = dados.filter(r => r.status === fStatus);
-  if (fRua)    dados = dados.filter(r => (getEnderecoInfo(r.endereco)?.rua || '—') === fRua);
-
-  // Filtro por status de recontagem (campo novo + derivado da divergência)
-  if (fStatusRec) {
-    dados = dados.filter(r => {
-      const div = state().divergencias.find(d => d.id === r.divergencia_id);
-      const sr  = r.status_recontagem || div?.status_recontagem || '';
-      const temAtrib = r.operador || div?.operador_responsavel;
-      if (fStatusRec === 'nao_atribuida') return !temAtrib;
-      return sr === fStatusRec;
-    });
   }
 
-  // Filtro por operador atribuído
-  if (fOperador) {
-    dados = dados.filter(r => {
-      const div = state().divergencias.find(d => d.id === r.divergencia_id);
-      return (r.operador || div?.operador_responsavel || '') === fOperador || (r.operador_recontagem || div?.operador_recontagem || '') === fOperador;
-    });
+  /* ------------------------------------------------------------------------
+   * RENDER HELPERS
+   * --------------------------------------------------------------------- */
+
+  function badgeStatus(status) {
+    switch (status) {
+      case STATUS.ABERTA: return ['b-red', 'ABERTA'];
+      case STATUS.EM_RECONTAGEM: return ['b-orange', 'EM RECONTAGEM'];
+      case STATUS.AGUARDANDO_ANALISTA: return ['b-purple', 'AGUARD. ANALISTA'];
+      case STATUS.RESOLVIDA: return ['b-green', 'RESOLVIDA'];
+      case STATUS.PERSISTENTE: return ['b-red', 'PERSISTENTE'];
+      case STATUS.CANCELADA: return ['b-gray', 'CANCELADA'];
+      default: return ['b-gray', status || '—'];
+    }
   }
 
-  if (busca) dados = dados.filter(r =>
-    (r.endereco||'').toLowerCase().includes(busca) ||
-    (r.produto||'').toLowerCase().includes(busca) ||
-    (r.descricao||'').toLowerCase().includes(busca) ||
-    (r.inventario_nome||'').toLowerCase().includes(busca) ||
-    (r.operador||'').toLowerCase().includes(busca) ||
-    (r.operador_recontagem||'').toLowerCase().includes(busca)
-  );
-
-  // Ordenação
-  if (ford === 'maior_diff')   dados = [...dados].sort((a,b) => Math.abs(b.qtd_primeira - b.qtd_esperada) - Math.abs(a.qtd_primeira - a.qtd_esperada));
-  else if (ford === 'endereco') dados = [...dados].sort((a,b) => (a.endereco||'').localeCompare(b.endereco||''));
-  else if (ford === 'atribuicao') dados = [...dados].sort((a,b) => {
-    const da = state().divergencias.find(d => d.id === a.divergencia_id);
-    const db2= state().divergencias.find(d => d.id === b.divergencia_id);
-    return ((db2?.atribuido_em||b.atribuido_em||'').localeCompare(da?.atribuido_em||a.atribuido_em||''));
-  });
-  else dados = [...dados].sort((a,b) => (b.criada_em||'').localeCompare(a.criada_em||''));
-
-  _recDadosFiltradosExport = dados.slice();
-
-  // Popular filtros dinâmicos
-  const selRua = document.getElementById('rec-frua');
-  if (selRua) {
-    const ruas = [...new Set(state().recontagens.map(r => getEnderecoInfo(r.endereco)?.rua || '—'))].sort();
-    selRua.innerHTML = '<option value="">Todas as ruas</option>' + ruas.map(r => `<option value="${r}" ${r===fRua?'selected':''}>${r}</option>`).join('');
-  }
-  const selOp = document.getElementById('rec-foperador');
-  if (selOp) {
-    const cur = selOp.value;
-    const ops = [...new Set(state().recontagens.flatMap(r => {
-      const div = state().divergencias.find(d => d.id === r.divergencia_id);
-      return [r.operador || div?.operador_responsavel || '', r.operador_recontagem || div?.operador_recontagem || ''];
-    }).filter(Boolean))].sort();
-    selOp.innerHTML = '<option value="">Todos os operadores</option>' + ops.map(o => `<option value="${o}" ${o===cur?'selected':''}>${o}</option>`).join('');
-    if (cur) selOp.value = cur;
+  function badgeStatusRec(status) {
+    switch (status) {
+      case STATUS_REC.PENDENTE: return ['b-yellow', 'Pendente'];
+      case STATUS_REC.EM_ANDAMENTO: return ['b-orange', 'Em andamento'];
+      case STATUS_REC.AGUARDANDO_ANALISTA: return ['b-purple', 'Aguard. analista'];
+      case STATUS_REC.CONCLUIDA: return ['b-green', 'Concluida'];
+      case STATUS_REC.SEM_DIVERGENCIA:
+      case STATUS_REC.RESOLVIDA: return ['b-green', 'Sem divergencia'];
+      case STATUS_REC.PERSISTENTE: return ['b-red', 'Persistente'];
+      case STATUS_REC.CANCELADA: return ['b-gray', 'Cancelada'];
+      default: return ['b-gray', '—'];
+    }
   }
 
-  // KPIs
-  // Indicadores e tabela usam exatamente os mesmos casos consolidados por
-  // endereço. Assim o menu não mostra 1 enquanto a tabela mostra 0, nem conta
-  // três documentos técnicos como três atividades operacionais.
-  const allRec = dados.slice();
-  const pendentes    = allRec.filter(r => r.status === 'PENDENTE').length;
-  const concluidas   = allRec.filter(r => r.status === 'CONCLUIDA').length;
-  const atribuidas   = allRec.filter(r => {
-    const div = state().divergencias.find(d => d.id === r.divergencia_id);
-    return r.operador || div?.operador_responsavel;
-  }).length;
-  const naoAtribuidas = allRec.filter(r => {
-    const div = state().divergencias.find(d => d.id === r.divergencia_id);
-    return !r.operador && !div?.operador_responsavel;
-  }).length;
-  const pctRes = allRec.length > 0 ? Math.round((concluidas/allRec.length)*100) : 0;
-  const maiorDiff = allRec.length > 0
-    ? Math.max(...allRec.map(r => Math.abs((r.qtd_primeira||0) - (r.qtd_esperada||0))))
-    : 0;
-  const persistentesRec = allRec.filter(r =>
-    (r.status_recontagem || '') === 'persistente' ||
-    (r.status_bloqueio || '') === 'PERSISTENTE_BLOQUEADO'
-  ).length;
-  const setK = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
-  setK('rk-pendentes', pendentes); setK('rk-concluidas', concluidas);
-  setK('rk-atribuidas', atribuidas); setK('rk-nao-atribuidas', naoAtribuidas);
-  setK('rk-persistentes', persistentesRec);
-  setK('rk-maior-diff', maiorDiff||'—'); setK('rk-pct', pctRes+'%');
-
-  if (!dados.length) {
-    document.getElementById('rec-table-wrap').innerHTML = `<div class="empty"><div class="empty-icon">🔄</div><div class="empty-title">Nenhuma recontagem encontrada</div><div class="empty-sub">Recontagens são criadas ao processar divergências. Use "Atribuir Recontagem" nas divergências para distribuir para operadores.</div></div>`;
-    return;
+  function tipoVisual(fluxo) {
+    switch (fluxo.tipoDivergencia) {
+      case 'PRODUTO_NAO_IDENTIFICADO':
+        return ['b-red', 'Produto nao identificado'];
+      case 'PRODUTO_FORA_ENDERECO':
+        return ['b-purple', 'Fora do endereco'];
+      case 'VAZIO_COM_PRODUTO_NA_BASE':
+        return ['b-yellow', 'Vazio com produto'];
+      default:
+        if (fluxo.diferenca > 0) return ['b-yellow', 'Sobra'];
+        if (fluxo.diferenca < 0) return ['b-red', 'Falta'];
+        return ['b-gray', fluxo.tipoDivergencia || 'Divergencia'];
+    }
   }
 
-  document.getElementById('rec-table-wrap').innerHTML = `
-    <div class="tbl-wrap"><table>
-      <thead><tr>
-        <th>Inventário</th><th>Rua</th><th>Endereço</th><th>Produto</th>
-        <th>Qtd Sistema</th>
-        <th>Contagem 1</th><th>Contagem 2</th><th>Contagem 3</th>
-        <th>Atribuído para</th><th>Executado por</th>
-        <th>Status</th><th>Ações</th>
-      </tr></thead>
-      <tbody>
-        ${dados.map(r => {
-          const endInfo = getEnderecoInfo(r.endereco);
-          const rua = endInfo?.rua || '—';
+  function renderRodadaCell(rodada, totalEsperado, label) {
+    const td = document.createElement('td');
 
-          // Buscar divergência correspondente
-          const div = state().divergencias.find(d => d.id === r.divergencia_id);
-          const atribPara   = r.operador || div?.operador_responsavel || '—';
-          const atribEm     = r.atribuido_em || div?.atribuido_em || '';
-          const atribPor    = r.atribuido_por || div?.atribuido_por || '';
-          const statusRec   = r.status_recontagem || div?.status_recontagem || (r.status === 'CONCLUIDA' ? 'concluida' : 'pendente');
-          const obsAtrib    = r.observacao_atribuicao || div?.observacao_atribuicao || '';
-          const naoAtribuido = atribPara === '—' || !atribPara;
-          const executadoPor = r.operador_recontagem || div?.operador_recontagem || '';
+    if (rodada.quantidade == null) {
+      td.textContent = '—';
+      td.style.color = 'var(--muted)';
+      td.style.textAlign = 'center';
+      return td;
+    }
 
-          // ── Células das 3 contagens — exibe produto E quantidade ──
-          const _ndp = v => String(v || '').trim().toUpperCase();
-          const prodEsp = _ndp(r.produto);
-          const _cellCont = (qtd, op, data, prodContado) => {
-            if (qtd === null || qtd === undefined) {
-              return `<td style="color:var(--muted-2);font-size:.78rem;text-align:center">—</td>`;
-            }
-            const partes = Array.isArray(prodContado) ? prodContado : String(prodContado || r.produto || '').split(/[,;|]+/);
-            const esperadoCanonico = _produtoCanonicoRec(r);
-            const limpas = partes.map(v => String(v || '').trim()).filter(Boolean);
-            const produtoExibido = limpas.find(v => _produtoCanonicoRec({produto:v}) === esperadoCanonico) || limpas[0] || r.produto || '—';
-            const nome = _nomeProdutoRec(produtoExibido);
-            return `<td><div style="font-weight:800" title="Codigo: ${escHTML(produtoExibido)}">${escHTML(nome)}</div><div style="font-family:var(--mono);font-size:.72rem;margin-top:2px">Qtd ${escHTML(qtd)}</div></td>`;
-          };
+    const codigo = texto(rodada.produto);
+    const nome = obterNomeProduto(codigo);
+    const bateu = totalEsperado != null &&
+      quantidadesIguais(rodada.quantidade, totalEsperado);
 
-          return `<tr>
-            <td style="font-size:.75rem;color:var(--muted)">${r.inventario_nome || r.inventario_id}</td>
-            <td class="mono" style="font-weight:600">${rua}</td>
-            <td class="mono">${r.endereco}</td>
-            <td>
-              <div style="font-weight:600;font-size:.82rem">${r.produto}</div>
-              <div style="font-size:.7rem;color:var(--muted)">${r.descricao || ''}</div>
-            </td>
-            <td class="mono" style="font-weight:700">${r.qtd_esperada ?? '—'}</td>
-            ${_cellCont(r.qtd_primeira,  r.operador_primeira,  r.data_primeira,  r.produto_primeira  || r.produto)}
-            ${_cellCont(r.qtd_segunda,   r.operador_segunda,   r.data_segunda,   r.produto_segunda)}
-            ${_cellCont(r.qtd_terceira,  r.operador_terceira,  r.data_terceira,  r.produto_terceira)}
-            <td>
-              ${naoAtribuido
-                ? `<span style="font-size:.75rem;color:var(--muted-2)">Não atribuído</span>`
-                : `<div style="font-weight:600;font-size:.82rem;color:var(--text)">${atribPara}</div>
-                   ${atribPor ? `<div style="font-size:.65rem;color:var(--muted)">por ${atribPor}</div>` : ''}
-                   ${obsAtrib ? `<div style="font-size:.68rem;color:var(--text-2);font-style:italic;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${obsAtrib}">💬 ${obsAtrib}</div>` : ''}`
-              }
-            </td>
-            <td>
-              ${executadoPor
-                ? `<div style="font-weight:700;font-size:.82rem;color:var(--success)">${escHTML(executadoPor)}</div>
-                   ${r.recontagem_concluida_em ? `<div style="font-size:.65rem;color:var(--muted)">${fmtTs(r.recontagem_concluida_em)}</div>` : ''}`
-                : `<span style="font-size:.75rem;color:var(--muted-2)">—</span>`}
-            </td>
-            <td>
-              ${statusRec
-                ? `<span class="badge ${recStatusBadge(statusRec)}" style="font-size:.7rem">${recStatusLabel(statusRec)}</span>`
-                : `<span class="badge b-yellow" style="font-size:.7rem">⏳ Pendente</span>`}
-            </td>
-            <td style="white-space:nowrap">
-              <div style="display:flex;gap:4px;flex-wrap:wrap">
-                ${_isFluxoEncerrado(r)
-                  ? `<span style="font-size:.68rem;color:var(--danger);font-weight:700;padding:3px 8px;background:rgba(217,32,32,.10);border-radius:6px;border:1px solid rgba(217,32,32,.25)">🔒 Encerrado</span>`
-                  : r.status === 'PENDENTE'
-                    ? `<button class="btn btn-primary btn-sm" onclick="abrirRegistrarRecontagem('${r.id}')" style="font-size:.72rem">📝 Registrar</button>`
-                    : `<span style="font-size:.72rem;color:var(--muted)">${fmtTs(r.concluida_em)}</span>`
-                }
-                ${(!_isFluxoEncerrado(r) && naoAtribuido)
-                  ? `<button class="btn btn-ghost btn-sm" onclick="${r._somente_divergencia
-                      ? `divAtribuirRapido('${r.divergencia_id}')`
-                      : `divAtribuirPorRec('${r.id}')`}" style="font-size:.72rem" title="Atribuir a um operador">👤 Atribuir</button>`
-                  : ''}
-              </div>
-            </td>
-          </tr>`;
-        }).join('')}
-      </tbody>
-    </table></div>`;
-}
+    if (bateu) {
+      td.style.background = 'rgba(34,197,94,.12)';
+      td.style.boxShadow = 'inset 3px 0 0 var(--success)';
+    }
 
+    const name = document.createElement('div');
+    name.style.fontWeight = '800';
+    name.style.color = bateu ? 'var(--success)' : 'inherit';
+    name.title = codigo ? `Codigo: ${codigo}` : label;
+    name.textContent = `${bateu ? '✓ ' : ''}${nome || 'Produto nao informado'}`;
 
+    const qty = document.createElement('div');
+    qty.style.fontFamily = 'var(--mono)';
+    qty.style.fontSize = '.72rem';
+    qty.style.marginTop = '2px';
+    qty.style.fontWeight = bateu ? '900' : '600';
+    qty.style.color = bateu ? 'var(--success)' : 'inherit';
+    qty.textContent = `Qtd ${rodada.quantidade}${bateu ? ' · conferida' : ''}`;
 
-function _exportarXlsxAnalista(nomeArquivo, nomeAba, linhas) {
-  if (!window.XLSX) {
-    showToast('Biblioteca Excel não carregada. Atualize a página e tente novamente.', 'e');
-    return;
+    td.append(name, qty);
+    return td;
   }
-  if (!linhas || !linhas.length) {
-    showToast('Não há dados nos filtros atuais para exportar.', 'w');
-    return;
-  }
-  const ws = XLSX.utils.json_to_sheet(linhas);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, nomeAba.substring(0, 31));
-  XLSX.writeFile(wb, nomeArquivo);
-}
 
-function exportarDivergencias() {
-  renderDivergencias();
-  const linhas = _divDadosFiltradosExport.map(d => {
-    const info = getEnderecoInfo(d.endereco) || {};
-    const rec = state().recontagens.find(r => r.divergencia_id === d.id) || {};
-    return {
-      'Inventário': d.inventario_nome || d.inventario_id || '',
-      'Rua': info.rua || '',
-      'Endereço': d.endereco || '',
-      'Produto': d.produto || d.descricao || '',
-      'GTIN bipado': d.gtin_bipado || '',
-      'Tipo': d.tipo_divergencia || d.tipo || '',
-      'Quantidade esperada': d.qtd_esperada ?? '',
-      'Quantidade contada': d.qtd_contada ?? '',
-      'Diferença': d.diferenca ?? '',
-      'Status': d.status || '',
-      'Status recontagem': d.status_recontagem || rec.status_recontagem || rec.status || '',
-      'Operador da contagem': d.operador || '',
-      'Atribuído para': d.operador_responsavel || rec.operador || '',
-      'Executado por': rec.operador_recontagem || d.operador_recontagem || '',
-      'Criada em': d.criada_em ? fmtTs(d.criada_em) : ''
+  function criarBotao({ text, action, key, className = 'btn btn-ghost btn-sm', title = '' }) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.textContent = text;
+    button.dataset.action = action;
+    button.dataset.fluxoKey = key;
+    button.title = title;
+    button.style.fontSize = '.7rem';
+    return button;
+  }
+
+  function renderKpisDivergencias(fluxos) {
+    const set = (id, value) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value;
     };
-  });
-  _exportarXlsxAnalista('divergencias-filtradas.xlsx', 'Divergências', linhas);
-}
 
-function exportarRecontagens() {
-  renderRecontagens();
-  const linhas = _recDadosFiltradosExport.map(r => {
-    const info = getEnderecoInfo(r.endereco) || {};
-    const div = state().divergencias.find(d => d.id === r.divergencia_id) || {};
-    return {
-      'Inventário': r.inventario_nome || r.inventario_id || '',
-      'Rua': info.rua || '',
-      'Endereço': r.endereco || '',
-      'Produto': r.produto || r.descricao || '',
-      'Quantidade esperada': r.qtd_esperada ?? '',
-      '1ª contagem': r.qtd_primeira ?? '',
-      'Operador 1ª': r.operador_primeira || '',
-      '2ª contagem': r.qtd_segunda ?? '',
-      'Operador 2ª': r.operador_segunda || '',
-      '3ª contagem': r.qtd_terceira ?? '',
-      'Operador 3ª': r.operador_terceira || '',
-      'Status': r.status_recontagem || div.status_recontagem || r.status || '',
-      'Atribuído para': r.operador || div.operador_responsavel || '',
-      'Executado por': r.operador_recontagem || div.operador_recontagem || '',
-      'Atribuída em': r.atribuido_em ? fmtTs(r.atribuido_em) : '',
-      'Concluída em': r.recontagem_concluida_em ? fmtTs(r.recontagem_concluida_em) : (r.concluida_em ? fmtTs(r.concluida_em) : '')
+    const abertas = fluxos.filter(f => f.status === STATUS.ABERTA).length;
+    const emRec = fluxos.filter(f => f.status === STATUS.EM_RECONTAGEM).length;
+    const aguardando = fluxos.filter(f => f.status === STATUS.AGUARDANDO_ANALISTA).length;
+    const resolvidas = fluxos.filter(f => f.status === STATUS.RESOLVIDA).length;
+    const persistentes = fluxos.filter(f => f.status === STATUS.PERSISTENTE).length;
+    const pendentes = fluxos.filter(f => f.statusRecontagem === STATUS_REC.PENDENTE).length;
+    const total = fluxos.length;
+
+    set('dk-abertas', abertas);
+    set('dk-em-rec', emRec);
+    set('dk-resolvidas', resolvidas);
+    set('dk-pct', total ? `${Math.round((resolvidas / total) * 100)}%` : '0%');
+    set('dk-persistente', persistentes);
+    set('dk-pendentes', pendentes);
+    set('dk-aguard-analista', aguardando);
+    set('dk-nao-ident', fluxos.filter(f => f.tipoDivergencia === 'PRODUTO_NAO_IDENTIFICADO').length);
+    set('dk-fora-end', fluxos.filter(f => f.tipoDivergencia === 'PRODUTO_FORA_ENDERECO').length);
+  }
+
+  function renderKpisRecontagens(fluxos) {
+    const set = (id, value) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value;
     };
+
+    const pendentes = fluxos.filter(f => f.statusRecontagem === STATUS_REC.PENDENTE).length;
+    const concluidas = fluxos.filter(f =>
+      [STATUS.RESOLVIDA, STATUS.PERSISTENTE].includes(f.status)
+    ).length;
+    const atribuidas = fluxos.filter(f => f.operadorResponsavel).length;
+    const naoAtribuidas = fluxos.filter(f => !f.operadorResponsavel).length;
+    const maiorDiff = fluxos.length
+      ? Math.max(...fluxos.map(f => Math.abs(f.diferenca ?? 0)))
+      : 0;
+
+    set('rk-pendentes', pendentes);
+    set('rk-concluidas', concluidas);
+    set('rk-atribuidas', atribuidas);
+    set('rk-nao-atribuidas', naoAtribuidas);
+    set('rk-persistentes', fluxos.filter(f => f.status === STATUS.PERSISTENTE).length);
+    set('rk-maior-diff', maiorDiff || '—');
+    set('rk-pct', fluxos.length ? `${Math.round((concluidas / fluxos.length) * 100)}%` : '0%');
+  }
+
+  function atualizarBarraSelecao() {
+    const bar = document.getElementById('div-sel-bar');
+    const count = document.getElementById('div-sel-count');
+    if (!bar || !count) return;
+
+    if (selecao.size) {
+      bar.style.display = 'flex';
+      count.textContent = `${selecao.size} endereco${selecao.size === 1 ? '' : 's'} selecionado${selecao.size === 1 ? '' : 's'}`;
+    } else {
+      bar.style.display = 'none';
+    }
+
+    const master = document.getElementById('div-chk-all');
+    if (master) {
+      const selectable = visaoDivergencias.filter(podeSelecionarFluxo);
+      const selectedVisible = selectable.filter(f => selecao.has(f.chaveFluxo)).length;
+      master.checked = selectable.length > 0 && selectedVisible === selectable.length;
+      master.indeterminate = selectedVisible > 0 && selectedVisible < selectable.length;
+    }
+  }
+
+  /* ------------------------------------------------------------------------
+   * RENDER DIVERGENCIAS
+   * --------------------------------------------------------------------- */
+
+  function renderDivergencias() {
+    const todos = construirFluxosCanonicos();
+    mapaFluxosVisiveis = new Map(todos.map(f => [f.chaveFluxo, f]));
+
+    popularFiltros(todos);
+
+    const fInv = texto(document.getElementById('div-sel-inv')?.value);
+    const baseKpis = fInv ? todos.filter(f => f.inventarioId === fInv) : todos;
+
+    visaoDivergencias = aplicarFiltrosDivergencias(todos);
+    renderKpisDivergencias(baseKpis);
+
+    for (const key of [...selecao]) {
+      const fluxo = mapaFluxosVisiveis.get(key);
+      if (!fluxo || !visaoDivergencias.some(v => v.chaveFluxo === key) || !podeSelecionarFluxo(fluxo)) {
+        selecao.delete(key);
+      }
+    }
+
+    const container = document.getElementById('div-table-wrap');
+    if (!container) return;
+
+    container.replaceChildren();
+
+    if (!visaoDivergencias.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.innerHTML = '<div class="empty-icon">✓</div><div class="empty-title">Nenhum conflito encontrado</div><div class="empty-sub">Nao ha fluxos que correspondam aos filtros atuais.</div>';
+      container.appendChild(empty);
+      atualizarBarraSelecao();
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'tbl-wrap';
+    const table = document.createElement('table');
+
+    const headers = [
+      '', 'Inventario', 'Rua', 'Endereco', 'Vezes contado',
+      'Operador contagem', 'Data', 'Tipo', 'Esperado no endereco',
+      '1a contagem', '2a contagem', '3a contagem', 'Resultado',
+      'Status', 'Status recontagem', 'Atribuido para', 'Executado por',
+      'Acoes'
+    ];
+
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+
+    headers.forEach((header, index) => {
+      const th = document.createElement('th');
+      if (index === 0) {
+        const master = document.createElement('input');
+        master.type = 'checkbox';
+        master.id = 'div-chk-all';
+        master.title = 'Selecionar todos os fluxos visiveis';
+        master.dataset.action = 'toggle-all';
+        th.appendChild(master);
+      } else {
+        th.textContent = header;
+      }
+      headRow.appendChild(th);
+    });
+
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+
+    visaoDivergencias.forEach(fluxo => {
+      const tr = document.createElement('tr');
+      tr.dataset.fluxoKey = fluxo.chaveFluxo;
+
+      if (selecao.has(fluxo.chaveFluxo)) {
+        tr.style.background = 'rgba(232,117,26,.06)';
+      }
+
+      const tdSelect = document.createElement('td');
+      if (podeSelecionarFluxo(fluxo)) {
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'div-row-chk';
+        checkbox.checked = selecao.has(fluxo.chaveFluxo);
+        checkbox.dataset.action = 'toggle-one';
+        checkbox.dataset.fluxoKey = fluxo.chaveFluxo;
+        tdSelect.appendChild(checkbox);
+      }
+      tr.appendChild(tdSelect);
+
+      const simpleCell = (textValue, className = '', style = {}) => {
+        const td = document.createElement('td');
+        if (className) td.className = className;
+        Object.assign(td.style, style);
+        td.textContent = textValue ?? '—';
+        return td;
+      };
+
+      tr.appendChild(simpleCell(fluxo.inventarioNome, '', { fontSize: '.75rem', color: 'var(--muted)' }));
+      tr.appendChild(simpleCell(fluxo.rua, 'mono', { fontWeight: '600' }));
+      tr.appendChild(simpleCell(fluxo.endereco, 'mono'));
+
+      const tdTimes = document.createElement('td');
+      tdTimes.style.textAlign = 'center';
+      const timesBadge = document.createElement('span');
+      timesBadge.className = 'badge b-purple';
+      timesBadge.textContent = `${fluxo.vezesContado}x`;
+      tdTimes.appendChild(timesBadge);
+      tr.appendChild(tdTimes);
+
+      tr.appendChild(simpleCell(fluxo.primeira.operador || '—', '', { fontSize: '.8rem' }));
+      tr.appendChild(simpleCell(formatarData(fluxo.criadaEm), 'mono', {
+        fontSize: '.72rem',
+        color: 'var(--muted)',
+        whiteSpace: 'nowrap'
+      }));
+
+      const [tipoClass, tipoLabel] = tipoVisual(fluxo);
+      const tdTipo = document.createElement('td');
+      const tipoBadge = document.createElement('span');
+      tipoBadge.className = `badge ${tipoClass}`;
+      tipoBadge.textContent = tipoLabel;
+      tdTipo.appendChild(tipoBadge);
+      tr.appendChild(tdTipo);
+
+      const tdExpected = document.createElement('td');
+      const expectedButton = criarBotao({
+        text: fluxo.totalEsperado == null
+          ? 'Esperado nao disponivel'
+          : `Total esperado: ${fluxo.totalEsperado}`,
+        action: 'details',
+        key: fluxo.chaveFluxo,
+        className: 'btn btn-ghost btn-sm',
+        title: 'Visualizar composicao do total esperado'
+      });
+      expectedButton.style.width = '100%';
+      expectedButton.style.minWidth = '145px';
+      expectedButton.style.textAlign = 'left';
+      tdExpected.appendChild(expectedButton);
+      tr.appendChild(tdExpected);
+
+      tr.appendChild(renderRodadaCell(fluxo.primeira, fluxo.totalEsperado, '1a contagem'));
+      tr.appendChild(renderRodadaCell(fluxo.segunda, fluxo.totalEsperado, '2a contagem'));
+      tr.appendChild(renderRodadaCell(fluxo.terceira, fluxo.totalEsperado, '3a contagem'));
+
+      const tdResult = document.createElement('td');
+      const result = document.createElement('div');
+      result.style.fontFamily = 'var(--mono)';
+      result.style.fontWeight = '800';
+      result.style.color = fluxo.resolvida ? 'var(--success)' : 'var(--danger)';
+      result.textContent = fluxo.resolvida
+        ? '✓ Conferido'
+        : fluxo.persistente
+          ? 'Persistente'
+          : 'Divergente';
+      tdResult.appendChild(result);
+      tr.appendChild(tdResult);
+
+      const [statusClass, statusLabel] = badgeStatus(fluxo.status);
+      const tdStatus = document.createElement('td');
+      const statusBadge = document.createElement('span');
+      statusBadge.className = `badge ${statusClass}`;
+      statusBadge.textContent = statusLabel;
+      tdStatus.appendChild(statusBadge);
+
+      if (fluxo.inconsistente) {
+        const warning = document.createElement('div');
+        warning.style.fontSize = '.62rem';
+        warning.style.color = 'var(--danger)';
+        warning.style.marginTop = '4px';
+        warning.textContent = 'Inconsistencia detectada';
+        warning.title = fluxo.inconsistencias.map(i => i.codigo).join(', ');
+        tdStatus.appendChild(warning);
+      }
+      tr.appendChild(tdStatus);
+
+      const [recClass, recLabel] = badgeStatusRec(fluxo.statusRecontagem);
+      const tdStatusRec = document.createElement('td');
+      const recBadge = document.createElement('span');
+      recBadge.className = `badge ${recClass}`;
+      recBadge.textContent = recLabel;
+      tdStatusRec.appendChild(recBadge);
+      tr.appendChild(tdStatusRec);
+
+      const tdAssigned = document.createElement('td');
+      if (fluxo.operadorResponsavel) {
+        const name = document.createElement('div');
+        name.style.fontWeight = '600';
+        name.textContent = fluxo.operadorResponsavel;
+        tdAssigned.appendChild(name);
+
+        if (fluxo.atribuidoEm) {
+          const date = document.createElement('div');
+          date.style.fontSize = '.65rem';
+          date.style.color = 'var(--muted)';
+          date.textContent = formatarData(fluxo.atribuidoEm);
+          tdAssigned.appendChild(date);
+        }
+      } else {
+        tdAssigned.textContent = 'Nao atribuido';
+        tdAssigned.style.color = 'var(--muted)';
+      }
+      tr.appendChild(tdAssigned);
+
+      const tdExecuted = document.createElement('td');
+      tdExecuted.textContent = fluxo.executadoPor || '—';
+      if (fluxo.executadoPor) {
+        tdExecuted.style.fontWeight = '700';
+        tdExecuted.style.color = 'var(--success)';
+      }
+      tr.appendChild(tdExecuted);
+
+      const tdActions = document.createElement('td');
+      tdActions.style.whiteSpace = 'nowrap';
+      const actions = document.createElement('div');
+      actions.style.display = 'flex';
+      actions.style.gap = '4px';
+      actions.style.flexWrap = 'wrap';
+
+      if (fluxo.encerrada) {
+        const locked = document.createElement('span');
+        locked.textContent = 'Encerrado';
+        locked.style.fontSize = '.68rem';
+        locked.style.fontWeight = '700';
+        locked.style.color = fluxo.persistente ? 'var(--danger)' : 'var(--success)';
+        actions.appendChild(locked);
+      } else if (fluxo.bloqueadaParaEdicao) {
+        const warning = document.createElement('span');
+        warning.textContent = 'Requer reconciliacao';
+        warning.style.fontSize = '.68rem';
+        warning.style.color = 'var(--danger)';
+        actions.appendChild(warning);
+      } else {
+        actions.appendChild(criarBotao({
+          text: 'Resolver',
+          action: 'resolve',
+          key: fluxo.chaveFluxo,
+          className: 'btn btn-success btn-sm',
+          title: 'Resolver manualmente com justificativa'
+        }));
+
+        if (fluxo.operadorResponsavel) {
+          actions.appendChild(criarBotao({
+            text: 'Desvincular',
+            action: 'unlink',
+            key: fluxo.chaveFluxo,
+            className: 'btn btn-ghost btn-sm',
+            title: 'Remover atribuicao ainda nao iniciada'
+          }));
+        } else if (podeSelecionarFluxo(fluxo)) {
+          actions.appendChild(criarBotao({
+            text: 'Atribuir',
+            action: 'assign',
+            key: fluxo.chaveFluxo,
+            className: 'btn btn-ghost btn-sm',
+            title: 'Atribuir recontagem'
+          }));
+        }
+      }
+
+      tdActions.appendChild(actions);
+      tr.appendChild(tdActions);
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+    atualizarBarraSelecao();
+  }
+
+  /* ------------------------------------------------------------------------
+   * RENDER RECONTAGENS
+   * --------------------------------------------------------------------- */
+
+  function renderRecontagens() {
+    const todos = construirFluxosCanonicos();
+    mapaFluxosVisiveis = new Map(todos.map(f => [f.chaveFluxo, f]));
+    popularFiltros(todos);
+
+    visaoRecontagens = aplicarFiltrosRecontagens(todos);
+    renderKpisRecontagens(visaoRecontagens);
+
+    const container = document.getElementById('rec-table-wrap');
+    if (!container) return;
+
+    container.replaceChildren();
+
+    if (!visaoRecontagens.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.innerHTML = '<div class="empty-icon">↻</div><div class="empty-title">Nenhuma recontagem encontrada</div><div class="empty-sub">Nao ha atividades que correspondam aos filtros atuais.</div>';
+      container.appendChild(empty);
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'tbl-wrap';
+    const table = document.createElement('table');
+
+    const headers = [
+      'Inventario', 'Rua', 'Endereco', 'Produto', 'Qtd sistema',
+      'Contagem 1', 'Contagem 2', 'Contagem 3', 'Atribuido para',
+      'Executado por', 'Status', 'Acoes'
+    ];
+
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    headers.forEach(header => {
+      const th = document.createElement('th');
+      th.textContent = header;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+
+    visaoRecontagens.forEach(fluxo => {
+      const tr = document.createElement('tr');
+      tr.dataset.fluxoKey = fluxo.chaveFluxo;
+
+      const simpleCell = (value, className = '') => {
+        const td = document.createElement('td');
+        td.className = className;
+        td.textContent = value ?? '—';
+        return td;
+      };
+
+      tr.appendChild(simpleCell(fluxo.inventarioNome));
+      tr.appendChild(simpleCell(fluxo.rua, 'mono'));
+      tr.appendChild(simpleCell(fluxo.endereco, 'mono'));
+
+      const tdProduct = document.createElement('td');
+      const product = document.createElement('div');
+      product.style.fontWeight = '600';
+      product.textContent = fluxo.produto || '—';
+      const description = document.createElement('div');
+      description.style.fontSize = '.7rem';
+      description.style.color = 'var(--muted)';
+      description.textContent = fluxo.descricao || '';
+      tdProduct.append(product, description);
+      tr.appendChild(tdProduct);
+
+      tr.appendChild(simpleCell(fluxo.totalEsperado ?? 'Nao disponivel', 'mono'));
+      tr.appendChild(renderRodadaCell(fluxo.primeira, fluxo.totalEsperado, '1a contagem'));
+      tr.appendChild(renderRodadaCell(fluxo.segunda, fluxo.totalEsperado, '2a contagem'));
+      tr.appendChild(renderRodadaCell(fluxo.terceira, fluxo.totalEsperado, '3a contagem'));
+
+      tr.appendChild(simpleCell(fluxo.operadorResponsavel || 'Nao atribuido'));
+      tr.appendChild(simpleCell(fluxo.executadoPor || '—'));
+
+      const [statusClass, statusLabel] = badgeStatus(fluxo.status);
+      const tdStatus = document.createElement('td');
+      const badge = document.createElement('span');
+      badge.className = `badge ${statusClass}`;
+      badge.textContent = statusLabel;
+      tdStatus.appendChild(badge);
+      tr.appendChild(tdStatus);
+
+      const tdActions = document.createElement('td');
+      const actions = document.createElement('div');
+      actions.style.display = 'flex';
+      actions.style.gap = '4px';
+      actions.style.flexWrap = 'wrap';
+
+      if (fluxo.encerrada) {
+        const label = document.createElement('span');
+        label.textContent = 'Encerrado';
+        label.style.fontSize = '.68rem';
+        label.style.fontWeight = '700';
+        actions.appendChild(label);
+      } else if (fluxo.bloqueadaParaEdicao) {
+        const label = document.createElement('span');
+        label.textContent = 'Requer reconciliacao';
+        label.style.fontSize = '.68rem';
+        label.style.color = 'var(--danger)';
+        actions.appendChild(label);
+      } else {
+        if (!fluxo.operadorResponsavel && podeSelecionarFluxo(fluxo)) {
+          actions.appendChild(criarBotao({
+            text: 'Atribuir',
+            action: 'assign',
+            key: fluxo.chaveFluxo
+          }));
+        }
+
+        if (fluxo.tarefaAtiva && typeof G.abrirRegistrarRecontagem === 'function') {
+          actions.appendChild(criarBotao({
+            text: 'Registrar',
+            action: 'register',
+            key: fluxo.chaveFluxo,
+            className: 'btn btn-primary btn-sm'
+          }));
+        }
+      }
+
+      tdActions.appendChild(actions);
+      tr.appendChild(tdActions);
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+  }
+
+  /* ------------------------------------------------------------------------
+   * MODAIS / ACOES
+   * --------------------------------------------------------------------- */
+
+  async function abrirAtribuicao(chaves = null) {
+    if (Array.isArray(chaves)) {
+      selecao.clear();
+      chaves.forEach(key => {
+        const fluxo = mapaFluxosVisiveis.get(key);
+        if (podeSelecionarFluxo(fluxo)) selecao.add(key);
+      });
+    }
+
+    for (const key of [...selecao]) {
+      if (!podeSelecionarFluxo(mapaFluxosVisiveis.get(key))) selecao.delete(key);
+    }
+
+    atualizarBarraSelecao();
+
+    if (!selecao.size) {
+      toast('Selecione pelo menos um endereco.', 'w');
+      return;
+    }
+
+    const resumo = document.getElementById('atrib-resumo');
+    if (resumo) {
+      resumo.replaceChildren();
+
+      const title = document.createElement('div');
+      title.style.fontWeight = '700';
+      title.style.marginBottom = '8px';
+      title.textContent = `${selecao.size} endereco${selecao.size === 1 ? '' : 's'} selecionado${selecao.size === 1 ? '' : 's'}:`;
+      resumo.appendChild(title);
+
+      const list = document.createElement('div');
+      list.style.display = 'flex';
+      list.style.flexWrap = 'wrap';
+      list.style.gap = '4px';
+
+      [...selecao].forEach(key => {
+        const fluxo = mapaFluxosVisiveis.get(key);
+        const badge = document.createElement('span');
+        badge.className = 'badge b-orange';
+        badge.textContent = fluxo?.endereco || key;
+        list.appendChild(badge);
+      });
+
+      resumo.appendChild(list);
+    }
+
+    G.openModal?.('modal-atribuir-recontagem');
+
+    const obs = document.getElementById('atrib-obs');
+    if (obs) obs.value = '';
+
+    await popularSelectOperadores('atrib-operador');
+  }
+
+  async function confirmarAtribuicao() {
+    const select = document.getElementById('atrib-operador');
+    const option = select?.selectedOptions?.[0];
+    const observacao = texto(document.getElementById('atrib-obs')?.value);
+
+    if (!option?.value) {
+      toast('Selecione um operador.', 'e');
+      return;
+    }
+
+    const operador = {
+      id: option.value,
+      uid: texto(option.dataset.uid),
+      nome: texto(option.dataset.nome || option.textContent)
+    };
+
+    const chaves = [...selecao];
+    if (!chaves.length && recAtribuirDireto?.chaveFluxo) {
+      chaves.push(recAtribuirDireto.chaveFluxo);
+    }
+
+    try {
+      await executarOperacao(`assign:${chaves.sort().join(',')}`, async () => {
+        await atribuirFluxos(chaves, operador, observacao);
+      });
+
+      G.closeModal?.('modal-atribuir-recontagem');
+      selecao.clear();
+      recAtribuirDireto = null;
+
+      renderDivergencias();
+      renderRecontagens();
+      G.atualizarBadgesNav?.();
+
+      G.logSistema?.(
+        'ATRIBUICAO_RECONTAGEM',
+        `${chaves.length} fluxo(s) atribuido(s) a ${operador.nome}`,
+        { chaves, operadorId: operador.id }
+      );
+
+      toast(`Atribuicao concluida para ${operador.nome}.`, 's');
+    } catch (error) {
+      console.error('[DivergenciasModule] confirmarAtribuicao:', error);
+      toast(error.message || 'Nao foi possivel concluir a atribuicao.', 'e');
+    }
+  }
+
+  async function confirmarDesvinculacao(key) {
+    const fluxo = mapaFluxosVisiveis.get(key);
+    if (!fluxo) return;
+
+    const confirmed = await confirmar(
+      `Desvincular ${fluxo.operadorResponsavel || 'o operador'} do endereco ${fluxo.endereco}?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await executarOperacao(`unlink:${key}`, () => desvincularFluxo(key));
+      renderDivergencias();
+      renderRecontagens();
+      G.atualizarBadgesNav?.();
+
+      G.logSistema?.('DESVINCULACAO_RECONTAGEM', 'Fluxo desvinculado', {
+        chaveFluxo: key,
+        endereco: fluxo.endereco
+      });
+
+      toast('Recontagem desvinculada. A divergencia permanece aberta.', 's');
+    } catch (error) {
+      console.error('[DivergenciasModule] desvincular:', error);
+      toast(error.message || 'Nao foi possivel desvincular.', 'e');
+    }
+  }
+
+  async function confirmarResolucaoManual(key) {
+    const fluxo = mapaFluxosVisiveis.get(key);
+    if (!fluxo) return;
+
+    const justificativa = G.prompt?.(
+      `Informe a justificativa para resolver manualmente o endereco ${fluxo.endereco}:`
+    );
+
+    if (!texto(justificativa)) return;
+
+    const confirmed = await confirmar(
+      `Confirmar resolucao manual do endereco ${fluxo.endereco}?`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await executarOperacao(`resolve:${key}`, () =>
+        resolverFluxoManual(key, texto(justificativa))
+      );
+
+      renderDivergencias();
+      renderRecontagens();
+      G.atualizarBadgesNav?.();
+
+      G.logSistema?.('DIVERGENCIA_RESOLVIDA_MANUALMENTE', 'Fluxo resolvido manualmente', {
+        chaveFluxo: key,
+        endereco: fluxo.endereco,
+        justificativa
+      });
+
+      toast('Divergencia resolvida manualmente.', 's');
+    } catch (error) {
+      console.error('[DivergenciasModule] resolver:', error);
+      toast(error.message || 'Nao foi possivel resolver a divergencia.', 'e');
+    }
+  }
+
+  function confirmar(message) {
+    if (typeof G.showConfirm === 'function') {
+      return new Promise(resolve => {
+        G.showConfirm(message, () => resolve(true), {
+          title: 'Confirmacao',
+          okLabel: 'Confirmar'
+        });
+        setTimeout(() => {
+          // O modal existente controla o cancelamento; este fallback nao resolve
+          // automaticamente para evitar confirmar sem acao do usuario.
+        }, 0);
+      });
+    }
+    return Promise.resolve(G.confirm(message));
+  }
+
+  function abrirDetalhes(key) {
+    const fluxo = mapaFluxosVisiveis.get(key);
+    if (!fluxo) {
+      toast('Fluxo nao localizado.', 'e');
+      return;
+    }
+
+    document.getElementById('modal-paletes-esperados-bg')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'modal-paletes-esperados-bg';
+    overlay.className = 'modal-bg open';
+    overlay.style.display = 'flex';
+    overlay.style.zIndex = '99999';
+
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.style.maxWidth = '820px';
+    modal.style.width = 'min(820px,94vw)';
+    modal.style.padding = '0';
+    modal.style.overflow = 'hidden';
+
+    const header = document.createElement('div');
+    header.className = 'modal-hdr';
+    header.style.padding = '18px 20px';
+
+    const titleWrap = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = 'modal-title';
+    title.textContent = 'Esperado e comparacao das contagens';
+
+    const subtitle = document.createElement('div');
+    subtitle.style.fontSize = '.72rem';
+    subtitle.style.color = 'var(--muted)';
+    subtitle.style.marginTop = '3px';
+    subtitle.textContent = `Endereco ${fluxo.endereco} · ${fluxo.itensEsperados.length} item(ns)`;
+
+    titleWrap.append(title, subtitle);
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'modal-close';
+    close.textContent = '×';
+    close.addEventListener('click', () => overlay.remove());
+
+    header.append(titleWrap, close);
+    modal.appendChild(header);
+
+    const items = document.createElement('div');
+    items.style.maxHeight = '42vh';
+    items.style.overflow = 'auto';
+    items.style.borderTop = '1px solid var(--border)';
+    items.style.borderBottom = '1px solid var(--border)';
+
+    const expectedItems = fluxo.itensEsperados.length
+      ? fluxo.itensEsperados
+      : [{
+          produto: fluxo.produto,
+          descricao: fluxo.descricao,
+          quantidade_esperada: fluxo.totalEsperado
+        }];
+
+    expectedItems.forEach((item, index) => {
+      const row = document.createElement('div');
+      row.style.display = 'grid';
+      row.style.gridTemplateColumns = 'minmax(90px,.7fr) minmax(170px,1.7fr) auto';
+      row.style.gap = '12px';
+      row.style.alignItems = 'center';
+      row.style.padding = '11px 12px';
+      row.style.borderBottom = '1px solid var(--border)';
+
+      const identifier = texto(
+        item.palete ||
+        item.pallet ||
+        item.numero_palete ||
+        item.numeroPalete ||
+        item.sscc ||
+        item.lote ||
+        `Item ${index + 1}`
+      );
+
+      const code = texto(
+        item.codigo_produto ||
+        item.codigoProduto ||
+        item.codigo_interno ||
+        item.codigoInterno ||
+        item.gtin ||
+        item.ean ||
+        item.dun ||
+        item.produto ||
+        '—'
+      );
+
+      const description = texto(
+        item.descricao_produto ||
+        item.descricaoProduto ||
+        item.descricao ||
+        item.nomeProduto ||
+        obterNomeProduto(code)
+      );
+
+      const left = document.createElement('div');
+      left.innerHTML = `<div style="font-size:.65rem;color:var(--muted)">ITEM</div><div class="mono" style="font-weight:800">${escapeHtml(identifier)}</div>`;
+
+      const center = document.createElement('div');
+      const codeEl = document.createElement('div');
+      codeEl.className = 'mono';
+      codeEl.style.fontWeight = '800';
+      codeEl.textContent = code;
+      const descEl = document.createElement('div');
+      descEl.style.fontSize = '.69rem';
+      descEl.style.color = 'var(--muted)';
+      descEl.textContent = description;
+      center.append(codeEl, descEl);
+
+      const right = document.createElement('div');
+      right.style.textAlign = 'right';
+      const qtyLabel = document.createElement('div');
+      qtyLabel.style.fontSize = '.65rem';
+      qtyLabel.style.color = 'var(--muted)';
+      qtyLabel.textContent = 'QUANTIDADE';
+      const qtyValue = document.createElement('div');
+      qtyValue.className = 'mono';
+      qtyValue.style.fontSize = '1rem';
+      qtyValue.style.fontWeight = '900';
+      qtyValue.textContent = String(obterQuantidadeEsperadaItem(item));
+      right.append(qtyLabel, qtyValue);
+
+      row.append(left, center, right);
+      items.appendChild(row);
+    });
+
+    modal.appendChild(items);
+
+    const totalBar = document.createElement('div');
+    totalBar.style.display = 'flex';
+    totalBar.style.justifyContent = 'space-between';
+    totalBar.style.alignItems = 'center';
+    totalBar.style.padding = '14px 20px';
+    totalBar.style.background = 'rgba(59,130,246,.07)';
+
+    const totalLabel = document.createElement('div');
+    totalLabel.textContent = 'TOTAL CONSOLIDADO DO ENDERECO';
+    totalLabel.style.fontSize = '.68rem';
+    totalLabel.style.color = 'var(--muted)';
+
+    const totalValue = document.createElement('div');
+    totalValue.className = 'mono';
+    totalValue.style.fontSize = '1.35rem';
+    totalValue.style.fontWeight = '950';
+    totalValue.textContent = fluxo.totalEsperado == null
+      ? 'Nao disponivel'
+      : String(fluxo.totalEsperado);
+
+    totalBar.append(totalLabel, totalValue);
+    modal.appendChild(totalBar);
+
+    const comparisons = document.createElement('div');
+    comparisons.style.padding = '16px 20px';
+    comparisons.style.display = 'grid';
+    comparisons.style.gridTemplateColumns = 'repeat(3,minmax(0,1fr))';
+    comparisons.style.gap = '10px';
+
+    [
+      ['1a contagem', fluxo.primeira],
+      ['2a contagem', fluxo.segunda],
+      ['3a contagem', fluxo.terceira]
+    ].forEach(([label, rodada]) => {
+      const card = document.createElement('div');
+      const hit = fluxo.totalEsperado != null &&
+        rodada.quantidade != null &&
+        quantidadesIguais(rodada.quantidade, fluxo.totalEsperado);
+
+      card.style.border = `1px solid ${hit ? 'rgba(34,197,94,.45)' : 'var(--border)'}`;
+      card.style.background = hit ? 'rgba(34,197,94,.11)' : 'var(--surface)';
+      card.style.borderRadius = '12px';
+      card.style.padding = '12px';
+
+      const cardTitle = document.createElement('strong');
+      cardTitle.textContent = label;
+
+      const name = document.createElement('div');
+      name.style.fontSize = '.72rem';
+      name.style.color = 'var(--muted)';
+      name.style.marginTop = '8px';
+      name.textContent = rodada.quantidade == null
+        ? 'Sem registro'
+        : obterNomeProduto(rodada.produto);
+
+      const qty = document.createElement('div');
+      qty.className = 'mono';
+      qty.style.fontSize = '1.05rem';
+      qty.style.fontWeight = '950';
+      qty.style.marginTop = '4px';
+      qty.style.color = hit ? 'var(--success)' : 'inherit';
+      qty.textContent = rodada.quantidade == null ? '—' : `Qtd ${rodada.quantidade}`;
+
+      card.append(cardTitle, name, qty);
+      comparisons.appendChild(card);
+    });
+
+    modal.appendChild(comparisons);
+    overlay.appendChild(modal);
+
+    overlay.addEventListener('click', event => {
+      if (event.target === overlay) overlay.remove();
+    });
+
+    document.body.appendChild(overlay);
+  }
+
+  /* ------------------------------------------------------------------------
+   * EXPORTACAO
+   * --------------------------------------------------------------------- */
+
+  function exportarXlsx(nomeArquivo, nomeAba, rows) {
+    if (!G.XLSX) {
+      toast('Biblioteca Excel nao carregada.', 'e');
+      return;
+    }
+    if (!rows.length) {
+      toast('Nao ha dados nos filtros atuais.', 'w');
+      return;
+    }
+
+    const ws = G.XLSX.utils.json_to_sheet(rows);
+    const wb = G.XLSX.utils.book_new();
+    G.XLSX.utils.book_append_sheet(wb, ws, nomeAba.slice(0, 31));
+    G.XLSX.writeFile(wb, nomeArquivo);
+  }
+
+  function exportarDivergencias() {
+    const rows = visaoDivergencias.map(f => ({
+      'Inventario': f.inventarioNome,
+      'Rua': f.rua,
+      'Endereco': f.endereco,
+      'Produto': f.produto,
+      'Descricao': f.descricao,
+      'Tipo': f.tipoDivergencia,
+      'Total esperado no endereco': f.totalEsperado ?? '',
+      '1a contagem': f.primeira.quantidade ?? '',
+      'Operador 1a': f.primeira.operador,
+      '2a contagem': f.segunda.quantidade ?? '',
+      'Operador 2a': f.segunda.operador,
+      '3a contagem': f.terceira.quantidade ?? '',
+      'Operador 3a': f.terceira.operador,
+      'Diferenca inicial': f.diferenca ?? '',
+      'Status exibido': f.status,
+      'Status persistido': f.statusPersistido,
+      'Status recontagem': f.statusRecontagem || '',
+      'Atribuido para': f.operadorResponsavel,
+      'Executado por': f.executadoPor,
+      'Inconsistencia detectada': f.inconsistente ? f.inconsistencias.map(i => i.codigo).join(', ') : '',
+      'Chave do fluxo': f.chaveFluxo,
+      'Criada em': formatarData(f.criadaEm)
+    }));
+
+    exportarXlsx('divergencias-filtradas.xlsx', 'Divergencias', rows);
+  }
+
+  function exportarRecontagens() {
+    const rows = visaoRecontagens.map(f => ({
+      'Inventario': f.inventarioNome,
+      'Rua': f.rua,
+      'Endereco': f.endereco,
+      'Produto': f.produto,
+      'Descricao': f.descricao,
+      'Total esperado no endereco': f.totalEsperado ?? '',
+      '1a contagem': f.primeira.quantidade ?? '',
+      'Operador 1a': f.primeira.operador,
+      '2a contagem': f.segunda.quantidade ?? '',
+      'Operador 2a': f.segunda.operador,
+      '3a contagem': f.terceira.quantidade ?? '',
+      'Operador 3a': f.terceira.operador,
+      'Status': f.status,
+      'Status recontagem': f.statusRecontagem || '',
+      'Atribuido para': f.operadorResponsavel,
+      'Executado por': f.executadoPor,
+      'Atribuida em': formatarData(f.atribuidoEm),
+      'Executada em': formatarData(f.executadoEm),
+      'Chave do fluxo': f.chaveFluxo
+    }));
+
+    exportarXlsx('recontagens-filtradas.xlsx', 'Recontagens', rows);
+  }
+
+  /* ------------------------------------------------------------------------
+   * EVENTOS DELEGADOS
+   * --------------------------------------------------------------------- */
+
+  function handleTableAction(event) {
+    const target = event.target.closest('[data-action]');
+    if (!target) return;
+
+    const action = target.dataset.action;
+    const key = target.dataset.fluxoKey;
+
+    if (action === 'toggle-all') {
+      const checked = target.checked;
+      visaoDivergencias.forEach(fluxo => {
+        if (!podeSelecionarFluxo(fluxo)) return;
+        if (checked) selecao.add(fluxo.chaveFluxo);
+        else selecao.delete(fluxo.chaveFluxo);
+      });
+      renderDivergencias();
+      return;
+    }
+
+    if (action === 'toggle-one') {
+      const fluxo = mapaFluxosVisiveis.get(key);
+      if (target.checked && podeSelecionarFluxo(fluxo)) selecao.add(key);
+      else selecao.delete(key);
+      atualizarBarraSelecao();
+      return;
+    }
+
+    if (action === 'assign') {
+      abrirAtribuicao([key]);
+      return;
+    }
+
+    if (action === 'unlink') {
+      confirmarDesvinculacao(key);
+      return;
+    }
+
+    if (action === 'resolve') {
+      confirmarResolucaoManual(key);
+      return;
+    }
+
+    if (action === 'details') {
+      abrirDetalhes(key);
+      return;
+    }
+
+    if (action === 'register') {
+      const fluxo = mapaFluxosVisiveis.get(key);
+      if (fluxo?.tarefaAtiva?.id) G.abrirRegistrarRecontagem?.(fluxo.tarefaAtiva.id);
+    }
+  }
+
+  function bindEvents() {
+    const divWrap = document.getElementById('div-table-wrap');
+    const recWrap = document.getElementById('rec-table-wrap');
+
+    if (divWrap && !divWrap.dataset.canonicalEvents) {
+      divWrap.addEventListener('click', handleTableAction);
+      divWrap.addEventListener('change', handleTableAction);
+      divWrap.dataset.canonicalEvents = '1';
+    }
+
+    if (recWrap && !recWrap.dataset.canonicalEvents) {
+      recWrap.addEventListener('click', handleTableAction);
+      recWrap.dataset.canonicalEvents = '1';
+    }
+  }
+
+  /* ------------------------------------------------------------------------
+   * API DE COMPATIBILIDADE
+   * --------------------------------------------------------------------- */
+
+  G.renderDivergencias = function renderDivergenciasPublic() {
+    bindEvents();
+    return renderDivergencias();
+  };
+
+  G.renderRecontagens = function renderRecontagensPublic() {
+    bindEvents();
+    return renderRecontagens();
+  };
+
+  G.divPodeSelecionar = obj => {
+    if (obj?.chaveFluxo) return podeSelecionarFluxo(obj);
+    const key = chaveFluxo(obj);
+    return podeSelecionarFluxo(mapaFluxosVisiveis.get(key));
+  };
+
+  G.divToggleSel = function divToggleSelCompat(idOrKey, checked) {
+    let key = idOrKey;
+    if (!mapaFluxosVisiveis.has(key)) {
+      const raw = (state().divergencias || []).find(d => texto(d.id) === texto(idOrKey));
+      key = raw ? chaveFluxo(raw) : key;
+    }
+
+    const fluxo = mapaFluxosVisiveis.get(key);
+    if (checked && podeSelecionarFluxo(fluxo)) selecao.add(key);
+    else selecao.delete(key);
+
+    atualizarBarraSelecao();
+  };
+
+  G.divToggleTodos = function divToggleTodosCompat(checked) {
+    visaoDivergencias.forEach(fluxo => {
+      if (!podeSelecionarFluxo(fluxo)) return;
+      if (checked) selecao.add(fluxo.chaveFluxo);
+      else selecao.delete(fluxo.chaveFluxo);
+    });
+    renderDivergencias();
+  };
+
+  G.divDeselecionarTodos = function divDeselecionarTodos() {
+    selecao.clear();
+    renderDivergencias();
+  };
+
+  G.divAtualizarBarraSel = atualizarBarraSelecao;
+
+  G.divFiltroRapido = function divFiltroRapido(tipo) {
+    if (tipo === 'limpar') {
+      filtroRapidoAtivo = '';
+      [
+        'div-busca', 'div-frua', 'div-fnivel', 'div-fsetor',
+        'div-fproduto', 'div-foperador', 'div-fstatus-rec',
+        'div-fdata', 'div-ftipo', 'div-fstatus', 'div-ford',
+        'div-sel-inv'
+      ].forEach(id => {
+        const element = document.getElementById(id);
+        if (element) element.value = '';
+      });
+    } else {
+      filtroRapidoAtivo = filtroRapidoAtivo === tipo ? '' : tipo;
+    }
+
+    ['nao_atribuidas', 'minhas', 'pendentes', 'aguardando_analista', 'concluidas']
+      .forEach(name => {
+        const button = document.getElementById(`fq-${name}`);
+        if (!button) return;
+        const active = filtroRapidoAtivo === name;
+        button.style.background = active ? 'var(--orange)' : '';
+        button.style.color = active ? '#fff' : '';
+        button.style.borderColor = active ? 'var(--orange)' : '';
+      });
+
+    renderDivergencias();
+  };
+
+  G.divPopularSelectOperadores = popularSelectOperadores;
+  G.abrirAtribuirRecontagem = () => abrirAtribuicao();
+  G.confirmarAtribuicao = confirmarAtribuicao;
+
+  G.divAtribuirRapido = function divAtribuirRapido(idOrKey) {
+    let key = idOrKey;
+    if (!mapaFluxosVisiveis.has(key)) {
+      const raw = (state().divergencias || []).find(d => texto(d.id) === texto(idOrKey));
+      key = raw ? chaveFluxo(raw) : key;
+    }
+    return abrirAtribuicao([key]);
+  };
+
+  G.divAtribuirPorRec = function divAtribuirPorRec(recId) {
+    const rec = (state().recontagens || []).find(r => texto(r.id) === texto(recId));
+    if (!rec) {
+      toast('Recontagem nao encontrada.', 'e');
+      return;
+    }
+
+    const key = chaveFluxo(rec);
+    recAtribuirDireto = { ...rec, chaveFluxo: key };
+    abrirAtribuicao([key]);
+  };
+
+  G.desvincularRecontagem = function desvincularRecontagemCompat(idOrKey) {
+    let key = idOrKey;
+    if (!mapaFluxosVisiveis.has(key)) {
+      const raw = (state().divergencias || []).find(d => texto(d.id) === texto(idOrKey));
+      key = raw ? chaveFluxo(raw) : key;
+    }
+    return confirmarDesvinculacao(key);
+  };
+
+  G.marcarDivergenciaResolvida = function marcarDivergenciaResolvidaCompat(idOrKey) {
+    let key = idOrKey;
+    if (!mapaFluxosVisiveis.has(key)) {
+      const raw = (state().divergencias || []).find(d => texto(d.id) === texto(idOrKey));
+      key = raw ? chaveFluxo(raw) : key;
+    }
+    return confirmarResolucaoManual(key);
+  };
+
+  G._marcarDivResolvida = G.marcarDivergenciaResolvida;
+  G.exportarDivergencias = exportarDivergencias;
+  G.exportarRecontagens = exportarRecontagens;
+  G.abrirDetalhePaletesEsperados = function abrirDetalheCompat(idOrKey) {
+    let key = idOrKey;
+    if (!mapaFluxosVisiveis.has(key)) {
+      const raw = (state().divergencias || []).find(d => texto(d.id) === texto(idOrKey));
+      key = raw ? chaveFluxo(raw) : key;
+    }
+    abrirDetalhes(key);
+  };
+  G.fecharDetalhePaletesEsperados = () => {
+    document.getElementById('modal-paletes-esperados-bg')?.remove();
+  };
+
+  G.AnalistaDivergenciasModule = Object.freeze({
+    STATUS,
+    STATUS_REC,
+    chaveFluxo,
+    construirFluxosCanonicos,
+    consolidarRodadas,
+    avaliarFluxo,
+    podeSelecionarFluxo,
+    atribuirFluxos,
+    desvincularFluxo,
+    resolverFluxoManual,
+    renderDivergencias,
+    renderRecontagens,
+    exportarDivergencias,
+    exportarRecontagens
   });
-  _exportarXlsxAnalista('recontagens-filtradas.xlsx', 'Recontagens', linhas);
-}
 
-
-// Exibe a composição do total esperado em formato de lista de paletes.
-function abrirDetalhePaletesEsperados(divId) {
-  const bruto = state().divergencias.find(item => String(item.id || '') === String(divId || ''));
-  if (!bruto) return showToast('Não foi possível localizar essa divergência.', 'e');
-  const invCanonico = _inventarioCanonicoRec(bruto);
-  const endCanonico = _FK.endereco(bruto.endereco);
-  const mesmoEndereco = obj =>
-    _inventarioCanonicoRec(obj) === invCanonico && _FK.endereco(obj?.endereco) === endCanonico;
-  const inventario = state().inventarios.find(i => _inventarioCanonicoRec(i) === invCanonico);
-  let itens = (inventario?.base || []).filter(item => _FK.endereco(item?.endereco) === endCanonico);
-  if (!itens.length && Array.isArray(bruto.itens_esperados)) itens = bruto.itens_esperados;
-  if (!itens.length) itens = [{ produto: bruto.produto, descricao: bruto.descricao, quantidade_esperada: bruto.qtd_esperada }];
-
-  const obterQtd = item => {
-    const valor = item?.quantidade_esperada ?? item?.quantidadeEsperada ?? item?.qtd_esperada ?? item?.qtdEsperada ??
-      item?.quantidade_enderecada ?? item?.qtd_enderecada ?? item?.saldo_estoque ?? item?.saldo ??
-      item?.saldo_erp ?? item?.qtd_sistema ?? item?.qtd_estoque ?? item?.estoque_total ??
-      item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde;
-    if (valor === null || valor === undefined || String(valor).trim() === '') return 0;
-    const numero = Number(String(valor).replace(',', '.'));
-    return Number.isFinite(numero) ? numero : 0;
-  };
-  const total = itens.reduce((soma, item) => soma + obterQtd(item), 0);
-  const linhas = itens.map((item, indice) => {
-    const codigo = item.codigo_produto || item.codigoProduto || item.codigo_interno || item.codigoInterno || item.gtin || item.ean || item.dun || item.produto || '—';
-    const nome = item.descricao_produto || item.descricaoProduto || item.descricao || item.nomeProduto || _nomeProdutoRec(codigo) || '';
-    const identificador = item.palete || item.pallet || item.numero_palete || item.numeroPalete || item.sscc || item.lote || `Palete ${indice + 1}`;
-    const qtd = obterQtd(item);
-    return `<div style="display:grid;grid-template-columns:minmax(90px,.7fr) minmax(170px,1.7fr) auto;gap:12px;align-items:center;padding:11px 12px;border-bottom:1px solid var(--border)">
-      <div><div style="font-size:.65rem;color:var(--muted)">PALETE</div><div class="mono" style="font-weight:800">${escHTML(identificador)}</div></div>
-      <div><div class="mono" style="font-weight:800">${escHTML(codigo)}</div>${nome ? `<div style="font-size:.69rem;color:var(--muted);margin-top:2px">${escHTML(nome)}</div>` : ''}</div>
-      <div style="text-align:right"><div style="font-size:.65rem;color:var(--muted)">QUANTIDADE</div><div class="mono" style="font-size:1rem;font-weight:900">${escHTML(qtd)}</div></div>
-    </div>`;
-  }).join('');
-
-  const divsEndereco = (state().divergencias || []).filter(mesmoEndereco);
-  const primeiraDiv = [...divsEndereco].sort((a,b) => String(a.criada_em || '').localeCompare(String(b.criada_em || '')))
-    .find(x => x.qtd_contada != null || x.qtd_primeira != null) || bruto;
-  const recs = (state().recontagens || []).filter(mesmoEndereco).filter(r =>
-    r.qtd_recontagem != null || r.qtd_segunda != null || r.qtd_terceira != null
-  ).sort((a,b) => String(a.recontagem_concluida_em || a.concluida_em || a.data_segunda || '')
-    .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.data_segunda || '')));
-  const consolidada = recs.find(r => r.qtd_terceira != null || r.qtd_segunda != null) || {};
-  const segundaRec = recs[0] || {};
-  const terceiraRec = recs[1] || {};
-  const rodadas = [
-    { titulo:'1ª contagem', qtd: primeiraDiv.qtd_primeira ?? primeiraDiv.qtd_contada ?? primeiraDiv.quantidade, produto: primeiraDiv.produto_primeira || primeiraDiv.produto_contado || primeiraDiv.gtin_bipado || primeiraDiv.produto || primeiraDiv.codigo_produto },
-    { titulo:'2ª contagem', qtd: consolidada.qtd_segunda ?? segundaRec.qtd_segunda ?? segundaRec.qtd_recontagem, produto: consolidada.produto_segunda || segundaRec.produto_segunda || segundaRec.produto_recontagem || segundaRec.produto },
-    { titulo:'3ª contagem', qtd: consolidada.qtd_terceira ?? terceiraRec.qtd_terceira ?? terceiraRec.qtd_recontagem, produto: consolidada.produto_terceira || terceiraRec.produto_terceira || terceiraRec.produto_recontagem || terceiraRec.produto }
-  ];
-  const numero = v => {
-    if (v === null || v === undefined || String(v).trim() === '') return null;
-    const n = Number(String(v).replace(',', '.'));
-    return Number.isFinite(n) ? n : null;
-  };
-  const comparacoes = rodadas.map(r => {
-    const qtd = numero(r.qtd);
-    const bateu = qtd !== null && qtd === total;
-    const codigo = String(r.produto || '').split(/[,;|]+/).map(x => x.trim()).filter(Boolean)[0] || '';
-    const nome = codigo ? _nomeProdutoRec(codigo) : 'Sem contagem';
-    return `<div style="border:1px solid ${bateu ? 'rgba(34,197,94,.45)' : 'var(--border)'};background:${bateu ? 'rgba(34,197,94,.11)' : 'var(--surface)'};border-radius:12px;padding:12px;min-width:0;box-shadow:${bateu ? 'inset 0 0 0 1px rgba(34,197,94,.12)' : 'none'}">
-      <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${r.titulo}</strong>${bateu ? '<span class="badge b-green">✅ Bateu</span>' : (qtd === null ? '<span class="badge b-gray">Sem registro</span>' : '<span class="badge b-red">Divergente</span>')}</div>
-      <div style="font-size:.72rem;color:var(--muted);margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHTML(nome)}">${escHTML(nome)}</div>
-      <div class="mono" style="font-size:1.05rem;font-weight:950;margin-top:4px;color:${bateu ? 'var(--success)' : 'inherit'}">${qtd === null ? '—' : `Qtd ${escHTML(qtd)}`}</div>
-      <div style="font-size:.66rem;color:var(--muted);margin-top:3px">Esperado consolidado: ${escHTML(total)}</div>
-    </div>`;
-  }).join('');
-
-  document.getElementById('modal-paletes-esperados-bg')?.remove();
-  document.body.insertAdjacentHTML('beforeend', `<div id="modal-paletes-esperados-bg" class="modal-bg open" style="display:flex;z-index:99999" onclick="if(event.target===this) fecharDetalhePaletesEsperados()">
-    <div class="modal" style="max-width:820px;width:min(820px,94vw);padding:0;overflow:hidden">
-      <div class="modal-hdr" style="padding:18px 20px">
-        <div><div class="modal-title">📦 Esperado e comparação das contagens</div><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Endereço ${escHTML(bruto.endereco || '—')} · ${itens.length} ${itens.length === 1 ? 'palete' : 'paletes'}</div></div>
-        <button class="modal-close" onclick="fecharDetalhePaletesEsperados()">✕</button>
-      </div>
-      <div style="max-height:42vh;overflow:auto;border-top:1px solid var(--border);border-bottom:1px solid var(--border)">${linhas}</div>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 20px;background:rgba(59,130,246,.07)">
-        <div><div style="font-size:.68rem;color:var(--muted)">TOTAL CONSOLIDADO DO ENDEREÇO</div><div style="font-size:.72rem;color:var(--muted)">Soma de todos os paletes listados acima</div></div>
-        <div class="mono" style="font-size:1.35rem;font-weight:950">${escHTML(total)}</div>
-      </div>
-      <div style="padding:16px 20px"><div style="font-weight:850;margin-bottom:10px">Comparação das contagens</div><div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px">${comparacoes}</div></div>
-      <div class="modal-actions" style="padding:14px 20px"><button class="btn btn-primary" onclick="fecharDetalhePaletesEsperados()">Fechar</button></div>
-    </div>
-  </div>`);
-}
-function fecharDetalhePaletesEsperados() {
-  document.getElementById('modal-paletes-esperados-bg')?.remove();
-}
+  bindEvents();
+})();

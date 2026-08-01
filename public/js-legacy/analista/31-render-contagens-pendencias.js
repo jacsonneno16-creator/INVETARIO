@@ -1,524 +1,1347 @@
-var __assign = (this && this.__assign) || function () {
-    __assign = Object.assign || function(t) {
-        for (var s, i = 1, n = arguments.length; i < n; i++) {
-            s = arguments[i];
-            for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p))
-                t[p] = s[p];
-        }
-        return t;
-    };
-    return __assign.apply(this, arguments);
-};
-var __spreadArray = (this && this.__spreadArray) || function (to, from, pack) {
-    if (pack || arguments.length === 2) for (var i = 0, l = from.length, ar; i < l; i++) {
-        if (ar || !(i in from)) {
-            if (!ar) ar = Array.prototype.slice.call(from, 0, i);
-            ar[i] = from[i];
-        }
+/* ============================================================================
+ * ANALISTA — CONTAGENS E PENDENCIAS CANONICAS
+ * ----------------------------------------------------------------------------
+ * Substitui:
+ *   - _resultadoRodadaEndereco
+ *   - renderContagens
+ *   - renderPendencias
+ *
+ * Dependencia principal:
+ *   window.AnalistaDivergenciasModule
+ *
+ * Objetivos:
+ *   - Uma unica fonte de verdade para status do fluxo.
+ *   - Contagens, Pendencias, Divergencias e Recontagens sempre concordam.
+ *   - Nenhuma regra de negocio dentro da renderizacao.
+ *   - Nenhuma gravacao durante renderizacao.
+ *   - KPIs, filtros, tabelas e exportacoes usam a mesma projecao.
+ * ========================================================================== */
+
+(() => {
+  'use strict';
+
+  const G = window;
+
+  if (!G.AnalistaStore?.getState) {
+    console.error('[ContagensPendenciasCanonico] AnalistaStore nao encontrado.');
+    return;
+  }
+
+  const state = () => G.AnalistaStore.getState();
+
+  function texto(value) {
+    return String(value ?? '').trim();
+  }
+
+  function upper(value) {
+    return texto(value).toUpperCase();
+  }
+
+  function lower(value) {
+    return texto(value).toLowerCase();
+  }
+
+  function numero(value) {
+    if (value === null || value === undefined || texto(value) === '') return null;
+    const n = Number(String(value).replace(',', '.'));
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function timestamp(value) {
+    if (!value) return 0;
+    if (typeof value?.toMillis === 'function') return value.toMillis();
+    if (typeof value?.toDate === 'function') return value.toDate().getTime();
+    const t = new Date(value).getTime();
+    return Number.isFinite(t) ? t : 0;
+  }
+
+  function formatarData(value) {
+    if (!value) return '—';
+    if (typeof G.fmtTs === 'function') return G.fmtTs(value);
+    const d = new Date(value);
+    return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString('pt-BR');
+  }
+
+  function escapeHtml(value) {
+    if (typeof G.escHTML === 'function') return G.escHTML(value);
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function getCanonicalModule() {
+    const module = G.AnalistaDivergenciasModule;
+    if (!module?.construirFluxosCanonicos || !module?.chaveFluxo) {
+      throw new Error(
+        'AnalistaDivergenciasModule nao carregado. Carregue modulo-divergencias-reescrito.js antes deste arquivo.'
+      );
     }
-    return to.concat(ar || Array.prototype.slice.call(from));
-};
-function state() { return window.AnalistaStore.getState(); }
-function _produtoContagemExibicao(c) {
-    var _a, _b;
-    var codigo = (c === null || c === void 0 ? void 0 : c.codigo_produto) || (c === null || c === void 0 ? void 0 : c.codigoProduto) || (c === null || c === void 0 ? void 0 : c.gtin) || (c === null || c === void 0 ? void 0 : c.ean) || (c === null || c === void 0 ? void 0 : c.dun) || (c === null || c === void 0 ? void 0 : c.codigo_lido) || (c === null || c === void 0 ? void 0 : c.codigoLido) || '';
-    var atual = String((c === null || c === void 0 ? void 0 : c.descricao_produto) || (c === null || c === void 0 ? void 0 : c.descricaoProduto) || (c === null || c === void 0 ? void 0 : c.descricao) || '').trim();
-    var placeholder = !atual || /^(PRODUTO NAO IDENTIFICADO|PRODUTO NÃO IDENTIFICADO|PRODUTO NAO CADASTRADO|PRODUTO NÃO CADASTRADO|CODIGO SEM CADASTRO|CÓDIGO SEM CADASTRO)$/i.test(atual);
-    var ach = (_b = (_a = window.DTProdutos) === null || _a === void 0 ? void 0 : _a.buscarSync) === null || _b === void 0 ? void 0 : _b.call(_a, codigo);
-    return { codigo: codigo || (ach === null || ach === void 0 ? void 0 : ach.codigoInterno) || (ach === null || ach === void 0 ? void 0 : ach.gtin) || (ach === null || ach === void 0 ? void 0 : ach.dun) || '', descricao: (!placeholder ? atual : '') || ((ach === null || ach === void 0 ? void 0 : ach.encontrado) ? ach.nomeProduto : 'Código sem cadastro') };
-}
-function contStatusBadge(status) {
-    var st = String(status || 'PENDENTE').toUpperCase();
-    if (st === 'PROCESSADO' || st === 'OK' || st === 'CONCLUIDA')
-        return 'b-green';
-    if (st === 'DIVERGENTE' || st === 'CONFLITO' || st === 'PERSISTENTE')
-        return 'b-red';
-    if (st === 'ESTORNADA' || st === 'EXCLUIDA')
-        return 'b-gray';
-    if (st === 'EM_RECONTAGEM' || st === 'RECONTAGEM')
-        return 'b-purple';
-    return 'b-orange';
-}
-window.contStatusBadge = window.contStatusBadge || contStatusBadge;
-// Resume o resultado final das rodadas (1ª/2ª/3ª contagem) de um endereço em
-// um único badge, em vez de o endereço aparecer uma vez por rodada na lista
-// de Contagens. Usa a mesma regra de avaliação da aba Recontagem, então os
-// dois lugares sempre concordam sobre qual rodada "bateu".
-function _resultadoRodadaEndereco(c) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m;
-    var st = state();
-    var invRegistro = (st.inventarios || []).find(function (i) {
-        var aliases = [i.id, i.codigo, i.nome, i.inventario_id, i.inventarioId]
-            .filter(Boolean).map(String);
-        return aliases.includes(String(c.inventario_id || c.inventarioId || ''));
-    });
-    var invIds = new Set([
-        invRegistro === null || invRegistro === void 0 ? void 0 : invRegistro.id,
-        invRegistro === null || invRegistro === void 0 ? void 0 : invRegistro.codigo,
-        invRegistro === null || invRegistro === void 0 ? void 0 : invRegistro.nome,
-        invRegistro === null || invRegistro === void 0 ? void 0 : invRegistro.inventario_id,
-        invRegistro === null || invRegistro === void 0 ? void 0 : invRegistro.inventarioId,
-        c.inventario_id, c.inventarioId
-    ].filter(Boolean).map(function (v) { return String(v); }));
-    var end = String(c.endereco || '').trim().toUpperCase();
-    var produto = String(c.codigo_produto || c.codigoProduto || c.produto || c.gtin || c.ean || c.dun || '').trim().toUpperCase();
-    var normalizaProduto = function (obj) { return String((obj === null || obj === void 0 ? void 0 : obj.produto) || (obj === null || obj === void 0 ? void 0 : obj.produto_contado) || (obj === null || obj === void 0 ? void 0 : obj.codigo_produto) || (obj === null || obj === void 0 ? void 0 : obj.codigoProduto) ||
-        (obj === null || obj === void 0 ? void 0 : obj.produto_recontagem) || (obj === null || obj === void 0 ? void 0 : obj.produto_segunda) || (obj === null || obj === void 0 ? void 0 : obj.produto_terceira) ||
-        (obj === null || obj === void 0 ? void 0 : obj.gtin) || (obj === null || obj === void 0 ? void 0 : obj.ean) || (obj === null || obj === void 0 ? void 0 : obj.dun) || '').trim().toUpperCase(); };
-    // A divergência precisa pertencer ao mesmo inventário, endereço E produto.
-    // Não usa mais fallback por "única divergência do endereço", pois isso ligava
-    // uma contagem a outro produto e podia exibir OK 3ª indevidamente.
-    var divsMesmoEndereco = (st.divergencias || []).filter(function (d) {
-        var inv = String(d.inventario_id || d.inventarioId || '');
-        return invIds.has(inv) && String(d.endereco || '').trim().toUpperCase() === end;
-    });
-    // Primeiro tenta o vínculo explícito da contagem. Depois usa produto normalizado.
-    // Como último recurso, aceita a única divergência aberta do endereço. Isso evita
-    // exibir "OK 1ª" quando o registro da contagem traz GTIN e a divergência ficou
-    // gravada com código interno do mesmo produto.
-    var idContagem = String(c.uuid || c.id || '');
-    var div = divsMesmoEndereco.find(function (d) {
-        return idContagem && String(d.contagem_uuid || d.contagem_id || d.origem_contagem_id || '') === idContagem;
-    }) || divsMesmoEndereco.find(function (d) { return produto && normalizaProduto(d) === produto; }) || (function () {
-        var abertas = divsMesmoEndereco.filter(function (d) {
-            return !['RESOLVIDA', 'PERSISTENTE', 'CANCELADA'].includes(String(d.status || '').toUpperCase());
-        });
-        return abertas.length === 1 ? abertas[0] : null;
-    })();
-    if (!div) {
-        if (c.divergente === true || String(c.status || '').toUpperCase() === 'DIVERGENTE' || divsMesmoEndereco.length > 0) {
-            return { texto: '❌ Divergente — aguardando decisão', cls: 'b-red' };
-        }
-        // Só mostra OK 1ª quando não existe qualquer divergência aberta para o endereço.
-        if (String(c.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM') {
-            return { texto: '✅ OK 1ª', cls: 'b-green' };
-        }
-        return null;
-    }
-    // Mantem a aba Contagens alinhada com a regra consolidada por endereco
-    // usada na aba Recontagem. Se o total da rodada bate com o total esperado,
-    // nao pode continuar como persistente nesta tela.
-    var numeroSeguro = function (valor) {
-        if (valor === null || valor === undefined || String(valor).trim() === '')
-            return null;
-        var n = Number(String(valor).replace(',', '.'));
-        return Number.isFinite(n) ? n : null;
-    };
-    var inventarioAtual = (st.inventarios || []).find(function (i) {
-        return invIds.has(String(i.id || i.codigo || i.nome || i.inventario_id || i.inventarioId || ''));
-    });
-    var itensEndereco = ((inventarioAtual === null || inventarioAtual === void 0 ? void 0 : inventarioAtual.base) || []).filter(function (item) {
-        return String((item === null || item === void 0 ? void 0 : item.endereco) || '').trim().toUpperCase() === end;
-    });
-    var qtdItem = function (item) {
-        var valor = item.quantidade_esperada;
-        if (valor == null) valor = item.quantidadeEsperada;
-        if (valor == null) valor = item.qtd_esperada;
-        if (valor == null) valor = item.qtdEsperada;
-        if (valor == null) valor = item.quantidade_enderecada;
-        if (valor == null) valor = item.qtd_enderecada;
-        if (valor == null) valor = item.saldo_estoque;
-        if (valor == null) valor = item.saldo;
-        if (valor == null) valor = item.saldo_erp;
-        if (valor == null) valor = item.qtd_sistema;
-        if (valor == null) valor = item.qtd_estoque;
-        if (valor == null) valor = item.estoque_total;
-        if (valor == null) valor = item.estoque;
-        if (valor == null) valor = item.quantidade;
-        if (valor == null) valor = item.qtd;
-        if (valor == null) valor = item.qtde;
-        var n = numeroSeguro(valor);
-        return n == null ? 0 : n;
-    };
-    var totalEsperadoEndereco = itensEndereco.length
-        ? itensEndereco.reduce(function (soma, item) { return soma + qtdItem(item); }, 0)
-        : null;
-    var recsEnderecoConcluidas = (st.recontagens || []).filter(function (r) {
-        var inv = String(r.inventario_id || r.inventarioId || '');
-        if (!invIds.has(inv) || String(r.endereco || '').trim().toUpperCase() !== end)
-            return false;
-        var status = String(r.status_recontagem || r.status || '').trim().toUpperCase();
-        var temQtd = r.qtd_recontagem != null || r.qtd_segunda != null || r.qtd_terceira != null;
-        var temConclusao = Boolean(r.recontagem_concluida_em || r.concluida_em || r.data_conclusao || r.finalizada_em || r.data_segunda || r.data_terceira);
-        return temQtd && (temConclusao || ['CONCLUIDA', 'CONCLUÍDA', 'FINALIZADA', 'PROCESSADA', 'RESOLVIDA', 'AGUARDANDO_ANALISTA'].includes(status));
-    }).sort(function (a, b) {
-        return String(a.data_terceira || a.recontagem_concluida_em || a.concluida_em || a.data_segunda || '')
-            .localeCompare(String(b.data_terceira || b.recontagem_concluida_em || b.concluida_em || b.data_segunda || ''));
-    });
-    if (totalEsperadoEndereco !== null && recsEnderecoConcluidas.length) {
-        var consolidada = recsEnderecoConcluidas.find(function (r) { return r.qtd_terceira != null || r.qtd_segunda != null; }) || {};
-        var segundaTotal = numeroSeguro(consolidada.qtd_segunda != null ? consolidada.qtd_segunda : (recsEnderecoConcluidas[0] && (recsEnderecoConcluidas[0].qtd_segunda != null ? recsEnderecoConcluidas[0].qtd_segunda : recsEnderecoConcluidas[0].qtd_recontagem)));
-        var terceiraTotal = numeroSeguro(consolidada.qtd_terceira != null ? consolidada.qtd_terceira : (recsEnderecoConcluidas[1] && (recsEnderecoConcluidas[1].qtd_terceira != null ? recsEnderecoConcluidas[1].qtd_terceira : recsEnderecoConcluidas[1].qtd_recontagem)));
-        var avaliacaoConsolidada = window.AnalistaDivergenciasRuntime && window.AnalistaDivergenciasRuntime.avaliarHistorico ? window.AnalistaDivergenciasRuntime.avaliarHistorico({
-            qtd_esperada: totalEsperadoEndereco,
-            qtd_primeira: div.qtd_primeira != null ? div.qtd_primeira : (div.qtd_contada != null ? div.qtd_contada : c.quantidade),
-            qtd_segunda: segundaTotal,
-            qtd_terceira: terceiraTotal,
-            status: div.status,
-            status_recontagem: div.status_recontagem,
-            divergente: div.divergente,
-            precisa_recontagem: div.precisa_recontagem,
-            tipo_divergencia: div.tipo_divergencia,
-            comparacao_somente_quantidade: true,
-            fluxo_consolidado_endereco: true
-        }) : null;
-        if (avaliacaoConsolidada && avaliacaoConsolidada.estado === 'RESOLVIDA')
-            return { texto: '✅ OK ' + avaliacaoConsolidada.rodada + 'ª', cls: 'b-green' };
-        if (avaliacaoConsolidada && avaliacaoConsolidada.estado === 'PERSISTENTE')
-            return { texto: '🔴 Persistente (3 rodadas)', cls: 'b-red' };
+    return module;
+  }
+
+  function obterProdutoContagem(c) {
+    const codigo = texto(
+      c?.codigo_produto ||
+      c?.codigoProduto ||
+      c?.gtin ||
+      c?.ean ||
+      c?.dun ||
+      c?.codigo_lido ||
+      c?.codigoLido
+    );
+
+    const atual = texto(
+      c?.descricao_produto ||
+      c?.descricaoProduto ||
+      c?.descricao
+    );
+
+    const placeholder = !atual ||
+      /^(PRODUTO NAO IDENTIFICADO|PRODUTO NÃO IDENTIFICADO|PRODUTO NAO CADASTRADO|PRODUTO NÃO CADASTRADO|CODIGO SEM CADASTRO|CÓDIGO SEM CADASTRO)$/i.test(atual);
+
+    let ach = null;
+    try {
+      ach = G.DTProdutos?.buscarSync?.(codigo) || null;
+    } catch (error) {
+      console.warn('[ContagensPendenciasCanonico] DTProdutos.buscarSync:', error);
     }
 
-    var statusConcluido = function (r) {
-        var status = String(r.status_recontagem || r.status || '').trim().toUpperCase();
-        var dataConclusao = r.recontagem_concluida_em || r.concluida_em ||
-            r.data_conclusao || r.finalizada_em || r.processada_em || null;
-        var statusOk = ['CONCLUIDA', 'CONCLUÍDA', 'FINALIZADA', 'PROCESSADA', 'RESOLVIDA'].includes(status);
-        var statusBloqueado = ['PENDENTE', 'ATRIBUIDA', 'ATRIBUÍDA', 'EM_ANDAMENTO', 'ABERTA', 'CANCELADA', 'EXCLUIDA'].includes(status);
-        return r.qtd_recontagem != null && !statusBloqueado && (statusOk || Boolean(dataConclusao));
+    return {
+      codigo: codigo || texto(ach?.codigoInterno || ach?.gtin || ach?.dun),
+      descricao:
+        (!placeholder ? atual : '') ||
+        (ach?.encontrado ? texto(ach.nomeProduto) : 'Codigo sem cadastro')
     };
-    // Só considera recontagens realmente concluídas e vinculadas à divergência exata.
-    var recs = (st.recontagens || [])
-        .filter(function (r) { return String(r.divergencia_id || '') === String(div.id || '') && statusConcluido(r); })
-        .sort(function (a, b) {
-        var na = Number(a.numero_recontagem || 0), nb = Number(b.numero_recontagem || 0);
-        if (na !== nb)
-            return na - nb;
-        return String(a.recontagem_concluida_em || a.concluida_em || a.finalizada_em || '')
-            .localeCompare(String(b.recontagem_concluida_em || b.concluida_em || b.finalizada_em || ''));
+  }
+
+  function obterInventarioCanonicoId(obj) {
+    const module = getCanonicalModule();
+    const key = module.chaveFluxo(obj);
+    if (!key) return '';
+    const parts = key.split('|');
+    return parts[parts.length - 2] || '';
+  }
+
+  function obterInventarioPorCanonico(obj) {
+    const id = obterInventarioCanonicoId(obj);
+    return (state().inventarios || []).find(inv => {
+      try {
+        return obterInventarioCanonicoId(inv) === id;
+      } catch {
+        return false;
+      }
+    }) || null;
+  }
+
+  function obterFluxosCanonicos() {
+    return getCanonicalModule().construirFluxosCanonicos();
+  }
+
+  function mapaFluxos() {
+    return new Map(obterFluxosCanonicos().map(fluxo => [fluxo.chaveFluxo, fluxo]));
+  }
+
+  function obterFluxoDaContagem(contagem, map = null) {
+    const module = getCanonicalModule();
+    const key = module.chaveFluxo(contagem);
+    if (!key) return null;
+    return (map || mapaFluxos()).get(key) || null;
+  }
+
+  function resultadoCanonicoDaContagem(contagem, fluxo) {
+    if (!fluxo) {
+      if (
+        contagem?.divergente === true ||
+        upper(contagem?.status) === 'DIVERGENTE'
+      ) {
+        return {
+          texto: 'Divergente — sem fluxo consolidado',
+          cls: 'b-red',
+          estado: 'INCONSISTENTE'
+        };
+      }
+
+      if (upper(contagem?.tipo_contagem || 'PRIMEIRA') !== 'RECONTAGEM') {
+        return {
+          texto: 'OK 1a',
+          cls: 'b-green',
+          estado: 'RESOLVIDA'
+        };
+      }
+
+      return {
+        texto: upper(contagem?.status || 'PENDENTE'),
+        cls: 'b-orange',
+        estado: 'SEM_FLUXO'
+      };
+    }
+
+    switch (fluxo.status) {
+      case 'RESOLVIDA': {
+        const rodada = Number(fluxo.avaliacao?.rodada || fluxo.vezesContado || 1);
+        return {
+          texto: `OK ${Math.max(1, Math.min(rodada, 3))}a`,
+          cls: 'b-green',
+          estado: fluxo.status
+        };
+      }
+
+      case 'PERSISTENTE':
+        return {
+          texto: 'Persistente (3 rodadas)',
+          cls: 'b-red',
+          estado: fluxo.status
+        };
+
+      case 'AGUARDANDO_ANALISTA':
+        return {
+          texto: fluxo.segunda?.quantidade != null
+            ? 'Aguardando 3a contagem'
+            : 'Aguardando analista',
+          cls: 'b-orange',
+          estado: fluxo.status
+        };
+
+      case 'EM_RECONTAGEM':
+        return {
+          texto: fluxo.operadorResponsavel
+            ? `Em recontagem — ${fluxo.operadorResponsavel}`
+            : 'Em recontagem',
+          cls: 'b-purple',
+          estado: fluxo.status
+        };
+
+      case 'ABERTA':
+      default:
+        return {
+          texto: 'Divergente — aguardando atribuicao',
+          cls: 'b-red',
+          estado: fluxo.status
+        };
+    }
+  }
+
+  function statusBadgeContagem(status) {
+    const st = upper(status || 'PENDENTE');
+    if (['PROCESSADO', 'OK', 'CONCLUIDA', 'RESOLVIDA'].includes(st)) return 'b-green';
+    if (['DIVERGENTE', 'CONFLITO', 'PERSISTENTE'].includes(st)) return 'b-red';
+    if (['ESTORNADA', 'EXCLUIDA', 'CANCELADA'].includes(st)) return 'b-gray';
+    if (['EM_RECONTAGEM', 'RECONTAGEM', 'AGUARDANDO_ANALISTA'].includes(st)) return 'b-purple';
+    return 'b-orange';
+  }
+
+  function setText(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value;
+  }
+
+  function setSelectOptions(id, values, emptyLabel, currentValue) {
+    const select = document.getElementById(id);
+    if (!select) return;
+
+    const current = currentValue ?? select.value;
+    select.replaceChildren();
+
+    const empty = document.createElement('option');
+    empty.value = '';
+    empty.textContent = emptyLabel;
+    select.appendChild(empty);
+
+    values.forEach(item => {
+      const option = document.createElement('option');
+
+      if (typeof item === 'object') {
+        option.value = texto(item.value);
+        option.textContent = texto(item.label);
+      } else {
+        option.value = texto(item);
+        option.textContent = texto(item);
+      }
+
+      select.appendChild(option);
     });
-    var base = {
-        qtd_esperada: div.qtd_esperada,
-        produto: div.produto || div.produto_contado || produto,
-        qtd_primeira: (_b = (_a = div.qtd_primeira) !== null && _a !== void 0 ? _a : div.qtd_contada) !== null && _b !== void 0 ? _b : c.quantidade,
-        produto_primeira: div.produto_primeira || div.produto_contado || produto,
-        qtd_segunda: (_d = (_c = recs[0]) === null || _c === void 0 ? void 0 : _c.qtd_recontagem) !== null && _d !== void 0 ? _d : null,
-        produto_segunda: ((_e = recs[0]) === null || _e === void 0 ? void 0 : _e.produto_recontagem) || ((_f = recs[0]) === null || _f === void 0 ? void 0 : _f.produto) || produto,
-        qtd_terceira: (_h = (_g = recs[1]) === null || _g === void 0 ? void 0 : _g.qtd_recontagem) !== null && _h !== void 0 ? _h : null,
-        produto_terceira: ((_j = recs[1]) === null || _j === void 0 ? void 0 : _j.produto_recontagem) || ((_k = recs[1]) === null || _k === void 0 ? void 0 : _k.produto) || produto
-    };
-    var avaliacao = (_m = (_l = window.AnalistaDivergenciasRuntime) === null || _l === void 0 ? void 0 : _l.avaliarHistorico) === null || _m === void 0 ? void 0 : _m.call(_l, base);
-    if (!avaliacao)
-        return { texto: '❌ Divergente — aguardando decisão', cls: 'b-red' };
-    // Trava de segurança: a rodada exibida nunca pode ser maior que a quantidade
-    // de recontagens realmente concluídas (1ª + até duas recontagens).
-    var rodadaMaximaReal = 1 + Math.min(recs.length, 2);
-    var rodadaReal = Math.min(Number(avaliacao.rodada || 1), rodadaMaximaReal);
-    if (avaliacao.estado === 'RESOLVIDA') {
-        return { texto: "\u2705 OK ".concat(rodadaReal, "\u00AA"), cls: 'b-green' };
+
+    if ([...select.options].some(option => option.value === current)) {
+      select.value = current;
     }
-    if (recs.length >= 2 && avaliacao.estado === 'PERSISTENTE') {
-        return { texto: '🔴 Persistente (3 rodadas)', cls: 'b-red' };
-    }
-    if (recs.length === 1)
-        return { texto: '⏳ Aguardando 3ª contagem', cls: 'b-orange' };
-    return { texto: '❌ Divergente — aguardando decisão', cls: 'b-red' };
-}
-// ───────────────────────────────────────────────────────────────────
-//  14. RENDERIZAÇÃO — CONTAGENS
-// ───────────────────────────────────────────────────────────────────
-function renderContagens() {
-    var _a, _b, _c, _d, _e, _f, _g;
-    var busca = (((_a = document.getElementById('cont-busca')) === null || _a === void 0 ? void 0 : _a.value) || '').toLowerCase();
-    var fInv = ((_b = document.getElementById('cont-finv')) === null || _b === void 0 ? void 0 : _b.value) || '';
-    var fTipo = ((_c = document.getElementById('cont-ftipo')) === null || _c === void 0 ? void 0 : _c.value) || '';
-    var fStatus = ((_d = document.getElementById('cont-fstatus')) === null || _d === void 0 ? void 0 : _d.value) || '';
-    var fRua = ((_e = document.getElementById('cont-frua')) === null || _e === void 0 ? void 0 : _e.value) || '';
-    var fOp = ((_f = document.getElementById('cont-foperador')) === null || _f === void 0 ? void 0 : _f.value) || '';
-    var fPeriodo = ((_g = document.getElementById('cont-fperiodo')) === null || _g === void 0 ? void 0 : _g.value) || '';
-    // Popular selects de inventários
-    var selInv = document.getElementById('cont-finv');
-    if (selInv && !selInv.options.length || (selInv && selInv.options.length === 1)) {
-        var cur_1 = selInv.value;
-        selInv.innerHTML = '<option value="">Todos os inventários</option>' +
-            state().inventarios.map(function (i) { return "<option value=\"".concat(i.id, "\" ").concat(i.id === cur_1 ? 'selected' : '', ">").concat(i.codigo, " \u2014 ").concat(i.nome, "</option>"); }).join('');
-        if (cur_1)
-            selInv.value = cur_1;
-    }
-    var dados = state().contagens || [];
-    // Cada rodada de recontagem gerava sua própria linha aqui, então um endereço
-    // recontado 2x aparecia 3x na lista (1ª + 2ª + 3ª) — confuso e redundante,
-    // já que essas rodadas já são exibidas com detalhe na aba Recontagem. Por
-    // padrão mostramos só a 1ª contagem de cada endereço, com um badge dizendo
-    // em qual rodada ele finalmente bateu. Quem quiser ver as rodadas de
-    // recontagem em si pode filtrar explicitamente por Tipo = Recontagem.
+  }
+
+  function obterChaveContagem(contagem) {
+    return getCanonicalModule().chaveFluxo(contagem);
+  }
+
+  function escolherPrimeiraContagemPorFluxo(contagens) {
+    const grupos = new Map();
+
+    contagens.forEach(contagem => {
+      const key = obterChaveContagem(contagem);
+      if (!key) return;
+
+      const atual = grupos.get(key);
+      const atualTs = timestamp(atual?.timestamp || atual?.criado_em || atual?.dataHora);
+      const novoTs = timestamp(contagem.timestamp || contagem.criado_em || contagem.dataHora);
+
+      if (!atual || novoTs < atualTs) grupos.set(key, contagem);
+    });
+
+    return [...grupos.values()];
+  }
+
+  function criarCelula(textValue, className = '', style = null) {
+    const td = document.createElement('td');
+    if (className) td.className = className;
+    if (style) Object.assign(td.style, style);
+    td.textContent = textValue ?? '—';
+    return td;
+  }
+
+  function criarBadge(textValue, className) {
+    const badge = document.createElement('span');
+    badge.className = `badge ${className}`;
+    badge.textContent = textValue;
+    return badge;
+  }
+
+  function criarBotao(textValue, action, id, className = 'btn btn-ghost btn-sm') {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = className;
+    button.textContent = textValue;
+    button.dataset.action = action;
+    button.dataset.id = texto(id);
+    return button;
+  }
+
+  /* ------------------------------------------------------------------------
+   * CONTAGENS
+   * --------------------------------------------------------------------- */
+
+  function renderContagens() {
+    const busca = lower(document.getElementById('cont-busca')?.value);
+    const fInv = texto(document.getElementById('cont-finv')?.value);
+    const fTipo = texto(document.getElementById('cont-ftipo')?.value);
+    const fStatus = texto(document.getElementById('cont-fstatus')?.value);
+    const fRua = texto(document.getElementById('cont-frua')?.value);
+    const fOp = texto(document.getElementById('cont-foperador')?.value);
+    const fPeriodo = texto(document.getElementById('cont-fperiodo')?.value);
+
+    const fluxos = obterFluxosCanonicos();
+    const fluxoMap = new Map(fluxos.map(fluxo => [fluxo.chaveFluxo, fluxo]));
+
+    setSelectOptions(
+      'cont-finv',
+      (state().inventarios || []).map(inv => ({
+        value: obterInventarioCanonicoId(inv),
+        label: `${texto(inv.codigo)} — ${texto(inv.nome)}`
+      })),
+      'Todos os inventarios',
+      fInv
+    );
+
+    let dados = (state().contagens || []).filter(contagem =>
+      !contagem._excluida ||
+      fStatus === 'EXCLUIDA'
+    );
+
     if (!fTipo) {
-        dados = dados.filter(function (c) { return c.tipo_contagem !== 'RECONTAGEM'; });
-        var grupos_1 = new Map();
-        var chaveContagem_1 = function (c) {
-            var id = String(c.inventario_id || c.inventarioId || '');
-            var inv = (state().inventarios || []).find(function (i) {
-                return [i.id, i.codigo, i.nome, i.inventario_id, i.inventarioId]
-                    .filter(Boolean).map(String).includes(id);
-            });
-            var produto = String(c.codigo_produto || c.codigoProduto || c.produto || c.gtin || c.ean || c.dun || '').trim().toUpperCase();
-            return "".concat(String((inv === null || inv === void 0 ? void 0 : inv.id) || id), "|").concat(String(c.endereco || '').trim().toUpperCase(), "|").concat(produto);
-        };
-        dados.forEach(function (c) {
-            var chave = chaveContagem_1(c);
-            var atual = grupos_1.get(chave);
-            var data = function (x) { return String(x.timestamp || x.criado_em || x.dataHora || ''); };
-            if (!atual || data(c).localeCompare(data(atual)) < 0)
-                grupos_1.set(chave, c);
-        });
-        dados = __spreadArray([], grupos_1.values(), true);
+      dados = dados.filter(contagem => upper(contagem.tipo_contagem) !== 'RECONTAGEM');
+      dados = escolherPrimeiraContagemPorFluxo(dados);
     }
-    if (fInv)
-        dados = dados.filter(function (c) { return String(c.inventario_id || c.inventarioId || '') === String(fInv); });
-    if (fTipo)
-        dados = dados.filter(function (c) { return c.tipo_contagem === fTipo; });
+
+    if (fInv) {
+      dados = dados.filter(contagem =>
+        obterInventarioCanonicoId(contagem) === fInv
+      );
+    }
+
+    if (fTipo) {
+      dados = dados.filter(contagem => texto(contagem.tipo_contagem) === fTipo);
+    }
+
     if (fStatus) {
+      dados = dados.filter(contagem => {
+        const fluxo = obterFluxoDaContagem(contagem, fluxoMap);
+
         if (fStatus === 'DIVERGENTE') {
-            // c.divergente é o campo real (boolean) — status='DIVERGENTE' nunca é usado
-            dados = dados.filter(function (c) { return c.divergente === true; });
+          return Boolean(
+            fluxo &&
+            !['RESOLVIDA', 'CANCELADA', 'EXCLUIDA'].includes(fluxo.status)
+          );
         }
-        else {
-            dados = dados.filter(function (c) { return c.status === fStatus; });
+
+        if (fStatus === 'RESOLVIDA') {
+          return fluxo?.status === 'RESOLVIDA';
         }
+
+        if (fStatus === 'PERSISTENTE') {
+          return fluxo?.status === 'PERSISTENTE';
+        }
+
+        if (fStatus === 'EM_RECONTAGEM') {
+          return ['EM_RECONTAGEM', 'AGUARDANDO_ANALISTA'].includes(fluxo?.status);
+        }
+
+        if (fStatus === 'EXCLUIDA') return contagem._excluida === true;
+
+        return upper(contagem.status) === upper(fStatus);
+      });
     }
-    if (fOp)
-        dados = dados.filter(function (c) { return (c.operador || '') === fOp; });
-    // Filtro por rua (baseado no endereço do cadastro)
-    if (fRua)
-        dados = dados.filter(function (c) {
-            var info = getEnderecoInfo(c.endereco);
-            return ((info === null || info === void 0 ? void 0 : info.rua) || '—') === fRua;
-        });
-    // Filtro por período
+
+    if (fOp) {
+      dados = dados.filter(contagem => texto(contagem.operador) === fOp);
+    }
+
+    if (fRua) {
+      dados = dados.filter(contagem =>
+        texto(G.getEnderecoInfo?.(contagem.endereco)?.rua || '—') === fRua
+      );
+    }
+
     if (fPeriodo) {
-        var hoje_1 = new Date();
-        hoje_1.setHours(0, 0, 0, 0);
-        var ontem_1 = new Date(hoje_1);
-        ontem_1.setDate(ontem_1.getDate() - 1);
-        var set7_1 = new Date(hoje_1);
-        set7_1.setDate(set7_1.getDate() - 7);
-        dados = dados.filter(function (c) {
-            var ts = c.timestamp ? new Date(c.timestamp) : null;
-            if (!ts)
-                return false;
-            if (fPeriodo === 'hoje')
-                return ts >= hoje_1;
-            if (fPeriodo === 'ontem')
-                return ts >= ontem_1 && ts < hoje_1;
-            if (fPeriodo === '7d')
-                return ts >= set7_1;
-            return true;
-        });
+      const hoje = new Date();
+      hoje.setHours(0, 0, 0, 0);
+
+      const ontem = new Date(hoje);
+      ontem.setDate(ontem.getDate() - 1);
+
+      const seteDias = new Date(hoje);
+      seteDias.setDate(seteDias.getDate() - 7);
+
+      dados = dados.filter(contagem => {
+        const dt = new Date(
+          contagem.timestamp ||
+          contagem.criado_em ||
+          contagem.dataHora ||
+          ''
+        );
+
+        if (Number.isNaN(dt.getTime())) return false;
+        if (fPeriodo === 'hoje') return dt >= hoje;
+        if (fPeriodo === 'ontem') return dt >= ontem && dt < hoje;
+        if (fPeriodo === '7d') return dt >= seteDias;
+        return true;
+      });
     }
-    if (busca)
-        dados = dados.filter(function (c) {
-            return (c.operador || '').toLowerCase().includes(busca) ||
-                (c.endereco || '').toLowerCase().includes(busca) ||
-                (c.codigo_produto || '').toLowerCase().includes(busca) ||
-                (c.descricao_produto || '').toLowerCase().includes(busca);
-        });
-    dados = __spreadArray([], dados, true).sort(function (a, b) { return (b.timestamp || '').localeCompare(a.timestamp || ''); });
-    // KPIs Contagens
-    var _allConts = state().contagens.filter(function (c) { return !c._excluida && c.status !== 'ESTORNADA'; });
-    var _setCK = function (id, v) { var el = document.getElementById(id); if (el)
-        el.textContent = v; };
-    _setCK('ck-total', _allConts.length);
-    _setCK('ck-processadas', _allConts.filter(function (c) { return c.status === 'PROCESSADO'; }).length);
-    _setCK('ck-divergentes', _allConts.filter(function (c) { return c.divergente === true; }).length);
-    _setCK('ck-pendentes', _allConts.filter(function (c) { return !c.status || c.status === 'PENDENTE'; }).length);
-    _setCK('ck-recontagens', _allConts.filter(function (c) { return c.tipo_contagem === 'RECONTAGEM'; }).length);
-    // Atualizar selects dinâmicos (rua e operador)
-    var selRua = document.getElementById('cont-frua');
-    if (selRua) {
-        var ruas = __spreadArray([], new Set(state().contagens.map(function (c) { var i = getEnderecoInfo(c.endereco); return (i === null || i === void 0 ? void 0 : i.rua) || '—'; }).filter(Boolean)), true).sort();
-        selRua.innerHTML = '<option value="">Todas as ruas</option>' + ruas.map(function (r) { return "<option value=\"".concat(r, "\" ").concat(r === fRua ? 'selected' : '', ">").concat(r, "</option>"); }).join('');
+
+    if (busca) {
+      dados = dados.filter(contagem => {
+        const produto = obterProdutoContagem(contagem);
+        const fluxo = obterFluxoDaContagem(contagem, fluxoMap);
+
+        return [
+          contagem.operador,
+          contagem.endereco,
+          produto.codigo,
+          produto.descricao,
+          fluxo?.inventarioNome,
+          fluxo?.operadorResponsavel
+        ].some(value => lower(value).includes(busca));
+      });
     }
-    var selOp = document.getElementById('cont-foperador');
-    if (selOp) {
-        var ops = __spreadArray([], new Set(state().contagens.map(function (c) { return c.operador; }).filter(Boolean)), true).sort();
-        selOp.innerHTML = '<option value="">Todos os operadores</option>' + ops.map(function (o) { return "<option value=\"".concat(o, "\" ").concat(o === fOp ? 'selected' : '', ">").concat(o, "</option>"); }).join('');
-    }
+
+    dados.sort((a, b) =>
+      timestamp(b.timestamp || b.criado_em || b.dataHora) -
+      timestamp(a.timestamp || a.criado_em || a.dataHora)
+    );
+
+    const contagensValidas = (state().contagens || []).filter(contagem =>
+      !contagem._excluida &&
+      !['ESTORNADA', 'EXCLUIDA'].includes(upper(contagem.status))
+    );
+
+    const fluxosComContagem = fluxos.filter(fluxo =>
+      contagensValidas.some(contagem => obterChaveContagem(contagem) === fluxo.chaveFluxo)
+    );
+
+    setText('ck-total', escolherPrimeiraContagemPorFluxo(
+      contagensValidas.filter(c => upper(c.tipo_contagem) !== 'RECONTAGEM')
+    ).length);
+
+    setText('ck-processadas', fluxosComContagem.filter(f => f.status === 'RESOLVIDA').length);
+
+    setText(
+      'ck-divergentes',
+      fluxosComContagem.filter(f =>
+        ['ABERTA', 'EM_RECONTAGEM', 'AGUARDANDO_ANALISTA', 'PERSISTENTE'].includes(f.status)
+      ).length
+    );
+
+    setText(
+      'ck-pendentes',
+      fluxosComContagem.filter(f =>
+        ['ABERTA', 'AGUARDANDO_ANALISTA'].includes(f.status)
+      ).length
+    );
+
+    setText(
+      'ck-recontagens',
+      fluxosComContagem.filter(f =>
+        f.segunda?.quantidade != null || f.terceira?.quantidade != null
+      ).length
+    );
+
+    setSelectOptions(
+      'cont-frua',
+      [...new Set(
+        (state().contagens || []).map(c =>
+          texto(G.getEnderecoInfo?.(c.endereco)?.rua || '—')
+        )
+      )].sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true })),
+      'Todas as ruas',
+      fRua
+    );
+
+    setSelectOptions(
+      'cont-foperador',
+      [...new Set(
+        (state().contagens || []).map(c => texto(c.operador)).filter(Boolean)
+      )].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+      'Todos os operadores',
+      fOp
+    );
+
+    const container = document.getElementById('cont-table-wrap');
+    if (!container) return;
+
+    container.replaceChildren();
+
     if (!dados.length) {
-        document.getElementById('cont-table-wrap').innerHTML = "<div class=\"empty\"><div class=\"empty-icon\">\uD83D\uDCCB</div><div class=\"empty-title\">Nenhuma contagem encontrada</div><div class=\"empty-sub\">As contagens dos coletores aparecem aqui automaticamente</div></div>";
-        return;
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.innerHTML = '<div class="empty-icon">📋</div><div class="empty-title">Nenhuma contagem encontrada</div><div class="empty-sub">As contagens dos coletores aparecem aqui automaticamente.</div>';
+      container.appendChild(empty);
+      return;
     }
-    document.getElementById('cont-table-wrap').innerHTML = "\n    <div class=\"tbl-wrap\"><table>\n      <thead><tr>\n        <th>Data/Hora</th><th>Operador</th><th>Invent\u00E1rio</th>\n        <th>Endere\u00E7o</th><th>Produto</th><th>Quantidade</th>\n        <th>Tipo</th><th>Status</th><th>A\u00E7\u00F5es</th>\n      </tr></thead>\n      <tbody>\n        ".concat(dados.map(function (c) {
-        var _a;
-        var inv = getInventarioPorId(c.inventario_id);
-        var excluida = c._excluida === true;
-        var rowStyle = excluida ? 'opacity:.45;background:#fafafa' : '';
-        var end = getEnderecoInfo(c.endereco);
-        var capInfo = end && end.capacidade_paletes !== null
-            ? "<span style=\"font-size:.65rem;color:var(--muted)\"> \u00B7 cap:".concat(end.capacidade_paletes, "</span>") : '';
-        var ruaInfo = (end === null || end === void 0 ? void 0 : end.rua) ? "<div style=\"font-size:.65rem;color:var(--muted)\">Rua: ".concat(end.rua, "</div>") : '';
-        var prodExib = _produtoContagemExibicao(c);
-        return "<tr style=\"".concat(rowStyle, "\">\n            <td class=\"mono\" style=\"white-space:nowrap;font-size:.75rem\">").concat(fmtTs(c.timestamp), "</td>\n            <td>\n              <div style=\"display:flex;align-items:center;gap:6px\">\n                <div class=\"u-avatar\" style=\"width:24px;height:24px;font-size:.65rem;flex-shrink:0\">").concat((c.operador || '?')[0].toUpperCase(), "</div>\n                <span style=\"font-weight:600;font-size:.82rem\">").concat(c.operador || '—', "</span>\n              </div>\n            </td>\n            <td style=\"font-size:.75rem;color:var(--muted)\">").concat((inv === null || inv === void 0 ? void 0 : inv.codigo) || c.inventario_id, "</td>\n            <td class=\"mono\">").concat(c.endereco || '—').concat(capInfo).concat(ruaInfo, "</td>\n            <td>\n              <div style=\"font-weight:600;font-size:.82rem\">").concat(prodExib.codigo || '—', "</div>\n              <div style=\"font-size:.72rem;color:var(--muted)\">").concat(prodExib.descricao || '', "</div>\n            </td>\n            <td class=\"mono\" style=\"font-weight:700;font-size:.9rem\">").concat((c.qtd_caixas != null && c.fator_caixa > 1)
-            ? "".concat(c.qtd_caixas, " CX")
-            : ((_a = c.quantidade) !== null && _a !== void 0 ? _a : '—'), "</td>\n            <td><span class=\"badge ").concat(c.tipo_contagem === 'RECONTAGEM' ? 'b-purple' : 'b-blue', "\">").concat(c.tipo_contagem || 'PRIMEIRA', "</span></td>\n            <td>\n              ").concat(excluida
-            ? "<span class=\"badge b-gray\">\uD83D\uDDD1 Exclu\u00EDda</span>"
-            : (function () {
-                var rodada = _resultadoRodadaEndereco(c);
-                return rodada
-                    ? "<span class=\"badge ".concat(rodada.cls, "\" title=\"Resultado final considerando as rodadas de recontagem\">").concat(rodada.texto, "</span>")
-                    : "<span class=\"badge ".concat(contStatusBadge(c.status), "\">").concat(c.status || 'PENDENTE', "</span>");
-            })(), "\n            </td>\n            <td>\n              ").concat(excluida
-            ? "<button class=\"btn btn-ghost btn-sm\" onclick=\"restaurarContagem('".concat(c.id, "')\" title=\"Restaurar contagem\">\u21A9 Restaurar</button>")
-            : "<div style=\"display:flex;gap:4px\">\n                     <button class=\"btn btn-danger btn-sm\" onclick=\"abrirEstorno('".concat(c.id, "')\" title=\"Estornar \u2014 libera endere\u00E7o com registro\">\u21A9 Estornar</button>\n                   </div>"), "\n            </td>\n          </tr>");
-    }).join(''), "\n      </tbody>\n    </table></div>");
-}
-// ───────────────────────────────────────────────────────────────────
-//  15. RENDERIZAÇÃO — PENDÊNCIAS
-// ───────────────────────────────────────────────────────────────────
-function renderPendencias() {
-    var _a, _b, _c, _d;
-    var selInv = document.getElementById('pend-sel-inv');
-    var busca = (((_a = document.getElementById('pend-busca')) === null || _a === void 0 ? void 0 : _a.value) || '').toLowerCase();
-    var fStatus = ((_b = document.getElementById('pend-fstatus')) === null || _b === void 0 ? void 0 : _b.value) || '';
-    var fLocal = ((_c = document.getElementById('pend-flocal')) === null || _c === void 0 ? void 0 : _c.value) || '';
-    var fRua = ((_d = document.getElementById('pend-frua')) === null || _d === void 0 ? void 0 : _d.value) || '';
-    var invId = (selInv === null || selInv === void 0 ? void 0 : selInv.value) || '';
-    // Preencher select de inventários
-    if (selInv) {
-        var cur_2 = selInv.value;
-        selInv.innerHTML = '<option value="">Selecione um inventário...</option>' +
-            state().inventarios.filter(function (i) { var _a; return ['ATIVO', 'ABERTO', 'PUBLICADO', 'LIBERADO', 'EM_ANDAMENTO', 'PAUSADO'].includes(String(i.status || '').toUpperCase()) || ((_a = i.enderecos_selecionados) === null || _a === void 0 ? void 0 : _a.length); }).map(function (i) {
-                return "<option value=\"".concat(i.id, "\" ").concat(i.id === cur_2 ? 'selected' : '', ">").concat(i.codigo, " \u2014 ").concat(i.nome, "</option>");
-            }).join('');
-        if (cur_2)
-            selInv.value = cur_2;
-    }
-    if (!invId) {
-        document.getElementById('pend-table-wrap').innerHTML = "<div class=\"empty\"><div class=\"empty-icon\">\u23F3</div><div class=\"empty-title\">Selecione um invent\u00E1rio</div></div>";
-        ['pk-total', 'pk-contados', 'pk-pendentes', 'pk-pct'].forEach(function (id) { return document.getElementById(id).textContent = '—'; });
-        return;
-    }
-    var inv = getInventarioPorId(invId);
-    if (!inv)
-        return;
-    // Usar state().enderecosLista como base oficial de endereços
-    var conts = (state().contagens || []).filter(function (c) { return String(c.inventario_id || c.inventarioId || '') === String(invId) && !c._excluida && c.status !== 'ESTORNADA'; });
-    var endsContadosSet = new Set(conts.filter(function (c) { return !_isVazio(c); }).map(function (c) { return c.endereco; }));
-    var endsVaziosConfSet = new Set(conts.filter(function (c) { return _isVazio(c) && c.status !== 'ESTORNADA'; }).map(function (c) { return c.endereco; }));
-    // Usar somente os endereços pertencentes ao inventário selecionado.
-    var selecionados = Array.isArray(inv.enderecos_selecionados) ? inv.enderecos_selecionados : [];
-    var selecionadosSet = new Set(selecionados.map(function (x) { return String(typeof x === 'string' ? x : (x.endereco || x.id || '')); }).filter(Boolean));
-    var baseInventario = selecionadosSet.size
-        ? (state().enderecosLista || []).filter(function (e) { return selecionadosSet.has(String(e.endereco || e.id || '')); })
-        : (Array.isArray(inv.base) && inv.base.length ? inv.base : (state().enderecosLista || []));
-    // Enriquecer a base do inventário com status de contagem
-    var lista = baseInventario.map(function (e) {
-        var _a;
-        var endInfo = e; // já é o objeto completo do ENDDB
-        var contado = endsContadosSet.has(e.endereco);
-        var vazioConf = endsVaziosConfSet.has(e.endereco);
-        var inativo = e.ativo === false;
-        var cap = (_a = e.capacidade_paletes) !== null && _a !== void 0 ? _a : null;
-        var usados = getPaletesUsados(invId, e.endereco);
-        var limiteTingido = !inativo && cap !== null && cap > 0 && usados >= cap;
-        var status_pend;
-        if (contado)
-            status_pend = 'CONTADO';
-        else if (vazioConf)
-            status_pend = 'VAZIO_CONFIRMADO';
-        else if (inativo)
-            status_pend = 'INATIVO';
-        else if (limiteTingido)
-            status_pend = 'LIMITE_ATINGIDO';
-        else
-            status_pend = 'PENDENTE';
-        return __assign(__assign({}, e), { contado: contado, vazioConf: vazioConf, inativo: inativo, limiteTingido: limiteTingido, usados: usados, status_pend: status_pend });
+
+    const wrap = document.createElement('div');
+    wrap.className = 'tbl-wrap';
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+
+    [
+      'Data/Hora',
+      'Operador',
+      'Inventario',
+      'Endereco',
+      'Produto',
+      'Quantidade',
+      'Tipo',
+      'Resultado consolidado',
+      'Acoes'
+    ].forEach(label => {
+      const th = document.createElement('th');
+      th.textContent = label;
+      headRow.appendChild(th);
     });
-    // Filtro de locais
-    var locFlt = document.getElementById('pend-flocal');
-    if (locFlt) {
-        var locais = __spreadArray([], new Set(lista.map(function (e) { return e.setor || '—'; })), true).sort();
-        locFlt.innerHTML = '<option value="">Todos os locais</option>' + locais.map(function (l) { return "<option value=\"".concat(l, "\" ").concat(l === fLocal ? 'selected' : '', ">").concat(l, "</option>"); }).join('');
-    }
-    // Filtro de ruas
-    var ruaFlt = document.getElementById('pend-frua');
-    if (ruaFlt) {
-        var ruas = __spreadArray([], new Set(lista.map(function (e) { return e.rua || extrairRua(e.endereco) || '—'; })), true).sort(function (a, b) { return a.localeCompare(b, 'pt-BR', { numeric: true }); });
-        ruaFlt.innerHTML = '<option value="">Todas as ruas</option>' + ruas.map(function (r) { return "<option value=\"".concat(r, "\" ").concat(r === fRua ? 'selected' : '', ">Rua ").concat(r, "</option>"); }).join('');
-    }
-    // Filtros
-    var filtrado = lista;
-    if (fStatus)
-        filtrado = filtrado.filter(function (e) { return e.status_pend === fStatus; });
-    if (fLocal)
-        filtrado = filtrado.filter(function (e) { return (e.setor || '—') === fLocal; });
-    if (fRua)
-        filtrado = filtrado.filter(function (e) { return (e.rua || extrairRua(e.endereco) || '—') === fRua; });
-    if (busca)
-        filtrado = filtrado.filter(function (e) {
-            return e.endereco.toLowerCase().includes(busca) ||
-                (e.setor || '').toLowerCase().includes(busca) ||
-                (e.rua || extrairRua(e.endereco) || '').toLowerCase().includes(busca);
-        });
-    // KPIs — conferidos = contados + vazios_confirmados (ambos saem das pendências)
-    var total = lista.length;
-    var contados = lista.filter(function (e) { return e.status_pend === 'CONTADO'; }).length;
-    var vaziosConf = lista.filter(function (e) { return e.status_pend === 'VAZIO_CONFIRMADO'; }).length;
-    var conferidos = contados + vaziosConf;
-    var pendentes = lista.filter(function (e) { return e.status_pend === 'PENDENTE'; }).length;
-    var inativos = lista.filter(function (e) { return e.status_pend === 'INATIVO'; }).length;
-    var limiteAting = lista.filter(function (e) { return e.status_pend === 'LIMITE_ATINGIDO'; }).length;
-    var elegíveis = total - inativos; // base real para % de progresso
-    var pct = elegíveis > 0 ? Math.round((conferidos / elegíveis) * 100) : 0;
-    document.getElementById('pk-total').textContent = total.toLocaleString('pt-BR');
-    document.getElementById('pk-contados').textContent = "".concat(conferidos.toLocaleString('pt-BR')).concat(vaziosConf > 0 ? " (".concat(vaziosConf, " vaz.)") : '');
-    document.getElementById('pk-pendentes').textContent = "".concat(pendentes, " + ").concat(limiteAting, "\uD83D\uDD12");
-    document.getElementById('pk-pct').textContent = pct + '%';
-    if (!filtrado.length) {
-        document.getElementById('pend-table-wrap').innerHTML = "<div class=\"empty\"><div class=\"empty-icon\">\u2705</div><div class=\"empty-title\">Nenhum endere\u00E7o encontrado com esses filtros</div></div>";
-    }
-    else {
-        var statusLabel_1 = {
-            CONTADO: { cls: 'b-green', txt: '✓ Contado' },
-            VAZIO_CONFIRMADO: { cls: 'b-gray', txt: '🔲 Vazio' },
-            PENDENTE: { cls: 'b-yellow', txt: '⏳ Pendente' },
-            INATIVO: { cls: 'b-gray', txt: '⛔ Inativo' },
-            LIMITE_ATINGIDO: { cls: 'b-blocked', txt: '🔒 Limite' },
-        };
-        document.getElementById('pend-table-wrap').innerHTML = "\n    ".concat(inativos > 0 ? "<div class=\"alert warn\" style=\"margin:12px 16px 0;border-radius:8px\">\u26D4 ".concat(inativos, " endere\u00E7o(s) inativo(s) n\u00E3o ser\u00E3o contabilizados no progresso.</div>") : '', "\n    ").concat(limiteAting > 0 ? "<div class=\"alert warn\" style=\"margin:8px 16px 0;border-radius:8px\">\uD83D\uDD12 ".concat(limiteAting, " endere\u00E7o(s) com limite de paletes atingido.</div>") : '', "\n    <div class=\"tbl-wrap\"><table>\n      <thead><tr><th>Endere\u00E7o</th><th>Local/\u00C1rea</th><th>Rua</th><th>N\u00EDvel</th><th>Tipo</th><th>Paletes (usados/cap)</th><th>Status</th></tr></thead>\n      <tbody>\n        ").concat(filtrado.map(function (e) {
-            var s = statusLabel_1[e.status_pend] || { cls: 'b-gray', txt: e.status_pend };
-            var cap = e.capacidade_paletes !== null ? String(e.capacidade_paletes) : '∞';
-            return "<tr style=\"".concat(e.inativo || e.limiteTingido ? 'opacity:.6' : '', "\">\n            <td class=\"mono\">").concat(e.endereco, "</td>\n            <td>").concat(e.setor || '—', "</td>\n            <td>").concat(e.rua || '—', "</td>\n            <td>").concat(e.nivel || '—', "</td>\n            <td>").concat(e.tipo || '—', "</td>\n            <td class=\"mono\" style=\"font-weight:700;color:").concat(e.limiteTingido ? 'var(--danger)' : 'inherit', "\">").concat(e.usados, "/").concat(cap, "</td>\n            <td><span class=\"badge ").concat(s.cls, "\">").concat(s.txt, "</span></td>\n          </tr>");
-        }).join(''), "\n      </tbody>\n    </table></div>");
-    }
-    // Update end count display
-    var endCountEl = document.getElementById('pend-end-count');
-    if (endCountEl)
-        endCountEl.textContent = "".concat(pendentes, " endere\u00E7o(s) aguardando de ").concat(total, " total");
-    // ── SEÇÃO: Recontagens pendentes ──────────────────────────────────
-    var recPend = (state().recontagens || []).filter(function (r) { return String(r.inventario_id || r.inventarioId || '') === String(invId) && String(r.status || '').toUpperCase() === 'PENDENTE'; });
-    var recSec = document.getElementById('pend-rec-section');
-    var pkRecPend = document.getElementById('pk-rec-pend');
-    if (pkRecPend)
-        pkRecPend.textContent = recPend.length.toLocaleString('pt-BR');
-    if (recSec) {
-        if (recPend.length > 0) {
-            recSec.style.display = '';
-            document.getElementById('pend-rec-count').textContent = "".concat(recPend.length, " recontagem(ns) pendente(s)");
-            document.getElementById('pend-rec-wrap').innerHTML = "\n        <div class=\"tbl-wrap\"><table>\n          <thead><tr><th>Endere\u00E7o</th><th>Produto</th><th>Qtd Sistema</th><th>1\u00AA Contagem</th><th>Diferen\u00E7a</th><th>A\u00E7\u00E3o</th></tr></thead>\n          <tbody>\n            ".concat(recPend.slice(0, 10).map(function (r) {
-                var diff = r.qtd_primeira - r.qtd_esperada;
-                return "<tr>\n                <td class=\"mono\">".concat(r.endereco, "</td>\n                <td style=\"font-size:.82rem\">").concat(r.produto, "</td>\n                <td class=\"mono\">").concat(r.qtd_esperada, "</td>\n                <td class=\"mono\" style=\"color:var(--danger);font-weight:700\">").concat(r.qtd_primeira, "</td>\n                <td class=\"mono\" style=\"font-weight:800;color:").concat(diff > 0 ? 'var(--warn)' : 'var(--danger)', "\">\n                  ").concat(diff > 0 ? '+' : '').concat(diff, "\n                </td>\n                <td><button class=\"btn btn-primary btn-sm\" onclick=\"abrirRegistrarRecontagem('").concat(r.id, "')\">\uD83D\uDCDD Registrar</button></td>\n              </tr>");
-            }).join(''), "\n          </tbody>\n        </table></div>\n        ").concat(recPend.length > 10 ? "<div style=\"padding:8px 16px;font-size:.75rem;color:var(--muted)\">... e mais ".concat(recPend.length - 10, ". Veja a aba Recontagem.</div>") : '');
+
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+
+    dados.forEach(contagem => {
+      const fluxo = obterFluxoDaContagem(contagem, fluxoMap);
+      const produto = obterProdutoContagem(contagem);
+      const inventario = obterInventarioPorCanonico(contagem);
+      const enderecoInfo = G.getEnderecoInfo?.(contagem.endereco) || {};
+      const excluida = contagem._excluida === true;
+      const resultado = resultadoCanonicoDaContagem(contagem, fluxo);
+
+      const tr = document.createElement('tr');
+      if (excluida) {
+        tr.style.opacity = '.45';
+        tr.style.background = '#fafafa';
+      }
+
+      tr.appendChild(criarCelula(
+        formatarData(contagem.timestamp || contagem.criado_em || contagem.dataHora),
+        'mono',
+        { whiteSpace: 'nowrap', fontSize: '.75rem' }
+      ));
+
+      const tdOperator = document.createElement('td');
+      const operatorWrap = document.createElement('div');
+      operatorWrap.style.display = 'flex';
+      operatorWrap.style.alignItems = 'center';
+      operatorWrap.style.gap = '6px';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'u-avatar';
+      avatar.style.width = '24px';
+      avatar.style.height = '24px';
+      avatar.style.fontSize = '.65rem';
+      avatar.style.flexShrink = '0';
+      avatar.textContent = texto(contagem.operador || '?').charAt(0).toUpperCase();
+
+      const operatorName = document.createElement('span');
+      operatorName.style.fontWeight = '600';
+      operatorName.style.fontSize = '.82rem';
+      operatorName.textContent = texto(contagem.operador || '—');
+
+      operatorWrap.append(avatar, operatorName);
+      tdOperator.appendChild(operatorWrap);
+      tr.appendChild(tdOperator);
+
+      tr.appendChild(criarCelula(
+        texto(inventario?.codigo || fluxo?.inventarioNome || contagem.inventario_id),
+        '',
+        { fontSize: '.75rem', color: 'var(--muted)' }
+      ));
+
+      const tdAddress = document.createElement('td');
+      tdAddress.className = 'mono';
+
+      const address = document.createElement('div');
+      address.textContent = texto(contagem.endereco || '—');
+      tdAddress.appendChild(address);
+
+      if (enderecoInfo.rua) {
+        const street = document.createElement('div');
+        street.style.fontSize = '.65rem';
+        street.style.color = 'var(--muted)';
+        street.textContent = `Rua: ${enderecoInfo.rua}`;
+        tdAddress.appendChild(street);
+      }
+
+      if (enderecoInfo.capacidade_paletes != null) {
+        const capacity = document.createElement('div');
+        capacity.style.fontSize = '.65rem';
+        capacity.style.color = 'var(--muted)';
+        capacity.textContent = `Capacidade: ${enderecoInfo.capacidade_paletes}`;
+        tdAddress.appendChild(capacity);
+      }
+
+      tr.appendChild(tdAddress);
+
+      const tdProduct = document.createElement('td');
+      const productCode = document.createElement('div');
+      productCode.style.fontWeight = '600';
+      productCode.style.fontSize = '.82rem';
+      productCode.textContent = produto.codigo || '—';
+
+      const productDescription = document.createElement('div');
+      productDescription.style.fontSize = '.72rem';
+      productDescription.style.color = 'var(--muted)';
+      productDescription.textContent = produto.descricao || '';
+
+      tdProduct.append(productCode, productDescription);
+      tr.appendChild(tdProduct);
+
+      const quantity = (
+        contagem.qtd_caixas != null &&
+        numero(contagem.fator_caixa) > 1
+      ) ? `${contagem.qtd_caixas} CX` : (
+        contagem.quantidade ??
+        contagem.qtd_caixas ??
+        '—'
+      );
+
+      tr.appendChild(criarCelula(quantity, 'mono', {
+        fontWeight: '700',
+        fontSize: '.9rem'
+      }));
+
+      const tdType = document.createElement('td');
+      tdType.appendChild(criarBadge(
+        texto(contagem.tipo_contagem || 'PRIMEIRA'),
+        upper(contagem.tipo_contagem) === 'RECONTAGEM' ? 'b-purple' : 'b-blue'
+      ));
+      tr.appendChild(tdType);
+
+      const tdResult = document.createElement('td');
+
+      if (excluida) {
+        tdResult.appendChild(criarBadge('Excluida', 'b-gray'));
+      } else {
+        const badge = criarBadge(resultado.texto, resultado.cls);
+        badge.title = fluxo
+          ? `Estado canonico: ${fluxo.status}`
+          : 'Sem fluxo consolidado correspondente';
+        tdResult.appendChild(badge);
+
+        if (fluxo?.inconsistente) {
+          const warning = document.createElement('div');
+          warning.style.fontSize = '.65rem';
+          warning.style.color = 'var(--danger)';
+          warning.style.marginTop = '4px';
+          warning.textContent = 'Inconsistencia detectada';
+          warning.title = fluxo.inconsistencias.map(i => i.codigo).join(', ');
+          tdResult.appendChild(warning);
         }
-        else {
-            recSec.style.display = 'none';
-        }
+      }
+
+      tr.appendChild(tdResult);
+
+      const tdActions = document.createElement('td');
+
+      if (excluida) {
+        tdActions.appendChild(
+          criarBotao('Restaurar', 'restore-count', contagem.id)
+        );
+      } else {
+        tdActions.appendChild(
+          criarBotao(
+            'Estornar',
+            'reverse-count',
+            contagem.id,
+            'btn btn-danger btn-sm'
+          )
+        );
+      }
+
+      tr.appendChild(tdActions);
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+  }
+
+  /* ------------------------------------------------------------------------
+   * PENDENCIAS
+   * --------------------------------------------------------------------- */
+
+  function getEnderecoId(item) {
+    return texto(
+      typeof item === 'string'
+        ? item
+        : item?.endereco || item?.id
+    );
+  }
+
+  function isVazioConfirmado(contagem) {
+    if (typeof G._isVazio === 'function') return Boolean(G._isVazio(contagem));
+
+    return (
+      contagem?.vazio === true ||
+      contagem?.endereco_vazio === true ||
+      upper(contagem?.resultado) === 'VAZIO' ||
+      numero(contagem?.quantidade) === 0
+    );
+  }
+
+  function construirPendenciasInventario(inventario, fluxos) {
+    const canonicalId = obterInventarioCanonicoId(inventario);
+
+    const selected = Array.isArray(inventario.enderecos_selecionados)
+      ? inventario.enderecos_selecionados
+      : [];
+
+    const selectedIds = new Set(selected.map(getEnderecoId).filter(Boolean));
+
+    let base;
+
+    if (selectedIds.size) {
+      base = (state().enderecosLista || []).filter(endereco =>
+        selectedIds.has(getEnderecoId(endereco))
+      );
+    } else if (Array.isArray(inventario.base) && inventario.base.length) {
+      const unique = new Map();
+      inventario.base.forEach(item => {
+        const id = getEnderecoId(item);
+        if (id && !unique.has(id)) unique.set(id, item);
+      });
+      base = [...unique.values()];
+    } else {
+      base = state().enderecosLista || [];
     }
-    // ── SEÇÃO: Divergências abertas ──────────────────────────────────
-    var divAbertas = (state().divergencias || []).filter(function (d) { return String(d.inventario_id || d.inventarioId || '') === String(invId) && ['ABERTA', 'DIVERGENTE', 'PENDENTE', 'PERSISTENTE', 'EM_RECONTAGEM'].includes(String(d.status || '').toUpperCase()); });
-    var divSec = document.getElementById('pend-div-section');
-    var pkDivAbertas = document.getElementById('pk-div-abertas');
-    if (pkDivAbertas)
-        pkDivAbertas.textContent = divAbertas.length.toLocaleString('pt-BR');
-    if (divSec) {
-        if (divAbertas.length > 0) {
-            divSec.style.display = '';
-            document.getElementById('pend-div-count').textContent = "".concat(divAbertas.length, " diverg\u00EAncia(s) aberta(s)");
-            document.getElementById('pend-div-wrap').innerHTML = "\n        <div class=\"tbl-wrap\"><table>\n          <thead><tr><th>Endere\u00E7o</th><th>Produto</th><th>Qtd Sistema</th><th>Qtd Contada</th><th>Diferen\u00E7a</th><th>Status</th></tr></thead>\n          <tbody>\n            ".concat(divAbertas.slice(0, 10).map(function (d) {
-                var difColor = d.diferenca > 0 ? 'var(--warn)' : 'var(--danger)';
-                return "<tr>\n                <td class=\"mono\">".concat(escHTML(d.endereco), "</td>\n                <td style=\"font-size:.82rem\">").concat(escHTML(d.produto), "</td>\n                <td class=\"mono\">").concat(d.qtd_esperada, "</td>\n                <td class=\"mono\" style=\"font-weight:700;color:").concat(d.qtd_contada < d.qtd_esperada ? 'var(--danger)' : 'var(--warn)', "\">").concat(d.qtd_contada, "</td>\n                <td class=\"mono\" style=\"font-weight:800;color:").concat(difColor, "\">").concat(d.diferenca > 0 ? '+' : '').concat(d.diferenca, "</td>\n                <td><span class=\"badge ").concat(d.status === 'EM_RECONTAGEM' ? 'b-orange' : 'b-red', "\">").concat(d.status === 'EM_RECONTAGEM' ? 'Em Recontagem' : 'Aberta', "</span></td>\n              </tr>");
-            }).join(''), "\n          </tbody>\n        </table></div>\n        ").concat(divAbertas.length > 10 ? "<div style=\"padding:8px 16px;font-size:.75rem;color:var(--muted)\">... e mais ".concat(divAbertas.length - 10, ". Veja a aba Recontagem.</div>") : '');
+
+    const contagens = (state().contagens || []).filter(contagem =>
+      obterInventarioCanonicoId(contagem) === canonicalId &&
+      !contagem._excluida &&
+      !['ESTORNADA', 'EXCLUIDA'].includes(upper(contagem.status))
+    );
+
+    const fluxoPorEndereco = new Map();
+
+    fluxos
+      .filter(fluxo => fluxo.inventarioId === canonicalId)
+      .forEach(fluxo => fluxoPorEndereco.set(texto(fluxo.endereco), fluxo));
+
+    const contagensPorEndereco = new Map();
+
+    contagens.forEach(contagem => {
+      const endereco = texto(contagem.endereco);
+      const list = contagensPorEndereco.get(endereco) || [];
+      list.push(contagem);
+      contagensPorEndereco.set(endereco, list);
+    });
+
+    return base.map(enderecoBase => {
+      const endereco = getEnderecoId(enderecoBase);
+      const fluxo = fluxoPorEndereco.get(endereco) || null;
+      const registros = contagensPorEndereco.get(endereco) || [];
+
+      const primeiraValida = registros.find(contagem =>
+        upper(contagem.tipo_contagem) !== 'RECONTAGEM'
+      ) || null;
+
+      const vazioConfirmado = registros.some(isVazioConfirmado);
+      const possuiContagem = Boolean(primeiraValida);
+
+      const inativo = enderecoBase.ativo === false;
+      const capacidade = enderecoBase.capacidade_paletes ?? null;
+
+      const usados = typeof G.getPaletesUsados === 'function'
+        ? G.getPaletesUsados(inventario.id, endereco)
+        : 0;
+
+      const limiteAtingido =
+        !inativo &&
+        capacidade !== null &&
+        numero(capacidade) > 0 &&
+        numero(usados) >= numero(capacidade);
+
+      let statusPendencia;
+      let statusFluxo = fluxo?.status || null;
+
+      if (inativo) {
+        statusPendencia = 'INATIVO';
+      } else if (limiteAtingido && !possuiContagem) {
+        statusPendencia = 'LIMITE_ATINGIDO';
+      } else if (!possuiContagem && !vazioConfirmado) {
+        statusPendencia = 'PENDENTE_CONTAGEM';
+      } else if (fluxo) {
+        switch (fluxo.status) {
+          case 'RESOLVIDA':
+            statusPendencia = vazioConfirmado
+              ? 'VAZIO_CONFIRMADO'
+              : 'CONCLUIDO';
+            break;
+          case 'PERSISTENTE':
+            statusPendencia = 'PERSISTENTE';
+            break;
+          case 'EM_RECONTAGEM':
+            statusPendencia = 'EM_RECONTAGEM';
+            break;
+          case 'AGUARDANDO_ANALISTA':
+            statusPendencia = 'AGUARDANDO_ANALISTA';
+            break;
+          case 'ABERTA':
+          default:
+            statusPendencia = 'DIVERGENCIA_ABERTA';
+            break;
         }
-        else {
-            divSec.style.display = 'none';
+      } else if (vazioConfirmado) {
+        statusPendencia = 'VAZIO_CONFIRMADO';
+      } else {
+        statusPendencia = 'CONCLUIDO';
+      }
+
+      return {
+        ...enderecoBase,
+        endereco,
+        fluxo,
+        registros,
+        primeiraValida,
+        possuiContagem,
+        vazioConfirmado,
+        inativo,
+        capacidade,
+        usados,
+        limiteAtingido,
+        statusPendencia,
+        statusFluxo,
+        setor: texto(enderecoBase.setor || enderecoBase.local || '—'),
+        rua: texto(
+          enderecoBase.rua ||
+          G.extrairRua?.(endereco) ||
+          G.getEnderecoInfo?.(endereco)?.rua ||
+          '—'
+        ),
+        nivel: texto(
+          enderecoBase.nivel ||
+          enderecoBase.andar ||
+          G.getEnderecoInfo?.(endereco)?.nivel ||
+          '—'
+        ),
+        tipo: texto(enderecoBase.tipo || '—')
+      };
+    });
+  }
+
+  function statusPendenciaVisual(status) {
+    const map = {
+      CONCLUIDO: ['b-green', 'Concluido'],
+      VAZIO_CONFIRMADO: ['b-green', 'Vazio confirmado'],
+      PENDENTE_CONTAGEM: ['b-yellow', 'Pendente contagem'],
+      DIVERGENCIA_ABERTA: ['b-red', 'Divergencia aberta'],
+      EM_RECONTAGEM: ['b-purple', 'Em recontagem'],
+      AGUARDANDO_ANALISTA: ['b-orange', 'Aguardando analista'],
+      PERSISTENTE: ['b-red', 'Persistente'],
+      INATIVO: ['b-gray', 'Inativo'],
+      LIMITE_ATINGIDO: ['b-blocked', 'Limite atingido']
+    };
+
+    return map[status] || ['b-gray', status || '—'];
+  }
+
+  function renderResumoFluxosPendencias(lista) {
+    const recPend = lista.filter(item =>
+      ['EM_RECONTAGEM', 'AGUARDANDO_ANALISTA'].includes(item.statusPendencia)
+    );
+
+    const divAbertas = lista.filter(item =>
+      ['DIVERGENCIA_ABERTA', 'PERSISTENTE'].includes(item.statusPendencia)
+    );
+
+    setText('pk-rec-pend', recPend.length.toLocaleString('pt-BR'));
+    setText('pk-div-abertas', divAbertas.length.toLocaleString('pt-BR'));
+
+    const recSection = document.getElementById('pend-rec-section');
+
+    if (recSection) {
+      if (!recPend.length) {
+        recSection.style.display = 'none';
+      } else {
+        recSection.style.display = '';
+        setText('pend-rec-count', `${recPend.length} atividade(s) de recontagem`);
+
+        const wrap = document.getElementById('pend-rec-wrap');
+        if (wrap) {
+          wrap.replaceChildren();
+
+          const tableWrap = document.createElement('div');
+          tableWrap.className = 'tbl-wrap';
+          const table = document.createElement('table');
+
+          const thead = document.createElement('thead');
+          const hr = document.createElement('tr');
+          ['Endereco', 'Esperado', '1a', '2a', '3a', 'Status', 'Responsavel', 'Acao']
+            .forEach(label => {
+              const th = document.createElement('th');
+              th.textContent = label;
+              hr.appendChild(th);
+            });
+          thead.appendChild(hr);
+          table.appendChild(thead);
+
+          const tbody = document.createElement('tbody');
+
+          recPend.slice(0, 10).forEach(item => {
+            const fluxo = item.fluxo;
+            const tr = document.createElement('tr');
+
+            tr.appendChild(criarCelula(item.endereco, 'mono'));
+            tr.appendChild(criarCelula(fluxo?.totalEsperado ?? '—', 'mono'));
+            tr.appendChild(criarCelula(fluxo?.primeira?.quantidade ?? '—', 'mono'));
+            tr.appendChild(criarCelula(fluxo?.segunda?.quantidade ?? '—', 'mono'));
+            tr.appendChild(criarCelula(fluxo?.terceira?.quantidade ?? '—', 'mono'));
+
+            const tdStatus = document.createElement('td');
+            const [cls, label] = statusPendenciaVisual(item.statusPendencia);
+            tdStatus.appendChild(criarBadge(label, cls));
+            tr.appendChild(tdStatus);
+
+            tr.appendChild(criarCelula(fluxo?.operadorResponsavel || 'Nao atribuido'));
+
+            const tdAction = document.createElement('td');
+
+            if (fluxo?.tarefaAtiva?.id && typeof G.abrirRegistrarRecontagem === 'function') {
+              tdAction.appendChild(
+                criarBotao(
+                  'Registrar',
+                  'register-recount',
+                  fluxo.tarefaAtiva.id,
+                  'btn btn-primary btn-sm'
+                )
+              );
+            }
+
+            tr.appendChild(tdAction);
+            tbody.appendChild(tr);
+          });
+
+          table.appendChild(tbody);
+          tableWrap.appendChild(table);
+          wrap.appendChild(tableWrap);
+
+          if (recPend.length > 10) {
+            const more = document.createElement('div');
+            more.style.padding = '8px 16px';
+            more.style.fontSize = '.75rem';
+            more.style.color = 'var(--muted)';
+            more.textContent = `... e mais ${recPend.length - 10}. Veja a aba Recontagem.`;
+            wrap.appendChild(more);
+          }
         }
+      }
     }
-}
+
+    const divSection = document.getElementById('pend-div-section');
+
+    if (divSection) {
+      if (!divAbertas.length) {
+        divSection.style.display = 'none';
+      } else {
+        divSection.style.display = '';
+        setText('pend-div-count', `${divAbertas.length} divergencia(s) aberta(s)`);
+
+        const wrap = document.getElementById('pend-div-wrap');
+        if (wrap) {
+          wrap.replaceChildren();
+
+          const tableWrap = document.createElement('div');
+          tableWrap.className = 'tbl-wrap';
+          const table = document.createElement('table');
+
+          const thead = document.createElement('thead');
+          const hr = document.createElement('tr');
+          ['Endereco', 'Esperado', '1a', '2a', '3a', 'Status', 'Responsavel']
+            .forEach(label => {
+              const th = document.createElement('th');
+              th.textContent = label;
+              hr.appendChild(th);
+            });
+          thead.appendChild(hr);
+          table.appendChild(thead);
+
+          const tbody = document.createElement('tbody');
+
+          divAbertas.slice(0, 10).forEach(item => {
+            const fluxo = item.fluxo;
+            const tr = document.createElement('tr');
+
+            tr.appendChild(criarCelula(item.endereco, 'mono'));
+            tr.appendChild(criarCelula(fluxo?.totalEsperado ?? '—', 'mono'));
+            tr.appendChild(criarCelula(fluxo?.primeira?.quantidade ?? '—', 'mono'));
+            tr.appendChild(criarCelula(fluxo?.segunda?.quantidade ?? '—', 'mono'));
+            tr.appendChild(criarCelula(fluxo?.terceira?.quantidade ?? '—', 'mono'));
+
+            const tdStatus = document.createElement('td');
+            const [cls, label] = statusPendenciaVisual(item.statusPendencia);
+            tdStatus.appendChild(criarBadge(label, cls));
+            tr.appendChild(tdStatus);
+
+            tr.appendChild(criarCelula(fluxo?.operadorResponsavel || 'Nao atribuido'));
+            tbody.appendChild(tr);
+          });
+
+          table.appendChild(tbody);
+          tableWrap.appendChild(table);
+          wrap.appendChild(tableWrap);
+
+          if (divAbertas.length > 10) {
+            const more = document.createElement('div');
+            more.style.padding = '8px 16px';
+            more.style.fontSize = '.75rem';
+            more.style.color = 'var(--muted)';
+            more.textContent = `... e mais ${divAbertas.length - 10}. Veja a aba Divergencias.`;
+            wrap.appendChild(more);
+          }
+        }
+      }
+    }
+  }
+
+  function renderPendencias() {
+    const selectInv = document.getElementById('pend-sel-inv');
+    const busca = lower(document.getElementById('pend-busca')?.value);
+    const fStatus = texto(document.getElementById('pend-fstatus')?.value);
+    const fLocal = texto(document.getElementById('pend-flocal')?.value);
+    const fRua = texto(document.getElementById('pend-frua')?.value);
+    const currentInv = texto(selectInv?.value);
+
+    const inventariosElegiveis = (state().inventarios || []).filter(inv =>
+      ['ATIVO', 'ABERTO', 'PUBLICADO', 'LIBERADO', 'EM_ANDAMENTO', 'PAUSADO']
+        .includes(upper(inv.status)) ||
+      Array.isArray(inv.enderecos_selecionados)
+    );
+
+    setSelectOptions(
+      'pend-sel-inv',
+      inventariosElegiveis.map(inv => ({
+        value: obterInventarioCanonicoId(inv),
+        label: `${texto(inv.codigo)} — ${texto(inv.nome)}`
+      })),
+      'Selecione um inventario...',
+      currentInv
+    );
+
+    const invId = texto(document.getElementById('pend-sel-inv')?.value);
+
+    if (!invId) {
+      const container = document.getElementById('pend-table-wrap');
+      if (container) {
+        container.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Selecione um inventario</div></div>';
+      }
+
+      ['pk-total', 'pk-contados', 'pk-pendentes', 'pk-pct', 'pk-rec-pend', 'pk-div-abertas']
+        .forEach(id => setText(id, '—'));
+
+      return;
+    }
+
+    const inventario = inventariosElegiveis.find(inv =>
+      obterInventarioCanonicoId(inv) === invId
+    );
+
+    if (!inventario) return;
+
+    const fluxos = obterFluxosCanonicos();
+    const lista = construirPendenciasInventario(inventario, fluxos);
+
+    setSelectOptions(
+      'pend-flocal',
+      [...new Set(lista.map(item => item.setor).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'pt-BR')),
+      'Todos os locais',
+      fLocal
+    );
+
+    setSelectOptions(
+      'pend-frua',
+      [...new Set(lista.map(item => item.rua).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true })),
+      'Todas as ruas',
+      fRua
+    );
+
+    let filtrada = lista.slice();
+
+    if (fStatus) {
+      filtrada = filtrada.filter(item => item.statusPendencia === fStatus);
+    }
+
+    if (fLocal) {
+      filtrada = filtrada.filter(item => item.setor === fLocal);
+    }
+
+    if (fRua) {
+      filtrada = filtrada.filter(item => item.rua === fRua);
+    }
+
+    if (busca) {
+      filtrada = filtrada.filter(item =>
+        [
+          item.endereco,
+          item.setor,
+          item.rua,
+          item.fluxo?.produto,
+          item.fluxo?.descricao,
+          item.fluxo?.operadorResponsavel
+        ].some(value => lower(value).includes(busca))
+      );
+    }
+
+    const total = lista.length;
+    const concluidos = lista.filter(item =>
+      ['CONCLUIDO', 'VAZIO_CONFIRMADO'].includes(item.statusPendencia)
+    ).length;
+
+    const pendentesContagem = lista.filter(item =>
+      item.statusPendencia === 'PENDENTE_CONTAGEM'
+    ).length;
+
+    const pendenciasFluxo = lista.filter(item =>
+      [
+        'DIVERGENCIA_ABERTA',
+        'EM_RECONTAGEM',
+        'AGUARDANDO_ANALISTA',
+        'PERSISTENTE'
+      ].includes(item.statusPendencia)
+    ).length;
+
+    const inativos = lista.filter(item => item.statusPendencia === 'INATIVO').length;
+    const limite = lista.filter(item => item.statusPendencia === 'LIMITE_ATINGIDO').length;
+    const elegiveis = total - inativos;
+    const pct = elegiveis > 0 ? Math.round((concluidos / elegiveis) * 100) : 0;
+
+    setText('pk-total', total.toLocaleString('pt-BR'));
+    setText('pk-contados', concluidos.toLocaleString('pt-BR'));
+    setText(
+      'pk-pendentes',
+      `${pendentesContagem + pendenciasFluxo}${limite ? ` + ${limite} bloqueado(s)` : ''}`
+    );
+    setText('pk-pct', `${pct}%`);
+
+    renderResumoFluxosPendencias(lista);
+
+    const container = document.getElementById('pend-table-wrap');
+    if (!container) return;
+
+    container.replaceChildren();
+
+    if (inativos > 0) {
+      const warning = document.createElement('div');
+      warning.className = 'alert warn';
+      warning.style.margin = '12px 16px 0';
+      warning.style.borderRadius = '8px';
+      warning.textContent = `${inativos} endereco(s) inativo(s) nao entram no progresso.`;
+      container.appendChild(warning);
+    }
+
+    if (limite > 0) {
+      const warning = document.createElement('div');
+      warning.className = 'alert warn';
+      warning.style.margin = '8px 16px 0';
+      warning.style.borderRadius = '8px';
+      warning.textContent = `${limite} endereco(s) com limite de paletes atingido.`;
+      container.appendChild(warning);
+    }
+
+    if (!filtrada.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty';
+      empty.innerHTML = '<div class="empty-icon">✓</div><div class="empty-title">Nenhum endereco encontrado com esses filtros</div>';
+      container.appendChild(empty);
+      return;
+    }
+
+    const wrap = document.createElement('div');
+    wrap.className = 'tbl-wrap';
+    const table = document.createElement('table');
+
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+
+    [
+      'Endereco',
+      'Local/Area',
+      'Rua',
+      'Nivel',
+      'Tipo',
+      'Paletes',
+      'Status operacional',
+      'Status do fluxo',
+      'Responsavel'
+    ].forEach(label => {
+      const th = document.createElement('th');
+      th.textContent = label;
+      hr.appendChild(th);
+    });
+
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+
+    filtrada.forEach(item => {
+      const tr = document.createElement('tr');
+
+      if (item.inativo || item.limiteAtingido) tr.style.opacity = '.6';
+
+      tr.appendChild(criarCelula(item.endereco, 'mono'));
+      tr.appendChild(criarCelula(item.setor));
+      tr.appendChild(criarCelula(item.rua));
+      tr.appendChild(criarCelula(item.nivel));
+      tr.appendChild(criarCelula(item.tipo));
+
+      const capacidade = item.capacidade == null ? '∞' : item.capacidade;
+      tr.appendChild(criarCelula(`${item.usados}/${capacidade}`, 'mono', {
+        fontWeight: '700',
+        color: item.limiteAtingido ? 'var(--danger)' : 'inherit'
+      }));
+
+      const [statusClass, statusLabel] = statusPendenciaVisual(item.statusPendencia);
+      const tdOperational = document.createElement('td');
+      tdOperational.appendChild(criarBadge(statusLabel, statusClass));
+      tr.appendChild(tdOperational);
+
+      const tdFlow = document.createElement('td');
+
+      if (item.fluxo) {
+        const flowBadgeClass = item.fluxo.status === 'RESOLVIDA'
+          ? 'b-green'
+          : item.fluxo.status === 'PERSISTENTE'
+            ? 'b-red'
+            : item.fluxo.status === 'EM_RECONTAGEM'
+              ? 'b-purple'
+              : item.fluxo.status === 'AGUARDANDO_ANALISTA'
+                ? 'b-orange'
+                : 'b-red';
+
+        tdFlow.appendChild(criarBadge(item.fluxo.status, flowBadgeClass));
+      } else {
+        tdFlow.appendChild(criarBadge('SEM DIVERGENCIA', 'b-gray'));
+      }
+
+      tr.appendChild(tdFlow);
+      tr.appendChild(criarCelula(item.fluxo?.operadorResponsavel || '—'));
+      tbody.appendChild(tr);
+    });
+
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+
+    setText(
+      'pend-end-count',
+      `${pendentesContagem + pendenciasFluxo} endereco(s) aguardando de ${total} total`
+    );
+  }
+
+  /* ------------------------------------------------------------------------
+   * EVENTOS
+   * --------------------------------------------------------------------- */
+
+  function handleAction(event) {
+    const target = event.target.closest('[data-action]');
+    if (!target) return;
+
+    const action = target.dataset.action;
+    const id = target.dataset.id;
+
+    if (action === 'restore-count') {
+      G.restaurarContagem?.(id);
+      return;
+    }
+
+    if (action === 'reverse-count') {
+      G.abrirEstorno?.(id);
+      return;
+    }
+
+    if (action === 'register-recount') {
+      G.abrirRegistrarRecontagem?.(id);
+    }
+  }
+
+  function bindEvents() {
+    const contWrap = document.getElementById('cont-table-wrap');
+    const pendRecWrap = document.getElementById('pend-rec-wrap');
+
+    if (contWrap && !contWrap.dataset.canonicalEvents) {
+      contWrap.addEventListener('click', handleAction);
+      contWrap.dataset.canonicalEvents = '1';
+    }
+
+    if (pendRecWrap && !pendRecWrap.dataset.canonicalEvents) {
+      pendRecWrap.addEventListener('click', handleAction);
+      pendRecWrap.dataset.canonicalEvents = '1';
+    }
+  }
+
+  G._produtoContagemExibicao = obterProdutoContagem;
+  G.contStatusBadge = statusBadgeContagem;
+  G._resultadoRodadaEndereco = function resultadoRodadaEnderecoCompat(contagem) {
+    const map = mapaFluxos();
+    return resultadoCanonicoDaContagem(contagem, obterFluxoDaContagem(contagem, map));
+  };
+
+  G.renderContagens = function renderContagensPublic() {
+    bindEvents();
+    return renderContagens();
+  };
+
+  G.renderPendencias = function renderPendenciasPublic() {
+    bindEvents();
+    return renderPendencias();
+  };
+
+  G.AnalistaContagensPendenciasModule = Object.freeze({
+    obterProdutoContagem,
+    resultadoCanonicoDaContagem,
+    construirPendenciasInventario,
+    renderContagens,
+    renderPendencias
+  });
+
+  bindEvents();
+})();
