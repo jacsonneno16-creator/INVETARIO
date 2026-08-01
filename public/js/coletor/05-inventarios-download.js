@@ -90,19 +90,21 @@ function carregarInventarios() {
   if (!navigator.onLine) {
     const cache = invCacheLoad().filter(i => {
       const s = (i.status || '').toUpperCase();
-      return s === 'ATIVO' || s === 'PAUSADO';
+      return ['ATIVO','ABERTO','EM_ANDAMENTO','PAUSADO'].includes(s);
     });
     APP.inventariosDisponiveis = cache;
     renderListaInventarios(cache);
     return;
   }
 
-    FS.collection(FCOL.inventarios)
-    .where('status', 'in', ['ATIVO', 'PAUSADO', 'Ativo', 'Pausado'])
-    .get()
+    // O analista pode persistir estados equivalentes com nomes diferentes.
+    // Consultar a coleção autorizada e normalizar aqui evita esconder um
+    // inventário ABERTO/EM_ANDAMENTO por diferença de texto.
+    FS.collection(FCOL.inventarios).get()
     .then(snap => {
       dbg('[Firestore] inventários encontrados:', snap.size);
       const lista = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter(i => ['ATIVO','ABERTO','EM_ANDAMENTO','PAUSADO'].includes(String(i.status || '').trim().toUpperCase()))
         .filter(i => !i.oculto_coletor);  // 🙈 ocultos pelo analista não aparecem
       APP.inventariosDisponiveis = lista;
       invCacheSave(lista);
@@ -118,7 +120,7 @@ function carregarInventarios() {
           const lista2 = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
           if (lista2.length) {
             // Coleção existe mas ou regra bloqueou a query com where, ou status difere
-            const ativos = lista2.filter(i => i.status === 'ATIVO');
+            const ativos = lista2.filter(i => ['ATIVO','ABERTO','EM_ANDAMENTO','PAUSADO'].includes(String(i.status || '').trim().toUpperCase()));
             if (ativos.length) {
               APP.inventariosDisponiveis = ativos;
               renderListaInventarios(ativos);
@@ -128,7 +130,7 @@ function carregarInventarios() {
             const statusList = lista2.map(i => i.status || '?').join(', ');
             el.innerHTML = `<div class="empty-inv" style="gap:8px">
               <div class="empty-inv-icon">⚠️</div>
-              <div style="font-size:.85rem;font-weight:600">Nenhum inventário com status ATIVO</div>
+              <div style="font-size:.85rem;font-weight:600">Nenhum inventário aberto para o coletor</div>
               <div style="font-size:.72rem;color:var(--muted);text-align:center">Encontrados ${lista2.length} doc(s) com status: ${statusList}</div>
               <div style="font-size:.72rem;color:var(--muted);text-align:center">Peça ao analista para clicar em "🔥 Sync Firebase"</div>
             </div>`;
@@ -146,7 +148,7 @@ function carregarInventarios() {
           // Fallback para cache local
           const cache = invCacheLoad().filter(i => {
             const s = (i.status || '').toUpperCase();
-            return s === 'ATIVO' || s === 'PAUSADO';
+            return ['ATIVO','ABERTO','EM_ANDAMENTO','PAUSADO'].includes(s);
           });
           APP.inventariosDisponiveis = cache;
           if (cache.length) {
@@ -184,7 +186,7 @@ function renderListaInventarios(lista) {
       <div class="inv-card-code">${escHTML(inv.codigo || inv.id)}</div>
       <div class="inv-card-name">${escHTML(inv.nome)}</div>
       <div class="inv-card-meta">
-        <span class="badge badge-ok">● ATIVO</span>
+        <span class="badge badge-ok">● ${escHTML(String(inv.status || 'ATIVO').toUpperCase())}</span>
         <span class="badge badge-info">${inv.total_registros || 0} registros</span>
         <span class="badge badge-muted">${inv.data_inicio || ''}</span>
         ${inv.total_enderecos ? `<span class="badge badge-muted">📍 ${inv.total_enderecos} end.</span>` : ''}

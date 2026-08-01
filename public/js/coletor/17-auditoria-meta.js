@@ -99,6 +99,10 @@
     }catch(e){ return { encontrado:false, lista:[] }; }
   }
 
+  function _statusAuditoriaDisponivel(status){
+    return ['LIBERADA', 'ABERTA', 'ATIVA', 'ATIVO', 'EM_ANDAMENTO']
+      .includes(String(status || '').trim().toUpperCase());
+  }
   function _auditoriaMeta(lista){
     return (lista || []).map(a => ({
       id: String(a.auditoria_id || a.id || '').trim(),
@@ -106,7 +110,7 @@
       total_registros: Number(a.totalItens || a.total_registros || 0),
       lojas: Array.isArray(a.lojas) ? a.lojas : [],
       importado_em: a.importado_em || '',
-      liberada: a.status === 'LIBERADA' || a.status === 'EM_ANDAMENTO' || !!a.liberada_coletor,
+      liberada: _statusAuditoriaDisponivel(a.status) || a.liberada === true || a.liberada_coletor === true,
       tipoAuditoria: a.tipoAuditoria || a.tipo_auditoria || '',
       disponivel_coletor: a.disponivel_coletor !== false
     })).filter(a => a.id && a.disponivel_coletor !== false && a.liberada);
@@ -217,9 +221,10 @@
       renderListaAuditorias(cache);
     };
     if (!navigator.onLine) { fromCache(); return; }
-    FS.collection('dt_auditorias_coletor')
-      .where('status', '==', 'LIBERADA')
-      .get()
+    // Busca os metadados autorizados e normaliza os estados no cliente. A tela
+    // administrativa historicamente gravou LIBERADA, ABERTA, ATIVA e
+    // EM_ANDAMENTO; filtrar por um único texto fazia auditorias válidas sumirem.
+    FS.collection('dt_auditorias_coletor').get()
       .then(snap => {
         const docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
         const grupos = _auditoriaMeta(docs);
@@ -227,7 +232,22 @@
         localStorage.setItem('auditorias_menu_cache_v2', JSON.stringify(grupos));
         renderListaAuditorias(grupos);
       })
-      .catch(() => fromCache());
+      .catch(err => {
+        console.error('[Auditorias] Falha ao consultar Firebase:', err?.code, err?.message || err);
+        const cache = JSON.parse(localStorage.getItem('auditorias_menu_cache_v2') || '[]');
+        if (cache.length) {
+          APP.auditoriasMenu = cache;
+          renderListaAuditorias(cache);
+          toast('Auditorias carregadas do cache. Firebase: ' + (err?.code || 'erro'), 'w');
+          return;
+        }
+        el.innerHTML = `<div class="empty-inv" style="gap:8px">
+          <div class="empty-inv-icon">❌</div>
+          <div style="font-size:.85rem;font-weight:600">Sem acesso às auditorias no Firebase</div>
+          <div style="font-size:.72rem;color:#f87171;text-align:center;word-break:break-all">${escHTML(err?.code || err?.message || 'erro desconhecido')}</div>
+          <button onclick="carregarAuditoriasMenu()" style="margin-top:8px;background:var(--primary);color:#fff;border:none;border-radius:8px;padding:8px 18px;font-size:.8rem;cursor:pointer">Tentar novamente</button>
+        </div>`;
+      });
   };
 
   window.renderListaAuditorias = function(lista){

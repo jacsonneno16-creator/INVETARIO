@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v234-auditoria-20260731-1';
+var CACHE='dt-inventario-v235-coletor-firebase-20260801-1';
 var PRECACHE=[
   '/',
   '/index.html',
