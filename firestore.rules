@@ -316,21 +316,51 @@ service cloud.firestore {
     }
 
     match /dt_coletores/{deviceId} {
-      allow read: if active() && (
-        canUseAnalista() ||
-        resource.data.uid == request.auth.uid ||
-        resource.data.operador_uid == request.auth.uid
-      );
-      allow create: if canUseColetor() &&
+      // O coletor precisa consultar seu deviceId antes de o documento existir
+      // e também precisa escutá-lo enquanto aguarda aprovação. A leitura
+      // unitária continua autenticada; a listagem completa permanece exclusiva
+      // do Analista para não expor os demais dispositivos aos operadores.
+      allow get: if signedIn();
+      allow list: if active() && canUseAnalista();
+      allow create: if signedIn() &&
         request.resource.data.uid == request.auth.uid &&
-        request.resource.data.operador_uid == request.auth.uid;
+        request.resource.data.operador_uid == request.auth.uid &&
+        request.resource.data.device_id == deviceId &&
+        request.resource.data.aprovado == 'pendente' &&
+        request.resource.data.status == 'pendente' &&
+        request.resource.data.excluido == false;
       allow update: if hasPermission('coletores', 'editar') ||
-        (canUseColetor() &&
-         (resource.data.uid == request.auth.uid ||
-          resource.data.operador_uid == request.auth.uid) &&
+        (signedIn() &&
          request.resource.data.uid == request.auth.uid &&
          request.resource.data.operador_uid == request.auth.uid &&
-         request.resource.data.aprovado == resource.data.aprovado);
+         request.resource.data.device_id == deviceId &&
+         (
+           // Atualização operacional normal. Não exige que documentos antigos
+           // já possuam device_id, uid ou operador_uid.
+           (request.resource.data.aprovado == resource.data.aprovado &&
+            request.resource.data.excluido == resource.data.excluido &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'uid', 'device_id', 'operador_uid', 'operador_atual',
+              'operador_email', 'ultimo_ping', 'status', 'sessao', 'ip',
+              'versao_app', 'contagens_enviadas', 'contagens_pendentes'
+            ])) ||
+           // Um aparelho removido/revogado pode reaparecer somente como
+           // pendente. Ele nunca consegue restaurar a própria aprovação.
+           (((resource.data.keys().hasAny(['aprovado']) &&
+              resource.data.aprovado == 'revogado') ||
+             (resource.data.keys().hasAny(['excluido']) &&
+              resource.data.excluido == true)) &&
+            request.resource.data.aprovado == 'pendente' &&
+            request.resource.data.status == 'pendente' &&
+            request.resource.data.excluido == false &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'uid', 'device_id', 'nome_coletor', 'numero', 'operador_uid',
+              'operador_atual', 'operador_email', 'ultimo_ping', 'status',
+              'aprovado', 'data_registro', 'sessao', 'ip', 'versao_app',
+              'contagens_enviadas', 'contagens_pendentes', 'excluido',
+              'revogado_em'
+            ]))
+         ));
       allow delete: if hasPermission('coletores', 'excluir');
     }
 
