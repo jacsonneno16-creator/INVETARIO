@@ -59,15 +59,11 @@ function getInventarioPorId(id) {
 
 /** Abre modal para criar novo inventário */
 function abrirNovoInventario() {
-  ['inv-codigo','inv-nome','inv-resp','inv-setor','inv-loja-principal','inv-lojas-espelho'].forEach(id => {
+  ['inv-codigo','inv-nome','inv-resp'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
   document.getElementById('inv-data').value = new Date().toISOString().slice(0,10);
-  const elCapaInicio = document.getElementById('inv-capa-inicio');
-  const elCapaLote = document.getElementById('inv-capa-lote');
-  if (elCapaInicio) elCapaInicio.value = '1';
-  if (elCapaLote) elCapaLote.value = '200';
   document.getElementById('inv-import-fb').innerHTML = '';
   document.getElementById('inv-end-sel-wrap').style.display = 'none';
   window.AnalistaState.batch([
@@ -120,14 +116,9 @@ function criarInventario() {
   // ─────────────────────────────────────────────────────────────────────
 
   const codigo = document.getElementById('inv-codigo').value.trim() || ('INV-' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' + String(state().inventarios.length + 1).padStart(3,'0'));
-  const lojaPrincipal = document.getElementById('inv-loja-principal').value.trim();
-  const lojasEspelho = (document.getElementById('inv-lojas-espelho').value || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean)
-    .filter((v, i, arr) => arr.indexOf(v) === i && v !== lojaPrincipal);
-  const capaInicioBase = Math.max(1, parseInt(document.getElementById('inv-capa-inicio').value || '1') || 1);
-  const capaLotePorOperador = Math.max(1, parseInt(document.getElementById('inv-capa-lote').value || '200') || 200);
+  // Configuracao operacional fixa: cada operador recebe um bloco de 200 capas.
+  const capaInicioBase = 1;
+  const capaLotePorOperador = 200;
 
   const inv = {
     id:                   gerarId('INV'),
@@ -135,9 +126,9 @@ function criarInventario() {
     nome,
     data_inicio:          document.getElementById('inv-data').value || new Date().toISOString().slice(0,10),
     responsavel:          document.getElementById('inv-resp').value.trim(),
-    setor:                document.getElementById('inv-setor').value.trim(),
-    loja_principal:       lojaPrincipal,
-    lojas_espelho:        lojasEspelho,
+    setor:                '',
+    loja_principal:       '',
+    lojas_espelho:        [],
     capa_inicio_base:     capaInicioBase,
     capa_lote_por_operador: capaLotePorOperador,
     capa_ranges:          [],
