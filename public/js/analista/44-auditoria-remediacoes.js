@@ -95,25 +95,27 @@
   }
 
   function lojaAbrirModalCriar() { global.abrirCadastroLoja?.(); }
-  function lojaFecharModalCriar() { global.closeModal?.('loja-modal-bg'); }
-  function lojaFecharModalEditar() { global.closeModal?.('loja-edit-modal-bg'); }
-  function lojaCriar() {
-    const nome = document.getElementById('loja-nome')?.value?.trim();
-    const codigo = document.getElementById('loja-codigo')?.value?.trim();
-    if (!nome) return global.showToast?.('Informe o nome da loja.', 'error');
-    document.getElementById('ml-id').value = '';
-    document.getElementById('ml-nome').value = nome;
-    document.getElementById('ml-codigo').value = codigo || '';
-    document.getElementById('ml-ativa').value = 'true';
-    global.salvarLoja?.();
-    document.getElementById('loja-modal-bg').style.display = 'none';
+  function lojaFecharModalCriar() { const m=document.getElementById('loja-modal-bg'); if(m)m.style.display='none'; }
+  function lojaFecharModalEditar() { const m=document.getElementById('loja-edit-modal-bg'); if(m)m.style.display='none'; }
+  async function lojaCriar() {
+    const nome=document.getElementById('loja-nome')?.value?.trim(), codigo=document.getElementById('loja-codigo')?.value?.trim().toUpperCase();
+    const feedback=document.getElementById('loja-modal-feedback'), btn=document.getElementById('btn-criar-loja');
+    if(!nome||!codigo)return global.showToast?.('Informe o código e o nome da loja.','error');
+    try{
+      if(btn){btn.disabled=true;btn.textContent='⏳ Criando...';}
+      const id=global.DTLoja?.slug?global.DTLoja.slug(codigo):codigo.toLowerCase().replace(/[^a-z0-9]+/g,'_');
+      await global.getDTRawFirestore().collection('lojas').doc(id).set({id,nome,codigo,ativa:true,responsavel:document.getElementById('loja-responsavel')?.value?.trim()||'',observacao:document.getElementById('loja-obs')?.value?.trim()||'',criada_em:new Date().toISOString(),atualizada_em:new Date().toISOString()},{merge:true});
+      lojaFecharModalCriar(); global.showToast?.('Loja criada com sucesso.','success'); await global.renderGestaoLojas?.();
+    }catch(e){if(feedback){feedback.style.display='block';feedback.innerHTML='<div class="alert danger">'+String(e.message||e)+'</div>';}global.showToast?.('Erro ao criar loja: '+(e.message||e),'error');}
+    finally{if(btn){btn.disabled=false;btn.textContent='🏪 Criar Loja';}}
   }
-  function lojaSalvarEdicao() {
-    document.getElementById('ml-id').value = document.getElementById('loja-edit-id')?.value || '';
-    document.getElementById('ml-nome').value = document.getElementById('loja-edit-nome')?.value || '';
-    document.getElementById('ml-codigo').value = document.getElementById('loja-edit-id')?.value || '';
-    global.salvarLoja?.();
-    document.getElementById('loja-edit-modal-bg').style.display = 'none';
+  async function lojaSalvarEdicao() {
+    const id=document.getElementById('loja-edit-id')?.value, nome=document.getElementById('loja-edit-nome')?.value?.trim();
+    if(!id||!nome)return global.showToast?.('Loja inválida ou nome não informado.','error');
+    try{
+      await global.getDTRawFirestore().collection('lojas').doc(id).set({nome,responsavel:document.getElementById('loja-edit-responsavel')?.value?.trim()||'',observacao:document.getElementById('loja-edit-obs')?.value?.trim()||'',atualizada_em:new Date().toISOString()},{merge:true});
+      lojaFecharModalEditar();global.showToast?.('Loja atualizada.','success');await global.renderGestaoLojas?.();
+    }catch(e){global.showToast?.('Erro ao atualizar loja: '+(e.message||e),'error');}
   }
   function lojaFiltrarEnderecos() {
     const busca = String(document.getElementById('loja-end-busca')?.value || '').toLowerCase();

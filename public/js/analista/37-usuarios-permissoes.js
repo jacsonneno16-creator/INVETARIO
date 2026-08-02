@@ -148,7 +148,14 @@
       timerPermissoes=setTimeout(aplicarPermissoesAnalista,40);
     }).observe(document.body,{childList:true,subtree:true});
   });
-  function oplSetTab(tab){const op=tab==='operadores';document.getElementById('opl-page-operadores').style.display=op?'block':'none';document.getElementById('opl-page-lojas').style.display=op?'none':'block';if(op)listarOperadores();else global.renderGestaoLojas?.();}
+  function oplSetTab(tab){
+    const op=tab==='operadores', pageOp=document.getElementById('opl-page-operadores'), pageLojas=document.getElementById('opl-page-lojas');
+    if(pageOp)pageOp.style.display=op?'block':'none';
+    if(pageLojas)pageLojas.style.display=op?'none':'block';
+    [['opl-tab-operadores',op],['opl-tab-lojas',!op]].forEach(([id,ativo])=>{const b=document.getElementById(id);if(!b)return;b.style.background=ativo?'var(--green,#1E6F4E)':'transparent';b.style.color=ativo?'#fff':'var(--muted)';b.style.boxShadow=ativo?'0 2px 10px rgba(30,111,78,.3)':'none';});
+    const page=document.getElementById('page-operadores'); if(page)page.scrollIntoView({block:'start'});
+    if(op)listarOperadores();else global.renderGestaoLojas?.();
+  }
   function opCarregarOperadoresParaFiltro(){const s=document.getElementById('op-rec-filtro-operador');if(s)s.innerHTML='<option value="">Selecione um operador…</option>'+usuarios.map(u=>`<option value="${esc(u.uid||u.id)}">${esc(u.nome||u.email)}</option>`).join('');}
   function opVerificarMinhaConta(){}
   Object.assign(global,{DT_MODULOS_PERMISSOES:MODULOS,temPermissao,aplicarPermissoesAnalista,listarOperadores,opFiltrarLista,opEditarUsuario,opExcluirUsuario,opSalvarEdicao,opFecharModal,opAbrirModalCriar,opFecharModalCriar,opSetModoLojasCriar,opSetModoLojasEditar,opSelecionarTipo,opGerarUsername,opGerarSenha,toggleOpSenha,toggleOpeditSenha,opValidarUsername,opValidarSenha,criarOperador,oplSetTab,opCarregarOperadoresParaFiltro,opVerificarMinhaConta,opMarcarPermissoes});

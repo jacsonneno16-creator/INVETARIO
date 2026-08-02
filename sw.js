@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v236-inventario-capas-fixas-20260802-1';
+var CACHE='dt-inventario-v239-expand-enderecos-20260802-1';
 var PRECACHE=[
   '/',
   '/index.html',

@@ -2,21 +2,56 @@
   const raw=()=>global.getDTRawFirestore();
   function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   async function renderGestaoLojas(){
-    const box=document.getElementById('lojas-lista'); if(!box)return;
-    box.innerHTML='<div class="empty">Carregando lojas...</div>';
+    const grid=document.getElementById('lojas-grid');
+    const lista=document.getElementById('lojas-lista');
+    const destinos=[grid,lista].filter(Boolean);
+    if(!destinos.length)return;
+    destinos.forEach(box=>box.innerHTML='<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando lojas...</div></div>');
     try{
       const lojas=await global.DTLoja.garantirLojaInicial(), ativa=global.getDTLojaAtiva();
-      box.innerHTML=`<div class="table-card"><table><thead><tr><th>Loja</th><th>Código</th><th>Status</th><th>Ambiente atual</th><th>Ações</th></tr></thead><tbody>${lojas.map(l=>`<tr>
-        <td><b>${esc(l.nome||l.id)}</b><div style="font-size:.7rem;color:var(--muted)">${esc(l.id)}</div></td>
-        <td>${esc(l.codigo||'—')}</td><td><span class="badge ${l.ativa===false?'badge-red':'badge-green'}">${l.ativa===false?'Inativa':'Ativa'}</span></td>
-        <td>${l.id===ativa?'✅ Em uso':'—'}</td><td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" onclick='editarLoja(${JSON.stringify(JSON.stringify(l))})'>Editar</button> <button class="btn btn-ghost btn-sm" onclick="usarLoja('${esc(l.id)}')">Usar</button></td>
-      </tr>`).join('')}</tbody></table></div>`;
-    }catch(e){box.innerHTML=`<div class="empty">Erro ao carregar lojas: ${esc(e.message)}</div>`;}
+      const cards=lojas.map(l=>`<div class="tc" style="margin:0;border-top:3px solid ${l.id===ativa?'var(--green,#1E6F4E)':'var(--amber,#F59E0B)'};padding:16px;min-width:0">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+          <div style="min-width:0"><div style="font-weight:800;font-size:1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🏪 ${esc(l.nome||l.id)}</div><div class="mono" style="font-size:.68rem;color:var(--muted);margin-top:3px">${esc(l.codigo||l.id)}</div></div>
+          <span class="badge ${l.ativa===false?'badge-red':'badge-green'}">${l.ativa===false?'Inativa':'Ativa'}</span>
+        </div>
+        <div style="font-size:.74rem;color:var(--muted);margin-top:10px">${l.id===ativa?'✅ Ambiente atualmente em uso':'Disponível para seleção'}</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:14px">
+          <button type="button" class="btn btn-primary btn-sm" onclick='editarLoja(${JSON.stringify(JSON.stringify(l))})'>✏️ Configurar</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="usarLoja('${esc(l.id)}')" ${l.id===ativa?'disabled':''}>${l.id===ativa?'Em uso':'Usar esta loja'}</button>
+        </div>
+      </div>`).join('');
+      if(grid) grid.innerHTML=cards||'<div class="empty" style="grid-column:1/-1"><div class="empty-title">Nenhuma loja cadastrada</div></div>';
+      if(lista) lista.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">${cards}</div>`;
+    }catch(e){
+      destinos.forEach(box=>box.innerHTML=`<div class="empty"><div class="empty-title">Erro ao carregar lojas</div><div class="empty-sub">${esc(e.message||e)}</div></div>`);
+      global.showToast?.('Erro ao carregar lojas: '+(e.message||e),'error');
+    }
   }
+
   function abrirCadastroLoja(){
+    const modal=document.getElementById('loja-modal-bg');
+    if(modal){
+      ['loja-codigo','loja-nome','loja-responsavel','loja-obs'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+      const fb=document.getElementById('loja-modal-feedback');if(fb){fb.style.display='none';fb.innerHTML='';}
+      modal.style.display='flex';
+      setTimeout(()=>document.getElementById('loja-codigo')?.focus(),0);
+      return;
+    }
     document.getElementById('ml-id').value=''; document.getElementById('ml-nome').value=''; document.getElementById('ml-codigo').value=''; document.getElementById('ml-ativa').value='true'; document.getElementById('ml-title').textContent='Cadastrar loja'; openModal('modal-loja-cadastro');
   }
-  function editarLoja(json){const l=JSON.parse(json);document.getElementById('ml-id').value=l.id;document.getElementById('ml-nome').value=l.nome||'';document.getElementById('ml-codigo').value=l.codigo||'';document.getElementById('ml-ativa').value=String(l.ativa!==false);document.getElementById('ml-title').textContent='Editar loja';openModal('modal-loja-cadastro');}
+  function editarLoja(json){
+    const l=typeof json==='string'?JSON.parse(json):json;
+    const modal=document.getElementById('loja-edit-modal-bg');
+    if(modal){
+      document.getElementById('loja-edit-id').value=l.id||'';
+      document.getElementById('loja-edit-nome').value=l.nome||'';
+      document.getElementById('loja-edit-responsavel').value=l.responsavel||'';
+      document.getElementById('loja-edit-obs').value=l.observacao||l.obs||'';
+      modal.style.display='flex';
+      return;
+    }
+    document.getElementById('ml-id').value=l.id;document.getElementById('ml-nome').value=l.nome||'';document.getElementById('ml-codigo').value=l.codigo||'';document.getElementById('ml-ativa').value=String(l.ativa!==false);document.getElementById('ml-title').textContent='Editar loja';openModal('modal-loja-cadastro');
+  }
   async function salvarLoja(){
     const nome=document.getElementById('ml-nome').value.trim(), codigo=document.getElementById('ml-codigo').value.trim().toUpperCase(); if(!nome){showToast('Informe o nome da loja','error');return;}
     const atualId=document.getElementById('ml-id').value, id=atualId||global.DTLoja.slug(codigo||nome);

@@ -1990,7 +1990,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div>
 <!-- ── TABS Operadores / Lojas ── -->
-<div style="display:flex;gap:3px;background:var(--surface-2);border-radius:10px;padding:4px;width:fit-content;border:1px solid var(--border);margin-bottom:20px">
+<div style="display:flex;gap:3px;background:var(--surface-2);border-radius:10px;padding:4px;width:fit-content;border:1px solid var(--border);margin-bottom:14px;position:sticky;top:0;z-index:20;box-shadow:0 6px 18px rgba(15,23,42,.08)">
 <button id="opl-tab-operadores" onclick="oplSetTab('operadores')" style="padding:9px 24px;border-radius:8px;border:none;cursor:pointer;font-family:var(--sans);font-size:.84rem;font-weight:700;transition:all .18s;background:var(--green,#1E6F4E);color:#fff;box-shadow:0 2px 10px rgba(30,111,78,.3)">
           👤 Configuração de Usuários
         </button>
@@ -2001,7 +2001,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <!-- ════ SUB-PÁGINA: OPERADORES ════ -->
 <div id="opl-page-operadores" style="display:block">
 <!-- ── MINHA CONTA DE COLETOR ── -->
-<div id="op-minha-conta-wrap">
+<div id="op-minha-conta-wrap" style="display:none">
 <div class="tc" style="border:1.5px solid rgba(0,229,255,.25)">
 <div class="tc-header" style="border-left-color:var(--accent);background:rgba(0,229,255,.05)">
 <div class="tc-title">👤 Meu acesso ao coletor</div>
@@ -3345,7 +3345,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260731-234-auditoria"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260731-234-auditoria"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260731-234-auditoria"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260731-234-auditoria"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260731-234-auditoria"></script><script src="js/analista/app-controller.js?v=20260731-234-auditoria"></script>
+<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260802-usuarios-lojas-v2"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260802-usuarios-lojas-v2"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260731-234-auditoria"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260731-234-auditoria"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260802-usuarios-lojas-v2"></script><script src="js/analista/app-controller.js?v=20260731-234-auditoria"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}
