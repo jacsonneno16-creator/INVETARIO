@@ -175,10 +175,10 @@ function renderEnderecos() {
     const ativos   = ends.filter(e => e.ativo).length;
     const inativos = ends.filter(e => !e.ativo).length;
     const bloqueados = ends.filter(e => e._limiteTingido).length;
-    const grpId = 'grp-' + local.replace(/[^a-z0-9]/gi,'_');
+    const grpId = 'grp-' + Array.from(local).map(ch => /[a-z0-9]/i.test(ch) ? ch : '_').join('') + '-' + Math.random().toString(36).slice(2,7);
 
     return `<div class="loc-group">
-      <div class="loc-group-header" onclick="toggleLocGroup('${grpId}')">
+      <button type="button" class="loc-group-header" data-loc-group-id="${grpId}" aria-expanded="false" aria-controls="${grpId}">
         <span class="loc-group-chevron" id="${grpId}-chev">▶</span>
         <span style="font-weight:700;font-size:.85rem">🏭 ${local}</span>
         <span style="font-size:.73rem;color:var(--muted);margin-left:4px">${ends.length} endereço(s)</span>
@@ -187,7 +187,7 @@ function renderEnderecos() {
           ${inativos ? `<span class="badge b-gray" style="font-size:.65rem">⛔ ${inativos} inativos</span>` : ''}
           ${bloqueados ? `<span class="badge b-blocked" style="font-size:.65rem">🔒 ${bloqueados} limite</span>` : ''}
         </div>
-      </div>
+      </button>
       <div class="loc-group-body" id="${grpId}">
         <div class="tbl-wrap">
           <table>
@@ -208,16 +208,36 @@ function renderEnderecos() {
       </div>
     </div>
     <div style="padding:10px">${gruposHtml}</div>`;
+  _bindEventosGruposEnderecos();
 }
 
-function toggleLocGroup(grpId) {
+
+
+
+function _bindEventosGruposEnderecos() {
+  const wrap = document.getElementById('end-table-wrap');
+  if (!wrap || wrap.dataset.locGroupBound === '1') return;
+  wrap.dataset.locGroupBound = '1';
+  wrap.addEventListener('click', function(event) {
+    const header = event.target.closest('[data-loc-group-id]');
+    if (!header || !wrap.contains(header)) return;
+    event.preventDefault();
+    const id = header.getAttribute('data-loc-group-id');
+    toggleLocGroup(id, header);
+  });
+}
+
+function toggleLocGroup(grpId, headerEl) {
   const body = document.getElementById(grpId);
   const chev = document.getElementById(grpId + '-chev');
-  if (!body) return;
+  if (!body) { console.warn('[Enderecos] Grupo nao encontrado:', grpId); return; }
   const isOpen = body.classList.contains('open');
   body.classList.toggle('open', !isOpen);
   if (chev) { chev.textContent = isOpen ? '▶' : '▼'; chev.classList.toggle('open', !isOpen); }
+  const header = headerEl || document.querySelector('[data-loc-group-id="' + CSS.escape(grpId) + '"]');
+  if (header) header.setAttribute('aria-expanded', String(!isOpen));
 }
+
 
 function toggleAllLocGroups(recolher) {
   document.querySelectorAll('.loc-group-body').forEach(body => {
@@ -372,3 +392,6 @@ function endVincularLoja(endCod) {
   }
 }
 
+
+window.toggleLocGroup = toggleLocGroup;
+window.toggleAllLocGroups = toggleAllLocGroups;
