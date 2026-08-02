@@ -283,9 +283,21 @@ function renderInvMapper() {
       <div style="display:flex;flex-direction:column;gap:6px">${camposHtml}</div>
 
       <div style="margin-top:12px;text-align:right">
-        <button class="btn btn-success" onclick="confirmarInvMapper()">✓ Aplicar Mapeamento e Importar</button>
+        <div id="inv-mapper-action-status" style="margin-bottom:8px;min-height:18px;font-size:.75rem;text-align:left"></div>
+        <button type="button" id="btn-confirmar-inv-mapper" class="btn btn-success">✓ Aplicar Mapeamento e Importar</button>
       </div>
     </div>`;
+
+  // Vincular o clique sem depender de onclick inline. Isso evita falha silenciosa
+  // quando o navegador bloqueia handlers inline ou quando o escopo global muda.
+  const btnAplicarMapper = document.getElementById('btn-confirmar-inv-mapper');
+  if (btnAplicarMapper) {
+    btnAplicarMapper.addEventListener('click', function(event) {
+      event.preventDefault();
+      event.stopPropagation();
+      confirmarInvMapper();
+    });
+  }
 
   // ── Carregar mapeamento salvo se houver ──
   try {
@@ -334,91 +346,131 @@ function invMapperPreview() {
 }
 
 function confirmarInvMapper() {
-  if (!_invRawCtx) return;
-  const { headers, rows, arquivo } = _invRawCtx;
+  const statusEl = document.getElementById('inv-mapper-action-status');
+  const btn = document.getElementById('btn-confirmar-inv-mapper');
+  const setStatus = (msg, tipo) => {
+    if (!statusEl) return;
+    const cores = { e:'#b91c1c', w:'#92400e', i:'#0369a1', s:'#166534' };
+    statusEl.style.color = cores[tipo] || cores.i;
+    statusEl.textContent = msg || '';
+  };
 
-  // Validar obrigatórios
-  const missing = INV_MAP_CAMPOS.filter(c => c.obrig && !document.getElementById(`imap-${c.key}`)?.value);
-  if (missing.length) {
-    invFbErr(`Campos obrigatórios não mapeados: ${missing.map(c=>c.label).join(', ')}`);
-    return;
+  if (!_invRawCtx) {
+    setStatus('O arquivo não está mais carregado. Selecione o arquivo novamente.', 'e');
+    invFbErr('O arquivo não está mais carregado. Selecione o arquivo novamente.');
+    return false;
   }
 
-  // Montar mapa { campo: colIndex } — autoMap como fallback, seleção do usuário tem prioridade
-  const autoMap = autoMapBase(headers);
-  const mapa = {};
-  // Aplica autoMap como base (garante custo_bruto e outros campos sem UI no mapper)
-  CAMPOS_BASE.forEach(campo => {
-    if (autoMap[campo] !== undefined) mapa[campo] = autoMap[campo];
-  });
-  // Sobrescreve com escolhas explícitas do usuário
-  INV_MAP_CAMPOS.forEach(c => {
-    const sel = document.getElementById(`imap-${c.key}`);
-    if (sel && sel.value !== '') mapa[c.key] = parseInt(sel.value);
-    else if (sel && sel.value === '' && autoMap[c.key] !== undefined) delete mapa[c.key]; // usuário optou por "não usar"
-  });
-
-  // Log para diagnóstico
-  console.log('[Mapper] mapa final:', JSON.stringify(mapa));
-  console.log('[Mapper] fator_caixa col index:', mapa['fator_caixa'], '| ex valor linha0:', mapa['fator_caixa'] !== undefined ? String(rows[0]?.[mapa['fator_caixa']] ?? '') : 'NÃO MAPEADO');
-
-  // Processar linhas com o mapa final
-  const base = rows.map(r => {
-    const obj = {};
-    CAMPOS_BASE.forEach(campo => {
-      obj[campo] = mapa[campo] !== undefined ? String(r[mapa[campo]] ?? '').trim() : '';
-    });
-    const fatorCx = Math.max(1, parseFloat(String(obj.fator_caixa || '').replace(',','.')) || 1);
-    obj.fator_caixa        = fatorCx;
-    // quantidade_esperada representa CAIXAS/PALetes conforme a contagem operacional.
-    // Não multiplicar pelo fator: o comparativo de divergência usa a mesma unidade informada pelo operador.
-    obj.quantidade_esperada = Math.max(0, parseFloat(obj.quantidade_esperada) || 0);
-    obj.custo_bruto         = Math.max(0, parseFloat(String(obj.custo_bruto).replace(',','.')) || 0);
-    return obj;
-  }).filter(r => r.endereco && r.codigo_produto); // obrigatório: endereço E produto
-
-  if (!base.length) {
-    invFbErr('Nenhum registro válido após o mapeamento. Verifique as colunas selecionadas.');
-    return;
-  }
-
-  window.AnalistaState.set('ui.inventarioImportCtx', { base, arquivo, headers, rows }, { source: 'arquivo-import-ok' });
-
-  // ── Salvar mapeamento para reutilizar na próxima importação ──
   try {
-    const mapaUser = {};
+    if (btn) {
+      btn.disabled = true;
+      btn.setAttribute('aria-busy', 'true');
+      btn.textContent = '⏳ Aplicando mapeamento...';
+    }
+    setStatus('Validando colunas e processando os registros...', 'i');
+
+    const { headers, rows, arquivo } = _invRawCtx;
+
+    const missing = INV_MAP_CAMPOS.filter(c => {
+      if (!c.obrig) return false;
+      const sel = document.getElementById(`imap-${c.key}`);
+      return !sel || sel.value === '';
+    });
+    if (missing.length) {
+      const msg = `Campos obrigatórios não mapeados: ${missing.map(c => c.label).join(', ')}`;
+      setStatus(msg, 'e');
+      invFbErr(msg);
+      return false;
+    }
+
+    const autoMap = autoMapBase(headers);
+    const mapa = {};
+    CAMPOS_BASE.forEach(campo => {
+      if (autoMap[campo] !== undefined) mapa[campo] = autoMap[campo];
+    });
     INV_MAP_CAMPOS.forEach(c => {
       const sel = document.getElementById(`imap-${c.key}`);
-      if (sel) mapaUser[c.key] = sel.value; // salva o índice selecionado
+      if (sel && sel.value !== '') mapa[c.key] = Number(sel.value);
+      else if (sel && autoMap[c.key] !== undefined) delete mapa[c.key];
     });
-    // Chave baseada nos nomes das colunas (independente da ordem das linhas)
-    const headerKey = headers.join('|').toLowerCase();
-    const savedMaps = JSON.parse(localStorage.getItem('inv_col_map') || '{}');
-    savedMaps[headerKey] = { mapa: mapaUser, arquivo, ts: Date.now() };
-    // Manter só os 5 mais recentes
-    const entries = Object.entries(savedMaps).sort((a,b) => (b[1].ts||0)-(a[1].ts||0)).slice(0,5);
-    localStorage.setItem('inv_col_map', JSON.stringify(Object.fromEntries(entries)));
-    dbg('[Mapper] Mapeamento salvo para', headers.length, 'colunas');
-  } catch(e){ console.warn("[Erro tratado]", e); }
 
-  // Ocultar mapeador e mostrar resultado
-  document.getElementById('inv-mapper-zone').style.display = 'none';
-  const endsU = [...new Set(base.map(r=>r.endereco).filter(Boolean))].length;
-  const prodsU = [...new Set(base.map(r=>r.codigo_produto).filter(Boolean))].length;
-  document.getElementById('inv-import-fb').innerHTML = `
-    <div class="status-box ok">
-      <div class="sb-icon">✅</div>
-      <div>
-        <div class="sb-text">${base.length.toLocaleString('pt-BR')} registros importados com mapeamento personalizado</div>
-        <div class="sb-sub">${arquivo} · ${endsU} endereços únicos · ${prodsU} produtos únicos
-          <button class="btn btn-ghost btn-sm" onclick="document.getElementById('inv-mapper-zone').style.display='block'" style="margin-left:8px;font-size:.7rem;padding:2px 8px">✏️ Editar mapeamento</button>
+    const base = rows.map(r => {
+      const obj = {};
+      CAMPOS_BASE.forEach(campo => {
+        obj[campo] = mapa[campo] !== undefined ? String(r[mapa[campo]] ?? '').trim() : '';
+      });
+      obj.fator_caixa = Math.max(1, parseFloat(String(obj.fator_caixa || '').replace(',','.')) || 1);
+      obj.quantidade_esperada = Math.max(0, parseFloat(String(obj.quantidade_esperada || '').replace(',','.')) || 0);
+      obj.custo_bruto = Math.max(0, parseFloat(String(obj.custo_bruto || '').replace(',','.')) || 0);
+      return obj;
+    }).filter(r => r.endereco && r.codigo_produto);
+
+    if (!base.length) {
+      const msg = 'Nenhum registro válido após o mapeamento. Verifique Endereço, Código do Produto e Quantidade Esperada.';
+      setStatus(msg, 'e');
+      invFbErr(msg);
+      return false;
+    }
+
+    if (!window.AnalistaState || typeof window.AnalistaState.set !== 'function') {
+      throw new Error('Store do Analista não está disponível. Atualize a página e tente novamente.');
+    }
+
+    window.AnalistaState.set('ui.inventarioImportCtx', { base, arquivo, headers, rows }, { source: 'arquivo-import-ok' });
+
+    try {
+      const mapaUser = {};
+      INV_MAP_CAMPOS.forEach(c => {
+        const sel = document.getElementById(`imap-${c.key}`);
+        if (sel) mapaUser[c.key] = sel.value;
+      });
+      const headerKey = headers.join('|').toLowerCase();
+      const savedMaps = JSON.parse(localStorage.getItem('inv_col_map') || '{}');
+      savedMaps[headerKey] = { mapa: mapaUser, arquivo, ts: Date.now() };
+      const entries = Object.entries(savedMaps).sort((a,b) => (b[1].ts||0)-(a[1].ts||0)).slice(0,5);
+      localStorage.setItem('inv_col_map', JSON.stringify(Object.fromEntries(entries)));
+    } catch(e) {
+      console.warn('[Mapper] Não foi possível salvar o mapeamento local:', e);
+    }
+
+    const mapperZone = document.getElementById('inv-mapper-zone');
+    if (mapperZone) mapperZone.style.display = 'none';
+    const endsU = [...new Set(base.map(r=>r.endereco).filter(Boolean))].length;
+    const prodsU = [...new Set(base.map(r=>r.codigo_produto).filter(Boolean))].length;
+    const fb = document.getElementById('inv-import-fb');
+    if (fb) fb.innerHTML = `
+      <div class="status-box ok">
+        <div class="sb-icon">✅</div>
+        <div>
+          <div class="sb-text">${base.length.toLocaleString('pt-BR')} registros importados com mapeamento personalizado</div>
+          <div class="sb-sub">${arquivo} · ${endsU} endereços únicos · ${prodsU} produtos únicos
+            <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('inv-mapper-zone').style.display='block'" style="margin-left:8px;font-size:.7rem;padding:2px 8px">✏️ Editar mapeamento</button>
+          </div>
         </div>
-      </div>
-    </div>`;
-  document.getElementById('inv-end-sel-wrap').style.display = 'block';
-  document.getElementById('inv-end-resumo-txt').textContent = `${endsU} endereços únicos da base serão incluídos automaticamente`;
-  habilitarBtnCriar();
+      </div>`;
+    const selWrap = document.getElementById('inv-end-sel-wrap');
+    if (selWrap) selWrap.style.display = 'block';
+    const resumo = document.getElementById('inv-end-resumo-txt');
+    if (resumo) resumo.textContent = `${endsU} endereços únicos da base serão incluídos automaticamente`;
+    if (typeof habilitarBtnCriar === 'function') habilitarBtnCriar();
+    if (typeof showToast === 'function') showToast(`✅ ${base.length.toLocaleString('pt-BR')} registros importados`, 's');
+    return true;
+  } catch (error) {
+    console.error('[confirmarInvMapper]', error);
+    const msg = 'Erro ao aplicar o mapeamento: ' + (error?.message || error);
+    setStatus(msg, 'e');
+    try { invFbErr(msg); } catch (_) {}
+    if (typeof showToast === 'function') showToast(msg, 'e');
+    return false;
+  } finally {
+    if (btn && btn.isConnected) {
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+      btn.textContent = '✓ Aplicar Mapeamento e Importar';
+    }
+  }
 }
+window.confirmarInvMapper = confirmarInvMapper;
 
 function resetInvImport() {
   _invRawCtx = null;
