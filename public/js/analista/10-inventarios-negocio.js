@@ -152,10 +152,15 @@ function criarInventario() {
   window.AnalistaState.replaceSlice('inventarios', [inv, ...(state().inventarios || [])], { source: 'criarInventario' });
   saveAll();
   closeModal('modal-inv');
-  renderInvTable();
-  renderDashboard();
-  atualizarBadgesNav();
-  popularSelects();
+  try {
+    window.renderInvTable?.();
+    window.renderDashboard?.();
+    window.atualizarBadgesNav?.();
+    window.popularSelects?.();
+    window.AnalistaNavigation?.renderCurrentPage?.();
+  } catch (error) {
+    console.error('[criarInventario] Falha ao atualizar interface:', error);
+  }
   logSistema('INVENTARIO', `Inventário ${inv.codigo} criado por ${inv.criado_por_nome}`, {
     id:                inv.id,
     nome:              inv.nome,

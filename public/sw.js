@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v237-mapper-click-20260802-1';
+var CACHE='dt-inventario-v238-popular-selects-20260802-1';
 var PRECACHE=[
   '/',
   '/index.html',
