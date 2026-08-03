@@ -1,42 +1,29 @@
 {
-  "functions": {
-    "source": "functions",
-    "runtime": "nodejs20"
+  "firestore": {
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
   },
   "hosting": {
     "public": "public",
     "ignore": [
       "firebase.json",
       "**/.*",
-      "**/node_modules/**"
+      "**/node_modules/**",
+      "package.json",
+      "package-lock.json",
+      "tests/**",
+      "scripts/**",
+      "sw.template.js"
     ],
     "headers": [
       {
-        "source": "**/*.@(html|js|webmanifest)",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache, no-store, must-revalidate"
-          }
-        ]
+        "source": "/sw.js",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }]
       },
       {
-        "source": "/sw.js",
-        "headers": [
-          {
-            "key": "Cache-Control",
-            "value": "no-cache"
-          },
-          {
-            "key": "Service-Worker-Allowed",
-            "value": "/"
-          }
-        ]
+        "source": "**/*.html",
+        "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
       }
     ]
-  },
-  "firestore": {
-    "rules": "firestore.rules",
-    "indexes": "firestore.indexes.json"
   }
 }

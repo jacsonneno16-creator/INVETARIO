@@ -138,40 +138,12 @@ async function registrarColetorNoFirestore(operadorInfo) {
   try {
     let snap = await ref.get();
 
-    // Compatibilidade com versões antigas: só reaproveita aprovação por loja
-    // quando o dispositivo nunca foi removido pelo analista. A exclusão grava
-    // um marcador global de revogação para impedir que uma aprovação legada
-    // apagada seja recriada automaticamente.
+    // O cadastro oficial do aparelho fica na coleção global dt_coletores.
+    // Registros antigos/incompletos são normalizados pelas regras sem permitir
+    // que o próprio coletor se aprove ou remova um bloqueio administrativo.
     const dadosAtuais = snap.exists ? (snap.data() || {}) : {};
-    const foiRevogado = snap.exists && (dadosAtuais.aprovado === 'revogado' || dadosAtuais.excluido === true);
-
-    if (!snap.exists && !foiRevogado) {
-      try {
-        const lojas = Array.isArray(window.DT_LOJAS_USUARIO_ATUAL) ? window.DT_LOJAS_USUARIO_ATUAL : [];
-        for (const loja of lojas) {
-          const antiga = await window.getDTRawFirestore().collection('lojas').doc(loja.id).collection(FCOL.coletores).doc(deviceId).get();
-          if (!antiga.exists) continue;
-          const legado = antiga.data() || {};
-          if (legado.aprovado === 'aprovado' || legado.status === 'aprovado') {
-            await ref.set(Object.assign({}, legado, {
-              device_id: deviceId,
-              aprovado: 'aprovado',
-              status: 'online',
-              migrado_aprovacao_global_em: ST()
-            }), { merge: true });
-            snap = await ref.get();
-            break;
-          }
-          if (legado.aprovado === 'bloqueado') {
-            await ref.set(Object.assign({}, legado, {device_id:deviceId, aprovado:'bloqueado'}), {merge:true});
-            snap = await ref.get();
-            break;
-          }
-        }
-      } catch (compatError) {
-        console.warn('[Coletor] Não foi possível consultar aprovação antiga:', compatError.message);
-      }
-    }
+    const foiRevogado = snap.exists &&
+      (dadosAtuais.aprovado === 'revogado' || dadosAtuais.excluido === true);
 
     // ── APARELHO NOVO ────────────────────────────────────────────────────
     if (!snap.exists || foiRevogado) {
@@ -246,7 +218,7 @@ async function registrarColetorNoFirestore(operadorInfo) {
     return 'aprovado';
 
   } catch (e) {
-    console.warn('[Coletor] registrarColetorNoFirestore falhou:', e.message);
+    console.warn('[Coletor] registrarColetorNoFirestore falhou:', { code: e.code || null, message: e.message, deviceId: deviceId, uid: operadorInfo && operadorInfo.uid });
     // Em caso de erro de rede, permitir acesso se já tinha sessão local
     return 'erro';
   }
