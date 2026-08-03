@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="pt-BR">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Monitor de Leituras</title><link rel="stylesheet" href="css/drone-teste.css?v=1"><style>.table{width:100%;border-collapse:collapse}.table th,.table td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;font-size:13px}.table th{font-size:11px;color:#667085;background:#f8fafc}.live{display:inline-flex;align-items:center;gap:6px;color:#13734d;font-weight:700}.dot{width:8px;height:8px;border-radius:50%;background:#22c55e;box-shadow:0 0 0 4px #22c55e22}</style></head>
+<body>
+<header class="topbar"><strong>🖥️ Monitor de leituras do celular</strong><a href="drone-teste.html">Abrir câmera</a></header>
+<main>
+<section class="panel"><h2>Filtros</h2><div class="panel-body grid"><div><label for="lojaSelect">Loja</label><select id="lojaSelect"><option>Carregando...</option></select></div><div><label for="filtro">Buscar código</label><input id="filtro" placeholder="Digite parte do código"></div><div class="full"><span class="live"><span class="dot"></span>Atualização em tempo real</span> · <span id="resumo">0 leituras</span></div></div></section>
+<section class="panel"><h2>Últimas leituras</h2><div class="panel-body" style="overflow:auto"><table class="table"><thead><tr><th>HORÁRIO</th><th>CÓDIGO</th><th>FORMATO</th><th>MISSÃO</th><th>OPERADOR</th><th>INVENTÁRIO</th></tr></thead><tbody id="tbody"><tr><td colspan="6">Aguardando...</td></tr></tbody></table></div></section>
+</main>
+<script src="vendor/firebase-10.12.2/firebase-app-compat.js"></script><script src="vendor/firebase-10.12.2/firebase-auth-compat.js"></script><script src="vendor/firebase-10.12.2/firebase-firestore-compat.js"></script><script src="js/shared/firebase-shared.js"></script><script src="js/drone/drone-monitor.js?v=1"></script>
+</body></html>
