@@ -459,6 +459,11 @@ function confirmarInvMapper() {
     console.error('[confirmarInvMapper]', error);
     const msg = 'Erro ao aplicar o mapeamento: ' + (error?.message || error);
     setStatus(msg, 'e');
+    // Silenciado de propósito: invFbErr() já é chamado dentro do handler de
+    // erro deste bloco (catch externo). Se ela própria lançar (ex.: elemento
+    // de feedback ausente no DOM), não deve derrubar o fluxo de erro que já
+    // está em andamento — o toast e o setStatus acima garantem que o usuário
+    // é avisado mesmo que este log auxiliar falhe.
     try { invFbErr(msg); } catch (_) {}
     if (typeof showToast === 'function') showToast(msg, 'e');
     return false;

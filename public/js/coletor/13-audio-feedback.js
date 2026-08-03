@@ -37,13 +37,13 @@ function _desbloqueioGesto() {
   _elErr.play().then(() => {
     _elErr.pause();
     _elErr.currentTime = 0;
-    console.log('[som] elErr desbloqueado');
+    window.dbg('[som] elErr desbloqueado');
   }).catch(e => console.warn('[som] elErr desbloqueio:', e.message));
 
   // Criar e resumir AudioContext dentro do gesto (para beepOk síntese)
   const ctx = _getAudioCtx();
   if (ctx && ctx.state === 'suspended') {
-    ctx.resume().then(() => console.log('[som] AudioContext resumed'))
+    ctx.resume().then(() => window.dbg('[som] AudioContext resumed'))
                .catch(e => console.warn('[som] resume:', e.message));
   }
 
@@ -64,7 +64,7 @@ async function _carregarBufOk() {
                             { cache: 'force-cache' });
     if (!res.ok) throw new Error(res.status);
     _bufOk = await ctx.decodeAudioData(await res.arrayBuffer());
-    console.log('[som] bufOk pronto (CDN)');
+    window.dbg('[som] bufOk pronto (CDN)');
   } catch(e) {
     console.warn('[som] CDN falhou — síntese será usada:', e.message);
   }
@@ -72,7 +72,7 @@ async function _carregarBufOk() {
 
 // ── beepErr — toca o MP3 de erro via HTMLAudioElement ────────────
 function beepErr() {
-  console.log('[som] beepErr — ready:', _audioReady);
+  window.dbg('[som] beepErr — ready:', _audioReady);
   if (!_audioReady) { _desbloqueioGesto(); return; }
   try {
     _elErr.currentTime = 0;
@@ -102,7 +102,7 @@ function _beepErrSintese() {
 
 // ── beepOk — síntese Web Audio (sem CDN, mais rápido) ────────────
 function beepOk() {
-  console.log('[som] beepOk — ready:', _audioReady);
+  window.dbg('[som] beepOk — ready:', _audioReady);
   if (!_audioReady) { _desbloqueioGesto(); return; }
 
   // Buffer CDN pronto? usar ele

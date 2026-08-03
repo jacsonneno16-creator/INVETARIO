@@ -1,0 +1,13 @@
+{
+  "name": "dt-inventario",
+  "private": true,
+  "version": "228.0.0",
+  "description": "Da Terrinha — Inventário (Analista + Coletor)",
+  "scripts": {
+    "build:sw": "node scripts/build-sw.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.0"
+  }
+}

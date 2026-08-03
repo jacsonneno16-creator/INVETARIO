@@ -41,6 +41,28 @@ window.escAttr = window.escAttr || escAttr;
   var descriptor = Object.getOwnPropertyDescriptor(global.Element.prototype, 'innerHTML');
   if (!descriptor || !descriptor.configurable || !descriptor.get || !descriptor.set) return;
   var tagsBloqueadas = 'script,iframe,object,embed,base,meta,link,foreignObject';
+  // Atributos que podem carregar uma URL e por isso precisam ser checados
+  // contra esquemas perigosos (javascript:, vbscript:, data:text/html).
+  var atributosDeUrl = {
+    href: 1, src: 1, 'xlink:href': 1, formaction: 1, action: 1,
+    poster: 1, background: 1
+  };
+  var esquemaPerigoso = /^(javascript:|vbscript:|data:text\/html)/i;
+  // srcset tem sintaxe própria ("url1 1x, url2 2x"); qualquer trecho com
+  // esquema perigoso já é suficiente para descartar o atributo inteiro.
+  function srcsetPerigoso(valor) {
+    return valor.split(',').some(function(parte){
+      return esquemaPerigoso.test(parte.trim().replace(/\s+/g, ''));
+    });
+  }
+  // style aceita vetores de injeção antigos (expression() do IE legado,
+  // ainda relevante em WebViews Android desatualizadas) e URLs com
+  // esquema perigoso dentro de url(...).
+  function stylePerigoso(valor) {
+    var semEspacos = valor.replace(/[\u0000-\u001f\u007f\s]+/g, '').toLowerCase();
+    return semEspacos.indexOf('expression(') !== -1 ||
+      /url\(\s*['"]?\s*(javascript:|vbscript:|data:text\/html)/i.test(semEspacos);
+  }
   function limpar(html) {
     var parsed = new global.DOMParser().parseFromString(
       '<!doctype html><html><body>' + String(html == null ? '' : html) + '</body></html>',
@@ -50,16 +72,19 @@ window.escAttr = window.escAttr || escAttr;
     parsed.body.querySelectorAll('*').forEach(function(node){
       Array.from(node.attributes).forEach(function(attribute){
         var name = attribute.name.toLowerCase();
-        var value = String(attribute.value || '').trim()
-          .replace(/[\u0000-\u001f\u007f\s]+/g, '')
-          .toLowerCase();
-        if (name.indexOf('on') === 0 || name === 'srcdoc' ||
-            ((name === 'href' || name === 'src' || name === 'xlink:href' ||
-              name === 'formaction' || name === 'action') &&
-             (value.indexOf('javascript:') === 0 || value.indexOf('vbscript:') === 0 ||
-              value.indexOf('data:text/html') === 0))) {
-          node.removeAttribute(attribute.name);
+        var bruto = String(attribute.value || '');
+        var normalizado = bruto.trim().replace(/[\u0000-\u001f\u007f\s]+/g, '').toLowerCase();
+        var remover = false;
+        if (name.indexOf('on') === 0 || name === 'srcdoc') {
+          remover = true;
+        } else if (atributosDeUrl[name] && esquemaPerigoso.test(normalizado)) {
+          remover = true;
+        } else if (name === 'srcset' && srcsetPerigoso(bruto)) {
+          remover = true;
+        } else if (name === 'style' && stylePerigoso(bruto)) {
+          remover = true;
         }
+        if (remover) node.removeAttribute(attribute.name);
       });
     });
     return descriptor.get.call(parsed.body);

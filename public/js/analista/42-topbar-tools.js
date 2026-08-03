@@ -86,7 +86,7 @@
       var lojaInfo=await obterLojaAtivaConfirmada();
       if(!lojaInfo) throw new Error('Selecione a loja dos endereços antes de sincronizar. A base de produtos é global, mas os endereços são separados por loja.');
       var lojaAtiva=lojaInfo.id;
-      console.log('[SYNC] Loja dos endereços:',lojaAtiva,'|',lojaInfo.nome||'', '| código',lojaInfo.codigo||'');
+      window.dbg('[SYNC] Loja dos endereços:',lojaAtiva,'|',lojaInfo.nome||'', '| código',lojaInfo.codigo||'');
       var listaEstado=arr(st.enderecosLista);
       var listaStorage=[];
       try{ if(global.storageLoad&&global.KEYS) listaStorage=arr(global.storageLoad(global.KEYS.enderecos)); }catch(_e){ console.warn("[Erro tratado]", _e); }
@@ -95,7 +95,7 @@
       var listaEnderecos=listaEstado;
       if(listaStorage.length>listaEnderecos.length) listaEnderecos=listaStorage;
       if(listaEnddb.length>listaEnderecos.length) listaEnderecos=listaEnddb;
-      console.log('[SYNC] Endereços disponíveis — estado:',listaEstado.length,'storage:',listaStorage.length,'ENDDB:',listaEnddb.length,'selecionados:',listaEnderecos.length);
+      window.dbg('[SYNC] Endereços disponíveis — estado:',listaEstado.length,'storage:',listaStorage.length,'ENDDB:',listaEnddb.length,'selecionados:',listaEnderecos.length);
       if(!listaEnderecos.length) throw new Error('Nenhum endereço disponível para publicar. Abra a aba Endereços e confirme a base importada.');
       for(var i=0;i<inventarios.length;i++){
         var inv=inventarios[i];
@@ -103,9 +103,9 @@
       }
       var endResultado=null;
       if(typeof global.fsPublicarEnderecos!=='function') throw new Error('Função de publicação de endereços não carregada.');
-      console.log('[SYNC] Publicando Base Geral de Endereços...');
+      window.dbg('[SYNC] Publicando Base Geral de Endereços...');
       endResultado=await global.fsPublicarEnderecos(listaEnderecos,lojaAtiva);
-      console.log('[SYNC] Endereços publicados:',endResultado&&endResultado.chunks,'chunks /',endResultado&&endResultado.total,'endereços / versão',endResultado&&endResultado.versao);
+      window.dbg('[SYNC] Endereços publicados:',endResultado&&endResultado.chunks,'chunks /',endResultado&&endResultado.total,'endereços / versão',endResultado&&endResultado.versao);
       if(typeof global.publicarChunksProdutos==='function') await global.publicarChunksProdutos();
       var checks=await Promise.all([
         verificarBase('dt_locais_meta','dt_locais_chunks','total'),

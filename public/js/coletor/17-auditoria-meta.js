@@ -173,7 +173,7 @@
       } catch(e) {
         console.warn('[AUDITORIA] Não foi possível persistir a base de endereços no IndexedDB:',e);
       }
-      console.log('[AUDITORIA] Base Geral de Endereços carregada:', locais.size, 'loja:', lojaId);
+      window.dbg('[AUDITORIA] Base Geral de Endereços carregada:', locais.size, 'loja:', lojaId);
       return locais;
     } catch (erro) {
       console.warn('[AUDITORIA] Falha ao carregar Base Geral de Endereços:', erro);
@@ -361,7 +361,7 @@
         window.setDTLojaAtiva(lojaAuditoria);
         APP.locaisAtivos = new Set();
         APP._locaisDoFirebase = false;
-        console.log('[AUDITORIA] Loja alterada para a loja da auditoria:', lojaAuditoria);
+        window.dbg('[AUDITORIA] Loja alterada para a loja da auditoria:', lojaAuditoria);
       }
     }
     APP._auditoriaCarregando=true;

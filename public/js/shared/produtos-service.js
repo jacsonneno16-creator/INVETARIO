@@ -119,7 +119,7 @@
         const esperadoProdutos=Number((metaServidor||{}).totalProdutos||(metaServidor||{}).total||0);
         if(esperadoChunks&&docs.length!==esperadoChunks)throw new Error('Base de produtos incompleta: '+docs.length+' de '+esperadoChunks+' chunks recebidos.');
         if(esperadoProdutos&&rows.length!==esperadoProdutos)throw new Error('Base de produtos incompleta: '+rows.length+' de '+esperadoProdutos+' produtos recebidos.');
-        console.log('[Produtos] Base atualizada somente por chunks:',docs.length,'documentos /',rows.length,'produtos / versão',versaoServidor);
+        window.dbg('[Produtos] Base atualizada somente por chunks:',docs.length,'documentos /',rows.length,'produtos / versão',versaoServidor);
         const result=indexar(rows);
         cache.versao=versaoServidor;
         if(versaoServidor)try{localStorage.setItem(versaoKey,versaoServidor);}catch(_e){ console.warn("[Erro tratado]", _e); }

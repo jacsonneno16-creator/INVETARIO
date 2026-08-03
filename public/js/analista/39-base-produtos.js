@@ -44,7 +44,7 @@ async function publicarChunksProdutos(){
   const antigos=await fs.collection('dt_produtos_chunks').get();
   const opsDelete=antigos.docs.filter(d=>!idsNovos.has(d.id)).map(d=>({tipo:'delete',ref:d.ref}));
   for(let i=0;i<opsDelete.length;i+=350){const batch=raw.batch();opsDelete.slice(i,i+350).forEach(op=>batch.delete(op.ref));await batch.commit();}
-  console.log('[Produtos] Chunks publicados:',totalChunks,'/',todos.length);
+  window.dbg('[Produtos] Chunks publicados:',totalChunks,'/',todos.length);
  }finally{sincronizandoChunks=false;}
 }
 async function iniciar(){if(listener)listener();listener=COL().onSnapshot(s=>{if(mutacaoEmAndamento)return;lista=s.docs.map(d=>{const p=global.DTProdutos.normalizarProduto(d.data(),d.id);p.categoriaFamilia=txt(d.data().categoriaFamilia||d.data().familiaCategoria)||inferirCategoria(p.nomeProduto,p.familiaNome);return p;});global.DTProdutos.indexar(lista);render();},e=>console.error('[Base Produtos]',e));}

@@ -304,7 +304,7 @@ _iniciarAuthAnalista();
 let _toastTimer;
 function showToast(msg, type) {
   const el = document.getElementById('toast');
-  if (!el) { console.log('[Toast]', msg); return; }
+  if (!el) { window.dbg('[Toast]', msg); return; }
   el.className = 'toast' + (type ? ' ' + type : '');
   el.textContent = msg;
   void el.offsetWidth; // força reflow para reiniciar a animação
@@ -364,7 +364,7 @@ async function logAuditoria(tipo, descricao, dados) {
       });
     }
   } catch (e) { console.error('[logAuditoria]', e); return null; }
-  console.log('[LOG]', tipo, descricao, dados);
+  window.dbg('[LOG]', tipo, descricao, dados);
 }
 function logSistema(tipo, desc, dados) { return logAuditoria(tipo, desc, dados); }
 

@@ -2107,17 +2107,18 @@
   // Fotografia física canônica do inventário. Esta é a única fonte operacional
   // para tela de Contagens, cards, relatórios, CSV/XLSX e integração. Cada
   // recontagem concluída SUBSTITUI integralmente a rodada anterior do endereço.
+  //
+  // _rodadaFisica e _recontagemConcluida agora delegam para
+  // js/analista/services/rodadaFisicaService.js — módulo puro e testado
+  // isoladamente (ver tests/rodadaFisicaService.test.js). A regra de negócio
+  // vive em um único lugar; aqui ficam só os aliases usados pelo resto do
+  // arquivo.
   function _rodadaFisica(c){
-    if(_nd(c?.tipo_contagem || 'PRIMEIRA') !== 'RECONTAGEM') return 1;
-    return Math.min(3, 1 + Math.max(1, Number(c?.numero_recontagem || 1)));
+    return global.RodadaFisicaService.rodadaFisica(c);
   }
 
   function _recontagemConcluida(rec){
-    if(!rec) return false;
-    const status=_nd(rec?.status_recontagem || rec?.status);
-    if(['CANCELADA','EXCLUIDA','ESTORNADA','PENDENTE','ATRIBUIDA','ATRIBUÍDA','EM_ANDAMENTO','ABERTA'].includes(status)) return false;
-    return Boolean(rec?.recontagem_concluida_em || rec?.concluida_em || rec?.finalizada_em || rec?.data_segunda || rec?.data_terceira) ||
-      ['CONCLUIDA','CONCLUÍDA','FINALIZADA','PROCESSADA','RESOLVIDA','AGUARDANDO_ANALISTA','SEM_DIVERGENCIA'].includes(status);
+    return global.RodadaFisicaService.recontagemConcluida(rec);
   }
 
   function _linhaRecontagemConcluida(c){
@@ -2138,15 +2139,7 @@
   }
 
   function _idPaleteFisico(c,indice){
-    const pal=_nd(c?.palete ?? c?.pallet ?? c?.numero_palete ?? c?.numeroPalete ?? c?.palete_key ?? c?.capa_palete ?? c?.capa ?? c?.sscc);
-    if(pal) return 'PAL:'+pal;
-    const id=String(c?.uuid || c?.id || c?.contagem_uuid || '').trim();
-    if(id) return 'DOC:'+id;
-    return 'LINHA:'+[
-      _nd(c?.gtin_bipado||c?.codigoLido||c?.codigo_lido||c?.dunLido||c?.codigo_produto),
-      c?.quantidade??c?.qtd??c?.qtd_contada??'',
-      c?.timestamp||c?.criado_em||c?.dataHora||indice
-    ].join('|');
+    return global.RodadaFisicaService.idPaleteFisico(c,indice);
   }
 
   function _fotografiaFisicaAtual(inventarioId){
