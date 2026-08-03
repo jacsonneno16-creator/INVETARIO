@@ -52,10 +52,10 @@ window.getDTFirestore = function(){
       if (prop === 'collection') {
         return function(nome){
           const path = String(nome || '');
-          // Coleções globais: cadastro de lojas, permissões de usuários e
-          // aprovação física dos dispositivos. A aprovação de um coletor é do
-          // navegador/aparelho, não da loja selecionada.
-          if (path === 'lojas' || path.startsWith('lojas/') || path === 'usuarios_acessos' || path === 'dt_coletores') return raw.collection(path);
+          // Coleções realmente globais: cadastro de lojas e permissões.
+          // dt_coletores permanece dentro da loja ativa, como as regras atuais
+          // do Firestore esperam: lojas/{lojaId}/dt_coletores/{deviceId}.
+          if (path === 'lojas' || path.startsWith('lojas/') || path === 'usuarios_acessos') return raw.collection(path);
           const lojaId = window.getDTLojaAtiva();
           if (!lojaId) throw new Error('Nenhuma loja selecionada. Selecione uma loja para continuar.');
           return raw.collection('lojas').doc(lojaId).collection(path);
