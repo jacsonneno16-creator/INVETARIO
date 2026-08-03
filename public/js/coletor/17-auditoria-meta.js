@@ -342,6 +342,12 @@
 
   window.selecionarAuditoriaMenu = async function(auditoriaId){
     if(APP._auditoriaCarregando) return;
+    // Aguarda a confirmação real do Firebase (não apenas a configuração de
+    // persistência) antes de concluir que não há sessão. Ver comentário em
+    // js/coletor/01-core-firebase-cache.js sobre DT_AUTH_USER_READY.
+    if(window.DT_AUTH_USER_READY){
+      try{ await window.DT_AUTH_USER_READY; }catch(_){ console.warn("[Erro tratado]", _); }
+    }
     if(!window.AUTH || !AUTH.currentUser){
       // AUTH.currentUser pode ficar momentaneamente nulo enquanto o Firebase
       // restaura/renova a sessão. Abrir uma auditoria nunca deve apagar o

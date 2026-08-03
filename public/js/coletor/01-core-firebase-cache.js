@@ -11,6 +11,39 @@ const FCOL = window.DT_FCOL;
 window.DT_AUTH_READY = AUTH.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
   .catch(e => { console.warn('[Auth] Persistência LOCAL indisponível:', e.message); });
 
+// DT_AUTH_USER_READY: diferente de DT_AUTH_READY (que só espera a persistência
+// ser configurada), esta promise resolve quando o Firebase efetivamente
+// confirma o usuário restaurado da sessão salva — o primeiro disparo de
+// onAuthStateChanged. Enquanto isso não acontece, AUTH.currentUser pode
+// estar null mesmo com o usuário logado (a restauração é assíncrona,
+// lê do IndexedDB). Qualquer fluxo que precise checar "o usuário está
+// autenticado?" antes de acessar o Firestore deve aguardar esta promise
+// primeiro, em vez de checar AUTH.currentUser direto — senão corre o risco
+// de tratar uma sessão válida como expirada só porque checou cedo demais.
+// Timeout de segurança: se o Firebase não confirmar em 6s (ex.: offline
+// sem sessão em cache), resolve mesmo assim para não travar a tela.
+window.DT_AUTH_USER_READY = new Promise((resolve) => {
+  var resolvido = false;
+  var _resolver = function(user) {
+    if (resolvido) return;
+    resolvido = true;
+    resolve(user || null);
+  };
+  var timeoutId = setTimeout(function(){ _resolver(AUTH.currentUser); }, 6000);
+  var unsubscribe;
+  try {
+    unsubscribe = AUTH.onAuthStateChanged(function(user){
+      clearTimeout(timeoutId);
+      _resolver(user);
+      if (typeof unsubscribe === 'function') unsubscribe();
+    });
+  } catch (e) {
+    console.warn('[Auth] Falha ao observar onAuthStateChanged inicial:', e.message);
+    clearTimeout(timeoutId);
+    _resolver(AUTH.currentUser);
+  }
+});
+
 // ── Persistência offline das contagens ──
 const _LOJA_CACHE = () => (window.getDTLojaAtiva&&window.getDTLojaAtiva()) || 'sem_loja';
 const LS_FILA    = 'col_fila_envio_' + _LOJA_CACHE();

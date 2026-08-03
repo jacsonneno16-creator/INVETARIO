@@ -216,6 +216,14 @@ async function _carregarBaseGeralProdutosInventario(force = false) {
 }
 
 async function selecionarInventario(id, modo = 'inventario') {
+  // Mesma corrida documentada em js/coletor/17-auditoria-meta.js e
+  // js/coletor/01-core-firebase-cache.js (DT_AUTH_USER_READY): logo após
+  // abrir o app, o Firebase ainda pode não ter restaurado a sessão salva,
+  // e as leituras do Firestore abaixo falhariam silenciosamente com
+  // permission-denied se disparadas cedo demais.
+  if (window.DT_AUTH_USER_READY) {
+    try { await window.DT_AUTH_USER_READY; } catch(_) { console.warn("[Erro tratado]", _); }
+  }
   APP.modoPendente = modo || 'inventario';
   const inv = (APP.inventariosDisponiveis || []).find(i => i.id === id);
   if (!inv) { toast('Inventário não encontrado', 'e'); return; }
