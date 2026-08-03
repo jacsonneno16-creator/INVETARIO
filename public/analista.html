@@ -2396,7 +2396,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260803-topo-acoes-v1"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260803-topo-acoes-v1"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260731-234-auditoria"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260731-234-auditoria"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260802-usuarios-lojas-v2"></script><script src="js/analista/app-controller.js?v=20260731-234-auditoria"></script>
+<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260803-topo-acoes-v2"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260803-topo-acoes-v1"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260731-234-auditoria"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260731-234-auditoria"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260802-usuarios-lojas-v2"></script><script src="js/analista/app-controller.js?v=20260731-234-auditoria"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}
@@ -2472,6 +2472,65 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   window.addEventListener('DOMContentLoaded',function(){obs.observe(document.body,{childList:true,subtree:true});obs.takeRecords();['cont-table-wrap','rec-table-wrap','div-table-wrap'].forEach(function(id){var el=document.getElementById(id);if(el) ativar(el);});});
 })();
 </script>
-<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v234 · 20260731.1</div>
+<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v237 · 20260803.2</div>
+
+<style id="fix-admin-pages-top-v237">
+/* Força Usuários e Gestão de Lojas a começarem no topo da área útil. */
+.content.admin-page-top{
+  display:block !important;
+  padding-top:14px !important;
+}
+.content.admin-page-top > .page.on{
+  display:flex !important;
+  width:100% !important;
+  margin:0 !important;
+  padding:0 !important;
+  min-height:0 !important;
+  height:auto !important;
+  transform:none !important;
+  position:relative !important;
+  top:auto !important;
+}
+#page-operadores.on,#page-lojas.on{
+  justify-content:flex-start !important;
+  align-items:stretch !important;
+  align-content:flex-start !important;
+}
+#page-operadores > .sec-hdr:first-child,#page-lojas > .sec-hdr:first-child{
+  margin:0 0 12px !important;
+  padding:0 0 10px !important;
+}
+</style>
+<script id="fix-admin-pages-top-script-v237">
+(function(){
+  function aplicar(){
+    var content=document.querySelector('.content');
+    if(!content)return;
+    var adminAtiva=document.querySelector('#page-operadores.on,#page-lojas.on');
+    content.classList.toggle('admin-page-top',!!adminAtiva);
+    if(adminAtiva){
+      adminAtiva.style.marginTop='0';
+      adminAtiva.style.paddingTop='0';
+      content.scrollTop=0;
+      window.scrollTo(0,0);
+    }
+  }
+  document.addEventListener('DOMContentLoaded',function(){
+    aplicar();
+    var content=document.querySelector('.content');
+    if(content){
+      new MutationObserver(aplicar).observe(content,{attributes:true,subtree:true,attributeFilter:['class']});
+    }
+    document.addEventListener('click',function(e){
+      if(e.target.closest('[data-page="operadores"],[data-page="lojas"],#nav-operadores,#nav-lojas')){
+        setTimeout(aplicar,0);setTimeout(aplicar,120);
+      }
+    });
+  });
+  window.addEventListener('hashchange',aplicar);
+  window.DT_aplicarTopoPaginasAdmin=aplicar;
+})();
+</script>
+
 </body>
 </html>
