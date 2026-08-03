@@ -14,7 +14,7 @@
         <td>${esc(l.responsavel||'—')}</td>
         <td>${l.ativa===false?'<span class="badge badge-red">Inativa</span>':'<span class="badge badge-green">Ativa</span>'}</td>
         <td>${l.id===ativa?'<span class="badge badge-blue">Em uso</span>':'<span style="color:var(--muted);font-size:.74rem">Disponível</span>'}</td>
-        <td style="text-align:center"><button class="acao-lapis" type="button" title="Configurar loja" aria-label="Configurar loja" data-loja-editar="${esc(l.id)}" onclick="editarLojaPorId('${esc(l.id)}')">✏️</button></td>
+        <td style="text-align:center"><button class="acao-lapis" type="button" title="Configurar loja" aria-label="Configurar loja" data-loja-editar="${esc(l.id)}">✏️</button></td>
       </tr>`).join('');
       const tabela=linhas?`<div class="tbl-wrap lojas-lista-linhas"><table><thead><tr><th>Loja</th><th>Responsável</th><th>Status</th><th>Ambiente</th><th style="width:74px;text-align:center">Ações</th></tr></thead><tbody>${linhas}</tbody></table></div>`:'<div class="empty"><div class="empty-title">Nenhuma loja cadastrada</div></div>';
       if(grid) grid.innerHTML=tabela;
@@ -278,22 +278,37 @@
   async function editarLojaPorId(id){
     if(!id)return;
     try{
-      const lojas=await global.DTLoja.garantirLojaInicial();
-      const loja=lojas.find(item=>String(item.id)===String(id));
+      // Consulta direta torna a edição independente de qualquer outra aba
+      // ter sido aberta ou de caches já terem sido inicializados.
+      let loja=null;
+      try{
+        const snap=await raw().collection('lojas').doc(String(id)).get();
+        if(snap.exists) loja=Object.assign({id:snap.id},snap.data()||{});
+      }catch(erroDireto){
+        console.warn('[Lojas] Consulta direta indisponível; usando lista local.',erroDireto);
+      }
+      if(!loja){
+        const lojas=await global.DTLoja.garantirLojaInicial();
+        loja=lojas.find(item=>String(item.id)===String(id));
+      }
       if(!loja)throw new Error('Loja não encontrada');
       editarLoja(loja);
     }catch(e){
       global.showToast?.('Não foi possível abrir a loja: '+(e.message||e),'error');
+      console.error('[Lojas] Falha ao abrir edição:',e);
     }
   }
 
-  document.addEventListener('click',function(event){
-    const botao=event.target.closest('[data-loja-editar]');
-    if(!botao)return;
+  function tratarCliqueEditarLoja(event){
+    const alvo=event.target && event.target.closest ? event.target.closest('[data-loja-editar]') : null;
+    if(!alvo)return;
     event.preventDefault();
     event.stopPropagation();
-    editarLojaPorId(botao.getAttribute('data-loja-editar'));
-  });
+    if(typeof event.stopImmediatePropagation==='function')event.stopImmediatePropagation();
+    editarLojaPorId(alvo.getAttribute('data-loja-editar'));
+  }
+  // Capture garante o clique mesmo se outro componente interromper a propagação.
+  document.addEventListener('click',tratarCliqueEditarLoja,true);
 
   Object.assign(global,{renderGestaoLojas,abrirCadastroLoja,editarLoja,editarLojaPorId,salvarLoja,usarLoja,migrarDadosLegadosParaLojaAtual,sincronizarDadosLegadosAutomaticamente,corrigirIsolamentoLojaAtual});
 })(window);

@@ -66,6 +66,7 @@ function renderPage(id) {
         if (typeof window.inicializarAbaColetores === 'function') window.inicializarAbaColetores();
         return _callPage('renderColetores');
       case 'operadores':         return _callPage('listarOperadores');
+      case 'lojas':              return _callPage('renderGestaoLojas');
       case 'auditoria':          return _callPage('renderAuditoriaOperacional');
       case 'rastreabilidade':    return _callPage('renderRastreabilidade');
       case 'importar-exportar':  return _callPage('ieAbrirPagina');

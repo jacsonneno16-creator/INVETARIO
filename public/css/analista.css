@@ -1056,3 +1056,51 @@ input,select,textarea{
   position:relative;
   z-index:2;
 }
+
+/* Correção v238 — páginas administrativas no topo real */
+.content:has(#page-operadores.on),
+.content:has(#page-lojas.on){
+  position:relative !important;
+  display:block !important;
+  padding-top:14px !important;
+  overflow:auto !important;
+}
+.content:has(#page-operadores.on) > #page-operadores.on,
+.content:has(#page-lojas.on) > #page-lojas.on{
+  position:absolute !important;
+  top:14px !important;
+  left:18px !important;
+  right:18px !important;
+  width:auto !important;
+  margin:0 !important;
+  padding:0 0 24px !important;
+  min-height:0 !important;
+  height:auto !important;
+  transform:none !important;
+  translate:none !important;
+  justify-content:flex-start !important;
+  align-items:stretch !important;
+  align-content:flex-start !important;
+}
+#page-operadores.on > .sec-hdr:first-child,
+#page-lojas.on > .sec-hdr:first-child{
+  margin:0 0 12px !important;
+  padding:0 !important;
+}
+#page-operadores.on .tc:first-of-type,
+#page-lojas.on .tc:first-of-type{
+  margin-top:0 !important;
+}
+#page-lojas [data-loja-editar]{
+  pointer-events:auto !important;
+  position:relative !important;
+  z-index:20 !important;
+}
+@media(max-width:1200px){
+  .content:has(#page-operadores.on) > #page-operadores.on,
+  .content:has(#page-lojas.on) > #page-lojas.on{
+    left:12px !important;
+    right:12px !important;
+    top:10px !important;
+  }
+}
