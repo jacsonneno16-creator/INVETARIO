@@ -216,75 +216,98 @@ async function _carregarBaseGeralProdutosInventario(force = false) {
 }
 
 async function selecionarInventario(id, modo = 'inventario') {
-  // Mesma corrida documentada em js/coletor/17-auditoria-meta.js e
-  // js/coletor/01-core-firebase-cache.js (DT_AUTH_USER_READY): logo após
-  // abrir o app, o Firebase ainda pode não ter restaurado a sessão salva,
-  // e as leituras do Firestore abaixo falhariam silenciosamente com
-  // permission-denied se disparadas cedo demais.
-  if (window.DT_AUTH_USER_READY) {
-    try { await window.DT_AUTH_USER_READY; } catch(_) { console.warn("[Erro tratado]", _); }
-  }
-  APP.modoPendente = modo || 'inventario';
-  const inv = (APP.inventariosDisponiveis || []).find(i => i.id === id);
-  if (!inv) { toast('Inventário não encontrado', 'e'); return; }
-
-  // ── Melhoria 5: verificar se base local já existe e está atualizada ──
-  const metaLocal   = baseMetaLoad(id);
-  const verLocal    = bVerLoad(id);
-  const verServidor = _invBaseVer(inv);
-  const baseLocal   = metaLocal ? baseLoad(id) : null;
-  const capLocal    = endCapLoad(id);
-
-  const cacheValido = (
-    baseLocal &&
-    baseLocal.length > 0 &&
-    // Cache é válido se a versão bate OU se não há versão para comparar
-    (verServidor === '' || verLocal === verServidor)
-  );
-
-  if (cacheValido) {
-    const produtosGerais = await _carregarBaseGeralProdutosInventario(false);
-    if (!produtosGerais.length) {
-      toast(navigator.onLine
-        ? 'Não foi possível baixar a Base Geral de Produtos. Tente abrir novamente.'
-        : 'A Base Geral de Produtos ainda não foi baixada neste coletor.', 'e');
+  // Evita cliques duplicados abrirem duas vezes o mesmo inventário
+  // enquanto a primeira chamada ainda está resolvendo a sessão/dados.
+  if (APP._inventarioAbrindo) return;
+  APP._inventarioAbrindo = true;
+  try {
+    // Mesma corrida documentada em js/coletor/17-auditoria-meta.js e
+    // js/coletor/01-core-firebase-cache.js (DT_AUTH_USER_READY): logo após
+    // abrir o app, o Firebase ainda pode não ter restaurado a sessão salva,
+    // e as leituras do Firestore abaixo falhariam silenciosamente com
+    // permission-denied se disparadas cedo demais.
+    if (window.DT_AUTH_USER_READY) {
+      try { await window.DT_AUTH_USER_READY; } catch(_) { console.warn("[Erro tratado]", _); }
+    }
+    // Assim como em selecionarAuditoriaMenu: se, mesmo após aguardar a
+    // restauração da sessão, o Firebase não confirmar um usuário logado,
+    // avisar claramente em vez de deixar o clique "sem reação". Abrir um
+    // inventário nunca deve apagar o operador nem forçar logout por causa
+    // desse estado transitório — apenas pedir para tentar de novo.
+    if (window.AUTH && !AUTH.currentUser) {
+      toast('Não foi possível confirmar a sessão agora. Aguarde alguns segundos e tente abrir o inventário novamente.', 'e');
       return;
     }
-    // ── Usar cache local — sem download ──────────────────────
-    dbg('[cache] base local válida —', baseLocal.length, 'registros, ver:', verLocal);
-    APP.inventario    = inv;
-    APP.base          = baseLocal;
 
-    // Capacidade: começar com o que a base tem, depois sobrepor com dt_locais (fonte principal)
-    let capMapa = _recalcularEndCap(baseLocal);
-    try {
-      const cached = localStorage.getItem(LS_LOCAIS);
-      if (cached) {
-        const locaisMap = JSON.parse(cached);
-        Object.entries(locaisMap).forEach(([k, v]) => { if (v > 0) capMapa[k] = v; });
-        dbg('[dt_locais cache] mesclado:', Object.values(capMapa).filter(v=>v>0).length, 'com cap');
+    APP.modoPendente = modo || 'inventario';
+    const inv = (APP.inventariosDisponiveis || []).find(i => i.id === id);
+    if (!inv) { toast('Inventário não encontrado', 'e'); return; }
+
+    // ── Melhoria 5: verificar se base local já existe e está atualizada ──
+    const metaLocal   = baseMetaLoad(id);
+    const verLocal    = bVerLoad(id);
+    const verServidor = _invBaseVer(inv);
+    const baseLocal   = metaLocal ? baseLoad(id) : null;
+    const capLocal    = endCapLoad(id);
+
+    const cacheValido = (
+      baseLocal &&
+      baseLocal.length > 0 &&
+      // Cache é válido se a versão bate OU se não há versão para comparar
+      (verServidor === '' || verLocal === verServidor)
+    );
+
+    if (cacheValido) {
+      const produtosGerais = await _carregarBaseGeralProdutosInventario(false);
+      if (!produtosGerais.length) {
+        toast(navigator.onLine
+          ? 'Não foi possível baixar a Base Geral de Produtos. Tente abrir novamente.'
+          : 'A Base Geral de Produtos ainda não foi baixada neste coletor.', 'e');
+        return;
       }
-    } catch(e){ console.warn("[Erro tratado]", e); }
-    APP.endCapacidade = capMapa;
-    endCapSave(id, capMapa);
+      // ── Usar cache local — sem download ──────────────────────
+      dbg('[cache] base local válida —', baseLocal.length, 'registros, ver:', verLocal);
+      APP.inventario    = inv;
+      APP.base          = baseLocal;
 
-    // Restaurar set de endereços válidos do cache
-    try {
-      const cs = localStorage.getItem(LS_LOCAIS + '_set');
-      APP.locaisAtivos = cs ? new Set(JSON.parse(cs)) : new Set(baseLocal.map(r => r._end).filter(Boolean));
-    } catch(e) {
-      APP.locaisAtivos = new Set(baseLocal.map(r => r._end).filter(Boolean));
+      // Capacidade: começar com o que a base tem, depois sobrepor com dt_locais (fonte principal)
+      let capMapa = _recalcularEndCap(baseLocal);
+      try {
+        const cached = localStorage.getItem(LS_LOCAIS);
+        if (cached) {
+          const locaisMap = JSON.parse(cached);
+          Object.entries(locaisMap).forEach(([k, v]) => { if (v > 0) capMapa[k] = v; });
+          dbg('[dt_locais cache] mesclado:', Object.values(capMapa).filter(v=>v>0).length, 'com cap');
+        }
+      } catch(e){ console.warn("[Erro tratado]", e); }
+      APP.endCapacidade = capMapa;
+      endCapSave(id, capMapa);
+
+      // Restaurar set de endereços válidos do cache
+      try {
+        const cs = localStorage.getItem(LS_LOCAIS + '_set');
+        APP.locaisAtivos = cs ? new Set(JSON.parse(cs)) : new Set(baseLocal.map(r => r._end).filter(Boolean));
+      } catch(e) {
+        APP.locaisAtivos = new Set(baseLocal.map(r => r._end).filter(Boolean));
+      }
+
+      APP.proximoCapa   = calcularProximoCapa();
+      _aplicarInventario(inv, APP.modoPendente || 'inventario');
+      toast(`✅ Base local carregada (${baseLocal.length} registros)`, 's');
+      return;
     }
 
-    APP.proximoCapa   = calcularProximoCapa();
-    _aplicarInventario(inv, APP.modoPendente || 'inventario');
-    toast(`✅ Base local carregada (${baseLocal.length} registros)`, 's');
-    return;
+    // ── Precisa baixar: sem cache ou versão desatualizada ─────
+    dbg('[cache] download necessário — cacheValido:', cacheValido, 'ver local:', verLocal, 'servidor:', verServidor);
+    _iniciarTelaDowload(inv);
+  } catch (err) {
+    // Rede de segurança final: qualquer falha inesperada aqui antes não
+    // aparecia para o operador — o clique simplesmente "não fazia nada".
+    console.error('[Inventário] Falha ao abrir inventário:', err);
+    toast('Erro ao abrir inventário: ' + (err && err.message ? err.message : String(err)), 'e');
+  } finally {
+    APP._inventarioAbrindo = false;
   }
-
-  // ── Precisa baixar: sem cache ou versão desatualizada ─────
-  dbg('[cache] download necessário — cacheValido:', cacheValido, 'ver local:', verLocal, 'servidor:', verServidor);
-  _iniciarTelaDowload(inv);
 }
 
 function _iniciarTelaDowload(inv) {

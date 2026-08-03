@@ -287,6 +287,28 @@ async function desbloquearColetor(id) {
   }
 }
 
+// Reabre o turno de UM único coletor (sem precisar fechar o inventário
+// inteiro). Usado quando o operador encerrou o turno por engano ou
+// precisa continuar contando antes do inventário ser fechado.
+async function reabrirTurnoColetor(id) {
+  const col = state().coletores.find(c => c.id === id);
+  const nome = col ? (col.nome_exibicao || `Coletor ${col.numero}`) : id;
+  if (!window.confirm(`Reabrir o turno de ${nome}? O operador poderá voltar a fazer contagens neste coletor.`)) return false;
+  try {
+    await FS_AN.collection(FS_COL_COLETORES).doc(id).set({
+      turno_encerrado: false,
+      turno_reaberto_em: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    showToast('🔓 Turno de ' + nome + ' reaberto.', 's');
+    logAuditoria('SISTEMA', 'Turno reaberto manualmente: ' + nome, id);
+    return true;
+  } catch (e) {
+    console.error('[Coletores] Erro ao reabrir turno:', e);
+    showToast('Erro ao reabrir turno: ' + e.message, 'e');
+    throw e;
+  }
+}
+
 // ── HEARTBEAT / STATUS AUTOMÁTICO ───────────────────────────────────
 function atualizarHeartbeat(coletorId) {
   window._coletorHeartbeats[coletorId] = Date.now();

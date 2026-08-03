@@ -197,6 +197,10 @@ async function registrarColetorNoFirestore(operadorInfo) {
     }
 
     // APROVADO: atualizar operador e sessão (nunca cria novo doc)
+    // Se o turno já foi encerrado neste aparelho (e o analista ainda não
+    // reabriu), a trava precisa sobreviver a um novo login — senão o
+    // operador conseguiria voltar a contar só saindo e entrando de novo.
+    APP.turnoEncerrado = dados.turno_encerrado === true;
     await ref.set({
       uid:              operadorInfo.uid || null,
       operador_uid:     operadorInfo.uid || null,

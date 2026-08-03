@@ -7,7 +7,7 @@ function inicializarAbaColetores() {
   if (_abaColetoresInicializada) return;
   _abaColetoresInicializada = true;
 
-  ['col-painel-cards', 'col-cadastro-wrap'].forEach(id => {
+  ['col-cadastro-wrap'].forEach(id => {
     const container = document.getElementById(id);
     if (!container || container.dataset.eventosColetores === '1') return;
     container.dataset.eventosColetores = '1';
@@ -27,8 +27,8 @@ async function tratarCliqueAcaoColetor(event) {
   const coletorId = botao.dataset.coletorId;
   if (!acao || !coletorId || _acoesColetoresEmAndamento.has(coletorId)) return;
 
-  if (acao === 'editar') {
-    editarNomeColetor(coletorId);
+  if (acao === 'configurar' || acao === 'editar') {
+    abrirConfigColetor(coletorId);
     return;
   }
   if (acao === 'logout') {
@@ -116,7 +116,6 @@ function renderColetores() {
     <div class="kpi purple"><span class="kpi-icon">📋</span><div class="kpi-val">${conts.length.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Total Contagens</div></div>
     <div class="kpi orange"><span class="kpi-icon">⚠️</span><div class="kpi-val">${conts.filter(c=>c.divergente===true).length}</div><div class="kpi-lbl">Com Divergência</div></div>`;
 
-  _renderPainelVisualColetores(cols);
   _renderTabelaColetores(cols);
 
   // Compatibilidade com versões antigas que ainda possuam o painel de produtividade.
@@ -174,92 +173,6 @@ function renderColetores() {
   document.getElementById('col-painel-ultima-atualizacao').textContent = 'Atualizado: ' + new Date().toLocaleTimeString('pt-BR');
 }
 
-// ── Painel de cards visuais ──────────────────────────────────────────
-function _renderPainelVisualColetores(cols) {
-  const el = document.getElementById('col-painel-cards');
-  if (!cols.length) {
-    el.innerHTML = `<div class="empty" style="padding:20px;width:100%">
-      <div class="empty-icon">📡</div><div class="empty-title">Nenhum coletor registrado</div>
-      <div class="empty-sub">Coletores são registrados automaticamente quando um aparelho acessa o sistema</div>
-      <button class="btn btn-warn btn-sm coletor-acao-btn" style="margin-top:12px" onclick="abrirModalSimularColetor()">🧪 Simular acesso de coletor</button>
-    </div>`;
-    return;
-  }
-  el.innerHTML = cols.map(col => {
-    const isOnline  = col.status === 'online';
-    const ap        = col.aprovado || 'pendente';
-    const op        = col.sessao;
-    const invNomeDisplay = op?.inventario_nome || (op?.inventario_id ? '(inv. ' + op.inventario_id.slice(-6) + ')' : '—');
-    const pendentes = col.contagens_pendentes || 0;
-    const turnoEncerrado = col.turno_encerrado === true;
-    const tempoOnline = isOnline && op ? _calcTempoOnline(op.login_em) : null;
-    const apBg    = ap==='aprovado' ? (isOnline?'#f0fdf4':'var(--surface-2)') : (ap==='bloqueado'||ap==='reprovado') ? '#fff5f5' : '#fffbeb';
-    const apBord  = ap==='aprovado' ? (isOnline?'var(--success)':'var(--border)') : (ap==='bloqueado'||ap==='reprovado') ? '#fca5a5' : '#fcd34d';
-    const apBadge = ap==='aprovado'
-      ? `<span style="font-size:.6rem;padding:2px 7px;border-radius:20px;background:rgba(34,197,94,.12);color:var(--success);font-weight:700">✓ Aprovado</span>`
-      : ap==='bloqueado'
-      ? `<span style="font-size:.6rem;padding:2px 7px;border-radius:20px;background:rgba(255,71,87,.12);color:var(--danger);font-weight:700">🚫 Bloqueado</span>`
-      : ap==='reprovado'
-      ? `<span style="font-size:.6rem;padding:2px 7px;border-radius:20px;background:rgba(255,71,87,.12);color:var(--danger);font-weight:700">❌ Reprovado</span>`
-      : `<span style="font-size:.6rem;padding:2px 7px;border-radius:20px;background:rgba(251,191,36,.15);color:#d97706;font-weight:700">⏳ Pendente</span>`;
-    return `<div class="coletor-card" data-coletor-card="${col.id}" style="
-      background:${apBg};
-      border:2px solid ${apBord};
-      border-radius:14px;padding:14px 16px;min-width:210px;flex:1;max-width:280px;
-      box-shadow:${isOnline&&ap==='aprovado'?'0 2px 12px rgba(34,197,94,.15)':'none'};position:relative;
-    ">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <div style="width:10px;height:10px;border-radius:50%;background:${isOnline&&ap==='aprovado'?'var(--success)':'#94a3b8'};flex-shrink:0;${isOnline&&ap==='aprovado'?'box-shadow:0 0 0 3px rgba(34,197,94,.25);animation:pulse 2s infinite':''}"></div>
-        <span style="font-weight:800;font-size:1rem;font-family:var(--mono)">${col.nome_exibicao || ('Coletor ' + col.numero)}</span>
-        ${apBadge}
-        ${turnoEncerrado ? `<span style="font-size:.6rem;padding:2px 7px;border-radius:20px;background:rgba(14,165,233,.15);color:#0ea5e9;font-weight:700;margin-left:4px">🔒 Encerrado</span>` : ''}
-        <button data-acao-coletor="editar" data-coletor-id="${col.id}" title="Editar nome" style="margin-left:auto;background:none;border:none;cursor:pointer;font-size:.85rem;opacity:.5;padding:2px 4px;flex-shrink:0" title="Renomear">✏️</button>
-      </div>
-      <div style="margin-bottom:8px">
-        <div style="font-size:.72rem;font-weight:600;color:var(--text);margin-bottom:2px">
-          👤 ${col.operador_atual || (op?.operador) || '<span style="color:var(--muted);font-style:italic">Sem operador</span>'}
-        </div>
-        ${op && ap==='aprovado' ? `
-          <div style="font-size:.68rem;color:var(--muted);margin-bottom:2px">🕐 Login: ${new Date(op.login_em).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div>
-          <div style="font-size:.68rem;color:var(--muted)">📦 ${invNomeDisplay}</div>
-        ` : ''}
-        ${ap==='pendente' ? '<div style="font-size:.7rem;color:#d97706;margin-top:4px">Aguardando aprovação do analista</div>' : ''}
-        ${ap==='bloqueado' ? '<div style="font-size:.7rem;color:var(--danger);margin-top:4px">Acesso bloqueado</div>' : ''}${ap==='reprovado' ? '<div style="font-size:.7rem;color:var(--danger);margin-top:4px">Solicitação reprovada</div>' : ''}
-      </div>
-      ${ap==='aprovado' ? `
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-        <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:5px 10px;text-align:center;flex:1">
-          <div style="font-size:.58rem;color:var(--muted);font-weight:700;text-transform:uppercase">Enviadas</div>
-          <div style="font-family:var(--mono);font-weight:700;font-size:.9rem">${col.contagens_enviadas||0}</div>
-        </div>
-        <div style="background:${pendentes>0?'#fef2f2':'#fff'};border:1px solid ${pendentes>0?'#fecaca':'var(--border)'};border-radius:8px;padding:5px 10px;text-align:center;flex:1">
-          <div style="font-size:.58rem;color:${pendentes>0?'var(--danger)':'var(--muted)'};font-weight:700;text-transform:uppercase">Pendentes</div>
-          <div style="font-family:var(--mono);font-weight:700;font-size:.9rem;color:${pendentes>0?'var(--danger)':'inherit'}">${pendentes}</div>
-        </div>
-      </div>
-      ${isOnline && tempoOnline ? `<div style="font-size:.63rem;color:var(--muted);text-align:center;margin-bottom:6px">⏱ Online há ${tempoOnline}</div>` : ''}
-      ` : ''}
-      <div style="font-size:.58rem;color:#94a3b8;margin-bottom:8px;word-break:break-all">🔑 ${col.device_id.slice(0,22)}</div>
-      <div style="display:flex;gap:4px;flex-wrap:wrap">
-        ${ap==='pendente'
-          ? `<button class="btn btn-success btn-sm coletor-acao-btn" style="flex:1;font-size:.68rem" data-acao-coletor="aprovar" data-coletor-id="${col.id}">✅ Aprovar</button>
-             <button class="btn btn-danger btn-sm coletor-acao-btn" style="font-size:.68rem" data-acao-coletor="reprovar" data-coletor-id="${col.id}">❌ Reprovar</button>`
-          : (ap==='bloqueado'||ap==='reprovado')
-          ? `<button class="btn btn-success btn-sm coletor-acao-btn" style="flex:1;font-size:.68rem" data-acao-coletor="desbloquear" data-coletor-id="${col.id}">🔓 Desbloquear</button>
-             <button class="btn btn-danger btn-sm coletor-acao-btn" style="font-size:.68rem" data-acao-coletor="excluir" data-coletor-id="${col.id}">🗑</button>`
-          : `${op && isOnline
-              ? `<button class="btn btn-ghost btn-sm coletor-acao-btn" style="flex:1;font-size:.68rem" data-acao-coletor="logout" data-coletor-id="${col.id}">🚪 Logout</button>`
-              : `<span style="flex:1"></span>`}
-             <button class="btn btn-warn btn-sm coletor-acao-btn" style="font-size:.68rem" data-acao-coletor="bloquear" data-coletor-id="${col.id}">🚫 Bloquear</button>
-             <button class="btn btn-danger btn-sm coletor-acao-btn" style="font-size:.68rem" data-acao-coletor="excluir" data-coletor-id="${col.id}">🗑</button>`}
-      </div>
-    </div>`;
-  }).join('') + `
-    <div style="border:2px dashed var(--border);border-radius:14px;padding:14px 16px;min-width:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;opacity:.6" onclick="abrirModalSimularColetor()">
-      <div style="font-size:1.4rem">📱</div><div style="font-size:.75rem;font-weight:600;text-align:center">Simular novo coletor</div>
-    </div>`;
-}
-
 function abrirLoginRapidoColetor(colId) {
   abrirModalLoginOperador();
   setTimeout(() => { const s = document.getElementById('lop-coletor-sel'); if(s){s.value=colId; verificarColetorDisponivel();} }, 100);
@@ -275,30 +188,22 @@ function _renderTabelaColetores(cols) {
     return;
   }
   el.innerHTML = `<div class="tbl-wrap"><table>
-    <thead><tr><th>Coletor</th><th>Device ID</th><th>Status</th><th>Operador Logado</th><th>Login</th><th>Inventário</th><th>Últ. Atividade</th><th>Enviadas</th><th>Pendentes</th><th>Ações</th></tr></thead>
+    <thead><tr><th>Coletor</th><th>Operador Logado</th><th>Inventário</th><th>Contagens</th><th>Últ. Atividade</th><th>Status</th><th>Ações</th></tr></thead>
     <tbody>${cols.sort((a,b)=>a.numero.localeCompare(b.numero)).map(col => {
-      const isOnline = col.status === 'online';
       const op = col.sessao;
-      const invNomeDisplay = op?.inventario_nome || (op?.inventario_id ? '(inv. ' + op.inventario_id.slice(-6) + ')' : '—');
       const pendentes = col.contagens_pendentes || 0;
+      const statusInfo = _statusColetor(col);
       return `<tr>
-        <td><div style="font-weight:800;font-family:var(--mono);font-size:.9rem">${col.nome_exibicao || ('Coletor ' + col.numero)}</div>${col.apelido?`<div style="font-size:.68rem;color:var(--muted)">${col.apelido}</div>`:''}<button data-acao-coletor="editar" data-coletor-id="${col.id}" style="background:none;border:none;cursor:pointer;font-size:.72rem;color:var(--muted);padding:2px 0;margin-top:2px">✏️ renomear</button></td>
-        <td><span class="mono" style="font-size:.62rem;color:var(--muted)">${col.device_id.slice(0,18)}…</span></td>
-        <td><span class="badge ${(col.aprovado||'pendente')==='aprovado'?(isOnline?'b-green':'b-gray'):(col.aprovado==='bloqueado'?'b-red':'b-yellow')}">${(col.aprovado||'pendente')==='aprovado'?(isOnline?'🟢 Online':'✓ Aprovado'):(col.aprovado==='bloqueado'?'🚫 Bloqueado':'⏳ Pendente')}</span></td>
+        <td>
+          <div style="font-weight:800;font-family:var(--mono);font-size:.9rem">${col.nome_exibicao || ('Coletor ' + col.numero)}</div>
+          <div class="mono" style="font-size:.62rem;color:var(--muted)">${col.device_id.slice(0,14)}…</div>
+        </td>
         <td>${col.operador_atual ? `<div style="font-weight:600;font-size:.82rem">${col.operador_atual}</div>${op?`<div style="font-size:.67rem;color:var(--muted)">Sessão ativa</div>`:''}` : '<span style="color:var(--muted);font-size:.78rem;font-style:italic">Nenhum</span>'}</td>
-        <td style="font-size:.73rem;color:var(--muted)">${op?new Date(op.login_em).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'—'}</td>
         <td style="font-size:.78rem">${op?.inventario_nome || '<span style="color:var(--muted)">—</span>'}</td>
-        <td style="font-size:.73rem;color:var(--muted)">${col.ultimo_ping?new Date(col.ultimo_ping).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'—'}</td>
-        <td class="mono" style="text-align:center;font-weight:700">${col.contagens_enviadas||0}</td>
-        <td class="mono" style="text-align:center">${pendentes>0?`<span class="badge b-red">${pendentes}</span>`:'0'}</td>
-        <td><div style="display:flex;gap:4px">
-          ${(col.aprovado||'pendente')==='pendente'
-            ? `<button class="btn btn-success btn-sm coletor-acao-btn" style="font-size:.65rem" data-acao-coletor="aprovar" data-coletor-id="${col.id}">✅ Aprovar</button><button class="btn btn-danger btn-sm coletor-acao-btn" style="font-size:.65rem" data-acao-coletor="reprovar" data-coletor-id="${col.id}">❌ Reprovar</button>`
-            : (col.aprovado==='bloqueado'||col.aprovado==='reprovado')
-            ? `<button class="btn btn-success btn-sm coletor-acao-btn" style="font-size:.65rem" data-acao-coletor="desbloquear" data-coletor-id="${col.id}">🔓 Desbloquear</button>`
-            : `${op&&isOnline?`<button class="btn btn-ghost btn-sm coletor-acao-btn" style="font-size:.65rem" data-acao-coletor="logout" data-coletor-id="${col.id}">🚪 Logout</button>`:''}<button class="btn btn-warn btn-sm coletor-acao-btn" style="font-size:.65rem" data-acao-coletor="bloquear" data-coletor-id="${col.id}">🚫</button>`}
-          <button class="btn btn-danger btn-sm coletor-acao-btn" style="font-size:.68rem" data-acao-coletor="excluir" data-coletor-id="${col.id}">🗑</button>
-        </div></td>
+        <td class="mono" style="text-align:center;font-size:.78rem">${col.contagens_enviadas||0} enviadas${pendentes>0?`<br><span class="badge b-red" style="margin-top:2px;display:inline-block">${pendentes} pendente(s)</span>`:''}</td>
+        <td style="font-size:.73rem;color:var(--muted)">${col.ultimo_ping?new Date(col.ultimo_ping).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—'}</td>
+        <td><span class="badge ${statusInfo.classe}">${statusInfo.rotulo}</span></td>
+        <td><button class="btn btn-ghost btn-sm coletor-acao-btn" style="font-size:.72rem" data-acao-coletor="configurar" data-coletor-id="${col.id}">⚙️ Configurar</button></td>
       </tr>`;
     }).join('')}</tbody>
   </table></div>
@@ -311,6 +216,18 @@ function _renderTabelaColetores(cols) {
     </div>` : ''}`;
 }
 
+// ── Status único do coletor (consolida aprovação + turno + online/offline) ──
+function _statusColetor(col) {
+  const ap = col.aprovado || 'pendente';
+  const isOnline = col.status === 'online';
+  if (ap === 'bloqueado')  return { rotulo: '🔒 Bloqueado',            classe: 'b-red'    };
+  if (ap === 'reprovado')  return { rotulo: '🔒 Reprovado',            classe: 'b-red'    };
+  if (ap === 'pendente')   return { rotulo: '⏳ Aguardando aprovação', classe: 'b-yellow' };
+  if (col.turno_encerrado) return { rotulo: '🔒 Turno encerrado',      classe: 'b-blue'   };
+  if (isOnline)             return { rotulo: '🟢 Online',              classe: 'b-green'  };
+  return { rotulo: '⚫ Offline', classe: 'b-gray' };
+}
+
 function _calcTempoOnline(horaLogin) {
   if (!horaLogin) return null;
   const diff = Date.now() - new Date(horaLogin).getTime();
@@ -321,43 +238,80 @@ function _calcTempoOnline(horaLogin) {
   return `${h}h${m>0?` ${m}min`:''}`;
 }
 
-// ── Editar nome do coletor ────────────────────────────────────────────
-function editarNomeColetor(colId) {
+// ── Configurar coletor (renomear + ações contextuais num só lugar) ──────
+// Substitui os antigos botões soltos (Aprovar/Reprovar/Bloquear/Excluir…)
+// por um único botão "⚙️ Configurar" na tabela, que abre este modal.
+function abrirConfigColetor(colId) {
   const col = state().coletores.find(c => c.id === colId);
   if (!col) return;
 
   const nomeAtual = col.nome_exibicao || ('Coletor ' + col.numero);
+  const ap = col.aprovado || 'pendente';
+  const isOnline = col.status === 'online';
+  const statusInfo = _statusColetor(col);
 
-  // Modal inline
   const modal = document.createElement('div');
   modal.style.cssText = `
     position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;
     display:flex;align-items:center;justify-content:center;padding:20px;
   `;
+
+  // Monta os botões de ação de acordo com o estado atual do coletor.
+  let acoesHtml = '';
+  if (ap === 'pendente') {
+    acoesHtml += `<button class="btn btn-success btn-sm" style="flex:1" data-cfg-acao="aprovar">✅ Aprovar acesso</button>
+                  <button class="btn btn-danger btn-sm" style="flex:1" data-cfg-acao="reprovar">❌ Reprovar</button>`;
+  } else if (ap === 'bloqueado' || ap === 'reprovado') {
+    acoesHtml += `<button class="btn btn-success btn-sm" style="flex:1" data-cfg-acao="desbloquear">🔓 Desbloquear</button>`;
+  } else {
+    if (col.turno_encerrado) {
+      acoesHtml += `<button class="btn btn-success btn-sm" style="flex:1" data-cfg-acao="reabrir">🔓 Reabrir para nova contagem</button>`;
+    }
+    if (isOnline && col.sessao) {
+      acoesHtml += `<button class="btn btn-ghost btn-sm" style="flex:1" data-cfg-acao="logout">🚪 Forçar logout</button>`;
+    }
+    acoesHtml += `<button class="btn btn-warn btn-sm" style="flex:1" data-cfg-acao="bloquear">🚫 Bloquear</button>`;
+  }
+
   modal.innerHTML = `
     <div style="
       background:#fff;border-radius:14px;padding:24px 22px;
-      max-width:360px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.2);
+      max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.2);
     ">
-      <div style="font-weight:800;font-size:1rem;margin-bottom:4px">✏️ Renomear Coletor</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <div style="font-weight:800;font-size:1rem">⚙️ Configurar Coletor</div>
+        <span class="badge ${statusInfo.classe}" style="margin-left:auto">${statusInfo.rotulo}</span>
+      </div>
       <div style="font-size:.75rem;color:var(--muted);margin-bottom:16px">Número: ${col.numero} · ID: ${col.device_id.slice(0,18)}…</div>
-      <label style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);display:block;margin-bottom:6px">Novo nome</label>
+
+      <label style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);display:block;margin-bottom:6px">Nome do coletor</label>
       <input id="modal-nome-coletor-input" type="text" value="${nomeAtual}"
         style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;
-               font-size:.95rem;font-family:var(--sans);outline:none;margin-bottom:16px"
+               font-size:.95rem;font-family:var(--sans);outline:none;margin-bottom:14px"
         placeholder="Ex: Coletor Câmara Fria"
         onfocus="this.style.borderColor='var(--orange)'"
         onblur="this.style.borderColor='var(--border)'"
       />
+      <button id="btn-modal-salvar-nome" style="
+        width:100%;padding:10px;border-radius:8px;border:none;margin-bottom:16px;
+        background:var(--orange);color:#fff;font-size:.85rem;font-weight:700;cursor:pointer;font-family:var(--sans)
+      ">💾 Salvar nome</button>
+
+      ${acoesHtml ? `
+      <div style="border-top:1px solid var(--border);padding-top:14px;margin-bottom:14px">
+        <label style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);display:block;margin-bottom:8px">Acesso do dispositivo</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${acoesHtml}</div>
+      </div>` : ''}
+
       <div style="display:flex;gap:8px">
         <button id="btn-modal-cancelar-nome" style="
           flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);
           background:transparent;color:var(--muted);font-size:.85rem;cursor:pointer;font-family:var(--sans)
-        ">Cancelar</button>
-        <button id="btn-modal-salvar-nome" style="
-          flex:1;padding:10px;border-radius:8px;border:none;
-          background:var(--orange);color:#fff;font-size:.85rem;font-weight:700;cursor:pointer;font-family:var(--sans)
-        ">💾 Salvar</button>
+        ">Fechar</button>
+        <button data-cfg-acao="excluir" style="
+          flex:1;padding:10px;border-radius:8px;border:1px solid var(--danger);
+          background:transparent;color:var(--danger);font-size:.85rem;font-weight:700;cursor:pointer;font-family:var(--sans)
+        ">🗑 Remover coletor</button>
       </div>
     </div>`;
 
@@ -385,31 +339,55 @@ function editarNomeColetor(colId) {
     btn.textContent = 'Salvando…';
 
     try {
-      // Salvar no Firestore
       await FS_AN.collection('dt_coletores').doc(colId).update({
         nome_exibicao: novoNome,
         nome_coletor:  novoNome,   // compatibilidade com o coletor.html
       });
-
-      // Atualizar DB local
       col.nome_exibicao = novoNome;
       col.nome_coletor  = novoNome;
       salvarDB_coletores();
-
-      fechar();
       renderColetores();
       showToast(`✏️ Coletor renomeado para "${novoNome}"`, 's');
       logAuditoria('SISTEMA', `Coletor ${col.numero} renomeado para "${novoNome}"`, { id: colId });
+      btn.disabled = false;
+      btn.textContent = '💾 Salvar nome';
     } catch(e) {
       // Se offline, salva só local e marca para sync
       col.nome_exibicao = novoNome;
       col.nome_coletor  = novoNome;
       salvarDB_coletores();
-      fechar();
       renderColetores();
       showToast(`✏️ Nome salvo localmente (sincronizará quando online)`, 'w');
+      btn.disabled = false;
+      btn.textContent = '💾 Salvar nome';
     }
   };
+
+  // Ações de acesso (aprovar/reprovar/bloquear/desbloquear/logout/excluir)
+  modal.querySelectorAll('[data-cfg-acao]').forEach(btnAcao => {
+    btnAcao.addEventListener('click', async () => {
+      const acao = btnAcao.dataset.cfgAcao;
+      btnAcao.disabled = true;
+      const textoOriginal = btnAcao.textContent;
+      btnAcao.textContent = '⏳ Processando…';
+      try {
+        let resultado = true;
+        if (acao === 'aprovar')          resultado = await aprovarColetor(colId);
+        else if (acao === 'reprovar')    resultado = await reprovarColetor(colId);
+        else if (acao === 'bloquear')    resultado = await bloquearColetor(colId);
+        else if (acao === 'desbloquear') resultado = await desbloquearColetor(colId);
+        else if (acao === 'reabrir')     resultado = await reabrirTurnoColetor(colId);
+        else if (acao === 'logout')      { logoutOperadorColetor(colId); resultado = true; }
+        else if (acao === 'excluir')     resultado = await excluirColetor(colId);
+        // Ações com confirm() nativo retornam false quando o usuário cancela.
+        if (resultado === false) { btnAcao.disabled = false; btnAcao.textContent = textoOriginal; return; }
+        fechar();
+      } catch (e) {
+        btnAcao.disabled = false;
+        btnAcao.textContent = textoOriginal;
+      }
+    });
+  });
 }
 
 // A Auditoria Operacional pertence exclusivamente ao módulo
