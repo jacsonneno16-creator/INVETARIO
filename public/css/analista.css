@@ -1025,82 +1025,10 @@ input,select,textarea{
   .table-wrap{border-radius:8px}
 }
 
-
-/* Correção v236: páginas administrativas no topo e ações confiáveis */
-.content{
-  justify-content:flex-start !important;
-  align-items:stretch !important;
-  align-content:flex-start !important;
-}
-#page-operadores.on,
-#page-lojas.on{
-  justify-content:flex-start !important;
-  align-items:stretch !important;
-  align-self:stretch !important;
-  margin-top:0 !important;
-  padding-top:0 !important;
-  min-height:0 !important;
-  height:auto !important;
-}
-#page-operadores > .sec-hdr:first-child,
-#page-lojas > .sec-hdr:first-child{
-  margin-top:0 !important;
-  padding-top:0 !important;
-}
-#page-operadores #opl-page-operadores,
-#page-lojas .lojas-gestao-tabela{
-  margin-top:0 !important;
-}
-.acao-lapis{
-  pointer-events:auto !important;
-  position:relative;
-  z-index:2;
-}
-
-/* Correção v238 — páginas administrativas no topo real */
-.content:has(#page-operadores.on),
-.content:has(#page-lojas.on){
-  position:relative !important;
-  display:block !important;
-  padding-top:14px !important;
-  overflow:auto !important;
-}
-.content:has(#page-operadores.on) > #page-operadores.on,
-.content:has(#page-lojas.on) > #page-lojas.on{
-  position:absolute !important;
-  top:14px !important;
-  left:18px !important;
-  right:18px !important;
-  width:auto !important;
-  margin:0 !important;
-  padding:0 0 24px !important;
-  min-height:0 !important;
-  height:auto !important;
-  transform:none !important;
-  translate:none !important;
-  justify-content:flex-start !important;
-  align-items:stretch !important;
-  align-content:flex-start !important;
-}
-#page-operadores.on > .sec-hdr:first-child,
-#page-lojas.on > .sec-hdr:first-child{
-  margin:0 0 12px !important;
-  padding:0 !important;
-}
-#page-operadores.on .tc:first-of-type,
-#page-lojas.on .tc:first-of-type{
-  margin-top:0 !important;
-}
-#page-lojas [data-loja-editar]{
-  pointer-events:auto !important;
-  position:relative !important;
-  z-index:20 !important;
-}
-@media(max-width:1200px){
-  .content:has(#page-operadores.on) > #page-operadores.on,
-  .content:has(#page-lojas.on) > #page-lojas.on{
-    left:12px !important;
-    right:12px !important;
-    top:10px !important;
-  }
-}
+/* Correção definitiva v240: páginas sempre no topo, sem posicionamento absoluto */
+.content{display:block !important;padding:20px 30px 28px !important;overflow:auto !important;}
+.page.on{display:flex !important;position:relative !important;top:0 !important;left:0 !important;right:auto !important;margin:0 !important;padding-top:0 !important;transform:none !important;min-height:0 !important;height:auto !important;justify-content:flex-start !important;align-items:stretch !important;align-content:flex-start !important;}
+#page-operadores.on,#page-lojas.on{position:relative !important;top:0 !important;margin:0 !important;padding:0 0 24px !important;}
+#page-operadores.on>.sec-hdr:first-child,#page-lojas.on>.sec-hdr:first-child{margin:0 0 12px !important;padding:0 0 10px !important;}
+#page-lojas [data-loja-editar]{pointer-events:auto !important;position:relative !important;z-index:3 !important;}
+@media(max-width:768px){.content{padding:12px !important;}}

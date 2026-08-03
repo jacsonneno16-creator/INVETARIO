@@ -32,6 +32,31 @@ function goPage(id, el) {
   if (!pageEl) { console.warn('Página não encontrada:', id); return; }
   pageEl.classList.add('on');
   if (el) el.classList.add('on');
+
+  // Garante que toda página comece no topo real da área de conteúdo.
+  // Remove estilos residuais aplicados por versões anteriores e por páginas visitadas antes.
+  const contentEl = document.querySelector('.content');
+  if (contentEl) {
+    contentEl.classList.remove('admin-page-top');
+    contentEl.style.display = 'block';
+    contentEl.style.paddingTop = '20px';
+    contentEl.style.justifyContent = 'flex-start';
+    contentEl.style.alignItems = 'stretch';
+    contentEl.scrollTop = 0;
+  }
+  pageEl.style.setProperty('position', 'relative', 'important');
+  pageEl.style.setProperty('top', '0', 'important');
+  pageEl.style.setProperty('left', '0', 'important');
+  pageEl.style.setProperty('right', 'auto', 'important');
+  pageEl.style.setProperty('margin', '0', 'important');
+  pageEl.style.setProperty('padding-top', '0', 'important');
+  pageEl.style.setProperty('transform', 'none', 'important');
+  pageEl.style.setProperty('min-height', '0', 'important');
+  pageEl.style.setProperty('height', 'auto', 'important');
+  pageEl.style.setProperty('justify-content', 'flex-start', 'important');
+  pageEl.style.setProperty('align-items', 'stretch', 'important');
+  window.scrollTo(0, 0);
+
   document.getElementById('page-title').textContent = PAGE_NAMES[id] || id;
   _currentPage = id;
   renderPage(id);
