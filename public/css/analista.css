@@ -871,3 +871,156 @@
 
 /* Dropdown de famílias de produto */
 .prod-familia-dropdown{position:relative;display:inline-block}.prod-familia-menu{position:absolute;z-index:10000;top:calc(100% + 6px);left:0;width:min(340px,85vw);max-height:380px;overflow:auto;background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;padding:8px;box-shadow:0 14px 40px rgba(0,0,0,.22)}.prod-familia-menu .search{width:100%;margin-bottom:7px}.prod-familia-item{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;background:transparent;color:inherit;padding:10px 11px;border-radius:8px;cursor:pointer;text-align:left}.prod-familia-item:hover,.prod-familia-item.ativo{background:var(--primary-soft,rgba(255,120,0,.14))}
+
+/* Listas compactas de Usuários e Lojas */
+.acao-lapis{width:36px;height:36px;border:1px solid var(--border);border-radius:11px;background:var(--surface);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:.9rem;transition:.16s ease;color:var(--text)}
+.acao-lapis:hover{border-color:var(--orange);background:rgba(255,122,24,.08);transform:translateY(-1px)}
+.acao-lapis:focus-visible{outline:3px solid rgba(255,122,24,.22);outline-offset:2px}
+.op-lista-linhas table,.lojas-lista-linhas table{min-width:760px}
+.op-lista-linhas th,.lojas-lista-linhas th{white-space:nowrap}
+.op-lista-linhas td,.lojas-lista-linhas td{vertical-align:middle;padding-top:11px;padding-bottom:11px}
+#page-operadores .sec-hdr{margin-bottom:10px}
+#page-operadores>[style*="position:sticky"]{top:0;margin-top:0}
+
+/* ═══════════════════════════════════════════════════════
+   PADRONIZAÇÃO VISUAL GLOBAL v235
+   Tipografia simples, menos cards e foco em tabelas/fluxos
+═══════════════════════════════════════════════════════ */
+:root{
+  --sans: Arial, Helvetica, sans-serif;
+  --mono: Arial, Helvetica, sans-serif;
+  --r: 10px;
+  --r-lg: 14px;
+  --r-sm: 8px;
+  --sh-xs: 0 1px 2px rgba(15,23,42,.05);
+  --sh: 0 2px 8px rgba(15,23,42,.07);
+  --sh-lg: 0 6px 18px rgba(15,23,42,.10);
+}
+html,body,button,input,select,textarea,table,th,td,label,a,span,div{
+  font-family: Arial, Helvetica, sans-serif;
+}
+body{
+  background:#f3f5f7;
+  font-size:14px;
+  line-height:1.45;
+  letter-spacing:0;
+}
+.main,.main-content{background:#f3f5f7}
+.page{padding-top:12px}
+.page-title{font-size:1.15rem;font-weight:700;letter-spacing:0}
+.page-subtitle,.page-sub,.sec-sub{font-size:.78rem}
+
+/* Remove os painéis numéricos repetidos das telas operacionais.
+   Os elementos permanecem no DOM para preservar toda a lógica JavaScript. */
+#page-dashboard > #kpi-grid,
+#page-acompanhamento .kpi-grid,
+#page-acompanhamento #acomp-live-hero,
+#page-contagens .kpi-grid,
+#page-pendencias .kpi-grid,
+#page-recontagens .kpi-grid,
+#page-rel-divergencias .kpi-grid,
+#page-produtividade .kpi-grid,
+#page-recontagens-historico .kpi-grid,
+#page-capas-duplicadas .kpi-grid,
+#page-enderecos .kpi-grid,
+#page-produtos .kpi-grid,
+#page-coletores .kpi-grid,
+#page-rastreabilidade .kpi-grid{
+  display:none !important;
+}
+
+/* Estrutura padrão das páginas: cabeçalho compacto + conteúdo em linhas */
+.page > .sec-hdr:first-child,
+.page > [class*="header"]:first-child{
+  margin-top:0 !important;
+}
+.sec-hdr{
+  padding:0 0 10px;
+  margin-bottom:10px;
+  border-bottom:1px solid var(--border);
+}
+.sec-title{font-size:.98rem;font-weight:700;letter-spacing:0}
+
+/* Cards funcionais viram blocos discretos, sem aspecto de painel de indicadores */
+.table-card,.filter-card,.sb-card,.panel,.section-card,
+.page > div[style*="border-radius"][style*="background"]{
+  border-radius:10px !important;
+  box-shadow:none !important;
+}
+.table-card,.filter-card,.panel,.section-card{
+  border:1px solid var(--border) !important;
+  background:var(--surface) !important;
+}
+
+/* Tabelas passam a ser o elemento principal */
+.table-wrap{
+  border-radius:10px;
+  border:1px solid var(--border);
+  background:#fff;
+  box-shadow:none;
+}
+table{font-size:.79rem}
+thead th{
+  background:#f5f7f9 !important;
+  color:#475569 !important;
+  font-size:.68rem !important;
+  font-weight:700 !important;
+  letter-spacing:.02em !important;
+  text-transform:uppercase;
+  border-bottom:1px solid #d8dee7 !important;
+}
+tbody td{padding-top:10px !important;padding-bottom:10px !important}
+tbody tr:hover td{background:#fafbfc !important}
+
+/* Filtros compactos na mesma linha, sem grandes caixas */
+.filters,.filter-row,.toolbar,.actions-row{
+  gap:8px !important;
+}
+input,select,textarea{
+  border-radius:7px !important;
+}
+.btn,.btn-sm,button{
+  border-radius:7px;
+}
+
+/* Dashboard: mantém somente os gráficos e resumos realmente úteis */
+#page-dashboard .dash-modern-card{
+  border-radius:12px;
+  box-shadow:none;
+  background:#fff;
+}
+#page-dashboard .dash-insight{
+  border-radius:8px;
+  background:#f7f8fa;
+}
+
+/* Acompanhamento já possui barras e tabelas; evita duplicação visual */
+#page-acompanhamento .progress,
+#page-acompanhamento [class*="progress"]{
+  border-radius:999px;
+}
+
+/* Modal pode manter resumo compacto, mas sem cartões coloridos */
+.modal .kpi{
+  min-height:auto !important;
+  padding:10px 12px !important;
+  border:1px solid var(--border) !important;
+  border-radius:8px !important;
+  box-shadow:none !important;
+  background:#f8fafc !important;
+}
+.modal .kpi::before,.modal .kpi::after{display:none !important}
+.modal .kpi-icon{display:none !important}
+.modal .kpi-val{font-size:1.1rem !important}
+
+/* Menos decoração e mais leitura */
+.badge{letter-spacing:0;text-transform:none}
+.mono,.kpi-val,.dash-rank-value,.dash-stat-row b,.log-time{
+  font-family:Arial,Helvetica,sans-serif !important;
+}
+
+@media(max-width:768px){
+  body{font-size:13px}
+  .page{padding-top:8px}
+  .table-wrap{border-radius:8px}
+}

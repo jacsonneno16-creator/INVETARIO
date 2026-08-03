@@ -103,18 +103,7 @@ function renderColetores() {
   let cols = state().coletores;
   if (fInv) cols = cols.filter(c => !c.sessao || c.sessao.inventario_id === fInv);
 
-  const online = cols.filter(c => c.status === 'online').length;
-  const totalPendentes = cols.reduce((s,c) => s + (c.contagens_pendentes||0), 0);
-
-  const pendAprovacao = state().coletores.filter(c => (c.aprovado||'pendente') === 'pendente').length;
-  const bloqueados2   = state().coletores.filter(c => c.aprovado === 'bloqueado').length;
-  document.getElementById('col-kpis').innerHTML = `
-    <div class="kpi blue"><span class="kpi-icon">📱</span><div class="kpi-val">${state().coletores.length}</div><div class="kpi-lbl">Dispositivos Registrados</div></div>
-    <div class="kpi green"><span class="kpi-icon">🟢</span><div class="kpi-val">${online}</div><div class="kpi-lbl">Online Agora</div></div>
-    <div class="kpi yellow"><span class="kpi-icon">⏳</span><div class="kpi-val" style="color:${pendAprovacao>0?'#d97706':'inherit'}">${pendAprovacao}</div><div class="kpi-lbl">Aguard. Aprovação</div></div>
-    <div class="kpi red"><span class="kpi-icon">🚫</span><div class="kpi-val">${bloqueados2}</div><div class="kpi-lbl">Bloqueados</div></div>
-    <div class="kpi purple"><span class="kpi-icon">📋</span><div class="kpi-val">${conts.length.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Total Contagens</div></div>
-    <div class="kpi orange"><span class="kpi-icon">⚠️</span><div class="kpi-val">${conts.filter(c=>c.divergente===true).length}</div><div class="kpi-lbl">Com Divergência</div></div>`;
+  // Resumo em cards removido por solicitação. A tela passa a abrir direto na lista de dispositivos.
 
   _renderTabelaColetores(cols);
 

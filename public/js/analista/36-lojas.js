@@ -9,19 +9,16 @@
     destinos.forEach(box=>box.innerHTML='<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando lojas...</div></div>');
     try{
       const lojas=await global.DTLoja.garantirLojaInicial(), ativa=global.getDTLojaAtiva();
-      const cards=lojas.map(l=>`<div class="tc" style="margin:0;border-top:3px solid ${l.id===ativa?'var(--green,#1E6F4E)':'var(--amber,#F59E0B)'};padding:16px;min-width:0">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
-          <div style="min-width:0"><div style="font-weight:800;font-size:1rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">🏪 ${esc(l.nome||l.id)}</div><div class="mono" style="font-size:.68rem;color:var(--muted);margin-top:3px">${esc(l.codigo||l.id)}</div></div>
-          <span class="badge ${l.ativa===false?'badge-red':'badge-green'}">${l.ativa===false?'Inativa':'Ativa'}</span>
-        </div>
-        <div style="font-size:.74rem;color:var(--muted);margin-top:10px">${l.id===ativa?'✅ Ambiente atualmente em uso':'Disponível para seleção'}</div>
-        <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:14px">
-          <button type="button" class="btn btn-primary btn-sm" onclick='editarLoja(${JSON.stringify(JSON.stringify(l))})'>✏️ Configurar</button>
-          <button type="button" class="btn btn-ghost btn-sm" onclick="usarLoja('${esc(l.id)}')" ${l.id===ativa?'disabled':''}>${l.id===ativa?'Em uso':'Usar esta loja'}</button>
-        </div>
-      </div>`).join('');
-      if(grid) grid.innerHTML=cards||'<div class="empty" style="grid-column:1/-1"><div class="empty-title">Nenhuma loja cadastrada</div></div>';
-      if(lista) lista.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px">${cards}</div>`;
+      const linhas=lojas.map(l=>`<tr>
+        <td><div style="display:flex;align-items:center;gap:10px"><div class="u-avatar" style="width:32px;height:32px;font-size:.78rem;flex:0 0 auto">🏪</div><div><div style="font-weight:750">${esc(l.nome||l.id)}</div><div class="mono" style="font-size:.66rem;color:var(--muted)">${esc(l.codigo||l.id)}</div></div></div></td>
+        <td>${esc(l.responsavel||'—')}</td>
+        <td>${l.ativa===false?'<span class="badge badge-red">Inativa</span>':'<span class="badge badge-green">Ativa</span>'}</td>
+        <td>${l.id===ativa?'<span class="badge badge-blue">Em uso</span>':'<span style="color:var(--muted);font-size:.74rem">Disponível</span>'}</td>
+        <td style="text-align:center"><button class="acao-lapis" type="button" title="Configurar loja" aria-label="Configurar loja" onclick='editarLoja(${JSON.stringify(JSON.stringify(l))})'>✏️</button></td>
+      </tr>`).join('');
+      const tabela=linhas?`<div class="tbl-wrap lojas-lista-linhas"><table><thead><tr><th>Loja</th><th>Responsável</th><th>Status</th><th>Ambiente</th><th style="width:74px;text-align:center">Ações</th></tr></thead><tbody>${linhas}</tbody></table></div>`:'<div class="empty"><div class="empty-title">Nenhuma loja cadastrada</div></div>';
+      if(grid) grid.innerHTML=tabela;
+      if(lista) lista.innerHTML=tabela;
     }catch(e){
       destinos.forEach(box=>box.innerHTML=`<div class="empty"><div class="empty-title">Erro ao carregar lojas</div><div class="empty-sub">${esc(e.message||e)}</div></div>`);
       global.showToast?.('Erro ao carregar lojas: '+(e.message||e),'error');
@@ -47,6 +44,7 @@
       document.getElementById('loja-edit-nome').value=l.nome||'';
       document.getElementById('loja-edit-responsavel').value=l.responsavel||'';
       document.getElementById('loja-edit-obs').value=l.observacao||l.obs||'';
+      const usarBtn=document.getElementById('loja-edit-usar');if(usarBtn){const emUso=l.id===global.getDTLojaAtiva();usarBtn.disabled=emUso;usarBtn.textContent=emUso?'Loja em uso':'Usar esta loja';}
       modal.style.display='flex';
       return;
     }
