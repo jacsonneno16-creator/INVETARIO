@@ -190,7 +190,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <span class="nav-icon">👤</span>Coletores
   </div>
 <div class="nav-item" id="nav-operadores" onclick="goPage('operadores',this)">
-<span class="nav-icon">🔑</span>Usuários / Lojas
+<span class="nav-icon">🔑</span>Usuários
   </div>
 <div class="nav-item" id="nav-lojas" onclick="goPage('lojas',this);renderGestaoLojas()">
 <span class="nav-icon">🏪</span>Gestão de Lojas
@@ -1281,61 +1281,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div><!-- /opl-page-operadores -->
 <!-- ════ SUB-PÁGINA: LOJAS ════ -->
-<div id="opl-page-lojas" style="display:none">
-<!-- Header Lojas -->
-<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
-<div>
-<div style="font-weight:800;font-size:1.05rem;color:var(--text)">🏪 Lojas Cadastradas</div>
-<div style="font-size:.78rem;color:var(--muted);margin-top:2px">Gerencie as lojas e seus endereços base</div>
-</div>
-<button class="btn btn-success btn-sm" onclick="lojaAbrirModalCriar()" style="gap:6px">
-<span style="font-size:1rem">＋</span> Nova Loja
-          </button>
-</div>
-<!-- Cards de lojas -->
-<div id="lojas-grid" style="margin-bottom:24px">
-<div class="empty" style="grid-column:1/-1">
-<div class="empty-icon">🏪</div>
-<div class="empty-title">Nenhuma loja cadastrada</div>
-<div class="empty-sub">Clique em <strong>+ Nova Loja</strong> para cadastrar a primeira loja</div>
-</div>
-</div>
-<!-- Banner: endereços sem loja -->
-<div id="loja-sem-loja-banner" style="display:none;margin-bottom:16px;padding:14px 18px;background:rgba(245,158,11,.09);border:1.5px solid rgba(245,158,11,.35);border-radius:12px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
-<div style="display:flex;align-items:center;gap:10px">
-<span style="font-size:1.3rem">📭</span>
-<div>
-<div id="loja-sem-loja-msg" style="font-weight:700;font-size:.88rem;color:#92400e">Existem endereços sem loja vinculada</div>
-<div style="font-size:.74rem;color:#b45309;margin-top:2px">Vá em <strong>Endereços → Vincular Loja em Massa</strong> para organizar, ou use o botão 🏪 em cada linha</div>
-</div>
-</div>
-<button class="btn btn-sm" onclick="goPage('enderecos',document.getElementById('nav-enderecos'));setTimeout(()=&gt;{const s=document.getElementById('end-floja');if(s){s.value='__sem_loja__';renderEnderecos();}},120)" style="background:linear-gradient(135deg,#F59E0B,#d97706);color:#fff;border:none;font-weight:700;white-space:nowrap">
-            📍 Ver sem loja
-          </button>
-</div>
-<!-- Endereços da Loja selecionada -->
-<div id="loja-enderecos-section" style="display:none">
-<div class="tc">
-<div class="tc-header" style="border-left-color:var(--amber,#F59E0B);background:linear-gradient(90deg,rgba(245,158,11,.07) 0%,transparent 60%)">
-<div>
-<div class="tc-title">📍 Endereços da Loja: <span id="loja-enderecos-nome" style="color:var(--amber,#F59E0B)">—</span></div>
-<div style="font-size:.73rem;color:var(--muted);margin-top:2px">Base de endereços vinculada a esta loja</div>
-</div>
-<div style="display:flex;gap:8px;flex-wrap:wrap">
-</div>
-</div>
-<div class="tc-toolbar">
-<input class="search" id="loja-end-busca" oninput="lojaFiltrarEnderecos()" placeholder="🔍 Buscar endereço, rua, setor..."/>
-<select class="filter-sel" id="loja-end-filtro-setor" onchange="lojaFiltrarEnderecos()">
-<option value="">Todos os setores</option>
-</select>
-</div>
-<div id="loja-enderecos-wrap" style="padding:16px">
-<div class="empty"><div class="empty-icon">📍</div><div class="empty-title">Nenhum endereço ainda</div></div>
-</div>
-</div>
-</div>
-</div><!-- /opl-page-lojas -->
+
 <!-- ════ MODAL: NOVA LOJA ════ -->
 <div id="loja-modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:960;align-items:center;justify-content:center">
 <div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:0;width:100%;max-width:500px;margin:20px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.25)">
@@ -2450,7 +2396,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260802-usuarios-lojas-v2"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260802-usuarios-lojas-v2"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260731-234-auditoria"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260731-234-auditoria"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260802-usuarios-lojas-v2"></script><script src="js/analista/app-controller.js?v=20260731-234-auditoria"></script>
+<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260803-topo-acoes-v1"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260803-topo-acoes-v1"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260731-234-auditoria"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260731-234-auditoria"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260802-usuarios-lojas-v2"></script><script src="js/analista/app-controller.js?v=20260731-234-auditoria"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}

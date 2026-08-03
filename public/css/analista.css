@@ -1024,3 +1024,35 @@ input,select,textarea{
   .page{padding-top:8px}
   .table-wrap{border-radius:8px}
 }
+
+
+/* Correção v236: páginas administrativas no topo e ações confiáveis */
+.content{
+  justify-content:flex-start !important;
+  align-items:stretch !important;
+  align-content:flex-start !important;
+}
+#page-operadores.on,
+#page-lojas.on{
+  justify-content:flex-start !important;
+  align-items:stretch !important;
+  align-self:stretch !important;
+  margin-top:0 !important;
+  padding-top:0 !important;
+  min-height:0 !important;
+  height:auto !important;
+}
+#page-operadores > .sec-hdr:first-child,
+#page-lojas > .sec-hdr:first-child{
+  margin-top:0 !important;
+  padding-top:0 !important;
+}
+#page-operadores #opl-page-operadores,
+#page-lojas .lojas-gestao-tabela{
+  margin-top:0 !important;
+}
+.acao-lapis{
+  pointer-events:auto !important;
+  position:relative;
+  z-index:2;
+}

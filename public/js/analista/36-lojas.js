@@ -14,7 +14,7 @@
         <td>${esc(l.responsavel||'—')}</td>
         <td>${l.ativa===false?'<span class="badge badge-red">Inativa</span>':'<span class="badge badge-green">Ativa</span>'}</td>
         <td>${l.id===ativa?'<span class="badge badge-blue">Em uso</span>':'<span style="color:var(--muted);font-size:.74rem">Disponível</span>'}</td>
-        <td style="text-align:center"><button class="acao-lapis" type="button" title="Configurar loja" aria-label="Configurar loja" onclick='editarLoja(${JSON.stringify(JSON.stringify(l))})'>✏️</button></td>
+        <td style="text-align:center"><button class="acao-lapis" type="button" title="Configurar loja" aria-label="Configurar loja" data-loja-editar="${esc(l.id)}">✏️</button></td>
       </tr>`).join('');
       const tabela=linhas?`<div class="tbl-wrap lojas-lista-linhas"><table><thead><tr><th>Loja</th><th>Responsável</th><th>Status</th><th>Ambiente</th><th style="width:74px;text-align:center">Ações</th></tr></thead><tbody>${linhas}</tbody></table></div>`:'<div class="empty"><div class="empty-title">Nenhuma loja cadastrada</div></div>';
       if(grid) grid.innerHTML=tabela;
@@ -275,5 +275,25 @@
     }catch(e){showToast('Erro na migração: '+e.message,'error');console.error(e);}
   }
 
-  Object.assign(global,{renderGestaoLojas,abrirCadastroLoja,editarLoja,salvarLoja,usarLoja,migrarDadosLegadosParaLojaAtual,sincronizarDadosLegadosAutomaticamente,corrigirIsolamentoLojaAtual});
+  async function editarLojaPorId(id){
+    if(!id)return;
+    try{
+      const lojas=await global.DTLoja.garantirLojaInicial();
+      const loja=lojas.find(item=>String(item.id)===String(id));
+      if(!loja)throw new Error('Loja não encontrada');
+      editarLoja(loja);
+    }catch(e){
+      global.showToast?.('Não foi possível abrir a loja: '+(e.message||e),'error');
+    }
+  }
+
+  document.addEventListener('click',function(event){
+    const botao=event.target.closest('[data-loja-editar]');
+    if(!botao)return;
+    event.preventDefault();
+    event.stopPropagation();
+    editarLojaPorId(botao.getAttribute('data-loja-editar'));
+  });
+
+  Object.assign(global,{renderGestaoLojas,abrirCadastroLoja,editarLoja,editarLojaPorId,salvarLoja,usarLoja,migrarDadosLegadosParaLojaAtual,sincronizarDadosLegadosAutomaticamente,corrigirIsolamentoLojaAtual});
 })(window);
