@@ -16,14 +16,14 @@
 <link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='36' fill='%231E6F4E'/%3E%3Ctext x='96' y='80' font-family='monospace' font-weight='700' font-size='52' fill='white' text-anchor='middle' dominant-baseline='middle'%3EDT%3C/text%3E%3Crect x='62' y='105' width='68' height='9' rx='4' fill='%23F59E0B'/%3E%3C/svg%3E" rel="apple-touch-icon"/>
 <link href="https://fonts.googleapis.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&amp;family=Barlow:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-<script src="js/legacy-polyfills.js?v=20260731-2322"></script>
+<script src="js/legacy-polyfills.js?v=20260804-1309"></script>
 <script src="vendor/xlsx-0.18.5/xlsx.full.min.js"></script>
 <!-- Firebase SDK v10 compat -->
 <script src="vendor/firebase-10.12.2/firebase-app-compat.js"></script>
 <script src="vendor/firebase-10.12.2/firebase-firestore-compat.js"></script>
 <script src="vendor/firebase-10.12.2/firebase-auth-compat.js"></script>
 <link rel="stylesheet" href="/css/coletor.css">
-<link rel="manifest" href="/manifest.webmanifest?v=20260731-2322"><meta name="theme-color" content="#0f5b3a"><script>(function(){window.DT_ERRORS=[];window.addEventListener('error',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:e.message,f:e.filename,l:e.lineno});});window.addEventListener('unhandledrejection',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:String(e.reason&&e.reason.message||e.reason)});});})();</script><link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="manifest" href="/manifest.webmanifest?v=20260804-1309"><meta name="theme-color" content="#0f5b3a"><script>(function(){window.DT_ERRORS=[];window.addEventListener('error',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:e.message,f:e.filename,l:e.lineno});});window.addEventListener('unhandledrejection',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:String(e.reason&&e.reason.message||e.reason)});});})();</script><link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
@@ -36,11 +36,11 @@
 <!-- Menu 3 pontos na tela de login -->
 <div style="position:absolute;top:14px;right:14px;z-index:20">
 <div style="position:relative">
-<button class="btn-menu3pts" id="btn-menu3pts-login" onclick="toggleMenu3ptsLogin()" title="Opções">⋮</button>
+<button class="btn-menu3pts" id="btn-menu3pts-login" title="Opções">⋮</button>
 <div class="menu3pts-dropdown" id="menu3pts-dropdown-login" style="display:none">
-<button class="menu3pts-item" onclick="atualizarAplicativo()">🔄 Atualizar aplicativo</button>
-<button class="menu3pts-item" onclick="toggleMenu3ptsLogin();diagnosticoCompatibilidade()">🔍 Diagnóstico</button>
-<button class="menu3pts-item" id="menu-instalar-pwa-login" onclick="toggleMenu3ptsLogin();instalarPWA()">📲 Baixar aplicativo</button>
+<button class="menu3pts-item" data-menu-action="update-app">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item" data-menu-action="diagnostic">🔍 Diagnóstico</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-login" data-menu-action="install-app">📲 Baixar aplicativo</button>
 <div class="menu3pts-sep"></div>
 <div class="menu3pts-ver">v<span id="login-ver-label">—</span></div>
 </div>
@@ -105,14 +105,14 @@
 <div style="display:flex;align-items:center;gap:8px">
 <div class="op-badge"><div class="op-dot"></div><span id="op-name-mode">Operador</span></div>
 <div style="position:relative">
-<button class="btn-menu3pts" id="btn-menu3pts-mode" onclick="toggleMenu3ptsMode()" title="Opções">⋮</button>
+<button class="btn-menu3pts" id="btn-menu3pts-mode" title="Opções">⋮</button>
 <div class="menu3pts-dropdown" id="menu3pts-dropdown-mode" style="display:none">
-<button class="menu3pts-item" onclick="atualizarAplicativo()">🔄 Atualizar aplicativo</button>
-<button class="menu3pts-item" onclick="toggleMenu3ptsMode();atualizarBase()">⬇️ Atualizar base de dados</button>
-<button class="menu3pts-item" id="menu-instalar-pwa-mode" onclick="toggleMenu3ptsMode();instalarPWA()">📲 Baixar aplicativo</button>
+<button class="menu3pts-item" data-menu-action="update-app">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item" data-menu-action="update-base">⬇️ Atualizar base de dados</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-mode" data-menu-action="install-app">📲 Baixar aplicativo</button>
 <div class="menu3pts-sep"></div>
-<button class="menu3pts-item" onclick="toggleMenu3ptsMode();diagnosticoCompatibilidade()">🔍 Diagnóstico</button>
-<button class="menu3pts-item" onclick="toggleMenu3ptsMode();doLogout()" style="color:#ff6b6b">🚪 Sair</button>
+<button class="menu3pts-item" data-menu-action="diagnostic">🔍 Diagnóstico</button>
+<button class="menu3pts-item" data-menu-action="logout" style="color:#ff6b6b">🚪 Sair</button>
 <div class="menu3pts-sep"></div>
 <div class="menu3pts-ver">v<span id="mode-ver-label">—</span></div>
 </div>
@@ -273,15 +273,15 @@
 </div>
 <!-- Menu três pontos (melhoria 3) -->
 <div style="position:relative">
-<button class="btn-menu3pts" id="btn-menu3pts" onclick="toggleMenu3pts()" title="Opções">⋮</button>
+<button class="btn-menu3pts" id="btn-menu3pts" title="Opções">⋮</button>
 <div class="menu3pts-dropdown" id="menu3pts-dropdown" style="display:none">
-<button class="menu3pts-item" onclick="atualizarAplicativo()">🔄 Atualizar aplicativo</button>
-<button class="menu3pts-item" onclick="atualizarBase()">⬇️ Atualizar base de dados</button>
-<button class="menu3pts-item" id="menu-instalar-pwa-app" onclick="toggleMenu3pts();instalarPWA()">📲 Baixar aplicativo</button>
+<button class="menu3pts-item" data-menu-action="update-app">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item" data-menu-action="update-base">⬇️ Atualizar base de dados</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-app" data-menu-action="install-app">📲 Baixar aplicativo</button>
 <div class="menu3pts-sep"></div>
-<button class="menu3pts-item" onclick="toggleMenu3pts();voltarInventarios()">📦 Trocar inventário</button>
-<button class="menu3pts-item" onclick="toggleMenu3pts();diagnosticoCompatibilidade()">🔍 Diagnóstico</button>
-<button class="menu3pts-item" onclick="toggleMenu3pts();doLogout()" style="color:#ff6b6b">🚪 Sair</button>
+<button class="menu3pts-item" data-menu-action="switch-inventory">📦 Trocar inventário</button>
+<button class="menu3pts-item" data-menu-action="diagnostic">🔍 Diagnóstico</button>
+<button class="menu3pts-item" data-menu-action="logout" style="color:#ff6b6b">🚪 Sair</button>
 <div class="menu3pts-sep"></div>
 <div class="menu3pts-ver" id="menu3pts-ver">v<span id="app-ver-label">—</span></div>
 </div>
@@ -795,8 +795,8 @@
 </div>
 
 
-<script src="js/shared/address-state-engine.js?v=20260731-2322"></script>
-<script src="js/shared/address-state-selectors.js?v=20260731-2322"></script>
-<script src="js/shared/address-state-view.js?v=20260731-2322"></script>
-<script src="js/shared/common-utils.js?v=20260731-2322"></script><script src="js/shared/firebase-shared.js?v=20260731-2322"></script><script src="js/shared/enderecos-service.js?v=20260731-2322"></script><script src="js/shared/produtos-service.js?v=20260731-2322"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260731-2322"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260731-2322"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260731-2322"></script><script src="js/coletor/03-estado-app.js?v=20260731-2322"></script><script src="js/coletor/04-auth-login.js?v=20260731-2322"></script><script src="js/coletor/05-inventarios-download.js?v=20260731-2322"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260731-2322"></script><script src="js/coletor/07-etapa-endereco.js?v=20260731-2322"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260731-2322"></script><script src="js/coletor/09-historico-stats.js?v=20260731-2322"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260731-2322"></script><script src="js/coletor/11-recontagens.js?v=20260731-2322"></script><script src="js/coletor/12-scanner-hardware.js?v=20260731-2322"></script><script src="js/coletor/13-audio-feedback.js?v=20260731-2322"></script><script src="js/coletor/14-toast.js?v=20260731-2322"></script><script src="js/coletor/15-utils-init.js?v=20260731-2322"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260731-2322"></script><script src="js/coletor/17-auditoria-meta.js?v=20260731-2322"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260731-2322"></script><script src="js/coletor/19-runtime-estavel-v15.js?v=20260731-2322"></script><script src="js/legacy-ui-compat.js?v=20260731-2322"></script><script>(function(){if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js?v=20260731-2322').catch(function(e){console.warn('[PWA]',e);});});}document.addEventListener('DOMContentLoaded',function(){(async function(){try{if(window.DT_AUTH_USER_READY){try{await window.DT_AUTH_USER_READY;}catch(_e){}}if(window.DTProdutos&&DTProdutos.carregar)DTProdutos.carregar().catch(function(e){console.warn('[Produtos] Cache inicial indisponível:',e);});}catch(e){console.warn('[Produtos] Inicialização falhou:',e);}})();});})();</script><div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v232.2 · 20260731.3</div></body>
+<script src="js/shared/address-state-engine.js?v=20260804-1309"></script>
+<script src="js/shared/address-state-selectors.js?v=20260804-1309"></script>
+<script src="js/shared/address-state-view.js?v=20260804-1309"></script>
+<script src="js/shared/common-utils.js?v=20260804-1309"></script><script src="js/shared/firebase-shared.js?v=20260804-1309"></script><script src="js/shared/enderecos-service.js?v=20260804-1309"></script><script src="js/shared/produtos-service.js?v=20260804-1309"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260804-1309"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260804-1309"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260804-1309"></script><script src="js/coletor/03-estado-app.js?v=20260804-1309"></script><script src="js/coletor/04-auth-login.js?v=20260804-1309"></script><script src="js/coletor/05-inventarios-download.js?v=20260804-1309"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260804-1309"></script><script src="js/coletor/07-etapa-endereco.js?v=20260804-1309"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260804-1309"></script><script src="js/coletor/09-historico-stats.js?v=20260804-1309"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260804-1309"></script><script src="js/coletor/11-recontagens.js?v=20260804-1309"></script><script src="js/coletor/12-scanner-hardware.js?v=20260804-1309"></script><script src="js/coletor/13-audio-feedback.js?v=20260804-1309"></script><script src="js/coletor/14-toast.js?v=20260804-1309"></script><script src="js/coletor/15-utils-init.js?v=20260804-1309"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260804-1309"></script><script src="js/coletor/17-auditoria-meta.js?v=20260804-1309"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260804-1309"></script><script src="js/coletor/19-runtime-estavel-v15.js?v=20260804-1309"></script><script src="js/coletor/20-menu-compat.js?v=20260804-1309"></script><script src="js/legacy-ui-compat.js?v=20260804-1309"></script><script>(function(){if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js?v=20260804-1309').catch(function(e){console.warn('[PWA]',e);});});}document.addEventListener('DOMContentLoaded',function(){(async function(){try{if(window.DT_AUTH_USER_READY){try{await window.DT_AUTH_USER_READY;}catch(_e){}}if(window.DTProdutos&&DTProdutos.carregar)DTProdutos.carregar().catch(function(e){console.warn('[Produtos] Cache inicial indisponível:',e);});}catch(e){console.warn('[Produtos] Inicialização falhou:',e);}})();});})();</script><div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v244 · 20260804.1</div></body>
 </html>

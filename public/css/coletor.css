@@ -586,3 +586,21 @@ html,body,button,input,select,textarea,label,a,span,div{
 .field,.top-logo,.inv-card-code,.addr-code,.qty-display,.stat-value{
   font-family:Arial,Helvetica,sans-serif !important;
 }
+
+/* v244 - menu superior do coletor: toque confiavel e sobreposicao correta */
+#screen-login .menu3pts-dropdown,
+#screen-mode .menu3pts-dropdown,
+#screen-app .menu3pts-dropdown {
+  z-index: 2147483646;
+  pointer-events: auto;
+  touch-action: manipulation;
+}
+#screen-login .btn-menu3pts,
+#screen-mode .btn-menu3pts,
+#screen-app .btn-menu3pts {
+  position: relative;
+  z-index: 2147483647;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}

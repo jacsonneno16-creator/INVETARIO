@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260804-102dec25e5b0';
+var CACHE='dt-inventario-20260804-menu3pts-v244';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -79,6 +79,7 @@ var PRECACHE=[
   '/js/coletor/17-auditoria-meta.js',
   '/js/coletor/18-auditoria-fluxo.js',
   '/js/coletor/19-runtime-estavel-v15.js',
+  '/js/coletor/20-menu-compat.js',
   '/js/legacy-ui-compat.js'
 ];
 self.addEventListener('install',function(e){
