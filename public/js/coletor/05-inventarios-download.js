@@ -193,30 +193,48 @@ function renderListaInventarios(lista) {
       </div>
     </button>
   `).join('');
+
+  // Liga o clique diretamente em cada cartão. Isso funciona também em
+  // coletores/WebViews antigos que não implementam Element.closest().
+  Array.prototype.forEach.call(el.querySelectorAll('.inv-card-menu[data-inventario-id]'), function(card) {
+    card.addEventListener('click', _abrirInventarioPeloCard, false);
+  });
 }
 
-// Clique delegado evita onclick inline quebrado por IDs especiais e garante
-// que erros assíncronos sejam exibidos ao operador.
-document.addEventListener('click', function(event) {
-  const card = event.target.closest('.inv-card-menu[data-inventario-id]');
-  const lista = document.getElementById('inv-list');
-  if (!card || !lista || !lista.contains(card)) return;
-  event.preventDefault();
-  if (card.disabled || APP._inventarioAbrindo) return;
-  const inventarioId = String(card.dataset.inventarioId || '').trim();
-  if (!inventarioId) { toast('Não foi possível identificar este inventário. Atualize a lista e tente novamente.', 'e'); return; }
+function _abrirInventarioPeloCard(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  const card = event && event.currentTarget ? event.currentTarget : this;
+  if (!card || card.disabled || APP._inventarioAbrindo) return;
+  const inventarioId = String(card.getAttribute('data-inventario-id') || '').trim();
+  if (!inventarioId) {
+    toast('Não foi possível identificar este inventário. Atualize a lista e tente novamente.', 'e');
+    return;
+  }
+
   card.disabled = true;
   card.setAttribute('aria-busy', 'true');
+  const nome = card.querySelector('.inv-card-name');
+  const textoAnterior = nome ? nome.textContent : '';
+  if (nome) nome.textContent = 'Abrindo inventário…';
+
   Promise.resolve(selecionarInventario(inventarioId, 'inventario'))
     .catch(function(error) {
       console.error('[Inventário] Erro ao abrir cartão:', error);
-      toast('Erro ao abrir inventário: ' + (error?.message || error), 'e');
+      toast('Erro ao abrir inventário: ' + ((error && error.message) || error), 'e');
     })
-    .finally(function() {
+    .then(function() {
       card.disabled = false;
       card.removeAttribute('aria-busy');
+      if (nome && document.body.contains(card)) nome.textContent = textoAnterior;
+    }, function() {
+      card.disabled = false;
+      card.removeAttribute('aria-busy');
+      if (nome && document.body.contains(card)) nome.textContent = textoAnterior;
     });
-});
+}
 
 // ─── Versão/timestamp da base no Firestore ──────────────────
 function _invBaseVer(docData) {
@@ -257,7 +275,8 @@ async function selecionarInventario(id, modo = 'inventario') {
     // avisar claramente em vez de deixar o clique "sem reação". Abrir um
     // inventário nunca deve apagar o operador nem forçar logout por causa
     // desse estado transitório — apenas pedir para tentar de novo.
-    if ((window.AUTH || (typeof getDTAuth === 'function' ? getDTAuth() : null)) && !(window.AUTH || getDTAuth()).currentUser) {
+    const authInventario = window.AUTH || (typeof getDTAuth === 'function' ? getDTAuth() : null);
+    if (authInventario && !authInventario.currentUser) {
       toast('Não foi possível confirmar a sessão agora. Aguarde alguns segundos e tente abrir o inventário novamente.', 'e');
       return;
     }
