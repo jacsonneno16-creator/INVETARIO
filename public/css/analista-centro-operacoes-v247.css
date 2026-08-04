@@ -1,0 +1,116 @@
+/* DT Inventario - Centro de Operacoes v247
+   Redesign aplicado somente dentro de #app-main. A tela de login permanece intacta. */
+:root{
+  --ops-bg:#f3f6f5;--ops-panel:#fff;--ops-soft:#f7faf8;--ops-line:#dce5df;
+  --ops-ink:#15241b;--ops-muted:#6b7d72;--ops-green:#0d4f2f;--ops-green2:#177245;
+  --ops-green3:#24a15d;--ops-orange:#ef7d20;--ops-red:#d92d20;--ops-blue:#2563eb;
+  --ops-shadow:0 8px 26px rgba(13,79,47,.075);--ops-shadow2:0 16px 42px rgba(13,79,47,.13);
+  --ops-radius:16px;--ops-radius-sm:10px;
+}
+#app-main{background:radial-gradient(circle at 95% -10%,rgba(239,125,32,.08),transparent 28%),linear-gradient(180deg,#f8faf9,#f1f5f3);color:var(--ops-ink)}
+#app-main *{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#b9c7bf transparent}
+#app-main *::-webkit-scrollbar{width:8px;height:8px}#app-main *::-webkit-scrollbar-thumb{background:#b9c7bf;border-radius:20px;border:2px solid transparent;background-clip:padding-box}
+
+/* Estrutura */
+#app-main .sidebar{width:238px;background:linear-gradient(180deg,#105033 0%,#0b4029 58%,#073321 100%);box-shadow:8px 0 30px rgba(7,43,28,.17)}
+#app-main .sb-logo{padding:18px 16px 15px;background:rgba(0,0,0,.08);border-bottom:1px solid rgba(255,255,255,.06)}
+#app-main .dt-logo-mark{width:42px;height:42px;border-radius:12px;box-shadow:0 7px 18px rgba(0,0,0,.18)}
+#app-main .sb-sec{padding:15px 16px 5px;font-size:.53rem;letter-spacing:.14em;color:rgba(255,255,255,.30)}
+#app-main .nav-item{min-height:38px;margin:2px 8px;padding:8px 11px 8px 14px;border-radius:9px;font-size:.76rem;color:rgba(255,255,255,.64);transition:.16s ease}
+#app-main .nav-item:hover{background:rgba(255,255,255,.075);color:#fff;transform:translateX(2px)}
+#app-main .nav-item.on{background:linear-gradient(90deg,rgba(239,125,32,.23),rgba(239,125,32,.08));color:#ffd2ae;box-shadow:inset 0 0 0 1px rgba(239,125,32,.16)}
+#app-main .nav-item.on:before{width:3px;height:68%;border-radius:4px;background:var(--ops-orange)}
+#app-main .nav-icon{width:20px;opacity:.9}#app-main .nav-badge{font-size:.54rem;padding:2px 6px;box-shadow:0 3px 9px rgba(0,0,0,.15)}
+#app-main .sb-bottom{padding:12px 13px;background:rgba(0,0,0,.11);border-top:1px solid rgba(255,255,255,.07)}
+#app-main .topbar{height:64px;padding:0 22px;background:rgba(255,255,255,.94);backdrop-filter:blur(14px);border-bottom:1px solid #dbe4df;box-shadow:0 5px 22px rgba(22,52,37,.055)}
+#app-main .topbar:after{height:2px;background:linear-gradient(90deg,var(--ops-orange),#ffad63 28%,transparent 65%)}
+#app-main .page-title{font-size:1.04rem;font-weight:800;letter-spacing:-.025em;color:var(--ops-ink)}
+#app-main .content{padding:18px 22px 30px;gap:17px;width:100%;max-width:1920px;margin:0 auto}
+#app-main .page{gap:16px;animation:opsIn .22s ease both}@keyframes opsIn{from{opacity:.35;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* Cabecalhos */
+#app-main .sec-hdr,#app-main .admin-management-header{min-height:58px;margin:0;padding:2px 2px 11px;display:flex;align-items:flex-end;justify-content:space-between;gap:14px;border-bottom:1px solid rgba(203,213,220,.75)}
+#app-main .sec-title,#app-main .admin-management-heading{font-size:1.04rem;font-weight:800;letter-spacing:-.025em;color:var(--ops-ink)}
+#app-main .sec-sub{margin-top:3px;font-size:.69rem;color:var(--ops-muted)}
+
+/* Superficies */
+#app-main .tc,#app-main .card,#app-main .panel,#app-main .section-card,#app-main .admin-management-card,#app-main .status-box,#app-main .dash-scroll-card{background:rgba(255,255,255,.97);border:1px solid var(--ops-line);border-radius:var(--ops-radius);box-shadow:var(--ops-shadow)}
+#app-main .tc{overflow:hidden;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
+#app-main .tc:hover{border-color:#c7d7cd;box-shadow:var(--ops-shadow2)}
+#app-main .tc-header{min-height:48px;padding:12px 16px;background:linear-gradient(180deg,#fff,#fbfcfb);border-bottom:1px solid var(--ops-line);display:flex;align-items:center;gap:10px}
+#app-main .tc-title{font-size:.82rem;font-weight:800;letter-spacing:-.015em;color:var(--ops-ink)}
+#app-main .tc-toolbar{padding:10px 14px;background:#fafcfb;border-bottom:1px solid var(--ops-line);gap:8px}
+
+/* KPIs */
+#app-main .kpi-grid{gap:11px}
+#app-main .kpi,#app-main .kpi-card{position:relative;overflow:hidden;min-height:102px;padding:15px 16px;border:1px solid var(--ops-line);border-radius:14px;background:linear-gradient(145deg,#fff,#fbfdfc);box-shadow:0 5px 18px rgba(22,52,37,.055);transition:.18s ease}
+#app-main .kpi:after,#app-main .kpi-card:after{content:"";position:absolute;width:78px;height:78px;border-radius:50%;right:-34px;top:-36px;background:rgba(15,81,50,.045)}
+#app-main .kpi:hover,#app-main .kpi-card:hover{transform:translateY(-2px);box-shadow:0 11px 26px rgba(22,52,37,.11);border-color:#c7d7cd}
+#app-main .kpi-icon{width:34px;height:34px;border-radius:10px;background:#eef7f1;display:flex;align-items:center;justify-content:center}
+#app-main .kpi-val,#app-main .kpi-value{font-size:1.42rem!important;font-weight:850;letter-spacing:-.045em;color:var(--ops-ink)}
+#app-main .kpi-lbl,#app-main .kpi-label{font-size:.63rem;font-weight:800;color:var(--ops-muted);text-transform:uppercase;letter-spacing:.055em}
+#app-main .kpi-sub{font-size:.61rem;color:#7e8d85}
+#app-main .kpi.orange{border-top:3px solid var(--ops-orange)}#app-main .kpi.green{border-top:3px solid var(--ops-green3)}#app-main .kpi.red{border-top:3px solid var(--ops-red)}#app-main .kpi.blue{border-top:3px solid var(--ops-blue)}
+
+/* Controles */
+#app-main .btn{min-height:36px;padding:8px 13px;border-radius:10px;font-size:.71rem;font-weight:750;letter-spacing:-.005em;transition:.14s ease}
+#app-main .btn:hover{transform:translateY(-1px)}
+#app-main .btn-primary{background:linear-gradient(135deg,var(--ops-green2),var(--ops-green));border-color:var(--ops-green);box-shadow:0 5px 14px rgba(15,81,50,.17)}
+#app-main .btn-success{background:linear-gradient(135deg,#239b58,#14783f)}
+#app-main .btn-danger{background:#fff3f2;color:#b42318;border-color:#f2c7c3}#app-main .btn-danger:hover{background:#ffe9e6}
+#app-main .btn-ghost,#app-main .btn-export{background:#fff;color:#34483c;border-color:#cfdad4}#app-main .btn-ghost:hover,#app-main .btn-export:hover{background:#f4f8f5;border-color:#aac0b3}
+#app-main .btn-sm{min-height:32px;padding:6px 10px;font-size:.66rem}
+#app-main .search,#app-main .filter-sel,#app-main input[type=text],#app-main input[type=search],#app-main input[type=email],#app-main input[type=number],#app-main input[type=password],#app-main select,#app-main textarea{min-height:36px;border:1px solid #cbd7d0;border-radius:10px;background:#fff;color:var(--ops-ink);font-size:.71rem;box-shadow:inset 0 1px 2px rgba(15,40,25,.025)}
+#app-main input:focus,#app-main select:focus,#app-main textarea:focus,#app-main .search:focus{outline:none;border-color:#78a98c;box-shadow:0 0 0 3px rgba(23,114,69,.11)}
+#app-main .field label,#app-main .form-group label{font-size:.61rem;font-weight:800;text-transform:uppercase;letter-spacing:.045em;color:#5c7064}
+
+/* Tabelas */
+#app-main .tbl-wrap,#app-main .table-wrap,#app-main .table-scroll,#app-main .admin-list-body{overflow:auto;background:#fff}
+#app-main table{border-collapse:separate;border-spacing:0;width:100%}
+#app-main thead th{position:sticky;top:0;z-index:4;height:39px;padding:9px 12px!important;background:#f1f5f3;color:#53645a;border-bottom:1px solid #d8e1dc;font-size:.59rem!important;font-weight:850;text-transform:uppercase;letter-spacing:.055em;white-space:nowrap}
+#app-main tbody td{padding:9px 12px!important;border-bottom:1px solid #edf1ef;font-size:.69rem;color:#314239;vertical-align:middle}
+#app-main tbody tr:nth-child(even){background:#fbfcfb}#app-main tbody tr:hover{background:#f0f8f3}#app-main tbody tr:last-child td{border-bottom:0}
+#app-main .badge,#app-main .pill,#app-main [class*="status-"]{border-radius:999px;font-weight:750;letter-spacing:.01em}
+
+/* Dashboard e acompanhamento */
+#app-main #page-dashboard .tc,#app-main #page-acompanhamento .tc{box-shadow:0 7px 23px rgba(22,52,37,.065)}
+#app-main #page-dashboard .kpi-grid,#app-main #page-acompanhamento .kpi-grid{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}
+#app-main #page-acompanhamento .tc-header{min-height:44px;padding:10px 14px}
+#app-main #page-acompanhamento .dash-scroll-card{max-height:430px}
+#app-main #page-acompanhamento [style*="height:14px"],#app-main #page-acompanhamento [style*="height: 14px"]{height:9px!important}
+#app-main #page-acompanhamento [style*="padding:16px"],#app-main #page-acompanhamento [style*="padding: 16px"]{padding:12px!important}
+
+/* Inventarios, auditoria e operacao */
+#app-main #page-inventarios .tc-toolbar,#app-main #page-auditoria .tc-toolbar,#app-main #page-contagens .tc-toolbar,#app-main #page-pendencias .tc-toolbar,#app-main #page-recontagens .tc-toolbar{display:flex;align-items:center;flex-wrap:wrap}
+#app-main #page-inventarios tbody td:first-child,#app-main #page-auditoria tbody td:first-child,#app-main #page-contagens tbody td:first-child{font-weight:750;color:#203d2d}
+#app-main #page-pendencias tbody tr:has(.badge.red),#app-main #page-recontagens tbody tr:has(.badge.red){box-shadow:inset 3px 0 0 #ef4444}
+#app-main #page-auditoria .auditoria-tabela{border-radius:0 0 14px 14px;overflow:hidden}
+
+/* Relatorios e produtividade */
+#app-main #page-rel-divergencias .tc,#app-main #page-capas-duplicadas .tc,#app-main #page-produtividade .tc{overflow:hidden}
+#app-main #page-produtividade .kpi-grid{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+
+/* Cadastros e administracao */
+#app-main .admin-management-page{gap:14px!important}
+#app-main .admin-management-card{padding:0!important;overflow:hidden}
+#app-main .admin-management-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#app-main .admin-list-header{padding:11px 14px;background:#f5f8f6;border-bottom:1px solid var(--ops-line)}
+#app-main #page-operadores .tc-toolbar,#app-main #page-lojas .tc-toolbar{position:sticky;top:64px;z-index:8}
+#app-main #page-enderecos .tc,#app-main #page-produtos .tc,#app-main #page-coletores .tc,#app-main #page-operadores .admin-management-card,#app-main #page-lojas .admin-management-card,#app-main #page-rastreabilidade .tc,#app-main #page-importar-exportar .tc{box-shadow:var(--ops-shadow)}
+#app-main #page-coletores tbody tr{transition:.15s ease}#app-main #page-coletores tbody tr:hover{transform:translateX(2px)}
+#app-main #page-importar-exportar .tc{background:linear-gradient(180deg,#fff,#fbfdfc)}
+
+/* Modais e alertas */
+#app-main .modal-bg{background:rgba(7,31,20,.49);backdrop-filter:blur(5px)}
+#app-main .modal{border:1px solid rgba(203,213,220,.9);border-radius:18px;box-shadow:0 26px 80px rgba(7,31,20,.27);overflow:hidden}
+#app-main .modal-hdr{padding:15px 18px;background:linear-gradient(180deg,#fff,#f7faf8);border-bottom:1px solid var(--ops-line)}
+#app-main .modal-title{font-size:.92rem;font-weight:850;letter-spacing:-.02em}
+#app-main .modal-footer{padding:13px 18px;background:#f7faf8;border-top:1px solid var(--ops-line)}
+#app-main .alert{border-radius:12px;border-width:1px;padding:11px 13px;font-size:.69rem}
+#app-main .empty{padding:42px 20px}#app-main .empty-title{font-size:.88rem;font-weight:800}#app-main .empty-sub{font-size:.69rem}
+#app-main .dt-build-version{border:1px solid #d9e1dc!important;color:#617068!important;box-shadow:0 4px 12px rgba(0,0,0,.06)}
+
+/* Responsivo */
+@media(max-width:1280px){#app-main .sidebar{width:216px}#app-main .content{padding:16px 17px 24px}#app-main .topbar{padding:0 17px}#app-main .kpi,#app-main .kpi-card{min-height:94px;padding:13px}}
+@media(max-width:920px){#app-main .sidebar{width:74px}#app-main .sb-logo{padding:13px 10px}#app-main .dt-logo-text,#app-main .sb-sec{display:none}#app-main .nav-item{justify-content:center;padding:9px;margin:3px 9px;font-size:0;gap:0}#app-main .nav-icon{font-size:1rem;width:auto}#app-main .nav-badge{position:absolute;top:2px;right:2px;font-size:.46rem}#app-main .sb-bottom{display:none}#app-main .content{padding:14px}#app-main .topbar{min-height:62px;height:auto;padding:10px 14px;align-items:flex-start}#app-main .sec-hdr,#app-main .admin-management-header{align-items:flex-start;flex-direction:column}}
+@media(max-width:680px){#app-main .sidebar{position:fixed;left:0;top:0;bottom:0;z-index:300;transform:translateX(-100%);transition:transform .2s ease}#app-main .sidebar.mobile-open{transform:none}#app-main .main{width:100%}#app-main .content{padding:11px}#app-main .topbar{padding:9px 11px}#app-main .btn{min-height:34px;padding:7px 10px}#app-main .kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}#app-main .kpi,#app-main .kpi-card{min-height:88px}#app-main .tc-header,#app-main .tc-toolbar{padding:9px 11px}#app-main thead th,#app-main tbody td{padding:8px 9px!important}}

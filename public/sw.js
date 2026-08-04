@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260804-permissoes-v245';
+var CACHE='dt-inventario-20260804-centro-operacoes-v247';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -7,6 +7,7 @@ var PRECACHE=[
   '/manifest.webmanifest',
   '/manifest-coletor.json',
   '/css/analista.css',
+  '/css/analista-centro-operacoes-v247.css',
   '/css/coletor.css',
   '/vendor/xlsx-0.18.5/xlsx.full.min.js',
   '/vendor/firebase-10.12.2/firebase-app-compat.js',
