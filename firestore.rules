@@ -45,6 +45,23 @@ service cloud.firestore {
         (access().keys().hasAny(['lojas_permitidas']) && access().lojas_permitidas is list && lojaId in access().lojas_permitidas)
       );
     }
+    function storeIdFromData(data) {
+      return data.keys().hasAny(['lojaId']) ? data.lojaId :
+        (data.keys().hasAny(['loja_id']) ? data.loja_id :
+        (data.keys().hasAny(['loja']) ? data.loja : null));
+    }
+    function canAccessDocumentStore(data) {
+      return active() && (
+        admin() ||
+        (access().keys().hasAny(['acesso_todas_lojas']) && access().acesso_todas_lojas == true) ||
+        (storeIdFromData(data) is string &&
+         access().keys().hasAny(['lojas_permitidas']) && access().lojas_permitidas is list &&
+         storeIdFromData(data) in access().lojas_permitidas)
+      );
+    }
+    function collectorCanReadOperationalDoc(data) {
+      return canUseColetor() && canAccessDocumentStore(data);
+    }
     function validText(value, maxLength) { return value is string && value.size() <= maxLength; }
     function validOperationalWrite() {
       return request.resource.data.keys().hasAny(['inventario_id', 'inventarioId']) &&
@@ -177,7 +194,11 @@ service cloud.firestore {
 
     match /dt_coletores/{deviceId} {
       allow get: if signedIn();
-      allow list: if active() && canUseAnalista();
+      allow list: if active() && (
+        canUseAnalista() ||
+        resource.data.uid == request.auth.uid ||
+        resource.data.operador_uid == request.auth.uid
+      );
 
       allow create: if signedIn() &&
         request.resource.data.uid == request.auth.uid &&
@@ -223,7 +244,7 @@ service cloud.firestore {
     }
 
     match /dt_auditorias/{docId} {
-      allow read: if admin();
+      allow read: if admin() || collectorCanReadOperationalDoc(resource.data);
       allow create, update, delete: if admin() && hasPermission('auditoria','editar');
       match /{subcolecao}/{subId} {
         allow read: if admin() && subcolecao in ['base_chunks','enderecos','ocorrencias'];
@@ -231,9 +252,24 @@ service cloud.firestore {
       }
     }
 
+    // Compatibilidade com versões antigas do coletor que consultam metadados na raiz.
+    match /dt_auditorias_coletor/{docId} {
+      allow read: if collectorCanReadOperationalDoc(resource.data) || canUseAnalista();
+      allow write: if hasPermission('auditoria','editar');
+    }
+
+    match /dt_inventarios/{docId} {
+      allow read: if admin() || collectorCanReadOperationalDoc(resource.data);
+      allow create, update: if admin() && hasPermission('inventarios','editar');
+      allow delete: if false;
+      match /{nested=**} {
+        allow read: if admin() || canUseColetor();
+        allow write: if admin() && hasPermission('inventarios','editar');
+      }
+    }
+
     match /{legacyCollection}/{docId} {
-      allow read, write: if admin() && legacyCollection in ['dt_locais','dt_inventarios','dt_operadores'];
-      match /{nested=**} { allow read, write: if admin() && legacyCollection in ['dt_inventarios']; }
+      allow read, write: if admin() && legacyCollection in ['dt_locais','dt_operadores'];
     }
 
     match /{legacyCollection}/{document=**} {
