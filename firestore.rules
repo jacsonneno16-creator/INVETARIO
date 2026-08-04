@@ -38,6 +38,43 @@ service cloud.firestore {
         access().permissoes[area][operation] == true
       );
     }
+
+    function hasAuditPermission(operation) {
+      return admin() || (
+        canUseAnalista() &&
+        access().keys().hasAny(['permissoes']) && access().permissoes is map &&
+        access().permissoes.keys().hasAny(['auditoria']) && access().permissoes.auditoria is map &&
+        access().permissoes.auditoria[operation] == true
+      );
+    }
+    function canViewAudit() {
+      return canUseAnalista() && (
+        admin() ||
+        hasAuditPermission('visualizar') || hasAuditPermission('criar') ||
+        hasAuditPermission('editar') || hasAuditPermission('excluir') ||
+        hasAuditPermission('importar') || hasAuditPermission('exportar') ||
+        hasAuditPermission('publicar') || hasAuditPermission('finalizar')
+      );
+    }
+    function collectorCanReserveCapa() {
+      return canUseColetor() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'capa_ranges','capa_inicio_base','capa_lote_por_operador','atualizado_em'
+        ]) &&
+        request.resource.data.capa_lote_por_operador == 200 &&
+        request.resource.data.capa_inicio_base is int && request.resource.data.capa_inicio_base >= 1 &&
+        request.resource.data.capa_ranges is list &&
+        request.resource.data.capa_ranges.size() ==
+          (resource.data.keys().hasAny(['capa_ranges']) && resource.data.capa_ranges is list
+            ? resource.data.capa_ranges.size() + 1 : 1) &&
+        request.resource.data.capa_ranges[request.resource.data.capa_ranges.size() - 1] is map &&
+        request.resource.data.capa_ranges[request.resource.data.capa_ranges.size() - 1].operador_uid == request.auth.uid &&
+        request.resource.data.capa_ranges[request.resource.data.capa_ranges.size() - 1].lote == 200 &&
+        request.resource.data.capa_ranges[request.resource.data.capa_ranges.size() - 1].min is int &&
+        request.resource.data.capa_ranges[request.resource.data.capa_ranges.size() - 1].max ==
+          request.resource.data.capa_ranges[request.resource.data.capa_ranges.size() - 1].min + 199;
+    }
+
     function canAccessStore(lojaId) {
       return active() && (
         admin() ||
@@ -140,8 +177,12 @@ service cloud.firestore {
       match /dt_inventarios/{docId} {
         allow read: if canAccessStore(lojaId);
         allow create: if canAccessStore(lojaId) && hasPermission('inventarios','criar');
-        allow update: if canAccessStore(lojaId) && hasPermission('inventarios','editar') &&
-          ((!resource.data.keys().hasAny(['versao']) && request.resource.data.versao == 1) || request.resource.data.versao == resource.data.versao + 1);
+        allow update: if canAccessStore(lojaId) && (
+          (hasPermission('inventarios','editar') &&
+            ((!resource.data.keys().hasAny(['versao']) && request.resource.data.versao == 1) ||
+             request.resource.data.versao == resource.data.versao + 1)) ||
+          collectorCanReserveCapa()
+        );
         allow delete: if false;
         match /base_chunks/{chunkId} {
           allow read: if canAccessStore(lojaId);
@@ -164,23 +205,42 @@ service cloud.firestore {
           (canUseColetor() && assignedToCurrentUser(resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','concluida_em','atualizado_em','sincronizado_em','contagem_uuid','quantidade_contada','operador_uid'])));
       }
       match /dt_auditorias/{docId} {
-        allow read: if canAccessStore(lojaId) && canUseAnalista();
-        allow write: if canAccessStore(lojaId) && hasPermission('auditoria','editar');
-        match /base_chunks/{chunkId} { allow read: if canAccessStore(lojaId) && canUseAnalista(); allow write: if canAccessStore(lojaId) && hasPermission('auditoria','editar'); }
-        match /enderecos/{enderecoId} { allow read: if canAccessStore(lojaId) && canUseAnalista(); allow create, update, delete: if canAccessStore(lojaId) && hasPermission('auditoria','editar'); }
-        match /itens_coletor/{itemId} {
-          allow read: if canAccessStore(lojaId) && (canUseAnalista() || canUseColetor());
-          allow create, update: if canAccessStore(lojaId) && hasPermission('auditoria','editar') && validAuditCollectorItem();
-          allow delete: if canAccessStore(lojaId) && hasPermission('auditoria','editar');
+        allow read: if canAccessStore(lojaId) && canViewAudit();
+        allow create: if canAccessStore(lojaId) && hasAuditPermission('criar');
+        allow update: if canAccessStore(lojaId) && (
+          hasAuditPermission('editar') || hasAuditPermission('importar') ||
+          hasAuditPermission('publicar') || hasAuditPermission('finalizar')
+        );
+        allow delete: if canAccessStore(lojaId) && hasAuditPermission('excluir');
+        match /base_chunks/{chunkId} {
+          allow read: if canAccessStore(lojaId) && canViewAudit();
+          allow create, update, delete: if canAccessStore(lojaId) && (hasAuditPermission('importar') || hasAuditPermission('editar'));
         }
-        match /resultados/{resultadoId} { allow read: if canAccessStore(lojaId) && canUseAnalista(); allow write: if false; }
-        match /ocorrencias/{ocorrenciaId} { allow read: if canAccessStore(lojaId) && canUseAnalista(); allow create, update, delete: if canAccessStore(lojaId) && hasPermission('auditoria','editar'); }
+        match /enderecos/{enderecoId} {
+          allow read: if canAccessStore(lojaId) && canViewAudit();
+          allow create, update, delete: if canAccessStore(lojaId) && (hasAuditPermission('importar') || hasAuditPermission('editar'));
+        }
+        match /itens_coletor/{itemId} {
+          allow read: if canAccessStore(lojaId) && (canViewAudit() || canUseColetor());
+          allow create, update: if canAccessStore(lojaId) && (hasAuditPermission('importar') || hasAuditPermission('publicar') || hasAuditPermission('editar')) && validAuditCollectorItem();
+          allow delete: if canAccessStore(lojaId) && (hasAuditPermission('excluir') || hasAuditPermission('importar') || hasAuditPermission('editar'));
+        }
+        match /resultados/{resultadoId} { allow read: if canAccessStore(lojaId) && canViewAudit(); allow write: if false; }
+        match /ocorrencias/{ocorrenciaId} {
+          allow read: if canAccessStore(lojaId) && canViewAudit();
+          allow create, update: if canAccessStore(lojaId) && hasAuditPermission('editar');
+          allow delete: if canAccessStore(lojaId) && hasAuditPermission('excluir');
+        }
       }
       match /dt_auditorias_coletor/{docId} {
-        allow read: if canAccessStore(lojaId) && (canUseAnalista() || canUseColetor());
-        allow write: if canAccessStore(lojaId) && hasPermission('auditoria','editar') && request.resource.data.keys().hasOnly(['id','auditoria_nome','status','loja','lojas','total_registros','totalItens','tipoAuditoria','versaoBase','liberadaEm','atualizadoEm']);
+        allow read: if canAccessStore(lojaId) && (canViewAudit() || canUseColetor());
+        allow create, update: if canAccessStore(lojaId) && (hasAuditPermission('publicar') || hasAuditPermission('editar')) && request.resource.data.keys().hasOnly(['id','auditoria_nome','status','loja','lojas','total_registros','totalItens','tipoAuditoria','versaoBase','liberadaEm','atualizadoEm']);
+        allow delete: if canAccessStore(lojaId) && (hasAuditPermission('excluir') || hasAuditPermission('finalizar') || hasAuditPermission('importar') || hasAuditPermission('editar'));
       }
-      match /dt_auditoria_imports/{docId} { allow read: if canAccessStore(lojaId); allow write: if canAccessStore(lojaId) && hasPermission('auditoria','editar'); }
+      match /dt_auditoria_imports/{docId} {
+        allow read: if canAccessStore(lojaId) && canViewAudit();
+        allow create, update, delete: if canAccessStore(lojaId) && (hasAuditPermission('importar') || hasAuditPermission('editar'));
+      }
       match /dt_bloqueios_recontagem/{docId} {
         allow read: if canAccessStore(lojaId);
         allow write: if canAccessStore(lojaId) && (hasPermission('recontagens','editar') || (canUseColetor() && request.resource.data.operador_uid == request.auth.uid && inventoryOpen(lojaId,request.resource.data)));
@@ -245,7 +305,9 @@ service cloud.firestore {
 
     match /dt_auditorias/{docId} {
       allow read: if admin() || collectorCanReadOperationalDoc(resource.data);
-      allow create, update, delete: if admin() && hasPermission('auditoria','editar');
+      allow create: if admin() && hasAuditPermission('criar');
+      allow update: if admin() && (hasAuditPermission('editar') || hasAuditPermission('importar') || hasAuditPermission('publicar') || hasAuditPermission('finalizar'));
+      allow delete: if admin() && hasAuditPermission('excluir');
       match /{subcolecao}/{subId} {
         allow read: if admin() && subcolecao in ['base_chunks','enderecos','ocorrencias'];
         allow write: if admin() && hasPermission('auditoria','editar') && subcolecao in ['base_chunks','enderecos','ocorrencias'];
@@ -255,7 +317,8 @@ service cloud.firestore {
     // Compatibilidade com versões antigas do coletor que consultam metadados na raiz.
     match /dt_auditorias_coletor/{docId} {
       allow read: if collectorCanReadOperationalDoc(resource.data) || canUseAnalista();
-      allow write: if hasPermission('auditoria','editar');
+      allow create, update: if hasAuditPermission('publicar') || hasAuditPermission('editar');
+      allow delete: if hasAuditPermission('excluir') || hasAuditPermission('finalizar') || hasAuditPermission('importar') || hasAuditPermission('editar');
     }
 
     match /dt_inventarios/{docId} {

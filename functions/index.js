@@ -290,10 +290,22 @@ function lojaAutorizada(acesso, lojaId) {
   );
 }
 
-function podeEditarAuditoria(acesso) {
+function temPermissaoAuditoria(acesso, operacao) {
   return administrador(acesso) || (
-    acessoAtivo(acesso) && acesso?.permissoes?.auditoria?.editar === true
+    acessoAtivo(acesso) && acesso?.permissoes?.auditoria?.[operacao] === true
   );
+}
+
+function podeEditarAuditoria(acesso) {
+  return temPermissaoAuditoria(acesso, 'editar');
+}
+
+function podeFinalizarAuditoria(acesso) {
+  return temPermissaoAuditoria(acesso, 'finalizar') || podeEditarAuditoria(acesso);
+}
+
+function podeExcluirAuditoria(acesso) {
+  return temPermissaoAuditoria(acesso, 'excluir');
 }
 
 function podeUsarColetor(acesso) {
@@ -403,7 +415,7 @@ exports.finalizarAuditoria = functions.region('southamerica-east1')
     const lojaId = textoSeguro(data?.lojaId, 120);
     const auditoriaId = textoSeguro(data?.auditoriaId, 180);
     const acesso = await acessoSolicitante(context);
-    if (!lojaAutorizada(acesso, lojaId) || !podeEditarAuditoria(acesso)) {
+    if (!lojaAutorizada(acesso, lojaId) || !podeFinalizarAuditoria(acesso)) {
       throw new functions.https.HttpsError('permission-denied', 'Sem permissão para finalizar.');
     }
     const refs = refsAuditoria(lojaId, auditoriaId);
@@ -450,7 +462,7 @@ exports.excluirAuditoriaCompleta = functions.region('southamerica-east1')
     const lojaId = textoSeguro(data?.lojaId, 120);
     const auditoriaId = textoSeguro(data?.auditoriaId, 180);
     const acesso = await acessoSolicitante(context);
-    if (!lojaAutorizada(acesso, lojaId) || !podeEditarAuditoria(acesso)) {
+    if (!lojaAutorizada(acesso, lojaId) || !podeExcluirAuditoria(acesso)) {
       throw new functions.https.HttpsError('permission-denied', 'Sem permissão para excluir.');
     }
     const refs = refsAuditoria(lojaId, auditoriaId);
@@ -461,6 +473,12 @@ exports.excluirAuditoriaCompleta = functions.region('southamerica-east1')
     try {
       for (const nome of subcolecoes) apagados += await apagarConsultaEmLotes(refs.auditoria.collection(nome));
       await refs.auditoria.delete();
+      await db.collection('lojas').doc(lojaId).collection('dt_auditorias_coletor').doc(auditoriaId).delete().catch(error => {
+        if (error?.code !== 5 && error?.code !== 'not-found') throw error;
+      });
+      await db.collection('dt_auditorias_coletor').doc(auditoriaId).delete().catch(error => {
+        if (error?.code !== 5 && error?.code !== 'not-found') throw error;
+      });
     } catch (error) {
       await refs.auditoria.set({status: 'ERRO_EXCLUSAO', exclusaoErro: String(error.message || error).slice(0, 500)}, {merge: true});
       throw new functions.https.HttpsError('internal', 'A exclusão não foi concluída; a auditoria foi preservada para nova tentativa.');

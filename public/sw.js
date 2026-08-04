@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260804-menu3pts-v244';
+var CACHE='dt-inventario-20260804-permissoes-v245';
 var PRECACHE=[
   '/',
   '/index.html',

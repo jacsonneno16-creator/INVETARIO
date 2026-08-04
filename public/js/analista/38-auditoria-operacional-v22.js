@@ -718,7 +718,6 @@
     try{
       encerrarListener();
       await callable('excluirAuditoriaCompleta')({lojaId:loja(),auditoriaId:id});
-      await DB().collection('dt_auditorias_coletor').doc(id).delete().catch(function(e){if(e.code!=='not-found')throw e;});
       auditoriaAtual=''; metaAtual=null; itensAtuais=[]; itensBrutosAtuais=[]; assinaturaAnterior='';
       if(sel) sel.value='';
       await popularSelect();renderizar();atualizarAcoesAuditoria();

@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-v239-expand-enderecos-20260802-1';
+var CACHE='dt-inventario-20260804-permissoes-v245';
 var PRECACHE=[
   '/',
   '/index.html',
