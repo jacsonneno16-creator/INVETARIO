@@ -108,14 +108,19 @@
       id: String(a.auditoria_id || a.id || '').trim(),
       auditoria_nome: a.nome || a.auditoria_nome || a.id || '',
       total_registros: Number(a.totalItens || a.total_registros || 0),
-      lojas: Array.isArray(a.lojas) ? a.lojas : [],
+      lojas: Array.isArray(a.lojas) && a.lojas.length
+        ? a.lojas.map(String).filter(Boolean)
+        : [a.loja || a.loja_id || a.lojaId || ''].map(String).filter(Boolean),
       importado_em: a.importado_em || '',
       liberada: _statusAuditoriaDisponivel(a.status) || a.liberada === true || a.liberada_coletor === true,
       tipoAuditoria: a.tipoAuditoria || a.tipo_auditoria || '',
       disponivel_coletor: a.disponivel_coletor !== false
     })).filter(a => a.id && a.disponivel_coletor !== false && a.liberada);
   }
-  window._extrairLojasDaAuditoria = function(aud){ return Array.isArray(aud?.lojas) ? aud.lojas : []; };
+  window._extrairLojasDaAuditoria = function(aud){
+    if (Array.isArray(aud?.lojas) && aud.lojas.length) return aud.lojas.map(String).filter(Boolean);
+    return [aud?.loja, aud?.loja_id, aud?.lojaId].map(v => String(v || '').trim()).filter(Boolean);
+  };
 
   function _normalizarEnderecoGeral(valor){
     return window.DTEnderecos?.chave(valor) || String(valor == null ? '' : valor).trim().toUpperCase();
@@ -177,8 +182,12 @@
       return locais;
     } catch (erro) {
       console.warn('[AUDITORIA] Falha ao carregar Base Geral de Endereços:', erro);
-      if((erro && (erro.code==='permission-denied' || /permission/i.test(erro.message||''))) || !AUTH.currentUser){
-        throw new Error('Sessão expirada ou sem permissão no Firebase. Volte ao login e entre novamente.');
+      // Permission-denied não significa necessariamente sessão expirada. Em
+      // ambiente multiloja costuma indicar loja incorreta ou regra específica.
+      // Só classificar como sessão expirada quando o Firebase realmente não
+      // possui usuário autenticado; caso contrário, aproveitar o cache local.
+      if(!window.AUTH || !AUTH.currentUser){
+        throw new Error('Sessão não confirmada pelo Firebase. Entre novamente no coletor.');
       }
       try {
         let cache = await window.DTAuditoriaStorage.cacheGet(cacheKey);
@@ -188,7 +197,9 @@
         APP.locaisAtivos = APP.locaisAtivos || new Set();
       }
       APP._locaisDoFirebase = false;
-      return APP.locaisAtivos;
+      if (APP.locaisAtivos.size) return APP.locaisAtivos;
+      const detalhe = erro && (erro.code || erro.message) ? String(erro.code || erro.message) : 'erro desconhecido';
+      throw new Error('Não foi possível acessar a Base Geral de Endereços da loja selecionada (' + detalhe + ').');
     }
   }
   window._carregarBaseGeralEnderecosAuditoria = _carregarBaseGeralEnderecosAuditoria;
@@ -200,14 +211,25 @@
       const cache = await window.DTAuditoriaStorage.cacheGet(cacheKey);
       if(Array.isArray(cache) && cache.length) return cache;
     }
-    const audRef = FS.collection(FCOL.auditorias).doc(auditoriaId);
-    const snap = await audRef.collection('itens_coletor').where('disponivel_coletor','==',true).get();
-    const pendentes = snap.docs.map(d => ({id:d.id,...d.data()}));
-    // A base cega contém somente endereço e identificador opaco. Nenhum código,
-    // produto ou critério esperado é persistido no dispositivo.
-    APP.auditoriaProdutosMap = {};
-    try { await window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes); } catch(e){ console.warn("[Erro tratado]", e); }
-    return pendentes;
+    try {
+      const audRef = FS.collection(FCOL.auditorias).doc(auditoriaId);
+      const snap = await audRef.collection('itens_coletor').where('disponivel_coletor','==',true).get();
+      const pendentes = snap.docs.map(d => ({id:d.id,...d.data()}));
+      // A base cega contém somente endereço e identificador opaco. Nenhum código,
+      // produto ou critério esperado é persistido no dispositivo.
+      APP.auditoriaProdutosMap = {};
+      try { await window.DTAuditoriaStorage.cacheSet(cacheKey, pendentes); } catch(e){ console.warn("[Erro tratado]", e); }
+      return pendentes;
+    } catch (erro) {
+      const cache = await window.DTAuditoriaStorage.cacheGet(cacheKey).catch(function(){ return null; });
+      if (Array.isArray(cache)) {
+        console.warn('[AUDITORIA] Itens online indisponíveis; usando cache local:', erro);
+        return cache;
+      }
+      if (!window.AUTH || !AUTH.currentUser) throw new Error('Sessão não confirmada pelo Firebase. Entre novamente no coletor.');
+      const detalhe = erro && (erro.code || erro.message) ? String(erro.code || erro.message) : 'erro desconhecido';
+      throw new Error('Não foi possível acessar os itens desta auditoria na loja selecionada (' + detalhe + ').');
+    }
   }
   window._carregarEnderecoAuditoria = _carregarEnderecoAuditoria;
 

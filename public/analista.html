@@ -1079,13 +1079,13 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div><!-- /page-rastreabilidade -->
 <!-- ══ OPERADORES ══ -->
-<div class="page" id="page-operadores">
-<div class="sec-hdr">
-<div>
+<div class="page admin-management-page" id="page-operadores">
+<div class="sec-hdr admin-management-header">
+<div class="admin-management-heading">
 <div class="sec-title">🔑 Configuração de Usuários</div>
 <div class="sec-sub">Cadastre usuários e configure seus acessos e permissões</div>
 </div>
-<div id="op-header-actions" style="display:flex;gap:8px">
+<div id="op-header-actions" class="admin-management-actions">
 <button class="btn btn-ghost btn-sm" id="op-btn-atualizar" onclick="listarOperadores();opVerificarMinhaConta()">🔄 Atualizar</button>
 <button class="btn btn-success btn-sm" id="op-btn-criar-usuario" onclick="opAbrirModalCriar()">➕ Criar Usuário</button>
 </div>
@@ -1206,14 +1206,14 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div>
 <!-- Lista de operadores -->
-<div class="tc">
-<div class="tc-header" style="border-left-color:var(--green-light);display:flex;align-items:center;justify-content:space-between">
+<div class="tc admin-management-card">
+<div class="tc-header admin-list-header">
 <div class="tc-title">👥 Usuários Cadastrados e Permissões</div>
-<div style="display:flex;gap:8px;align-items:center">
-<input id="op-busca" oninput="opFiltrarLista()" placeholder="🔍 Buscar..." style="padding:5px 10px;border:1px solid var(--border);border-radius:8px;font-size:.78rem;background:var(--surface-2);color:var(--text);outline:none;width:160px">
+<div class="admin-list-tools">
+<input class="admin-search-input" id="op-busca" oninput="opFiltrarLista()" placeholder="🔍 Buscar usuário...">
 </input></div>
 </div>
-<div id="op-lista-wrap" style="padding:16px">
+<div id="op-lista-wrap" class="admin-list-body">
 <div class="empty"><div class="empty-icon">🔑</div><div class="empty-title">Carregando operadores…</div></div>
 </div>
 </div>
@@ -1367,23 +1367,23 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 <!-- ══ IMPORTAR / EXPORTAR ══ -->
 
-<div class="page" id="page-lojas">
-  <div class="sec-hdr" style="margin-bottom:14px">
-    <div>
+<div class="page admin-management-page" id="page-lojas">
+  <div class="sec-hdr admin-management-header">
+    <div class="admin-management-heading">
       <div class="sec-title">🏪 Gestão de Lojas</div>
       <div class="sec-sub">Cadastre, edite e selecione os ambientes das lojas</div>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+    <div class="admin-management-actions">
       <button class="btn btn-ghost btn-sm" onclick="renderGestaoLojas()">🔄 Atualizar</button>
       <button class="btn btn-primary btn-sm" onclick="abrirCadastroLoja()">＋ Nova loja</button>
     </div>
   </div>
-  <div class="tc lojas-gestao-tabela">
-    <div class="tc-header">
+  <div class="tc lojas-gestao-tabela admin-management-card">
+    <div class="tc-header admin-list-header">
       <div class="tc-title">Lojas cadastradas</div>
       <button class="btn btn-ghost btn-sm" onclick="migrarDadosLegadosParaLojaAtual()" title="Usar somente quando houver dados antigos fora das lojas">📦 Migrar dados antigos</button>
     </div>
-    <div id="lojas-lista"></div>
+    <div id="lojas-lista" class="admin-list-body"></div>
   </div>
 </div>
 <div class="page" id="page-importar-exportar">
@@ -2396,7 +2396,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260803-v238-edicao-direta"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260803-topo-acoes-v1"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260731-234-auditoria"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260731-234-auditoria"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260802-usuarios-lojas-v2"></script><script src="js/analista/app-controller.js?v=20260731-234-auditoria"></script>
+<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260804-v241-layout-admin"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260804-v241-layout-admin"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260731-234-auditoria"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260731-234-auditoria"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260802-usuarios-lojas-v2"></script><script src="js/analista/app-controller.js?v=20260731-234-auditoria"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}
@@ -2472,7 +2472,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   window.addEventListener('DOMContentLoaded',function(){obs.observe(document.body,{childList:true,subtree:true});obs.takeRecords();['cont-table-wrap','rec-table-wrap','div-table-wrap'].forEach(function(id){var el=document.getElementById(id);if(el) ativar(el);});});
 })();
 </script>
-<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v238 · 20260803.3</div>
+<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v241 · 20260804.1</div>
 
 <style id="fix-admin-pages-top-v237">
 /* Força Usuários e Gestão de Lojas a começarem no topo da área útil. */

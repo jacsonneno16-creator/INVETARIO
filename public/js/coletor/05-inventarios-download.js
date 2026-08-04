@@ -182,7 +182,7 @@ function renderListaInventarios(lista) {
     return;
   }
   el.innerHTML = lista.map(inv => `
-    <div class="inv-card" onclick="selecionarInventario('${inv.id}','inventario')">
+    <button type="button" class="inv-card inv-card-menu" data-inventario-id="${escHTML(inv.id)}" style="width:100%;text-align:left">
       <div class="inv-card-code">${escHTML(inv.codigo || inv.id)}</div>
       <div class="inv-card-name">${escHTML(inv.nome)}</div>
       <div class="inv-card-meta">
@@ -191,9 +191,32 @@ function renderListaInventarios(lista) {
         <span class="badge badge-muted">${inv.data_inicio || ''}</span>
         ${inv.total_enderecos ? `<span class="badge badge-muted">📍 ${inv.total_enderecos} end.</span>` : ''}
       </div>
-    </div>
+    </button>
   `).join('');
 }
+
+// Clique delegado evita onclick inline quebrado por IDs especiais e garante
+// que erros assíncronos sejam exibidos ao operador.
+document.addEventListener('click', function(event) {
+  const card = event.target.closest('.inv-card-menu[data-inventario-id]');
+  const lista = document.getElementById('inv-list');
+  if (!card || !lista || !lista.contains(card)) return;
+  event.preventDefault();
+  if (card.disabled || APP._inventarioAbrindo) return;
+  const inventarioId = String(card.dataset.inventarioId || '').trim();
+  if (!inventarioId) { toast('Não foi possível identificar este inventário. Atualize a lista e tente novamente.', 'e'); return; }
+  card.disabled = true;
+  card.setAttribute('aria-busy', 'true');
+  Promise.resolve(selecionarInventario(inventarioId, 'inventario'))
+    .catch(function(error) {
+      console.error('[Inventário] Erro ao abrir cartão:', error);
+      toast('Erro ao abrir inventário: ' + (error?.message || error), 'e');
+    })
+    .finally(function() {
+      card.disabled = false;
+      card.removeAttribute('aria-busy');
+    });
+});
 
 // ─── Versão/timestamp da base no Firestore ──────────────────
 function _invBaseVer(docData) {
@@ -292,7 +315,7 @@ async function selecionarInventario(id, modo = 'inventario') {
       }
 
       APP.proximoCapa   = calcularProximoCapa();
-      _aplicarInventario(inv, APP.modoPendente || 'inventario');
+      await _aplicarInventario(inv, APP.modoPendente || 'inventario');
       toast(`✅ Base local carregada (${baseLocal.length} registros)`, 's');
       return;
     }
