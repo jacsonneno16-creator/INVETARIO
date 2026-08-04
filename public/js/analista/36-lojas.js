@@ -12,8 +12,8 @@
       const linhas=lojas.map(l=>`<tr>
         <td><div style="display:flex;align-items:center;gap:10px"><div class="u-avatar" style="width:32px;height:32px;font-size:.78rem;flex:0 0 auto">🏪</div><div><div style="font-weight:750">${esc(l.nome||l.id)}</div><div class="mono" style="font-size:.66rem;color:var(--muted)">${esc(l.codigo||l.id)}</div></div></div></td>
         <td>${esc(l.responsavel||'—')}</td>
-        <td>${l.ativa===false?'<span class="badge badge-red">Inativa</span>':'<span class="badge badge-green">Ativa</span>'}</td>
-        <td>${l.id===ativa?'<span class="badge badge-blue">Em uso</span>':'<span style="color:var(--muted);font-size:.74rem">Disponível</span>'}</td>
+        <td>${l.ativa===false?'<span class="badge b-red">Inativa</span>':'<span class="badge b-green">Ativa</span>'}</td>
+        <td>${l.id===ativa?'<span class="badge b-blue">Em uso</span>':'<span style="color:var(--muted);font-size:.74rem">Disponível</span>'}</td>
         <td style="text-align:center"><button class="acao-lapis" type="button" title="Configurar loja" aria-label="Configurar loja" data-loja-editar="${esc(l.id)}">✏️</button></td>
       </tr>`).join('');
       const tabela=linhas?`<div class="tbl-wrap lojas-lista-linhas"><table><thead><tr><th>Loja</th><th>Responsável</th><th>Status</th><th>Ambiente</th><th style="width:74px;text-align:center">Ações</th></tr></thead><tbody>${linhas}</tbody></table></div>`:'<div class="empty"><div class="empty-title">Nenhuma loja cadastrada</div></div>';

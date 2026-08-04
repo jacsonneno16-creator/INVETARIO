@@ -15,7 +15,10 @@ const PAGE_NAMES = {
   enderecos:        'Endereços do Armazém',
   produtos:         'Base de Produtos',
   coletores:        'Coletores / Operadores',
+  operadores:       'Usuários',
+  lojas:            'Gestão de Lojas',
   auditoria:        'Auditoria',
+  rastreabilidade:  'Rastreabilidade',
   'importar-exportar': 'Importar / Exportar',
 };
 
