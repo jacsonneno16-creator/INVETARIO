@@ -257,7 +257,7 @@ async function selecionarInventario(id, modo = 'inventario') {
     // avisar claramente em vez de deixar o clique "sem reação". Abrir um
     // inventário nunca deve apagar o operador nem forçar logout por causa
     // desse estado transitório — apenas pedir para tentar de novo.
-    if (window.AUTH && !AUTH.currentUser) {
+    if ((window.AUTH || (typeof getDTAuth === 'function' ? getDTAuth() : null)) && !(window.AUTH || getDTAuth()).currentUser) {
       toast('Não foi possível confirmar a sessão agora. Aguarde alguns segundos e tente abrir o inventário novamente.', 'e');
       return;
     }

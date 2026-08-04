@@ -63,6 +63,12 @@
 
 
   const AUDITORIA_ABERTURA_TIMEOUT_MS = 10000;
+  function _usuarioFirebaseAuditoria(){
+    try {
+      const auth = window.AUTH || (typeof getDTAuth === 'function' ? getDTAuth() : null);
+      return auth && auth.currentUser ? auth.currentUser : null;
+    } catch (_) { return null; }
+  }
   function _comTimeoutAberturaAuditoria(promise, ms, rotulo){
     return Promise.race([
       Promise.resolve(promise),
@@ -186,7 +192,7 @@
       // ambiente multiloja costuma indicar loja incorreta ou regra específica.
       // Só classificar como sessão expirada quando o Firebase realmente não
       // possui usuário autenticado; caso contrário, aproveitar o cache local.
-      if(!window.AUTH || !AUTH.currentUser){
+      if(!_usuarioFirebaseAuditoria()){
         throw new Error('Sessão não confirmada pelo Firebase. Entre novamente no coletor.');
       }
       try {
@@ -226,7 +232,7 @@
         console.warn('[AUDITORIA] Itens online indisponíveis; usando cache local:', erro);
         return cache;
       }
-      if (!window.AUTH || !AUTH.currentUser) throw new Error('Sessão não confirmada pelo Firebase. Entre novamente no coletor.');
+      if (!_usuarioFirebaseAuditoria()) throw new Error('Sessão não confirmada pelo Firebase. Entre novamente no coletor.');
       const detalhe = erro && (erro.code || erro.message) ? String(erro.code || erro.message) : 'erro desconhecido';
       throw new Error('Não foi possível acessar os itens desta auditoria na loja selecionada (' + detalhe + ').');
     }
@@ -370,7 +376,7 @@
     if(window.DT_AUTH_USER_READY){
       try{ await window.DT_AUTH_USER_READY; }catch(_){ console.warn("[Erro tratado]", _); }
     }
-    if(!window.AUTH || !AUTH.currentUser){
+    if(!_usuarioFirebaseAuditoria()){
       // AUTH.currentUser pode ficar momentaneamente nulo enquanto o Firebase
       // restaura/renova a sessão. Abrir uma auditoria nunca deve apagar o
       // operador nem forçar logout do sistema por causa desse estado transitório.

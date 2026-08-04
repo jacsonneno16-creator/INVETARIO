@@ -5,6 +5,8 @@ const FIREBASE_CFG = window.DT_FIREBASE_CFG;
 getDTFirebaseApp();
 const FS   = getDTFirestore();
 const AUTH = getDTAuth();
+// Expor a instância para módulos carregados em outros escopos.
+window.AUTH = AUTH;
 const FCOL = window.DT_FCOL;
 
 // Mantém a sessão de autenticação no aparelho. Nunca executa logout automático na abertura.
