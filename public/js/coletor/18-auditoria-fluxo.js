@@ -33,7 +33,8 @@
   function operadorNome(){ return APP.operador?.name || APP.operador?.nome || ''; }
   function operadorUsuario(){ return APP.operador?.email || APP.operador?.usuario || APP.operador?.login || ''; }
   function lojaAtual(){
-    return window.getDTLojaAtiva?.() || APP.lojaAtual?.id || APP.lojaId || APP.inventario?.loja || APP.lojaAtual?.nome || '';
+    const meta=(APP.auditoriasMenu||[]).find(function(x){return texto(x&&x.id)===texto(auditoriaId());})||{};
+    return texto(APP.inventario?.loja_id || APP.inventario?.lojaId || meta.loja_id || meta.lojaId || window.getDTLojaAtiva?.() || APP.lojaAtual?.id || APP.lojaId || APP.inventario?.loja);
   }
   function auditoriaId(){ return APP.inventario?.auditoria_id || APP.inventario?.id || ''; }
 
@@ -269,6 +270,7 @@
       auditoriaId:audId,
       subcolecao:subcolecao||'enderecos',
       payload:payload,
+      lojaId:lojaAtual(),
       criadoEm:agoraISO()
     };
     await window.DTAuditoriaStorage.filaPut(registro);
@@ -347,7 +349,8 @@
         try {
           const ocorrencia=(x.subcolecao||'enderecos')==='ocorrencias';
           const enviar=firebase.app().functions('southamerica-east1').httpsCallable(ocorrencia?'registrarOcorrenciaAuditoria':'registrarResultadoAuditoria');
-          const lojaId=texto(x.payload&&x.payload.loja)||texto(window.getDTLojaAtiva&&window.getDTLojaAtiva());
+          const metaAud=(APP.auditoriasMenu||[]).find(function(a){return texto(a&&a.id)===texto(x.auditoriaId);})||{};
+          const lojaId=texto(x.lojaId)||texto(x.payload&&x.payload.loja_id)||texto(x.payload&&x.payload.lojaId)||texto(metaAud.loja_id||metaAud.lojaId)||texto(x.payload&&x.payload.loja)||texto(window.getDTLojaAtiva&&window.getDTLojaAtiva());
           const dados=ocorrencia?
             {lojaId:lojaId,auditoriaId:x.auditoriaId,ocorrenciaId:x.docId,endereco:x.payload.endereco,dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',dispositivoId:x.payload.dispositivo_id||''}:
             {lojaId:lojaId,auditoriaId:x.auditoriaId,itemId:x.docId,endereco:x.payload.endereco||'',dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',vazio:x.payload.vazio===true,dispositivoId:x.payload.dispositivo_id||''};

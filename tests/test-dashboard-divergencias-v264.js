@@ -1,0 +1,14 @@
+'use strict';
+const fs=require('fs');
+const assert=require('assert');
+const root=__dirname+'/..';
+const dash=fs.readFileSync(root+'/public/js/analista/22-dashboard-render-sync.js','utf8');
+const html=fs.readFileSync(root+'/public/analista.html','utf8');
+const v254=fs.readFileSync(root+'/public/js/analista/49-quatro-telas-v254.js','utf8');
+assert(dash.includes("Auditorias em aberto':'Inventários em aberto"), 'rotulo dinamico principal ausente');
+assert(dash.includes('function _dashDivergenciasProduto'), 'agrupamento de divergencia por produto ausente');
+assert(dash.includes('📦 Produtos com mais divergências'), 'grafico/ranking de produtos ausente');
+assert(dash.includes("['Auditorias em aberto','Endereços previstos'"), 'KPI de auditorias em aberto ausente');
+assert(v254.includes("operacoesLabel=aud?'Auditorias em aberto':'Inventários em aberto'"), 'layout v254 nao acompanha modo');
+assert(html.includes('20260805-dashboard-v264'), 'cache bust v264 ausente no analista');
+console.log('OK test-dashboard-divergencias-v264');

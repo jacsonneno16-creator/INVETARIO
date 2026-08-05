@@ -1,0 +1,13 @@
+const fs=require('fs'); const assert=require('assert');
+const root=__dirname+'/../public/js/coletor/';
+const auth=fs.readFileSync(root+'04-auth-login.js','utf8');
+const end=fs.readFileSync(root+'07-etapa-endereco.js','utf8');
+const sync=fs.readFileSync(root+'02-sync-dispositivo.js','utf8');
+const aud=fs.readFileSync(root+'18-auditoria-fluxo.js','utf8');
+assert(!auth.includes('O turno deste aparelho já foi encerrado'), 'login não deve exibir alerta de turno');
+assert(end.includes('if (!ehAuditoria && APP.turnoEncerrado)'), 'turno só bloqueia inventário');
+assert(sync.includes("if (APP.modoAcesso !== 'auditoria') await verificarInventarioAtivo()"), 'reconexão não valida auditoria como inventário');
+assert(sync.includes('window.sincronizarFilaAuditoria'), 'reconexão deve enviar auditorias');
+assert(aud.includes('lojaId:lojaAtual()'), 'fila deve persistir loja da auditoria');
+assert(aud.includes('const lojaId=texto(x.lojaId)'), 'sync deve priorizar loja persistida');
+console.log('OK v266');

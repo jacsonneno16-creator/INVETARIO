@@ -371,19 +371,20 @@ function confirmarEndereco() {
   }
 
   // ── Bloqueio por status do inventário ──
+  const ehAuditoria = APP.modoAcesso === 'auditoria' || APP.inventario?.tipo === 'auditoria' || !!APP.inventario?.auditoria_id;
   const statusInv = (APP.inventario?.status || '').toUpperCase();
-  if (statusInv === 'PAUSADO') {
+  if (!ehAuditoria && statusInv === 'PAUSADO') {
     toast('⏸ Inventário pausado pelo analista. Contagens bloqueadas.', 'w');
     beepErr(); return;
   }
-  if (statusInv === 'FECHADO' || statusInv === 'CANCELADO') {
-    toast('🚫 Inventário encerrado. Retornando...', 'e');
-    setTimeout(() => voltarInventarios(), 1500);
+  if (!ehAuditoria && (statusInv === 'FECHADO' || statusInv === 'CANCELADO')) {
+    const fbStatus = document.getElementById('fb-endereco');
+    if (fbStatus) fbStatus.innerHTML = '<div class="fb warn">🔒 Este inventário está encerrado neste coletor.</div>';
     beepErr(); return;
   }
 
   // ── Bloqueio por turno encerrado ──
-  if (APP.turnoEncerrado) {
+  if (!ehAuditoria && APP.turnoEncerrado) {
     toast('🔒 Turno encerrado. Não é possível realizar novas contagens.', 'w');
     beepErr(); return;
   }

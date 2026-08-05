@@ -84,9 +84,6 @@ function doCriarConta() {
         const el = document.getElementById(id); if (el) el.textContent = displayName;
       });
       toast('✅ Conta criada! Bem-vindo, ' + displayName + '!', 's');
-      if (APP.turnoEncerrado) {
-        toast('🔒 O turno deste aparelho já foi encerrado. Fale com o analista para reabrir antes de fazer novas contagens.', 'w');
-      }
       goScreen('mode');
       carregarInventarios();
       carregarAuditoriasMenu();
@@ -348,9 +345,6 @@ async function doLogin() {
       carregarAuditoriasMenu();
       iniciarSyncBackground();
       toast('Bem-vindo, ' + name + '!', 's');
-      if (APP.turnoEncerrado) {
-        toast('🔒 O turno deste aparelho já foi encerrado. Fale com o analista para reabrir antes de fazer novas contagens.', 'w');
-      }
     })
     .catch(err => {
       clearTimeout(_tid);

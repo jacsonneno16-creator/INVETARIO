@@ -472,16 +472,16 @@ function iniciarSyncBackground() {
   removerListenersConectividade();
   _onColetorOnline = async function () {
     atualizarBarraStatus();
-    // ⚠️ Verificar inventário ANTES de enviar a fila.
-    // Se o analista fechou o inventário enquanto o operador estava offline,
-    // as contagens pendentes não devem ser enviadas (evita poluir inventário fechado).
-    await verificarInventarioAtivo();
-    if (APP.inventario) {
-      const sincronizar = typeof window.sincronizarTudoEmSegundoPlano === 'function'
-        ? window.sincronizarTudoEmSegundoPlano('online')
-        : enviarFilaPendente();
-      Promise.resolve(sincronizar).catch((err) => console.warn('[Sync] Falha ao enviar filas após reconexão:', err));
-    }
+    // Auditoria é independente de turno e de inventário encerrado. Ao voltar a
+    // internet, envia a fila em segundo plano sem trocar tela nem pedir retorno.
+    if (APP.modoAcesso !== 'auditoria') await verificarInventarioAtivo();
+    const sincronizar = typeof window.sincronizarTudoEmSegundoPlano === 'function'
+      ? window.sincronizarTudoEmSegundoPlano('online')
+      : Promise.all([
+          typeof enviarFilaPendente === 'function' ? enviarFilaPendente() : Promise.resolve(),
+          typeof window.sincronizarFilaAuditoria === 'function' ? window.sincronizarFilaAuditoria() : Promise.resolve()
+        ]);
+    Promise.resolve(sincronizar).catch((err) => console.warn('[Sync] Falha ao enviar filas após reconexão:', err));
   };
   _onColetorOffline = function () {
     atualizarBarraStatus();
@@ -561,10 +561,9 @@ function iniciarListenerInventarios() {
       }
       // Se operador está dentro de um inventário, verifica se ainda está ativo
       if (APP.modoAcesso !== 'auditoria' && APP.inventario && !idsAtivos.includes(APP.inventario.id)) {
-        toast('⚠️ Este inventário foi encerrado. Retornando à seleção...', 'w');
-        APP.inventario = null;
-        APP.base       = [];
-        setTimeout(() => voltarInventarios(), 2200);
+        APP.inventario.status = 'FECHADO';
+        APP.inventario._encerradoNoServidor = true;
+        renderListaInventarios(lista);
       }
       dbg('[Poll] inventários:', lista.length, 'ativos');
     } catch(e) {
@@ -584,10 +583,9 @@ async function verificarInventarioAtivo() {
     const doc = await FS.collection(FCOL.inventarios).doc(APP.inventario.id).get();
     const status = doc.data()?.status;
     if (!doc.exists || status === 'FECHADO' || status === 'Fechado' || status === 'CANCELADO') {
-      toast('⚠️ Este inventário foi encerrado ou excluído. Retornando à seleção...', 'w');
-      APP.inventario = null;
-      APP.base       = [];
-      setTimeout(() => voltarInventarios(), 2200);
+      APP.inventario.status = 'FECHADO';
+      APP.inventario._encerradoNoServidor = true;
+      atualizarBarraStatus();
     }
   } catch(e) {
     console.warn('[verif] Não foi possível verificar inventário:', e.message);

@@ -22,7 +22,7 @@ function ensureDashboard(){
   var recent=qs('#dash-recentes-card',p);if(recent)recent.parentNode.insertBefore(panel,recent);else p.appendChild(panel);
  }
  var ruas=parseProgress(qs('#dash-ruas-wrap',p),5);
- var inv=val('kd-inventarios'),end=val('kd-enderecos'),cont=val('kd-end-contados'),pend=val('kd-pendencias'),div=val('kd-diverg'),ops=val('kd-operadores');
+ var modo=(document.getElementById('dash-mode')||{}).value||'inventario';var operacoesLabel=modo==='auditoria'?'Auditorias em aberto':'Inventários em aberto';var inv=val('kd-inventarios'),end=val('kd-enderecos'),cont=val('kd-end-contados'),pend=val('kd-pendencias'),div=val('kd-diverg'),ops=val('kd-operadores');
  panel.innerHTML=
   '<section class="dash-v252-panel"><div class="dash-v252-head"><span>🏆 Destaques por rua</span><small>progresso</small></div><div class="dash-v252-body">'+progressRows(ruas)+'</div></section>'+ 
   '<section class="dash-v252-panel"><div class="dash-v252-head"><span>⚡ Atividades recentes</span><small>tempo real</small></div><div class="dash-v252-body">'+
@@ -31,7 +31,7 @@ function ensureDashboard(){
     '<div class="dash-v252-activity"><i class="dash-v252-dot" style="background:#ef4444"></i><div><div class="dash-v252-a-title">'+safe(div)+' registros em conflito</div><div class="dash-v252-a-sub">Acesse Recontagem para analisar as diferenças.</div></div></div>'+ 
   '</div></section>'+ 
   '<section class="dash-v252-panel"><div class="dash-v252-head"><span>📋 Resumo geral</span></div><div class="dash-v252-body"><div class="dash-v252-summary">'+
-    '<div><b>'+safe(inv)+'</b><span>Inventários ativos</span></div><div><b>'+safe(end)+'</b><span>Endereços</span></div><div><b>'+safe(cont)+'</b><span>Contados</span></div><div><b>'+safe(ops)+'</b><span>Operadores ativos</span></div>'+ 
+    '<div><b>'+safe(inv)+'</b><span data-dashboard-operacoes-label>'+safe(operacoesLabel)+'</span></div><div><b>'+safe(end)+'</b><span>Endereços</span></div><div><b>'+safe(cont)+'</b><span>Contados</span></div><div><b>'+safe(ops)+'</b><span>Operadores ativos</span></div>'+ 
   '</div></div></section>';
 }
 function ensureAcomp(){

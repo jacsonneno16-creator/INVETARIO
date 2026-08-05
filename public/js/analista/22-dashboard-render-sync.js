@@ -29,6 +29,7 @@ function limparFiltrosDash() {
 let _dashCache = null;
 
 function renderDashboardInventario() {
+  _dashAtualizarRotulosModo('inventario');
   // ── Preencher selects de filtro ──
   const fInvEl   = document.getElementById('dash-finv');
   const fRuaEl   = document.getElementById('dash-frua');
@@ -538,6 +539,43 @@ function _dashInventoryColumns(items, onclickFn) {
   }).join('')}</div></div></div></div>`;
 }
 
+function _dashNomeProdutoDivergencia(d) {
+  const nome = d.produto_descricao || d.produtoDescricao || d.descricao_produto || d.descricao || d.produto_nome || d.produtoNome || d.produto || '';
+  const codigo = d.gtin || d.dun || d.codigo_barras || d.codigoBarras || d.produto_gtin || d.produtoGtin || '';
+  if (nome && codigo && !String(nome).includes(String(codigo))) return `${nome} · ${codigo}`;
+  return String(nome || codigo || 'Produto não identificado');
+}
+function _dashDivergenciasProduto(dc) {
+  const invId = dc?.filtros?.inventarioId || '';
+  const ruaFiltro = dc?.filtros?.rua || '';
+  const localFiltro = dc?.filtros?.local || '';
+  const ends = state().enderecosLista || [];
+  const endMap = new Map(ends.map(e => [String(e.endereco || ''), e]));
+  const lista = (state().divergencias || []).filter(d => {
+    const status = String(d.status || '').toUpperCase();
+    if (['CANCELADA','EXCLUIDA','ESTORNADA'].includes(status)) return false;
+    if (invId && String(d.inventario_id || d.inventarioId || '') !== String(invId)) return false;
+    if (ruaFiltro || localFiltro) {
+      const base = endMap.get(String(d.endereco || '')) || {};
+      const rua = base.rua || extrairRua(d.endereco) || 'SEM RUA';
+      const local = base.setor || base.local || 'SEM LOCAL';
+      if (ruaFiltro && String(rua) !== String(ruaFiltro)) return false;
+      if (localFiltro && String(local) !== String(localFiltro)) return false;
+    }
+    return true;
+  });
+  const agrupado = {};
+  lista.forEach(d => {
+    const nome = _dashNomeProdutoDivergencia(d);
+    agrupado[nome] = (agrupado[nome] || 0) + 1;
+  });
+  return Object.entries(agrupado).sort((a,b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR')).slice(0, 12);
+}
+function _dashProdutoDivergenciaBars(items) {
+  if (!items.length) return '<div class="empty" style="padding:24px"><div class="empty-icon">📦</div><div class="empty-title">Nenhuma divergência por produto</div><div class="empty-sub">Os produtos aparecerão aqui quando houver conflitos.</div></div>';
+  const max = Math.max(...items.map(x => x[1]), 1);
+  return items.map(([nome,total]) => `<button class="btn btn-ghost btn-sm" onclick="dashApplyProdutoDivergencia(${JSON.stringify(nome).replace(/"/g,'&quot;')})" style="width:100%;display:block;text-align:left;padding:10px 12px;margin-bottom:7px"><div style="display:flex;justify-content:space-between;gap:10px"><b title="${_dashSafe(nome)}" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_dashSafe(nome)}</b><span class="mono">${total}</span></div><div style="height:9px;background:var(--border);border-radius:99px;margin-top:7px;overflow:hidden"><div style="height:100%;width:${Math.max(4,Math.round(total/max*100))}%;background:linear-gradient(90deg,var(--danger),var(--orange));border-radius:99px"></div></div></button>`).join('');
+}
 function _renderDashboardCharts() {
   const wrap = document.getElementById('dash-charts-wrap');
   if (!wrap) return;
@@ -582,6 +620,8 @@ function _renderDashboardCharts() {
   ], r => r.operador_recontagem || r.operador_nome || r.operador || r.usuario || 'SEM OPERADOR');
 
   const pct = Math.max(0, Math.min(100, dc.pctGeral || 0));
+  const divergenciasProdutos = _dashDivergenciasProduto(dc);
+  const divergenciasProdutosHtml = _dashProdutoDivergenciaBars(divergenciasProdutos);
   const pendPct = 100 - pct;
 
   const ruasHtml = _dashInventoryColumns(ruas.map(r => ({...r,filterValue:r.label,label:`Rua ${r.label}`})), 'dashApplyRuaFilter');
@@ -689,6 +729,10 @@ function _renderDashboardCharts() {
         <div style="padding:14px;display:flex;flex-direction:column;gap:8px">${operadoresHtml}</div>
       </div>
     </div>
+    <div class="tc" style="margin-bottom:16px">
+      <div class="tc-header"><div><div class="tc-title">📦 Produtos com mais divergências</div><div class="sec-sub">Ranking de produtos em conflito no inventário e filtros selecionados</div></div></div>
+      <div style="padding:12px">${divergenciasProdutosHtml}</div>
+    </div>
     <div style="margin:4px 0 12px">
       <div style="font-size:1rem;font-weight:800;color:var(--text)">🔄 Análise de recontagens</div>
       <div class="sec-sub">Somente rodadas de recontagem executadas no filtro atual; não são somadas às contagens normais.</div>
@@ -754,6 +798,17 @@ function dashApplyOperadorFilter(operador) {
 
 // ───────────────────────────────────────────────────────────────────
 
+function dashApplyProdutoDivergencia(produto) {
+  goPage('divergencias', document.getElementById('nav-divergencias'));
+  const busca = document.getElementById('div-busca') || document.getElementById('diverg-busca');
+  if (busca) {
+    busca.value = produto || '';
+    busca.dispatchEvent(new Event('input', { bubbles:true }));
+  } else if (typeof renderDivergencias === 'function') {
+    renderDivergencias();
+  }
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // DASHBOARD DUPLO — INVENTÁRIO / AUDITORIA (v36)
 // ══════════════════════════════════════════════════════════════════════
@@ -777,11 +832,23 @@ function _dashSetKpi(idx,valor,rotulo,icone){
   const lbl=card?.querySelector('.kpi-lbl'); const ico=card?.querySelector('.kpi-icon');
   if(lbl)lbl.textContent=rotulo; if(ico)ico.textContent=icone;
 }
+function _dashAtualizarRotulosModo(modo){
+  const auditoria=modo==='auditoria';
+  const primeiro=document.getElementById('kd-inventarios')?.closest('.kpi');
+  const lbl=primeiro?.querySelector('.kpi-lbl');
+  const ico=primeiro?.querySelector('.kpi-icon');
+  if(lbl) lbl.textContent=auditoria?'Auditorias em aberto':'Inventários em aberto';
+  if(ico) ico.textContent=auditoria?'🔎':'📦';
+  document.querySelectorAll('[data-dashboard-operacoes-label]').forEach(el=>{
+    el.textContent=auditoria?'Auditorias em aberto':'Inventários em aberto';
+  });
+}
 function alterarModoDashboard(modo){
   document.querySelectorAll('.dash-inv-filter').forEach(e=>e.style.display=modo==='inventario'?'':'none');
   document.querySelectorAll('.dash-aud-filter').forEach(e=>e.style.display=modo==='auditoria'?'':'none');
   const novo=document.querySelector('#page-dashboard button[onclick="abrirNovoInventario()"]');
   if(novo) novo.style.display=modo==='inventario'?'':'none';
+  _dashAtualizarRotulosModo(modo);
   renderDashboard();
 }
 function renderDashboard(){
@@ -872,7 +939,7 @@ function _dashAudBars(arr,tipo,lim=10){if(!arr.length)return'<div class="empty" 
 function renderDashboardAuditoria(){
   const lista=_dashAudFiltrados(), total=lista.length, ok=lista.filter(i=>_dashAudStatus(i)==='OK').length, div=lista.filter(i=>_dashAudStatus(i)==='DIVERGENTE').length, vaz=lista.filter(i=>_dashAudStatus(i)==='ENDERECO_VAZIO').length, pend=lista.filter(i=>_dashAudStatus(i)==='PENDENTE').length, audit=total-pend, taxa=total?Math.round(audit/total*100):0, acur=audit?Math.round(ok/audit*100):0;
   const ops=new Set(lista.map(i=>i.operadorNome||i.operador_nome||i.operadorId||i.operador_id).filter(Boolean)).size;
-  [_dashAudMetas.length,total,audit,pend,ok,div,vaz,`${taxa}%`,ops].forEach((v,idx)=>_dashSetKpi(idx,v,['Auditorias','Endereços previstos','Endereços auditados','Endereços pendentes','Endereços corretos','Divergências','End. vazios','% executado','Operadores'][idx],['🔎','📍','✅','⏳','🎯','⚠️','📭','📊','👥'][idx]));
+  [_dashAudMetas.length,total,audit,pend,ok,div,vaz,`${taxa}%`,ops].forEach((v,idx)=>_dashSetKpi(idx,v,['Auditorias em aberto','Endereços previstos','Endereços auditados','Endereços pendentes','Endereços corretos','Divergências','End. vazios','% executado','Operadores'][idx],['🔎','📍','✅','⏳','🎯','⚠️','📭','📊','👥'][idx]));
   const diverg=lista.filter(i=>_dashAudStatus(i)==='DIVERGENTE');
   const prod=_dashAgrupar(diverg,i=>i.produtoEsperado||i.produto_esperado||i.dunEsperado||i.dun_esperado||i.dun||'SEM PRODUTO');
   const ruas=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).rua), niveis=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).nivel), cols=_dashAgrupar(diverg,i=>_dashEnderecoPartes(i.endereco).coluna);
