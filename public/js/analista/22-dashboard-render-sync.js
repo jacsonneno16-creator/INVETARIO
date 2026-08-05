@@ -891,9 +891,18 @@ async function carregarDashboardAuditoria(forcar){
     const selecionadas=escolhido?_dashAudMetas.filter(m=>m.id===escolhido):_dashAudMetas;
     const listas=await Promise.all(selecionadas.map(async m=>{
       const ref=m._ref || raw.collection('dt_auditorias').doc(m.id);
-      const [res,baseChunks]=await Promise.all([ref.collection('enderecos').get(),ref.collection('base_chunks').get().catch(()=>({docs:[]}))]);
-      const resultados=res.docs.map(d=>({id:d.id,...d.data()}));
-      const base=[];baseChunks.docs.forEach(d=>{const x=d.data()||{};(x.dados||x.itens||x.registros||[]).forEach((r,idx)=>base.push({id:String(r.id||r.docId||d.id+'_'+idx),...r}));});
+      const [enderecosSnap,resultadosSnap,baseChunks,espelhoSnap]=await Promise.all([
+        ref.collection('enderecos').get().catch(()=>({docs:[]})),
+        ref.collection('resultados').get().catch(()=>({docs:[]})),
+        ref.collection('base_chunks').get().catch(()=>({docs:[]})),
+        raw.collection('dt_auditoria_resultados').where('auditoriaId','==',m.id).get().catch(()=>({docs:[]}))
+      ]);
+      const resultadosMap=new Map();
+      resultadosSnap.docs.forEach(d=>resultadosMap.set(String(d.id),{id:d.id,...d.data()}));
+      espelhoSnap.docs.forEach(d=>{const x={id:d.id,...d.data()};const itemId=String(x.itemId||x.item_id||x.enderecoId||x.endereco_id||x.id||'');if(itemId)resultadosMap.set(itemId,{...(resultadosMap.get(itemId)||{}),...x,id:itemId});});
+      const resultados=[...resultadosMap.values()];
+      const base=enderecosSnap.docs.map(d=>({id:d.id,...d.data()}));
+      baseChunks.docs.forEach(d=>{const x=d.data()||{};(x.dados||x.itens||x.registros||[]).forEach((r,idx)=>base.push({id:String(r.id||r.docId||r.documentoId||d.id+'_'+idx),...r}));});
       const porId=new Map(resultados.map(r=>[String(r.id),r]));
       const porEnd=new Map(resultados.map(r=>[String(r.endereco||'').trim().toUpperCase(),r]));
       const usados=new Set();

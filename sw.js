@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260805-6009d425d320';
+var CACHE='dt-inventario-20260805-v273-dashboard-acomp';
 var PRECACHE=[
   '/',
   '/index.html',

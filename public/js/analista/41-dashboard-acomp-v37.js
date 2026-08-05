@@ -98,11 +98,17 @@
     try{
       const leituras=await Promise.all(candidatos.map(async candidato=>{
         try{
-          const [enderecos,ocorrencias]=await Promise.all([
-            candidato.ref.collection('enderecos').get(),
-            candidato.ref.collection('ocorrencias').get().catch(()=>({docs:[]}))
+          const auditoriaId=String(candidato.meta?.id||id);
+          const [resultados,ocorrencias,espelho]=await Promise.all([
+            candidato.ref.collection('resultados').get().catch(()=>({docs:[]})),
+            candidato.ref.collection('ocorrencias').get().catch(()=>({docs:[]})),
+            rawDb().collection('dt_auditoria_resultados').where('auditoriaId','==',auditoriaId).get().catch(()=>({docs:[]}))
           ]);
-          const itens=await montarItensAuditoria(candidato.ref,enderecos);
+          const combinados=new Map();
+          resultados.docs.forEach(d=>combinados.set(String(d.id),{id:d.id,...d.data()}));
+          espelho.docs.forEach(d=>{const x={id:d.id,...d.data()};const itemId=String(x.itemId||x.item_id||x.enderecoId||x.endereco_id||x.id||'');if(itemId)combinados.set(itemId,{...(combinados.get(itemId)||{}),...x,id:itemId});});
+          const fakeSnap={docs:[...combinados.values()].map(x=>({id:String(x.id),data:()=>x}))};
+          const itens=await montarItensAuditoria(candidato.ref,fakeSnap);
           return {candidato,itens,ocorrencias:ocorrencias.docs.map(d=>({id:d.id,...d.data()}))};
         }catch(error){
           console.warn('[ACOMP AUD] Origem indisponível '+(candidato.meta?._origem||'desconhecida')+':',error);
@@ -235,7 +241,14 @@
     restaurarLayoutInventario();ensureHero().style.display='';oldRenderAcompanhamento?.();
     setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);
   };
-  window.trocarInventarioAcomp=async function(){if(tipoAcomp()==='auditoria'){acompAudItens=[];acompAudOcorrencias=[];acompAudFiltro={tipo:'',valor:''};return renderAcompAuditoria();}return oldTrocarInventarioAcomp?.();};
+  window.trocarInventarioAcomp=async function(){
+    if(tipoAcomp()==='auditoria'){
+      acompAudItens=[];acompAudOcorrencias=[];acompAudFiltro={tipo:'',valor:''};
+      renderAcompAuditoria();
+      return carregarAuditoriaSelecionada();
+    }
+    return oldTrocarInventarioAcomp?.();
+  };
   window.renderAcompanhamento=function(){if(tipoAcomp()==='auditoria')return renderAcompAuditoria();oldRenderAcompanhamento?.();setTimeout(()=>{const pct=parseInt(document.getElementById('ak-pct')?.textContent)||0;setHero(pct,document.getElementById('acomp-inv-nome')?.textContent||'Inventário',`${document.getElementById('ak-contados')?.textContent||0} endereços contados`,'#34d399')},0);};
   window.atualizarAcompanhamentoAuditoriaManual=async function(){
     await loadAuditoriasAcomp(true);
