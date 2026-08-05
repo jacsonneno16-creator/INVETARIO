@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260805-recontagem-v258';
+var CACHE='dt-inventario-20260805-iniciar-rodada-v259';
 var PRECACHE=[
   '/css/analista-quatro-telas-v254.css',
   '/js/analista/49-quatro-telas-v254.js',

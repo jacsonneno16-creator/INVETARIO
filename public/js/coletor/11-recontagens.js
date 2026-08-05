@@ -181,37 +181,65 @@ function _itemAguardandoAnalista(item) {
   return Boolean(item.divergencia_id && stRec === 'pendente' && !String(item.operador || '').trim());
 }
 
-function selecionarEnderecoRecontagem(itemId) {
-  const item =
-    (APP.divergenciasAtribuidas||[]).find(d => d.id === itemId) ||
-    (APP.recontagens||[]).find(r => r.id === itemId) ||
-    { id: itemId, endereco: itemId, tipo: 'recontagem' };
-
-  // Primeiro informa corretamente quando a rodada está aguardando decisão.
-  if (_itemAguardandoAnalista(item)) {
-    toast('🔒 Aguardando decisão do analista. Uma nova rodada será atribuída quando necessário.', 'w');
-    return;
-  }
-
-  if (_itemEncerradoColetor(item)) {
-    toast('🔒 Esta rodada já está encerrada. Não é possível iniciar novamente.', 'e');
-    return;
-  }
-
-  // Existem no máximo duas recontagens após a contagem inicial.
-  // A segunda recontagem (numero_recontagem = 2) ainda precisa ser permitida.
-  const numRec = Number(item.numero_recontagem || 1);
-  const terceiraJaRealizada = item.qtd_terceira != null || numRec > 2;
-  if (terceiraJaRealizada) {
-    toast('🔒 Limite de 3 contagens atingido. Sem consenso — endereço marcado como persistente.', 'e');
-    return;
-  }
-
-  _ativarModoRecontagem(item);
+function _buscarItemRecontagemColetor(itemId) {
+  const id = String(itemId || '');
+  return (APP.recontagens || []).find(r => String(r.id) === id) ||
+    (APP.divergenciasAtribuidas || []).find(d => String(d.id) === id) || null;
 }
 
-function _marcarRecontagemIniciada(item) {
-  if (!item || !item.id) return;
+function _itemAcionavelRecontagem(item) {
+  if (!item) return false;
+  const sr = String(item.status_recontagem || 'pendente').toLowerCase();
+  const st = String(item.status || '').toUpperCase();
+  const bloqueio = String(item.status_bloqueio || '').toUpperCase();
+  if (['cancelada','persistente','resolvida','sem_divergencia','aguardando_analista'].includes(sr)) return false;
+  if (['CANCELADA','PERSISTENTE','RESOLVIDA'].includes(st)) return false;
+  if (bloqueio === 'PERSISTENTE_BLOQUEADO') return false;
+  // Documentos antigos podem manter status=CONCLUIDA da rodada anterior,
+  // mas uma nova tarefa pendente é indicada por status_recontagem=pendente.
+  return sr === 'pendente' || sr === 'em_andamento' || st === 'PENDENTE' || st === 'EM_ANDAMENTO';
+}
+
+async function selecionarEnderecoRecontagem(itemId) {
+  try {
+    const item = _buscarItemRecontagemColetor(itemId);
+    if (!item) {
+      console.error('[REC] Tarefa não localizada para iniciar rodada:', itemId, APP.recontagens);
+      toast('⚠️ Rodada não encontrada. Toque em Sync e tente novamente.', 'e');
+      return;
+    }
+
+    if (_itemAguardandoAnalista(item)) {
+      toast('🔒 Aguardando decisão do analista. Uma nova rodada será atribuída quando necessário.', 'w');
+      return;
+    }
+
+    if (!_itemAcionavelRecontagem(item)) {
+      console.warn('[REC] Tarefa não acionável:', { id:item.id, status:item.status, status_recontagem:item.status_recontagem });
+      toast('🔒 Esta rodada não está disponível para início.', 'e');
+      return;
+    }
+
+    const numRec = Number(item.numero_recontagem || 1);
+    const terceiraJaRealizada = item.qtd_terceira != null || numRec > 2;
+    if (terceiraJaRealizada) {
+      toast('🔒 Limite de 3 contagens atingido. Sem consenso — endereço marcado como persistente.', 'e');
+      return;
+    }
+
+    const btn = document.querySelector('[data-rec-start-id="' + CSS.escape(String(item.id)) + '"]');
+    if (btn) { btn.disabled = true; btn.dataset.originalText = btn.textContent; btn.textContent = '⏳ Iniciando rodada…'; }
+    await _ativarModoRecontagem(item);
+  } catch (e) {
+    console.error('[REC] Falha ao iniciar rodada:', e);
+    toast('❌ Não foi possível iniciar a rodada: ' + (e && e.message ? e.message : 'erro inesperado'), 'e');
+    renderRecontagensAtribuidas();
+  }
+}
+window.selecionarEnderecoRecontagem = selecionarEnderecoRecontagem;
+
+async function _marcarRecontagemIniciada(item) {
+  if (!item || !item.id) throw new Error('Tarefa de recontagem sem identificador.');
   const agora = new Date().toISOString();
   const operador = APP.operador?.name || APP.operador?.nome || '';
   const upd = {
@@ -227,13 +255,23 @@ function _marcarRecontagemIniciada(item) {
   const local = (APP.recontagens || []).find(r => String(r.id) === String(item.id));
   if (local) Object.assign(local, upd);
 
-  if (!navigator.onLine || !FS) return;
-  FS.collection('dt_recontagens').doc(item.id).set(upd, { merge: true }).catch(e =>
-    console.warn('[Rec] Não foi possível marcar início:', e.message)
-  );
+  if (!navigator.onLine || !FS) return true;
+  try {
+    await FS.collection('dt_recontagens').doc(item.id).set(upd, { merge: true });
+    return true;
+  } catch (e) {
+    console.error('[REC] Firestore recusou início da rodada:', {
+      code: e && e.code, message: e && e.message, id: item.id,
+      operador_uid: upd.operador_uid, operador: operador
+    });
+    // A interface ainda pode iniciar em modo offline; a atualização será
+    // reenviada quando houver sincronização, sem deixar o botão "morto".
+    toast('⚠️ Rodada aberta no aparelho. A sincronização com o Firebase ficou pendente.', 'w');
+    return false;
+  }
 }
 
-function _ativarModoRecontagem(item) {
+async function _ativarModoRecontagem(item) {
   // ── Normalizar ids: garantir que recontagem_id e divergencia_id estejam corretos ──
   // Se o item vier de APP.divergenciasAtribuidas, é uma divergência (não tem divergencia_id).
   // Precisamos buscar a recontagem PENDENTE vinculada para gravar o recontagem_id correto.
@@ -272,11 +310,13 @@ function _ativarModoRecontagem(item) {
   }
 
   APP.modoRecontagem = itemNorm;
-  _marcarRecontagemIniciada(itemNorm);
-  _endVerif = null;       // limpar cache Firebase — recontagem é sessão nova e independente
-  resetContagem();
+  await _marcarRecontagemIniciada(itemNorm);
+  _endVerif = null;
+  try { resetContagem(); } catch (e) { console.warn('[REC] resetContagem falhou, continuando:', e); }
   showView('contar', document.querySelector('.nav-tab'));
   setTimeout(() => _aplicarUIRecontagem(itemNorm), 80);
+  toast('✅ Rodada iniciada. Bipe o endereço para confirmar.', 's');
+  return true;
 }
 
 function _aplicarUIRecontagem(item) {
@@ -504,9 +544,18 @@ function renderRecontagensAtribuidas() {
         ?`<div style="text-align:center;font-size:.75rem;color:var(--success);font-weight:700;padding:8px;background:rgba(0,214,143,.08);border-radius:8px">${grupo.itens.some(i=>i.statusRec==='sem_divergencia'||i.statusRec==='resolvida')?'✅ SEM DIFERENÇA':'✅ CONCLUÍDA'}</div>`
         : aguardando
           ?`<div style="text-align:center;font-size:.75rem;color:#818cf8;font-weight:700;padding:8px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.25);border-radius:8px">🔒 Aguardando decisão do analista</div>`
-          :`<button onclick="selecionarEnderecoRecontagem('${grupo._id}')" style="width:100%;padding:12px;background:linear-gradient(135deg,${isDiv?'#f59e0b,#d97706':'#E8751A,#C45E0E'});color:#fff;font-weight:800;border:none;border-radius:10px;font-size:.88rem;cursor:pointer">📍 Iniciar rodada — ${grupo.endereco}</button>`
+          :`<button type="button" class="btn-iniciar-rodada-rec" data-rec-start-id="${String(grupo._id).replace(/&/g,'&amp;').replace(/"/g,'&quot;')}" style="width:100%;padding:12px;background:linear-gradient(135deg,${isDiv?'#f59e0b,#d97706':'#E8751A,#C45E0E'});color:#fff;font-weight:800;border:none;border-radius:10px;font-size:.88rem;cursor:pointer">📍 Iniciar rodada — ${grupo.endereco}</button>`
       }
     </div>`;
   }
   el.innerHTML = html;
+  // Eventos ligados diretamente após a renderização. Evita falhas de onclick
+  // inline em WebViews/PWAs e garante que cada clique use o id real da tarefa.
+  el.querySelectorAll('.btn-iniciar-rodada-rec').forEach(btn => {
+    btn.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      selecionarEnderecoRecontagem(this.getAttribute('data-rec-start-id'));
+    }, { passive:false });
+  });
 }
