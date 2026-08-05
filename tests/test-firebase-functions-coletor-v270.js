@@ -1,0 +1,13 @@
+const fs=require('fs');
+const html=fs.readFileSync('public/coletor.html','utf8');
+const fluxo=fs.readFileSync('public/js/coletor/18-auditoria-fluxo.js','utf8');
+const app=html.indexOf('firebase-app-compat.js');
+const auth=html.indexOf('firebase-auth-compat.js');
+const funcs=html.indexOf('firebase-functions-compat.js');
+const scripts=html.indexOf('js/coletor/18-auditoria-fluxo.js');
+if(app<0||auth<0||funcs<0||scripts<0) throw new Error('SDK Firebase incompleto no coletor');
+if(!(app<funcs && auth<funcs && funcs<scripts)) throw new Error('firebase-functions-compat em ordem incorreta');
+if(!fluxo.includes("typeof app.functions!=='function'")) throw new Error('validacao defensiva ausente');
+if(!fluxo.includes("app.functions('southamerica-east1')")) throw new Error('regiao da Function ausente');
+if(!html.includes('v270 · 20260805.8')) throw new Error('versao visual incorreta');
+console.log('OK firebase functions coletor v270');

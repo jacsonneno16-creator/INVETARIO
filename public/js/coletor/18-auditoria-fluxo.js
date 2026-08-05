@@ -380,7 +380,18 @@
   async function enviarRegistroAuditoria(x){
     const ocorrencia=(x.subcolecao||'enderecos')==='ocorrencias';
     const nome=ocorrencia?'registrarOcorrenciaAuditoria':'registrarResultadoAuditoria';
-    const callable=firebase.app().functions('southamerica-east1').httpsCallable(nome);
+    if(!window.firebase || typeof firebase.app!=='function'){
+      throw Object.assign(new Error('Firebase nao foi inicializado no coletor.'),{code:'auditoria/firebase-indisponivel'});
+    }
+    const app=firebase.app();
+    if(!app || typeof app.functions!=='function'){
+      throw Object.assign(new Error('Modulo Firebase Functions nao carregado. Feche e abra o aplicativo para atualizar.'),{code:'auditoria/functions-nao-carregado'});
+    }
+    const functions=app.functions('southamerica-east1');
+    if(!functions || typeof functions.httpsCallable!=='function'){
+      throw Object.assign(new Error('Firebase Functions indisponivel nesta versao do aplicativo.'),{code:'auditoria/functions-invalido'});
+    }
+    const callable=functions.httpsCallable(nome);
     const resposta=await comTimeoutAuditoria(callable(dadosEnvioAuditoria(x)),AUDITORIA_SYNC_TIMEOUT_MS);
     const data=resposta&&resposta.data||{};
     if(data.ok!==true)throw Object.assign(new Error(data.mensagem||'Servidor nao confirmou a auditoria.'),{code:data.codigo||'auditoria/sem-confirmacao'});
