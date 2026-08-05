@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260805-auditoria-v262';
+var CACHE='dt-inventario-20260805-auditoria-v263';
 var PRECACHE=[
   '/css/analista-quatro-telas-v254.css',
   '/js/analista/49-quatro-telas-v254.js',

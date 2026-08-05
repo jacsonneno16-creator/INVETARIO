@@ -319,6 +319,7 @@ exports.registrarResultadoAuditoria = functions.region('southamerica-east1')
     const dunLido = textoSeguro(data?.dunLido, 120);
     const produtoLido = textoSeguro(data?.produtoLido, 500);
     const vazio = data?.vazio === true;
+    const enderecoInformado = textoSeguro(data?.endereco, 220);
     if (!lojaId || !auditoriaId || !itemId) {
       throw new functions.https.HttpsError('invalid-argument', 'Auditoria ou item inválido.');
     }
@@ -327,9 +328,19 @@ exports.registrarResultadoAuditoria = functions.region('southamerica-east1')
       throw new functions.https.HttpsError('permission-denied', 'Coletor sem acesso a esta auditoria.');
     }
     const refs = refsAuditoria(lojaId, auditoriaId);
-    const esperadoRef = refs.esperados.doc(itemId);
-    const cegoRef = refs.cegos.doc(itemId);
-    const resultadoRef = refs.resultados.doc(itemId);
+    let itemIdResolvido = itemId;
+    let esperadoRef = refs.esperados.doc(itemIdResolvido);
+    let cegoRef = refs.cegos.doc(itemIdResolvido);
+    let [esperadoTeste, cegoTeste] = await Promise.all([esperadoRef.get(), cegoRef.get()]);
+    if ((!esperadoTeste.exists || !cegoTeste.exists) && enderecoInformado) {
+      const porEndereco = await refs.cegos.where('endereco', '==', enderecoInformado).limit(2).get();
+      if (porEndereco.size === 1) {
+        itemIdResolvido = porEndereco.docs[0].id;
+        esperadoRef = refs.esperados.doc(itemIdResolvido);
+        cegoRef = refs.cegos.doc(itemIdResolvido);
+      }
+    }
+    const resultadoRef = refs.resultados.doc(itemIdResolvido);
     return db.runTransaction(async tx => {
       const [metaSnap, esperadoSnap, cegoSnap, resultadoSnap] = await Promise.all([
         tx.get(refs.auditoria), tx.get(esperadoRef), tx.get(cegoRef), tx.get(resultadoRef)
@@ -349,7 +360,7 @@ exports.registrarResultadoAuditoria = functions.region('southamerica-east1')
         (normalizar(dunLido) && normalizar(dunLido) === normalizar(esperado.dunEsperado) ? 'OK' : 'DIVERGENTE');
       const agora = admin.firestore.FieldValue.serverTimestamp();
       const resultado = {
-        auditoriaId, itemId, endereco: cegoSnap.data().endereco,
+        auditoriaId, itemId: itemIdResolvido, endereco: cegoSnap.data().endereco,
         dunLido: vazio ? null : dunLido, produtoLido: vazio ? null : produtoLido,
         status, operador_uid: context.auth.uid,
         operador_id: context.auth.token.email || context.auth.uid,

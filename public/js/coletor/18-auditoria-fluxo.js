@@ -33,7 +33,7 @@
   function operadorNome(){ return APP.operador?.name || APP.operador?.nome || ''; }
   function operadorUsuario(){ return APP.operador?.email || APP.operador?.usuario || APP.operador?.login || ''; }
   function lojaAtual(){
-    return APP.lojaAtual?.id || APP.lojaAtual?.nome || APP.lojaId || APP.inventario?.loja || window.getDTLojaAtiva?.() || '';
+    return window.getDTLojaAtiva?.() || APP.lojaAtual?.id || APP.lojaId || APP.inventario?.loja || APP.lojaAtual?.nome || '';
   }
   function auditoriaId(){ return APP.inventario?.auditoria_id || APP.inventario?.id || ''; }
 
@@ -328,19 +328,30 @@
       try{localStorage.removeItem(chaveLS);}catch(e){ console.warn("[Erro tratado]", e); }
     }
   }
+  async function aguardarAuthAuditoria(){
+    if(window.DT_AUTH_USER_READY){ try{ await window.DT_AUTH_USER_READY; }catch(_e){} }
+    const auth=window.AUTH || (firebase.app && firebase.app().auth ? firebase.app().auth() : null);
+    const user=auth && auth.currentUser;
+    if(!user){ const e=new Error('Sessão Firebase ainda não restaurada'); e.code='auditoria/auth-pendente'; throw e; }
+    try{ await user.getIdToken(true); }catch(_e){ await user.getIdToken(); }
+    return user;
+  }
   async function sincronizarFilaAuditoria(){
     if(_sincronizandoAuditoria || !navigator.onLine) return;
     _sincronizandoAuditoria=true;
     try{
+      await aguardarAuthAuditoria();
       const fila=await window.DTAuditoriaStorage.filaAll();
       for(let i=0;i<fila.length;i++){
         const x=fila[i];
         try {
           const ocorrencia=(x.subcolecao||'enderecos')==='ocorrencias';
           const enviar=firebase.app().functions('southamerica-east1').httpsCallable(ocorrencia?'registrarOcorrenciaAuditoria':'registrarResultadoAuditoria');
+          const lojaId=texto(x.payload&&x.payload.loja)||texto(window.getDTLojaAtiva&&window.getDTLojaAtiva());
           const dados=ocorrencia?
-            {lojaId:x.payload.loja,auditoriaId:x.auditoriaId,ocorrenciaId:x.docId,endereco:x.payload.endereco,dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',dispositivoId:x.payload.dispositivo_id||''}:
-            {lojaId:x.payload.loja,auditoriaId:x.auditoriaId,itemId:x.docId,dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',vazio:x.payload.vazio===true,dispositivoId:x.payload.dispositivo_id||''};
+            {lojaId:lojaId,auditoriaId:x.auditoriaId,ocorrenciaId:x.docId,endereco:x.payload.endereco,dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',dispositivoId:x.payload.dispositivo_id||''}:
+            {lojaId:lojaId,auditoriaId:x.auditoriaId,itemId:x.docId,endereco:x.payload.endereco||'',dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',vazio:x.payload.vazio===true,dispositivoId:x.payload.dispositivo_id||''};
+          if(!dados.lojaId){ const erroLoja=new Error('Loja da auditoria não identificada'); erroLoja.code='auditoria/loja-ausente'; throw erroLoja; }
           const resposta=await comTimeoutAuditoria(enviar(dados),AUDITORIA_SYNC_TIMEOUT_MS);
           const statusServidor=String(resposta&&resposta.data&&resposta.data.status||'').toUpperCase();
           if(!ocorrencia && statusServidor){
@@ -353,7 +364,8 @@
           try{ window.dispatchEvent(new CustomEvent('dt-auditoria-sync',{detail:{id:x.docId,status:statusServidor||'ENVIADO'}})); }catch(_e){}
           if(typeof window.updateStats==='function') window.updateStats();
         } catch(e) {
-          console.warn('[AUDITORIA] Item permanece na fila offline:',x.docId,e);
+          console.error('[AUDITORIA] Falha de envio; item preservado na fila:',{id:x.docId,codigo:e&&e.code||'',mensagem:e&&e.message||String(e),loja:x.payload&&x.payload.loja,auditoria:x.auditoriaId});
+          try{ localStorage.setItem('dt_auditoria_ultimo_erro',JSON.stringify({em:agoraISO(),id:x.docId,codigo:e&&e.code||'',mensagem:e&&e.message||String(e)})); }catch(_e){}
           agendarSyncAuditoria();
           break;
         }

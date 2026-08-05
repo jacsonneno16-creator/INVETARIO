@@ -75,7 +75,7 @@ function normProd(v) {
   if (!s || s === 'NULL' || s === 'UNDEFINED' || s === 'NAN') return PROD_VAZIO;
   return s;
 }
-const APP_VERSION = '3.2.0';            // versão do aplicativo
+const APP_VERSION = '3.2.1';            // versão do aplicativo
 
 // ══════════════════════════════════════════════════
 //  NORMALIZAÇÃO DA BASE  (melhoria 1 e 2)

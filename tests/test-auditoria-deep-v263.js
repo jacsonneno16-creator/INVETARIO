@@ -1,0 +1,15 @@
+const fs=require('fs');
+const assert=require('assert');
+const fluxo=fs.readFileSync('public/js/coletor/18-auditoria-fluxo.js','utf8');
+const sync=fs.readFileSync('public/js/coletor/02-sync-dispositivo.js','utf8');
+const fn=fs.readFileSync('functions/index.js','utf8');
+const painel=fs.readFileSync('public/js/analista/49-quatro-telas-v254.js','utf8');
+const html=fs.readFileSync('public/coletor.html','utf8');
+assert(fluxo.includes('aguardarAuthAuditoria'), 'sync nao aguarda autenticacao');
+assert(fluxo.includes('endereco:x.payload.endereco'), 'endereco nao enviado para recuperacao');
+assert(fluxo.includes("window.getDTLojaAtiva?.() || APP.lojaAtual?.id"), 'loja ativa nao priorizada');
+assert(sync.includes("if (APP.modoAcesso === 'auditoria') return;"), 'auditoria ainda validada como inventario');
+assert(fn.includes("where('endereco', '==', enderecoInformado)"), 'backend sem recuperacao por endereco');
+assert(!painel.includes("'Item '+(i+1)"), 'painel ainda inventa locais Item N');
+assert(html.includes('v263 · 20260805.4'), 'build v263 ausente');
+console.log('OK test-auditoria-deep-v263');
