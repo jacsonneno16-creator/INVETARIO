@@ -303,56 +303,119 @@ function podeUsarColetor(acesso) {
   );
 }
 
-function refsAuditoria(lojaId, auditoriaId) {
-  const auditoria = db.collection('lojas').doc(lojaId)
-    .collection('dt_auditorias').doc(auditoriaId);
+function refsAuditoria(lojaId, auditoriaId, origem = 'loja') {
+  const auditoria = origem === 'raiz'
+    ? db.collection('dt_auditorias').doc(auditoriaId)
+    : db.collection('lojas').doc(lojaId).collection('dt_auditorias').doc(auditoriaId);
   return {auditoria, esperados: auditoria.collection('enderecos'),
-    cegos: auditoria.collection('itens_coletor'), resultados: auditoria.collection('resultados')};
+    cegos: auditoria.collection('itens_coletor'), resultados: auditoria.collection('resultados'),
+    lojaId, origem};
+}
+
+async function localizarRefsAuditoria({lojaId, auditoriaId, itemId, endereco, acesso}) {
+  const candidatos = [];
+  const vistos = new Set();
+  const adicionar = (id, origem) => {
+    const chave = origem === 'raiz' ? 'raiz' : `loja:${String(id || '')}`;
+    if (vistos.has(chave) || (origem !== 'raiz' && !id)) return;
+    vistos.add(chave);
+    candidatos.push(refsAuditoria(String(id || lojaId || ''), auditoriaId, origem));
+  };
+
+  // Primeiro respeita exatamente a loja enviada pelo coletor e depois tenta a
+  // coleção raiz, pois versões anteriores do analista criavam auditorias nos
+  // dois formatos.
+  adicionar(lojaId, 'loja');
+  adicionar(lojaId, 'raiz');
+
+  const publico = await db.collection('dt_auditorias_coletor').doc(auditoriaId).get().catch(() => null);
+  const metaPublica = publico && publico.exists ? (publico.data() || {}) : {};
+  const lojasMeta = Array.isArray(metaPublica.lojas) ? metaPublica.lojas : [];
+  [metaPublica.loja, metaPublica.loja_id, metaPublica.lojaId, ...lojasMeta]
+    .map(v => String(v || '').trim()).filter(Boolean).forEach(id => adicionar(id, 'loja'));
+
+  // Último recurso: procura somente nas lojas que o usuário pode acessar. Isso
+  // corrige filas antigas gravadas com alias como "matriz"/"loja_matriz" sem
+  // abrir acesso a lojas não autorizadas.
+  if (administrador(acesso) || acesso?.acesso_todas_lojas === true) {
+    const lojasSnap = await db.collection('lojas').get();
+    lojasSnap.docs.forEach(d => adicionar(d.id, 'loja'));
+  } else {
+    lojasPermitidas(acesso).forEach(id => adicionar(id, 'loja'));
+  }
+
+  for (const refs of candidatos) {
+    if (refs.origem === 'loja' && !lojaAutorizada(acesso, refs.lojaId)) continue;
+    const esperadoRef = refs.esperados.doc(itemId);
+    const cegoRef = refs.cegos.doc(itemId);
+    const [metaSnap, esperadoSnap, cegoSnap] = await Promise.all([
+      refs.auditoria.get(), esperadoRef.get(), cegoRef.get()
+    ]);
+    if (metaSnap.exists || esperadoSnap.exists || cegoSnap.exists) {
+      return {refs, metaPublica, metaSnap, esperadoRef, cegoRef, esperadoSnap, cegoSnap};
+    }
+    if (endereco) {
+      const porEndereco = await refs.cegos.where('endereco', '==', endereco).limit(2).get();
+      if (porEndereco.size === 1) {
+        const resolvido = porEndereco.docs[0];
+        return {
+          refs, metaPublica, metaSnap,
+          esperadoRef: refs.esperados.doc(resolvido.id),
+          cegoRef: resolvido.ref,
+          esperadoSnap: await refs.esperados.doc(resolvido.id).get(),
+          cegoSnap: resolvido,
+          itemIdResolvido: resolvido.id
+        };
+      }
+    }
+  }
+  throw new functions.https.HttpsError('not-found', 'Auditoria ou item não encontrado nas lojas autorizadas.');
 }
 
 exports.registrarResultadoAuditoria = functions.region('southamerica-east1')
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
-    const lojaId = textoSeguro(data?.lojaId, 120);
+    const lojaIdInformada = textoSeguro(data?.lojaId, 120);
     const auditoriaId = textoSeguro(data?.auditoriaId, 180);
     const itemId = textoSeguro(data?.itemId, 220);
     const dunLido = textoSeguro(data?.dunLido, 120);
     const produtoLido = textoSeguro(data?.produtoLido, 500);
     const vazio = data?.vazio === true;
     const enderecoInformado = textoSeguro(data?.endereco, 220);
-    if (!lojaId || !auditoriaId || !itemId) {
+    if (!auditoriaId || !itemId) {
       throw new functions.https.HttpsError('invalid-argument', 'Auditoria ou item inválido.');
     }
     const acesso = await acessoSolicitante(context);
-    if (!lojaAutorizada(acesso, lojaId) || !podeUsarColetor(acesso)) {
-      throw new functions.https.HttpsError('permission-denied', 'Coletor sem acesso a esta auditoria.');
+    if (!podeUsarColetor(acesso)) {
+      throw new functions.https.HttpsError('permission-denied', 'Usuário sem acesso ao coletor.');
     }
-    const refs = refsAuditoria(lojaId, auditoriaId);
-    let itemIdResolvido = itemId;
-    let esperadoRef = refs.esperados.doc(itemIdResolvido);
-    let cegoRef = refs.cegos.doc(itemIdResolvido);
-    let [esperadoTeste, cegoTeste] = await Promise.all([esperadoRef.get(), cegoRef.get()]);
-    if ((!esperadoTeste.exists || !cegoTeste.exists) && enderecoInformado) {
-      const porEndereco = await refs.cegos.where('endereco', '==', enderecoInformado).limit(2).get();
-      if (porEndereco.size === 1) {
-        itemIdResolvido = porEndereco.docs[0].id;
-        esperadoRef = refs.esperados.doc(itemIdResolvido);
-        cegoRef = refs.cegos.doc(itemIdResolvido);
-      }
-    }
+
+    const localizado = await localizarRefsAuditoria({
+      lojaId: lojaIdInformada, auditoriaId, itemId, endereco: enderecoInformado, acesso
+    });
+    const refs = localizado.refs;
+    const lojaIdResolvida = refs.lojaId || lojaIdInformada;
+    let itemIdResolvido = localizado.itemIdResolvido || itemId;
+    let esperadoRef = localizado.esperadoRef || refs.esperados.doc(itemIdResolvido);
+    let cegoRef = localizado.cegoRef || refs.cegos.doc(itemIdResolvido);
     const resultadoRef = refs.resultados.doc(itemIdResolvido);
+
     return db.runTransaction(async tx => {
-      const [metaSnap, esperadoSnap, cegoSnap, resultadoSnap] = await Promise.all([
-        tx.get(refs.auditoria), tx.get(esperadoRef), tx.get(cegoRef), tx.get(resultadoRef)
+      const [metaSnap, esperadoSnap, cegoSnap, resultadoSnap, publicoSnap] = await Promise.all([
+        tx.get(refs.auditoria), tx.get(esperadoRef), tx.get(cegoRef), tx.get(resultadoRef),
+        tx.get(db.collection('dt_auditorias_coletor').doc(auditoriaId))
       ]);
-      if (!metaSnap.exists || !['LIBERADA', 'EM_ANDAMENTO'].includes(String(metaSnap.data().status || '').toUpperCase())) {
+      const statusMeta = String((metaSnap.exists ? metaSnap.data()?.status : '') ||
+        (publicoSnap.exists ? publicoSnap.data()?.status : '') || '').toUpperCase();
+      if (!['LIBERADA', 'EM_ANDAMENTO', 'ABERTA', 'ATIVA', 'ATIVO'].includes(statusMeta)) {
         throw new functions.https.HttpsError('failed-precondition', 'Auditoria não está liberada ou em andamento.');
       }
       if (!esperadoSnap.exists || !cegoSnap.exists) {
         throw new functions.https.HttpsError('not-found', 'Item da auditoria não encontrado.');
       }
       if (resultadoSnap.exists && AUDITORIA_STATUS_FINAIS.has(resultadoSnap.data().status)) {
-        return {ok: true, status: resultadoSnap.data().status, repetido: true};
+        return {ok: true, status: resultadoSnap.data().status, repetido: true,
+          lojaId: lojaIdResolvida, origem: refs.origem};
       }
       const esperado = esperadoSnap.data();
       const normalizar = valor => String(valor || '').replace(/\D/g, '').replace(/^0+/, '');
@@ -365,19 +428,25 @@ exports.registrarResultadoAuditoria = functions.region('southamerica-east1')
         status, operador_uid: context.auth.uid,
         operador_id: context.auth.token.email || context.auth.uid,
         operador_nome: acesso?.nome || context.auth.token.name || context.auth.token.email || 'Coletor',
-        dispositivo_id: textoSeguro(data?.dispositivoId, 180), loja: lojaId,
-        lidoEm: agora, atualizadoEm: agora
+        dispositivo_id: textoSeguro(data?.dispositivoId, 180), loja: lojaIdResolvida,
+        origem_auditoria: refs.origem, lidoEm: agora, atualizadoEm: agora
       };
       tx.set(resultadoRef, resultado);
-      tx.update(cegoRef, {disponivel_coletor: false, status: 'CONCLUIDO', atualizadoEm: agora});
-      tx.update(esperadoRef, resultado);
+      tx.set(cegoRef, {disponivel_coletor: false, status: 'CONCLUIDO', atualizadoEm: agora}, {merge: true});
+      tx.set(esperadoRef, resultado, {merge: true});
       const campoTotal = status === 'OK' ? 'totalOk' :
         (status === 'DIVERGENTE' ? 'totalDivergentes' : 'totalVazios');
-      tx.update(refs.auditoria, {
-        status: 'EM_ANDAMENTO', totalPendentes: admin.firestore.FieldValue.increment(-1),
-        [campoTotal]: admin.firestore.FieldValue.increment(1), atualizadoEm: agora
-      });
-      return {ok: true, status};
+      tx.set(refs.auditoria, {
+        status: 'EM_ANDAMENTO',
+        totalPendentes: admin.firestore.FieldValue.increment(-1),
+        [campoTotal]: admin.firestore.FieldValue.increment(1), atualizadoEm: agora,
+        loja: lojaIdResolvida
+      }, {merge: true});
+      tx.set(db.collection('dt_auditorias_coletor').doc(auditoriaId), {
+        status: 'EM_ANDAMENTO', loja: lojaIdResolvida,
+        lojas: admin.firestore.FieldValue.arrayUnion(lojaIdResolvida), atualizadoEm: agora
+      }, {merge: true});
+      return {ok: true, status, lojaId: lojaIdResolvida, origem: refs.origem};
     });
   });
 

@@ -34,7 +34,7 @@
   function operadorUsuario(){ return APP.operador?.email || APP.operador?.usuario || APP.operador?.login || ''; }
   function lojaAtual(){
     const meta=(APP.auditoriasMenu||[]).find(function(x){return texto(x&&x.id)===texto(auditoriaId());})||{};
-    return texto(APP.inventario?.loja_id || APP.inventario?.lojaId || meta.loja_id || meta.lojaId || window.getDTLojaAtiva?.() || APP.lojaAtual?.id || APP.lojaId || APP.inventario?.loja);
+    return texto(APP.inventario?.loja_id || APP.inventario?.lojaId || (Array.isArray(APP.inventario?.lojas) && APP.inventario.lojas[0]) || meta.loja_id || meta.lojaId || (Array.isArray(meta.lojas) && meta.lojas[0]) || meta.loja || window.getDTLojaAtiva?.() || APP.lojaAtual?.id || APP.lojaId || APP.inventario?.loja);
   }
   function auditoriaId(){ return APP.inventario?.auditoria_id || APP.inventario?.id || ''; }
 
@@ -350,13 +350,19 @@
           const ocorrencia=(x.subcolecao||'enderecos')==='ocorrencias';
           const enviar=firebase.app().functions('southamerica-east1').httpsCallable(ocorrencia?'registrarOcorrenciaAuditoria':'registrarResultadoAuditoria');
           const metaAud=(APP.auditoriasMenu||[]).find(function(a){return texto(a&&a.id)===texto(x.auditoriaId);})||{};
-          const lojaId=texto(x.lojaId)||texto(x.payload&&x.payload.loja_id)||texto(x.payload&&x.payload.lojaId)||texto(metaAud.loja_id||metaAud.lojaId)||texto(x.payload&&x.payload.loja)||texto(window.getDTLojaAtiva&&window.getDTLojaAtiva());
+          const lojaId=texto(x.lojaId)||texto(x.payload&&x.payload.loja_id)||texto(x.payload&&x.payload.lojaId)||texto(metaAud.loja_id||metaAud.lojaId||(Array.isArray(metaAud.lojas)&&metaAud.lojas[0])||metaAud.loja)||texto(x.payload&&x.payload.loja)||texto(window.getDTLojaAtiva&&window.getDTLojaAtiva());
           const dados=ocorrencia?
             {lojaId:lojaId,auditoriaId:x.auditoriaId,ocorrenciaId:x.docId,endereco:x.payload.endereco,dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',dispositivoId:x.payload.dispositivo_id||''}:
             {lojaId:lojaId,auditoriaId:x.auditoriaId,itemId:x.docId,endereco:x.payload.endereco||'',dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',vazio:x.payload.vazio===true,dispositivoId:x.payload.dispositivo_id||''};
           if(!dados.lojaId){ const erroLoja=new Error('Loja da auditoria não identificada'); erroLoja.code='auditoria/loja-ausente'; throw erroLoja; }
           const resposta=await comTimeoutAuditoria(enviar(dados),AUDITORIA_SYNC_TIMEOUT_MS);
           const statusServidor=String(resposta&&resposta.data&&resposta.data.status||'').toUpperCase();
+          const lojaResolvida=texto(resposta&&resposta.data&&resposta.data.lojaId);
+          if(lojaResolvida){
+            x.lojaId=lojaResolvida;
+            if(x.payload) x.payload.loja=lojaResolvida;
+            if(APP.inventario && texto(APP.inventario.auditoria_id||APP.inventario.id)===texto(x.auditoriaId)) APP.inventario.loja_id=lojaResolvida;
+          }
           if(!ocorrencia && statusServidor){
             const payloadFinal=Object.assign({},x.payload||{},{status:statusServidor});
             await marcarConcluidoLocalAuditoria(x.docId,payloadFinal);

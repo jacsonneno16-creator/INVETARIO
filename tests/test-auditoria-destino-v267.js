@@ -1,0 +1,13 @@
+const fs = require('fs');
+const assert = require('assert');
+const fn = fs.readFileSync(__dirname + '/../functions/index.js', 'utf8');
+const meta = fs.readFileSync(__dirname + '/../public/js/coletor/17-auditoria-meta.js', 'utf8');
+const fluxo = fs.readFileSync(__dirname + '/../public/js/coletor/18-auditoria-fluxo.js', 'utf8');
+assert(fn.includes("origem === 'raiz'"), 'Function deve aceitar auditoria na coleção raiz');
+assert(fn.includes('localizarRefsAuditoria'), 'Function deve localizar auditoria entre origens autorizadas');
+assert(fn.includes("collection('dt_auditorias_coletor').doc(auditoriaId)"), 'Function deve usar metadado público para resolver loja/status');
+assert(fn.includes('arrayUnion(lojaIdResolvida)'), 'Function deve consolidar loja resolvida');
+assert(meta.includes('loja_id: String((lojasAuditoria'), 'Abertura deve persistir loja da auditoria');
+assert(fluxo.includes('Array.isArray(metaAud.lojas)'), 'Sincronizador deve considerar lista de lojas');
+assert(fluxo.includes('lojaResolvida'), 'Sincronizador deve aceitar destino corrigido pelo servidor');
+console.log('OK v267');

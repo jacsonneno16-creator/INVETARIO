@@ -404,7 +404,7 @@
     APP._auditoriaCargaToken=token;
     APP.modoPendente = 'auditoria';
     APP.modoAcesso = 'auditoria';
-    APP.inventario = { id: auditoriaId, nome: meta.auditoria_nome || auditoriaId, status: 'ATIVO', auditoria_id: auditoriaId };
+    APP.inventario = { id: auditoriaId, nome: meta.auditoria_nome || auditoriaId, status: 'ATIVO', auditoria_id: auditoriaId, loja_id: String((lojasAuditoria && lojasAuditoria[0]) || meta.loja_id || meta.lojaId || meta.loja || (window.getDTLojaAtiva && window.getDTLojaAtiva()) || '').trim(), lojas: lojasAuditoria.slice() };
     APP.base = [];
     APP.auditoriaBase = [];
     APP.contagens = [];
