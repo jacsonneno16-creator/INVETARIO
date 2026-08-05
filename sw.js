@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260804-centro-operacoes-v250';
+var CACHE='dt-inventario-20260804-centro-real-v251';
 var PRECACHE=[
   '/',
   '/index.html',

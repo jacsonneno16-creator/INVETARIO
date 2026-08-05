@@ -1,0 +1,31 @@
+/* Centro de Operacoes v251 - aplicado apenas depois do login */
+#app-main .page{width:100%;max-width:none!important;min-width:0}
+#app-main .page:not(.on){display:none!important}
+#app-main .content{max-width:none!important;width:100%;padding:20px 24px 32px}
+#app-main .sec-hdr,#app-main .tc,#app-main .ops-v251{width:100%;max-width:none;box-sizing:border-box}
+#app-main .ops-v251{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:12px;margin:0 0 16px}
+#app-main .ops-card{background:#fff;border:1px solid #dbe5df;border-radius:12px;padding:14px 16px;min-height:74px;box-shadow:0 4px 14px rgba(15,69,48,.05)}
+#app-main .ops-card .l{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#6d7d75;font-weight:700}
+#app-main .ops-card .v{font-size:25px;line-height:1.15;font-weight:850;color:#173c2e;margin-top:5px}
+#app-main .ops-card .s{font-size:11px;color:#7b8b83;margin-top:3px}
+#app-main .ops-card.warn{border-top:3px solid #f59e0b}.ops-card.danger{border-top:3px solid #ef4444}.ops-card.good{border-top:3px solid #16a34a}.ops-card.info{border-top:3px solid #2563eb}
+#app-main .ops-grid-2{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(300px,.85fr);gap:16px;margin-bottom:16px}
+#app-main .ops-panel{background:#fff;border:1px solid #dbe5df;border-radius:12px;overflow:hidden;min-width:0}
+#app-main .ops-panel-h{padding:13px 16px;border-bottom:1px solid #e7eee9;font-weight:800;color:#173c2e;display:flex;align-items:center;justify-content:space-between}
+#app-main .ops-panel-b{padding:14px 16px}
+#app-main .heatmap-v251{display:grid;grid-template-columns:repeat(12,minmax(24px,1fr));gap:6px}
+#app-main .heat-cell{height:36px;border-radius:7px;border:1px solid rgba(0,0,0,.06);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#173c2e;cursor:pointer;transition:.15s transform}
+#app-main .heat-cell:hover{transform:translateY(-2px)}
+#app-main .heat-0{background:#f6c7c7}.heat-1{background:#ffd9a3}.heat-2{background:#f7e68a}.heat-3{background:#b8e4bc}.heat-4{background:#58bb78;color:#fff}
+#app-main .ops-ranking{display:flex;flex-direction:column;gap:10px}
+#app-main .ops-rank-row{display:grid;grid-template-columns:minmax(90px,1fr) 2fr 52px;gap:10px;align-items:center;font-size:12px}
+#app-main .ops-rank-bar{height:8px;background:#e8eee9;border-radius:999px;overflow:hidden}.ops-rank-bar>i{display:block;height:100%;background:#1e6f4e;border-radius:999px}
+#app-main #page-acompanhamento .v251-original-grid{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(330px,.8fr);gap:16px;align-items:start}
+#app-main #page-acompanhamento .v251-side{display:grid;gap:16px;min-width:0}
+#app-main #page-acompanhamento .v251-main{min-width:0}
+#app-main #page-acompanhamento #acomp-ruas-grid{max-height:510px!important}
+#app-main .tc table{width:100%!important;max-width:none!important}
+#app-main .table-wrap,#app-main [id$="table-wrap"],#app-main [id$="-wrap"]{max-width:100%}
+#app-main #page-produtos .tc,#app-main #page-enderecos .tc,#app-main #page-coletores .tc,#app-main #page-operadores .tc,#app-main #page-lojas .tc,#app-main #page-rastreabilidade .tc{width:100%}
+@media(max-width:1250px){#app-main .ops-v251{grid-template-columns:repeat(3,1fr)}#app-main .ops-grid-2,#app-main #page-acompanhamento .v251-original-grid{grid-template-columns:1fr}}
+@media(max-width:760px){#app-main .content{padding:12px}#app-main .ops-v251{grid-template-columns:1fr 1fr}#app-main .heatmap-v251{grid-template-columns:repeat(6,1fr)}}
