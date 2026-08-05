@@ -274,7 +274,10 @@ service cloud.firestore {
     }
 
     match /lojas/{lojaId} {
-      allow read: if canAccessStore(lojaId);
+      // O documento raiz contém somente dados cadastrais da loja e precisa
+      // poder ser listado na etapa de login. As subcoleções operacionais
+      // continuam protegidas individualmente por canAccessStore(lojaId).
+      allow read: if signedIn();
       allow create, update: if admin() && validText(request.resource.data.nome, 120);
       allow delete: if false;
 

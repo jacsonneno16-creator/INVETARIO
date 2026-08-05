@@ -18,6 +18,32 @@ function _dashContagens(inventarioId){
 //  11. RENDERIZAÇÃO — DASHBOARD
 // ───────────────────────────────────────────────────────────────────
 
+
+function _dashStatusAberto(valor){
+  const s=String(valor||'ABERTA').trim().toUpperCase();
+  return !['RESOLVIDA','RESOLVIDO','CANCELADA','CANCELADO','EXCLUIDA','EXCLUIDO','ESTORNADA','ESTORNADO','SEM_DIVERGENCIA','FINALIZADA','FINALIZADO'].includes(s);
+}
+function _dashDivergenciasInventarioFiltradas(inventarioId,ruaFiltro,localFiltro){
+  const st=state();
+  const ends=new Map((st.enderecosLista||[]).map(e=>[String(e.endereco||''),e]));
+  const vistos=new Set();
+  return (st.divergencias||[]).filter(d=>{
+    if(!_dashStatusAberto(d.status_recontagem||d.status))return false;
+    const did=String(d.inventario_id||d.inventarioId||'');
+    if(inventarioId&&did!==String(inventarioId))return false;
+    const e=ends.get(String(d.endereco||''))||{};
+    const rua=String(e.rua||extrairRua(d.endereco)||'SEM RUA');
+    const local=String(e.setor||e.local||'SEM LOCAL');
+    if(ruaFiltro&&rua!==String(ruaFiltro))return false;
+    if(localFiltro&&local!==String(localFiltro))return false;
+    const chave=String(d.id||d.divergencia_id||[did,d.endereco,d.produto_id||d.codigo_produto||d.gtin||d.dun||'',d.tipo_divergencia||d.tipo||''].join('|'));
+    if(vistos.has(chave))return false;
+    vistos.add(chave);
+    return true;
+  });
+}
+window._dashDivergenciasInventarioFiltradas=_dashDivergenciasInventarioFiltradas;
+
 function limparFiltrosDash() {
   ['dash-finv','dash-frua','dash-flocal'].forEach(id => {
     const el = document.getElementById(id);
@@ -93,13 +119,20 @@ function renderDashboardInventario() {
     });
   });
 
-  const divAbertos = state().divergencias.filter(d => {
-    if (fInvId && d.inventario_id !== fInvId) return false;
-    return d.status === 'ABERTA';
-  }).length;
+  const divergenciasFiltradas = _dashDivergenciasInventarioFiltradas(fInvId,fRua,fLocal);
+  const divAbertos = divergenciasFiltradas.length;
   const recPend = state().recontagens.filter(r => {
-    if (fInvId && r.inventario_id !== fInvId) return false;
-    return r.status === 'PENDENTE';
+    const rid=String(r.inventario_id||r.inventarioId||'');
+    if (fInvId && rid !== String(fInvId)) return false;
+    if (!_dashStatusAberto(r.status_recontagem||r.status)) return false;
+    if (fRua || fLocal) {
+      const end=state().enderecosLista.find(e=>String(e.endereco||'')===String(r.endereco||''))||{};
+      const rua=String(end.rua||extrairRua(r.endereco)||'SEM RUA');
+      const local=String(end.setor||end.local||'SEM LOCAL');
+      if(fRua&&rua!==String(fRua))return false;
+      if(fLocal&&local!==String(fLocal))return false;
+    }
+    return true;
   }).length;
 
   const base4Pct = endsFiltered.length > 0 ? endsFiltered.length : endsBaseAtivos.length;
@@ -138,6 +171,7 @@ function renderDashboardInventario() {
   document.getElementById('kd-pct-geral').textContent    = pctGeral + '%';
   document.getElementById('kd-operadores').textContent   = opsAtivos.size;
 
+  window.__DT_DASHBOARD_SNAPSHOT={modo:'inventario',total:totalCadastradosCard,concluidos:endContadosTotal,pendentes:pendentesTotal,divergencias:divAbertos,recontagens:recPend,pct:pctGeral,operadores:opsAtivos.size,inventariosAbertos:invsConsiderados.length,contagens:contagensConsideradas.length,divergenciasLista:divergenciasFiltradas.slice()};
   _dashCache = {
     filtros: { inventarioId: fInvId, rua: fRua, local: fLocal },
     invsConsiderados,
@@ -149,6 +183,7 @@ function renderDashboardInventario() {
     endContadosTotal,
     pendentesTotal,
     divAbertos,
+    divergenciasFiltradas,
     recPend,
     opsAtivos: [...opsAtivos]
   };
@@ -972,4 +1007,4 @@ function renderDashboardAuditoria(){
   const tab=document.getElementById('dash-inv-table');if(tab){const rec=[...lista].sort((a,b)=>String(b.lidoEm||b.lido_em||'').localeCompare(String(a.lidoEm||a.lido_em||''))).slice(0,15);tab.innerHTML=rec.length?`<div class="table-wrap"><table><thead><tr><th>Auditoria</th><th>Endereço</th><th>Produto esperado</th><th>Produto lido</th><th>Status</th><th>Operador</th></tr></thead><tbody>${rec.map(i=>`<tr><td>${_dashSafe(i.auditoriaNome)}</td><td class="mono">${_dashSafe(i.endereco)}</td><td>${_dashSafe(i.produtoEsperado||i.produto_esperado||i.dunEsperado||i.dun_esperado||'—')}</td><td>${_dashSafe(i.produtoLido||i.produto_lido||i.dunLido||i.dun_lido||'—')}</td><td><span class="badge ${_dashAudStatus(i)==='OK'?'ok':_dashAudStatus(i)==='DIVERGENTE'?'err':'warn'}">${_dashSafe(_dashAudStatus(i))}</span></td><td>${_dashSafe(i.operadorNome||i.operador_nome||'—')}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty"><div class="empty-title">Nenhum resultado para os filtros</div></div>';}
   const alert=document.getElementById('dash-alert-wrap');if(alert)alert.innerHTML=div?`<div class="alert warn"><b>⚠️ ${div} divergência(s)</b> nos filtros atuais. Clique nos gráficos para aprofundar a análise.</div>`:`<div class="alert ok"><b>✅ Nenhuma divergência</b> nos filtros atuais.</div>`;
 }
-window.alterarModoDashboard=alterarModoDashboard;window.carregarDashboardAuditoria=carregarDashboardAuditoria;window.renderDashboardAuditoriaBase=renderDashboardAuditoria;window.renderDashboardAuditoria=renderDashboardAuditoria;window._dashAudBarClick=_dashAudBarClick;
+window.alterarModoDashboard=alterarModoDashboard;window.carregarDashboardAuditoria=carregarDashboardAuditoria;window.renderDashboardAuditoriaBase=renderDashboardAuditoria;window.renderDashboardAuditoria=renderDashboardAuditoria;window._dashAudBarClick=_dashAudBarClick;window._dashAudFiltrados=_dashAudFiltrados;window._dashAudStatus=_dashAudStatus;window._dashAudMetasRef=function(){return _dashAudMetas.slice();};
