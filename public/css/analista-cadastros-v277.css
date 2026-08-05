@@ -1,0 +1,11 @@
+/* UI v277 - Base de Produtos e Enderecos */
+#page-produtos .kpi-grid,#page-enderecos .kpi-grid{grid-template-columns:repeat(6,minmax(150px,1fr));gap:12px}
+#page-produtos .kpi,#page-enderecos .kpi{min-height:86px;border-radius:14px;box-shadow:0 4px 14px rgba(15,23,42,.06)}
+.cad-v2-toolbar{display:grid;grid-template-columns:minmax(260px,1.5fr) repeat(3,minmax(150px,.7fr)) auto;gap:10px;padding:14px;background:#fff;border-bottom:1px solid var(--border)}
+.cad-v2-quick{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.cad-v2-chip{border:1px solid var(--border);background:#fff;border-radius:999px;padding:6px 12px;font-size:.72rem;font-weight:700;cursor:pointer}.cad-v2-chip.active{background:var(--green,#08734f);color:#fff;border-color:transparent}
+.cad-v2-table{overflow:auto}.cad-v2-table table{min-width:1180px}.cad-v2-table th{white-space:nowrap;font-size:.68rem}.cad-v2-table td{vertical-align:middle}
+.cad-v2-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-top:1px solid var(--border);background:#fff;flex-wrap:wrap}
+.cad-v2-pages{display:flex;gap:5px;align-items:center}.cad-v2-page{min-width:34px;height:32px;border:1px solid var(--border);background:#fff;border-radius:7px;font-weight:700;cursor:pointer}.cad-v2-page.active{background:#08734f;color:#fff;border-color:#08734f}.cad-v2-page:disabled{opacity:.4;cursor:not-allowed}
+.cad-v2-tag{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:.65rem;font-weight:800;border:1px solid}.cad-v2-tag.green{color:#08734f;background:#ecfdf5;border-color:#a7f3d0}.cad-v2-tag.blue{color:#1d4ed8;background:#eff6ff;border-color:#bfdbfe}.cad-v2-tag.purple{color:#7e22ce;background:#faf5ff;border-color:#e9d5ff}.cad-v2-tag.orange{color:#c2410c;background:#fff7ed;border-color:#fed7aa}.cad-v2-tag.red{color:#b91c1c;background:#fef2f2;border-color:#fecaca}.cad-v2-actions{display:flex;gap:6px}.cad-v2-actions button{width:34px;height:34px;padding:0;border-radius:9px}
+@media(max-width:1100px){#page-produtos .kpi-grid,#page-enderecos .kpi-grid{grid-template-columns:repeat(3,1fr)}.cad-v2-toolbar{grid-template-columns:1fr 1fr}.cad-v2-toolbar .search{grid-column:1/-1}}
