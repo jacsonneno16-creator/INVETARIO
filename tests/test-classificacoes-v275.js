@@ -1,0 +1,13 @@
+const fs=require('fs');
+const root=__dirname+'/../public';
+const imp=fs.readFileSync(root+'/js/analista/11-importacao-base-oficial.js','utf8');
+const inv=fs.readFileSync(root+'/js/analista/10-inventarios-negocio.js','utf8');
+const ext=fs.readFileSync(root+'/js/analista/50-inventario-classificacoes-v275.js','utf8');
+const end=fs.readFileSync(root+'/js/coletor/07-etapa-endereco.js','utf8');
+const save=fs.readFileSync(root+'/js/coletor/08-etapas-produto-quantidade-salvamento.js','utf8');
+for(const f of ['tipo_produto','tipo_endereco','contabiliza_inventario','permite_multiplos_operadores','total_unidades_sistema']) if(!imp.includes(f)) throw Error('campo ausente: '+f);
+if(!inv.includes('somente_enderecos_contabilizaveis')) throw Error('metadado inventario ausente');
+if(!ext.includes('Acompanhamento por Produto')) throw Error('visao por produto ausente');
+if(!end.includes('_enderecoPermiteMultiplosOperadores')) throw Error('multioperador ausente');
+if(!save.includes('quantidade_unidades')) throw Error('conversao unidades ausente');
+console.log('OK v275');

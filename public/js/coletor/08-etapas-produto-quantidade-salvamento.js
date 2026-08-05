@@ -627,7 +627,9 @@ function _executarSalvar(qty) {
     validade: a.validade,
     quantidade: qty,                               // sempre em caixas (ou unidades, se GTIN)
     qtd_caixas:  _isDunBipado ? qty : null,        // quantas caixas o operador informou
-    fator_caixa: _isDunBipado ? _fatorCx : null,   // fator de conversão cx→und
+    fator_caixa: _isDunBipado ? _fatorCx : 1,      // fator de conversão cx→und
+    quantidade_unidades: _isDunBipado ? (qty * _fatorCx) : qty,
+    unidade_contagem: _isDunBipado ? 'CAIXA' : 'UNIDADE',
     tipo_bipagem: _isDunBipado ? 'DUN' : 'GTIN',   // qual código foi bipado
     quantidade_esperada: qtdEsp || '',
     divergente,

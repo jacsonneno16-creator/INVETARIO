@@ -663,6 +663,7 @@ async function enviarFilaPendente() {
 
       // Remove do IDB e marca localmente
       await idbDelete(c.uuid);
+      try{ if(window.DTStatusLedger) DTStatusLedger.mark('inventario',c.inventario_id||c.inventarioId||APP.inventario?.id,c,'ENVIADO'); }catch(_e){}
       enviados.push(c.uuid || c.id);
 
     } catch(err) {

@@ -184,6 +184,30 @@ async function atualizarCacheLocais() {
 }
 
 
+
+// v276 — Cards de status baseados em um livro-caixa local persistente.
+// Cada registro salvo é mantido como PENDENTE ou ENVIADO, inclusive após
+// recarregar a página, ficar offline ou sair da tela de contagem.
+(function(){
+  const KEY='dt_coletor_status_ledger_v276';
+  function load(){try{return JSON.parse(localStorage.getItem(KEY)||'{}')||{};}catch(_){return {};}}
+  function save(v){try{localStorage.setItem(KEY,JSON.stringify(v));}catch(_){}}
+  function scope(tipo,id){return String(tipo||'inventario')+'::'+String(id||'sem-id');}
+  function mark(tipo,id,registro,status){
+    if(!registro)return; const rid=String(registro.uuid||registro.chave||registro.docId||registro.id||'').trim(); if(!rid)return;
+    const all=load(), k=scope(tipo,id), box=all[k]||{itens:{}};
+    box.itens[rid]={status:String(status||'PENDENTE').toUpperCase(),divergente:!!(registro._alertaQtd||registro.divergencia_potencial||registro.divergente||String(registro.status||'').toUpperCase()==='DIVERGENTE'),atualizadoEm:new Date().toISOString()};
+    all[k]=box; save(all);
+    try{window.dispatchEvent(new CustomEvent('dt-status-ledger-atualizado'));}catch(_){ }
+  }
+  function resumo(tipo,id){
+    const all=load(), box=all[scope(tipo,id)]||{itens:{}}, vals=Object.values(box.itens||{});
+    const pendentes=vals.filter(x=>x.status!=='ENVIADO').length;
+    return {total:vals.length,enviadas:vals.length-pendentes,pendentes,divergencias:vals.filter(x=>x.divergente).length};
+  }
+  window.DTStatusLedger={mark,resumo};
+})();
+
 // v156 — Status da Auditoria offline baseado na fila IndexedDB.
 (function(){
   const _updateStatsBase = window.updateStats;
@@ -211,10 +235,11 @@ async function atualizarCacheLocais() {
     // exibiam zero.
     const resultados = Array.from(mapa.values());
     const pendIds = new Set(pendFila.map(_audDocId).filter(Boolean));
-    const total = resultados.length;
-    const pendentes = resultados.filter(r => pendIds.has(_audDocId(r))).length;
-    const enviadas = Math.max(0, total - pendentes);
-    const divergencias = resultados.filter(r => _audStatus(r) === 'DIVERGENTE').length;
+    const lr = window.DTStatusLedger ? DTStatusLedger.resumo('auditoria',audId) : {total:0,enviadas:0,pendentes:0,divergencias:0};
+    const total = Math.max(resultados.length, lr.total);
+    const pendentes = Math.max(resultados.filter(r => pendIds.has(_audDocId(r))).length, lr.pendentes);
+    const enviadas = Math.max(lr.enviadas, total - pendentes);
+    const divergencias = Math.max(resultados.filter(r => _audStatus(r) === 'DIVERGENTE').length, lr.divergencias);
     const set = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=String(v); };
     set('st-total', total); set('st-enviadas', enviadas); set('st-pendentes', pendentes); set('st-div', divergencias);
     window._dtAuditoriaPendentes = pendentes;
@@ -261,10 +286,11 @@ async function atualizarCacheLocais() {
       fila = Array.isArray(fila) ? fila : [];
       const pendInv = fila.filter(_invAtiva).filter(c => !invId || _invId(c) === invId);
       const pendIds = new Set(pendInv.map(_invUuid).filter(Boolean));
-      const total = ativas.length;
-      const pendentes = ativas.filter(c => pendIds.has(_invUuid(c))).length;
-      const enviadas = Math.max(0, total - pendentes);
-      const divs = ativas.filter(_invDivergenciaLocal).length;
+      const lr = window.DTStatusLedger ? DTStatusLedger.resumo('inventario',invId) : {total:0,enviadas:0,pendentes:0,divergencias:0};
+      const total = Math.max(ativas.length, lr.total);
+      const pendentes = Math.max(pendInv.length, lr.pendentes);
+      const enviadas = Math.max(lr.enviadas, total - pendentes);
+      const divs = Math.max(ativas.filter(_invDivergenciaLocal).length, lr.divergencias);
       const s = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
       s('st-total', total); s('st-enviadas', enviadas); s('st-pendentes', pendentes); s('st-div', divs);
       s('st-op', APP.operador?.name || '—'); s('st-inv', APP.inventario?.nome || '—');
@@ -289,3 +315,6 @@ async function atualizarCacheLocais() {
     }
   };
 })();
+
+window.addEventListener('dt-status-ledger-atualizado',function(){ if(typeof window.updateStats==='function') window.updateStats(); });
+setInterval(function(){ if(typeof window.updateStats==='function') window.updateStats(); },2000);

@@ -3,7 +3,7 @@ function state(){ return window.AnalistaStore.getState(); }
 //  6. IMPORTAÇÃO DE ARQUIVOS (BASE OFICIAL)
 // ───────────────────────────────────────────────────────────────────
 
-const CAMPOS_BASE = ['endereco','pallete_ou_capa','codigo_produto','descricao_produto','gtin','dun','quantidade_esperada','fator_caixa','setor','rua','nivel','custo_bruto','observacao'];
+const CAMPOS_BASE = ['endereco','pallete_ou_capa','codigo_produto','descricao_produto','gtin','dun','quantidade_esperada','total_unidades_sistema','fator_caixa','tipo_produto','tipo_endereco','contabiliza_inventario','permite_multiplos_operadores','setor','rua','nivel','custo_bruto','observacao'];
 const ALIAS_BASE = {
   // ── Endereço ─────────────────────────────────────────────────────
   endereco: [
@@ -53,6 +53,12 @@ const ALIAS_BASE = {
     // Genéricos
     'quantidade','qtd','qty','estoque','qtde','fator_estoque',
   ],
+
+  total_unidades_sistema: ['total_unidades_sistema','total_em_unidades','estoque_total_unidades','saldo_unidades','quantidade_sistema_unidades','qtd_total_unidades'],
+  tipo_produto: ['tipo_produto','categoria_produto','categoria_inventario','grupo_produto','classe_produto','tipo_item','familia_produto'],
+  tipo_endereco: ['tipo_endereco','fisico_virtual','endereco_fisico_virtual','classificacao_endereco'],
+  contabiliza_inventario: ['contabiliza_inventario','contar_inventario','entra_inventario','considerar_inventario','inventariavel'],
+  permite_multiplos_operadores: ['permite_multiplos_operadores','multi_operador','contagem_colaborativa','permite_contagem_simultanea'],
   // ── Setor ─────────────────────────────────────────────────────────
   setor: [
     'setor','sector','area','área','local_area',
@@ -122,6 +128,11 @@ function parseRowsToBase(rows, headers) {
     // Garantir que campos numéricos sejam números
     obj.quantidade_esperada = Math.max(0, parseFloat(obj.quantidade_esperada) || 0);
     obj.custo_bruto         = Math.max(0, parseFloat(String(obj.custo_bruto).replace(',','.')) || 0);
+    obj.total_unidades_sistema = Math.max(0, parseFloat(String(obj.total_unidades_sistema).replace(',','.')) || (obj.quantidade_esperada * (Math.max(1, parseFloat(String(obj.fator_caixa).replace(',','.')) || 1))));
+    obj.tipo_produto = String(obj.tipo_produto || 'NAO CLASSIFICADO').trim().toUpperCase();
+    obj.tipo_endereco = String(obj.tipo_endereco || 'FISICO').trim().toUpperCase();
+    obj.contabiliza_inventario = !/^(NAO|NÃO|FALSE|0)$/i.test(String(obj.contabiliza_inventario || (obj.tipo_endereco === 'VIRTUAL' ? 'NAO' : 'SIM')).trim());
+    obj.permite_multiplos_operadores = /^(SIM|TRUE|1)$/i.test(String(obj.permite_multiplos_operadores || (obj.tipo_endereco === 'VIRTUAL' ? 'SIM' : 'NAO')).trim());
     return obj;
   }).filter(r => r.endereco || r.codigo_produto);
 }
@@ -210,7 +221,12 @@ const INV_MAP_CAMPOS = [
   { key:'endereco',          label:'Endereço',              obrig:true,  icon:'📍', hint:'Código do endereço (ex: 01.02.A.01.01)' },
   { key:'codigo_produto',    label:'Código do Produto',     obrig:true,  icon:'🔑', hint:'SKU, código ou chave do produto' },
   { key:'descricao_produto', label:'Descrição do Produto',  obrig:false, icon:'📝', hint:'Nome ou descrição do produto' },
-  { key:'quantidade_esperada',label:'Quantidade Esperada (Caixas)', obrig:true, icon:'🔢', hint:'Quantidade esperada em caixas/paletes para o endereço. Ex.: se o endereço possui 50 caixas, informe 50. O fator e o total em unidades ficam apenas como referência e não alteram esta quantidade.' },
+  { key:'quantidade_esperada',label:'Quantidade Sistema (Caixas/Volumes)', obrig:true, icon:'🔢', hint:'Quantidade prevista no sistema na unidade original da base.' },
+  { key:'total_unidades_sistema',label:'Total Sistema em Unidades', obrig:false, icon:'🧮', hint:'Total já convertido em unidades. Se vazio, será calculado por quantidade × fator da caixa.' },
+  { key:'tipo_produto',label:'Tipo do Produto', obrig:false, icon:'🏷️', hint:'Produto de venda, insumo, embalagem, matéria-prima etc.' },
+  { key:'tipo_endereco',label:'Tipo do Endereço', obrig:false, icon:'📍', hint:'FISICO ou VIRTUAL.' },
+  { key:'contabiliza_inventario',label:'Contabiliza no Inventário', obrig:false, icon:'✅', hint:'SIM para entrar no progresso; NÃO para endereço virtual fora da soma.' },
+  { key:'permite_multiplos_operadores',label:'Permite Vários Operadores', obrig:false, icon:'👥', hint:'SIM para contagem colaborativa no mesmo endereço.' },
   { key:'custo_bruto',       label:'Custo Unitário (R$)',   obrig:false, icon:'💰', hint:'Custo unitário do produto — usado para calcular Valor Ganho/Perda na Análise por Produto' },
   { key:'setor',             label:'Setor / Área',          obrig:false, icon:'🏭', hint:'Setor de armazenagem' },
   { key:'rua',               label:'Rua / Corredor',        obrig:false, icon:'🛤️', hint:'Rua ou corredor do endereço' },
@@ -402,6 +418,11 @@ function confirmarInvMapper() {
       obj.fator_caixa = Math.max(1, parseFloat(String(obj.fator_caixa || '').replace(',','.')) || 1);
       obj.quantidade_esperada = Math.max(0, parseFloat(String(obj.quantidade_esperada || '').replace(',','.')) || 0);
       obj.custo_bruto = Math.max(0, parseFloat(String(obj.custo_bruto || '').replace(',','.')) || 0);
+      obj.total_unidades_sistema = Math.max(0, parseFloat(String(obj.total_unidades_sistema || '').replace(',','.')) || (obj.quantidade_esperada * obj.fator_caixa));
+      obj.tipo_produto = String(obj.tipo_produto || 'NAO CLASSIFICADO').trim().toUpperCase();
+      obj.tipo_endereco = String(obj.tipo_endereco || 'FISICO').trim().toUpperCase();
+      obj.contabiliza_inventario = !/^(NAO|NÃO|FALSE|0)$/i.test(String(obj.contabiliza_inventario || (obj.tipo_endereco === 'VIRTUAL' ? 'NAO' : 'SIM')).trim());
+      obj.permite_multiplos_operadores = /^(SIM|TRUE|1)$/i.test(String(obj.permite_multiplos_operadores || (obj.tipo_endereco === 'VIRTUAL' ? 'SIM' : 'NAO')).trim());
       return obj;
     }).filter(r => r.endereco && r.codigo_produto);
 

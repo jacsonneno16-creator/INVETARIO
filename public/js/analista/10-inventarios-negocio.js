@@ -109,7 +109,9 @@ function criarInventario() {
   // Eles permanecem no cadastro (ENDDB) para consulta, mas são excluídos da contagem.
   const endsSelecionadosAtivos = endsSelecionados.filter(e => {
     const info = getEnderecoInfo(e.endereco || e);
-    return !info || info.ativo !== false; // sem cadastro → tratado como ativo (legado)
+    if (info && info.ativo === false) return false;
+    const linha = state().ui.inventarioImportCtx.base.find(r => String(r.endereco||'').trim().toUpperCase() === String(e.endereco||e).trim().toUpperCase());
+    return !linha || linha.contabiliza_inventario !== false; // virtual fica disponível na base, mas fora do progresso
   });
   const qtdInativos = endsSelecionados.length - endsSelecionadosAtivos.length;
   endsSelecionados = endsSelecionadosAtivos;
@@ -133,8 +135,11 @@ function criarInventario() {
     capa_lote_por_operador: capaLotePorOperador,
     capa_ranges:          [],
     status:               'ATIVO',
-    base:                 [...state().ui.inventarioImportCtx.base],
-    total_registros:      state().ui.inventarioImportCtx.base.length,
+    base:                 [...state().ui.inventarioImportCtx.base].filter(r => { const t=String(r.tipo_produto||'NAO CLASSIFICADO').toUpperCase(); const sel=window.__DT_TIPOS_PRODUTO_SELECIONADOS||[]; return !sel.length || sel.includes(t); }),
+    total_registros:      [...state().ui.inventarioImportCtx.base].filter(r => { const t=String(r.tipo_produto||'NAO CLASSIFICADO').toUpperCase(); const sel=window.__DT_TIPOS_PRODUTO_SELECIONADOS||[]; return !sel.length || sel.includes(t); }).length,
+    tipos_produto:        [...(window.__DT_TIPOS_PRODUTO_SELECIONADOS||[])],
+    somente_enderecos_contabilizaveis: true,
+    total_enderecos_virtuais_excluidos: [...new Set(state().ui.inventarioImportCtx.base.filter(r=>r.contabiliza_inventario===false).map(r=>r.endereco))].length,
     arquivo:              state().ui.inventarioImportCtx.arquivo,
     enderecos_selecionados: endsSelecionados,
     total_enderecos:      endsSelecionados.length,

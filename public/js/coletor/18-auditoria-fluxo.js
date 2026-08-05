@@ -274,6 +274,7 @@
       criadoEm:agoraISO()
     };
     await window.DTAuditoriaStorage.filaPut(registro);
+    try{ if(window.DTStatusLedger) DTStatusLedger.mark('auditoria',audId,registro,'PENDENTE'); }catch(_e){}
     return registro;
   }
   // SINCRONIZADOR DE AUDITORIA V2
@@ -418,6 +419,7 @@
             if(registro){registro.status=status;registro.servidor_confirmado=true;}
           }
           await window.DTAuditoriaStorage.filaDelete(x.chave);
+          try{ if(window.DTStatusLedger) DTStatusLedger.mark('auditoria',x.auditoriaId,x,'ENVIADO'); }catch(_e){}
           try{window.dispatchEvent(new CustomEvent('dt-auditoria-sync',{detail:{id:x.docId,status:status,lojaId:data.lojaId||'',origem:data.origem||''}}));}catch(_e){}
         }catch(e){
           houveErro=true;

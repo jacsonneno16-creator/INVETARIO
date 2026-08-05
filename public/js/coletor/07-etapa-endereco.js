@@ -267,6 +267,20 @@ function _mostrarFeedbackVerificacao(fbEl, endNorm) {
   // 'livre' — não sobrescreve o feedback padrão
 }
 
+
+function _enderecoPermiteMultiplosOperadores(endNorm) {
+  const alvo=String(endNorm||'').trim().toUpperCase();
+  const listas=[APP?.inventario?.base||[], APP?.base||[], APP?.enderecos||[]];
+  for(const lista of listas){
+    const r=(lista||[]).find(x=>String(x.endereco||x.codigo||'').trim().toUpperCase()===alvo);
+    if(r){
+      const tipo=String(r.tipo_endereco||'').toUpperCase();
+      return r.permite_multiplos_operadores===true || /^(SIM|TRUE|1)$/i.test(String(r.permite_multiplos_operadores||'')) || tipo==='VIRTUAL';
+    }
+  }
+  return false;
+}
+
 /** Confirma endereço sem botão — usado no fluxo auto-avanço (endereço não encontrado na base). */
 function confirmarEnderecoSilencioso() {
   const raw = document.getElementById('f-endereco').value;
@@ -297,11 +311,11 @@ function confirmarEnderecoSilencioso() {
     document.getElementById('f-endereco').className = 'field field-err';
     return;
   }
-  if (status === 'outro') {
+  if (status === 'outro' && !_enderecoPermiteMultiplosOperadores(valNorm)) {
     _modalBloqueioOutroOperador(valNorm, verifAtual.docsOutros || []);
     return;
   }
-  if (status === 'proprio') {
+  if (status === 'proprio' && !_enderecoPermiteMultiplosOperadores(valNorm)) {
     fb.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px">
       <b>🔒 Primeira contagem já realizada neste endereço</b>
       <span style="font-size:.7rem;opacity:.9">Uma nova contagem somente pode ser liberada pelo Analista na aba Recontagem.</span>
@@ -441,7 +455,7 @@ function confirmarEndereco() {
     beepErr(); return;
   }
 
-  if (status === 'outro') {
+  if (status === 'outro' && !_enderecoPermiteMultiplosOperadores(valNorm)) {
     // Bloquear — marcar campo como erro E mostrar modal (mesmo nível que em_recontagem)
     fb.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px">
       <b>🚫 Endereço ocupado por outro operador</b>

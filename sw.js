@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260805-v273-dashboard-acomp';
+var CACHE='dt-inventario-20260805-v275-classificacoes-produtos';
 var PRECACHE=[
   '/',
   '/index.html',
