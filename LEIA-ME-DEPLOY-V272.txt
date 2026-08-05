@@ -1,0 +1,18 @@
+CORRECAO DO ERRO: User code failed to load / Timeout after 10000
+
+O functions/index.js nao executa consultas ou migracoes durante a inicializacao.
+O erro ocorre porque o Firebase CLI encerra a descoberta local das Functions apos 10 segundos.
+
+FORMA RECOMENDADA:
+1. Abra a pasta do projeto.
+2. Execute DEPLOY-V272.cmd.
+
+OU NO CMD:
+set FUNCTIONS_DISCOVERY_TIMEOUT=60
+firebase deploy --only firestore:rules,functions,hosting
+
+OU NO POWERSHELL:
+$env:FUNCTIONS_DISCOVERY_TIMEOUT='60'
+firebase deploy --only firestore:rules,functions,hosting
+
+O deploy so terminou corretamente se aparecer a atualizacao da Function registrarResultadoAuditoria.
