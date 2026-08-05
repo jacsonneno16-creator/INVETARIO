@@ -59,7 +59,17 @@
     const w=document.getElementById('op-lista-wrap');
     if(!w)return;
     const q=String(document.getElementById('op-busca')?.value||'').toLowerCase();
-    const lista=usuarios.map((u,i)=>({...u,_indiceOriginal:i})).filter(u=>`${u.nome||''} ${u.email||''} ${u.email_analista||''} ${u.email_coletor||''} ${u.login_coletor||''} ${u.perfil||''}`.toLowerCase().includes(q));
+    const perfil=String(document.getElementById('op-filtro-perfil')?.value||'');
+    const status=String(document.getElementById('op-filtro-status')?.value||'');
+    const lista=usuarios.map((u,i)=>({...u,_indiceOriginal:i})).filter(u=>{
+      const texto=`${u.nome||''} ${u.email||''} ${u.email_analista||''} ${u.email_coletor||''} ${u.login_coletor||''} ${u.perfil||''}`.toLowerCase();
+      const p=String(u.perfil||u.tipo||'operador').toLowerCase();
+      const ehAdmin=u.admin_mestre===true||u.administrador_mestre===true||p==='administrador'||p==='admin';
+      const perfilOk=!perfil||(perfil==='administrador'?ehAdmin:perfil==='analista'?(p==='analista'&&!ehAdmin):(p==='operador'&&!ehAdmin));
+      const statusOk=!status||(status==='ativo'?u.ativo!==false:u.ativo===false);
+      return texto.includes(q)&&perfilOk&&statusOk;
+    });
+    global.DTAtualizarResumoUsuarios?.(usuarios,lista.length);
     if(!lista.length){w.innerHTML='<div class="empty"><div class="empty-title">Nenhum usuário encontrado</div></div>';return;}
     w.innerHTML=`<div class="tbl-wrap op-lista-linhas"><table>
       <thead><tr><th>Usuário</th><th>Login</th><th>Acesso</th><th>Lojas</th><th>Status</th><th style="width:74px;text-align:center">Ações</th></tr></thead>

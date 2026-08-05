@@ -1,5 +1,7 @@
-var CACHE='dt-inventario-20260804-centro-real-v251';
+var CACHE='dt-inventario-20260805-usuarios-lojas-v253';
 var PRECACHE=[
+  '/css/analista-usuarios-lojas-v253.css',
+  '/js/analista/48-usuarios-lojas-v253.js',
   '/',
   '/index.html',
   '/analista.html',

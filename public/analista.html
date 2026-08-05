@@ -95,7 +95,8 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <meta name="theme-color" content="#0d4f2f">
 
 <link rel="stylesheet" href="/css/analista-operacao-v250.css?v=20260804-v250">
-<link rel="stylesheet" href="css/analista-centro-real-v251.css?v=20260804-2118">
+<link rel="stylesheet" href="css/analista-dashboard-acomp-v252.css?v=20260804-2245">
+<link rel="stylesheet" href="css/analista-usuarios-lojas-v253.css?v=20260805-0030">
 </head>
 <body>
 <!-- ══════════ TELA DE LOGIN ══════════ -->
@@ -1084,16 +1085,23 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="page admin-management-page" id="page-operadores">
 <div class="sec-hdr admin-management-header">
 <div class="admin-management-heading">
-<div class="sec-title">🔑 Configuração de Usuários</div>
-<div class="sec-sub">Cadastre usuários e configure seus acessos e permissões</div>
+<div class="sec-title">👤 Usuários</div>
+<div class="sec-sub">Gerencie usuários, perfis e permissões de acesso ao sistema</div>
 </div>
 <div id="op-header-actions" class="admin-management-actions">
 <button class="btn btn-ghost btn-sm" id="op-btn-atualizar" onclick="listarOperadores();opVerificarMinhaConta()">🔄 Atualizar</button>
-<button class="btn btn-success btn-sm" id="op-btn-criar-usuario" onclick="opAbrirModalCriar()">➕ Criar Usuário</button>
+<button class="btn btn-success btn-sm" id="op-btn-criar-usuario" onclick="opAbrirModalCriar()">＋ Novo Usuário</button>
 </div>
 </div>
 <!-- ════ SUB-PÁGINA: OPERADORES ════ -->
 <div id="opl-page-operadores" style="display:block">
+<div id="usuarios-kpis" class="admin-kpi-grid" aria-label="Resumo de usuários">
+  <div class="admin-kpi-card"><span class="admin-kpi-icon green">👥</span><div><small>Total de Usuários</small><strong id="usr-kpi-total">—</strong><em>Cadastrados no sistema</em></div></div>
+  <div class="admin-kpi-card"><span class="admin-kpi-icon blue">🛡️</span><div><small>Administradores</small><strong id="usr-kpi-admin">—</strong><em>Acesso administrativo</em></div></div>
+  <div class="admin-kpi-card"><span class="admin-kpi-icon purple">🖥️</span><div><small>Analistas</small><strong id="usr-kpi-analistas">—</strong><em>Acesso ao painel</em></div></div>
+  <div class="admin-kpi-card"><span class="admin-kpi-icon orange">📦</span><div><small>Coletores</small><strong id="usr-kpi-coletores">—</strong><em>Acesso operacional</em></div></div>
+  <div class="admin-kpi-card"><span class="admin-kpi-icon green">✓</span><div><small>Usuários Ativos</small><strong id="usr-kpi-ativos">—</strong><em>Com acesso liberado</em></div></div>
+</div>
 <!-- ── MINHA CONTA DE COLETOR ── -->
 <div id="op-minha-conta-wrap" style="display:none">
 <div class="tc" style="border:1.5px solid rgba(0,229,255,.25)">
@@ -1209,12 +1217,13 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 <!-- Lista de operadores -->
 <div class="tc admin-management-card">
-<div class="tc-header admin-list-header">
-<div class="tc-title">👥 Usuários Cadastrados e Permissões</div>
-<div class="admin-list-tools">
-<input class="admin-search-input" id="op-busca" oninput="opFiltrarLista()" placeholder="🔍 Buscar usuário...">
-</input></div>
+<div class="admin-filter-bar">
+  <div class="admin-filter-search"><span>⌕</span><input class="admin-search-input" id="op-busca" oninput="opFiltrarLista()" placeholder="Buscar por nome, e-mail ou usuário..."></div>
+  <label><span>Perfil</span><select id="op-filtro-perfil" onchange="opFiltrarLista()"><option value="">Todos os perfis</option><option value="administrador">Administradores</option><option value="analista">Analistas</option><option value="operador">Coletores</option></select></label>
+  <label><span>Status</span><select id="op-filtro-status" onchange="opFiltrarLista()"><option value="">Todos os status</option><option value="ativo">Ativos</option><option value="bloqueado">Bloqueados</option></select></label>
+  <button class="btn btn-ghost btn-sm" type="button" onclick="document.getElementById('op-busca').value='';document.getElementById('op-filtro-perfil').value='';document.getElementById('op-filtro-status').value='';opFiltrarLista()">✕ Limpar filtros</button>
 </div>
+<div class="tc-header admin-list-header"><div><div class="tc-title">Lista de Usuários</div><div class="admin-list-count" id="usuarios-list-count">— usuários</div></div></div>
 <div id="op-lista-wrap" class="admin-list-body">
 <div class="empty"><div class="empty-icon">🔑</div><div class="empty-title">Carregando operadores…</div></div>
 </div>
@@ -1373,16 +1382,27 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   <div class="sec-hdr admin-management-header">
     <div class="admin-management-heading">
       <div class="sec-title">🏪 Gestão de Lojas</div>
-      <div class="sec-sub">Cadastre, edite e selecione os ambientes das lojas</div>
+      <div class="sec-sub">Gerencie lojas, configurações e acessos do sistema</div>
     </div>
     <div class="admin-management-actions">
       <button class="btn btn-ghost btn-sm" onclick="renderGestaoLojas()">🔄 Atualizar</button>
-      <button class="btn btn-primary btn-sm" onclick="abrirCadastroLoja()">＋ Nova loja</button>
+      <button class="btn btn-primary btn-sm" onclick="abrirCadastroLoja()">＋ Nova Loja</button>
     </div>
+  </div>
+  <div id="lojas-kpis" class="admin-kpi-grid admin-kpi-grid-stores">
+    <div class="admin-kpi-card"><span class="admin-kpi-icon green">🏪</span><div><small>Total de Lojas</small><strong id="loja-kpi-total">—</strong><em>Lojas cadastradas</em></div></div>
+    <div class="admin-kpi-card"><span class="admin-kpi-icon green">✓</span><div><small>Lojas Ativas</small><strong id="loja-kpi-ativas">—</strong><em>Em operação</em></div></div>
+    <div class="admin-kpi-card"><span class="admin-kpi-icon gray">◉</span><div><small>Lojas Inativas</small><strong id="loja-kpi-inativas">—</strong><em>Desativadas</em></div></div>
+    <div class="admin-kpi-card"><span class="admin-kpi-icon purple">👥</span><div><small>Ambiente Atual</small><strong id="loja-kpi-atual">—</strong><em>Loja selecionada</em></div></div>
+  </div>
+  <div class="admin-filter-bar lojas-filter-bar">
+    <div class="admin-filter-search"><span>⌕</span><input id="lojas-busca" class="admin-search-input" placeholder="Buscar por nome ou código da loja..." oninput="renderGestaoLojas()"></div>
+    <label><span>Status</span><select id="lojas-filtro-status" onchange="renderGestaoLojas()"><option value="">Todos os status</option><option value="ativa">Ativas</option><option value="inativa">Inativas</option></select></label>
+    <button class="btn btn-ghost btn-sm" type="button" onclick="document.getElementById('lojas-busca').value='';document.getElementById('lojas-filtro-status').value='';renderGestaoLojas()">✕ Limpar filtros</button>
   </div>
   <div class="tc lojas-gestao-tabela admin-management-card">
     <div class="tc-header admin-list-header">
-      <div class="tc-title">Lojas cadastradas</div>
+      <div><div class="tc-title">Lista de Lojas</div><div class="admin-list-count" id="lojas-list-count">— lojas</div></div>
       <button class="btn btn-ghost btn-sm" onclick="migrarDadosLegadosParaLojaAtual()" title="Usar somente quando houver dados antigos fora das lojas">📦 Migrar dados antigos</button>
     </div>
     <div id="lojas-lista" class="admin-list-body"></div>
@@ -2535,6 +2555,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </script>
 
 <script src="js/analista/45-ui-centro-operacoes-v250.js?v=20260804-v250"></script>
-<script src="js/analista/46-centro-operacoes-real-v251.js?v=20260804-2118"></script>
+<script src="js/analista/47-dashboard-acomp-v252.js?v=20260804-2245"></script>
+<script src="js/analista/48-usuarios-lojas-v253.js?v=20260805-0030"></script>
 </body>
 </html>
