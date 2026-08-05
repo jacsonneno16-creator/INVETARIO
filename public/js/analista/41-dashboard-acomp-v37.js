@@ -53,6 +53,25 @@
       });}
       catch(e){console.warn('[ACOMP AUD] Falha ao listar '+origem+':',e);}
     }
+    // dt_auditorias_coletor funciona como índice público. Algumas auditorias
+    // antigas possuem apenas subcoleções (base_chunks/resultados), sem documento
+    // pai; por isso elas não aparecem em collection('dt_auditorias').get().
+    // Leia o índice e crie candidatos diretos para esses caminhos.
+    try{
+      const indice=await raw.collection('dt_auditorias_coletor').get();
+      indice.docs.forEach(d=>{
+        const x={id:d.id,...d.data(),_origem:'raiz'};
+        const atual=porId.get(d.id);
+        if(!atual) porId.set(d.id,{...x,_candidatos:[x]});
+        else if(!atual._candidatos.some(c=>c._origem==='raiz')) atual._candidatos.push(x);
+        const lojas=[x.loja,x.loja_id,x.lojaId].concat(Array.isArray(x.lojas)?x.lojas:[]).filter(Boolean);
+        lojas.forEach(l=>{
+          const c={...x,_origem:'loja:'+String(l)};
+          const a=porId.get(d.id);
+          if(a&&!a._candidatos.some(k=>k._origem===c._origem))a._candidatos.push(c);
+        });
+      });
+    }catch(e){console.warn('[ACOMP AUD] Falha ao ler índice de auditorias:',e);}
     // O coletor grava em dt_auditorias na raiz. Leia essa origem primeiro e
     // consulte apenas a loja ativa como compatibilidade com instalações novas.
     const acesso=window.DT_USUARIO_ACESSO_ATUAL||{};

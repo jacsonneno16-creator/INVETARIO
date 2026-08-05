@@ -880,6 +880,18 @@ async function carregarDashboardAuditoria(forcar){
     const metas=[],vistos=new Set();
     async function add(ref,origem){try{const snap=await ref.get();snap.docs.forEach(d=>{if(vistos.has(d.id))return;vistos.add(d.id);metas.push({id:d.id,...d.data(),_origem:origem,_ref:d.ref});});}catch(e){console.warn('[Dashboard Auditoria] '+origem,e);}}
     if(window.getDTRawFirestore){
+      // Use o índice público para incluir auditorias cujo documento pai não
+      // existe, mas que possuem base_chunks/resultados. Essas auditorias não
+      // aparecem em consultas normais de dt_auditorias.
+      try{
+        const indice=await raw.collection('dt_auditorias_coletor').get();
+        indice.docs.forEach(d=>{
+          if(vistos.has(d.id))return;
+          vistos.add(d.id);
+          const x={id:d.id,...d.data(),_origem:'raiz',_ref:raw.collection('dt_auditorias').doc(d.id)};
+          metas.push(x);
+        });
+      }catch(e){console.warn('[Dashboard Auditoria] índice público',e);}
       if(lojaAtual)await add(raw.collection('lojas').doc(lojaAtual).collection('dt_auditorias'),'loja:'+lojaAtual);
       const acesso=window.DT_USUARIO_ACESSO_ATUAL||{};
       const acessoGlobal=acesso.acesso_todas_lojas===true || acesso.perfil==='administrador' || acesso.admin_mestre===true || acesso.administrador_mestre===true;
