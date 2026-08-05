@@ -91,16 +91,36 @@ function criarInventario() {
     showToast('Importe a base de dados primeiro', 'e'); return;
   }
 
-  // Montar lista de endereços selecionados
-  // Prioridade: seleção manual > endereços únicos da base
+  // Aplicar os filtros escolhidos na abertura do inventário.
+  // A base geral importada continua preservada no contexto, mas o inventário
+  // recebe somente os tipos/produtos selecionados pelo analista.
+  const baseImportada = [...state().ui.inventarioImportCtx.base];
+  const baseTipos = baseImportada.filter(r => {
+    const t = String(r.tipo_produto || 'NAO CLASSIFICADO').toUpperCase();
+    const sel = window.__DT_TIPOS_PRODUTO_SELECIONADOS || [];
+    return !sel.length || sel.includes(t);
+  });
+  const baseInventario = window.DTInventarioProdutoFiltro?.aplicar
+    ? window.DTInventarioProdutoFiltro.aplicar(baseTipos)
+    : baseTipos;
+
+  if (!baseInventario.length) {
+    showToast('Nenhum registro da base importada corresponde aos produtos selecionados.', 'e');
+    return;
+  }
+
+  // Montar lista de endereços selecionados. No modo por produto, somente os
+  // endereços que possuem o item escolhido participam do inventário.
   let endsSelecionados = [];
   if (state().ui.selecionadosSetores.size > 0) {
+    const permitidos = new Set(baseInventario.map(r => String(r.endereco || '').trim().toUpperCase()).filter(Boolean));
     state().ui.selecionadosSetores.forEach(s => {
-      if (state().enderecosPorSetor[s]) endsSelecionados.push(...state().enderecosPorSetor[s]);
+      if (state().enderecosPorSetor[s]) {
+        endsSelecionados.push(...state().enderecosPorSetor[s].filter(e => permitidos.has(String(e.endereco || e).trim().toUpperCase())));
+      }
     });
   } else {
-    // Usar endereços únicos da base importada
-    const endsUnicos = [...new Set(state().ui.inventarioImportCtx.base.map(r => r.endereco).filter(Boolean))];
+    const endsUnicos = [...new Set(baseInventario.map(r => r.endereco).filter(Boolean))];
     endsSelecionados = endsUnicos.map(e => ({ endereco: e }));
   }
 
@@ -110,7 +130,7 @@ function criarInventario() {
   const endsSelecionadosAtivos = endsSelecionados.filter(e => {
     const info = getEnderecoInfo(e.endereco || e);
     if (info && info.ativo === false) return false;
-    const linha = state().ui.inventarioImportCtx.base.find(r => String(r.endereco||'').trim().toUpperCase() === String(e.endereco||e).trim().toUpperCase());
+    const linha = baseInventario.find(r => String(r.endereco||'').trim().toUpperCase() === String(e.endereco||e).trim().toUpperCase());
     return !linha || linha.contabiliza_inventario !== false; // virtual fica disponível na base, mas fora do progresso
   });
   const qtdInativos = endsSelecionados.length - endsSelecionadosAtivos.length;
@@ -135,11 +155,13 @@ function criarInventario() {
     capa_lote_por_operador: capaLotePorOperador,
     capa_ranges:          [],
     status:               'ATIVO',
-    base:                 [...state().ui.inventarioImportCtx.base].filter(r => { const t=String(r.tipo_produto||'NAO CLASSIFICADO').toUpperCase(); const sel=window.__DT_TIPOS_PRODUTO_SELECIONADOS||[]; return !sel.length || sel.includes(t); }),
-    total_registros:      [...state().ui.inventarioImportCtx.base].filter(r => { const t=String(r.tipo_produto||'NAO CLASSIFICADO').toUpperCase(); const sel=window.__DT_TIPOS_PRODUTO_SELECIONADOS||[]; return !sel.length || sel.includes(t); }).length,
+    base:                 baseInventario,
+    total_registros:      baseInventario.length,
     tipos_produto:        [...(window.__DT_TIPOS_PRODUTO_SELECIONADOS||[])],
+    modo_abertura:        window.DTInventarioProdutoFiltro?.modo?.() || 'GERAL',
+    produtos_selecionados: window.DTInventarioProdutoFiltro?.selecionados?.() || [],
     somente_enderecos_contabilizaveis: true,
-    total_enderecos_virtuais_excluidos: [...new Set(state().ui.inventarioImportCtx.base.filter(r=>r.contabiliza_inventario===false).map(r=>r.endereco))].length,
+    total_enderecos_virtuais_excluidos: [...new Set(baseInventario.filter(r=>r.contabiliza_inventario===false).map(r=>r.endereco))].length,
     arquivo:              state().ui.inventarioImportCtx.arquivo,
     enderecos_selecionados: endsSelecionados,
     total_enderecos:      endsSelecionados.length,

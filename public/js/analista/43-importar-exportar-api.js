@@ -233,12 +233,43 @@
     }).filter(Boolean);
   }
   function normalizeValidity(value) {
-    var text = String(value || '').trim();
+    var text = String(value == null ? '' : value).trim();
     if (!text) return '';
+    // Aceita datas sem separador vindas do coletor/Excel: ddmmaaaa.
+    if (/^\d{8}$/.test(text)) {
+      return text.slice(0,2) + '/' + text.slice(2,4) + '/' + text.slice(4,8);
+    }
+    // Aceita datas com separador: d/m/aa, dd-mm-aaaa etc.
     var m = text.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
-    if (!m) return text;
-    var year = m[3].length === 2 ? '20' + m[3] : m[3];
-    return m[1].padStart(2,'0') + '/' + m[2].padStart(2,'0') + '/' + year;
+    if (m) {
+      var year = m[3].length === 2 ? '20' + m[3] : m[3];
+      return m[1].padStart(2,'0') + '/' + m[2].padStart(2,'0') + '/' + year;
+    }
+    // Aceita serial de data do Excel quando recebido como número.
+    if (/^\d{5}(?:\.\d+)?$/.test(text)) {
+      var serial = Number(text);
+      if (Number.isFinite(serial) && serial > 20000 && serial < 100000) {
+        var utc = Math.round((serial - 25569) * 86400 * 1000);
+        var d = new Date(utc);
+        if (!Number.isNaN(d.getTime())) {
+          return String(d.getUTCDate()).padStart(2,'0') + '/' +
+            String(d.getUTCMonth()+1).padStart(2,'0') + '/' + d.getUTCFullYear();
+        }
+      }
+    }
+    return text;
+  }
+  function normalizeGtin(value) {
+    var text = String(value == null ? '' : value).trim().replace(/\s+/g,'');
+    if (!text) return '';
+    // Evita notação científica criada pelo Excel (ex.: 1.7899E+13).
+    if (/^[+-]?(?:\d+(?:[.,]\d+)?|[.,]\d+)[eE][+-]?\d+$/.test(text)) {
+      var num = Number(text.replace(',', '.'));
+      if (Number.isFinite(num) && num >= 0) text = num.toFixed(0);
+    }
+    // Remove o sufixo .0 quando o código foi interpretado como número.
+    text = text.replace(/^[+]/, '').replace(/\.0+$/, '');
+    return text;
   }
   function decimalBR(value) {
     var n = Number(value);
@@ -256,7 +287,7 @@
     var rows = consolidatedRows(invId), errors = [], grouped = {}, palletAddress = {};
     rows.forEach(function(row, index){
       var line = index + 2;
-      var gtin = String(row.gtin || '').trim().replace(/\s+/g,'');
+      var gtin = normalizeGtin(row.gtin);
       var qty = Number(row.quantidade);
       var address = String(row.endereco || '').trim();
       var productLot = String(row.lote_produto || '').trim();
@@ -494,10 +525,10 @@
     } catch (error) { toast('Erro ao importar contagens: ' + error.message, 'e'); }
     finally { if (el('ie-file-contagens')) el('ie-file-contagens').value = ''; }
   };
-  global.ieExportarBluesoft = function () {
-    var invId = value('ie-bluesoft-inv');
+  global.ieExportarBluesoft = function (formatoForcado, inventarioForcado) {
+    var invId = String(inventarioForcado || value('ie-bluesoft-inv') || '').trim();
     if (!invId) return toast('Selecione o inventário.', 'w');
-    var formato = String(value('ie-bluesoft-formato') || 'csv').toLowerCase();
+    var formato = String(formatoForcado || value('ie-bluesoft-formato') || 'csv').toLowerCase();
     if (formato !== 'txt') formato = 'csv';
     var result = buildBluesoftExport(invId, 'ENDERECAMENTO', '');
     if (!result.rows.length) return toast('Não há contagens resolvidas para exportar. Pendências sem decisão não entram no arquivo.', 'w');
@@ -523,6 +554,14 @@
     downloadBlob(conteudo, 'bluesoft_enderecamento_' + invId + '_' + fileStamp() + '.' + extensao, mime);
     toast(result.rows.length.toLocaleString('pt-BR') + ' item(ns) exportado(s) em ' + extensao.toUpperCase() + '.', 's');
   };
+
+  global.exportarContagensBluesoft = function (formato) {
+    var seletor = document.getElementById('cont-finv');
+    var invId = seletor ? String(seletor.value || '').trim() : '';
+    if (!invId) return toast('Selecione um inventário no filtro da aba Contagens.', 'w');
+    return global.ieExportarBluesoft(formato, invId);
+  };
+
   global.ieBluesoftLayoutChanged = function () {};
 
   function configFromForm() {
