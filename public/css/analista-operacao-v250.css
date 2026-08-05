@@ -1,0 +1,130 @@
+/* DT Inventario - Centro de Operacoes v250
+   Escopo estrito: somente painel autenticado. A tela de login nao e alterada. */
+#app-main{
+  --v250-green:#0f5b3c;--v250-green-2:#17734d;--v250-green-soft:#e9f6ef;
+  --v250-orange:#f59e0b;--v250-red:#ef4444;--v250-blue:#2563eb;
+  --v250-ink:#17202d;--v250-muted:#667085;--v250-line:#e3e9ef;
+  --v250-bg:#f5f8f7;--v250-card:#fff;--v250-radius:14px;
+  background:var(--v250-bg);color:var(--v250-ink);min-width:0;
+}
+#app-main *{box-sizing:border-box}
+#app-main .main{min-width:0;flex:1;background:var(--v250-bg)}
+#app-main .content{display:block!important;width:100%!important;max-width:none!important;min-width:0!important;padding:18px 22px 30px!important;overflow-x:hidden!important}
+#app-main .page{display:none!important;width:100%!important;max-width:none!important;min-width:0!important;margin:0!important;padding:0!important;position:relative!important;inset:auto!important;transform:none!important}
+#app-main .page.on{display:block!important;animation:v250In .18s ease-out}
+@keyframes v250In{from{opacity:.45;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* Barra superior e navegacao */
+#app-main .topbar{height:64px!important;background:#fff!important;border-bottom:1px solid var(--v250-line)!important;box-shadow:0 1px 6px rgba(16,24,40,.04)!important;padding:0 22px!important}
+#app-main .page-title{font-size:1.05rem!important;font-weight:800!important;color:var(--v250-ink)!important}
+#app-main .sidebar{width:226px!important;min-width:226px!important;background:linear-gradient(180deg,#0d5538 0%,#083d29 100%)!important;border-right:1px solid rgba(255,255,255,.08)!important}
+#app-main .brand{min-height:88px!important;padding:15px 16px!important;border-bottom:1px solid rgba(255,255,255,.09)!important}
+#app-main .nav-item{margin:3px 8px!important;min-height:40px!important;padding:9px 12px!important;border-radius:9px!important;color:rgba(255,255,255,.68)!important;font-size:.78rem!important;font-weight:600!important}
+#app-main .nav-item:hover{background:rgba(255,255,255,.07)!important;color:#fff!important}
+#app-main .nav-item.on{background:rgba(255,255,255,.12)!important;color:#fff!important;box-shadow:inset 3px 0 0 var(--v250-orange)!important}
+#app-main .nav-icon{width:20px!important;text-align:center!important;opacity:.9}
+#app-main .nav-section{padding:15px 16px 5px!important;color:rgba(255,255,255,.28)!important;font-size:.58rem!important;letter-spacing:.14em!important}
+
+/* Componentes globais */
+#app-main .sec-hdr{display:flex!important;align-items:flex-start!important;justify-content:space-between!important;gap:16px!important;margin:0 0 14px!important;padding:0!important;border:0!important;background:transparent!important}
+#app-main .sec-title{font-size:1.15rem!important;font-weight:800!important;color:var(--v250-ink)!important;letter-spacing:-.02em}
+#app-main .sec-sub{font-size:.73rem!important;color:var(--v250-muted)!important;margin-top:3px!important}
+#app-main .tc{width:100%!important;max-width:none!important;min-width:0!important;background:#fff!important;border:1px solid var(--v250-line)!important;border-radius:var(--v250-radius)!important;box-shadow:0 4px 16px rgba(16,24,40,.045)!important;margin-bottom:14px!important;overflow:hidden!important}
+#app-main .tc-header{min-height:54px!important;padding:13px 16px!important;border:0!important;border-bottom:1px solid var(--v250-line)!important;background:#fff!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important}
+#app-main .tc-title{font-size:.86rem!important;font-weight:800!important;color:var(--v250-ink)!important}
+#app-main .tc-toolbar{display:flex!important;align-items:center!important;gap:8px!important;flex-wrap:wrap!important;padding:11px 14px!important;background:#fbfcfd!important;border-bottom:1px solid var(--v250-line)!important}
+#app-main .search,#app-main .filter-sel,#app-main input:not([type=checkbox]):not([type=radio]),#app-main select{min-height:36px!important;border:1px solid #d7dfe7!important;border-radius:9px!important;background:#fff!important;box-shadow:none!important;font-size:.75rem!important;color:var(--v250-ink)!important}
+#app-main .search:focus,#app-main .filter-sel:focus,#app-main input:focus,#app-main select:focus{border-color:#54a77d!important;box-shadow:0 0 0 3px rgba(23,115,77,.11)!important;outline:0!important}
+#app-main .btn{min-height:36px!important;border-radius:9px!important;font-weight:700!important;font-size:.73rem!important;box-shadow:none!important}
+#app-main .btn-primary{background:var(--v250-green-2)!important;border-color:var(--v250-green-2)!important;color:#fff!important}
+#app-main .btn-primary:hover{background:#0f6241!important;transform:translateY(-1px)}
+#app-main .btn-export{background:#eef6ff!important;color:#1d4ed8!important;border:1px solid #cfe0ff!important}
+#app-main .btn-ghost{background:#fff!important;color:#52606f!important;border:1px solid #d8e0e8!important}
+
+#app-main .kpi-grid{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(145px,1fr))!important;gap:10px!important;margin:0 0 14px!important;width:100%!important}
+#app-main .kpi{position:relative!important;min-height:91px!important;padding:15px 14px!important;background:#fff!important;border:1px solid var(--v250-line)!important;border-radius:12px!important;box-shadow:0 3px 12px rgba(16,24,40,.035)!important;overflow:hidden!important}
+#app-main .kpi:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:currentColor;opacity:.7}
+#app-main .kpi-icon{font-size:1rem!important;position:absolute!important;right:13px!important;top:12px!important;opacity:.72!important}
+#app-main .kpi-val{font-size:1.45rem!important;line-height:1.1!important;font-weight:800!important;letter-spacing:-.04em!important;color:var(--v250-ink)!important}
+#app-main .kpi-lbl{font-size:.64rem!important;line-height:1.25!important;text-transform:uppercase!important;letter-spacing:.055em!important;color:var(--v250-muted)!important;margin-top:7px!important;font-weight:700!important}
+
+/* Tabelas: compactas, largura integral e rolagem somente quando necessaria */
+#app-main .tbl-wrap,#app-main .table-wrap,#app-main [id$="-table-wrap"],#app-main .auditoria-tbl-wrap{display:block!important;width:100%!important;max-width:100%!important;overflow-x:auto!important;overflow-y:visible!important;-webkit-overflow-scrolling:touch!important}
+#app-main table{width:100%!important;max-width:none!important;border-collapse:separate!important;border-spacing:0!important;font-size:.72rem!important;background:#fff!important}
+#app-main table thead th{position:sticky!important;top:0!important;z-index:3!important;padding:10px 11px!important;background:#f6f8fa!important;color:#667085!important;font-size:.61rem!important;text-transform:uppercase!important;letter-spacing:.045em!important;border-bottom:1px solid var(--v250-line)!important;white-space:nowrap!important}
+#app-main table tbody td{padding:10px 11px!important;border-bottom:1px solid #edf1f4!important;color:#344054!important;vertical-align:middle!important}
+#app-main table tbody tr:hover td{background:#f8fbf9!important}
+#app-main table tbody tr:last-child td{border-bottom:0!important}
+#app-main .badge{border-radius:999px!important;font-size:.61rem!important;font-weight:800!important;padding:4px 8px!important}
+
+/* Dashboard - composicao proxima ao mockup */
+#page-dashboard>div:first-child{min-height:124px!important;border-radius:16px!important;margin-bottom:14px!important;padding:20px 24px!important}
+#page-dashboard #kpi-grid{grid-template-columns:repeat(5,minmax(130px,1fr))!important}
+#page-dashboard #dash-breakdown-grid{display:grid!important;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr)!important;gap:14px!important}
+#page-dashboard #dash-charts-wrap{display:grid!important;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr)!important;gap:14px!important;width:100%!important}
+#page-dashboard #dash-progress-wrap,#page-dashboard #dash-recentes-card{width:100%!important}
+
+/* Inventarios */
+#page-inventarios .tc{min-height:540px}
+#page-inventarios .tc-toolbar{display:grid!important;grid-template-columns:minmax(280px,1fr) 180px 180px!important}
+#page-inventarios #inv-table-wrap{min-height:430px!important}
+
+/* Acompanhamento: KPIs + rua ampla + dois paineis inferiores */
+#page-acompanhamento #acomp-kpis{grid-template-columns:repeat(6,minmax(125px,1fr))!important}
+#page-acompanhamento>.tc:nth-of-type(1){width:100%!important}
+#page-acompanhamento>.tc:nth-of-type(2),#page-acompanhamento>.tc:nth-of-type(3){display:inline-block!important;width:calc(50% - 8px)!important;vertical-align:top!important}
+#page-acompanhamento>.tc:nth-of-type(2){margin-right:12px!important}
+#page-acompanhamento #acomp-ruas-grid{max-height:430px!important;display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:9px!important;padding:12px!important}
+#page-acompanhamento #acomp-progress-detail,#page-acompanhamento #acomp-coletores-wrap{max-height:360px!important;min-height:260px!important}
+
+/* Operacao e relatorios */
+#page-contagens .kpi-grid,#page-pendencias .kpi-grid,#page-recontagens .kpi-grid,#page-produtividade .kpi-grid{grid-template-columns:repeat(5,minmax(130px,1fr))!important}
+#page-contagens .tc-toolbar,#page-recontagens .tc-toolbar{display:grid!important;grid-template-columns:minmax(220px,1.6fr) repeat(5,minmax(130px,.7fr))!important}
+#page-pendencias .tc-toolbar{display:grid!important;grid-template-columns:minmax(240px,1.5fr) repeat(3,minmax(150px,.7fr))!important}
+#page-rel-divergencias .tc-toolbar{display:grid!important;grid-template-columns:minmax(230px,1.4fr) repeat(4,minmax(145px,.7fr))!important}
+#page-produtividade>div:not(.sec-hdr):not(.kpi-grid){width:100%!important;max-width:none!important}
+#page-produtividade .tc{display:block!important}
+
+/* Cadastros */
+#page-enderecos .tc-toolbar,#page-produtos .tc-toolbar,#page-coletores .tc-toolbar{display:grid!important;grid-template-columns:minmax(260px,1.6fr) repeat(3,minmax(145px,.7fr))!important}
+#page-enderecos #end-table-wrap,#page-produtos #prod-table-wrap,#page-coletores #coletores-wrap{min-height:480px!important}
+#page-operadores,#page-lojas{width:100%!important;max-width:none!important}
+#page-operadores .admin-management-card,#page-lojas .admin-management-card{width:100%!important;max-width:none!important}
+#page-operadores .admin-management-header,#page-lojas .admin-management-header{margin-bottom:14px!important}
+#page-operadores #operadores-lista,#page-lojas #lojas-lista{width:100%!important;max-width:none!important}
+
+/* Auditoria e rastreabilidade */
+#page-auditoria .tc,#page-rastreabilidade .tc{width:100%!important;max-width:none!important}
+#page-auditoria .toolbar,#page-rastreabilidade .tc-toolbar{width:100%!important;display:grid!important;grid-template-columns:repeat(auto-fit,minmax(155px,1fr))!important;gap:8px!important}
+#page-auditoria .auditoria-tabela{min-width:1180px!important;width:100%!important}
+
+/* Importar/exportar ocupa toda a largura */
+#page-importar-exportar>div[id^="ie-panel-"]{width:100%!important;max-width:none!important}
+#page-importar-exportar #ie-panel-exportar>div,#page-importar-exportar #ie-panel-importar>div,#page-importar-exportar #ie-panel-api>div{width:100%!important;max-width:none!important;grid-template-columns:repeat(2,minmax(0,1fr))!important}
+
+/* Paginas vazias, mensagens e graficos */
+#app-main .empty{min-height:170px!important;display:flex!important;flex-direction:column!important;align-items:center!important;justify-content:center!important;color:var(--v250-muted)!important}
+#app-main canvas,#app-main svg{max-width:100%!important}
+#app-main [style*="max-width"]{max-width:100%!important}
+
+/* Nao deixar CSS inline antigo exibir paginas inativas */
+#app-main .page:not(.on){display:none!important;visibility:hidden!important;pointer-events:none!important}
+#app-main .page.on{visibility:visible!important;pointer-events:auto!important}
+
+@media(max-width:1280px){
+ #app-main .sidebar{width:205px!important;min-width:205px!important}
+ #app-main .content{padding:14px 16px 24px!important}
+ #page-dashboard #kpi-grid{grid-template-columns:repeat(3,minmax(130px,1fr))!important}
+ #page-acompanhamento #acomp-kpis{grid-template-columns:repeat(3,minmax(130px,1fr))!important}
+ #page-contagens .tc-toolbar,#page-recontagens .tc-toolbar{grid-template-columns:repeat(3,minmax(150px,1fr))!important}
+}
+@media(max-width:900px){
+ #app-main .content{padding:12px!important}
+ #app-main .sec-hdr{flex-direction:column!important;align-items:stretch!important}
+ #app-main .kpi-grid,#page-dashboard #kpi-grid,#page-acompanhamento #acomp-kpis,#page-contagens .kpi-grid,#page-pendencias .kpi-grid,#page-recontagens .kpi-grid,#page-produtividade .kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+ #page-dashboard #dash-breakdown-grid,#page-dashboard #dash-charts-wrap{grid-template-columns:1fr!important}
+ #page-acompanhamento>.tc:nth-of-type(2),#page-acompanhamento>.tc:nth-of-type(3){display:block!important;width:100%!important;margin-right:0!important}
+ #page-acompanhamento #acomp-ruas-grid{grid-template-columns:1fr!important}
+ #page-inventarios .tc-toolbar,#page-contagens .tc-toolbar,#page-pendencias .tc-toolbar,#page-recontagens .tc-toolbar,#page-rel-divergencias .tc-toolbar,#page-enderecos .tc-toolbar,#page-produtos .tc-toolbar,#page-coletores .tc-toolbar{display:flex!important}
+ #page-importar-exportar #ie-panel-exportar>div,#page-importar-exportar #ie-panel-importar>div,#page-importar-exportar #ie-panel-api>div{grid-template-columns:1fr!important}
+}

@@ -14,7 +14,6 @@
 <script src="vendor/firebase-10.12.2/firebase-auth-compat.js"></script>
 <script src="vendor/firebase-10.12.2/firebase-firestore-compat.js"></script>
 <link rel="stylesheet" href="/css/analista.css">
-<link rel="stylesheet" href="/css/analista-centro-operacoes-v249.css?v=20260804-1835">
 <style id="v80-analista-compacto">
 /* v80 — layout compacto e tabelas largas sem quebrar nomes de produtos */
 :root{font-size:14px}
@@ -95,6 +94,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <meta name="theme-color" content="#0d4f2f">
 
+<link rel="stylesheet" href="/css/analista-operacao-v250.css?v=20260804-v250">
 </head>
 <body>
 <!-- ══════════ TELA DE LOGIN ══════════ -->
@@ -2473,7 +2473,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   window.addEventListener('DOMContentLoaded',function(){obs.observe(document.body,{childList:true,subtree:true});obs.takeRecords();['cont-table-wrap','rec-table-wrap','div-table-wrap'].forEach(function(id){var el=document.getElementById(id);if(el) ativar(el);});});
 })();
 </script>
-<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v246 · 20260804.2</div>
+<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v241 · 20260804.1</div>
 
 <style id="fix-admin-pages-top-v237">
 /* Força Usuários e Gestão de Lojas a começarem no topo da área útil. */
@@ -2533,5 +2533,6 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 })();
 </script>
 
+<script src="js/analista/45-ui-centro-operacoes-v250.js?v=20260804-v250"></script>
 </body>
 </html>

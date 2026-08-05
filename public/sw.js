@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260804-abas-isoladas-v249';
+var CACHE='dt-inventario-20260804-centro-operacoes-v250';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -7,7 +7,7 @@ var PRECACHE=[
   '/manifest.webmanifest',
   '/manifest-coletor.json',
   '/css/analista.css',
-  '/css/analista-centro-operacoes-v249.css',
+  '/css/analista-operacao-v250.css',
   '/css/coletor.css',
   '/vendor/xlsx-0.18.5/xlsx.full.min.js',
   '/vendor/firebase-10.12.2/firebase-app-compat.js',
@@ -55,6 +55,7 @@ var PRECACHE=[
   '/js/analista/42-topbar-tools.js',
   '/js/analista/43-importar-exportar-api.js',
   '/js/analista/44-auditoria-remediacoes.js',
+  '/js/analista/45-ui-centro-operacoes-v250.js',
   '/js/analista/app-controller.js',
   '/js/analista/firebaseService.js',
   '/js/analista/services/inventarioService.js',

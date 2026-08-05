@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260804-abas-isoladas-v249';
+var CACHE='dt-inventario-20260804-centro-operacoes-v250';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -6,9 +6,6 @@ var PRECACHE=[
   '/coletor.html',
   '/manifest.webmanifest',
   '/manifest-coletor.json',
-  '/css/analista.css',
-  '/css/analista-centro-operacoes-v249.css',
-  '/css/coletor.css',
   '/vendor/xlsx-0.18.5/xlsx.full.min.js',
   '/vendor/firebase-10.12.2/firebase-app-compat.js',
   '/vendor/firebase-10.12.2/firebase-auth-compat.js',
@@ -36,7 +33,6 @@ var PRECACHE=[
   '/js/analista/12-validacao-operacional.js',
   '/js/analista/13-enderecos-importacao-selecao.js',
   '/js/analista/20-sync-contagens.js',
-  '/js/analista/services/rodadaFisicaService.js',
   '/js/analista/21-divergencias-recontagens.js',
   '/js/analista/22-dashboard-render-sync.js',
   '/js/analista/30-render-inventarios-acompanhamento.js',
@@ -55,6 +51,7 @@ var PRECACHE=[
   '/js/analista/42-topbar-tools.js',
   '/js/analista/43-importar-exportar-api.js',
   '/js/analista/44-auditoria-remediacoes.js',
+  '/js/analista/45-ui-centro-operacoes-v250.js',
   '/js/analista/app-controller.js',
   '/js/analista/firebaseService.js',
   '/js/analista/services/inventarioService.js',
@@ -80,7 +77,6 @@ var PRECACHE=[
   '/js/coletor/17-auditoria-meta.js',
   '/js/coletor/18-auditoria-fluxo.js',
   '/js/coletor/19-runtime-estavel-v15.js',
-  '/js/coletor/20-menu-compat.js',
   '/js/legacy-ui-compat.js'
 ];
 self.addEventListener('install',function(e){
