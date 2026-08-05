@@ -760,6 +760,7 @@ function _contagemOrigemExataRec(divergencia) {
 }
 
 function renderDivergencias() {
+  _instalarEventosRecontagem();
   const scrollAnterior=document.querySelector('#div-table-wrap .tbl-wrap')?.scrollLeft || 0;
   const busca     = (document.getElementById('div-busca')?.value || '').toLowerCase();
   const fInv      = document.getElementById('div-sel-inv')?.value || '';
@@ -1121,7 +1122,7 @@ function renderDivergencias() {
               ? esperadosEndereco.reduce((total, item) => total + _qtdEsperadaItem(item), 0)
               : Number(qtdEspTxt) || 0);
           const quantidadePaletes = esperadosEndereco.length || 1;
-          const esperadoHtml = `<button type="button" onclick="abrirDetalhePaletesEsperados(decodeURIComponent('${encodeURIComponent(String(d.id || ''))}'))"
+          const esperadoHtml = `<button type="button" data-rec-action="detalhar-esperado" data-div-id="${escHTML(String(d.id || ''))}"
             title="Clique para visualizar os paletes"
             style="width:100%;min-width:145px;text-align:left;border:1px solid rgba(59,130,246,.28);background:rgba(59,130,246,.07);border-radius:10px;padding:8px 10px;cursor:pointer;color:inherit">
               <div class="mono" style="font-weight:850;font-size:.78rem">Total esperado: ${escHTML(totalEsperadoEndereco)}</div>
@@ -1579,9 +1580,7 @@ function renderRecontagens() {
                     : `<span style="font-size:.72rem;color:var(--muted)">${fmtTs(r.concluida_em)}</span>`
                 }
                 ${(!_isFluxoEncerrado(r) && naoAtribuido)
-                  ? `<button class="btn btn-ghost btn-sm" type="button" onclick="return ${r._somente_divergencia
-                      ? `divAtribuirRapido(decodeURIComponent('${encodeURIComponent(String(r.divergencia_id || ''))}'))`
-                      : `divAtribuirPorRec(decodeURIComponent('${encodeURIComponent(String(r.id || ''))}'))`}" style="font-size:.72rem" title="Atribuir a um operador">👤 Atribuir</button>`
+                  ? `<button class="btn btn-ghost btn-sm" type="button" data-rec-action="atribuir-linha" data-rec-kind="${r._somente_divergencia ? 'div' : 'rec'}" data-rec-id="${escHTML(String(r._somente_divergencia ? (r.divergencia_id || '') : (r.id || '')))}" style="font-size:.72rem" title="Atribuir a um operador">👤 Atribuir</button>`
                   : ''}
               </div>
             </td>
@@ -1592,13 +1591,70 @@ function renderRecontagens() {
   divAtualizarBarraSel();
 }
 
-// Expor explicitamente as ações usadas por botões HTML e WebViews antigos.
+
+// Eventos delegados da tela de Recontagem. Não dependem de onclick/onchange
+// embutidos, portanto funcionam também em WebViews e após re-render da tabela.
+function _instalarEventosRecontagem() {
+  const pagina = document.getElementById('page-recontagens');
+  if (!pagina || pagina.dataset.recEventosInstalados === '1') return;
+  pagina.dataset.recEventosInstalados = '1';
+
+  pagina.addEventListener('change', function(evento) {
+    const checkbox = evento.target?.closest?.('.div-row-chk');
+    if (!checkbox || !pagina.contains(checkbox)) return;
+    const id = String(checkbox.dataset.id || '');
+    if (!id) return;
+    divToggleSel(id, checkbox.checked === true);
+  }, true);
+
+  pagina.addEventListener('click', function(evento) {
+    const alvo = evento.target?.closest?.('[data-rec-action]');
+    if (!alvo || !pagina.contains(alvo)) return;
+    evento.preventDefault();
+    evento.stopPropagation();
+    const acao = alvo.dataset.recAction;
+    if (acao === 'detalhar-esperado') {
+      abrirDetalhePaletesEsperados(String(alvo.dataset.divId || ''));
+      return;
+    }
+    if (acao === 'atribuir-linha') {
+      const id = String(alvo.dataset.recId || '');
+      if (!id) return showToast('Registro da recontagem não identificado.', 'e');
+      if (alvo.dataset.recKind === 'rec') divAtribuirPorRec(id);
+      else divAtribuirRapido(id);
+    }
+  }, true);
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', _instalarEventosRecontagem, { once:true });
+} else {
+  _instalarEventosRecontagem();
+}
+
+// Exportação explícita das ações chamadas pela interface e por integrações.
 window.divToggleSel = divToggleSel;
 window.divToggleTodos = divToggleTodos;
 window.divDeselecionarTodos = divDeselecionarTodos;
 window.divAtribuirRapido = divAtribuirRapido;
 window.divAtribuirPorRec = divAtribuirPorRec;
 window.abrirAtribuirRecontagem = abrirAtribuirRecontagem;
+window.abrirDetalhePaletesEsperados = abrirDetalhePaletesEsperados;
+window.fecharDetalhePaletesEsperados = fecharDetalhePaletesEsperados;
+window._instalarEventosRecontagem = _instalarEventosRecontagem;
+window.DTRecontagemDebug = Object.freeze({
+  definirSelecionavel: function(item) {
+    if (!item || item.id == null) return false;
+    _divSelecionaveisRender.set(String(item.id), item);
+    return true;
+  },
+  limparSelecao: function() {
+    _divSelecionadas.clear();
+    _divSelecionaveisRender.clear();
+    divAtualizarBarraSel();
+  },
+  selecionados: function() { return [..._divSelecionadas]; }
+});
 
 function _exportarXlsxAnalista(nomeArquivo, nomeAba, linhas) {
   if (!window.XLSX) {
@@ -1671,8 +1727,24 @@ function exportarRecontagens() {
 
 // Exibe a composição do total esperado em formato de lista de paletes.
 function abrirDetalhePaletesEsperados(divId) {
-  const bruto = state().divergencias.find(item => String(item.id || '') === String(divId || ''));
-  if (!bruto) return showToast('Não foi possível localizar essa divergência.', 'e');
+  const chave = String(divId || '');
+  let bruto = _obterDivSelecionada(chave) ||
+    state().divergencias.find(item => String(item.id || '') === chave) ||
+    [..._divSelecionaveisRender.values()].find(item =>
+      String(item.id || '') === chave ||
+      (Array.isArray(item._divergencias_agrupadas) && item._divergencias_agrupadas.map(String).includes(chave))
+    ) || null;
+  if (!bruto) {
+    const rec = state().recontagens.find(item => String(item.id || '') === chave);
+    if (rec) {
+      bruto = state().divergencias.find(item => String(item.id || '') === String(rec.divergencia_id || '')) || rec;
+    }
+  }
+  if (!bruto) {
+    console.error('[Recontagem] Detalhe esperado não localizado', { divId, selecionaveis:[..._divSelecionaveisRender.keys()] });
+    showToast('Não foi possível localizar os dados esperados deste endereço. Atualize a tela e tente novamente.', 'e');
+    return false;
+  }
   const invCanonico = _inventarioCanonicoRec(bruto);
   const endCanonico = _FK.endereco(bruto.endereco);
   const mesmoEndereco = obj =>
