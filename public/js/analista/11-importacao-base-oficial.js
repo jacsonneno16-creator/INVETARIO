@@ -3,7 +3,7 @@ function state(){ return window.AnalistaStore.getState(); }
 //  6. IMPORTAÇÃO DE ARQUIVOS (BASE OFICIAL)
 // ───────────────────────────────────────────────────────────────────
 
-const CAMPOS_BASE = ['endereco','pallete_ou_capa','codigo_produto','descricao_produto','gtin','dun','quantidade_esperada','total_unidades_sistema','fator_caixa','tipo_produto','tipo_endereco','contabiliza_inventario','permite_multiplos_operadores','setor','rua','nivel','custo_bruto','observacao'];
+const CAMPOS_BASE = ['endereco','pallete_ou_capa','codigo_produto','descricao_produto','gtin','dun','quantidade_esperada','total_unidades_sistema','fator_caixa','tipo_produto','tipo_endereco','contabiliza_inventario','permite_multiplos_operadores','setor','rua','nivel','custo_bruto','lote_produto','validade','palete','observacao'];
 const ALIAS_BASE = {
   // ── Endereço ─────────────────────────────────────────────────────
   endereco: [
@@ -85,6 +85,9 @@ const ALIAS_BASE = {
     'custo_bruto_unit','custo_bruto_unitario','custo_liq',
   ],
   // ── Observação ────────────────────────────────────────────────────
+  lote_produto: ['lote_produto','lote','numero_lote'],
+  validade: ['validade','data_validade'],
+  palete: ['palete','pallet','capa_palete','pallete_ou_capa'],
   observacao: [
     'observacao','observação','obs','nota','notas',
     // Da Terrinha — campos extras mapeados como observação
@@ -516,3 +519,5 @@ function invFbErr(msg) {
   habilitarBtnCriar();
 }
 
+
+window.baixarModeloBaseInventarioClassificada=function(){const rows=[{endereco:'14.1520.1.5.1.1.1',pallete_ou_capa:'2907916',codigo_produto:'000123',descricao_produto:'PRODUTO EXEMPLO',gtin:'7890000000001',dun:'17890000000018',quantidade_esperada:100,total_unidades_sistema:1200,fator_caixa:12,tipo_produto:'PRODUTO DE VENDA',tipo_endereco:'FISICO',contabiliza_inventario:'SIM',permite_multiplos_operadores:'NAO',setor:'PRODUTO ACABADO',rua:'RUA 1',nivel:'1',lote_produto:'L001',validade:'31/12/2027',palete:'2907916'}];const ws=XLSX.utils.json_to_sheet(rows),wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Base Inventario');XLSX.writeFile(wb,'modelo_base_inventario_classificada.xlsx')};

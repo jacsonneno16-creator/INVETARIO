@@ -227,74 +227,57 @@ function confirmarGtin() {
   // ────────────────────────────────────────────────────────────────────────
 
   APP.atual.gtin = normProd(val);
-  APP.atual.step = 4;
 
+  // Endereço virtual: fluxo reduzido — produto e quantidade apenas.
+  if (APP.atual.enderecoVirtual === true || String(APP.atual.tipoEndereco || '').toUpperCase() === 'VIRTUAL') {
+    APP.atual.capa = '';
+    APP.atual.loteProduto = '';
+    APP.atual.validade = '';
+    APP.atual.step = 5;
+    _calcExpr = '';
+    _calcResultado = null;
+    _calcMode = false;
+    const fq = document.getElementById('f-qty');
+    if (fq) fq.value = '';
+    const cw = document.getElementById('calc-wrap');
+    if (cw) cw.style.display = 'none';
+    updateSteps();
+    setTimeout(() => document.getElementById('f-qty')?.focus(), 100);
+    return;
+  }
+
+  // Endereço físico: solicitar obrigatoriamente o número do lote.
+  APP.atual.step = 4;
   document.getElementById('f-validade').value = '';
   document.getElementById('fb-validade').innerHTML = '';
-
   updateSteps();
   setTimeout(() => document.getElementById('f-validade').focus(), 100);
 }
 
 // ═══════════════════════════════════════════════════
-//  ETAPA 4: VALIDADE  (DD/MM/AAAA)
+//  ETAPA 4: LOTE DO PRODUTO
 // ═══════════════════════════════════════════════════
 function onValidadeInput() {
-  let raw = document.getElementById('f-validade').value.replace(/\D/g,'');
-  // Formatar como DD/MM/AAAA
-  let fmt = '';
-  if (raw.length > 0) fmt  = raw.slice(0,2);
-  if (raw.length > 2) fmt += '/' + raw.slice(2,4);
-  if (raw.length > 4) fmt += '/' + raw.slice(4,8);
-  document.getElementById('f-validade').value = fmt;
-
+  const el = document.getElementById('f-validade');
   const fb = document.getElementById('fb-validade');
-  if (fmt.length < 10) { fb.innerHTML = ''; return; }
-
-  const [dd, mm, aaaa] = fmt.split('/').map(Number);
-  const dataVal = new Date(aaaa, mm - 1, dd);
-  const hoje    = new Date(); hoje.setHours(0,0,0,0);
-
-  if (!dd || dd < 1 || dd > 31 || !mm || mm < 1 || mm > 12 || !aaaa || aaaa < 2000
-      || isNaN(dataVal.getTime()) || dataVal.getDate() !== dd) {
-    fb.innerHTML = `<div class="fb err">✗ Data inválida — use DD/MM/AAAA</div>`;
-    document.getElementById('f-validade').className = 'field field-err'; return;
+  if (!el) return;
+  let val = String(el.value || '').replace(/[;\r\n]/g, '').slice(0, 30);
+  el.value = val;
+  if (!val.trim()) {
+    if (fb) fb.innerHTML = '';
+    el.className = 'field';
+    return;
   }
-
-  if (dataVal < hoje) {
-    fb.innerHTML = `<div class="fb err">✗ Validade no passado — produto vencido!</div>`;
-    document.getElementById('f-validade').className = 'field field-err'; return;
-  }
-
-  const maxData = new Date(hoje.getFullYear() + 5, hoje.getMonth(), hoje.getDate());
-  if (dataVal > maxData) {
-    fb.innerHTML = `<div class="fb warn">⚠ Validade muito distante — confirme se está correta</div>`;
-    document.getElementById('f-validade').className = 'field field-warn'; return;
-  }
-
-  const diasRestantes = Math.round((dataVal - hoje) / 86400000);
-  const aviso = diasRestantes <= 90 ? ` · ⚠ Vence em ${diasRestantes} dia(s)` : '';
-  fb.innerHTML = `<div class="fb ok">✓ Válido até ${fmt}${aviso}</div>`;
-  document.getElementById('f-validade').className = 'field field-ok';
-
-  // Auto-avança se digitou os 10 chars (DD/MM/AAAA) e data é válida
-  if (fmt.length === 10 && !aviso.includes('⚠')) {
-    setTimeout(() => confirmarValidade(), 300);
-  }
+  if (fb) fb.innerHTML = `<div class="fb ok">✓ Lote informado: ${escHTML(val.trim())}</div>`;
+  el.className = 'field field-ok';
 }
 
 function confirmarValidade() {
-  const val = document.getElementById('f-validade').value;
-  if (val.length < 10) { toast('Informe a validade completa (DD/MM/AAAA)', 'e'); beepErr(); return; }
-  const [dd, mm, aaaa] = val.split('/').map(Number);
-  const dataVal = new Date(aaaa, mm - 1, dd);
-  const hoje    = new Date(); hoje.setHours(0,0,0,0);
-  if (!dd || dd < 1 || dd > 31 || !mm || mm < 1 || mm > 12 || !aaaa || aaaa < 2000
-      || isNaN(dataVal.getTime()) || dataVal.getDate() !== dd) {
-    toast('Data inválida (DD/MM/AAAA)', 'e'); beepErr(); return;
-  }
-  if (dataVal < hoje) { toast('Produto vencido!', 'e'); beepErr(); return; }
-  APP.atual.validade = val;
+  // Compatibilidade: o campo mantém o id antigo, mas agora representa lote.
+  const val = String(document.getElementById('f-validade')?.value || '').trim();
+  if (!val) { toast('Informe o número do lote', 'e'); beepErr(); return; }
+  APP.atual.loteProduto = val;
+  APP.atual.validade = '';
   APP.atual.step = 5;
   beepOk();
   _calcExpr = '';
@@ -504,15 +487,15 @@ function salvarContagem() {
         </div>
         <div style="display:flex;justify-content:space-between;padding:7px 10px;background:var(--card);border-radius:8px">
           <span style="color:var(--muted)">🏷️ Capa Palete</span>
-          <span style="font-family:var(--mono);font-weight:700;color:var(--text)">${a.capa}</span>
+          <span style="font-family:var(--mono);font-weight:700;color:var(--text)">${a.enderecoVirtual ? '—' : (a.capa || '—')}</span>
         </div>
         <div style="display:flex;justify-content:space-between;padding:7px 10px;background:var(--card);border-radius:8px;gap:8px">
           <span style="color:var(--muted);flex-shrink:0">📦 Produto</span>
           <span style="font-weight:600;color:var(--text);text-align:right;font-size:.72rem">${a.produtoAtual?.descricao_produto || a.gtin}</span>
         </div>
         <div style="display:flex;justify-content:space-between;padding:7px 10px;background:var(--card);border-radius:8px">
-          <span style="color:var(--muted)">📅 Validade</span>
-          <span style="font-family:var(--mono);font-weight:700;color:var(--text)">${a.validade}</span>
+          <span style="color:var(--muted)">🏷️ Lote</span>
+          <span style="font-family:var(--mono);font-weight:700;color:var(--text)">${a.enderecoVirtual ? 'Não se aplica' : (a.loteProduto || '—')}</span>
         </div>
         <div style="display:flex;justify-content:space-between;padding:10px 12px;background:rgba(232,117,26,.08);border:1px solid rgba(232,117,26,.2);border-radius:8px">
           <span style="color:var(--muted);font-weight:700">🔢 Quantidade</span>
@@ -624,7 +607,11 @@ function _executarSalvar(qty) {
     produtoLidoNome:  _nomeProdutoLido,
     descricao:         _nomeProdutoLido,
     descricao_produto: _nomeProdutoLido,
-    validade: a.validade,
+    lote_produto: a.enderecoVirtual ? '' : (a.loteProduto || ''),
+    validade: a.enderecoVirtual ? '' : (a.validade || ''),
+    tipo_endereco: a.enderecoVirtual ? 'VIRTUAL' : (a.tipoEndereco || 'FISICO'),
+    contabiliza_inventario: a.contabilizaInventario !== false,
+    permite_multiplos_operadores: a.permiteMultiplosOperadores === true,
     quantidade: qty,                               // sempre em caixas (ou unidades, se GTIN)
     qtd_caixas:  _isDunBipado ? qty : null,        // quantas caixas o operador informou
     fator_caixa: _isDunBipado ? _fatorCx : 1,      // fator de conversão cx→und
@@ -970,7 +957,7 @@ function confirmarRebipar() {
 }
 
 function resetContagem() {
-  APP.atual = { step:1, endereco:'', _endNorm:'', enderecoValido:false, capa:'', gtin:'', produtoAtual:null, produtoDivergenteEnd:false, validade:'', quantidade:0, somentesDun:false, capacidadeEnd:0 };
+  APP.atual = { step:1, endereco:'', _endNorm:'', enderecoValido:false, capa:'', gtin:'', produtoAtual:null, produtoDivergenteEnd:false, loteProduto:'', validade:'', quantidade:0, somentesDun:false, capacidadeEnd:0, tipoEndereco:'FISICO', enderecoVirtual:false, contabilizaInventario:true, permiteMultiplosOperadores:false };
   _endVerif = null; // invalidar cache de verificação
   _loteReset();     // limpar estado de lançamento rápido
 

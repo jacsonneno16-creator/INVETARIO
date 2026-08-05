@@ -268,6 +268,27 @@ function _mostrarFeedbackVerificacao(fbEl, endNorm) {
 }
 
 
+
+function _cadastroEnderecoAtual(endNorm) {
+  const alvo = String(endNorm || '').trim().toUpperCase();
+  const listas = [APP?.inventario?.base || [], APP?.base || [], APP?.enderecos || []];
+  for (const lista of listas) {
+    const r = (lista || []).find(x => String(x.endereco || x.codigo || x._end || '').trim().toUpperCase() === alvo);
+    if (r) return r;
+  }
+  return null;
+}
+
+function _aplicarClassificacaoEndereco(endNorm) {
+  const r = _cadastroEnderecoAtual(endNorm) || {};
+  const tipo = String(r.tipo_endereco || r.tipoEndereco || (r.virtual ? 'VIRTUAL' : 'FISICO')).trim().toUpperCase() || 'FISICO';
+  APP.atual.tipoEndereco = tipo;
+  APP.atual.enderecoVirtual = tipo === 'VIRTUAL';
+  APP.atual.contabilizaInventario = r.contabiliza_inventario !== false && !/^(NAO|NÃO|FALSE|0)$/i.test(String(r.contabiliza_inventario ?? 'SIM'));
+  APP.atual.permiteMultiplosOperadores = APP.atual.enderecoVirtual || r.permite_multiplos_operadores === true || /^(SIM|TRUE|1)$/i.test(String(r.permite_multiplos_operadores || ''));
+  return r;
+}
+
 function _enderecoPermiteMultiplosOperadores(endNorm) {
   const alvo=String(endNorm||'').trim().toUpperCase();
   const listas=[APP?.inventario?.base||[], APP?.base||[], APP?.enderecos||[]];
@@ -332,7 +353,8 @@ function confirmarEnderecoSilencioso() {
   APP.atual.endereco    = valNorm;
   APP.atual._endNorm    = valNorm;
   APP.atual.somentesDun = valNorm.includes('14.1520');
-  APP.atual.step        = 2;
+  _aplicarClassificacaoEndereco(valNorm);
+  APP.atual.step        = APP.atual.enderecoVirtual ? 3 : 2;
   beepSuave();
 
   const range = APP.capaRange;
@@ -502,7 +524,8 @@ function _prosseguirComEndereco(valNorm) {
     APP.atual.endereco    = valNorm;
     APP.atual._endNorm    = valNorm;
     APP.atual.somentesDun = valNorm.includes('14.1520');
-    APP.atual.step        = 2;
+    _aplicarClassificacaoEndereco(valNorm);
+    APP.atual.step        = APP.atual.enderecoVirtual ? 3 : 2;
     beepSuave();
     const el2 = document.getElementById('cp-proximo-hint');
     const el3 = document.getElementById('f-capa');
@@ -520,6 +543,22 @@ function _prosseguirComEndereco(valNorm) {
   APP.atual._endNorm    = valNorm;
   APP.atual.capacidadeEnd = cap;
   APP.atual.somentesDun = valNorm.includes('14.1520');
+  _aplicarClassificacaoEndereco(valNorm);
+
+  if (APP.atual.enderecoVirtual) {
+    APP.atual.capa = '';
+    APP.atual.loteProduto = '';
+    APP.atual.validade = '';
+    APP.atual.step = 3;
+    if (fb) fb.innerHTML = '<div class="fb ok">✓ Endereço virtual — informe produto e quantidade</div>';
+    const fg = document.getElementById('f-gtin');
+    if (fg) fg.value = '';
+    const fbg = document.getElementById('fb-gtin');
+    if (fbg) fbg.innerHTML = '';
+    updateSteps();
+    setTimeout(() => fg?.focus(), 100);
+    return;
+  }
 
   // DEBUG visual — exibe cap detectada no feedback para confirmar no celular
   if (fb) fb.innerHTML = `<div class="fb info" style="font-size:.68rem;line-height:1.5">
