@@ -739,28 +739,14 @@ async function enfileirarContagem(contagem) {
   // 1️⃣ Salvar no IDB (fonte de verdade — sobrevive a reload e fechamento)
   await idbPut(record);
 
-  // 2️⃣ Registrar imediatamente no livro-caixa persistente dos cards.
-  // Isso garante que Total/Pendentes mudem no mesmo instante, inclusive offline.
-  try {
-    if (window.DTStatusLedger) {
-      DTStatusLedger.mark(
-        'inventario',
-        record.inventario_id || record.inventarioId || APP.inventario?.id || '',
-        record,
-        'PENDENTE'
-      );
-    }
-  } catch (_e) {}
-
-  // 3️⃣ Atualizar espelho localStorage (backup de emergência)
+  // 2️⃣ Atualizar espelho localStorage (backup de emergência)
   FILA_ENVIO = await idbGetPendentes();
   filaSave(FILA_ENVIO);
 
-  // 4️⃣ Atualizar UI imediatamente — operador não espera Firebase
+  // 3️⃣ Atualizar UI imediatamente — operador não espera Firebase
   atualizarBarraStatus();
-  try { if (typeof window.updateStats === 'function') window.updateStats(); } catch (_e) {}
 
-  // 5️⃣ Tentar enviar em background (sem bloquear o fluxo do operador)
+  // 4️⃣ Tentar enviar em background (sem bloquear o fluxo do operador)
   if (navigator.onLine) {
     enviarFilaPendente().catch((erro) => {
       console.error('[Sincronização] Falha no envio em segundo plano; item mantido na fila', { uuid, erro });

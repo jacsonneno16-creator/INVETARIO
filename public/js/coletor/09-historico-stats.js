@@ -205,26 +205,7 @@ async function atualizarCacheLocais() {
     const pendentes=vals.filter(x=>x.status!=='ENVIADO').length;
     return {total:vals.length,enviadas:vals.length-pendentes,pendentes,divergencias:vals.filter(x=>x.divergente).length};
   }
-  function reconciliar(tipo,id,registrosPendentes,registrosConhecidos){
-    const all=load(), k=scope(tipo,id), box=all[k]||{itens:{}};
-    const pend=new Set((registrosPendentes||[]).map(r=>String(r.uuid||r.chave||r.docId||r.id||'')).filter(Boolean));
-    (registrosConhecidos||[]).forEach(r=>{
-      const rid=String(r.uuid||r.chave||r.docId||r.id||'').trim(); if(!rid)return;
-      const anterior=box.itens[rid]||{};
-      box.itens[rid]={
-        status:pend.has(rid)?'PENDENTE':(anterior.status||'ENVIADO'),
-        divergente:!!(anterior.divergente||r._alertaQtd||r.divergencia_potencial||r.divergente||String(r.status||'').toUpperCase()==='DIVERGENTE'),
-        atualizadoEm:new Date().toISOString()
-      };
-    });
-    (registrosPendentes||[]).forEach(r=>{
-      const rid=String(r.uuid||r.chave||r.docId||r.id||'').trim(); if(!rid)return;
-      const anterior=box.itens[rid]||{};
-      box.itens[rid]={status:'PENDENTE',divergente:!!(anterior.divergente||r._alertaQtd||r.divergencia_potencial||r.divergente),atualizadoEm:new Date().toISOString()};
-    });
-    all[k]=box; save(all);
-  }
-  window.DTStatusLedger={mark,resumo,reconciliar};
+  window.DTStatusLedger={mark,resumo};
 })();
 
 // v156 — Status da Auditoria offline baseado na fila IndexedDB.
@@ -305,15 +286,10 @@ async function atualizarCacheLocais() {
       fila = Array.isArray(fila) ? fila : [];
       const pendInv = fila.filter(_invAtiva).filter(c => !invId || _invId(c) === invId);
       const pendIds = new Set(pendInv.map(_invUuid).filter(Boolean));
-      if (window.DTStatusLedger && DTStatusLedger.reconciliar) {
-        DTStatusLedger.reconciliar('inventario', invId, pendInv, ativas);
-      }
       const lr = window.DTStatusLedger ? DTStatusLedger.resumo('inventario',invId) : {total:0,enviadas:0,pendentes:0,divergencias:0};
-      const idsAtivos = new Set(ativas.map(_invUuid).filter(Boolean));
-      const idsPend = new Set(pendInv.map(_invUuid).filter(Boolean));
-      const total = Math.max(new Set([...idsAtivos, ...idsPend]).size, lr.total);
-      const pendentes = Math.max(idsPend.size, lr.pendentes);
-      const enviadas = Math.max(0, Math.max(lr.enviadas, total - pendentes));
+      const total = Math.max(ativas.length, lr.total);
+      const pendentes = Math.max(pendInv.length, lr.pendentes);
+      const enviadas = Math.max(lr.enviadas, total - pendentes);
       const divs = Math.max(ativas.filter(_invDivergenciaLocal).length, lr.divergencias);
       const s = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
       s('st-total', total); s('st-enviadas', enviadas); s('st-pendentes', pendentes); s('st-div', divs);
