@@ -247,6 +247,20 @@
 
 
   function chaveRegistroAuditoria(audId,subcolecao,docId){ return [audId,subcolecao||'enderecos',docId].join('::'); }
+  function chaveConcluidosAuditoria(audId){
+    const loja=lojaAtual();
+    return 'dt_auditoria_concluidos_'+String(loja||'')+'_'+String(audId||'');
+  }
+  async function marcarConcluidoLocalAuditoria(docId,payload){
+    const chave=chaveConcluidosAuditoria(auditoriaId());
+    let registros=[];
+    try{ registros=await window.DTAuditoriaStorage.cacheGet(chave); }catch(_){ registros=[]; }
+    if(!Array.isArray(registros)) registros=[];
+    registros=registros.filter(function(x){ return texto(x&&x.id)!==texto(docId); });
+    registros.unshift({id:docId,payload:payload||{},salvoEm:agoraISO()});
+    if(registros.length>5000) registros.length=5000;
+    await window.DTAuditoriaStorage.cacheSet(chave,registros);
+  }
   async function enfileirarAuditoria(docId,payload,subcolecao){
     const audId=auditoriaId();
     const registro={
@@ -406,6 +420,7 @@
     const nomeLido = status === STATUS_VAZIO ? null : localizarProdutoLido(lido);
     const payload = {
       auditoriaId: auditoriaId(),
+      endereco: texto(item.endereco),
       dunLido: lido,
       produtoLido: nomeLido,
       loja: lojaAtual(),
@@ -418,6 +433,7 @@
       // Confirma primeiro no armazenamento durável do aparelho. A operação nunca
       // fica esperando o timeout da internet; a sincronização ocorre em paralelo.
       await enfileirarAuditoria(docId,payload,'enderecos');
+      await marcarConcluidoLocalAuditoria(docId,payload);
       APP.auditorias = (APP.auditorias || []).filter(a => documentoId(a) !== docId);
       APP.contagens = (APP.contagens || []).filter(a => texto(a.id) !== docId);
       APP.contagens.unshift({id:docId,...payload});

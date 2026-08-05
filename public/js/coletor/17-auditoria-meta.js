@@ -464,6 +464,33 @@
         if(typeof _dlStep==='function') _dlStep('aud-base','📝','Base da Auditoria','Modo offline — '+baseAuditoria.length+' endereços pendentes no aparelho','run');
       }
       APP.auditorias=Array.isArray(baseAuditoria)?baseAuditoria:[];
+
+      // Restaura o progresso feito neste aparelho, inclusive depois que a fila
+      // já foi sincronizada. Assim uma queda/retorno da internet ou reabertura
+      // da tela não faz endereços auditados reaparecerem como pendentes.
+      const lojaAuditoriaAtual=window.getDTLojaAtiva?window.getDTLojaAtiva():'';
+      const chaveConcluidos='dt_auditoria_concluidos_'+lojaAuditoriaAtual+'_'+auditoriaId;
+      let concluidos=[];
+      try{ concluidos=await window.DTAuditoriaStorage.cacheGet(chaveConcluidos); }catch(_){ concluidos=[]; }
+      if(!Array.isArray(concluidos)) concluidos=[];
+      let filaAtual=[];
+      try{ filaAtual=await window.DTAuditoriaStorage.filaAll(); }catch(_){ filaAtual=[]; }
+      const filaDestaAuditoria=(Array.isArray(filaAtual)?filaAtual:[]).filter(function(x){
+        return String(x.auditoriaId||'')===String(auditoriaId) && String(x.subcolecao||'enderecos')==='enderecos';
+      });
+      const mapaLocais=new Map();
+      concluidos.forEach(function(x){ if(x&&x.id) mapaLocais.set(String(x.id),x.payload||{}); });
+      filaDestaAuditoria.forEach(function(x){ if(x&&x.docId) mapaLocais.set(String(x.docId),x.payload||{}); });
+      if(mapaLocais.size){
+        APP.auditorias=APP.auditorias.filter(function(item){
+          const id=String(item&&item.id || (auditoriaId+'__'+_normalizarEnderecoGeral(item&&item.endereco)));
+          return !mapaLocais.has(id);
+        });
+        APP.contagens=Array.from(mapaLocais.entries()).map(function(par){
+          const id=par[0], payload=par[1]||{};
+          return {id:id,_docId:id,auditoriaId:auditoriaId,endereco:payload.endereco||'',gtin:payload.dunLido||'',descricao:payload.produtoLido||'Auditoria registrada',dataHora:payload.criadoEm||new Date().toISOString(),status:'PENDENTE_SERVIDOR',_auditoria:true};
+        });
+      }
       _hidratarMapaProdutosAuditoria(APP.auditorias);
       const totalAud=(APP.auditorias||[]).length;
       if(typeof _dlStep==='function') _dlStep('aud-base','📝','Base da Auditoria',totalAud+' endereços pendentes','ok');

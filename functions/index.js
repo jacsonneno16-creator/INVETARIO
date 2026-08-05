@@ -334,8 +334,8 @@ exports.registrarResultadoAuditoria = functions.region('southamerica-east1')
       const [metaSnap, esperadoSnap, cegoSnap, resultadoSnap] = await Promise.all([
         tx.get(refs.auditoria), tx.get(esperadoRef), tx.get(cegoRef), tx.get(resultadoRef)
       ]);
-      if (!metaSnap.exists || metaSnap.data().status !== 'LIBERADA') {
-        throw new functions.https.HttpsError('failed-precondition', 'Auditoria não está liberada.');
+      if (!metaSnap.exists || !['LIBERADA', 'EM_ANDAMENTO'].includes(String(metaSnap.data().status || '').toUpperCase())) {
+        throw new functions.https.HttpsError('failed-precondition', 'Auditoria não está liberada ou em andamento.');
       }
       if (!esperadoSnap.exists || !cegoSnap.exists) {
         throw new functions.https.HttpsError('not-found', 'Item da auditoria não encontrado.');
@@ -382,8 +382,8 @@ exports.registrarOcorrenciaAuditoria = functions.region('southamerica-east1')
     }
     const refs = refsAuditoria(lojaId, auditoriaId);
     const meta = await refs.auditoria.get();
-    if (!meta.exists || meta.data().status !== 'LIBERADA') {
-      throw new functions.https.HttpsError('failed-precondition', 'Auditoria não está liberada.');
+    if (!meta.exists || !['LIBERADA', 'EM_ANDAMENTO'].includes(String(meta.data().status || '').toUpperCase())) {
+      throw new functions.https.HttpsError('failed-precondition', 'Auditoria não está liberada ou em andamento.');
     }
     await refs.auditoria.collection('ocorrencias').doc(ocorrenciaId).set({
       auditoriaId, tipo: 'PRODUTO_FORA_AUDITORIA', status: 'PRODUTO_FORA_AUDITORIA',

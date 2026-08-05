@@ -1,0 +1,11 @@
+const fs=require('fs'); const assert=require('assert');
+const fn=fs.readFileSync('functions/index.js','utf8');
+const fluxo=fs.readFileSync('public/js/coletor/18-auditoria-fluxo.js','utf8');
+const meta=fs.readFileSync('public/js/coletor/17-auditoria-meta.js','utf8');
+assert(fn.includes("['LIBERADA', 'EM_ANDAMENTO'].includes(String(metaSnap.data().status || '').toUpperCase())"),'resultado deve aceitar auditoria em andamento');
+assert(fn.includes("['LIBERADA', 'EM_ANDAMENTO'].includes(String(meta.data().status || '').toUpperCase())"),'ocorrencia deve aceitar auditoria em andamento');
+assert(fluxo.includes('await marcarConcluidoLocalAuditoria(docId,payload);'),'resultado deve persistir conclusao local');
+assert(fluxo.includes('endereco: texto(item.endereco)'),'resultado local deve preservar endereco');
+assert(meta.includes("const chaveConcluidos='dt_auditoria_concluidos_'"),'abertura deve restaurar conclusoes locais');
+assert(meta.includes('return !mapaLocais.has(id);'),'base deve ocultar itens concluidos localmente');
+console.log('OK test-auditoria-offline-v260');
