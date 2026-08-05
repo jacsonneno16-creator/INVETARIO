@@ -473,7 +473,7 @@ exports.registrarResultadoAuditoria = functions.region('southamerica-east1')
       tx.set(db.collection('dt_auditorias_coletor').doc(auditoriaId),{status:'EM_ANDAMENTO',loja:lojaResolvida,lojas:lojaResolvida?admin.firestore.FieldValue.arrayUnion(lojaResolvida):[],atualizadoEm:agora},{merge:true});
       return {status,repetido:false};
     });
-    return {ok:true,status:retorno.status,repetido:retorno.repetido,lojaId:lojaResolvida,origem:refs.origem,itemId};
+    return {ok:true,status:retorno.status,repetido:retorno.repetido,lojaId:lojaResolvida,origem:refs.origem,itemId,buildServidor:'v271'};
   });
 
 exports.registrarOcorrenciaAuditoria = functions.region('southamerica-east1')
