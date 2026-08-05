@@ -276,12 +276,24 @@ function divStatusBadge(status) {
 function divAtualizarBarraSel() {
   const bar = document.getElementById('div-sel-bar');
   const cnt = document.getElementById('div-sel-count');
-  if (!bar) return;
-  if (_divSelecionadas.size > 0) {
-    bar.style.display = 'flex';
-    cnt.textContent = `${_divSelecionadas.size} endereço${_divSelecionadas.size !== 1 ? 's' : ''} selecionado${_divSelecionadas.size !== 1 ? 's' : ''}`;
-  } else {
-    bar.style.display = 'none';
+  const btnTopo = document.getElementById('btn-atribuir-selecionados');
+  const quantidade = _divSelecionadas.size;
+
+  if (cnt) {
+    cnt.textContent = `${quantidade} endereço${quantidade !== 1 ? 's' : ''} selecionado${quantidade !== 1 ? 's' : ''}`;
+  }
+
+  if (bar) {
+    bar.style.display = quantidade > 0 ? 'flex' : 'none';
+    bar.setAttribute('aria-hidden', quantidade > 0 ? 'false' : 'true');
+  }
+
+  if (btnTopo) {
+    btnTopo.style.display = quantidade > 0 ? 'inline-flex' : 'none';
+    btnTopo.disabled = quantidade === 0;
+    btnTopo.textContent = quantidade > 0
+      ? `👥 Atribuir (${quantidade})`
+      : '👥 Atribuir selecionados';
   }
 }
 
@@ -318,7 +330,9 @@ function divDeselecionarTodos() {
 }
 
 function divAtribuirRapido(divId) {
-  const div = state().divergencias.find(d => d.id === divId);
+  // A tabela também pode exibir registros consolidados que ainda não existem
+  // no array bruto. Use a mesma fonte usada pelo checkbox da linha.
+  const div = _obterDivSelecionada(divId) || state().divergencias.find(d => String(d.id) === String(divId));
   const recontagensValidas = state().recontagens.filter(r =>
     r.divergencia_id === divId &&
     !['CANCELADA','EXCLUIDA'].includes(String(r.status || '').toUpperCase()) &&
@@ -333,10 +347,14 @@ function divAtribuirRapido(divId) {
     showToast('🔒 Esta atividade já atingiu o limite de contagens ou está encerrada.', 'e');
     return;
   }
+  _recAtribuirDireto = null;
   _divSelecionadas.clear();
-  _divSelecionadas.add(divId);
+  _divSelecionadas.add(String(divId));
   divAtualizarBarraSel();
-  abrirAtribuirRecontagem();
+  Promise.resolve(abrirAtribuirRecontagem()).catch(erro => {
+    console.error('[Recontagem] Falha ao abrir atribuição rápida', { divId, erro });
+    showToast('Não foi possível abrir a atribuição. Atualize os dados e tente novamente.', 'e');
+  });
 }
 
 // Atribuir a partir da aba Recontagens (recebe rec.id, localiza divergência correspondente)

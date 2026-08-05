@@ -1,0 +1,64 @@
+/* v254 - Dashboard, Acompanhamento, Usuarios e Lojas */
+#app-main .content{padding:18px 22px 28px!important;align-content:start!important}
+#app-main .page.on{display:block!important;width:100%!important;max-width:none!important;margin:0!important;padding:0 0 24px!important;align-self:start!important;min-height:0!important}
+#app-main .page:not(.on){display:none!important}
+
+/* Corrige paginas administrativas deslocadas para baixo */
+#app-main #page-operadores.on,#app-main #page-lojas.on{display:block!important;position:relative!important;inset:auto!important;margin:0!important;padding:0 0 28px!important;transform:none!important;vertical-align:top!important}
+#app-main #page-operadores>.admin-management-header,#app-main #page-lojas>.admin-management-header{margin:0 0 14px!important;padding:0!important;min-height:54px!important}
+#app-main #page-operadores #opl-page-operadores{display:flex!important;flex-direction:column!important;gap:14px!important;width:100%!important;margin:0!important;padding:0!important}
+#app-main #page-lojas{gap:14px!important}
+#app-main .admin-kpi-grid{grid-template-columns:repeat(5,minmax(150px,1fr))!important;gap:14px!important}
+#app-main .admin-kpi-grid-stores{grid-template-columns:repeat(4,minmax(180px,1fr))!important}
+#app-main .admin-kpi-card{min-height:102px!important;padding:16px 18px!important;border-radius:15px!important}
+#app-main .admin-filter-bar{margin:0!important}
+#app-main .admin-management-card{width:100%!important;margin:0!important}
+
+/* Estrutura comum */
+.v254-shell{display:flex;flex-direction:column;gap:16px;width:100%}
+.v254-kpis{display:grid;grid-template-columns:repeat(6,minmax(145px,1fr));gap:14px}
+.v254-kpi{background:#fff;border:1px solid #dde7e1;border-radius:15px;padding:16px;min-height:104px;display:grid;grid-template-columns:44px 1fr;grid-template-rows:auto auto auto;column-gap:12px;box-shadow:0 6px 20px rgba(22,72,51,.055)}
+.v254-kpi-icon{grid-row:1/4;width:44px;height:44px;border-radius:13px;display:grid;place-items:center;font-size:1.3rem;background:#edf7f0}
+.v254-kpi-label{font-size:.69rem;font-weight:750;color:#465f54}
+.v254-kpi-value{font-size:1.62rem;line-height:1.1;font-weight:850;color:#142d23;margin-top:3px}
+.v254-kpi-sub{font-size:.64rem;color:#7b8982;margin-top:5px}
+.v254-grid-4{display:grid;grid-template-columns:1.15fr .85fr 1.08fr 1fr;gap:16px;align-items:stretch}
+.v254-grid-3{display:grid;grid-template-columns:1.35fr .9fr .9fr;gap:16px;align-items:stretch}
+.v254-grid-acomp{display:grid;grid-template-columns:1.35fr .95fr 1fr;gap:16px;align-items:start}
+.v254-card{background:#fff;border:1px solid #dde7e1;border-radius:16px;box-shadow:0 7px 24px rgba(22,72,51,.05);overflow:hidden;min-width:0}
+.v254-card-head{padding:14px 17px;border-bottom:1px solid #e7eee9;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.v254-card-title{font-size:.88rem;font-weight:850;color:#183d2e}
+.v254-card-sub{font-size:.65rem;color:#7d8b84;margin-top:3px}
+.v254-card-body{padding:15px 17px}
+.v254-chart{height:190px;display:flex;align-items:flex-end;gap:9px;padding:12px 6px 22px;border-bottom:1px solid #edf2ef;background:linear-gradient(to top,rgba(30,111,78,.035),transparent)}
+.v254-chart-bar{flex:1;min-width:18px;background:linear-gradient(180deg,#36a36e,#1e6f4e);border-radius:6px 6px 2px 2px;position:relative}
+.v254-chart-bar span{position:absolute;bottom:-20px;left:50%;transform:translateX(-50%);font-size:.58rem;color:#718078;white-space:nowrap}
+.v254-donut{width:150px;height:150px;border-radius:50%;margin:8px auto;background:conic-gradient(#1e9b5f 0 var(--p),#f59e0b var(--p) calc(var(--p) + 10%),#e8edf0 calc(var(--p) + 10%) 100%);position:relative}
+.v254-donut:after{content:"";position:absolute;inset:27px;background:#fff;border-radius:50%}
+.v254-donut-center{position:absolute;inset:0;display:grid;place-items:center;z-index:2;font-size:1.45rem;font-weight:850;color:#174733}
+.v254-list{display:flex;flex-direction:column;gap:10px}
+.v254-row{display:grid;grid-template-columns:minmax(90px,1fr) 1.2fr 48px;gap:10px;align-items:center;font-size:.72rem}
+.v254-progress{height:8px;background:#e7eeea;border-radius:999px;overflow:hidden}.v254-progress i{display:block;height:100%;background:#1e8c58;border-radius:999px}
+.v254-table{width:100%;border-collapse:collapse}.v254-table th{font-size:.63rem;color:#718078;text-align:left;padding:9px 7px;border-bottom:1px solid #e7eee9}.v254-table td{font-size:.7rem;padding:10px 7px;border-bottom:1px solid #eef3f0}.v254-table tr:last-child td{border-bottom:0}
+.v254-badge{display:inline-flex;padding:3px 8px;border-radius:999px;font-size:.6rem;font-weight:750;background:#e8f6ed;color:#16814a}.v254-badge.warn{background:#fff2df;color:#c86d00}.v254-badge.danger{background:#ffe9e9;color:#d72c2c}
+.v254-empty{min-height:170px;display:grid;place-items:center;text-align:center;color:#8b9791;font-size:.72rem}
+.v254-activity{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid #eef3f0}.v254-activity:last-child{border-bottom:0}.v254-dot{width:9px;height:9px;border-radius:50%;background:#1e8c58;margin-top:4px;flex:0 0 auto}
+
+/* Dashboard: esconde apenas os blocos substituidos; banner/filtros continuam reais */
+#page-dashboard.v254-ready>#kpi-grid,#page-dashboard.v254-ready>#dash-progress-wrap,#page-dashboard.v254-ready>#dash-charts-wrap,#page-dashboard.v254-ready>#dash-breakdown-grid,#page-dashboard.v254-ready>#dash-recentes-card,#page-dashboard.v254-ready>#dash-v252-insights{display:none!important}
+#page-dashboard #v254-dashboard{display:flex}
+#page-dashboard>div:first-child{margin-bottom:0!important}
+#page-dashboard>div[style*="background:var(--surface-2)"]{margin-bottom:0!important}
+
+/* Acompanhamento: fonte original fica invisivel, painel novo usa os mesmos dados */
+#page-acompanhamento.v254-ready>#acomp-kpis,#page-acompanhamento.v254-ready>.acomp-v252-grid,#page-acompanhamento.v254-ready>#acomp-v252-footer,#page-acompanhamento.v254-ready>.tc{display:none!important}
+#page-acompanhamento #v254-acomp{display:flex}
+
+@media(max-width:1400px){.v254-kpis{grid-template-columns:repeat(3,1fr)}.v254-grid-4{grid-template-columns:1fr 1fr}.v254-grid-3,.v254-grid-acomp{grid-template-columns:1fr 1fr}.v254-grid-3>*:last-child,.v254-grid-acomp>*:last-child{grid-column:1/-1}.admin-kpi-grid{grid-template-columns:repeat(3,1fr)!important}.admin-kpi-grid-stores{grid-template-columns:repeat(2,1fr)!important}}
+@media(max-width:900px){.v254-grid-4,.v254-grid-3,.v254-grid-acomp{grid-template-columns:1fr}.v254-grid-3>*:last-child,.v254-grid-acomp>*:last-child{grid-column:auto}.v254-kpis{grid-template-columns:repeat(2,1fr)}.admin-kpi-grid,.admin-kpi-grid-stores{grid-template-columns:repeat(2,1fr)!important}}
+@media(max-width:600px){#app-main .content{padding:12px!important}.v254-kpis,.admin-kpi-grid,.admin-kpi-grid-stores{grid-template-columns:1fr!important}.v254-row{grid-template-columns:1fr}.v254-row strong{text-align:left}}
+
+/* v255 - seleção e atribuição de recontagem */
+#page-recontagens #div-sel-bar{position:sticky;top:68px;z-index:35;margin:0 0 8px;border:1px solid rgba(232,117,26,.28);border-radius:10px;box-shadow:0 8px 24px rgba(15,23,42,.12);backdrop-filter:blur(8px)}
+#page-recontagens .div-row-chk{position:relative;z-index:2}
+#btn-atribuir-selecionados{align-items:center;justify-content:center}

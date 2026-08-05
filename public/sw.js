@@ -1,5 +1,7 @@
-var CACHE='dt-inventario-20260805-usuarios-lojas-v253';
+var CACHE='dt-inventario-20260805-recontagem-v255';
 var PRECACHE=[
+  '/css/analista-quatro-telas-v254.css',
+  '/js/analista/49-quatro-telas-v254.js',
   '/css/analista-usuarios-lojas-v253.css',
   '/js/analista/48-usuarios-lojas-v253.js',
   '/',
