@@ -680,7 +680,18 @@ function _executarSalvar(qty) {
   const n = parseInt(a.capa);
   if (!isNaN(n) && n >= APP.proximoCapa) APP.proximoCapa = n + 1;
 
-  enfileirarContagem({ ...contagem, dataHora: contagem.dataHora.toISOString() });
+  const contagemFila = { ...contagem, dataHora: contagem.dataHora.toISOString() };
+  enfileirarContagem(contagemFila);
+  // O card de status precisa registrar a contagem no mesmo instante em que ela
+  // entra na fila. Antes apenas o envio confirmado era registrado, portanto
+  // Total/Pendentes permaneciam em zero durante o trabalho offline.
+  try {
+    if (window.DTStatusLedger) {
+      DTStatusLedger.mark('inventario', contagem.inventario_id || APP.inventario?.id, contagemFila, 'PENDENTE');
+    }
+  } catch (e) {
+    console.warn('[Status] Falha ao registrar contagem pendente:', e);
+  }
   renderHistorico();
   updateStats();
 

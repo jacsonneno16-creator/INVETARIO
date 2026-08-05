@@ -285,6 +285,13 @@ async function atualizarCacheLocais() {
       if (seq !== _invStatsSeq) return;
       fila = Array.isArray(fila) ? fila : [];
       const pendInv = fila.filter(_invAtiva).filter(c => !invId || _invId(c) === invId);
+      // Reconcilia registros antigos da fila criados antes do livro-caixa existir.
+      // Assim os cards passam a refletir imediatamente tudo que já está no IndexedDB.
+      if (window.DTStatusLedger) {
+        pendInv.forEach(c => {
+          try { DTStatusLedger.mark('inventario', _invId(c) || invId, c, 'PENDENTE'); } catch (_) {}
+        });
+      }
       const pendIds = new Set(pendInv.map(_invUuid).filter(Boolean));
       const lr = window.DTStatusLedger ? DTStatusLedger.resumo('inventario',invId) : {total:0,enviadas:0,pendentes:0,divergencias:0};
       const total = Math.max(ativas.length, lr.total);

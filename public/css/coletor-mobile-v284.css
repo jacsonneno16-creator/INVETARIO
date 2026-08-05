@@ -1,0 +1,90 @@
+/* Coletor Mobile v284 - layout otimizado para telas 320-600px */
+@media (max-width: 700px) {
+  :root { --mobile-nav-h: 66px; }
+  body { padding-bottom: calc(var(--mobile-nav-h) + env(safe-area-inset-bottom)); }
+  #screen-app { min-height: 100dvh; }
+  .app-header {
+    min-height: 50px; padding: 6px 10px; position: sticky; top: 0; z-index: 30;
+    background: rgba(8,20,37,.97); border-bottom: 1px solid var(--border);
+  }
+  .btn-back { font-size: .7rem; padding: 6px 8px; }
+  .app-inv-name { font-size: .75rem; max-width: 34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #conn-pill { padding: 4px 7px !important; }
+  .op-badge { max-width: 92px; overflow:hidden; }
+  .op-badge span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* Navegação fixa inferior, padrão coletor */
+  .nav {
+    position: fixed !important; left: 0; right: 0; bottom: 0; z-index: 100;
+    height: calc(var(--mobile-nav-h) + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+    display: grid !important; grid-template-columns: repeat(6, 1fr);
+    background: rgba(8,20,37,.98); border-top: 1px solid var(--border); border-bottom: 0;
+    box-shadow: 0 -8px 26px rgba(0,0,0,.35);
+  }
+  .nav-tab { min-width:0; padding: 8px 2px 6px; font-size:.54rem; letter-spacing:.02em; gap:3px; }
+  .nav-tab .ni { font-size:1rem; }
+  .nav-tab.on { border-top:2px solid var(--accent); border-bottom:0; background:rgba(232,117,26,.08); }
+  .view { padding: 10px 10px 18px !important; }
+
+  /* Cards de status compactos e úteis */
+  #view-status .stat-grid { gap:8px; }
+  #view-status .stat-box { padding:13px 8px; min-height:88px; display:flex; flex-direction:column; justify-content:center; }
+  #view-status .stat-val { font-size:1.75rem; line-height:1; }
+  #view-status .stat-lbl { margin-top:8px; }
+  #view-status .card { border-radius:12px; }
+  #view-status > div:last-child { display:grid !important; grid-template-columns:1fr; gap:8px !important; }
+  #view-status > div:last-child .btn { margin:0; }
+
+  /* Etapas: ocupam pouco espaço e permanecem legíveis */
+  #view-contar .step-indicator { margin: 0 2px 10px !important; gap:4px; }
+  #view-contar .step-dot { width:25px; height:25px; font-size:.65rem; }
+  #view-contar .step-line { min-width:4px; }
+
+  /* Cartão de confirmação inicial */
+  #step-endereco { border-radius:13px; overflow:hidden; }
+  #step-endereco .sf-row { min-height:64px; padding:8px 12px; }
+  #step-endereco .sf-label { width:auto; min-width:76px; }
+  #step-endereco .sf-extra { padding:0 12px 12px; }
+  #btn-confirmar-endereco { min-height:50px !important; }
+
+  /* Fluxo de próximo pallet: uma única tela clara */
+  #bloco-endereco-travado { margin:0 !important; }
+  #bloco-endereco-travado > div:first-child {
+    background:linear-gradient(180deg,rgba(19,40,67,.98),rgba(13,28,49,.98)) !important;
+    border:1px solid var(--border) !important; border-radius:13px !important;
+    padding:14px !important; margin-bottom:10px !important;
+  }
+  #txt-endereco-travado { font-size:1.05rem !important; color:var(--accent) !important; }
+  #txt-cap-travado { font-size:.76rem !important; line-height:1.5; }
+  #bloco-endereco-travado > div:nth-child(2) {
+    background:var(--card) !important; border:1px solid var(--border) !important;
+    border-radius:13px !important; padding:14px !important;
+  }
+  #bloco-endereco-travado > div:nth-child(2) > div:first-child {
+    font-size:.84rem !important; color:var(--text) !important; line-height:1.4; margin-bottom:12px !important;
+  }
+  #bloco-endereco-travado > div:nth-child(2) > div:nth-child(2) { display:block !important; }
+  #f-rebipar-endereco { width:100%; min-height:50px !important; margin-bottom:10px; padding-right:14px !important; }
+  #bloco-endereco-travado button.btn-primary { width:100%; min-height:50px !important; }
+  #fb-rebipar { min-height:0; }
+
+  /* Campos e botões adequados ao scanner e toque */
+  .field { min-height:48px !important; font-size:1rem !important; }
+  .btn { min-height:48px !important; border-radius:11px !important; }
+  .card { border-radius:13px !important; }
+  .qty-btn { width:48px; height:48px; }
+  .qty-input { font-size:1.65rem; }
+
+  /* Evita conteúdo escondido pela barra inferior */
+  #view-contar, #view-status, #view-historico, #view-recontagens, #view-estorno, #view-auditoria {
+    padding-bottom: 24px !important;
+  }
+}
+
+@media (max-width: 380px) {
+  .nav-tab { font-size:.48rem; }
+  .nav-tab .ni { font-size:.9rem; }
+  .app-inv-name { display:none; }
+  #view-status .stat-box { min-height:78px; }
+}

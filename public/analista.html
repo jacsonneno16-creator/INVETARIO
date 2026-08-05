@@ -1501,23 +1501,21 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </button>
 <div style="margin-top:6px;border-top:1px solid var(--border);padding-top:10px">
 <div style="font-size:.75rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Exportação Bluesoft:</div>
-<div style="display:grid;grid-template-columns:minmax(210px,1fr) 190px auto;gap:8px;align-items:center">
+<div style="display:grid;grid-template-columns:minmax(210px,1fr) 150px auto;gap:8px;align-items:center">
 <select class="filter-sel" id="ie-bluesoft-inv">
 <option value="">Selecione o inventário...</option>
 </select>
-<select class="filter-sel" id="ie-bluesoft-layout" onchange="ieBluesoftLayoutChanged()" title="Layout oficial de importação da Bluesoft">
-<option value="ENDERECAMENTO">CSV – Endereçamento</option>
-<option value="GERAL">CSV – Inventário geral</option>
-<option value="AUTO">Automático pelo cadastro</option>
+<select class="filter-sel" id="ie-bluesoft-formato" title="Formato do arquivo">
+<option value="csv">CSV</option>
+<option value="txt">TXT</option>
 </select>
-<button class="btn btn-success btn-sm" onclick="ieExportarBluesoft()">📤 Gerar CSV</button>
+<button class="btn btn-success btn-sm" onclick="ieExportarBluesoft()">📤 Exportar contagens</button>
 </div>
-<div id="ie-bluesoft-lote-wrap" style="display:none;align-items:center;gap:8px;margin-top:8px">
-<label for="ie-bluesoft-lote" style="font-size:.73rem;font-weight:700;color:var(--muted);white-space:nowrap">Lote de contagem:</label>
-<input id="ie-bluesoft-lote" inputmode="numeric" maxlength="7" placeholder="Ex.: 1" style="width:130px;padding:7px 10px;border:1.5px solid var(--border);border-radius:6px;font-family:var(--mono)">
-<span style="font-size:.7rem;color:var(--muted)">Obrigatório apenas no CSV geral. Não é o lote físico do produto.</span>
+<div style="margin-top:9px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2,#f8fafc)">
+<div style="font-size:.72rem;font-weight:800;color:var(--text);margin-bottom:5px">Layout Bluesoft — Endereçamento</div>
+<code style="font-size:.7rem;white-space:normal;word-break:break-word">endereco_logistico;gtin;quantidade;lote_produto;validade;palete</code>
+<div style="font-size:.68rem;color:var(--muted);margin-top:6px">CSV e TXT usam o mesmo conteúdo, com separador ponto e vírgula. Pendências sem decisão não entram no arquivo.</div>
 </div>
-<div style="font-size:.7rem;color:var(--muted);margin-top:7px">Usa o código realmente bipado na rodada que resolveu o fluxo. Pendências e persistentes sem decisão não são exportadas.</div>
 </div>
 </div>
 </div>

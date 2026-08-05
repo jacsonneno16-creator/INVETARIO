@@ -496,32 +496,34 @@
   };
   global.ieExportarBluesoft = function () {
     var invId = value('ie-bluesoft-inv');
-    if (!invId) return toast('Selecione o inventario.', 'w');
-    var inv = (state().inventarios || []).find(function(i){return String(i.id) === String(invId);}) || {};
-    var layout = bluesoftLayout(inv, value('ie-bluesoft-layout') || 'AUTO');
-    var result = buildBluesoftExport(invId, layout, value('ie-bluesoft-lote'));
-    if (!result.rows.length) return toast('Nao ha contagens resolvidas para exportar. Pendencias e persistentes nao entram no arquivo.', 'w');
+    if (!invId) return toast('Selecione o inventário.', 'w');
+    var formato = String(value('ie-bluesoft-formato') || 'csv').toLowerCase();
+    if (formato !== 'txt') formato = 'csv';
+    var result = buildBluesoftExport(invId, 'ENDERECAMENTO', '');
+    if (!result.rows.length) return toast('Não há contagens resolvidas para exportar. Pendências sem decisão não entram no arquivo.', 'w');
     if (result.errors.length) {
       var preview = result.errors.slice(0,8).join('\n');
       if (result.errors.length > 8) preview += '\n... e mais ' + (result.errors.length-8) + ' erro(s).';
-      alert('A exportacao foi bloqueada pelas validacoes da Bluesoft:\n\n' + preview);
+      alert('A exportação foi bloqueada pelas validações do layout Bluesoft:\n\n' + preview);
       return;
     }
-    var headers = layout === 'ENDERECAMENTO'
-      ? ['endereco_logistico','gtin','quantidade','lote_produto','validade','palete']
-      : ['lote','gtin','quantidade'];
-    var csv = '\uFEFF' + headers.join(';') + '\r\n' + result.rows.map(function(row){
-      return headers.map(function(h){ return h === 'quantidade' ? decimalBR(row[h]) : String(row[h] == null ? '' : row[h]); }).join(';');
-    }).join('\r\n');
-    var suffix = layout === 'ENDERECAMENTO' ? 'enderecamento' : 'geral';
-    downloadBlob(csv, 'bluesoft_' + suffix + '_' + invId + '_' + fileStamp() + '.csv', 'text/csv;charset=utf-8');
-    toast(result.rows.length.toLocaleString('pt-BR') + ' item(ns) exportado(s) no layout Bluesoft ' + (layout === 'ENDERECAMENTO' ? 'com enderecamento.' : 'geral.'), 's');
+    var headers = ['endereco_logistico','gtin','quantidade','lote_produto','validade','palete'];
+    function campo(valor) {
+      var texto = String(valor == null ? '' : valor);
+      return texto.replace(/[\r\n]+/g, ' ').replace(/;/g, ',').trim();
+    }
+    var linhas = result.rows.map(function(row){
+      return headers.map(function(h){
+        return h === 'quantidade' ? campo(decimalBR(row[h])) : campo(row[h]);
+      }).join(';');
+    });
+    var conteudo = '\uFEFF' + headers.join(';') + '\r\n' + linhas.join('\r\n');
+    var extensao = formato === 'txt' ? 'txt' : 'csv';
+    var mime = formato === 'txt' ? 'text/plain;charset=utf-8' : 'text/csv;charset=utf-8';
+    downloadBlob(conteudo, 'bluesoft_enderecamento_' + invId + '_' + fileStamp() + '.' + extensao, mime);
+    toast(result.rows.length.toLocaleString('pt-BR') + ' item(ns) exportado(s) em ' + extensao.toUpperCase() + '.', 's');
   };
-  global.ieBluesoftLayoutChanged = function () {
-    var layout = value('ie-bluesoft-layout');
-    var box = el('ie-bluesoft-lote-wrap');
-    if (box) box.style.display = layout === 'GERAL' ? 'flex' : 'none';
-  };
+  global.ieBluesoftLayoutChanged = function () {};
 
   function configFromForm() {
     return {

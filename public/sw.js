@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260805-v276-cards-status';
+var CACHE='dt-inventario-20260805-v285-export-bluesoft';
 var PRECACHE=[
   '/',
   '/index.html',
