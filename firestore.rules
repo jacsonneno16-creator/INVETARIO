@@ -697,6 +697,13 @@ service cloud.firestore {
       allow create, update, delete: if hasPermission('recontagens', 'editar');
     }
 
+    // Espelho central confirmado exclusivamente pelas Cloud Functions.
+    // Permite que qualquer computador do analista veja os mesmos resultados.
+    match /dt_auditoria_resultados/{docId} {
+      allow read: if canUseAnalista() && canAccessDocumentStore(resource.data);
+      allow create, update, delete: if false;
+    }
+
     match /dt_auditorias/{docId} {
       allow read: if canUseAnalista() ||
         collectorCanReadOperationalDoc(resource.data);

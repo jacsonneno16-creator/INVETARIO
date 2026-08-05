@@ -372,109 +372,142 @@ async function localizarRefsAuditoria({lojaId, auditoriaId, itemId, endereco, ac
   throw new functions.https.HttpsError('not-found', 'Auditoria ou item não encontrado nas lojas autorizadas.');
 }
 
+function normalizarCodigoAuditoria(valor) {
+  return String(valor || '').replace(/\D/g, '').replace(/^0+/, '');
+}
+function normalizarEnderecoAuditoria(valor) {
+  return String(valor || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+async function candidatosAuditoriaV2(lojaId, auditoriaId, acesso) {
+  const lista=[]; const vistos=new Set();
+  const add=(origem,id)=>{const chave=origem==='raiz'?'raiz':`loja:${id||''}`;if(vistos.has(chave)||(!id&&origem!=='raiz'))return;vistos.add(chave);lista.push(refsAuditoria(String(id||''),auditoriaId,origem));};
+  if(lojaId)add('loja',lojaId);
+  add('raiz','');
+  const publico=await db.collection('dt_auditorias_coletor').doc(auditoriaId).get().catch(()=>null);
+  const meta=publico&&publico.exists?publico.data()||{}:{};
+  [meta.loja,meta.loja_id,meta.lojaId,...(Array.isArray(meta.lojas)?meta.lojas:[])].map(v=>String(v||'').trim()).filter(Boolean).forEach(id=>add('loja',id));
+  if(administrador(acesso)||acesso?.acesso_todas_lojas===true){
+    const lojas=await db.collection('lojas').get(); lojas.docs.forEach(d=>add('loja',d.id));
+  }else lojasPermitidas(acesso).forEach(id=>add('loja',id));
+  return {lista,publico,meta};
+}
+async function localizarItemAuditoriaV2({lojaId,auditoriaId,itemId,endereco,acesso}) {
+  const candidatos=await candidatosAuditoriaV2(lojaId,auditoriaId,acesso);
+  const alvo=normalizarEnderecoAuditoria(endereco);
+  for(const refs of candidatos.lista){
+    if(refs.origem==='loja'&&!lojaAutorizada(acesso,refs.lojaId))continue;
+    const [metaSnap,esperadoDireto,cegoDireto]=await Promise.all([refs.auditoria.get(),refs.esperados.doc(itemId).get(),refs.cegos.doc(itemId).get()]);
+    if(esperadoDireto.exists||cegoDireto.exists){return {refs,metaSnap,esperadoSnap:esperadoDireto,cegoSnap:cegoDireto,itemId:itemId,publico:candidatos.publico};}
+    if(alvo){
+      const cegos=await refs.cegos.where('endereco','==',endereco).limit(2).get().catch(()=>({docs:[]}));
+      if(cegos.docs&&cegos.docs.length===1){const c=cegos.docs[0],e=await refs.esperados.doc(c.id).get();return {refs,metaSnap,esperadoSnap:e,cegoSnap:c,itemId:c.id,publico:candidatos.publico};}
+      const esperados=await refs.esperados.where('endereco','==',endereco).limit(2).get().catch(()=>({docs:[]}));
+      if(esperados.docs&&esperados.docs.length===1){const e=esperados.docs[0],c=await refs.cegos.doc(e.id).get();return {refs,metaSnap,esperadoSnap:e,cegoSnap:c,itemId:e.id,publico:candidatos.publico};}
+    }
+    // Compatibilidade com auditorias standalone antigas que possuem somente base_chunks.
+    const chunks=await refs.auditoria.collection('base_chunks').orderBy('parte').get().catch(()=>null);
+    if(chunks&&!chunks.empty&&alvo){
+      let achado=null;
+      for(const doc of chunks.docs){
+        const dados=doc.data()||{}; const itens=dados.itens||dados.dados||dados.registros||[];
+        achado=itens.find(r=>normalizarEnderecoAuditoria(r.endereco||r.local||r.codigo_endereco)===alvo)||null;
+        if(achado)break;
+      }
+      if(achado){
+        const esperado={auditoriaId,endereco:endereco||achado.endereco||achado.local||'',dunEsperado:achado.dunEsperado||achado.dun||achado.gtin||achado.ean||achado.codigo_barras||'',produtoEsperado:achado.produtoEsperado||achado.produto||achado.descricao||achado.descricao_produto||'',status:'PENDENTE',loja:refs.lojaId||lojaId,origem:'BASE_CHUNKS_LEGADA'};
+        return {refs,metaSnap,esperadoSnap:null,cegoSnap:null,itemId:itemId,esperadoLegado:esperado,publico:candidatos.publico};
+      }
+    }
+    if(metaSnap.exists&&alvo){
+      // Mantem o candidato para diagnostico, mas continua buscando uma base que contenha o item.
+    }
+  }
+  throw new functions.https.HttpsError('not-found','A auditoria foi encontrada, mas o endereco/item nao existe na base publicada.');
+}
+
 exports.registrarResultadoAuditoria = functions.region('southamerica-east1')
+  .runWith({timeoutSeconds: 60, memory: '512MB'})
   .https.onCall(async (data, context) => {
-    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
-    const lojaIdInformada = textoSeguro(data?.lojaId, 120);
-    const auditoriaId = textoSeguro(data?.auditoriaId, 180);
-    const itemId = textoSeguro(data?.itemId, 220);
-    const dunLido = textoSeguro(data?.dunLido, 120);
-    const produtoLido = textoSeguro(data?.produtoLido, 500);
-    const vazio = data?.vazio === true;
-    const enderecoInformado = textoSeguro(data?.endereco, 220);
-    if (!auditoriaId || !itemId) {
-      throw new functions.https.HttpsError('invalid-argument', 'Auditoria ou item inválido.');
-    }
-    const acesso = await acessoSolicitante(context);
-    if (!podeUsarColetor(acesso)) {
-      throw new functions.https.HttpsError('permission-denied', 'Usuário sem acesso ao coletor.');
-    }
+    if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+    const protocolo=textoSeguro(data?.protocolo,300)||`${context.auth.uid}:${Date.now()}`;
+    const lojaId=textoSeguro(data?.lojaId,120);
+    const auditoriaId=textoSeguro(data?.auditoriaId,180);
+    const itemIdInformado=textoSeguro(data?.itemId,220);
+    const endereco=textoSeguro(data?.endereco,220);
+    const dunLido=textoSeguro(data?.dunLido,120);
+    const produtoLido=textoSeguro(data?.produtoLido,500);
+    const vazio=data?.vazio===true;
+    if(!auditoriaId||!itemIdInformado||(!endereco&&!itemIdInformado))throw new functions.https.HttpsError('invalid-argument','Auditoria, item ou endereco invalido.');
+    const acesso=await acessoSolicitante(context);
+    if(!podeUsarColetor(acesso))throw new functions.https.HttpsError('permission-denied','Usuario sem acesso ao coletor.');
 
-    const localizado = await localizarRefsAuditoria({
-      lojaId: lojaIdInformada, auditoriaId, itemId, endereco: enderecoInformado, acesso
-    });
-    const refs = localizado.refs;
-    const lojaIdResolvida = refs.lojaId || lojaIdInformada;
-    let itemIdResolvido = localizado.itemIdResolvido || itemId;
-    let esperadoRef = localizado.esperadoRef || refs.esperados.doc(itemIdResolvido);
-    let cegoRef = localizado.cegoRef || refs.cegos.doc(itemIdResolvido);
-    const resultadoRef = refs.resultados.doc(itemIdResolvido);
+    const localizado=await localizarItemAuditoriaV2({lojaId,auditoriaId,itemId:itemIdInformado,endereco,acesso});
+    const refs=localizado.refs;
+    const itemId=localizado.itemId||itemIdInformado;
+    const lojaResolvida=refs.lojaId||lojaId||'';
+    const resultadoRef=refs.resultados.doc(itemId);
+    const espRef=refs.esperados.doc(itemId);
+    const cegoRef=refs.cegos.doc(itemId);
+    const espInicial=localizado.esperadoSnap&&localizado.esperadoSnap.exists?localizado.esperadoSnap.data():localizado.esperadoLegado;
+    const statusMeta=String((localizado.metaSnap&&localizado.metaSnap.exists?localizado.metaSnap.data()?.status:'')||(localizado.publico&&localizado.publico.exists?localizado.publico.data()?.status:'')||'LIBERADA').toUpperCase();
+    if(['FINALIZADA','CANCELADA','EXCLUSAO_PENDENTE'].includes(statusMeta))throw new functions.https.HttpsError('failed-precondition','A auditoria ja foi encerrada.');
 
-    return db.runTransaction(async tx => {
-      const [metaSnap, esperadoSnap, cegoSnap, resultadoSnap, publicoSnap] = await Promise.all([
-        tx.get(refs.auditoria), tx.get(esperadoRef), tx.get(cegoRef), tx.get(resultadoRef),
-        tx.get(db.collection('dt_auditorias_coletor').doc(auditoriaId))
-      ]);
-      const statusMeta = String((metaSnap.exists ? metaSnap.data()?.status : '') ||
-        (publicoSnap.exists ? publicoSnap.data()?.status : '') || '').toUpperCase();
-      if (!['LIBERADA', 'EM_ANDAMENTO', 'ABERTA', 'ATIVA', 'ATIVO'].includes(statusMeta)) {
-        throw new functions.https.HttpsError('failed-precondition', 'Auditoria não está liberada ou em andamento.');
-      }
-      if (!esperadoSnap.exists || !cegoSnap.exists) {
-        throw new functions.https.HttpsError('not-found', 'Item da auditoria não encontrado.');
-      }
-      if (resultadoSnap.exists && AUDITORIA_STATUS_FINAIS.has(resultadoSnap.data().status)) {
-        return {ok: true, status: resultadoSnap.data().status, repetido: true,
-          lojaId: lojaIdResolvida, origem: refs.origem};
-      }
-      const esperado = esperadoSnap.data();
-      const normalizar = valor => String(valor || '').replace(/\D/g, '').replace(/^0+/, '');
-      const status = vazio ? 'ENDERECO_VAZIO' :
-        (normalizar(dunLido) && normalizar(dunLido) === normalizar(esperado.dunEsperado) ? 'OK' : 'DIVERGENTE');
-      const agora = admin.firestore.FieldValue.serverTimestamp();
-      const resultado = {
-        auditoriaId, itemId: itemIdResolvido, endereco: cegoSnap.data().endereco,
-        dunLido: vazio ? null : dunLido, produtoLido: vazio ? null : produtoLido,
-        status, operador_uid: context.auth.uid,
-        operador_id: context.auth.token.email || context.auth.uid,
-        operador_nome: acesso?.nome || context.auth.token.name || context.auth.token.email || 'Coletor',
-        dispositivo_id: textoSeguro(data?.dispositivoId, 180), loja: lojaIdResolvida,
-        origem_auditoria: refs.origem, lidoEm: agora, atualizadoEm: agora
-      };
-      tx.set(resultadoRef, resultado);
-      tx.set(cegoRef, {disponivel_coletor: false, status: 'CONCLUIDO', atualizadoEm: agora}, {merge: true});
-      tx.set(esperadoRef, resultado, {merge: true});
-      const campoTotal = status === 'OK' ? 'totalOk' :
-        (status === 'DIVERGENTE' ? 'totalDivergentes' : 'totalVazios');
-      tx.set(refs.auditoria, {
-        status: 'EM_ANDAMENTO',
-        totalPendentes: admin.firestore.FieldValue.increment(-1),
-        [campoTotal]: admin.firestore.FieldValue.increment(1), atualizadoEm: agora,
-        loja: lojaIdResolvida
-      }, {merge: true});
-      tx.set(db.collection('dt_auditorias_coletor').doc(auditoriaId), {
-        status: 'EM_ANDAMENTO', loja: lojaIdResolvida,
-        lojas: admin.firestore.FieldValue.arrayUnion(lojaIdResolvida), atualizadoEm: agora
-      }, {merge: true});
-      return {ok: true, status, lojaId: lojaIdResolvida, origem: refs.origem};
+    const mirrorId=Buffer.from(`${auditoriaId}|${itemId}`).toString('base64').replace(/[\/=+]/g,'_').slice(0,700);
+    const mirrorRef=db.collection('dt_auditoria_resultados').doc(mirrorId);
+    const agora=admin.firestore.FieldValue.serverTimestamp();
+    const retorno=await db.runTransaction(async tx=>{
+      const [resultadoSnap,mirrorSnap,espSnap,cegoSnap]=await Promise.all([tx.get(resultadoRef),tx.get(mirrorRef),tx.get(espRef),tx.get(cegoRef)]);
+      const existente=resultadoSnap.exists?resultadoSnap.data():(mirrorSnap.exists?mirrorSnap.data():null);
+      if(existente&&existente.protocolo===protocolo)return {status:existente.status,repetido:true};
+      const esperado=espSnap.exists?espSnap.data():(espInicial||{});
+      if(!esperado||(!esperado.endereco&&!endereco))throw new functions.https.HttpsError('not-found','Base esperada da auditoria nao encontrada.');
+      const esperadoCodigo=normalizarCodigoAuditoria(esperado.dunEsperado||esperado.gtin||esperado.ean||esperado.codigo_barras);
+      const lidoCodigo=normalizarCodigoAuditoria(dunLido);
+      const status=vazio?'ENDERECO_VAZIO':(lidoCodigo&&esperadoCodigo&&lidoCodigo===esperadoCodigo?'OK':'DIVERGENTE');
+      const resultado={protocolo,auditoriaId,itemId,endereco:endereco||esperado.endereco||'',dunEsperado:esperado.dunEsperado||esperado.gtin||esperado.ean||'',produtoEsperado:esperado.produtoEsperado||esperado.produto||esperado.descricao||'',dunLido:vazio?null:dunLido,produtoLido:vazio?null:produtoLido,status,operador_uid:context.auth.uid,operador_id:context.auth.token.email||context.auth.uid,operador_nome:acesso?.nome||context.auth.token.name||context.auth.token.email||'Coletor',dispositivo_id:textoSeguro(data?.dispositivoId,180),loja:lojaResolvida,origem_auditoria:refs.origem,coletadoEm:textoSeguro(data?.coletadoEm,80)||null,lidoEm:agora,atualizadoEm:agora};
+      tx.set(resultadoRef,resultado,{merge:true});
+      tx.set(mirrorRef,resultado,{merge:true});
+      tx.set(espRef,{...esperado,...resultado},{merge:true});
+      tx.set(cegoRef,{auditoriaId,itemId,endereco:resultado.endereco,loja:lojaResolvida,disponivel_coletor:false,status:'CONCLUIDO',atualizadoEm:agora},{merge:true});
+      tx.set(refs.auditoria,{status:'EM_ANDAMENTO',loja:lojaResolvida,atualizadoEm:agora},{merge:true});
+      tx.set(db.collection('dt_auditorias_coletor').doc(auditoriaId),{status:'EM_ANDAMENTO',loja:lojaResolvida,lojas:lojaResolvida?admin.firestore.FieldValue.arrayUnion(lojaResolvida):[],atualizadoEm:agora},{merge:true});
+      return {status,repetido:false};
     });
+    return {ok:true,status:retorno.status,repetido:retorno.repetido,lojaId:lojaResolvida,origem:refs.origem,itemId};
   });
 
 exports.registrarOcorrenciaAuditoria = functions.region('southamerica-east1')
+  .runWith({timeoutSeconds: 60, memory: '512MB'})
   .https.onCall(async (data, context) => {
-    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
-    const lojaId = textoSeguro(data?.lojaId, 120);
-    const auditoriaId = textoSeguro(data?.auditoriaId, 180);
-    const ocorrenciaId = textoSeguro(data?.ocorrenciaId, 220);
-    const acesso = await acessoSolicitante(context);
-    if (!lojaAutorizada(acesso, lojaId) || !podeUsarColetor(acesso)) {
-      throw new functions.https.HttpsError('permission-denied', 'Coletor sem acesso a esta auditoria.');
+    if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+    const lojaId=textoSeguro(data?.lojaId,120);
+    const auditoriaId=textoSeguro(data?.auditoriaId,180);
+    const ocorrenciaId=textoSeguro(data?.ocorrenciaId||data?.itemId,220);
+    const protocolo=textoSeguro(data?.protocolo,300)||`${auditoriaId}:${ocorrenciaId}`;
+    if(!auditoriaId||!ocorrenciaId)throw new functions.https.HttpsError('invalid-argument','Auditoria ou ocorrencia invalida.');
+    const acesso=await acessoSolicitante(context);
+    if(!podeUsarColetor(acesso))throw new functions.https.HttpsError('permission-denied','Usuario sem acesso ao coletor.');
+    const candidatos=await candidatosAuditoriaV2(lojaId,auditoriaId,acesso);
+    let refs=null;
+    for(const candidato of candidatos.lista){
+      if(candidato.origem==='loja'&&!lojaAutorizada(acesso,candidato.lojaId))continue;
+      const snap=await candidato.auditoria.get();
+      if(snap.exists){refs=candidato;break;}
     }
-    const refs = refsAuditoria(lojaId, auditoriaId);
-    const meta = await refs.auditoria.get();
-    if (!meta.exists || !['LIBERADA', 'EM_ANDAMENTO'].includes(String(meta.data().status || '').toUpperCase())) {
-      throw new functions.https.HttpsError('failed-precondition', 'Auditoria não está liberada ou em andamento.');
+    if(!refs){
+      // Auditorias antigas podem possuir apenas metadado publico; usa a origem raiz.
+      refs=refsAuditoria('',auditoriaId,'raiz');
     }
-    await refs.auditoria.collection('ocorrencias').doc(ocorrenciaId).set({
-      auditoriaId, tipo: 'PRODUTO_FORA_AUDITORIA', status: 'PRODUTO_FORA_AUDITORIA',
-      endereco: textoSeguro(data?.endereco, 220), dunLido: textoSeguro(data?.dunLido, 120),
-      produtoLido: textoSeguro(data?.produtoLido, 500), loja: lojaId,
-      operador_uid: context.auth.uid, operador_id: context.auth.token.email || context.auth.uid,
-      operador_nome: acesso?.nome || context.auth.token.name || context.auth.token.email || 'Coletor',
-      dispositivo_id: textoSeguro(data?.dispositivoId, 180),
-      criadoEm: admin.firestore.FieldValue.serverTimestamp()
-    }, {merge: false});
-    return {ok: true};
+    const agora=admin.firestore.FieldValue.serverTimestamp();
+    const registro={protocolo,auditoriaId,tipo:'PRODUTO_FORA_AUDITORIA',status:'PRODUTO_FORA_AUDITORIA',endereco:textoSeguro(data?.endereco,220),dunLido:textoSeguro(data?.dunLido,120),produtoLido:textoSeguro(data?.produtoLido,500),operador_uid:context.auth.uid,operador_id:context.auth.token.email||context.auth.uid,operador_nome:acesso?.nome||context.auth.token.name||context.auth.token.email||'Coletor',dispositivo_id:textoSeguro(data?.dispositivoId,180),loja:refs.lojaId||lojaId||'',origem_auditoria:refs.origem,criadoEm:agora,atualizadoEm:agora};
+    const mirrorId=Buffer.from(`${auditoriaId}|ocorrencia|${ocorrenciaId}`).toString('base64').replace(/[\/=+]/g,'_').slice(0,700);
+    await Promise.all([
+      refs.auditoria.collection('ocorrencias').doc(ocorrenciaId).set(registro,{merge:true}),
+      db.collection('dt_auditoria_resultados').doc(mirrorId).set({...registro,itemId:ocorrenciaId},{merge:true}),
+      refs.auditoria.set({status:'EM_ANDAMENTO',atualizadoEm:agora},{merge:true}),
+      db.collection('dt_auditorias_coletor').doc(auditoriaId).set({status:'EM_ANDAMENTO',atualizadoEm:agora},{merge:true})
+    ]);
+    return {ok:true,status:'PRODUTO_FORA_AUDITORIA',lojaId:refs.lojaId||lojaId||'',origem:refs.origem,itemId:ocorrenciaId};
   });
 
 exports.finalizarAuditoria = functions.region('southamerica-east1')

@@ -409,10 +409,14 @@
     }
     atualizarAcoesAuditoria();
     try{
-      const [esperadosSnap,resultadosSnap]=await Promise.all([
-        ref.collection('enderecos').get(), ref.collection('resultados').get()
+      const [esperadosSnap,resultadosSnap,espelhoSnap]=await Promise.all([
+        ref.collection('enderecos').get(),
+        ref.collection('resultados').get(),
+        DB().collection('dt_auditoria_resultados').where('auditoriaId','==',auditoriaAtual).get().catch(function(){return {docs:[]};})
       ]);
-      const resultados=new Map(resultadosSnap.docs.map(d=>[d.id,d.data()||{}]));
+      const resultados=new Map();
+      (resultadosSnap.docs||[]).forEach(function(d){resultados.set(d.id,d.data()||{});});
+      (espelhoSnap.docs||[]).forEach(function(d){const x=d.data()||{};if(x.itemId)resultados.set(String(x.itemId),x);});
       itensBrutosAtuais=esperadosSnap.docs.map(d=>({id:d.id,raw:{...d.data(),...(resultados.get(d.id)||{})}}));
       itensAtuais=itensBrutosAtuais.map(x=>normalizarItem(x.raw,x.id));
       assinaturaAnterior=assinatura(itensAtuais);

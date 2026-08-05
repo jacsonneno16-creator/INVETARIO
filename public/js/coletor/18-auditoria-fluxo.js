@@ -276,124 +276,173 @@
     await window.DTAuditoriaStorage.filaPut(registro);
     return registro;
   }
+  // SINCRONIZADOR DE AUDITORIA V2
+  // A leitura sempre e confirmada primeiro no IndexedDB. O envio e idempotente,
+  // independente de turno/inventario e nunca muda a tela atual do operador.
   let _sincronizandoAuditoria=false;
   let _timerRetryAuditoria=null;
-  const AUDITORIA_SYNC_TIMEOUT_MS=12000;
+  const AUDITORIA_SYNC_TIMEOUT_MS=30000;
+  const AUDITORIA_RETRY_BASE_MS=5000;
+
   function comTimeoutAuditoria(promise,ms){
     return new Promise(function(resolve,reject){
-      let finalizado=false;
+      let terminou=false;
       const timer=setTimeout(function(){
-        if(finalizado)return;
-        finalizado=true;
-        const erro=new Error('Tempo limite de sincronização excedido');
-        erro.code='auditoria/offline-timeout';
+        if(terminou)return;
+        terminou=true;
+        const erro=new Error('O servidor demorou para confirmar a auditoria. O registro continua salvo no aparelho.');
+        erro.code='auditoria/timeout';
         reject(erro);
       },ms);
       Promise.resolve(promise).then(function(valor){
-        if(finalizado)return;
-        finalizado=true;
-        clearTimeout(timer);
-        resolve(valor);
+        if(terminou)return; terminou=true; clearTimeout(timer); resolve(valor);
       },function(erro){
-        if(finalizado)return;
-        finalizado=true;
-        clearTimeout(timer);
-        reject(erro);
+        if(terminou)return; terminou=true; clearTimeout(timer); reject(erro);
       });
     });
   }
-  function agendarSyncAuditoria(){
+
+  function atualizarEstadoFilaAuditoria(total,erro){
+    try{
+      localStorage.setItem('dt_auditoria_sync_pendente',String(Math.max(0,Number(total)||0)));
+      if(erro) localStorage.setItem('dt_auditoria_ultimo_erro',JSON.stringify(erro));
+      else if(Number(total)===0) localStorage.removeItem('dt_auditoria_ultimo_erro');
+    }catch(_e){}
+    try{ window.dispatchEvent(new CustomEvent('dt-auditoria-fila',{detail:{pendentes:Number(total)||0,erro:erro||null}})); }catch(_e){}
+    if(typeof window.updateStats==='function') window.updateStats();
+  }
+
+  function agendarSyncAuditoria(atraso){
     if(_timerRetryAuditoria || !navigator.onLine)return;
     _timerRetryAuditoria=setTimeout(function(){
       _timerRetryAuditoria=null;
-      sincronizarFilaAuditoria().catch(function(error){ console.warn("[Falha assíncrona]", error); });
-    },15000);
+      sincronizarFilaAuditoria().catch(function(error){ console.warn('[AUDITORIA V2] retry:',error); });
+    },Math.max(AUDITORIA_RETRY_BASE_MS,Number(atraso)||AUDITORIA_RETRY_BASE_MS));
   }
+
   async function migrarFilaAuditoriaLegada(){
     const chaves=[];
     for(let i=0;i<localStorage.length;i++){
       const chave=localStorage.key(i);
       if(chave && chave.indexOf('dt_auditoria_fila_')===0) chaves.push(chave);
     }
-    for(let i=0;i<chaves.length;i++){
-      const chaveLS=chaves[i];
+    for(const chaveLS of chaves){
       let fila=[];
-      try{ fila=JSON.parse(localStorage.getItem(chaveLS)||'[]'); }catch(e){ console.warn("[Erro tratado]", e); }
-      for(let j=0;j<fila.length;j++){
-        const x=fila[j]||{};
-        if(!x.docId||!x.auditoriaId) continue;
-        x.subcolecao=x.subcolecao||'enderecos';
-        x.chave=chaveRegistroAuditoria(x.auditoriaId,x.subcolecao,x.docId);
-        x.criadoEm=x.criadoEm||agoraISO();
-        await window.DTAuditoriaStorage.filaPut(x);
+      try{ fila=JSON.parse(localStorage.getItem(chaveLS)||'[]'); }catch(_e){}
+      for(const antigo of fila){
+        if(!antigo || !antigo.docId || !antigo.auditoriaId)continue;
+        antigo.subcolecao=antigo.subcolecao||'enderecos';
+        antigo.chave=antigo.chave||chaveRegistroAuditoria(antigo.auditoriaId,antigo.subcolecao,antigo.docId);
+        antigo.criadoEm=antigo.criadoEm||agoraISO();
+        antigo.tentativas=Number(antigo.tentativas||0);
+        await window.DTAuditoriaStorage.filaPut(antigo);
       }
-      try{localStorage.removeItem(chaveLS);}catch(e){ console.warn("[Erro tratado]", e); }
+      try{localStorage.removeItem(chaveLS);}catch(_e){}
     }
   }
+
   async function aguardarAuthAuditoria(){
     if(window.DT_AUTH_USER_READY){ try{ await window.DT_AUTH_USER_READY; }catch(_e){} }
     const auth=window.AUTH || (firebase.app && firebase.app().auth ? firebase.app().auth() : null);
-    const user=auth && auth.currentUser;
-    if(!user){ const e=new Error('Sessão Firebase ainda não restaurada'); e.code='auditoria/auth-pendente'; throw e; }
-    try{ await user.getIdToken(true); }catch(_e){ await user.getIdToken(); }
+    let user=auth&&auth.currentUser;
+    if(!user && auth){
+      user=await new Promise(function(resolve){
+        let finalizado=false;
+        const timer=setTimeout(function(){if(!finalizado){finalizado=true;resolve(auth.currentUser||null);}},8000);
+        const off=auth.onAuthStateChanged(function(u){if(!finalizado){finalizado=true;clearTimeout(timer);try{off();}catch(_e){}resolve(u||null);}});
+      });
+    }
+    if(!user){ const e=new Error('Sessao do coletor nao confirmada. A auditoria continua salva e sera reenviada apos o login.');e.code='auditoria/auth-pendente';throw e; }
+    await user.getIdToken().catch(function(){return null;});
     return user;
   }
+
+  function dadosEnvioAuditoria(x){
+    const p=x.payload||{};
+    const meta=(APP.auditoriasMenu||[]).find(function(a){return texto(a&&a.id)===texto(x.auditoriaId);})||{};
+    const lojaId=texto(x.lojaId||p.loja_id||p.lojaId||p.loja||meta.loja_id||meta.lojaId||(Array.isArray(meta.lojas)&&meta.lojas[0])||meta.loja);
+    const base={
+      protocolo:texto(x.chave)||chaveRegistroAuditoria(x.auditoriaId,x.subcolecao||'enderecos',x.docId),
+      lojaId:lojaId,
+      auditoriaId:texto(x.auditoriaId),
+      itemId:texto(x.docId),
+      endereco:texto(p.endereco),
+      dunLido:texto(p.dunLido||p.gtinLido||p.codigoLido),
+      produtoLido:texto(p.produtoLido||p.produto_lido),
+      vazio:p.vazio===true,
+      dispositivoId:texto(p.dispositivo_id||dispositivoId()),
+      coletadoEm:texto(p.criadoEm||x.criadoEm||agoraISO())
+    };
+    if((x.subcolecao||'enderecos')==='ocorrencias') base.ocorrenciaId=base.itemId;
+    return base;
+  }
+
+  async function enviarRegistroAuditoria(x){
+    const ocorrencia=(x.subcolecao||'enderecos')==='ocorrencias';
+    const nome=ocorrencia?'registrarOcorrenciaAuditoria':'registrarResultadoAuditoria';
+    const callable=firebase.app().functions('southamerica-east1').httpsCallable(nome);
+    const resposta=await comTimeoutAuditoria(callable(dadosEnvioAuditoria(x)),AUDITORIA_SYNC_TIMEOUT_MS);
+    const data=resposta&&resposta.data||{};
+    if(data.ok!==true)throw Object.assign(new Error(data.mensagem||'Servidor nao confirmou a auditoria.'),{code:data.codigo||'auditoria/sem-confirmacao'});
+    return data;
+  }
+
   async function sincronizarFilaAuditoria(){
-    if(_sincronizandoAuditoria || !navigator.onLine) return;
+    if(_sincronizandoAuditoria || !navigator.onLine)return;
     _sincronizandoAuditoria=true;
+    let houveErro=false;
     try{
       await aguardarAuthAuditoria();
-      const fila=await window.DTAuditoriaStorage.filaAll();
-      for(let i=0;i<fila.length;i++){
-        const x=fila[i];
-        try {
-          const ocorrencia=(x.subcolecao||'enderecos')==='ocorrencias';
-          const enviar=firebase.app().functions('southamerica-east1').httpsCallable(ocorrencia?'registrarOcorrenciaAuditoria':'registrarResultadoAuditoria');
-          const metaAud=(APP.auditoriasMenu||[]).find(function(a){return texto(a&&a.id)===texto(x.auditoriaId);})||{};
-          const lojaId=texto(x.lojaId)||texto(x.payload&&x.payload.loja_id)||texto(x.payload&&x.payload.lojaId)||texto(metaAud.loja_id||metaAud.lojaId||(Array.isArray(metaAud.lojas)&&metaAud.lojas[0])||metaAud.loja)||texto(x.payload&&x.payload.loja)||texto(window.getDTLojaAtiva&&window.getDTLojaAtiva());
-          const dados=ocorrencia?
-            {lojaId:lojaId,auditoriaId:x.auditoriaId,ocorrenciaId:x.docId,endereco:x.payload.endereco,dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',dispositivoId:x.payload.dispositivo_id||''}:
-            {lojaId:lojaId,auditoriaId:x.auditoriaId,itemId:x.docId,endereco:x.payload.endereco||'',dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',vazio:x.payload.vazio===true,dispositivoId:x.payload.dispositivo_id||''};
-          if(!dados.lojaId){ const erroLoja=new Error('Loja da auditoria não identificada'); erroLoja.code='auditoria/loja-ausente'; throw erroLoja; }
-          const resposta=await comTimeoutAuditoria(enviar(dados),AUDITORIA_SYNC_TIMEOUT_MS);
-          const statusServidor=String(resposta&&resposta.data&&resposta.data.status||'').toUpperCase();
-          const lojaResolvida=texto(resposta&&resposta.data&&resposta.data.lojaId);
-          if(lojaResolvida){
-            x.lojaId=lojaResolvida;
-            if(x.payload) x.payload.loja=lojaResolvida;
-            if(APP.inventario && texto(APP.inventario.auditoria_id||APP.inventario.id)===texto(x.auditoriaId)) APP.inventario.loja_id=lojaResolvida;
-          }
-          if(!ocorrencia && statusServidor){
-            const payloadFinal=Object.assign({},x.payload||{},{status:statusServidor});
+      let fila=await window.DTAuditoriaStorage.filaAll();
+      atualizarEstadoFilaAuditoria(fila.length,null);
+      for(const x of fila){
+        if(!navigator.onLine)break;
+        try{
+          const data=await enviarRegistroAuditoria(x);
+          const status=texto(data.status||'ENVIADO').toUpperCase();
+          if((x.subcolecao||'enderecos')!=='ocorrencias'){
+            const payloadFinal=Object.assign({},x.payload||{},{status:status,servidor_confirmado:true,servidor_confirmado_em:agoraISO()});
             await marcarConcluidoLocalAuditoria(x.docId,payloadFinal);
-            const registro=(APP.contagens||[]).find(function(r){ return texto(r&&r.id)===texto(x.docId); });
-            if(registro) registro.status=statusServidor;
+            const registro=(APP.contagens||[]).find(function(r){return texto(r&&r.id)===texto(x.docId);});
+            if(registro){registro.status=status;registro.servidor_confirmado=true;}
           }
           await window.DTAuditoriaStorage.filaDelete(x.chave);
-          try{ window.dispatchEvent(new CustomEvent('dt-auditoria-sync',{detail:{id:x.docId,status:statusServidor||'ENVIADO'}})); }catch(_e){}
-          if(typeof window.updateStats==='function') window.updateStats();
-        } catch(e) {
-          console.error('[AUDITORIA] Falha de envio; item preservado na fila:',{id:x.docId,codigo:e&&e.code||'',mensagem:e&&e.message||String(e),loja:x.payload&&x.payload.loja,auditoria:x.auditoriaId});
-          try{ localStorage.setItem('dt_auditoria_ultimo_erro',JSON.stringify({em:agoraISO(),id:x.docId,codigo:e&&e.code||'',mensagem:e&&e.message||String(e)})); }catch(_e){}
-          agendarSyncAuditoria();
-          break;
+          try{window.dispatchEvent(new CustomEvent('dt-auditoria-sync',{detail:{id:x.docId,status:status,lojaId:data.lojaId||'',origem:data.origem||''}}));}catch(_e){}
+        }catch(e){
+          houveErro=true;
+          x.tentativas=Number(x.tentativas||0)+1;
+          x.ultimoErro={em:agoraISO(),codigo:texto(e&&e.code),mensagem:texto(e&&e.message||e)};
+          try{await window.DTAuditoriaStorage.filaPut(x);}catch(_e){}
+          atualizarEstadoFilaAuditoria((await window.DTAuditoriaStorage.filaAll()).length,{id:x.docId,auditoriaId:x.auditoriaId,tentativas:x.tentativas,...x.ultimoErro});
+          console.error('[AUDITORIA V2] Registro preservado para novo envio:',x.ultimoErro,x);
+          // Um registro antigo ou inconsistente nao bloqueia os demais.
+          continue;
         }
       }
-    } finally {
+      fila=await window.DTAuditoriaStorage.filaAll();
+      atualizarEstadoFilaAuditoria(fila.length,houveErro?undefined:null);
+      if(fila.length)agendarSyncAuditoria(Math.min(60000,AUDITORIA_RETRY_BASE_MS*Math.max(1,Math.min(10,Number(fila[0].tentativas||1)))));
+    }catch(e){
+      houveErro=true;
+      const fila=await window.DTAuditoriaStorage.filaAll().catch(function(){return[];});
+      atualizarEstadoFilaAuditoria(fila.length,{em:agoraISO(),codigo:texto(e&&e.code),mensagem:texto(e&&e.message||e)});
+      agendarSyncAuditoria(10000);
+    }finally{
       _sincronizandoAuditoria=false;
     }
   }
+
   window.sincronizarFilaAuditoria=sincronizarFilaAuditoria;
   window.addEventListener('online',function(){
-    if(_timerRetryAuditoria){ clearTimeout(_timerRetryAuditoria); _timerRetryAuditoria=null; }
-    sincronizarFilaAuditoria().catch(function(error){ console.warn("[Falha assíncrona]", error); });
+    if(_timerRetryAuditoria){clearTimeout(_timerRetryAuditoria);_timerRetryAuditoria=null;}
+    // Somente sincroniza. Nao navega, nao mostra confirmacao e nao reinicia a auditoria.
+    sincronizarFilaAuditoria().catch(function(error){console.warn('[AUDITORIA V2] online:',error);});
   });
-  window.addEventListener('offline',function(){
-    if(_timerRetryAuditoria){ clearTimeout(_timerRetryAuditoria); _timerRetryAuditoria=null; }
-  });
-  migrarFilaAuditoriaLegada().then(function(){
-    if(navigator.onLine) sincronizarFilaAuditoria();
-  }).catch(function(e){console.warn('[AUDITORIA] Falha ao migrar fila antiga:',e);});
+  window.addEventListener('offline',function(){if(_timerRetryAuditoria){clearTimeout(_timerRetryAuditoria);_timerRetryAuditoria=null;}});
+  migrarFilaAuditoriaLegada().then(function(){return window.DTAuditoriaStorage.filaAll();}).then(function(fila){
+    atualizarEstadoFilaAuditoria(fila.length,null);
+    if(navigator.onLine)sincronizarFilaAuditoria();
+  }).catch(function(e){console.warn('[AUDITORIA V2] migracao:',e);});
 
   async function salvarOcorrenciaForaAuditoria(produtoLido){
     if (estado.processando || !estado.item) return;

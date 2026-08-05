@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260805-dashboard-v264';
+var CACHE='dt-inventario-20260805-auditoria-v269';
 var PRECACHE=[
   '/css/analista-quatro-telas-v254.css',
   '/js/analista/49-quatro-telas-v254.js',
@@ -10,6 +10,9 @@ var PRECACHE=[
   '/coletor.html',
   '/manifest.webmanifest',
   '/manifest-coletor.json',
+  '/css/analista.css',
+  '/css/analista-operacao-v250.css',
+  '/css/coletor.css',
   '/vendor/xlsx-0.18.5/xlsx.full.min.js',
   '/vendor/firebase-10.12.2/firebase-app-compat.js',
   '/vendor/firebase-10.12.2/firebase-auth-compat.js',
@@ -37,6 +40,7 @@ var PRECACHE=[
   '/js/analista/12-validacao-operacional.js',
   '/js/analista/13-enderecos-importacao-selecao.js',
   '/js/analista/20-sync-contagens.js',
+  '/js/analista/services/rodadaFisicaService.js',
   '/js/analista/21-divergencias-recontagens.js',
   '/js/analista/22-dashboard-render-sync.js',
   '/js/analista/30-render-inventarios-acompanhamento.js',
@@ -81,6 +85,7 @@ var PRECACHE=[
   '/js/coletor/17-auditoria-meta.js',
   '/js/coletor/18-auditoria-fluxo.js',
   '/js/coletor/19-runtime-estavel-v15.js',
+  '/js/coletor/20-menu-compat.js',
   '/js/legacy-ui-compat.js'
 ];
 self.addEventListener('install',function(e){
