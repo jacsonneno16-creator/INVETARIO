@@ -341,8 +341,17 @@
           const dados=ocorrencia?
             {lojaId:x.payload.loja,auditoriaId:x.auditoriaId,ocorrenciaId:x.docId,endereco:x.payload.endereco,dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',dispositivoId:x.payload.dispositivo_id||''}:
             {lojaId:x.payload.loja,auditoriaId:x.auditoriaId,itemId:x.docId,dunLido:x.payload.dunLido||'',produtoLido:x.payload.produtoLido||'',vazio:x.payload.vazio===true,dispositivoId:x.payload.dispositivo_id||''};
-          await comTimeoutAuditoria(enviar(dados),AUDITORIA_SYNC_TIMEOUT_MS);
+          const resposta=await comTimeoutAuditoria(enviar(dados),AUDITORIA_SYNC_TIMEOUT_MS);
+          const statusServidor=String(resposta&&resposta.data&&resposta.data.status||'').toUpperCase();
+          if(!ocorrencia && statusServidor){
+            const payloadFinal=Object.assign({},x.payload||{},{status:statusServidor});
+            await marcarConcluidoLocalAuditoria(x.docId,payloadFinal);
+            const registro=(APP.contagens||[]).find(function(r){ return texto(r&&r.id)===texto(x.docId); });
+            if(registro) registro.status=statusServidor;
+          }
           await window.DTAuditoriaStorage.filaDelete(x.chave);
+          try{ window.dispatchEvent(new CustomEvent('dt-auditoria-sync',{detail:{id:x.docId,status:statusServidor||'ENVIADO'}})); }catch(_e){}
+          if(typeof window.updateStats==='function') window.updateStats();
         } catch(e) {
           console.warn('[AUDITORIA] Item permanece na fila offline:',x.docId,e);
           agendarSyncAuditoria();

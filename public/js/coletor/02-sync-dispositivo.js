@@ -535,6 +535,9 @@ function iniciarListenerInventarios() {
   // Função de poll — executa imediatamente e depois a cada 3 min
   async function _pollInventarios() {
     if (!navigator.onLine || !APP.operador) return;
+    // Auditoria usa outro documento/coleção. Nunca validar o ID da auditoria
+    // na coleção de inventários, pois isso fazia a tela voltar sozinha ao início.
+    if (APP.modoAcesso === 'auditoria') return;
     // [OTIMIZADO] Se o operador está na tela de coleta (dentro de um inventário),
     // o _syncInterval já chama verificarInventarioAtivo() a cada 10 min.
     // Só faz poll completo quando está na tela de seleção de inventários.
@@ -557,7 +560,7 @@ function iniciarListenerInventarios() {
         renderListaInventarios(lista);
       }
       // Se operador está dentro de um inventário, verifica se ainda está ativo
-      if (APP.inventario && !idsAtivos.includes(APP.inventario.id)) {
+      if (APP.modoAcesso !== 'auditoria' && APP.inventario && !idsAtivos.includes(APP.inventario.id)) {
         toast('⚠️ Este inventário foi encerrado. Retornando à seleção...', 'w');
         APP.inventario = null;
         APP.base       = [];
@@ -576,6 +579,7 @@ function iniciarListenerInventarios() {
 /** Verifica se o inventário atual ainda existe/está ativo no Firestore */
 async function verificarInventarioAtivo() {
   if (!APP.inventario || !navigator.onLine) return;
+  if (APP.modoAcesso === 'auditoria') return;
   try {
     const doc = await FS.collection(FCOL.inventarios).doc(APP.inventario.id).get();
     const status = doc.data()?.status;

@@ -419,7 +419,7 @@ exports.finalizarAuditoria = functions.region('southamerica-east1')
     }
     await db.runTransaction(async tx => {
       const meta = await tx.get(refs.auditoria);
-      if (!meta.exists || !['LIBERADA', 'EM_ANDAMENTO'].includes(meta.data().status)) {
+      if (!meta.exists || !['LIBERADA', 'EM_ANDAMENTO'].includes(String(meta.data().status || '').toUpperCase())) {
         throw new functions.https.HttpsError('failed-precondition', 'Estado inválido para finalização.');
       }
       tx.update(refs.auditoria, {

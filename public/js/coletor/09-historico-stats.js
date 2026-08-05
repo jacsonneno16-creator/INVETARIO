@@ -205,7 +205,11 @@ async function atualizarCacheLocais() {
       const id = _audDocId(r); if (id) mapa.set(id, r);
     });
     pendFila.forEach(x => { const id = _audDocId(x); if (id) mapa.set(id, Object.assign({id:id}, x.payload || {})); });
-    const resultados = Array.from(mapa.values()).filter(r => ['OK','DIVERGENTE','ENDERECO_VAZIO'].includes(_audStatus(r)));
+    // Todo registro salvo no aparelho conta como auditoria realizada, mesmo antes
+    // de o servidor devolver OK/DIVERGENTE. Antes este filtro aceitava apenas
+    // status finais e, por isso, a barra mostrava 50 na fila enquanto os cards
+    // exibiam zero.
+    const resultados = Array.from(mapa.values());
     const pendIds = new Set(pendFila.map(_audDocId).filter(Boolean));
     const total = resultados.length;
     const pendentes = resultados.filter(r => pendIds.has(_audDocId(r))).length;

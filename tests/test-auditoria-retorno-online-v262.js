@@ -1,0 +1,14 @@
+const fs=require('fs');
+const assert=require('assert');
+const stats=fs.readFileSync('public/js/coletor/09-historico-stats.js','utf8');
+const sync=fs.readFileSync('public/js/coletor/02-sync-dispositivo.js','utf8');
+const cache=fs.readFileSync('public/js/coletor/01-core-firebase-cache.js','utf8');
+const fluxo=fs.readFileSync('public/js/coletor/18-auditoria-fluxo.js','utf8');
+const html=fs.readFileSync('public/coletor.html','utf8');
+assert(stats.includes('const resultados = Array.from(mapa.values());'),'cards ainda ignoram auditorias pendentes sem status final');
+assert(sync.includes("if (APP.modoAcesso === 'auditoria') return;"),'poll de inventario ainda pode expulsar auditoria');
+assert(cache.includes("if (APP.modoAcesso === 'auditoria') return;"),'limpeza de cache ainda pode expulsar auditoria');
+assert(fluxo.includes('statusServidor'),'sincronizacao nao preserva status devolvido pelo servidor');
+assert(fluxo.includes("new CustomEvent('dt-auditoria-sync'"),'sincronizacao nao atualiza interface');
+assert(html.includes('v262 · 20260805.3'),'build v262 nao identificado');
+console.log('OK test-auditoria-retorno-online-v262');

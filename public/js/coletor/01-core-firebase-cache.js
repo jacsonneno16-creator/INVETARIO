@@ -552,6 +552,9 @@ function invCacheSave(list) {
  */
 function limparInventariosObsoletos(idsAtivos) {
   if (!Array.isArray(idsAtivos)) return;
+  // No modo auditoria, APP.inventario representa a auditoria e não deve ser
+  // comparado com os IDs da coleção de inventários.
+  if (APP.modoAcesso === 'auditoria') return;
   const idsSet = new Set(idsAtivos);
 
   // Verificar se o inventário atual foi removido

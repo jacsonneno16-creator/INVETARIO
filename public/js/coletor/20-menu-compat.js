@@ -90,11 +90,12 @@
     button.setAttribute('data-menu-bound', '1');
     button.setAttribute('aria-haspopup', 'menu');
     button.setAttribute('aria-expanded', 'false');
-    button.onclick = function (event) { return toggleByIds(buttonId, menuId, event); };
-    button.addEventListener('touchend', function (event) {
-      if (event.cancelable) event.preventDefault();
-      toggleByIds(buttonId, menuId, event);
-    }, false);
+
+    // Use somente o evento click. Em telas touch, touchend + click eram
+    // disparados em sequencia: o primeiro abria e o segundo fechava o menu.
+    button.onclick = function (event) {
+      return toggleByIds(buttonId, menuId, event);
+    };
   }
 
   function bindAction(selector, actionName) {
@@ -102,11 +103,15 @@
     var i;
     for (i = 0; i < nodes.length; i += 1) {
       (function (node) {
+        node.type = 'button';
         node.onclick = function (event) {
           if (event) {
             if (event.preventDefault) event.preventDefault();
             if (event.stopPropagation) event.stopPropagation();
           }
+          if (node.getAttribute('data-menu-running') === '1') return false;
+          node.setAttribute('data-menu-running', '1');
+          window.setTimeout(function () { node.removeAttribute('data-menu-running'); }, 500);
           return safeCall(actionName);
         };
       }(nodes[i]));

@@ -1,0 +1,11 @@
+const fs = require('fs');
+const assert = require('assert');
+const js = fs.readFileSync('public/js/coletor/20-menu-compat.js', 'utf8');
+const html = fs.readFileSync('public/coletor.html', 'utf8');
+const sw = fs.readFileSync('public/sw.js', 'utf8');
+assert(!js.includes("addEventListener('touchend'"), 'menu ainda possui touchend duplicado');
+assert(js.includes('button.onclick = function (event)'), 'botao nao possui clique unico');
+assert(js.includes("node.type = 'button'"), 'acoes do menu nao foram protegidas como button');
+assert(html.includes('20260805-auditoria-v262'), 'HTML nao aponta para a versao nova do menu');
+assert(sw.includes('dt-inventario-20260805-auditoria-v262'), 'cache do SW nao foi renovado');
+console.log('OK: menu do coletor preservado na v262');
