@@ -518,19 +518,19 @@
 <button class="btn btn-primary" id="btn-confirmar-gtin" onclick="confirmarGtin()" style="margin-top:8px;padding:11px 14px;font-size:.9rem;width:100%">Confirmar →</button>
 </div>
 </div>
-<!-- ETAPA 4: Lote do produto -->
+<!-- ETAPA 4: Validade -->
 <div class="step-field" id="step-validade" style="display:none">
 <div class="sf-row">
-<div class="sf-label">Lote</div>
+<div class="sf-label">Validade</div>
 <div class="sf-sep"></div>
 <div class="sf-input-wrap">
-<input autocomplete="off" class="field" id="f-validade" inputmode="text" maxlength="30" oninput="onValidadeInput()" placeholder="Número do lote" type="text"/>
+<input autocomplete="off" class="field" id="f-validade" inputmode="numeric" maxlength="10" oninput="onValidadeInput()" placeholder="DD/MM/AAAA" type="text"/>
 <span class="sf-val" id="sf-val-validade" style="display:none"></span>
 </div>
 </div>
 <div class="sf-extra">
 <div id="fb-validade" style="padding-top:4px"></div>
-<button class="btn btn-primary" id="btn-confirmar-validade" onclick="confirmarValidade()" style="margin-top:8px;padding:11px 14px;font-size:.9rem;width:100%">Confirmar lote →</button>
+<button class="btn btn-primary" id="btn-confirmar-validade" onclick="confirmarValidade()" style="margin-top:8px;padding:11px 14px;font-size:.9rem;width:100%">Confirmar →</button>
 </div>
 </div>
 <!-- ETAPA 5: Quantidade -->
