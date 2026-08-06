@@ -15,6 +15,9 @@ const ALIAS_END = {
   sequencia:          ['sequencia','sequência','seq','posicao','posição','pos'],
   observacao:         ['observacao','observação','obs','descricao','descrição','nota'],
   tipo:               ['tipo','type'],
+  tipo_endereco:      ['tipo_endereco','tipoendereco','tipo_end'],
+  contabiliza_inventario: ['contabiliza_inventario','contabiliza','contabilizar_inventario'],
+  permite_multiplos_operadores: ['permite_multiplos_operadores','multiplos_operadores','multi_operadores','permite_multiplo_operador'],
   capacidade_paletes: ['capacidade_paletes','cap_paletes','capacidade','paletes','cap','capacidade_palete',
                        'qtd_paletes','qtd_palete','num_paletes','slots'],
   ativo:              ['ativo','active','status'],
@@ -231,6 +234,33 @@ function renderColMapper() {
           </select>
           <div id="map-ex-tipo" style="font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:3px">—</div>
         </div>
+        <div>
+          <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:5px">
+            🏗 Tipo do Endereço (FISICO/VIRTUAL) <span style="color:var(--muted);font-weight:400">opcional</span>
+          </div>
+          <select class="mapper-select" id="map-sel-tipo_endereco" onchange="updateMapperPreview()" style="width:100%">
+            ${optsFor('tipo_endereco')}
+          </select>
+          <div id="map-ex-tipo_endereco" style="font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:3px">—</div>
+        </div>
+        <div>
+          <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:5px">
+            🧮 Contabiliza no Inventário <span style="color:var(--muted);font-weight:400">opcional</span>
+          </div>
+          <select class="mapper-select" id="map-sel-contabiliza_inventario" onchange="updateMapperPreview()" style="width:100%">
+            ${optsFor('contabiliza_inventario')}
+          </select>
+          <div id="map-ex-contabiliza_inventario" style="font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:3px">—</div>
+        </div>
+        <div>
+          <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:5px">
+            👥 Permite Múltiplos Operadores <span style="color:var(--muted);font-weight:400">opcional</span>
+          </div>
+          <select class="mapper-select" id="map-sel-permite_multiplos_operadores" onchange="updateMapperPreview()" style="width:100%">
+            ${optsFor('permite_multiplos_operadores')}
+          </select>
+          <div id="map-ex-permite_multiplos_operadores" style="font-family:var(--mono);font-size:.7rem;color:var(--muted);margin-top:3px">—</div>
+        </div>
       </div>
 
       <div style="margin-bottom:12px;padding:12px 14px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px">
@@ -257,7 +287,7 @@ function updateMapperPreview() {
   const { rows } = _endImport;
   if (!rows.length) return;
 
-  const SIMPLE_KEYS = ['endereco','capacidade_paletes','ativo','tipo','nome_local'];
+  const SIMPLE_KEYS = ['endereco','capacidade_paletes','ativo','tipo','nome_local','tipo_endereco','contabiliza_inventario','permite_multiplos_operadores'];
   SIMPLE_KEYS.forEach(key => {
     const sel = document.getElementById(`map-sel-${key}`);
     const exEl = document.getElementById(`map-ex-${key}`);
@@ -373,6 +403,35 @@ function confirmarImportEnderecos() {
       nomeLocal = String(row[parseInt(selNomeLocal.value)] ?? '').trim();
     }
 
+    // ── Tipo do Endereço (FISICO/VIRTUAL) ───────────────────────────────
+    // Campo introduzido no redesenho da tela (v287) — antes só existia o
+    // campo livre "tipo" (ex.: ARMAZENAGEM). Se a planilha não trouxer esta
+    // coluna, assume FISICO (mesmo padrão do cadastro manual).
+    let tipoEndereco = 'FISICO';
+    const selTipoEnd = document.getElementById('map-sel-tipo_endereco');
+    if (selTipoEnd && selTipoEnd.value !== '') {
+      const rawTipoEnd = String(row[parseInt(selTipoEnd.value)] ?? '').trim().toUpperCase();
+      if (rawTipoEnd === 'VIRTUAL' || rawTipoEnd === 'FISICO') tipoEndereco = rawTipoEnd;
+    }
+
+    // ── Contabiliza no inventário ───────────────────────────────────────
+    // Padrão: SIM para endereço físico, NÃO para virtual (mesma regra do
+    // cadastro manual em addressModal).
+    let contabilizaInventario = tipoEndereco !== 'VIRTUAL';
+    const selContabiliza = document.getElementById('map-sel-contabiliza_inventario');
+    if (selContabiliza && selContabiliza.value !== '') {
+      const rawContabiliza = String(row[parseInt(selContabiliza.value)] ?? '').trim().toLowerCase();
+      if (rawContabiliza !== '') contabilizaInventario = !['0','false','não','nao','n','no'].includes(rawContabiliza);
+    }
+
+    // ── Permite múltiplos operadores ────────────────────────────────────
+    let multiplosOperadores = tipoEndereco === 'VIRTUAL';
+    const selMultiplos = document.getElementById('map-sel-permite_multiplos_operadores');
+    if (selMultiplos && selMultiplos.value !== '') {
+      const rawMultiplos = String(row[parseInt(selMultiplos.value)] ?? '').trim().toLowerCase();
+      if (rawMultiplos !== '') multiplosOperadores = ['1','true','sim','s','yes','y'].includes(rawMultiplos);
+    }
+
     built.push({
       id:                 _nextEnderecoId(),
       endereco,
@@ -380,6 +439,9 @@ function confirmarImportEnderecos() {
       local_area:         local || area || '',
       nome_local:         nomeLocal,
       tipo,
+      tipo_endereco:      tipoEndereco,
+      contabiliza_inventario: contabilizaInventario,
+      permite_multiplos_operadores: multiplosOperadores,
       observacao:         '',
       capacidade_paletes: cap,
       ativo,
@@ -640,6 +702,9 @@ function exportarEnderecos() {
     'Nível': e.nivel || '',
     'Sequência': e.sequencia || '',
     'Tipo': e.tipo || '',
+    'Tipo Endereco': (e.tipo_endereco || e.tipoEndereco || (e.virtual ? 'VIRTUAL' : 'FISICO') || '').toString().toUpperCase(),
+    'Contabiliza Inventario': e.contabiliza_inventario === false ? 'NAO' : 'SIM',
+    'Multiplos Operadores': e.permite_multiplos_operadores === true ? 'SIM' : 'NAO',
     'Capacidade Paletes': e.capacidade_paletes === null || e.capacidade_paletes === undefined ? '' : e.capacidade_paletes,
     'Ativo': e.ativo === false ? 'NÃO' : 'SIM',
     'Observação': e.observacao || ''
