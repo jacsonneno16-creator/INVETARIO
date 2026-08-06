@@ -537,7 +537,7 @@
       display: none; align-items: center; justify-content: center;
       z-index: 999; backdrop-filter: blur(5px);
     }
-    .modal-bg.open { display: flex; }
+    .modal-bg.open, .modal-bg.on { display: flex; }
     .modal {
       background: var(--surface);
       border-radius: var(--r-lg);

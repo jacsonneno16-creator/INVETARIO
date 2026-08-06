@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260805-v285-export-bluesoft';
+var CACHE='dt-inventario-20260806-v294-acoes-cadastros';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -7,6 +7,7 @@ var PRECACHE=[
   '/manifest.webmanifest',
   '/manifest-coletor.json',
   '/css/analista.css',
+  '/css/analista-cadastros-v287.css',
   '/css/coletor.css',
   '/vendor/xlsx-0.18.5/xlsx.full.min.js',
   '/vendor/firebase-10.12.2/firebase-app-compat.js',
@@ -54,6 +55,7 @@ var PRECACHE=[
   '/js/analista/42-topbar-tools.js',
   '/js/analista/43-importar-exportar-api.js',
   '/js/analista/44-auditoria-remediacoes.js',
+  '/js/analista/52-cadastros-v287.js',
   '/js/analista/app-controller.js',
   '/js/analista/firebaseService.js',
   '/js/analista/services/inventarioService.js',
