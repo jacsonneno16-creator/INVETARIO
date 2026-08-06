@@ -23,9 +23,12 @@ async function loadProducts(){
   P.all=s.docs.map(d=>({id:d.id,...d.data()}));
   renderProducts();
  },e=>{
-  console.error('[Produtos] onSnapshot falhou:',e);
-  toast('Erro ao carregar produtos: '+e.message,'error');
+  console.warn('[Produtos] onSnapshot falhou (provável tela de login ainda aberta):',e.code||e.message);
   P.unsub=null;
+  // "permission-denied" aqui é o caso esperado de rodar antes do login
+  // terminar — não é um erro real para o usuário ver, só ruído. Qualquer
+  // outro tipo de erro (rede, cota, etc.) continua avisando na tela.
+  if(e.code!=='permission-denied')toast('Erro ao carregar produtos: '+e.message,'error');
   renderProducts();
  });
 }
