@@ -816,6 +816,8 @@ let _dashAudMetas = [];
 let _dashAudItens = [];
 let _dashAudCarregando = false;
 let _dashAudLoja = '';
+const _dashAudCache = new Map();
+const _DASH_AUD_TTL = 60000;
 let _dashAudFiltroColuna = '';
 let _dashAudFiltroOperador = '';
 
@@ -895,13 +897,16 @@ async function carregarDashboardAuditoria(forcar){
       if(lojaAtual)await add(raw.collection('lojas').doc(lojaAtual).collection('dt_auditorias'),'loja:'+lojaAtual);
       const acesso=window.DT_USUARIO_ACESSO_ATUAL||{};
       const acessoGlobal=acesso.acesso_todas_lojas===true || acesso.perfil==='administrador' || acesso.admin_mestre===true || acesso.administrador_mestre===true;
-      if(acessoGlobal){try{const ls=await raw.collection('lojas').get();for(const ld of ls.docs){if(ld.id!==lojaAtual)await add(raw.collection('lojas').doc(ld.id).collection('dt_auditorias'),'loja:'+ld.id);}}catch(e){ console.warn("[Erro tratado]", e); }}
+      if(acessoGlobal){try{const ls=await raw.collection('lojas').get();await Promise.all(ls.docs.filter(ld=>ld.id!==lojaAtual).map(ld=>add(raw.collection('lojas').doc(ld.id).collection('dt_auditorias'),'loja:'+ld.id)));}catch(e){ console.warn('[Dashboard Auditoria] lojas', e); }}
       if(acessoGlobal) await add(raw.collection('dt_auditorias'),'raiz');
     }else await add(raw.collection('dt_auditorias'),'loja');
     _dashAudMetas=metas;
     const escolhido=document.getElementById('dash-faud')?.value||'';
     const selecionadas=escolhido?_dashAudMetas.filter(m=>m.id===escolhido):_dashAudMetas;
     const listas=await Promise.all(selecionadas.map(async m=>{
+      const cacheKey=(lojaAtual||'raiz')+'|'+m.id;
+      const cached=_dashAudCache.get(cacheKey);
+      if(!forcar && cached && (Date.now()-cached.ts)<_DASH_AUD_TTL) return cached.itens;
       const ref=m._ref || raw.collection('dt_auditorias').doc(m.id);
       const [enderecosSnap,resultadosSnap,baseChunks,espelhoSnap]=await Promise.all([
         ref.collection('enderecos').get().catch(()=>({docs:[]})),
@@ -920,7 +925,9 @@ async function carregarDashboardAuditoria(forcar){
       const usados=new Set();
       const unidos=base.length?base.map(b=>{const r=porId.get(String(b.id))||porEnd.get(String(b.endereco||'').trim().toUpperCase());if(r)usados.add(String(r.id));return r?{...b,...r,id:r.id||b.id}:{...b,status:b.status||'PENDENTE'};}):resultados.slice();
       resultados.forEach(r=>{if(!usados.has(String(r.id))&&!unidos.some(x=>String(x.id)===String(r.id)))unidos.push(r);});
-      return unidos.map(x=>({auditoriaId:m.id,auditoriaNome:m.nome||m.auditoria_nome||m.id,...x}));
+      const itens=unidos.map(x=>({auditoriaId:m.id,auditoriaNome:m.nome||m.auditoria_nome||m.id,...x}));
+      _dashAudCache.set(cacheKey,{ts:Date.now(),itens});
+      return itens;
     }));
     _dashAudItens=listas.flat(); _dashAudLoja=lojaAtual;
     _dashPopularFiltrosAuditoria(); renderDashboardAuditoria();

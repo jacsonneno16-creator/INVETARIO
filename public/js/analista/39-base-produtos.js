@@ -1,6 +1,17 @@
 (function(global){
 'use strict';
-const COL=()=>global.getDTRawFirestore().collection(global.DT_FCOL.produtos||'dt_produtos');let lista=[],listener=null,familiaAtiva='TODAS',sincronizandoChunks=false,mutacaoEmAndamento=false;
+// v296.2 — Este arquivo era a tela antiga de "Base de Produtos" (renderização própria,
+// onSnapshot próprio, dropdown de famílias). A tela hoje é 100% renderizada por
+// js/analista/52-cadastros-v287.js, que já mantém seu próprio listener em tempo real
+// (P.unsub) e reage sozinho a qualquer escrita nesta coleção.
+// Por isso este arquivo NÃO deve mais manter lista/listener/render próprios — isso
+// causava uma segunda leitura simultânea do Firestore e divergência entre o badge e a
+// tabela quando os dois estados ficavam dessincronizados. Ele expõe apenas as ações de
+// dados (importar, exportar, modelo, republicar chunks, excluir todos, salvar) que a
+// tela nova chama via window.produtoXxx — a atualização da tela acontece sozinha
+// porque qualquer escrita aqui dispara o onSnapshot que o 52-cadastros-v287.js já mantém.
+const COL=()=>global.getDTRawFirestore().collection(global.DT_FCOL.produtos||'dt_produtos');
+let sincronizandoChunks=false;
 const txt=v=>String(v==null?'':v).trim();const esc=v=>txt(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const cab=v=>txt(v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[_\-]+/g,' ').replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
 const cod=v=>global.DTProdutos.normalizarCodigo(v);
@@ -9,18 +20,6 @@ function hashTexto(v){let h=2166136261,s=txt(v).toUpperCase();for(let i=0;i<s.le
 function limparCodigoPlanilha(v){let s=txt(v).replace(/\s+/g,'');if(/^\d+[.,]0+$/.test(s))s=s.replace(/[.,]0+$/,'');if(/^\d+(?:[.,]\d+)?E[+-]?\d+$/i.test(s)){const n=Number(s.replace(',','.'));if(Number.isFinite(n))s=n.toLocaleString('fullwide',{useGrouping:false,maximumFractionDigits:0});}return s.replace(/[^0-9A-Za-z]/g,'');}
 function normalizeRow(row){const map={},compact={};Object.keys(row||{}).forEach(k=>{const nk=cab(k),ck=nk.replace(/[^A-Z0-9]/g,'');map[nk]=row[k];compact[ck]=row[k];});const pick=arr=>{for(const k of arr){const kk=cab(k),ck=kk.replace(/[^A-Z0-9]/g,'');const v=map[kk]!=null?map[kk]:compact[ck];if(v!=null&&txt(v))return txt(v);}return '';};const nome=pick(['PRODUTO','DESCRICAO','DESCRIÇÃO','NOME DO PRODUTO','DESCRICAO PRODUTO','ITEM']);const unidade=pick(['UNIDADE','UN','EMBALAGEM']);const fam=global.DTProdutos.inferirFamilia(nome,unidade);const categoria=pick(['SECAO','SEÇÃO','FAMILIA','FAMÍLIA','CATEGORIA','GRUPO','FAMILIA DO PRODUTO'])||inferirCategoria(nome,fam.familiaNome);const codigoInformado=pick(['CODIGO','CÓDIGO','CODIGO INTERNO','CÓDIGO INTERNO','SKU','PRODUTO ID']);const codigoDescricao=(nome.match(/^\s*(\d{4,6})\b/)||[])[1]||'';const gtin=limparCodigoPlanilha(pick(['GTIN PRINCIPAL','GTIN_PRINCIPAL','GTIN-PRINCIPAL','GTIN/EAN','EAN/GTIN','GTIN EAN','EAN GTIN','GTIN','EAN','EAN13','GTIN13','EAN 13','GTIN 13','CODIGO DE BARRAS','CÓDIGO DE BARRAS','COD BARRAS','BARCODE']));const dun=limparCodigoPlanilha(pick(['DUN','DUN14','DUN 14','EAN14','EAN 14','GTIN14','GTIN 14','CODIGO DUN','DUN PRINCIPAL']));const tipoProduto=pick(['TIPO PRODUTO','TIPO_PRODUTO','CATEGORIA PRODUTO','CATEGORIA INVENTARIO','GRUPO PRODUTO'])||'NAO CLASSIFICADO';const fatorCaixa=Math.max(1,Number(String(pick(['FATOR CAIXA','FATOR_CAIXA','FATOR EMBALAGEM','UNIDADES POR CAIXA'])||'1').replace(',','.'))||1);const ativoRaw=pick(['ATIVO','STATUS']);const ativo=!/^(NAO|NÃO|INATIVO|FALSE|0)$/i.test(ativoRaw||'SIM');return {codigoInterno:codigoInformado||codigoDescricao,nomeProduto:nome,dun:dun,gtin:gtin||dun,unidade:unidade,embalagem:fam.embalagem,familiaCodigo:fam.familiaCodigo,familiaNome:fam.familiaNome,produtoPrincipal:fam.familiaNome,categoriaFamilia:categoria,tipoProduto:tipoProduto,tipo_produto:tipoProduto,fatorCaixa:fatorCaixa,fator_caixa:fatorCaixa,ativo:ativo};}
 function validar(rows){const erros=[];rows.forEach((p,i)=>{const linha=i+2;if(!p.nomeProduto)erros.push({linha,codigo:p.codigoInterno||p.gtin,motivo:'Nome do produto obrigatório'});if(!p.codigoInterno&&!p.gtin&&!p.nomeProduto)erros.push({linha,codigo:'',motivo:'Linha sem identificação'});});return erros;}
-function familiasDisponiveis(){const m=new Map();lista.forEach(p=>{const f=txt(p.categoriaFamilia)||inferirCategoria(p.nomeProduto,p.familiaNome);m.set(f,(m.get(f)||0)+1);});return Array.from(m.entries()).sort((a,b)=>a[0].localeCompare(b[0],'pt-BR'));}
-function chaveFamiliaProduto(p){const codigo=cod(p&&p.familiaCodigo);if(codigo)return 'COD:'+codigo;const nome=txt(p&&(p.familiaNome||p.produtoPrincipal));if(nome)return 'NOME:'+cab(nome);const inferida=global.DTProdutos.inferirFamilia(txt(p&&p.nomeProduto),txt(p&&(p.unidade||p.embalagem)));return inferida.familiaCodigo?'COD:'+cod(inferida.familiaCodigo):'NOME:'+cab(inferida.familiaNome);}
-function apresentacoesFamilia(p){const chave=chaveFamiliaProduto(p);const tipos=[];lista.forEach(x=>{if(chaveFamiliaProduto(x)!==chave)return;const tipo=txt(x.embalagem||x.unidade||global.DTProdutos.inferirEmbalagem(x.nomeProduto,x.unidade)||'OUTRO').toUpperCase();if(tipo&&!tipos.includes(tipo))tipos.push(tipo);});const ordem={UND:1,UNIDADE:1,FD:2,FARDO:2,CX:3,CAIXA:3};return tipos.sort((a,b)=>(ordem[a]||99)-(ordem[b]||99)||a.localeCompare(b,'pt-BR'));}
-function expandirResultadoPorFamilia(diretos){if(!diretos.length)return diretos;const chaves=new Set(diretos.map(chaveFamiliaProduto).filter(Boolean));return lista.filter(p=>chaves.has(chaveFamiliaProduto(p)));}
-function renderFamilias(){const wrap=document.getElementById('prod-familias');if(!wrap)return;const fams=familiasDisponiveis();const atual=familiaAtiva==='TODAS'?'Todas as famílias':familiaAtiva;wrap.innerHTML=`<div class="prod-familia-dropdown"><button type="button" class="btn btn-ghost" id="prod-familia-toggle">📁 ${esc(atual)} <span>▾</span></button><div id="prod-familia-menu" class="prod-familia-menu" style="display:none"><input id="prod-familia-busca" class="search" placeholder="Pesquisar família..."><button class="prod-familia-item ${familiaAtiva==='TODAS'?'ativo':''}" data-prod-familia="TODAS">Todas as famílias <b>${lista.length}</b></button>${fams.map(([f,n])=>`<button class="prod-familia-item ${familiaAtiva===f?'ativo':''}" data-prod-familia="${esc(f)}">${esc(f)} <b>${n}</b></button>`).join('')}</div></div>`;const toggle=document.getElementById('prod-familia-toggle'),menu=document.getElementById('prod-familia-menu'),busca=document.getElementById('prod-familia-busca');if(toggle&&menu)toggle.onclick=function(ev){ev.stopPropagation();menu.style.display=menu.style.display==='none'?'block':'none';if(menu.style.display==='block'&&busca)busca.focus();};if(busca)busca.oninput=function(){const q=txt(this.value).toLowerCase();menu.querySelectorAll('[data-prod-familia]').forEach(function(b){b.style.display=!q||b.textContent.toLowerCase().includes(q)?'flex':'none';});};}
-function render(){
- if(document.getElementById('v287-p-table')){window.renderCadastrosV291?.();return;}
- const busca=txt(document.getElementById('prod-busca')?.value).toLowerCase();const st=document.getElementById('prod-status')?.value||'';const baseFiltrada=lista.filter(p=>{const familia=txt(p.categoriaFamilia)||inferirCategoria(p.nomeProduto,p.familiaNome);return (!st||(st==='ativo'?p.ativo:p.ativo===false))&&(familiaAtiva==='TODAS'||familia===familiaAtiva);});let f;if(busca){const diretos=baseFiltrada.filter(p=>{const familia=txt(p.categoriaFamilia)||inferirCategoria(p.nomeProduto,p.familiaNome);return [p.codigoInterno,p.nomeProduto,p.dun,p.gtin,p.unidade,p.embalagem,p.familiaCodigo,p.familiaNome,p.produtoPrincipal,familia].join(' ').toLowerCase().includes(busca);});const chaves=new Set(diretos.map(chaveFamiliaProduto).filter(Boolean));f=baseFiltrada.filter(p=>chaves.has(chaveFamiliaProduto(p)));}else f=baseFiltrada;
- const set=(id,v)=>{const e=document.getElementById(id);if(e)e.textContent=v;};set('prod-k-total',lista.length);set('prod-k-semdun',lista.filter(p=>!p.dun).length);set('prod-k-semgtin',lista.filter(p=>!p.gtin).length);set('nb-produtos',lista.length);renderFamilias();
- const wrap=document.querySelector('#page-produtos #prod-table-wrap');if(!wrap)return;if(!f.length){wrap.innerHTML='<div class="empty"><div class="empty-icon">📦</div><div class="empty-title">Nenhum produto encontrado</div><div class="empty-sub">Altere a família ou os filtros utilizados.</div></div>';return;}
- wrap.innerHTML=`<div style="overflow:auto"><table><thead><tr><th>Código interno</th><th>Produto</th><th>Família</th><th>GTIN/EAN</th><th>Embalagem</th><th>Produto principal</th><th>Apresentações</th><th>Status</th><th>Ações</th></tr></thead><tbody>${f.map(p=>`<tr><td class="mono">${esc(p.codigoInterno||'—')}</td><td><b>${esc(p.nomeProduto)}</b></td><td><span class="badge">${esc(p.categoriaFamilia||inferirCategoria(p.nomeProduto,p.familiaNome))}</span></td><td class="mono">${esc(p.gtin||'—')}</td><td><span class="badge">${esc(p.embalagem||p.unidade||'—')}</span></td><td>${esc(p.familiaNome||p.produtoPrincipal||'—')}</td><td><div style="display:flex;gap:4px;flex-wrap:wrap">${apresentacoesFamilia(p).map(x=>`<span class="badge">${esc(x)}</span>`).join('')||'—'}</div></td><td><span class="badge ${p.ativo?'ok':'off'}">${p.ativo?'ATIVO':'INATIVO'}</span></td><td><div style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" data-prod-acao="editar" data-id="${esc(p.id)}">✏️</button><button class="btn btn-ghost btn-sm" data-prod-acao="toggle" data-id="${esc(p.id)}">${p.ativo?'⏸':'▶'}</button><button class="btn btn-danger btn-sm" data-prod-acao="excluir" data-id="${esc(p.id)}">🗑</button></div></td></tr>`).join('')}</tbody></table></div>`;
-}
 
 async function publicarChunksProdutos(){
  if(sincronizandoChunks)return;sincronizandoChunks=true;
@@ -48,13 +47,12 @@ async function publicarChunksProdutos(){
   window.dbg('[Produtos] Chunks publicados:',totalChunks,'/',todos.length);
  }finally{sincronizandoChunks=false;}
 }
-async function iniciar(){if(listener)listener();listener=COL().onSnapshot(s=>{if(mutacaoEmAndamento)return;lista=s.docs.map(d=>{const p=global.DTProdutos.normalizarProduto(d.data(),d.id);p.categoriaFamilia=txt(d.data().categoriaFamilia||d.data().familiaCategoria)||inferirCategoria(p.nomeProduto,p.familiaNome);return p;});global.DTProdutos.indexar(lista);render();},e=>console.error('[Base Produtos]',e));}
 async function salvarProduto(p,id,publicar=true){const agora=new Date().toISOString();const fam=global.DTProdutos.inferirFamilia(p.nomeProduto,p.unidade);const payload={codigoInterno:txt(p.codigoInterno),nomeProduto:txt(p.nomeProduto),dun:txt(p.dun),gtin:txt(p.gtin),unidade:txt(p.unidade),embalagem:txt(p.embalagem)||fam.embalagem,familiaCodigo:txt(p.familiaCodigo)||fam.familiaCodigo,familiaNome:txt(p.familiaNome)||fam.familiaNome,produtoPrincipal:txt(p.produtoPrincipal)||fam.familiaNome,categoriaFamilia:txt(p.categoriaFamilia)||inferirCategoria(p.nomeProduto,fam.familiaNome),tipoProduto:txt(p.tipoProduto||p.tipo_produto)||'NAO CLASSIFICADO',tipo_produto:txt(p.tipoProduto||p.tipo_produto)||'NAO CLASSIFICADO',fatorCaixa:Math.max(1,Number(p.fatorCaixa||p.fator_caixa)||1),fator_caixa:Math.max(1,Number(p.fatorCaixa||p.fator_caixa)||1),ativo:p.ativo!==false,atualizadoEm:agora,atualizadoPor:global.currentUser?.email||''};if(!id){payload.criadoEm=agora;payload.criadoPor=global.currentUser?.email||'';}await COL().doc(id||idEstavel(payload)).set(payload,{merge:true});if(publicar)await publicarChunksProdutos();}
 function abrirModal(p={}){const categoria=p.categoriaFamilia||inferirCategoria(p.nomeProduto,p.familiaNome);const html=`<div id="modal-produto-bg" class="modal-bg open"><div class="modal"><div class="modal-hdr"><div class="modal-title">${p.id?'Editar':'Novo'} produto</div><button class="modal-close" data-prod-fechar>✕</button></div><div class="fg"><div class="fi"><div class="fl">Código interno</div><input id="mp-cod" value="${esc(p.codigoInterno||'')}"></div><div class="fi full"><div class="fl">Produto *</div><input id="mp-nome" value="${esc(p.nomeProduto||'')}"></div><div class="fi"><div class="fl">Família *</div><input id="mp-familia" placeholder="Ex.: TAPIOCA, FAROFA" value="${esc(categoria==='SEM FAMÍLIA'?'':categoria)}"></div><div class="fi"><div class="fl">GTIN/EAN</div><input id="mp-gtin" value="${esc(p.gtin||'')}"></div><div class="fi"><div class="fl">Unidade/embalagem</div><input id="mp-un" value="${esc(p.unidade||p.embalagem||'')}"></div></div><div class="modal-actions"><button class="btn btn-ghost" data-prod-fechar>Cancelar</button><button class="btn btn-primary" id="mp-salvar">Salvar</button></div></div></div>`;document.body.insertAdjacentHTML('beforeend',html);document.querySelectorAll('[data-prod-fechar]').forEach(b=>b.onclick=()=>document.getElementById('modal-produto-bg')?.remove());document.getElementById('mp-salvar').onclick=async()=>{const obj={codigoInterno:txt(document.getElementById('mp-cod').value),nomeProduto:txt(document.getElementById('mp-nome').value),categoriaFamilia:txt(document.getElementById('mp-familia').value).toUpperCase(),dun:txt(p.dun),gtin:txt(document.getElementById('mp-gtin').value),unidade:txt(document.getElementById('mp-un').value),ativo:p.ativo!==false};const er=validar([obj]);if(er.length)return alert(er[0].motivo);if(!obj.categoriaFamilia)return alert('Informe a família do produto.');await salvarProduto(obj,p.id);document.getElementById('modal-produto-bg')?.remove();};}
 async function importar(file){
  if(!file)return;
  if(global.__produtoImportando){if(global.showToast)global.showToast('Já existe uma importação em andamento.','info');return;}
- global.__produtoImportando=true;mutacaoEmAndamento=true;
+ global.__produtoImportando=true;
  const aviso=global.showToast?global.showToast('Lendo e importando a base de produtos…','info'):null;
  try{
   const data=await file.arrayBuffer();
@@ -63,8 +61,12 @@ async function importar(file){
   const normalized=rows.map(normalizeRow).filter(p=>p.nomeProduto||p.codigoInterno||p.gtin||p.dun);
   const erros=validar(normalized);
   if(erros.length)throw new Error('Base inválida:\n'+erros.slice(0,30).map(e=>`Linha ${e.linha} · ${e.codigo||'sem código'} · ${e.motivo}`).join('\n'));
+  // Busca o estado atual direto do Firestore (sem depender de um listener próprio)
+  // só para casar duplicidade por GTIN/código+nome durante a importação.
+  const snapAtual=await COL().get();
+  const listaAtual=snapAtual.docs.map(d=>({id:d.id,...global.DTProdutos.normalizarProduto(d.data(),d.id)}));
   const porGtin=new Map(),porChave=new Map();
-  lista.forEach(p=>{const g=cod(p.gtin||p.dun);if(g)porGtin.set(g,p);porChave.set((cod(p.codigoInterno)||'')+'|'+txt(p.nomeProduto).toUpperCase(),p);});
+  listaAtual.forEach(p=>{const g=cod(p.gtin||p.dun);if(g)porGtin.set(g,p);porChave.set((cod(p.codigoInterno)||'')+'|'+txt(p.nomeProduto).toUpperCase(),p);});
   const agora=new Date().toISOString(),docs=[],vistos=new Set();let inseridos=0,atualizados=0,duplicados=0;
   normalized.forEach((p,i)=>{
    const g=cod(p.gtin||p.dun),ch=(cod(p.codigoInterno)||'')+'|'+txt(p.nomeProduto).toUpperCase();
@@ -77,30 +79,55 @@ async function importar(file){
   const raw=global.getDTRawFirestore();
   for(let i=0;i<docs.length;i+=300){const batch=raw.batch();docs.slice(i,i+300).forEach(x=>batch.set(COL().doc(x.id),x.payload,{merge:true}));await batch.commit();}
   await publicarChunksProdutos();
-  const snap=await COL().get();lista=snap.docs.map(d=>{const p=global.DTProdutos.normalizarProduto(d.data(),d.id);p.categoriaFamilia=txt(d.data().categoriaFamilia||d.data().familiaCategoria)||inferirCategoria(p.nomeProduto,p.familiaNome);return p;});global.DTProdutos.indexar(lista);render();
   const msg=`Importação finalizada: ${rows.length} linha(s) lida(s), ${docs.length} gravada(s), ${inseridos} nova(s), ${atualizados} atualizada(s)${duplicados?`, ${duplicados} duplicada(s) ignorada(s)`:''}.`;
   if(global.showToast)global.showToast(msg,'success');else alert(msg);
  }catch(e){console.error('[Produtos] Falha na importação',e);const msg=e?.message||String(e);if(global.showToast)global.showToast(msg,'error');else alert(msg);}
- finally{global.__produtoImportando=false;mutacaoEmAndamento=false;if(!listener)iniciar();}
+ finally{global.__produtoImportando=false;}
 }
 async function atualizarBase(){
  if(global.__produtoImportando){if(global.showToast)global.showToast('Já existe uma operação em andamento.','info');return;}
- global.__produtoImportando=true;mutacaoEmAndamento=true;
- const aviso=global.showToast?global.showToast('Atualizando base de produtos…','info'):null;
+ global.__produtoImportando=true;
  try{
   const snap=await COL().get();
-  lista=snap.docs.map(d=>{const p=global.DTProdutos.normalizarProduto(d.data(),d.id);p.categoriaFamilia=txt(d.data().categoriaFamilia||d.data().familiaCategoria)||inferirCategoria(p.nomeProduto,p.familiaNome);return p;});
-  global.DTProdutos.indexar(lista);render();
   await publicarChunksProdutos();
-  if(global.showToast)global.showToast(`Base atualizada: ${lista.length} produto(s) publicado(s) para os coletores.`,'success');
+  if(global.showToast)global.showToast(`Base atualizada: ${snap.docs.length} produto(s) publicado(s) para os coletores.`,'success');
  }catch(e){console.error('[Produtos] Falha ao atualizar base',e);const msg=e?.message||String(e);if(global.showToast)global.showToast(msg,'error');else alert(msg);}
- finally{global.__produtoImportando=false;mutacaoEmAndamento=false;}
+ finally{global.__produtoImportando=false;}
 }
-function exportar(){const dados=lista.map(p=>({'Código interno':p.codigoInterno,'Produto':p.nomeProduto,'Família':p.categoriaFamilia||inferirCategoria(p.nomeProduto,p.familiaNome),'GTIN/EAN':p.gtin,'Unidade':p.unidade,'Embalagem':p.embalagem,'Produto principal':p.familiaNome||p.produtoPrincipal,'Tipo produto':p.tipoProduto||p.tipo_produto||'NAO CLASSIFICADO','Fator caixa':p.fatorCaixa||p.fator_caixa||1,'Status':p.ativo?'ATIVO':'INATIVO'}));const ws=XLSX.utils.json_to_sheet(dados);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Produtos');XLSX.writeFile(wb,'base_produtos.xlsx');}
-async function excluirTodos(){const total=lista.length;if(!total){if(global.showToast)global.showToast('Não há produtos para excluir.','error');return;}const executar=async()=>{let excluidos=0;mutacaoEmAndamento=true;if(listener){try{listener();}catch(_){ console.warn("[Erro tratado]", _); }listener=null;}try{const snap=await COL().get();const docs=snap.docs||[];for(let i=0;i<docs.length;i+=300){const batch=global.getDTRawFirestore().batch();docs.slice(i,i+300).forEach(d=>batch.delete(d.ref));await batch.commit();excluidos+=Math.min(300,docs.length-i);}lista=[];global.DTProdutos.indexar([]);await publicarChunksProdutos();render();if(global.showToast)global.showToast(excluidos+' produto(s) excluído(s).','success');}catch(e){console.error(e);if(global.showToast)global.showToast('Erro ao excluir todos: '+e.message,'error');}finally{mutacaoEmAndamento=false;await iniciar();}};if(global.showConfirm)global.showConfirm('Excluir TODOS os '+total.toLocaleString('pt-BR')+' produtos desta loja?',executar,{title:'Excluir todos os produtos',icon:'🗑️',okLabel:'Excluir tudo',okClass:'btn-danger'});else if(confirm('Excluir TODOS os '+total+' produtos desta loja?'))await executar();}
-function reiniciarAoTrocarLoja(){if(listener){try{listener();}catch(_){ console.warn("[Erro tratado]", _); }listener=null;}lista=[];familiaAtiva='TODAS';global.DTProdutos.indexar([]);render();iniciar();}
+async function exportar(){
+ const snap=await COL().get();
+ const lista=snap.docs.map(d=>({id:d.id,...d.data()}));
+ const dados=lista.map(p=>({'Código interno':p.codigoInterno,'Produto':p.nomeProduto,'Família':p.categoriaFamilia||inferirCategoria(p.nomeProduto,p.familiaNome),'GTIN/EAN':p.gtin,'Unidade':p.unidade,'Embalagem':p.embalagem,'Produto principal':p.familiaNome||p.produtoPrincipal,'Tipo produto':p.tipoProduto||p.tipo_produto||'NAO CLASSIFICADO','Fator caixa':p.fatorCaixa||p.fator_caixa||1,'Status':p.ativo?'ATIVO':'INATIVO'}));
+ const ws=XLSX.utils.json_to_sheet(dados);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Produtos');XLSX.writeFile(wb,'base_produtos.xlsx');
+}
+async function excluirTodos(){
+ const snapAtual=await COL().get();
+ const total=snapAtual.docs.length;
+ if(!total){if(global.showToast)global.showToast('Não há produtos para excluir.','error');return;}
+ const executar=async()=>{
+  let excluidos=0;
+  try{
+   const snap=await COL().get();const docs=snap.docs||[];
+   for(let i=0;i<docs.length;i+=300){const batch=global.getDTRawFirestore().batch();docs.slice(i,i+300).forEach(d=>batch.delete(d.ref));await batch.commit();excluidos+=Math.min(300,docs.length-i);}
+   await publicarChunksProdutos();
+   if(global.showToast)global.showToast(excluidos+' produto(s) excluído(s).','success');
+  }catch(e){console.error(e);if(global.showToast)global.showToast('Erro ao excluir todos: '+e.message,'error');}
+   
+ };
+ if(global.showConfirm)global.showConfirm('Excluir TODOS os '+total.toLocaleString('pt-BR')+' produtos desta loja?',executar,{title:'Excluir todos os produtos',icon:'🗑️',okLabel:'Excluir tudo',okClass:'btn-danger'});
+ else if(confirm('Excluir TODOS os '+total+' produtos desta loja?'))await executar();
+}
 function modelo(){const ws=XLSX.utils.json_to_sheet([{'CÓDIGO INTERNO':'000123','PRODUTO':'00001 TAPIOCA DA TERRINHA 1 KG - CX 12','FAMÍLIA':'TAPIOCA','TIPO PRODUTO':'PRODUTO DE VENDA','GTIN':'0789000000001','DUN':'17890000000018','FATOR CAIXA':12,'UNIDADE':'CX','ATIVO':'SIM'}]);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Modelo');XLSX.writeFile(wb,'modelo_base_produtos.xlsx');}
-document.addEventListener('click',async e=>{if(!e.target.closest('.prod-familia-dropdown')){const m=document.getElementById('prod-familia-menu');if(m)m.style.display='none';}const fb=e.target.closest('[data-prod-familia]');if(fb){familiaAtiva=fb.dataset.prodFamilia||'TODAS';render();return;}const b=e.target.closest('[data-prod-acao]');if(!b)return;const p=lista.find(x=>x.id===b.dataset.id);if(!p)return;if(b.dataset.prodAcao==='editar')abrirModal(p);if(b.dataset.prodAcao==='toggle')await salvarProduto({...p,ativo:!p.ativo},p.id);if(b.dataset.prodAcao==='excluir'&&confirm(`Excluir ${p.nomeProduto}?`)){mutacaoEmAndamento=true;try{await COL().doc(p.id).delete();lista=lista.filter(x=>x.id!==p.id);global.DTProdutos.indexar(lista);render();await publicarChunksProdutos();}finally{mutacaoEmAndamento=false;}}});
-if(!global.__baseProdutosListenerLoja){global.__baseProdutosListenerLoja=true;global.addEventListener('dt-loja-alterada',reiniciarAoTrocarLoja);}
-global.renderBaseProdutos=()=>{render();if(!listener)iniciar();};global.produtoNovo=()=>abrirModal();global.produtoImportar=importar;global.produtoAtualizarBase=atualizarBase;global.produtoExportar=exportar;global.produtoBaixarModelo=modelo;global.produtoExcluirTodos=excluirTodos;global.publicarChunksProdutos=publicarChunksProdutos;
+
+// Compat: a tela nova (52-cadastros-v287.js) sobrescreve renderBaseProdutos com a
+// própria função de ativação da tela; se por algum motivo ela ainda não tiver
+// carregado, isto evita um erro de "não é função" — não faz mais leitura própria.
+global.renderBaseProdutos=global.renderBaseProdutos||function(){};
+global.produtoNovo=()=>abrirModal();
+global.produtoImportar=importar;
+global.produtoAtualizarBase=atualizarBase;
+global.produtoExportar=exportar;
+global.produtoBaixarModelo=modelo;
+global.produtoExcluirTodos=excluirTodos;
+global.publicarChunksProdutos=publicarChunksProdutos;
 })(window);

@@ -62,7 +62,18 @@
   // Renderizar toda a pagina em cada documento recebido do Firebase fazia a
   // thread principal ficar ocupada continuamente. Agora as mudancas sao
   // consolidadas e existe no maximo uma renderizacao a cada 120 ms.
-  function scheduleRender(){
+  function paginaAfetada(action){
+    const page=global._currentPage||document.querySelector('.page.on')?.id?.replace('page-','')||'';
+    const type=String(action?.type||'');
+    const source=String(action?.meta?.source||'');
+    if(source.includes('produto') && page!=='produtos') return false;
+    if(source.includes('endereco') && !['enderecos','inventarios','dashboard','acompanhamento'].includes(page)) return false;
+    if(type==='SET_SYNC_STATUS') return false;
+    return true;
+  }
+
+  function scheduleRender(action){
+    if(!paginaAfetada(action))return;
     clearTimeout(renderTid);
     renderTid = setTimeout(() => {
       if (rendering) return;
@@ -80,7 +91,7 @@
           rendering = false;
         }
       }, 700);
-    }, 120);
+    }, 60);
     scheduleBadges();
   }
 
@@ -103,7 +114,7 @@
         try { DivergenciaService.corrigirOrfas(); }
         catch (err) { console.warn('[AppController] corrigirDivsOrfas', err); }
         schedulePersist();
-        scheduleRender();
+        scheduleRender({type:'BUSINESS_REPROCESS',meta:{source:'business-reprocess'}});
       }, 1200);
     }, 350);
   }
@@ -121,7 +132,7 @@
 
       // SET_SYNC_STATUS muda apenas textos pequenos que ja sao atualizados por
       // updateSyncUI. Nao ha motivo para reconstruir tabelas e dashboards.
-      if (metaSource !== 'ui-render' && !isOnlySyncAction(action)) scheduleRender();
+      if (metaSource !== 'ui-render' && !isOnlySyncAction(action)) scheduleRender(action);
 
       if (DivergenciaService.deveReprocessar(action?.type) && DivergenciaService.afetaFluxoDeContagem(action)) {
         const changed = prevState.contagens !== state.contagens;

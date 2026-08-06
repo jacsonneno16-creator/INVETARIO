@@ -47,210 +47,25 @@ function atualizarEnderecos(renderToo = true) {
   if (renderToo) renderEnderecos();
 }
 
+// v296.2 — A renderização em tabela/accordion antiga (linhas, grupos por local,
+// badges de capacidade) foi removida daqui: a tela de Endereços hoje é 100%
+// desenhada por js/analista/52-cadastros-v287.js (renderAddresses/initAddresses),
+// que lê os mesmos dados via window.AnalistaStore.getState().enderecosLista.
+// Esta função só existe para compatibilidade com quem ainda chama
+// window.renderEnderecos() diretamente — ela delega para a tela nova.
 function renderEnderecos() {
-  if (document.getElementById('v287-e-table')) { window.renderCadastrosV291?.(); return; }
-  const busca   = (document.getElementById('end-busca')?.value || '').toLowerCase();
-  const fLocal  = document.getElementById('end-flocal')?.value || '';
-  const fStatus = document.getElementById('end-fstatus')?.value || '';
-  const fLoja   = document.getElementById('end-floja')?.value || '';
-
-  // Popular select de lojas se ainda não foi
-  _popularEndLojaSelect();
-
-  const invAtivo = getInventariosAtivos()[0] || null;
-
-  let lista = state().enderecosLista.map(e => {
-    const usados = invAtivo ? getPaletesUsados(invAtivo.id, e.endereco) : 0;
-    const limiteTingido = e.ativo && e.capacidade_paletes !== null && e.capacidade_paletes > 0 && usados >= e.capacidade_paletes;
-    return { ...e, _usados: usados, _limiteTingido: limiteTingido };
-  });
-
-  if (fLoja === '__sem_loja__') lista = lista.filter(e => !e.loja || e.loja === '');
-  else if (fLoja)               lista = lista.filter(e => e.loja === fLoja);
-  if (fLocal)              lista = lista.filter(e => (e.setor || e.nome_local || e.local) === fLocal);
-  if (fStatus === 'ativo')     lista = lista.filter(e => e.ativo && !e._limiteTingido);
-  if (fStatus === 'inativo')   lista = lista.filter(e => !e.ativo);
-  if (fStatus === 'cap_zero')  lista = lista.filter(e => e.capacidade_paletes === 0);
-  if (fStatus === 'bloqueado') lista = lista.filter(e => e._limiteTingido);
-  if (busca) lista = lista.filter(e =>
-    e.endereco.toLowerCase().includes(busca) ||
-    (e.nome_local||'').toLowerCase().includes(busca) ||
-    (e.setor||'').toLowerCase().includes(busca) ||
-    (e.local||'').toLowerCase().includes(busca) ||
-    (e.rua||'').toLowerCase().includes(busca)
-  );
-
-  if (!lista.length) {
-    document.getElementById('end-table-wrap').innerHTML = `<div class="empty"><div class="empty-icon">📍</div><div class="empty-title">Nenhum endereço encontrado</div><div class="empty-sub">Ajuste os filtros ou importe uma planilha de endereços</div></div>`;
-    return;
-  }
-
-  function endStatusBadge(e) {
-    if (!e.ativo && e.capacidade_paletes === 0) return `<span class="badge b-gray">⛔ Cap.Zero</span>`;
-    if (!e.ativo)       return `<span class="badge b-gray">⛔ Inativo</span>`;
-    if (e._limiteTingido) return `<span class="badge b-blocked">🔒 Limite</span>`;
-    return `<span class="badge b-green">✅ Ativo</span>`;
-  }
-
-  function capCell(e) {
-    const capStr = e.capacidade_paletes !== null ? String(e.capacidade_paletes) : '∞';
-    const usadosStr = invAtivo ? String(e._usados) : '0';
-    const cor = e._limiteTingido ? 'var(--danger)' : (e.capacidade_paletes === 0 ? 'var(--muted)' : 'var(--text)');
-    return `<div style="display:flex;align-items:center;gap:6px">
-      <span class="mono" style="font-weight:700;color:${cor}">${usadosStr}/${capStr}</span>
-      <button onclick="editarCapacidade('${e.endereco.replace(/'/g,"\\'")}')" class="btn btn-ghost btn-sm" style="padding:2px 6px;font-size:.65rem" title="Editar capacidade">✏</button>
-    </div>`;
-  }
-
-  // Decompose address into labeled parts for display
-  const PLABELS = ['Loja','Local','Área','Rua','Col','Nív','Seq'];
-  const PCOLORS = ['#dbeafe','#dcfce7','#fef9c3','#fce7f3','#ede9fe','#ffedd5','#e0f2fe'];
-  const PTXT    = ['#1d4ed8','#16a34a','#a16207','#be185d','#6d28d9','#c2410c','#0369a1'];
-
-  function partsHtml(endereco) {
-    const parsed = window.DTEnderecos?.partes(endereco) || {};
-    const parts = [parsed.loja, parsed.local, parsed.area, parsed.rua, parsed.coluna, parsed.nivel, parsed.sequencia];
-    return parts.map((parte, i) => parte ?
-      `<span style="display:inline-flex;flex-direction:column;align-items:center;background:${PCOLORS[i]||'#f1f5f9'};border-radius:5px;padding:1px 5px;min-width:28px;margin-right:2px">
-        <span style="font-size:.5rem;font-weight:700;text-transform:uppercase;color:${PTXT[i]||'#64748b'}">${PLABELS[i]||'P'+(i+1)}</span>
-        <span style="font-family:var(--mono);font-size:.71rem;font-weight:700;color:${PTXT[i]||'#1e293b'}">${escHTML(parte)}</span>
-      </span>` : ''
-    ).join('');
-  }
-
-  function lojaTagHtml(e) {
-    if (!e.loja) return `<span style="font-size:.68rem;color:var(--muted-2,#94a3b8);font-style:italic">Sem loja</span>`;
-    return `<span style="display:inline-flex;align-items:center;gap:3px;padding:2px 8px;border-radius:20px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.3);font-size:.68rem;font-weight:700;color:#92400e;font-family:var(--mono)">${escHTML(e.loja)}</span>`;
-  }
-
-  function rowHtml(e) {
-    const safe = e.endereco.replace(/'/g,"\\'");
-    return `<tr class="${!e.ativo ? 'end-inativo' : ''}">
-      <td class="mono" style="font-size:.77rem;white-space:nowrap">${e.endereco}</td>
-      <td><div style="display:flex;flex-wrap:wrap;gap:2px">${partsHtml(e.endereco)}</div></td>
-      <td><span class="badge b-gray" style="font-size:.65rem">${e.tipo || 'ARM.'}</span></td>
-      <td>${lojaTagHtml(e)}</td>
-      <td>${capCell(e)}</td>
-      <td>${endStatusBadge(e)}</td>
-      <td style="white-space:nowrap">
-        <div style="display:flex;gap:3px">
-          <button onclick="endVincularLoja('${safe}')"
-            class="btn btn-ghost btn-sm"
-            style="font-size:.7rem;padding:3px 7px" title="Vincular a uma loja">🏪</button>
-          <button onclick="toggleAtivacaoEndereco('${safe}')"
-            class="btn ${e.ativo ? 'btn-ghost' : 'btn-success'} btn-sm"
-            style="font-size:.7rem">
-            ${e.ativo ? '⛔ Desativar' : '✅ Ativar'}
-          </button>
-          <button onclick="excluirEndereco('${safe}')"
-            class="btn btn-danger btn-sm" style="font-size:.7rem" title="Excluir endereço">🗑</button>
-        </div>
-      </td>
-    </tr>`;
-  }
-
-  // ── Agrupar por LOCAL (parte 1 do endereço ou campo local/setor) ──────────
-  // Se há busca ativa ou filtros, mostrar tabela plana (sem accordion)
-  const usarGrupos = !busca && !fStatus;
-
-  if (!usarGrupos) {
-    // Modo plano — sem agrupamento
-    document.getElementById('end-table-wrap').innerHTML = `
-      <div class="tbl-wrap">
-        <table>
-          <thead><tr><th>Endereço</th><th>Estrutura</th><th>Tipo</th><th>Loja</th><th>Paletes usados/cap</th><th>Status</th><th>Ações</th></tr></thead>
-          <tbody>${lista.slice(0,1000).map(rowHtml).join('')}</tbody>
-        </table>
-      </div>
-      ${lista.length > 1000 ? `<div style="text-align:center;padding:8px;font-size:.73rem;color:var(--muted)">Exibindo 1.000 de ${lista.length.toLocaleString('pt-BR')} endereços — use os filtros para refinar</div>` : ''}`;
-    return;
-  }
-
-  // Modo agrupado por Local de Estoque
-  const grupos = {};
-  lista.forEach(e => {
-    const grpKey = e.setor || e.nome_local || e.local || 'SEM LOCAL';
-    if (!grupos[grpKey]) grupos[grpKey] = [];
-    grupos[grpKey].push(e);
-  });
-
-  const gruposHtml = Object.entries(grupos).sort((a,b) => a[0].localeCompare(b[0])).map(([local, ends]) => {
-    const ativos   = ends.filter(e => e.ativo).length;
-    const inativos = ends.filter(e => !e.ativo).length;
-    const bloqueados = ends.filter(e => e._limiteTingido).length;
-    const grpId = 'grp-' + Array.from(local).map(ch => /[a-z0-9]/i.test(ch) ? ch : '_').join('') + '-' + Math.random().toString(36).slice(2,7);
-
-    return `<div class="loc-group">
-      <button type="button" class="loc-group-header" data-loc-group-id="${grpId}" aria-expanded="false" aria-controls="${grpId}">
-        <span class="loc-group-chevron" id="${grpId}-chev">▶</span>
-        <span style="font-weight:700;font-size:.85rem">🏭 ${local}</span>
-        <span style="font-size:.73rem;color:var(--muted);margin-left:4px">${ends.length} endereço(s)</span>
-        <div style="margin-left:auto;display:flex;gap:5px">
-          ${ativos ? `<span class="badge b-green" style="font-size:.65rem">${ativos} ativos</span>` : ''}
-          ${inativos ? `<span class="badge b-gray" style="font-size:.65rem">⛔ ${inativos} inativos</span>` : ''}
-          ${bloqueados ? `<span class="badge b-blocked" style="font-size:.65rem">🔒 ${bloqueados} limite</span>` : ''}
-        </div>
-      </button>
-      <div class="loc-group-body" id="${grpId}">
-        <div class="tbl-wrap">
-          <table>
-            <thead><tr><th>Endereço</th><th>Estrutura</th><th>Tipo</th><th>Loja</th><th>Paletes usados/cap</th><th>Status</th><th>Ações</th></tr></thead>
-            <tbody>${ends.map(rowHtml).join('')}</tbody>
-          </table>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-
-  document.getElementById('end-table-wrap').innerHTML = `
-    <div style="padding:10px 14px;background:#f8fafc;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between">
-      <div style="font-size:.73rem;color:var(--muted)">${lista.length.toLocaleString('pt-BR')} endereços em ${Object.keys(grupos).length} local(is)</div>
-      <div style="display:flex;gap:6px">
-        <button class="btn btn-ghost btn-sm" style="font-size:.7rem" onclick="toggleAllLocGroups(true)">▶ Recolher todos</button>
-        <button class="btn btn-ghost btn-sm" style="font-size:.7rem" onclick="toggleAllLocGroups(false)">▼ Expandir todos</button>
-      </div>
-    </div>
-    <div style="padding:10px">${gruposHtml}</div>`;
-  _bindEventosGruposEnderecos();
+  window.renderCadastrosV291?.();
 }
 
-
-
-
-function _bindEventosGruposEnderecos() {
-  const wrap = document.getElementById('end-table-wrap');
-  if (!wrap || wrap.dataset.locGroupBound === '1') return;
-  wrap.dataset.locGroupBound = '1';
-  wrap.addEventListener('click', function(event) {
-    const header = event.target.closest('[data-loc-group-id]');
-    if (!header || !wrap.contains(header)) return;
-    event.preventDefault();
-    const id = header.getAttribute('data-loc-group-id');
-    toggleLocGroup(id, header);
-  });
-}
-
-function toggleLocGroup(grpId, headerEl) {
-  const body = document.getElementById(grpId);
-  const chev = document.getElementById(grpId + '-chev');
-  if (!body) { console.warn('[Enderecos] Grupo nao encontrado:', grpId); return; }
-  const isOpen = body.classList.contains('open');
-  body.classList.toggle('open', !isOpen);
-  if (chev) { chev.textContent = isOpen ? '▶' : '▼'; chev.classList.toggle('open', !isOpen); }
-  const header = headerEl || document.querySelector('[data-loc-group-id="' + CSS.escape(grpId) + '"]');
-  if (header) header.setAttribute('aria-expanded', String(!isOpen));
-}
-
-
-function toggleAllLocGroups(recolher) {
-  document.querySelectorAll('.loc-group-body').forEach(body => {
-    body.classList.toggle('open', !recolher);
-  });
-  document.querySelectorAll('.loc-group-chevron').forEach(chev => {
-    chev.textContent = recolher ? '▶' : '▼';
-    chev.classList.toggle('open', !recolher);
-  });
-}
+// ⚠️ Atenção (não corrigido automaticamente): a tela nova de Endereços não tem,
+// no momento, campos de "capacidade de paletes" nem de "loja vinculada" no
+// modal de edição — funcionalidades que existiam na tela antiga (editarCapacidade,
+// endVincularLoja, bloqueio de endereço por limite de paletes no inventário ativo).
+// As funções abaixo foram mantidas (não apagadas) porque contêm essa regra de
+// negócio, mas hoje não há nenhum botão na tela nova que as chame. Se essas
+// funcionalidades ainda forem necessárias, elas precisam ser reincorporadas ao
+// modal/tabela do 52-cadastros-v287.js — isso é uma decisão de produto, não algo
+// que deveria ser resolvido silenciosamente numa limpeza de código.
 
 /**
  * Abre prompt inline para editar a capacidade de paletes de um endereço.
@@ -396,5 +211,4 @@ function endVincularLoja(endCod) {
 }
 
 
-window.toggleLocGroup = toggleLocGroup;
-window.toggleAllLocGroups = toggleAllLocGroups;
+
