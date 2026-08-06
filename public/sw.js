@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260806-v294-acoes-cadastros';
+var CACHE='dt-inventario-20260806-v295-acoes-estaveis';
 var PRECACHE=[
   '/',
   '/index.html',

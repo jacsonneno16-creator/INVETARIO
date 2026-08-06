@@ -37,3 +37,12 @@
 .v287-badge{white-space:nowrap}
 @media(max-width:1200px){.v287-cards{grid-template-columns:repeat(3,minmax(150px,1fr))}.v287-toolbar,#page-enderecos .v287-toolbar{grid-template-columns:repeat(2,minmax(180px,1fr))}.v287-toolbar .search{grid-column:1/-1}}
 @media(max-width:760px){#page-produtos.v287-ready,#page-enderecos.v287-ready{padding:10px!important}.v287-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.v287-toolbar,#page-enderecos .v287-toolbar{display:flex}.v287-card strong{font-size:22px}}
+
+/* v295 - modal isolado dos componentes legados */
+.v295-overlay{position:fixed;inset:0;z-index:2147483000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(15,23,42,.62);backdrop-filter:blur(3px)}
+.v295-dialog{width:min(720px,96vw);max-height:92vh;overflow:auto;background:#fff;border-radius:16px;box-shadow:0 24px 80px rgba(2,6,23,.35);padding:0;color:#172033}
+.v295-dialog .modal-hdr{position:sticky;top:0;z-index:2;background:#fff;border-bottom:1px solid #e2e8f0;padding:16px 18px;display:flex;align-items:center;justify-content:space-between}
+.v295-dialog .modal-title{font-size:18px;font-weight:800}.v295-dialog .modal-close{border:0;background:#f1f5f9;border-radius:9px;width:36px;height:36px;cursor:pointer;font-size:17px}
+.v295-dialog .v287-form-grid{padding:18px}.v295-dialog .modal-actions{position:sticky;bottom:0;background:#fff;border-top:1px solid #e2e8f0;padding:14px 18px;display:flex;justify-content:flex-end;gap:10px}
+.v295-dialog input,.v295-dialog select{width:100%;min-height:42px;border:1px solid #cbd5e1;border-radius:9px;padding:8px 10px;background:#fff;color:#172033}
+.v295-dialog .fl{font-size:12px;font-weight:700;color:#475569;margin-bottom:5px}
