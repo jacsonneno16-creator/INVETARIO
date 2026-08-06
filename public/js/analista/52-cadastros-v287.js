@@ -23,6 +23,36 @@ function addressModal(e={}){document.getElementById('v287-modal')?.remove();cons
 function fillSel(id,vals,current,label){const e=document.getElementById(id);if(!e)return;e.innerHTML=`<option value="">${label}</option>`+vals.map(v=>`<option value="${esc(v)}" ${v===current?'selected':''}>${esc(v)}</option>`).join('')}
 function set(id,v){const e=document.getElementById(id);if(e)e.textContent=Number(v||0).toLocaleString('pt-BR')}
 function bindPager(id,state,render){const e=document.getElementById(id);if(!e)return;e.innerHTML=pages(state.filtered?.length??((w.AnalistaStore?.getState()?.enderecosLista||[]).length),state.page,state.size);e.querySelectorAll('[data-pg]').forEach(b=>b.onclick=()=>{state.page=Math.max(1,Number(b.dataset.pg)||1);render()});e.querySelector('[data-size]').onchange=x=>{state.size=Number(x.target.value)||20;state.page=1;render()}}
+async function excluirEnderecoV293(endereco){
+  if(!endereco){toast('Endereço inválido.','error');return;}
+  if(!confirm('Excluir este endereço?'))return;
+  try{
+    const atual=(w.AnalistaStore?.getState()?.enderecosLista||[]);
+    const next=atual.filter(x=>String(x.endereco)!==String(endereco));
+    const by={};
+    next.forEach(x=>{const k=x.setor||x.nome_local||x.local||'SEM LOCAL';(by[k]||(by[k]=[])).push(x)});
+    w.AnalistaActions?.replaceSlice?.('enderecosLista',next,{source:'v293-acoes'});
+    w.AnalistaActions?.replaceSlice?.('enderecosPorSetor',by,{source:'v293-acoes'});
+    w.storageSave?.(w.KEYS?.enderecos,next);
+    await w.fsPublicarEnderecos?.(next);
+    renderAddresses();
+    toast('Endereço excluído.');
+  }catch(err){console.error('[Ações cadastro] excluir endereço',err);toast('Erro ao excluir endereço: '+(err.message||err),'error');}
+}
+function ligarAcoesCadastro(){
+  if(w.__acoesCadastroLigadas)return;
+  w.__acoesCadastroLigadas=true;
+  document.addEventListener('click',function(ev){
+    const pe=ev.target.closest('[data-pe]');
+    if(pe){ev.preventDefault();ev.stopImmediatePropagation();const item=P.all.find(x=>String(x.id)===String(pe.dataset.pe));if(item)productModal(item);else toast('Produto não encontrado.','error');return;}
+    const pd=ev.target.closest('[data-pd]');
+    if(pd){ev.preventDefault();ev.stopImmediatePropagation();deleteProduct(pd.dataset.pd);return;}
+    const ee=ev.target.closest('[data-ee]');
+    if(ee){ev.preventDefault();ev.stopImmediatePropagation();const all=w.AnalistaStore?.getState()?.enderecosLista||[];const item=all.find(x=>String(x.endereco)===String(ee.dataset.ee));if(item)addressModal(item);else toast('Endereço não encontrado.','error');return;}
+    const ed=ev.target.closest('[data-ed]');
+    if(ed){ev.preventDefault();ev.stopImmediatePropagation();excluirEnderecoV293(ed.dataset.ed);return;}
+  },true);
+}
 function activateProducts(){initProducts();if(!P.unsub)loadProducts();else renderProducts();}
 function activateAddresses(){initAddresses();renderAddresses();}
 // Substitui os renderizadores legados. A navegação chama estes nomes globais.
@@ -31,6 +61,6 @@ w.atualizarBaseProdutos=activateProducts;
 w.renderEnderecos=activateAddresses;
 w.atualizarEnderecos=activateAddresses;
 w.renderCadastrosV291=function(){activateProducts();activateAddresses();};
-function boot(){activateProducts();activateAddresses();document.addEventListener('click',e=>{const nav=e.target.closest('[data-page="produtos"],[data-page="enderecos"],#nav-produtos,#nav-enderecos');if(nav){setTimeout(()=>{const pp=document.getElementById('page-produtos'),pe=document.getElementById('page-enderecos');if(pp?.classList.contains('on'))activateProducts();if(pe?.classList.contains('on'))activateAddresses()},20);setTimeout(()=>{const pp=document.getElementById('page-produtos'),pe=document.getElementById('page-enderecos');if(pp?.classList.contains('on'))activateProducts();if(pe?.classList.contains('on'))activateAddresses()},180)}});const root=document.querySelector('.content')||document.body;new MutationObserver(()=>{const pp=document.getElementById('page-produtos'),pe=document.getElementById('page-enderecos');if(pp?.classList.contains('on')&&!pp.querySelector('#v287-p-table'))activateProducts();if(pe?.classList.contains('on')&&!pe.querySelector('#v287-e-table'))activateAddresses()}).observe(root,{childList:true,subtree:true})}
+function boot(){ligarAcoesCadastro();activateProducts();activateAddresses();document.addEventListener('click',e=>{const nav=e.target.closest('[data-page="produtos"],[data-page="enderecos"],#nav-produtos,#nav-enderecos');if(nav){setTimeout(()=>{const pp=document.getElementById('page-produtos'),pe=document.getElementById('page-enderecos');if(pp?.classList.contains('on'))activateProducts();if(pe?.classList.contains('on'))activateAddresses()},20);setTimeout(()=>{const pp=document.getElementById('page-produtos'),pe=document.getElementById('page-enderecos');if(pp?.classList.contains('on'))activateProducts();if(pe?.classList.contains('on'))activateAddresses()},180)}});const root=document.querySelector('.content')||document.body;new MutationObserver(()=>{const pp=document.getElementById('page-produtos'),pe=document.getElementById('page-enderecos');if(pp?.classList.contains('on')&&!pp.querySelector('#v287-p-table'))activateProducts();if(pe?.classList.contains('on')&&!pe.querySelector('#v287-e-table'))activateAddresses()}).observe(root,{childList:true,subtree:true})}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot);else boot();
 })(window);
