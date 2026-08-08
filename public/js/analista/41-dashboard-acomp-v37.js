@@ -155,7 +155,7 @@
   function agrupar(lista,fn){const m={};lista.forEach(x=>{const k=fn(x)||'SEM DADO';m[k]=(m[k]||0)+1});return Object.entries(m).sort((a,b)=>b[1]-a[1]);}
   const GRAD=['linear-gradient(90deg,#f97316,#fb923c)','linear-gradient(90deg,#2563eb,#38bdf8)','linear-gradient(90deg,#10b981,#34d399)','linear-gradient(90deg,#8b5cf6,#a78bfa)','linear-gradient(90deg,#ef4444,#fb7185)','linear-gradient(90deg,#06b6d4,#67e8f9)','linear-gradient(90deg,#eab308,#fde047)','linear-gradient(90deg,#ec4899,#f9a8d4)','linear-gradient(90deg,#14b8a6,#5eead4)','linear-gradient(90deg,#6366f1,#a5b4fc)'];
   function progressRows(arr,total){if(!arr.length)return '<div class="empty"><div class="empty-title">Sem dados para exibir</div></div>';return arr.map(([l,v],idx)=>{const pct=total?Math.round(v/total*100):0;return `<div style="display:grid;grid-template-columns:100px 1fr 55px;gap:12px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)"><b style="font-size:.75rem">${safe(l)}</b><div class="prog"><div class="prog-fill" style="width:${pct}%;background:${GRAD[idx%GRAD.length]}"></div></div><span class="mono" style="font-size:.7rem;text-align:right">${v} · ${pct}%</span></div>`}).join('');}
-  function jsArg(v){return String(v??'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ');}
+  function jsArg(v){return String(v??'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/\r?\n/g,' ').replace(/"/g,'&quot;');}
   function acompFiltrados(){
     const f=acompAudFiltro;
     if(!f.tipo||!f.valor)return acompAudItens;

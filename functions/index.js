@@ -11,6 +11,10 @@ const PERFIS_ADMIN = new Set(['administrador']);
 const MAX_NOME = 120;
 const MAX_EMAIL = 254;
 const MAX_UIDS = 20;
+// Nome vira displayName do Firebase Auth e é renderizado em telas internas;
+// bloquear caracteres de marcação HTML na origem evita que um nome vire
+// injeção de script em qualquer tela que (hoje ou no futuro) o exiba sem escapar.
+const NOME_VALIDO = /^[\p{L}\p{M}\d .'-]+$/u;
 
 function acessoAtivo(acesso) {
   return Boolean(acesso && acesso.ativo !== false);
@@ -116,7 +120,7 @@ exports.criarUsuarioVinculado = functions
     const emailAnalista = emailNormalizado(data?.emailAnalista);
     const emailColetor = emailNormalizado(data?.emailColetor);
     const criarAnalista = data?.criarAnalista === true;
-    if (!nome || nome.length > MAX_NOME || !emailColetor || (criarAnalista && !emailAnalista)) {
+    if (!nome || nome.length > MAX_NOME || !NOME_VALIDO.test(nome) || !emailColetor || (criarAnalista && !emailAnalista)) {
       throw new functions.https.HttpsError('invalid-argument', 'Nome, login e senha são obrigatórios.');
     }
     validarSenha(senha);

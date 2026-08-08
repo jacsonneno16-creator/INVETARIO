@@ -42,7 +42,7 @@ function atualizarEnderecos(renderToo = true) {
   if (fLocal) {
     const cur = fLocal.value;
     fLocal.innerHTML = '<option value="">Todos os Locais de Estoque</option>' +
-      setores.sort().map(s => `<option value="${s}" ${s === cur ? 'selected' : ''}>${s} (${state().enderecosPorSetor[s].length})</option>`).join('');
+      setores.sort().map(s => `<option value="${escHTML(s)}" ${s === cur ? 'selected' : ''}>${escHTML(s)} (${state().enderecosPorSetor[s].length})</option>`).join('');
   }
   if (renderToo) renderEnderecos();
 }

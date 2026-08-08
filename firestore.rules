@@ -227,6 +227,23 @@ service cloud.firestore {
         );
     }
 
+    function permissoesWithinGrantorScope() {
+      // Um não-administrador nunca pode conceder a outra conta uma
+      // permissão que ele mesmo não possui — senão qualquer titular de
+      // 'operadores.criar/editar' poderia forjar um admin de fato (com
+      // permissoes completas) sem nunca marcar perfil:'administrador'.
+      // Como as regras do Firestore não permitem iterar chaves dinâmicas
+      // de um mapa aninhado, a única forma segura de validar isso aqui é
+      // exigir que quem não é admin não altere 'permissoes' na criação
+      // (só pode ficar vazio, como já acontece no fluxo de conta
+      // secundária do coletor) nem no update (tem que continuar igual ao
+      // valor já salvo). Conceder/alterar permissões de outra conta passa
+      // a exigir admin().
+      return !request.resource.data.keys().hasAny(['permissoes']) ||
+        request.resource.data.permissoes == {} ||
+        (resource != null && request.resource.data.permissoes == resource.data.permissoes);
+    }
+
     function safeUserScope() {
       return admin() || (
         (!request.resource.data.keys().hasAny(['perfil']) ||
@@ -235,6 +252,7 @@ service cloud.firestore {
           request.resource.data.admin_mestre != true) &&
         (!request.resource.data.keys().hasAny(['administrador_mestre']) ||
           request.resource.data.administrador_mestre != true) &&
+        permissoesWithinGrantorScope() &&
         (
           (
             access().keys().hasAny(['acesso_todas_lojas']) &&
@@ -586,7 +604,14 @@ service cloud.firestore {
     }
 
     match /dt_coletores/{deviceId} {
-      allow get: if signedIn();
+      // Mesmo critério do 'list' abaixo: qualquer signedIn() aqui permitia
+      // que um operador/coletor buscasse por ID o documento de QUALQUER
+      // outro dispositivo (de qualquer loja) e lesse operador_email/ip/sessao.
+      allow get: if active() && (
+        canUseAnalista() ||
+        resource.data.uid == request.auth.uid ||
+        resource.data.operador_uid == request.auth.uid
+      );
 
       allow list: if active() && (
         canUseAnalista() ||

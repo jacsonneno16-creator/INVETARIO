@@ -2463,7 +2463,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 (function(){
   if('serviceWorker' in navigator){
     window.addEventListener('load',function(){
-      navigator.serviceWorker.register('/sw.js?v=20260731-234-auditoria').then(function(reg){
+      navigator.serviceWorker.register('/sw.js?v=20260808-v297-cache-fix').then(function(reg){
         reg.update();
       }).catch(function(e){
         if(window.console) console.warn('[PWA]',e);

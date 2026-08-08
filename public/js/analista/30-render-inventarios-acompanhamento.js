@@ -105,7 +105,7 @@ function renderAcompanhamento() {
   if (sel) {
     const ativos = state().inventarios.filter(i => i.status === 'ATIVO');
     sel.innerHTML = '<option value="">Selecione um inventário...</option>' +
-      ativos.map(i => `<option value="${i.id}" ${i.id === state().ui.acompanhamentoInventarioId ? 'selected' : ''}>${i.codigo} — ${i.nome}</option>`).join('');
+      ativos.map(i => `<option value="${i.id}" ${i.id === state().ui.acompanhamentoInventarioId ? 'selected' : ''}>${escapeHTML(i.codigo)} — ${escapeHTML(i.nome)}</option>`).join('');
   }
 
   const inv = state().ui.acompanhamentoInventarioId ? getInventarioPorId(state().ui.acompanhamentoInventarioId) : (getInventariosAtivos()[0] || null);
@@ -214,7 +214,7 @@ function renderAcompanhamento() {
   if (filtroRua) {
     filtroRua.innerHTML = '<option value="">Todas as ruas</option>' +
       Object.keys(porRua).sort((a,b) => a.localeCompare(b, 'pt-BR', {numeric:true}))
-        .map(r => `<option value="${r}" ${r === ruaSelecionada ? 'selected' : ''}>${r}</option>`).join('');
+        .map(r => `<option value="${escapeHTML(r)}" ${r === ruaSelecionada ? 'selected' : ''}>${escapeHTML(r)}</option>`).join('');
   }
 
   const ruasFiltradas = ruaSelecionada
@@ -237,14 +237,14 @@ function renderAcompanhamento() {
           // Recontagens nesta rua
           const endsRua = endsAtivos.filter(e => _getRua(e) === rua).map(e => e.endereco);
           const recsRua = state().recontagens.filter(r => r.inventario_id === inv.id && endsRua.includes(r.endereco)).length;
-          return `<div onclick="abrirDetalheRua('${inv.id}','${rua.replace(/'/g,"\\'")}','${encodeURIComponent(rua)}')"
+          return `<div onclick="abrirDetalheRua('${inv.id}','${rua.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;')}','${encodeURIComponent(rua)}')"
             style="background:${finalizado ? '#f0fdf4' : 'var(--surface)'};border:1.5px solid ${finalizado ? '#86efac' : 'var(--border)'};border-radius:10px;padding:14px 18px;cursor:pointer;transition:all .18s;user-select:none"
             onmouseover="this.style.borderColor='var(--accent)';this.style.transform='translateX(3px)'"
             onmouseout="this.style.borderColor='${finalizado?'#86efac':'var(--border)'   }';this.style.transform='translateX(0)'">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
               <div style="display:flex;align-items:center;gap:8px">
                 <span style="font-size:.95rem">🛣️</span>
-                <span style="font-weight:700;font-size:.9rem">Rua ${rua}</span>
+                <span style="font-weight:700;font-size:.9rem">Rua ${escapeHTML(rua)}</span>
                 ${finalizado ? '<span class="badge b-green" style="font-size:.6rem">✓ FINALIZADA</span>' : ''}
                 ${d.vazios > 0 ? `<span class="badge b-gray" style="font-size:.6rem">🔲 ${d.vazios} vaz.</span>` : ''}
                 ${recsRua > 0 ? `<span class="badge b-orange" style="font-size:.6rem">🔄 ${recsRua} rec.</span>` : ''}
@@ -284,7 +284,7 @@ function renderAcompanhamento() {
       const color = finalizado ? 'green' : p >= 80 ? 'green' : p >= 50 ? 'blue' : 'yellow';
       return `<div style="margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
-          <span style="font-size:.82rem;font-weight:700">🏭 ${local}</span>
+          <span style="font-size:.82rem;font-weight:700">🏭 ${escapeHTML(local)}</span>
           <div style="display:flex;align-items:center;gap:8px">
             <span style="font-size:.72rem;color:var(--muted)">${conferidos}/${d.total} end.${d.vazios > 0 ? ` (${d.vazios} vaz.)` : ''}</span>
             ${finalizado ? '<span class="badge b-green" style="font-size:.6rem">✓ OK</span>' : ''}
@@ -331,8 +331,8 @@ function renderAcompanhamento() {
     return `<tr>
       <td>
         <div style="display:flex;align-items:center;gap:8px">
-          <div class="u-avatar" style="width:28px;height:28px;font-size:.7rem;flex-shrink:0">${(op||'?')[0].toUpperCase()}</div>
-          <span style="font-weight:600">${op || 'Desconhecido'}</span>
+          <div class="u-avatar" style="width:28px;height:28px;font-size:.7rem;flex-shrink:0">${escapeHTML((op||'?')[0].toUpperCase())}</div>
+          <span style="font-weight:600">${escapeHTML(op || 'Desconhecido')}</span>
         </div>
       </td>
       <td class="mono" style="font-weight:700">${d.total.toLocaleString('pt-BR')}</td>

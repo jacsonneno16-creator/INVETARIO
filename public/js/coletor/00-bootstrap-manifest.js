@@ -183,7 +183,7 @@ window.iniciarListenerAuditoria = function(invId){
     lista.forEach(a => { const rua = a.rua || 'SEM RUA'; (ruas[rua] ||= []).push(a); });
     wrap.innerHTML = Object.entries(ruas).map(([rua,itens], idx) => `
       <div class="card" style="padding:0;overflow:hidden;border-color:rgba(232,117,26,.24)">
-        <div onclick="toggleAuditoriaRua('${esc(rua)}')" style="padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;background:rgba(232,117,26,.06)">
+        <div onclick="toggleAuditoriaRua('${String(rua).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;')}')" style="padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;background:rgba(232,117,26,.06)">
           <div><div style="font-size:.95rem;font-weight:800;color:var(--text)">${esc(rua)}</div><div style="font-size:.72rem;color:var(--muted)">${itens.length} endereço(s) pendente(s)</div></div>
           <div id="aud-rua-icon-${idx}" style="font-size:1rem;color:var(--accent)">▸</div>
         </div>

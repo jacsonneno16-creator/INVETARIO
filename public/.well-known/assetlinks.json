@@ -1,0 +1,10 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.web.daterrinha_inventario.twa",
+      "sha256_cert_fingerprints": ["38:4E:65:62:EF:8F:F4:71:CF:F6:9F:AA:E9:D0:B6:E0:CD:E4:A2:87:1C:2E:94:B3:80:54:CD:9C:95:F2:29:C1"]
+    }
+  }
+]

@@ -350,9 +350,9 @@ function _atualizarBannerRecontagem(item) {
           ${Number(item._capacidade_rodada || item.capacidade_pallets || item.capacidade_paletes || item.capacidade || 0) > 0
             ? `<div style="font-size:.72rem;color:#fde68a;margin-bottom:5px">📦 Paletes desta rodada: <b>${Number(item._paletes_contados_rodada || 0)}</b>/<b>${Number(item._capacidade_rodada || item.capacidade_pallets || item.capacidade_paletes || item.capacidade || 0)}</b></div>`
             : `<div style="font-size:.72rem;color:#fde68a;margin-bottom:5px">📦 Registre todos os paletes e encerre com ENDERECO VAZIO</div>`}
-          ${item.descricao ? `<div style="font-size:.7rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${item.descricao}</div>` : ''}
+          ${item.descricao ? `<div style="font-size:.7rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHTML(item.descricao)}</div>` : ''}
           ${item.observacao_atribuicao || item.observacao
-            ? `<div style="margin-top:5px;padding:5px 8px;background:rgba(251,191,36,.08);border-radius:6px;font-size:.68rem;color:#fbbf24;font-style:italic">💬 ${item.observacao_atribuicao || item.observacao}</div>`
+            ? `<div style="margin-top:5px;padding:5px 8px;background:rgba(251,191,36,.08);border-radius:6px;font-size:.68rem;color:#fbbf24;font-style:italic">💬 ${escHTML(item.observacao_atribuicao || item.observacao)}</div>`
             : ''}
         </div>
         <button onclick="cancelarModoRecontagem()" style="flex-shrink:0;background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.4);color:#f87171;border-radius:8px;padding:6px 10px;font-size:.72rem;font-weight:700;cursor:pointer;white-space:nowrap">✕ Sair</button>
@@ -521,7 +521,7 @@ function renderRecontagensAtribuidas() {
     const produtosUnicos = [...new Map(grupo.itens.map(i => [i.barcode||i.descricao, i])).values()];
     const produtosHtml = produtosUnicos.map(i =>
       `<div style="display:flex;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,.05)">
-        ${i.descricao?`<span style="font-size:.78rem;font-weight:600;color:var(--text);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${i.descricao}</span>`:''}
+        ${i.descricao?`<span style="font-size:.78rem;font-weight:600;color:var(--text);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHTML(i.descricao)}</span>`:''}
         ${i.barcode?`<span style="font-size:.65rem;color:var(--muted);font-family:var(--mono)">📦 ${i.barcode}</span>`:''}
         ${i.diferenca!=null?`<span style="font-size:.78rem;font-weight:800;color:${i.diferenca<0?'var(--danger)':'var(--warn)'};">${i.diferenca>0?'+':''}${i.diferenca}</span>`:''}
       </div>`
@@ -538,8 +538,8 @@ function renderRecontagensAtribuidas() {
         ${nProdutos>1?`<span style="font-size:.65rem;font-weight:700;background:rgba(232,117,26,.15);color:var(--accent);border-radius:99px;padding:2px 8px">${nProdutos} produtos</span>`:''}
       </div>
       <div style="margin-bottom:6px">${produtosHtml}</div>
-      ${grupo.obs?`<div style="padding:5px 8px;background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.2);border-radius:6px;font-size:.68rem;color:var(--text);margin-bottom:5px">💬 ${grupo.obs}</div>`:''}
-      <div style="font-size:.62rem;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;margin-bottom:${(concluida||aguardando)?'0':'8px'}">${grupo.operador?`<span>👤 ${grupo.operador}</span>`:''} ${dataStr?`<span>📅 ${dataStr}</span>`:''}</div>
+      ${grupo.obs?`<div style="padding:5px 8px;background:rgba(255,179,0,.08);border:1px solid rgba(255,179,0,.2);border-radius:6px;font-size:.68rem;color:var(--text);margin-bottom:5px">💬 ${escHTML(grupo.obs)}</div>`:''}
+      <div style="font-size:.62rem;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap;margin-bottom:${(concluida||aguardando)?'0':'8px'}">${grupo.operador?`<span>👤 ${escHTML(grupo.operador)}</span>`:''} ${dataStr?`<span>📅 ${dataStr}</span>`:''}</div>
       ${concluida
         ?`<div style="text-align:center;font-size:.75rem;color:var(--success);font-weight:700;padding:8px;background:rgba(0,214,143,.08);border-radius:8px">${grupo.itens.some(i=>i.statusRec==='sem_divergencia'||i.statusRec==='resolvida')?'✅ SEM DIFERENÇA':'✅ CONCLUÍDA'}</div>`
         : aguardando

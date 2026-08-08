@@ -106,7 +106,7 @@
       const id=global.DTLoja?.slug?global.DTLoja.slug(codigo):codigo.toLowerCase().replace(/[^a-z0-9]+/g,'_');
       await global.getDTRawFirestore().collection('lojas').doc(id).set({id,nome,codigo,ativa:true,responsavel:document.getElementById('loja-responsavel')?.value?.trim()||'',observacao:document.getElementById('loja-obs')?.value?.trim()||'',criada_em:new Date().toISOString(),atualizada_em:new Date().toISOString()},{merge:true});
       lojaFecharModalCriar(); global.showToast?.('Loja criada com sucesso.','success'); await global.renderGestaoLojas?.();
-    }catch(e){if(feedback){feedback.style.display='block';feedback.innerHTML='<div class="alert danger">'+String(e.message||e)+'</div>';}global.showToast?.('Erro ao criar loja: '+(e.message||e),'error');}
+    }catch(e){if(feedback){feedback.style.display='block';feedback.innerHTML='<div class="alert danger">'+esc(String(e.message||e))+'</div>';}global.showToast?.('Erro ao criar loja: '+(e.message||e),'error');}
     finally{if(btn){btn.disabled=false;btn.textContent='🏪 Criar Loja';}}
   }
   async function lojaSalvarEdicao() {

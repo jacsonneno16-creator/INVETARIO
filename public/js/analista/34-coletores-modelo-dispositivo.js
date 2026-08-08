@@ -66,8 +66,8 @@ function abrirModalLoginOperador() {
   if (selCol) {
     selCol.innerHTML = '<option value="">Selecione o coletor...</option>' +
       state().coletores.map(c => {
-        const op = c.sessao ? ` — ${c.sessao.operador} (em uso)` : ' — livre';
-        return `<option value="${c.id}">Coletor ${c.numero}${c.apelido ? ' · ' + c.apelido : ''}${op}</option>`;
+        const op = c.sessao ? ` — ${escapeHTML(c.sessao.operador)} (em uso)` : ' — livre';
+        return `<option value="${c.id}">Coletor ${c.numero}${c.apelido ? ' · ' + escapeHTML(c.apelido) : ''}${op}</option>`;
       }).join('');
   }
   const selInv = document.getElementById('lop-inv');

@@ -483,19 +483,19 @@ function salvarContagem() {
       <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:20px;font-size:.78rem">
         <div style="display:flex;justify-content:space-between;padding:7px 10px;background:var(--card);border-radius:8px">
           <span style="color:var(--muted)">📍 Endereço</span>
-          <span style="font-family:var(--mono);font-weight:700;color:var(--text)">${a.endereco}</span>
+          <span style="font-family:var(--mono);font-weight:700;color:var(--text)">${escHTML(a.endereco)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;padding:7px 10px;background:var(--card);border-radius:8px">
           <span style="color:var(--muted)">🏷️ Capa Palete</span>
-          <span style="font-family:var(--mono);font-weight:700;color:var(--text)">${a.enderecoVirtual ? '—' : (a.capa || '—')}</span>
+          <span style="font-family:var(--mono);font-weight:700;color:var(--text)">${a.enderecoVirtual ? '—' : escHTML(a.capa || '—')}</span>
         </div>
         <div style="display:flex;justify-content:space-between;padding:7px 10px;background:var(--card);border-radius:8px;gap:8px">
           <span style="color:var(--muted);flex-shrink:0">📦 Produto</span>
-          <span style="font-weight:600;color:var(--text);text-align:right;font-size:.72rem">${a.produtoAtual?.descricao_produto || a.gtin}</span>
+          <span style="font-weight:600;color:var(--text);text-align:right;font-size:.72rem">${escHTML(a.produtoAtual?.descricao_produto || a.gtin)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;padding:7px 10px;background:var(--card);border-radius:8px">
           <span style="color:var(--muted)">🏷️ Lote</span>
-          <span style="font-family:var(--mono);font-weight:700;color:var(--text)">${a.enderecoVirtual ? 'Não se aplica' : (a.loteProduto || '—')}</span>
+          <span style="font-family:var(--mono);font-weight:700;color:var(--text)">${a.enderecoVirtual ? 'Não se aplica' : escHTML(a.loteProduto || '—')}</span>
         </div>
         <div style="display:flex;justify-content:space-between;padding:10px 12px;background:rgba(232,117,26,.08);border:1px solid rgba(232,117,26,.2);border-radius:8px">
           <span style="color:var(--muted);font-weight:700">🔢 Quantidade</span>

@@ -106,18 +106,18 @@ async function renderEstorno() {
         <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
           <div style="flex:1;min-width:0">
             <div style="display:flex;align-items:center;flex-wrap:wrap;gap:2px">
-              <span style="font-size:.82rem;font-weight:700;font-family:var(--mono);color:${isEstornada?'var(--muted)':'var(--accent)'}">${icone} ${c.endereco || '—'}</span>
+              <span style="font-size:.82rem;font-weight:700;font-family:var(--mono);color:${isEstornada?'var(--muted)':'var(--accent)'}">${icone} ${escHTML(c.endereco || '—')}</span>
               ${labelTipo}${labelLocal}
             </div>
             <div style="font-size:.72rem;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-              ${isVazio ? 'Endereço vazio confirmado' : (c.descricao || c.gtin || '—')}
+              ${isVazio ? 'Endereço vazio confirmado' : escHTML(c.descricao || c.gtin || '—')}
             </div>
             <div style="font-size:.68rem;color:var(--muted);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap">
-              ${!isVazio ? `<span>CP&nbsp;${c.capa||'—'}</span><span>Qtd&nbsp;<b>${c.quantidade}</b></span><span>Val&nbsp;${c.validade||'—'}</span>` : ''}
+              ${!isVazio ? `<span>CP&nbsp;${escHTML(c.capa||'—')}</span><span>Qtd&nbsp;<b>${escHTML(c.quantidade)}</b></span><span>Val&nbsp;${escHTML(c.validade||'—')}</span>` : ''}
               <span>🕐&nbsp;${fmtData(c.dataHora)}</span>
             </div>
             ${isEstornada ? `<div style="font-size:.64rem;color:var(--muted);margin-top:4px;border-top:1px solid var(--border);padding-top:4px">
-              ↩ Estornado por <b>${c.estornada_por||'—'}</b> em ${fmtData(c._excluida_em)}
+              ↩ Estornado por <b>${escHTML(c.estornada_por||'—')}</b> em ${fmtData(c._excluida_em)}
             </div>` : ''}
           </div>
           <div style="flex-shrink:0">

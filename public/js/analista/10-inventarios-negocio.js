@@ -462,11 +462,11 @@ function verBase(id) {
   document.getElementById('modal-base-title').textContent = `📂 Base da Auditoria — ${inv.nome}`;
   const cols = ['endereco','codigo_produto','descricao_produto','quantidade_esperada','setor','pallete_ou_capa'];
   document.getElementById('modal-base-content').innerHTML = `
-    <div style="font-size:.78rem;color:var(--muted);margin-bottom:10px">${inv.base.length.toLocaleString('pt-BR')} registros · ${inv.arquivo || 'Importado'}</div>
+    <div style="font-size:.78rem;color:var(--muted);margin-bottom:10px">${inv.base.length.toLocaleString('pt-BR')} registros · ${escHTML(inv.arquivo || 'Importado')}</div>
     <div class="preview-wrap" style="max-height:360px">
       <table class="preview-table">
-        <thead><tr>${cols.map(c => `<th>${c.replace(/_/g,' ')}</th>`).join('')}</tr></thead>
-        <tbody>${inv.base.slice(0,200).map(r => `<tr>${cols.map(c => `<td>${r[c]||'—'}</td>`).join('')}</tr>`).join('')}</tbody>
+        <thead><tr>${cols.map(c => `<th>${escHTML(c.replace(/_/g,' '))}</th>`).join('')}</tr></thead>
+        <tbody>${inv.base.slice(0,200).map(r => `<tr>${cols.map(c => `<td>${escHTML(r[c]||'—')}</td>`).join('')}</tr>`).join('')}</tbody>
       </table>
     </div>
     ${inv.base.length > 200 ? `<div style="text-align:center;padding:10px;font-size:.75rem;color:var(--muted)">Exibindo primeiros 200 de ${inv.base.length.toLocaleString('pt-BR')} registros</div>` : ''}`;

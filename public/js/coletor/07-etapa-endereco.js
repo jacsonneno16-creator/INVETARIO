@@ -624,12 +624,12 @@ function _modalBloqueioOutroOperador(endNorm, docsOutros) {
     corBorda: 'rgba(255,71,87,.5)',
     corpo: `
       <div style="font-size:.82rem;color:var(--text);text-align:center;line-height:1.6">
-        Endereço <b style="font-family:var(--mono);color:var(--accent)">${endNorm}</b> foi coletado por
-        <b style="color:var(--warn)">${quem}</b>
+        Endereço <b style="font-family:var(--mono);color:var(--accent)">${escHTML(endNorm)}</b> foi coletado por
+        <b style="color:var(--warn)">${escHTML(quem)}</b>
         <br><span style="font-size:.72rem;color:var(--muted)">${qtd} pallet(s) registrado(s)</span>
       </div>
       <div style="margin-top:10px;padding:10px 12px;background:rgba(255,71,87,.08);border:1px solid rgba(255,71,87,.2);border-radius:8px;font-size:.75rem;color:var(--muted);text-align:center">
-        Somente <b>${quem}</b> pode estornar esta contagem.
+        Somente <b>${escHTML(quem)}</b> pode estornar esta contagem.
       </div>`,
     botoes: [
       { label: '← Voltar', estilo: 'ghost', acao: null }

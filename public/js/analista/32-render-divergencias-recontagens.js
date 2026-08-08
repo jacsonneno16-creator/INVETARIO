@@ -1541,7 +1541,7 @@ function renderRecontagens() {
           };
 
           return `<tr>
-            <td style="font-size:.75rem;color:var(--muted)">${r.inventario_nome || r.inventario_id}</td>
+            <td style="font-size:.75rem;color:var(--muted)">${escHTML(r.inventario_nome || r.inventario_id)}</td>
             <td class="mono" style="font-weight:600">${rua}</td>
             <td class="mono">${r.endereco}</td>
             <td>
@@ -1555,9 +1555,9 @@ function renderRecontagens() {
             <td>
               ${naoAtribuido
                 ? `<span style="font-size:.75rem;color:var(--muted-2)">Não atribuído</span>`
-                : `<div style="font-weight:600;font-size:.82rem;color:var(--text)">${atribPara}</div>
-                   ${atribPor ? `<div style="font-size:.65rem;color:var(--muted)">por ${atribPor}</div>` : ''}
-                   ${obsAtrib ? `<div style="font-size:.68rem;color:var(--text-2);font-style:italic;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${obsAtrib}">💬 ${obsAtrib}</div>` : ''}`
+                : `<div style="font-weight:600;font-size:.82rem;color:var(--text)">${escHTML(atribPara)}</div>
+                   ${atribPor ? `<div style="font-size:.65rem;color:var(--muted)">por ${escHTML(atribPor)}</div>` : ''}
+                   ${obsAtrib ? `<div style="font-size:.68rem;color:var(--text-2);font-style:italic;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${escHTML(obsAtrib)}">💬 ${escHTML(obsAtrib)}</div>` : ''}`
               }
             </td>
             <td>

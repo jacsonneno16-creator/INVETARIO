@@ -1519,7 +1519,7 @@
       <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:6px 10px;background:var(--card);border-radius:8px;gap:8px">
         <span style="font-size:.68rem;color:var(--muted);text-transform:uppercase;font-weight:700;white-space:nowrap">${label}</span>
         <span style="font-family:var(--mono);font-weight:800;font-size:.95rem">${_fmt(val)}</span>
-        ${op ? `<span style="font-size:.68rem;color:var(--muted);white-space:nowrap">👤 ${op}</span>` : ''}
+        ${op ? `<span style="font-size:.68rem;color:var(--muted);white-space:nowrap">👤 ${esc(op)}</span>` : ''}
       </div>`;
 
     const ctx = state().ui.recontagemCtx;
@@ -1541,8 +1541,8 @@
           ${ctx.qtd_terceira != null ? _row('3ª Contagem', ctx.qtd_terceira, ctx.operador_terceira) : ''}
           ${historico}
         </div>
-        ${ctx.operador ? `<div style="padding:5px 10px;background:rgba(232,117,26,.08);border-radius:8px;font-size:.72rem">👤 Atribuído para: <b>${ctx.operador}</b></div>` : ''}
-        ${ctx.observacao_atribuicao ? `<div style="padding:5px 10px;background:rgba(255,179,0,.06);border:1px solid rgba(255,179,0,.2);border-radius:8px;font-size:.72rem;color:#fbbf24">💬 ${ctx.observacao_atribuicao}</div>` : ''}
+        ${ctx.operador ? `<div style="padding:5px 10px;background:rgba(232,117,26,.08);border-radius:8px;font-size:.72rem">👤 Atribuído para: <b>${esc(ctx.operador)}</b></div>` : ''}
+        ${ctx.observacao_atribuicao ? `<div style="padding:5px 10px;background:rgba(255,179,0,.06);border:1px solid rgba(255,179,0,.2);border-radius:8px;font-size:.72rem;color:#fbbf24">💬 ${esc(ctx.observacao_atribuicao)}</div>` : ''}
       </div>`;
 
     const _recProdEl = document.getElementById('rec-produto');

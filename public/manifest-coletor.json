@@ -1,7 +1,7 @@
 {
   "id": "/coletor.html",
-  "name": "DT Inventário — Coletor",
-  "short_name": "DT Coletor",
+  "name": "DT Inventário",
+  "short_name": "DT Inventário",
   "description": "Coletor de inventário Da Terrinha Alimentos",
   "start_url": "/coletor.html",
   "scope": "/",

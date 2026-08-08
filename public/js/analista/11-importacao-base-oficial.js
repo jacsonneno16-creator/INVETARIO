@@ -281,7 +281,7 @@ function renderInvMapper() {
     <div style="border:1px solid #bae6fd;border-radius:10px;background:#f0f9ff;padding:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:8px">
         <div>
-          <div style="font-weight:700;font-size:.88rem;color:#0369a1">🗂️ Mapeamento de Colunas — <span style="font-weight:400">${arquivo}</span></div>
+          <div style="font-weight:700;font-size:.88rem;color:#0369a1">🗂️ Mapeamento de Colunas — <span style="font-weight:400">${escHTML(arquivo)}</span></div>
           <div style="font-size:.73rem;color:var(--muted);margin-top:2px">${headers.length} colunas detectadas · ${rows.length.toLocaleString('pt-BR')} linhas · Para cada campo, escolha a coluna correspondente do seu arquivo</div>
         </div>
         <button class="btn btn-ghost btn-sm" onclick="resetInvImport()" style="white-space:nowrap;flex-shrink:0">↩ Outro arquivo</button>
@@ -291,10 +291,10 @@ function renderInvMapper() {
       <div style="margin-bottom:12px;overflow-x:auto;border-radius:7px;border:1px solid #bae6fd">
         <table style="font-size:.7rem;border-collapse:collapse;width:100%;min-width:400px">
           <thead><tr style="background:#dbeafe">
-            ${headers.map(h => `<th style="padding:5px 8px;text-align:left;color:#1d4ed8;font-weight:700;white-space:nowrap">${h}</th>`).join('')}
+            ${headers.map(h => `<th style="padding:5px 8px;text-align:left;color:#1d4ed8;font-weight:700;white-space:nowrap">${escHTML(h)}</th>`).join('')}
           </tr></thead>
           <tbody>
-            ${rows.slice(0,3).map(r => `<tr style="border-top:1px solid #e0f2fe">${headers.map((_,i) => `<td style="padding:4px 8px;color:var(--text);white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis">${String(r[i]||'').trim().slice(0,40)}</td>`).join('')}</tr>`).join('')}
+            ${rows.slice(0,3).map(r => `<tr style="border-top:1px solid #e0f2fe">${headers.map((_,i) => `<td style="padding:4px 8px;color:var(--text);white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis">${escHTML(String(r[i]||'').trim().slice(0,40))}</td>`).join('')}</tr>`).join('')}
           </tbody>
         </table>
       </div>
@@ -339,7 +339,7 @@ function renderInvMapper() {
       if (mapperZone) {
         const aviso = document.createElement('div');
         aviso.style.cssText = 'margin-bottom:8px;padding:8px 12px;background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;font-size:.75rem;color:#92400e;display:flex;justify-content:space-between;align-items:center';
-        aviso.innerHTML = `<span>✅ Mapeamento anterior restaurado automaticamente (${saved.arquivo})</span>
+        aviso.innerHTML = `<span>✅ Mapeamento anterior restaurado automaticamente (${escHTML(saved.arquivo)})</span>
           <button onclick="this.parentElement.remove()" style="background:none;border:none;cursor:pointer;color:#92400e;font-size:.9rem">✕</button>`;
         mapperZone.insertBefore(aviso, mapperZone.firstChild);
       }
@@ -467,7 +467,7 @@ function confirmarInvMapper() {
         <div class="sb-icon">✅</div>
         <div>
           <div class="sb-text">${base.length.toLocaleString('pt-BR')} registros importados com mapeamento personalizado</div>
-          <div class="sb-sub">${arquivo} · ${endsU} endereços únicos · ${prodsU} produtos únicos
+          <div class="sb-sub">${escHTML(arquivo)} · ${endsU} endereços únicos · ${prodsU} produtos únicos
             <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('inv-mapper-zone').style.display='block'" style="margin-left:8px;font-size:.7rem;padding:2px 8px">✏️ Editar mapeamento</button>
           </div>
         </div>

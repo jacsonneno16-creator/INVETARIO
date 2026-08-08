@@ -1,4 +1,7 @@
 function state(){ return window.AnalistaStore.getState(); }
+function normalizeImportValue(value) {
+  return String(value || '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
 // ───────────────────────────────────────────────────────────────────
 //  7-B. IMPORTAÇÃO DE ENDEREÇOS (com capacidade_paletes)
 // ───────────────────────────────────────────────────────────────────
@@ -181,14 +184,14 @@ function renderColMapper() {
       headers.map((h, i) => {
         const ex = rows[0] ? String(rows[0][i] ?? '').trim().slice(0, 20) : '';
         const sel = (detected !== undefined && detected === i) ? ' selected' : '';
-        return `<option value="${i}"${sel}>${h}${ex ? ` · ${ex}` : ''}</option>`;
+        return `<option value="${i}"${sel}>${escHTML(h)}${ex ? ` · ${escHTML(ex)}` : ''}</option>`;
       }).join('');
   };
 
   document.getElementById('end-mapper-content').innerHTML = `
     <div class="mapper-wrap">
       <div style="margin-bottom:10px">
-        <div style="font-weight:700;font-size:.88rem">📄 ${filename}</div>
+        <div style="font-weight:700;font-size:.88rem">📄 ${escHTML(filename)}</div>
         <div style="font-size:.7rem;color:var(--muted);margin-top:2px">${rows.length.toLocaleString('pt-BR')} linhas · ${headers.length} colunas detectadas</div>
       </div>
 
@@ -313,17 +316,17 @@ function updateMapperPreview() {
     const partsHtml = parts.map((p, i) => p ? `
       <span class="addr-part" style="background:${PCOLORS[i]||'#f1f5f9'}">
         <span class="addr-part-lbl" style="color:${PTXT[i]||'#64748b'}">${PLABELS[i]||'P'+(i+1)}</span>
-        <span class="addr-part-val" style="color:${PTXT[i]||'#1e293b'}">${p}</span>
+        <span class="addr-part-val" style="color:${PTXT[i]||'#1e293b'}">${escHTML(p)}</span>
       </span>` : '').join('');
 
     const nomeLocalVal = _getMapVal(row, 'nome_local');
     const extras = [];
-    if (nomeLocalVal !== '') extras.push(`🏭 local: <strong>${nomeLocalVal}</strong>`);
-    if (capVal !== '') extras.push(`🏗 cap: <strong>${capVal}</strong>`);
-    if (ativoVal !== '') extras.push(`ativo: ${ativoVal}`);
+    if (nomeLocalVal !== '') extras.push(`🏭 local: <strong>${escHTML(nomeLocalVal)}</strong>`);
+    if (capVal !== '') extras.push(`🏗 cap: <strong>${escHTML(capVal)}</strong>`);
+    if (ativoVal !== '') extras.push(`ativo: ${escHTML(ativoVal)}`);
 
     return `<div class="addr-preview-row">
-      <div class="addr-code">${endereco}
+      <div class="addr-code">${escHTML(endereco)}
         ${extras.length ? `<span style="font-size:.68rem;color:var(--muted);font-weight:400;margin-left:8px">${extras.join(' · ')}</span>` : ''}
       </div>
       <div class="addr-parts">${partsHtml || '<span style="font-size:.72rem;color:var(--warn)">⚠️ Endereço sem partes reconhecidas — verifique o separador "."</span>'}</div>
@@ -410,8 +413,10 @@ function confirmarImportEnderecos() {
     let tipoEndereco = 'FISICO';
     const selTipoEnd = document.getElementById('map-sel-tipo_endereco');
     if (selTipoEnd && selTipoEnd.value !== '') {
-      const rawTipoEnd = String(row[parseInt(selTipoEnd.value)] ?? '').trim().toUpperCase();
-      if (rawTipoEnd === 'VIRTUAL' || rawTipoEnd === 'FISICO') tipoEndereco = rawTipoEnd;
+      const rawTipoEnd = normalizeImportValue(row[parseInt(selTipoEnd.value)] ?? '');
+      const cleanedTipoEnd = rawTipoEnd.replace(/[^A-Z0-9]/g, '');
+      if (/^(VIRTUAL|VIRT|V)$/.test(cleanedTipoEnd)) tipoEndereco = 'VIRTUAL';
+      else if (/^(FISICO|FISICA|F)$/.test(cleanedTipoEnd)) tipoEndereco = 'FISICO';
     }
 
     // ── Contabiliza no inventário ───────────────────────────────────────
@@ -636,13 +641,13 @@ function renderSelEnd() {
   lista.innerHTML = filtrados.map(setor => {
     const count = state().enderecosPorSetor[setor].length;
     const ativo = state().ui.selecionadosSetores.has(setor);
-    return `<div onclick="toggleSelSetor('${setor.replace(/'/g,"\\'")}',this)"
+    return `<div onclick="toggleSelSetor('${setor.replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;')}',this)"
       style="display:flex;align-items:center;gap:12px;padding:11px 16px;border-bottom:1px solid var(--border);cursor:pointer;background:${ativo?'#eff6ff':'#fff'};transition:background .12s">
       <div style="width:18px;height:18px;border-radius:4px;border:2px solid ${ativo?'var(--accent)':'#d1d5db'};background:${ativo?'var(--accent)':'#fff'};display:flex;align-items:center;justify-content:center;flex-shrink:0">
         ${ativo?'<span style="color:#fff;font-size:10px;font-weight:800">✓</span>':''}
       </div>
       <div style="flex:1">
-        <div style="font-weight:600;font-size:.83rem">${setor}</div>
+        <div style="font-weight:600;font-size:.83rem">${escHTML(setor)}</div>
         <div style="font-size:.7rem;color:var(--muted);margin-top:1px">${count} endereços</div>
       </div>
       <span class="badge ${ativo?'b-blue':'b-gray'}">${count}</span>

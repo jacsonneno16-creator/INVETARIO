@@ -14,6 +14,9 @@ function _dashContagens(inventarioId){
     !c._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(c.status||'').toUpperCase())
   );
 }
+function _dashLocalName(e){
+  return String(e?.setor || e?.local || e?.nome_local || e?.nomeLocal || e?.local_area || e?.local_estoque || 'SEM LOCAL').trim() || 'SEM LOCAL';
+}
 // ───────────────────────────────────────────────────────────────────
 //  11. RENDERIZAÇÃO — DASHBOARD
 // ───────────────────────────────────────────────────────────────────
@@ -43,7 +46,7 @@ function renderDashboardInventario() {
   if (fInvEl) {
     const cur = fInvEl.value;
     fInvEl.innerHTML = '<option value="">Todos os inventários ativos</option>' +
-      getInventariosAtivos().map(i => `<option value="${i.id}" ${i.id===cur?'selected':''}>${i.codigo} — ${i.nome}</option>`).join('');
+      getInventariosAtivos().map(i => `<option value="${i.id}" ${i.id===cur?'selected':''}>${escHTML(i.codigo)} — ${escHTML(i.nome)}</option>`).join('');
     if (cur) fInvEl.value = cur;
   }
 
@@ -56,13 +59,13 @@ function renderDashboardInventario() {
   if (fRuaEl) {
     const cur = fRuaEl.value;
     const ruas = [...new Set(endsBaseAtivos.map(e => e.rua || extrairRua(e.endereco) || 'SEM RUA'))].sort((a,b)=>a.localeCompare(b,'pt-BR',{numeric:true}));
-    fRuaEl.innerHTML = '<option value="">Todas as ruas</option>' + ruas.map(r=>`<option value="${r}" ${r===cur?'selected':''}>Rua ${r}</option>`).join('');
+    fRuaEl.innerHTML = '<option value="">Todas as ruas</option>' + ruas.map(r=>`<option value="${escHTML(r)}" ${r===cur?'selected':''}>Rua ${escHTML(r)}</option>`).join('');
     if (cur) fRuaEl.value = cur;
   }
   if (fLocalEl) {
     const cur = fLocalEl.value;
-    const locais = [...new Set(endsBaseAtivos.map(e => e.setor || 'SEM LOCAL'))].sort();
-    fLocalEl.innerHTML = '<option value="">Todos os locais</option>' + locais.map(l=>`<option value="${l}" ${l===cur?'selected':''}>${l}</option>`).join('');
+    const locais = [...new Set(endsBaseAtivos.map(_dashLocalName))].sort((a,b)=>a.localeCompare(b,'pt-BR',{numeric:true}));
+    fLocalEl.innerHTML = '<option value="">Todos os locais</option>' + locais.map(l=>`<option value="${escHTML(l)}" ${l===cur?'selected':''}>${escHTML(l)}</option>`).join('');
     if (cur) fLocalEl.value = cur;
   }
 
@@ -73,7 +76,7 @@ function renderDashboardInventario() {
   // Endereços filtrados por rua/local
   let endsFiltered = endsBaseAtivos;
   if (fRua)   endsFiltered = endsFiltered.filter(e => (e.rua || extrairRua(e.endereco) || 'SEM RUA') === fRua);
-  if (fLocal) endsFiltered = endsFiltered.filter(e => (e.setor || 'SEM LOCAL') === fLocal);
+  if (fLocal) endsFiltered = endsFiltered.filter(e => _dashLocalName(e) === fLocal);
 
   const endsFilteredSet = new Set(endsFiltered.map(e => e.endereco));
 
@@ -112,7 +115,7 @@ function renderDashboardInventario() {
     if (fRua || fLocal) {
       const end = state().enderecosLista.find(e => e.endereco === c.endereco) || {};
       const rua = end.rua || extrairRua(c.endereco) || 'SEM RUA';
-      const local = end.setor || 'SEM LOCAL';
+      const local = _dashLocalName(end);
       if (fRua && rua !== fRua) return false;
       if (fLocal && local !== fLocal) return false;
     }
@@ -127,7 +130,7 @@ function renderDashboardInventario() {
 
   document.getElementById('kd-inventarios').textContent  = invsConsiderados.length;
   const totalCadastradosCard = (fRua || fLocal)
-    ? endsBaseTodos.filter(e => (!fRua || (e.rua || extrairRua(e.endereco) || 'SEM RUA') === fRua) && (!fLocal || (e.setor || 'SEM LOCAL') === fLocal)).length
+    ? endsBaseTodos.filter(e => (!fRua || (e.rua || extrairRua(e.endereco) || 'SEM RUA') === fRua) && (!fLocal || _dashLocalName(e) === fLocal)).length
     : endsBaseTodos.length;
   document.getElementById('kd-enderecos').textContent    = totalCadastradosCard.toLocaleString('pt-BR');
   document.getElementById('kd-end-contados').textContent = endContadosTotal.toLocaleString('pt-BR');
@@ -291,7 +294,7 @@ function _renderDashRuas(endsBase, invsConsiderados) {
     const color = pct >= 80 ? 'green' : pct >= 40 ? 'orange' : 'red';
     return `<div style="margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-        <span style="font-size:.78rem;font-weight:600">${rua}</span>
+        <span style="font-size:.78rem;font-weight:600">${escHTML(rua)}</span>
         <span style="font-size:.7rem;color:var(--muted);font-family:var(--mono)">${d.contados}/${d.total} · ${pct}%</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
@@ -318,7 +321,7 @@ function _renderDashLocais(endsBase, invsConsiderados) {
 
   const locais = {};
   endsBase.forEach(e => {
-    const local = e.setor || 'SEM LOCAL';
+    const local = _dashLocalName(e);
     if (!locais[local]) locais[local] = { total: 0, contados: 0 };
     locais[local].total++;
     if (contadosSet.has(e.endereco) || vaziosConfSet.has(e.endereco)) locais[local].contados++;
@@ -338,7 +341,7 @@ function _renderDashLocais(endsBase, invsConsiderados) {
     const color = pct >= 80 ? 'green' : pct >= 40 ? 'orange' : 'red';
     return `<div style="margin-bottom:10px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-        <span style="font-size:.78rem;font-weight:600">${local}</span>
+        <span style="font-size:.78rem;font-weight:600">${escHTML(local)}</span>
         <span style="font-size:.7rem;color:var(--muted);font-family:var(--mono)">${d.contados}/${d.total} · ${pct}%</span>
       </div>
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
@@ -588,7 +591,7 @@ function _renderDashboardCharts() {
   const ruas = _dashBuildBreakdown(dc.endsBase, dc.invsConsiderados, e => e.rua || extrairRua(e.endereco) || 'SEM RUA')
     .sort((a,b) => b.pendentes - a.pendentes || a.pct - b.pct)
     .slice(0,6);
-  const locais = _dashBuildBreakdown(dc.endsBase, dc.invsConsiderados, e => e.setor || 'SEM LOCAL')
+  const locais = _dashBuildBreakdown(dc.endsBase, dc.invsConsiderados, e => _dashLocalName(e))
     .sort((a,b) => b.pendentes - a.pendentes || a.pct - b.pct)
     .slice(0,6);
   const contagensNormais = dc.contagensConsideradas.filter(c => !_dashIsRecontagem(c));
@@ -628,7 +631,7 @@ function _renderDashboardCharts() {
   const locaisHtml = _dashInventoryColumns(locais, 'dashApplyLocalFilter');
 
   const operadoresHtml = operadores.length ? operadores.map((op, idx) => `
-    <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start;padding:10px 12px;border-radius:12px" onclick="dashApplyOperadorFilter(${JSON.stringify(op.operador)})">
+    <button class="btn btn-ghost btn-sm" style="width:100%;justify-content:flex-start;padding:10px 12px;border-radius:12px" onclick="dashApplyOperadorFilter(${JSON.stringify(op.operador).replace(/"/g,'&quot;')})">
       <div style="display:flex;align-items:center;gap:10px;width:100%">
         <div style="width:28px;height:28px;border-radius:10px;background:${idx===0?'var(--orange-soft)':'var(--surface-3)'};display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:.72rem;font-weight:700;color:${idx===0?'var(--orange)':'var(--muted)'}">${idx+1}</div>
         <div style="flex:1;min-width:0;text-align:left">
@@ -963,7 +966,7 @@ function _dashAudBarClick(tipo,valor){
   else if(tipo==='operador')_dashAudFiltroOperador=_dashAudFiltroOperador===valor?'':valor;
   renderDashboardAuditoria();
 }
-function _dashAudBars(arr,tipo,lim=10){if(!arr.length)return'<div class="empty" style="padding:20px"><div class="empty-title">Sem dados</div></div>';const max=Math.max(...arr.map(x=>x[1]),1);return arr.slice(0,lim).map(([l,v])=>`<button class="btn btn-ghost btn-sm" onclick="_dashAudBarClick('${tipo}','${String(l).replace(/'/g,"\\'")}')" style="width:100%;display:block;text-align:left;padding:9px 10px;margin-bottom:7px"><div style="display:flex;justify-content:space-between;gap:8px"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_dashSafe(l)}</b><span class="mono">${v}</span></div><div style="height:9px;background:var(--border);border-radius:99px;margin-top:6px;overflow:hidden"><div style="height:100%;width:${Math.max(4,Math.round(v/max*100))}%;background:linear-gradient(90deg,var(--orange),#ef4444);border-radius:99px"></div></div></button>`).join('');}
+function _dashAudBars(arr,tipo,lim=10){if(!arr.length)return'<div class="empty" style="padding:20px"><div class="empty-title">Sem dados</div></div>';const max=Math.max(...arr.map(x=>x[1]),1);return arr.slice(0,lim).map(([l,v])=>`<button class="btn btn-ghost btn-sm" onclick="_dashAudBarClick('${tipo}','${String(l).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;')}')" style="width:100%;display:block;text-align:left;padding:9px 10px;margin-bottom:7px"><div style="display:flex;justify-content:space-between;gap:8px"><b style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_dashSafe(l)}</b><span class="mono">${v}</span></div><div style="height:9px;background:var(--border);border-radius:99px;margin-top:6px;overflow:hidden"><div style="height:100%;width:${Math.max(4,Math.round(v/max*100))}%;background:linear-gradient(90deg,var(--orange),#ef4444);border-radius:99px"></div></div></button>`).join('');}
 function renderDashboardAuditoria(){
   const lista=_dashAudFiltrados(), total=lista.length, ok=lista.filter(i=>_dashAudStatus(i)==='OK').length, div=lista.filter(i=>_dashAudStatus(i)==='DIVERGENTE').length, vaz=lista.filter(i=>_dashAudStatus(i)==='ENDERECO_VAZIO').length, pend=lista.filter(i=>_dashAudStatus(i)==='PENDENTE').length, audit=total-pend, taxa=total?Math.round(audit/total*100):0, acur=audit?Math.round(ok/audit*100):0;
   const ops=new Set(lista.map(i=>i.operadorNome||i.operador_nome||i.operadorId||i.operador_id).filter(Boolean)).size;

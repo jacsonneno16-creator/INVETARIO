@@ -184,10 +184,10 @@ function _renderTabelaColetores(cols) {
       const statusInfo = _statusColetor(col);
       return `<tr>
         <td>
-          <div style="font-weight:800;font-family:var(--mono);font-size:.9rem">${col.nome_exibicao || ('Coletor ' + col.numero)}</div>
+          <div style="font-weight:800;font-family:var(--mono);font-size:.9rem">${esc(col.nome_exibicao || ('Coletor ' + col.numero))}</div>
           <div class="mono" style="font-size:.62rem;color:var(--muted)">${col.device_id.slice(0,14)}…</div>
         </td>
-        <td>${col.operador_atual ? `<div style="font-weight:600;font-size:.82rem">${col.operador_atual}</div>${op?`<div style="font-size:.67rem;color:var(--muted)">Sessão ativa</div>`:''}` : '<span style="color:var(--muted);font-size:.78rem;font-style:italic">Nenhum</span>'}</td>
+        <td>${col.operador_atual ? `<div style="font-weight:600;font-size:.82rem">${esc(col.operador_atual)}</div>${op?`<div style="font-size:.67rem;color:var(--muted)">Sessão ativa</div>`:''}` : '<span style="color:var(--muted);font-size:.78rem;font-style:italic">Nenhum</span>'}</td>
         <td style="font-size:.78rem">${op?.inventario_nome || '<span style="color:var(--muted)">—</span>'}</td>
         <td class="mono" style="text-align:center;font-size:.78rem">${col.contagens_enviadas||0} enviadas${pendentes>0?`<br><span class="badge b-red" style="margin-top:2px;display:inline-block">${pendentes} pendente(s)</span>`:''}</td>
         <td style="font-size:.73rem;color:var(--muted)">${col.ultimo_ping?new Date(col.ultimo_ping).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—'}</td>
@@ -234,7 +234,7 @@ function abrirConfigColetor(colId) {
   const col = state().coletores.find(c => c.id === colId);
   if (!col) return;
 
-  const nomeAtual = col.nome_exibicao || ('Coletor ' + col.numero);
+  const nomeAtual = esc(col.nome_exibicao || ('Coletor ' + col.numero));
   const ap = col.aprovado || 'pendente';
   const isOnline = col.status === 'online';
   const statusInfo = _statusColetor(col);

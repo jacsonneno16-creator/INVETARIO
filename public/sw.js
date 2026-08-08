@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260806-v296-acoes-estaveis';
+var CACHE='dt-inventario-20260808-v297-cache-fix';
 var PRECACHE=[
   '/',
   '/index.html',

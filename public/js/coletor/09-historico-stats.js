@@ -63,9 +63,9 @@ function renderHistorico() {
       border-radius:10px;margin-bottom:6px">
       <div style="font-size:1.1rem;margin-top:1px">${div ? '⚠️' : '✅'}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:.82rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.descricao}</div>
+        <div style="font-size:.82rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHTML(c.descricao)}</div>
         <div style="font-size:.68rem;color:var(--muted);margin-top:2px">
-          📍 ${c.endereco} &nbsp;·&nbsp; CP ${c.capa} &nbsp;·&nbsp; Val ${c.validade}
+          📍 ${escHTML(c.endereco)} &nbsp;·&nbsp; CP ${escHTML(c.capa)} &nbsp;·&nbsp; Val ${escHTML(c.validade)}
         </div>
         ${div ? `<div style="font-size:.68rem;color:var(--warn);margin-top:2px">Esperado: ${c.quantidade_esperada} · Contado: ${c.quantidade}</div>` : ''}
         ${c.bateu_auditoria ? `<div style="font-size:.68rem;color:var(--success);margin-top:2px;font-weight:700">✅ Bateu com auditoria</div>` : ''}

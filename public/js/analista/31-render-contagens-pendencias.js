@@ -235,7 +235,7 @@ function renderContagens() {
   if (selInv && !selInv.options.length || (selInv && selInv.options.length === 1)) {
     const cur = selInv.value;
     selInv.innerHTML = '<option value="">Todos os inventários</option>' +
-      state().inventarios.map(i => `<option value="${i.id}" ${i.id === cur ? 'selected' : ''}>${i.codigo} — ${i.nome}</option>`).join('');
+      state().inventarios.map(i => `<option value="${i.id}" ${i.id === cur ? 'selected' : ''}>${escHTML(i.codigo)} — ${escHTML(i.nome)}</option>`).join('');
     if (cur) selInv.value = cur;
   }
 
@@ -316,12 +316,12 @@ function renderContagens() {
   const selRua = document.getElementById('cont-frua');
   if (selRua) {
     const ruas = [...new Set(state().contagens.map(c => { const i = getEnderecoInfo(c.endereco); return i?.rua || '—'; }).filter(Boolean))].sort();
-    selRua.innerHTML = '<option value="">Todas as ruas</option>' + ruas.map(r => `<option value="${r}" ${r===fRua?'selected':''}>${r}</option>`).join('');
+    selRua.innerHTML = '<option value="">Todas as ruas</option>' + ruas.map(r => `<option value="${escHTML(r)}" ${r===fRua?'selected':''}>${escHTML(r)}</option>`).join('');
   }
   const selOp = document.getElementById('cont-foperador');
   if (selOp) {
     const ops = [...new Set(state().contagens.map(c => c.operador).filter(Boolean))].sort();
-    selOp.innerHTML = '<option value="">Todos os operadores</option>' + ops.map(o => `<option value="${o}" ${o===fOp?'selected':''}>${o}</option>`).join('');
+    selOp.innerHTML = '<option value="">Todos os operadores</option>' + ops.map(o => `<option value="${escHTML(o)}" ${o===fOp?'selected':''}>${escHTML(o)}</option>`).join('');
   }
 
   if (!dados.length) {
@@ -711,16 +711,17 @@ function renderPendencias() {
   if (!inv) return;
 
   // Usar state().enderecosLista como base oficial de endereços
-  const conts   = (state().contagens || []).filter(c => String(c.inventario_id || c.inventarioId || '') === String(invId) && !c._excluida && c.status !== 'ESTORNADA');
+  const st = state();
+  const conts = (st.contagens || []).filter(c => String(c.inventario_id || c.inventarioId || '') === String(invId) && !c._excluida && c.status !== 'ESTORNADA');
   const endsContadosSet = new Set(conts.filter(c => !_isVazio(c)).map(c => c.endereco));
   const endsVaziosConfSet = new Set(conts.filter(c => _isVazio(c) && c.status !== 'ESTORNADA').map(c => c.endereco));
+  const enderecosLista = st.enderecosLista || [];
 
-  // Usar somente os endereços pertencentes ao inventário selecionado.
   const selecionados = Array.isArray(inv.enderecos_selecionados) ? inv.enderecos_selecionados : [];
   const selecionadosSet = new Set(selecionados.map(x => String(typeof x === 'string' ? x : (x.endereco || x.id || ''))).filter(Boolean));
   const baseInventario = selecionadosSet.size
-    ? (state().enderecosLista || []).filter(e => selecionadosSet.has(String(e.endereco || e.id || '')))
-    : (Array.isArray(inv.base) && inv.base.length ? inv.base : (state().enderecosLista || []));
+    ? enderecosLista.filter(e => selecionadosSet.has(String(e.endereco || e.id || '')))
+    : (Array.isArray(inv.base) && inv.base.length ? inv.base : enderecosLista);
 
   // Enriquecer a base do inventário com status de contagem
   const lista = baseInventario.map(e => {
@@ -818,7 +819,7 @@ function renderPendencias() {
     ${limiteAting > 0 ? `<div class="alert warn" style="margin:8px 16px 0;border-radius:8px">🔒 ${limiteAting} endereço(s) com limite de paletes atingido.</div>` : ''}
     <div id="pend-selection-bar" style="display:${_pendSelecionados.size?'flex':'none'};align-items:center;justify-content:space-between;gap:12px;margin:12px 16px 0;padding:10px 12px;border:1px solid rgba(232,117,26,.28);background:rgba(232,117,26,.06);border-radius:10px"><strong id="pend-selection-count">${_pendSelecionados.size} endereço(s) selecionado(s)</strong><button class="btn btn-primary btn-sm" onclick="abrirAtribuirPendencias()">👥 Atribuir selecionados</button></div>
     <div class="tbl-wrap"><table>
-      <thead><tr><th style="width:38px"><input type="checkbox" onchange="pendToggleTodos(this.checked)" title="Selecionar pendentes"></th><th>Endereço</th><th>Produto</th><th>Quantidade total</th><th>Paletes do produto</th><th>Local/Área</th><th>Rua</th><th>Nível</th><th>Tipo</th><th>Paletes (usados/cap)</th><th>Operador atribuído</th><th>Status</th><th>Ação</th></tr></thead>
+      <thead><tr><th style="width:38px"><input type="checkbox" onchange="pendToggleTodos(this.checked)" title="Selecionar pendentes"></th><th>Endereço</th><th>Produto</th><th>Quantidade total</th><th>Paletes do produto</th><th>Local/Área</th><th>Operador atribuído</th><th>Status</th><th>Ação</th></tr></thead>
       <tbody>
         ${filtrado.flatMap(e => {
           const s = statusLabel[e.status_pend] || { cls:'b-gray', txt: e.status_pend };
@@ -830,14 +831,10 @@ function renderPendencias() {
           return produtos.map((produto, indiceProduto) => `<tr style="${e.inativo || e.limiteTingido ? 'opacity:.6' : ''}">
             <td><input class="pend-row-check" data-endereco="${escHTML(e.endereco)}" type="checkbox" ${_pendSelecionados.has(e.endereco)?'checked':''} ${podeAtribuir?'':'disabled'} onchange="pendToggleEndereco('${escHTML(e.endereco)}',this.checked)"></td>
             <td class="mono">${escHTML(e.endereco)}</td>
-            <td><button type="button" class="btn btn-ghost btn-sm" style="text-align:left;white-space:normal;justify-content:flex-start;padding:5px 7px" onclick="abrirDetalheProdutoPendencia('${escHTML(invId)}','${escHTML(e.endereco)}',${JSON.stringify(produto.chave)})"><span><span class="mono" style="font-weight:850">${escHTML(produto.codigo)}</span>${produto.descricao?`<span style="display:block;font-size:.69rem;color:var(--muted);margin-top:2px">${escHTML(produto.descricao)}</span>`:''}</span></button></td>
+            <td><div style="text-align:left;white-space:normal;cursor:pointer" onclick="abrirDetalheProdutoPendencia('${escHTML(invId)}','${escHTML(e.endereco)}',${JSON.stringify(produto.chave)})"><span><span class="mono" style="font-weight:850">${escHTML(produto.codigo)}</span>${produto.descricao?`<span style="display:block;font-size:.69rem;color:var(--muted);margin-top:2px">${escHTML(produto.descricao)}</span>`:''}</span></div></td>
             <td class="mono" style="font-weight:900">${escHTML(produto.quantidade_total)}</td>
-            <td><button type="button" class="btn btn-ghost btn-sm" onclick="abrirDetalheProdutoPendencia('${escHTML(invId)}','${escHTML(e.endereco)}',${JSON.stringify(produto.chave)})">📦 ${produto.paletes.length} — detalhar</button></td>
+            <td><div role="button" style="text-align:left;white-space:normal;justify-content:flex-start;padding:0;margin:0;cursor:pointer" onclick="abrirDetalheProdutoPendencia('${escHTML(invId)}','${escHTML(e.endereco)}',${JSON.stringify(produto.chave)})">📦 ${produto.paletes.length} — detalhar</div></td>
             <td>${escHTML(e.setor || '—')}</td>
-            <td>${escHTML(e.rua || '—')}</td>
-            <td>${escHTML(e.nivel || '—')}</td>
-            <td>${escHTML(e.tipo || '—')}</td>
-            <td class="mono" style="font-weight:700;color:${e.limiteTingido?'var(--danger)':'inherit'}">${e.usados}/${cap}</td>
             <td>${op ? `<span class="badge b-purple">👤 ${escHTML(opCurto)}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
             <td><span class="badge ${s.cls}">${s.txt}</span></td>
             <td>${podeAtribuir ? (op ? `<button class="btn btn-ghost btn-sm" onclick="desvincularPendencia('${escHTML(e.endereco)}')">Desvincular</button>` : `<button class="btn btn-primary btn-sm" onclick="abrirAtribuirPendencias('${escHTML(e.endereco)}')">👥 Atribuir</button>`) : '—'}</td>

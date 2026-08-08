@@ -27,8 +27,29 @@ const oldMapper=window.confirmarMapeamentoInv; if(oldMapper)window.confirmarMape
 function productRows(inv){
  const base=inv?.base||[]; const conts=(st().contagens||[]).filter(c=>c.inventario_id===inv.id&&c.status!=='ESTORNADA'); const map=new Map();
  const keyOf=x=>String(x.codigo_produto||x.produto_codigo||x.gtin||x.gtinLido||x.codigoLido||'SEM-CODIGO').trim();
- for(const r of base){const k=keyOf(r);if(!map.has(k))map.set(k,{codigo:k,descricao:r.descricao_produto||r.descricao||'Produto',fator:n(r.fator_caixa)||1,sistema:0,contado:0,enderecos:new Set(),tipo:r.tipo_produto||'NAO CLASSIFICADO'});const o=map.get(k);o.sistema+=n(r.total_unidades_sistema)||(n(r.quantidade_esperada)*(n(r.fator_caixa)||1));}
- for(const c of conts){if(c.tipo_contagem==='VAZIO'||c.tipo==='VAZIO_CONFIRMADO')continue;const k=keyOf(c);if(!map.has(k))map.set(k,{codigo:k,descricao:c.descricao_produto||c.produtoLidoNome||c.descricao||'Produto não previsto',fator:n(c.fator_caixa)||1,sistema:0,contado:0,enderecos:new Set(),tipo:'EXTRA'});const o=map.get(k);const un=n(c.quantidade_unidades)||(n(c.quantidade)*(String(c.tipo_bipagem||'').toUpperCase()==='DUN'?(n(c.fator_caixa)||1):1));o.contado+=un;if(c.endereco)o.enderecos.add(c.endereco);}
+ for(const r of base){
+   const k=keyOf(r);
+   const factorImported=n(r.fator_caixa||r.fatorCaixa);
+   const productMaster=window.DTProdutos?.buscarSync?.(k);
+   const factorMaster=productMaster?.encontrado ? n(productMaster.fator_caixa||productMaster.fatorCaixa) : 0;
+   const fator=factorImported||factorMaster||1;
+   if(!map.has(k)) map.set(k,{codigo:k,descricao:r.descricao_produto||r.descricao||'Produto',fator:fator,sistema:0,contado:0,enderecos:new Set(),tipo:r.tipo_produto||'NAO CLASSIFICADO'});
+   const o=map.get(k);
+   o.sistema += n(r.total_unidades_sistema) || (n(r.quantidade_esperada) * fator);
+ }
+ for(const c of conts){
+   if(c.tipo_contagem==='VAZIO'||c.tipo==='VAZIO_CONFIRMADO') continue;
+   const k=keyOf(c);
+   const factorImported=n(c.fator_caixa||c.fatorCaixa);
+   const productMaster=window.DTProdutos?.buscarSync?.(k);
+   const factorMaster=productMaster?.encontrado ? n(productMaster.fator_caixa||productMaster.fatorCaixa) : 0;
+   const fator=factorImported||factorMaster||1;
+   if(!map.has(k)) map.set(k,{codigo:k,descricao:c.descricao_produto||c.produtoLidoNome||c.descricao||'Produto não previsto',fator:fator,sistema:0,contado:0,enderecos:new Set(),tipo:'EXTRA'});
+   const o=map.get(k);
+   const un = n(c.quantidade_unidades) || (n(c.quantidade) * (String(c.tipo_bipagem||'').toUpperCase()==='DUN' ? fator : 1));
+   o.contado += un;
+   if(c.endereco) o.enderecos.add(c.endereco);
+ }
  return [...map.values()].map(o=>({...o,diferenca:o.contado-o.sistema})).sort((a,b)=>Math.abs(b.diferenca)-Math.abs(a.diferenca));
 }
 function renderProductView(){
