@@ -113,7 +113,13 @@ service cloud.firestore {
         (
           data.keys().hasAny(['loja_id']) ? data.loja_id :
           (
-            data.keys().hasAny(['loja']) ? data.loja : null
+            data.keys().hasAny(['loja']) ? data.loja :
+            (
+              // Documentos de dt_inventarios guardam a loja em 'loja_principal'
+              // (não 'loja'/'loja_id'/'lojaId') — sem este ramo,
+              // canAccessDocumentStore() nunca reconhece a loja do inventário.
+              data.keys().hasAny(['loja_principal']) ? data.loja_principal : null
+            )
           )
         );
     }
@@ -291,6 +297,14 @@ service cloud.firestore {
         resource.data.administrador_mestre != true;
     }
 
+    // Configuração de integrações externas (ex.: Bluesoft) compartilhada por
+    // toda a empresa — salva uma única vez e usada automaticamente em
+    // qualquer dispositivo/sessão, sem precisar reconfigurar por loja.
+    match /dt_config/{docId} {
+      allow read: if canUseAnalista();
+      allow write: if admin();
+    }
+
     match /lojas/{lojaId} {
       allow read: if canAccessStore(lojaId);
       allow create, update: if admin() && validText(request.resource.data.nome, 120);
@@ -384,11 +398,18 @@ service cloud.firestore {
             request.resource.data.versao == resource.data.versao + 1
           );
 
-        allow delete: if false;
+        // Exclusão permanente pedida explicitamente pelo usuário (v305):
+        // "Excluir" deixou de arquivar e passou a apagar de verdade — sem
+        // isso a chamada .delete() feita por excluirInventario() falhava
+        // silenciosamente contra esta regra.
+        allow delete: if canAccessStore(lojaId) &&
+          hasPermission('inventarios', 'excluir');
 
         match /base_chunks/{chunkId} {
           allow read: if canAccessStore(lojaId);
 
+          // "write" já cobre delete — usado pela exclusão permanente do
+          // inventário para apagar os chunks da base.
           allow write: if canAccessStore(lojaId) &&
             hasPermission('inventarios', 'editar');
         }
@@ -413,6 +434,100 @@ service cloud.firestore {
 
         allow write: if canAccessStore(lojaId) &&
           hasPermission('enderecos', 'editar');
+      }
+
+      // Unificação com o Sistema de Produção (fase 2) — receita/BOM por
+      // produto. Coleção própria (prefixo producao_), separada do catálogo
+      // dt_produtos (que é pra contagem física, não pra receita).
+      match /producao_produtos/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('producao-ficha-tecnica', 'editar');
+      }
+
+      match /producao_ficha_tecnica/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('producao-ficha-tecnica', 'editar');
+      }
+
+      // Unificação com o Sistema de Produção (fase 3a) — cadastro de
+      // máquinas + ocupação semanal (ocupação fica em 0% até a fase da
+      // Programação existir).
+      match /producao_maquinas/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('producao-maquinas', 'editar');
+      }
+
+      // Unificação com o Sistema de Produção (fase 3b) — lista/cadastro de
+      // Ordens de Produção. A partir da fase 3d, o Gantt também escreve
+      // aqui (arrastar barra = mudar data; reordenar fila = mudar
+      // sortOrder), por isso aceita a permissão de qualquer um dos dois
+      // módulos que dão UI de edição pra este registro.
+      match /producao_registros/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow write: if canAccessStore(lojaId) && (
+          hasPermission('producao-programacao', 'editar') ||
+          hasPermission('producao-gantt', 'editar') ||
+          hasPermission('producao-gantt', 'reordenar') ||
+          hasPermission('producao-prog-automatica', 'executar') ||
+          hasPermission('producao-realizado', 'editar')
+        );
+      }
+
+      // Unificação com o Sistema de Produção (fase 3f) — apontamento diário
+      // de produção real por OP (produzido x programado), usado por
+      // Realizado e por Dashboard/Relatórios pra calcular "Realizado".
+      match /producao_apontamentos/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('producao-realizado', 'editar');
+      }
+
+      // Unificação com o Sistema de Produção (fase 3d) — projeção manual de
+      // vendas por produto (entrada do motor simplificado de Programação
+      // Automática).
+      match /producao_projecao/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('producao-projecao', 'editar');
+      }
+
+      // Unificação com o Sistema de Produção (fase 3d) — cadastro de
+      // mão-de-obra "sem login". Corrigido em relação à original: escopado
+      // por loja (a original guardava isso numa coleção global sem loja).
+      match /producao_funcionarios/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('producao-funcionarios', 'editar');
+      }
+
+      // Unificação com o Sistema de Produção (fase 3e) — tempo de troca
+      // (setup) entre produtos numa mesma máquina; usado pelo motor de
+      // agenda pra encaixar o tempo de setup na fila.
+      match /producao_setup/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('producao-setup', 'editar');
+      }
+
+      // Unificação com o Sistema de Produção (fase 3e) — config pequena por
+      // loja (hoje só os 3 atalhos de turno T1/T2/T3, editáveis). Escrita
+      // usa a mesma permissão de Máquinas, já que é editada de lá.
+      match /producao_config/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('producao-maquinas', 'editar');
       }
 
       match /dt_operadores/{docId} {
@@ -694,22 +809,43 @@ service cloud.firestore {
     match /dt_produtos/{docId} {
       allow read: if active();
 
+      // Além de quem gerencia produtos, quem cria/edita inventário também
+      // pode gravar aqui — fsPublicarProdutos() escreve nesta coleção como
+      // efeito colateral automático de criarInventario(), não como uma ação
+      // deliberada de gestão de produtos, e falhava com permission-denied
+      // para quem só tinha permissão de inventário.
       allow write: if hasPermission('produtos', 'editar') ||
-        hasPermission('produtos', 'importar');
+        hasPermission('produtos', 'importar') ||
+        hasPermission('inventarios', 'criar') ||
+        hasPermission('inventarios', 'editar');
     }
 
     match /dt_produtos_chunks/{docId} {
       allow read: if active();
 
+      // Além de quem gerencia produtos, quem cria/edita inventário também
+      // pode gravar aqui — fsPublicarProdutos() escreve nesta coleção como
+      // efeito colateral automático de criarInventario(), não como uma ação
+      // deliberada de gestão de produtos, e falhava com permission-denied
+      // para quem só tinha permissão de inventário.
       allow write: if hasPermission('produtos', 'editar') ||
-        hasPermission('produtos', 'importar');
+        hasPermission('produtos', 'importar') ||
+        hasPermission('inventarios', 'criar') ||
+        hasPermission('inventarios', 'editar');
     }
 
     match /dt_produtos_meta/{docId} {
       allow read: if active();
 
+      // Além de quem gerencia produtos, quem cria/edita inventário também
+      // pode gravar aqui — fsPublicarProdutos() escreve nesta coleção como
+      // efeito colateral automático de criarInventario(), não como uma ação
+      // deliberada de gestão de produtos, e falhava com permission-denied
+      // para quem só tinha permissão de inventário.
       allow write: if hasPermission('produtos', 'editar') ||
-        hasPermission('produtos', 'importar');
+        hasPermission('produtos', 'importar') ||
+        hasPermission('inventarios', 'criar') ||
+        hasPermission('inventarios', 'editar');
     }
 
     match /dt_atribuicoes_contagem/{docId} {
@@ -802,20 +938,30 @@ service cloud.firestore {
     }
 
     match /dt_inventarios/{docId} {
-      allow read: if admin() ||
+      // Antes disto exigia admin() junto da permissão — um analista não-admin
+      // com 'inventarios.editar' concedido (inclusive para arquivar/"excluir"
+      // um inventário, ou para fsPublicarInventario republicar) ficava
+      // bloqueado mesmo tendo a permissão certa.
+      //
+      // Uma primeira correção trocou admin() por canAccessDocumentStore()
+      // (o mesmo padrão de dt_auditorias), mas 'loja_principal' nos
+      // documentos de inventário vem VAZIO por padrão na criação
+      // (10-inventarios-negocio.js) — então a checagem de loja falhava e
+      // continuava bloqueando quem não tem acesso_todas_lojas. Como
+      // dt_produtos e dt_atribuicoes_contagem (mesmo nível, mesmo peso)
+      // já não fazem checagem de loja nenhuma, aqui segue o mesmo padrão:
+      // só a permissão decide.
+      allow read: if canUseAnalista() ||
         collectorCanReadOperationalDoc(resource.data);
 
-      allow create, update: if admin() &&
-        hasPermission('inventarios', 'editar');
+      allow create, update: if hasPermission('inventarios', 'editar');
 
       allow delete: if false;
 
       match /{nested=**} {
-        allow read: if admin() ||
-          canUseColetor();
+        allow read: if canUseColetor() || canUseAnalista();
 
-        allow write: if admin() &&
-          hasPermission('inventarios', 'editar');
+        allow write: if hasPermission('inventarios', 'editar');
       }
     }
 

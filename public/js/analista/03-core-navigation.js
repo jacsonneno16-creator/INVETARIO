@@ -17,6 +17,20 @@ const PAGE_NAMES = {
   coletores:        'Coletores / Operadores',
   auditoria:        'Auditoria',
   'importar-exportar': 'Importar / Exportar',
+  'producao-dashboard': 'Dashboard (Produção)',
+  'producao-ficha-tecnica': 'Ficha Técnica (Produção)',
+  'producao-maquinas': 'Máquinas (Produção)',
+  'producao-programacao': 'Programação (Produção)',
+  'producao-gantt': 'Gantt (Produção)',
+  'producao-realizado': 'Realizado (Produção)',
+  'producao-insumos': 'Insumos (Produção)',
+  'producao-projecao': 'Projeção de Vendas (Produção)',
+  'producao-prog-automatica': 'Programação Automática (Produção)',
+  'producao-funcionarios': 'Funcionários (Produção)',
+  'producao-relatorios': 'Relatórios (Produção)',
+  'producao-setup': 'Tempos de Setup (Produção)',
+  'producao-mapa-fabrica': 'Mapa da Fábrica (Produção)',
+  'producao-estoque': 'Estoque (Produção)',
 };
 
 let _currentPage = 'dashboard';
@@ -95,6 +109,20 @@ function renderPage(id) {
       case 'auditoria':          return _callPage('renderAuditoriaOperacional');
       case 'rastreabilidade':    return _callPage('renderRastreabilidade');
       case 'importar-exportar':  return _callPage('ieAbrirPagina');
+      case 'producao-dashboard':     return _callPage('renderProducaoDashboard');
+      case 'producao-ficha-tecnica': return _callPage('renderProducaoFichaTecnica');
+      case 'producao-maquinas':      return _callPage('renderProducaoMaquinas');
+      case 'producao-programacao':   return _callPage('renderProducaoProgramacao');
+      case 'producao-gantt':         return _callPage('renderProducaoGantt');
+      case 'producao-realizado':     return _callPage('renderProducaoRealizado');
+      case 'producao-insumos':       return _callPage('renderProducaoInsumos');
+      case 'producao-projecao':      return _callPage('renderProducaoProjecao');
+      case 'producao-prog-automatica': return _callPage('renderProducaoProgAutomatica');
+      case 'producao-funcionarios':  return _callPage('renderProducaoFuncionarios');
+      case 'producao-relatorios':    return _callPage('renderProducaoRelatorios');
+      case 'producao-setup':         return _callPage('renderProducaoSetup');
+      case 'producao-mapa-fabrica':  return _callPage('renderProducaoMapaFabrica');
+      case 'producao-estoque':       return _callPage('renderProducaoEstoque');
     }
   } catch (e) {
     console.error('[Navegação] Falha ao renderizar a página "' + id + '":', e);

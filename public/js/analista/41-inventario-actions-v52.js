@@ -105,26 +105,20 @@
           });
           if(global.AnalistaState&&global.AnalistaState.replaceSlice)global.AnalistaState.replaceSlice(chave,arr,{source:'excluirInventario-v80'});
         });
-        refresh();toast('Arquivando inventário…','i');
+        refresh();toast('Excluindo inventário e dados relacionados…','i');
         var raw=db();
         if(raw&&navigator.onLine){
           var ref=raw.collection(coll()).doc(id);
-          await raw.runTransaction(async function(transaction){
-            var snapshot=await transaction.get(ref);
-            if(!snapshot.exists) throw new Error('Inventário não encontrado no servidor.');
-            var remoto=snapshot.data()||{}, versao=Number(remoto.versao||0);
-            transaction.update(ref,{
-              status:'ARQUIVADO',
-              oculto_coletor:true,
-              excluido_logicamente:true,
-              arquivado_em:firebase.firestore.FieldValue.serverTimestamp(),
-              arquivado_por:global._currentAnalistaUser?.uid||global._currentAnalistaUser?.email||'',
-              versao:versao+1
-            });
-          });
+          // Ordem importa: primeiro apaga o que depende do inventário
+          // (contagens/divergências/recontagens e os chunks da base), só
+          // depois o documento principal — exclusão real e permanente, sem
+          // arquivamento e sem possibilidade de recuperação.
+          await apagarDocumentosRelacionados(inv);
+          await apagarColecaoEmLotes(ref.collection('base_chunks'));
+          await ref.delete();
         }
         try{global.AnalistaFirebaseService&&global.AnalistaFirebaseService.restart&&await global.AnalistaFirebaseService.restart();}catch(_e){ console.warn("[Erro tratado]", _e); }
-        refresh();toast('📦 Inventário arquivado. O histórico foi preservado.','s');
+        refresh();toast('🗑 Inventário excluído permanentemente.','s');
         return true;
       }catch(e){
         console.error('[v80 excluirInventario]',e);
@@ -134,9 +128,9 @@
         return false;
       }
     };
-    var msg='Arquivar o inventário “'+(inv.nome||inv.codigo||id)+'”? Ele sairá da operação, mas o histórico continuará disponível para auditoria e recuperação.';
+    var msg='Excluir PERMANENTEMENTE o inventário “'+(inv.nome||inv.codigo||id)+'”? Isso apaga o inventário e todas as contagens, divergências e recontagens ligadas a ele do Firebase. Não é possível desfazer.';
     if(typeof global.showConfirm==='function'){
-      global.showConfirm(msg,executar,{title:'Arquivar inventário',icon:'📦',okLabel:'Arquivar',okClass:'btn-danger'});return true;
+      global.showConfirm(msg,executar,{title:'Excluir inventário permanentemente',icon:'🗑',okLabel:'Excluir para sempre',okClass:'btn-danger'});return true;
     }
     if(confirm(msg))return executar();return false;
   }

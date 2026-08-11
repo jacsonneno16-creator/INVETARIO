@@ -635,9 +635,8 @@ function _pendIdPaleteBase(item, indice) {
   return String(item?.palete ?? item?.pallet ?? item?.numero_palete ?? item?.numeroPalete ?? item?.capa_palete ??
     item?.capa ?? item?.sscc ?? item?.lote ?? `Palete ${indice + 1}`).trim();
 }
-function _pendProdutosEndereco(inv, endereco) {
-  const norm = v => String(v ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const itens = (Array.isArray(inv?.base) ? inv.base : []).filter(item => norm(item?.endereco) === norm(endereco));
+const _pendNormEnd = v => String(v ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+function _pendAgruparItensBase(itens) {
   const grupos = new Map();
   itens.forEach((item, indice) => {
     const codigo = _pendCodigoProdutoBase(item);
@@ -650,6 +649,31 @@ function _pendProdutosEndereco(inv, endereco) {
     grupo.paletes.push({ identificador:_pendIdPaleteBase(item, indice), quantidade, item });
   });
   return [...grupos.values()].sort((a,b) => String(a.codigo).localeCompare(String(b.codigo), 'pt-BR', {numeric:true}));
+}
+// renderPendencias chama isto uma vez POR ENDEREÇO da lista — que agora, com
+// a base via API incluindo todos os endereços locais, pode ter milhares de
+// linhas. Escanear inv.base inteiro a cada endereço virava
+// endereços×base_do_inventário operações e travava a aba inteira. O índice
+// por endereço é reconstruído só quando inv.base muda de referência.
+let _pendBaseCacheArr = null;
+let _pendBaseCacheMapa = null;
+function _pendIndiceBase(inv) {
+  const base = Array.isArray(inv?.base) ? inv.base : null;
+  if (base !== _pendBaseCacheArr) {
+    _pendBaseCacheArr = base;
+    _pendBaseCacheMapa = new Map();
+    (base || []).forEach(item => {
+      const chave = _pendNormEnd(item?.endereco);
+      if (!chave) return;
+      if (!_pendBaseCacheMapa.has(chave)) _pendBaseCacheMapa.set(chave, []);
+      _pendBaseCacheMapa.get(chave).push(item);
+    });
+  }
+  return _pendBaseCacheMapa;
+}
+function _pendProdutosEndereco(inv, endereco) {
+  const itens = _pendIndiceBase(inv).get(_pendNormEnd(endereco)) || [];
+  return _pendAgruparItensBase(itens);
 }
 function abrirDetalheProdutoPendencia(invId, endereco, produtoChave) {
   const inv = getInventarioPorId(invId);

@@ -4,7 +4,9 @@
   var CFG_KEY = 'dt_integracao_api_v1';
   var QUEUE_KEY = 'dt_integracao_fila_v1';
   var HISTORY_KEY = 'dt_integracao_historico_v1';
+  var BLUESOFT_PROXY_URL = 'https://southamerica-east1-daterrinha-inventario.cloudfunctions.net/bluesoftProxy';
   var currentPayload = null;
+  var _bluesoftLojasCache = null;
 
   function el(id) { return document.getElementById(id); }
   function value(id) { var node = el(id); return node ? String(node.value || '').trim() : ''; }
@@ -430,6 +432,7 @@
       }
     });
     updateCounts(); fillInventories(); loadConfig(); renderHistory(); renderQueue();
+    if (tab === 'api') carregarConfigRemota();
   };
   global.ieAbrirPagina = function () { global.ieSetTab('exportar'); };
   global.ieAbrirImportBase = function () {
@@ -584,6 +587,17 @@
     global.apiSetAmbiente(cfg.ambiente || 'homologacao', true);
     global.apiAdapterOnChange(cfg.adapter || 'custom');
   }
+  // A configuração fica salva no Firestore (dt_config/integracao_api) para
+  // não precisar ser preenchida de novo em cada dispositivo/navegador — o
+  // localStorage é só um cache rápido para a primeira renderização antes do
+  // Firestore responder.
+  var CFG_DOC = 'integracao_api';
+  async function carregarConfigRemota() {
+    try {
+      var snap = await global.getDTRawFirestore().collection('dt_config').doc(CFG_DOC).get();
+      if (snap.exists) { writeJson(CFG_KEY, snap.data() || {}); loadConfig(); }
+    } catch (error) { console.warn('[API] Configuração remota indisponível (usando cache local):', error); }
+  }
   global.apiSetAmbiente = function (environment, quiet) {
     var cfg = readJson(CFG_KEY, {}); cfg.ambiente = environment; writeJson(CFG_KEY, cfg);
     var prod = environment === 'producao';
@@ -600,7 +614,18 @@
     var prod = el('api-env-badge') && el('api-env-badge').textContent === 'PRD';
     if (el('api-url')) el('api-url').value = value(prod ? 'api-url-prd' : 'api-url-hml');
   };
-  global.apiSalvarConfig = function () { writeJson(CFG_KEY, configFromForm()); toast('Configuração da API salva.', 's'); };
+  global.apiSalvarConfig = async function () {
+    var cfg = configFromForm();
+    writeJson(CFG_KEY, cfg);
+    try {
+      await global.getDTRawFirestore().collection('dt_config').doc(CFG_DOC).set(
+        Object.assign({}, cfg, {atualizado_em: new Date().toISOString()}), {merge:true}
+      );
+      toast('Configuração da API salva — vale para qualquer dispositivo/sessão.', 's');
+    } catch (error) {
+      toast('Configuração salva neste navegador, mas falhou ao sincronizar entre dispositivos: ' + error.message, 'w');
+    }
+  };
   global.apiResetarMapeamento = function () {
     var defaults = {'fmap-endereco':'endereco,local,address','fmap-codigo-produto':'codigo_produto,codigo,sku,product_id','fmap-descricao':'descricao_produto,descricao,produto,description','fmap-qtd-esperada':'quantidade_esperada,saldo,qtd_esperada,expected_qty,saldo_erp','fmap-gtin':'gtin,ean,barcode,ean13,codigo_barras'};
     Object.keys(defaults).forEach(function (id) { if (el(id)) el(id).value = defaults[id]; });
@@ -616,7 +641,16 @@
     if (!base) throw new Error('Informe a URL da API.');
     return base + (end.charAt(0) === '/' ? end : '/' + end);
   }
+  // O servidor da Bluesoft não devolve headers de CORS, então o navegador
+  // bloqueia qualquer fetch direto a partir do nosso domínio para esse host.
+  // Esta detecção fica dentro do request() genérico (não só nas funções
+  // "Bluesoft" dedicadas) para que NENHUMA chamada — Testar Conexão,
+  // Exportar, Fila, Importar Dados, Via API — consiga acidentalmente tentar
+  // falar direto com a Bluesoft, independente do adaptador selecionado.
+  var BLUESOFT_HOST_REGEX = /^(https:\/\/erp\.bluesoft\.com\.br\/[\w-]+)(\/.*)?$/i;
   async function request(url, options) {
+    var bsMatch = url.match(BLUESOFT_HOST_REGEX);
+    if (bsMatch) return requestBluesoft(bsMatch[2] || '/', options, bsMatch[1]);
     var cfg = configFromForm(), controller = new AbortController(), timer = setTimeout(function () { controller.abort(); }, cfg.timeout * 1000);
     var headers = Object.assign({'Content-Type':'application/json'}, options && options.headers || {});
     if (cfg.token) headers.Authorization = /^Bearer /i.test(cfg.token) ? cfg.token : 'Bearer ' + cfg.token;
@@ -628,9 +662,113 @@
       return body;
     } finally { clearTimeout(timer); }
   }
+  // Todas as chamadas à Bluesoft passam por esta Cloud Function (bluesoftProxy),
+  // que faz a chamada servidor-para-servidor (sem restrição de CORS) e usa o
+  // header x-CustomToken exigido pela Bluesoft (não é Authorization: Bearer).
+  async function requestBluesoft(path, options, baseUrlOverride) {
+    var cfg = configFromForm();
+    if (!cfg.token) throw new Error('Informe o Token/API Key do Bluesoft na Configuração.');
+    var baseUrl = baseUrlOverride || value('api-url');
+    if (!baseUrl) throw new Error('Informe a URL do Bluesoft (Homologação/Produção) na Configuração.');
+    var idToken;
+    try { idToken = await global.firebase.auth().currentUser.getIdToken(); }
+    catch (_) { idToken = null; }
+    if (!idToken) throw new Error('Faça login novamente para usar a integração Bluesoft.');
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, cfg.timeout * 1000);
+    try {
+      var response = await fetch(BLUESOFT_PROXY_URL, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json', 'Authorization':'Bearer ' + idToken},
+        signal: controller.signal,
+        body: JSON.stringify({
+          method: (options && options.method) || 'GET',
+          path: path,
+          baseUrl: baseUrl,
+          token: cfg.token,
+          body: options && options.body != null ? JSON.parse(options.body) : undefined
+        })
+      });
+      var text = await response.text(), body = null;
+      try { body = text ? JSON.parse(text) : null; } catch (_) { body = text; }
+      if (!response.ok) throw new Error('HTTP ' + response.status + (text ? ': ' + String(text).slice(0, 200) : ''));
+      return body;
+    } finally { clearTimeout(timer); }
+  }
+
+  // Lista as lojas cadastradas na Bluesoft (GET /api/lojas), usada para
+  // vincular uma loja local ao lojaKey/lojaCd correto (ver 36-lojas.js).
+  // A resposta é cacheada em memória só durante a sessão da página.
+  global.apiBluesoftListarLojas = async function (forcarRecarga) {
+    if (_bluesoftLojasCache && !forcarRecarga) return _bluesoftLojasCache;
+    var body = await requestBluesoft('/api/lojas', {method:'GET'});
+    var lojas = externalRows(body).map(normalizedObject);
+    _bluesoftLojasCache = lojas;
+    return lojas;
+  };
+
+  // Sincroniza TODAS as lojas retornadas por GET /api/lojas para o cadastro
+  // local (coleção "lojas"): cria as que não existem ainda (casadas por
+  // bluesoft_loja_key) e atualiza o vínculo/fluxo das que já foram ligadas
+  // manualmente em Gestão de Lojas. Nunca apaga nem renomeia uma loja que já
+  // existia antes da sincronização (a API de exclusão de loja é bloqueada de
+  // propósito nas regras do Firestore).
+  global.apiSincronizarLojasBluesoft = async function () {
+    toast('⏳ Sincronizando lojas com a Bluesoft...', 'i');
+    try {
+      var lojasBluesoft = await apiBluesoftListarLojas(true);
+      if (!lojasBluesoft.length) throw new Error('A Bluesoft não retornou nenhuma loja.');
+      var raw = global.getDTRawFirestore();
+      var existentes = await raw.collection('lojas').get();
+      var porLojaKey = new Map();
+      existentes.docs.forEach(function (d) {
+        var v = d.data() || {};
+        if (v.bluesoft_loja_key) porLojaKey.set(String(v.bluesoft_loja_key), d.id);
+      });
+      var agora = new Date().toISOString(), batch = raw.batch(), criadas = 0, atualizadas = 0;
+      lojasBluesoft.forEach(function (item) {
+        var lojaKey = String(item.lojakey || '').trim();
+        if (!lojaKey) return;
+        var cd = item.lojacd === true;
+        var ativa = item.ativa !== false;
+        var dadosBluesoft = {
+          bluesoft_loja_key: lojaKey,
+          bluesoft_loja_cd: cd,
+          bluesoft_tipo_fluxo: cd ? 'ENDERECAMENTO_LOGISTICO' : 'PADRAO',
+          bluesoft_ativa: ativa,
+          bluesoft_sincronizado_em: agora
+        };
+        var idExistente = porLojaKey.get(lojaKey);
+        if (idExistente) {
+          batch.set(raw.collection('lojas').doc(idExistente), dadosBluesoft, {merge: true});
+          atualizadas++;
+        } else {
+          var nome = String(item.descricao || item.nomefantasia || ('Loja ' + lojaKey)).trim();
+          batch.set(raw.collection('lojas').doc('bluesoft_' + lojaKey), Object.assign({
+            nome: nome, codigo: lojaKey, ativa: ativa,
+            criada_em: agora, atualizada_em: agora, origem: 'BLUESOFT_SYNC'
+          }, dadosBluesoft), {merge: true});
+          criadas++;
+        }
+      });
+      await batch.commit();
+      toast(criadas + ' loja(s) nova(s) criada(s) e ' + atualizadas + ' loja(s) já vinculada(s) atualizada(s).', 's');
+      await global.renderGestaoLojas?.();
+    } catch (error) {
+      toast('Falha ao sincronizar lojas com a Bluesoft: ' + error.message, 'e');
+    }
+  };
+
   global.apiTestarConexao = async function () {
-    try { await request(apiUrl(''), {method:'GET'}); toast('Conexão com a API realizada.', 's'); }
-    catch (error) { toast('Falha na conexão: ' + error.message, 'e'); }
+    try {
+      // Para a Bluesoft, testar a raiz da URL não diz nada (a raiz não é uma
+      // rota válida); /api/lojas é uma chamada leve que já confirma
+      // token + conectividade. request() já detecta e roteia pelo proxy
+      // automaticamente sempre que o host for da Bluesoft.
+      if (BLUESOFT_HOST_REGEX.test(value('api-url') + '/api/lojas')) await request(value('api-url').replace(/\/+$/, '') + '/api/lojas', {method:'GET'});
+      else await request(apiUrl(''), {method:'GET'});
+      toast('Conexão com a API realizada.', 's');
+    } catch (error) { toast('Falha na conexão: ' + error.message, 'e'); }
   };
   function payloadFor(invId) {
     var cfg = configFromForm(), inv = (state().inventarios || []).find(function (item) { return String(item.id) === String(invId); });
@@ -682,7 +820,7 @@
   function externalRows(body) {
     if (Array.isArray(body)) return body;
     if (!body || typeof body !== 'object') return [];
-    return body.data || body.items || body.results || body.registros || [];
+    return body.data || body.items || body.results || body.registros || body.content || body.conteudo || body.lojas || [];
   }
   global.apiImportarDados = async function () {
     var type = value('api-import-tipo'), invId = value('api-import-inv');
@@ -705,6 +843,515 @@
     } catch (error) { addHistory('IMPORTAÇÃO','ERRO',error.message); toast('Erro na importação: ' + error.message, 'e'); }
   };
 
+  // ── Abrir Inventário via Bluesoft (fluxo de um clique) ──────────────────
+  // Puxa o estoque atual do Bluesoft para a loja ativa da sessão (getDTLojaAtiva)
+  // e abre o modal de Novo Inventário já com essa base carregada. Não cria o
+  // inventário direto: quem decide o departamento/tipo de produto e confirma é
+  // o analista, no próprio modal — a caixa "Tipos de produto deste inventário"
+  // (50-inventario-classificacoes-v275.js) já aparece sozinha assim que
+  // percebe que ui.inventarioImportCtx mudou.
+  //
+  // A loja precisa estar vinculada a um lojaKey da Bluesoft (ver "Vincular ao
+  // Bluesoft" em Gestão de Lojas, 36-lojas.js) — é esse vínculo que diz qual
+  // rota usar:
+  //   - lojaCd=true  (CD/endereçamento logístico): GET /api/wms/ajuste-estoque-logistico
+  //     já traz produto + endereço físico + quantidade + lote + validade + palete.
+  //   - lojaCd=false (loja comum): GET /api/comercial/estoques/ficha-estoque só
+  //     traz quantidade total por produto, sem endereço — as linhas entram num
+  //     endereço virtual único (contagem coletiva, sem localização física).
+  var BLUESOFT_ENDERECO_VIRTUAL = 'BLUESOFT-ESTOQUE-GERAL';
+  var BLUESOFT_TAMANHO_PAGINA = 200;
+  // Teto de segurança bem mais baixo que antes (1000 páginas = até 200.000+
+  // registros duplicados se a API não avançar a página corretamente). 300
+  // páginas já cobre um catálogo grande de sobra (60.000 linhas).
+  var BLUESOFT_LIMITE_PAGINAS = 300;
+
+  async function _bluesoftPaginarTudo(caminhoBase, params, onProgresso, nomesPaginacao) {
+    // nomesPaginacao === false: rota sem suporte a paginação (confirmado no
+    // OpenAPI oficial — ex.: /api/wms/ajuste-estoque-logistico não tem
+    // parâmetro "pagination" nenhum e sempre devolve a lista inteira numa
+    // única resposta). Nesse caso é uma busca só, sem loop.
+    if (nomesPaginacao === false) {
+      var qsUnica = Object.keys(params).map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
+      var bodyUnico = await requestBluesoft(caminhoBase + (qsUnica ? '?' + qsUnica : ''), {method:'GET'});
+      var itensUnicos = externalRows(bodyUnico).map(normalizedObject);
+      if (onProgresso) onProgresso(itensUnicos.length, itensUnicos.length);
+      return itensUnicos;
+    }
+    // Confirmado em teste real: mandar "pagination.currentPage"/"pagination.
+    // pageSize" (com prefixo) faz a Bluesoft ignorar o parâmetro e devolver
+    // sempre pageSize=30 (o default do schema), mesmo pedindo 200 — a API
+    // usa bind "achatado" (Spring @ModelAttribute): o nome do parâmetro no
+    // objeto "pagination" da doc OpenAPI não entra na querystring, só os
+    // campos do objeto, sem prefixo nenhum.
+    var nomes = nomesPaginacao || {page: 'currentPage', size: 'pageSize'};
+    // Busca em lotes de páginas simultâneas (em vez de uma por vez) — um
+    // catálogo grande (+15.000 produtos) tem mais de 90 páginas de 200
+    // itens; buscando uma de cada vez, cada rodada de ida-e-volta até a
+    // Bluesoft soma minutos. Em lotes de 5 páginas em paralelo, o tempo
+    // total cai proporcionalmente sem sobrecarregar a API.
+    var CONCORRENCIA_PAGINAS = 5;
+    var itens = [], pagina = 0, vistos = new Set(), paginasSemNovidade = 0, total = null, acabou = false;
+    while (!acabou) {
+      var indicesLote = [];
+      for (var k = 0; k < CONCORRENCIA_PAGINAS; k++) indicesLote.push(pagina + k);
+      var respostasLote = await Promise.all(indicesLote.map(function (p) {
+        var query = Object.assign({}, params);
+        query[nomes.page] = p;
+        query[nomes.size] = BLUESOFT_TAMANHO_PAGINA;
+        var qs = Object.keys(query).map(function (k2) { return encodeURIComponent(k2) + '=' + encodeURIComponent(query[k2]); }).join('&');
+        return requestBluesoft(caminhoBase + '?' + qs, {method:'GET'});
+      }));
+      for (var idx = 0; idx < respostasLote.length; idx++) {
+        var body = respostasLote[idx], paginaAtual = indicesLote[idx];
+        var pageItems = externalRows(body).map(normalizedObject);
+        if (paginaAtual < 3 || paginaAtual % 10 === 0) {
+          console.info('[Bluesoft] ' + caminhoBase + ' página ' + paginaAtual + ': ' + pageItems.length + ' item(ns) nesta resposta' +
+            (body && typeof body === 'object' && !Array.isArray(body) ? ' (currentPage=' + body.currentPage + ', pageSize=' + body.pageSize + ')' : ''));
+        }
+        if (!pageItems.length) { acabou = true; break; } // página vazia: acabaram os dados
+        if (total == null) total = _bluesoftTotalDe(body);
+
+        // Detecção de estagnação: se VÁRIAS páginas inteiras seguidas já
+        // tiverem sido vistas (a Bluesoft não avançou a página do lado
+        // dela), para aqui — evita duplicar os mesmos registros centenas de
+        // vezes até o teto de segurança. O limiar é alto de propósito: exigir
+        // várias repetições em sequência (não só uma) evita interromper cedo
+        // demais um catálogo grande e legítimo por causa de uma coincidência
+        // pontual entre duas páginas.
+        var novosNestaPagina = 0;
+        pageItems.forEach(function (item) {
+          var chave = JSON.stringify(item);
+          if (!vistos.has(chave)) { vistos.add(chave); itens.push(item); novosNestaPagina++; }
+        });
+        if (onProgresso) onProgresso(itens.length, total);
+        if (novosNestaPagina === 0) {
+          paginasSemNovidade++;
+          if (paginasSemNovidade >= 5) {
+            console.warn('[Bluesoft] Paginação de ' + caminhoBase + ' parou por estagnação na página ' + paginaAtual + ' (' + itens.length + ' registro(s) coletados' + (total ? ' de ' + total + ' esperados' : '') + ').');
+            acabou = true; break;
+          }
+        } else {
+          paginasSemNovidade = 0;
+        }
+
+        // Quando a API informa o total, isso é mais confiável que o tamanho da
+        // página para saber que terminou (algumas rotas devolvem a última
+        // página incompleta, outras repetem o tamanho cheio até o fim).
+        if (total != null && itens.length >= total) { acabou = true; break; }
+        if (pageItems.length < BLUESOFT_TAMANHO_PAGINA) { acabou = true; break; }
+      }
+      pagina += CONCORRENCIA_PAGINAS;
+      if (pagina > BLUESOFT_LIMITE_PAGINAS) {
+        throw new Error('A busca passou de ' + (BLUESOFT_LIMITE_PAGINAS * BLUESOFT_TAMANHO_PAGINA).toLocaleString('pt-BR') +
+          ' registros sem terminar e foi interrompida por segurança — a paginação pode não estar avançando corretamente ' +
+          'para esta rota da Bluesoft. Fale com o suporte da Bluesoft sobre isso antes de tentar de novo.');
+      }
+    }
+    return itens;
+  }
+  function _bluesoftTotalDe(body) {
+    if (!body || typeof body !== 'object') return null;
+    var chaves = ['totalElements', 'totalelements', 'total', 'totalItens', 'totalitens', 'totalRegistros', 'totalregistros', 'totalRecords', 'totalrecords'];
+    for (var i = 0; i < chaves.length; i++) {
+      var valor = body[chaves[i]];
+      if (typeof valor === 'number') return valor;
+    }
+    return null;
+  }
+  // ── Painel dedicado "Via API (Bluesoft)" dentro do modal de Novo Inventário ──
+  // Some completamente os campos do fluxo manual (upload/mapeador) enquanto
+  // a busca está em andamento, e mostra passos + progresso em vez de só um
+  // toast no canto da tela.
+  function _invApiFlowMostrar() {
+    var sel = el('inv-modo-selector'), arq = el('inv-modo-arquivo'), api = el('inv-modo-api');
+    if (sel) sel.style.display = 'none';
+    if (arq) arq.style.display = 'none';
+    if (api) api.style.display = 'block';
+  }
+  global._invApiFlowVoltar = function () {
+    var sel = el('inv-modo-selector'), arq = el('inv-modo-arquivo'), api = el('inv-modo-api');
+    if (sel) sel.style.display = 'flex';
+    if (arq) arq.style.display = 'block';
+    if (api) { api.style.display = 'none'; api.innerHTML = ''; }
+  };
+  // Sempre que o modal de Novo Inventário abrir "do zero" (botão ➕ Novo
+  // Inventário), o modo volta para o estado padrão (seletor Via API/Via
+  // Arquivo visível) — sem isso, um Via API anterior deixaria o painel de
+  // progresso "preso" na tela na próxima vez que o modal abrir.
+  var _oldAbrirNovoInventario = global.abrirNovoInventario;
+  if (typeof _oldAbrirNovoInventario === 'function') {
+    global.abrirNovoInventario = function () {
+      var r = _oldAbrirNovoInventario.apply(this, arguments);
+      global._invApiFlowVoltar();
+      return r;
+    };
+  }
+  function _invApiFlowRender(icone, titulo, subtitulo, extraHtml, tom) {
+    var api = el('inv-modo-api'); if (!api) return;
+    api.innerHTML = '<div class="status-box ' + (tom || 'info') + '"><div class="sb-icon">' + icone + '</div><div>' +
+      '<div class="sb-text">' + escapeHtml(titulo) + '</div>' +
+      (subtitulo ? '<div class="sb-sub">' + subtitulo + '</div>' : '') +
+      (extraHtml || '') + '</div></div>';
+  }
+  // Catálogo de produtos da Bluesoft (GET /api/comercial/produtos), usado só
+  // para classificar tipo_produto (Venda/Insumo/Consumo/Embalagem/etc.) e
+  // alimentar a caixa "Tipos de produto deste inventário" que já existe no
+  // modal de Novo Inventário (50-inventario-classificacoes-v275.js). As
+  // rotas de estoque (ficha-estoque/ajuste-estoque-logistico) não trazem
+  // essa classificação, então sem esse cruzamento tudo cairia num único
+  // grupo "NAO CLASSIFICADO" e o filtro por tipo/departamento não teria
+  // como funcionar para dados vindos do Bluesoft.
+  var _bluesoftCatalogoCache = null;
+  function _bluesoftClassificarTipoProduto(item) {
+    var destino = String(item.principaldestinoproduto || '').trim();
+    if (destino) return destino.toUpperCase();
+    var flags = item.tipoproduto || {};
+    if (flags.mercadoriaParaRevenda) return 'PRODUTO DE VENDA';
+    if (flags.produtoAcabado) return 'PRODUTO ACABADO';
+    if (flags.subProduto) return 'SUBPRODUTO';
+    if (flags.materiaPrima) return 'MATERIA PRIMA';
+    if (flags.embalagem) return 'EMBALAGEM';
+    if (flags.mercadoriaParaUsoConsumo) return 'INSUMO/CONSUMO';
+    return 'NAO CLASSIFICADO';
+  }
+  // Só os campos realmente usados (classificação + auto-cadastro) — o item
+  // bruto da Bluesoft vem com centenas de campos (fiscal, fornecedores,
+  // tributação...) que não cabem no cache local em texto (localStorage tem
+  // limite de alguns MB) e não são usados aqui.
+  function _bluesoftProjetarItemCatalogo(item) {
+    return {
+      produtokey: item.produtokey, produtounitariokey: item.produtounitariokey,
+      gtinprincipal: item.gtinprincipal, gtin: item.gtin,
+      descricao: item.descricao, descricaoproduto: item.descricaoproduto, nomeproduto: item.nomeproduto,
+      nome: item.nome, descricaocompleta: item.descricaocompleta, descricaoresumida: item.descricaoresumida,
+      produto: item.produto, nomefantasia: item.nomefantasia,
+      unidademedida: item.unidademedida, unidade: item.unidade, embalagem: item.embalagem,
+      principaldestinoproduto: item.principaldestinoproduto, tipoproduto: item.tipoproduto,
+      // gtinsCaixas: código de barras da CAIXA (barraKey = o DUN de verdade)
+      // e quantas unidades tem dentro (fatorEstoque = fator caixa de
+      // verdade), confirmado no schema oficial da Bluesoft. Sem isso, DUN
+      // ficava sempre vazio e fator caixa sempre fixo em 1.
+      gtinscaixas: item.gtinscaixas, fatorestoque: item.fatorestoque
+    };
+  }
+  // Extrai DUN (código de barras da caixa) e fator caixa reais do 1º item de
+  // "gtinsCaixas" do produto — cai para o fatorEstoque do produto (unidades
+  // por embalagem) e depois para 1 quando a Bluesoft não tem essa info.
+  function _bluesoftCaixaDoItem(item) {
+    var caixa = Array.isArray(item.gtinscaixas) && item.gtinscaixas[0] ? item.gtinscaixas[0] : null;
+    var dun = caixa ? String(caixa.barraKey || '').trim() : '';
+    var fatorCaixa = Math.max(1, Number((caixa && caixa.fatorEstoque) || item.fatorestoque || 1) || 1);
+    return {dun: dun, fatorCaixa: fatorCaixa};
+  }
+  // A Bluesoft modela caixa/fardo como um PRODUTO SEPARADO no catálogo, ligado
+  // ao produto unitário via "produtounitariokey" (confirmado com dado real:
+  // "00001 TAPIOCA... - CX 12", produtokey 304, produtounitariokey 1,
+  // fatorestoque 12). O estoque físico (ficha-estoque/ajuste-estoque-
+  // logistico) só traz a quantidade em UNIDADES — sem cruzar com esse
+  // vínculo, o fator_caixa da linha de contagem fica sempre 1, e o coletor
+  // não consegue converter "50 caixas bipadas" em "600 unidades".
+  function _bluesoftMapaFatorCaixa(itensCatalogo) {
+    var mapa = new Map();
+    function registrar(chave, fator) {
+      if (!chave) return;
+      var atual = mapa.get(chave);
+      if (!atual || fator > atual) mapa.set(chave, fator);
+    }
+    (itensCatalogo || []).forEach(function (item) {
+      var fator = Number(item.fatorestoque);
+      if (!(fator > 1)) return;
+      // Não sabemos se o estoque físico (WMS) reporta o produto pela chave
+      // do PRODUTO UNITÁRIO (aí precisamos achar a caixa relacionada) ou
+      // pela chave da PRÓPRIA CAIXA (aí o fator já está no item). Registra
+      // dos dois jeitos pra funcionar nos dois casos.
+      registrar(String(item.produtokey || '').trim(), fator);
+      registrar(String(item.produtounitariokey || '').trim(), fator);
+    });
+    return mapa;
+  }
+  var BLUESOFT_CATALOGO_CACHE_KEY = 'dt_bluesoft_catalogo_cache_v5';
+  var BLUESOFT_CATALOGO_CACHE_VALIDADE_MS = 12 * 60 * 60 * 1000; // 12h
+  // Busca o catálogo (/api/comercial/produtos), usado tanto para classificar
+  // tipo_produto quanto para o auto-cadastro na Base de Produtos abaixo. É a
+  // rota mais lenta do fluxo (o catálogo completo passa de várias centenas de
+  // páginas) — por isso fica em cache local por algumas horas, e não só em
+  // memória: sem isso, toda vez que a página recarrega (todo "Novo
+  // Inventário" do dia) essa busca inteira teria que ser refeita do zero.
+  async function _bluesoftCatalogoProdutos() {
+    if (_bluesoftCatalogoCache) return _bluesoftCatalogoCache;
+    var cache = readJson(BLUESOFT_CATALOGO_CACHE_KEY, null);
+    if (cache && Array.isArray(cache.itens) && cache.itens.length && (Date.now() - (cache.buscadoEm || 0)) < BLUESOFT_CATALOGO_CACHE_VALIDADE_MS) {
+      _bluesoftCatalogoCache = cache.itens;
+      console.info('[Bluesoft] Catálogo de produtos: ' + cache.itens.length + ' item(ns) do cache local (buscado há ' +
+        Math.round((Date.now() - cache.buscadoEm) / 60000) + ' min).');
+      return _bluesoftCatalogoCache;
+    }
+    try {
+      var itensCompletos = await _bluesoftPaginarTudo('/api/comercial/produtos', {});
+      _bluesoftCatalogoCache = itensCompletos.map(_bluesoftProjetarItemCatalogo);
+      console.info('[Bluesoft] Catálogo de produtos: ' + _bluesoftCatalogoCache.length + ' item(ns) único(s) recebido(s) no total.');
+      try { writeJson(BLUESOFT_CATALOGO_CACHE_KEY, {itens: _bluesoftCatalogoCache, buscadoEm: Date.now()}); }
+      catch (erroCache) { console.warn('[Bluesoft] Catálogo buscado, mas não coube no cache local (será refeito na próxima vez):', erroCache); }
+    } catch (error) {
+      console.warn('[Bluesoft] Não foi possível carregar o catálogo de produtos:', error);
+      _bluesoftCatalogoCache = [];
+    }
+    return _bluesoftCatalogoCache;
+  }
+  function _bluesoftMapaTiposProduto(itensCatalogo) {
+    var mapa = new Map();
+    (itensCatalogo || []).forEach(function (item) {
+      var key = String(item.produtokey || '').trim();
+      if (key) mapa.set(key, _bluesoftClassificarTipoProduto(item));
+    });
+    return mapa;
+  }
+  // Cadastro automático na Base de Produtos: só INSERE produtos que ainda não
+  // existem localmente (por bluesoft_produto_key ou GTIN/DUN) — nunca
+  // atualiza nem sobrescreve um produto já cadastrado, manual ou anterior.
+  async function _bluesoftAutoCadastrarProdutos(itensCatalogo) {
+    if (!Array.isArray(itensCatalogo) || !itensCatalogo.length) return 0;
+    if (typeof global.DTProdutos?.inferirFamilia !== 'function') return 0;
+    try {
+      var raw = global.getDTRawFirestore();
+      var colecao = raw.collection((global.DT_FCOL && global.DT_FCOL.produtos) || 'dt_produtos');
+      var snap = await colecao.get();
+      var porGtin = new Set(), porProdutoKey = new Set();
+      snap.docs.forEach(function (d) {
+        var v = d.data() || {};
+        var g = String(v.gtin || v.dun || '').replace(/\s+/g, '').toUpperCase();
+        if (g) porGtin.add(g);
+        if (v.bluesoft_produto_key) porProdutoKey.add(String(v.bluesoft_produto_key));
+      });
+      // Diagnóstico: mostra no console as chaves reais do 1º item do catálogo.
+      // Os nomes de campo usados abaixo (descricao/nomeProduto/etc.) são um
+      // palpite — se a maioria dos produtos continuar sem cadastrar, confira
+      // este log para achar o nome real do campo de descrição.
+      if (itensCatalogo[0]) console.info('[Bluesoft] Exemplo de item do catálogo de produtos (chaves reais da API):', itensCatalogo[0]);
+      var agora = new Date().toISOString(), batch = raw.batch(), pendentes = 0, inseridos = 0;
+      for (var i = 0; i < itensCatalogo.length; i++) {
+        var item = itensCatalogo[i];
+        var produtoKey = String(item.produtokey || '').trim();
+        var gtin = String(item.gtinprincipal || item.gtin || '').replace(/\s+/g, '').toUpperCase();
+        var nome = String(item.descricao || item.descricaoproduto || item.nomeproduto || item.nome ||
+          item.descricaocompleta || item.descricaoresumida || item.produto || item.nomefantasia || '').trim();
+        // Sem nome reconhecido, mas com identificador válido: cadastra com um
+        // nome provisório em vez de pular o produto inteiro. Perder o
+        // produto por completo é pior do que ele entrar com um nome
+        // genérico editável depois — foi exatamente isso que fez o
+        // cadastro automático parar em 30 produtos de 841 disponíveis.
+        if (!nome && (produtoKey || gtin)) nome = 'Produto Bluesoft #' + (produtoKey || gtin);
+        if (!nome || (!produtoKey && !gtin)) continue;
+        if (produtoKey && porProdutoKey.has(produtoKey)) continue;
+        if (gtin && porGtin.has(gtin)) continue;
+        var unidade = String(item.unidademedida || item.unidade || item.embalagem || '').trim();
+        var fam = global.DTProdutos.inferirFamilia(nome, unidade);
+        var tipo = _bluesoftClassificarTipoProduto(item);
+        var caixa = _bluesoftCaixaDoItem(item);
+        var payload = {
+          codigoInterno: produtoKey, nomeProduto: nome, dun: caixa.dun, gtin: gtin,
+          unidade: unidade, embalagem: fam.embalagem,
+          familiaCodigo: fam.familiaCodigo, familiaNome: fam.familiaNome, produtoPrincipal: fam.familiaNome,
+          categoriaFamilia: (fam.familiaNome || 'SEM FAMÍLIA').toUpperCase(),
+          tipoProduto: tipo, tipo_produto: tipo,
+          fatorCaixa: caixa.fatorCaixa, fator_caixa: caixa.fatorCaixa, ativo: true,
+          bluesoft_produto_key: produtoKey, origem: 'BLUESOFT_AUTO',
+          criadoEm: agora, atualizadoEm: agora, criadoPor: 'bluesoft-auto-sync'
+        };
+        batch.set(colecao.doc('p_bluesoft_' + (produtoKey || gtin)), payload, {merge: true});
+        if (produtoKey) porProdutoKey.add(produtoKey);
+        if (gtin) porGtin.add(gtin);
+        inseridos++; pendentes++;
+        // Lotes menores (200 em vez de 400) com uma pequena pausa entre cada
+        // commit: catálogos grandes (a Bluesoft pode trazer +15.000 produtos
+        // novos numa primeira sincronização) esgotavam a fila de escrita do
+        // SDK do Firestore ("resource-exhausted: Write stream exhausted"),
+        // pois os commits saíam mais rápido do que o backend confirmava.
+        if (pendentes >= 200) {
+          await batch.commit();
+          await new Promise(function (resolve) { setTimeout(resolve, 300); });
+          batch = raw.batch(); pendentes = 0;
+        }
+      }
+      if (pendentes) await batch.commit();
+      if (inseridos && typeof global.publicarChunksProdutos === 'function') await global.publicarChunksProdutos();
+      return inseridos;
+    } catch (error) {
+      console.warn('[Bluesoft] Falha ao auto-cadastrar produtos na Base de Produtos:', error);
+      return 0;
+    }
+  }
+  async function _lojaAtivaComVinculoBluesoft() {
+    var lojaId = global.getDTLojaAtiva ? global.getDTLojaAtiva() : '';
+    if (!lojaId) throw new Error('Nenhuma loja ativa. Selecione uma loja antes de continuar.');
+    var snap = await global.getDTRawFirestore().collection('lojas').doc(lojaId).get();
+    var loja = snap.exists ? snap.data() || {} : {};
+    if (!loja.bluesoft_loja_key) {
+      throw new Error('Esta loja ainda não está vinculada a uma loja da Bluesoft. Vá em Gestão de Lojas e vincule antes de puxar o estoque.');
+    }
+    return loja;
+  }
+  global.apiAbrirInventarioBluesoft = async function () {
+    global.abrirNovoInventario();
+    _invApiFlowMostrar();
+    _invApiFlowRender('🔵', 'Conectando à Bluesoft...', 'Confirmando token e loja vinculada.');
+    try {
+      var loja = await _lojaAtivaComVinculoBluesoft();
+      var lojaKey = loja.bluesoft_loja_key;
+      var nomeLoja = loja.nome || loja.codigo || ('#' + lojaKey);
+      _invApiFlowRender('🏷️', 'Carregando catálogo de produtos...', 'Isso é usado para classificar os tipos de produto e para completar a Base de Produtos automaticamente.');
+      var itensCatalogo = await _bluesoftCatalogoProdutos();
+      var mapaTipos = _bluesoftMapaTiposProduto(itensCatalogo);
+      var mapaFatorCaixa = _bluesoftMapaFatorCaixa(itensCatalogo);
+      var rotuloRota = loja.bluesoft_loja_cd === true ? 'endereços físicos (WMS)' : 'saldo de estoque';
+      function progresso(carregados, total) {
+        var pct = total ? Math.min(100, Math.round(carregados / total * 100)) : null;
+        var barra = pct != null
+          ? '<div style="margin-top:8px;height:8px;background:var(--surface-3);border-radius:99px;overflow:hidden"><div style="height:100%;width:' + pct + '%;background:var(--info);transition:width .2s"></div></div>'
+          : '';
+        _invApiFlowRender('📦', 'Buscando ' + rotuloRota + ' da loja ' + escapeHtml(nomeLoja) + '...',
+          carregados.toLocaleString('pt-BR') + (total ? ' de ' + total.toLocaleString('pt-BR') : '') + ' produto(s) carregado(s)', barra);
+      }
+      var base;
+      // Cruza com o cadastro local de Endereços: se o analista marcou um
+      // endereço como VIRTUAL lá (ex.: "loja", "produção" — pontos de
+      // contagem coletiva, sem lote/validade), isso precisa valer aqui
+      // também. Sem esse cruzamento, toda linha vinda da Bluesoft entrava
+      // sempre como FISICO, ignorando o cadastro.
+      var mapaEnderecosLocais = new Map((state().enderecosLista || []).map(function (e) {
+        return [String(e.endereco || '').trim().toUpperCase(), e];
+      }));
+      if (loja.bluesoft_loja_cd === true) {
+        var itensLogisticos = await _bluesoftPaginarTudo('/api/wms/ajuste-estoque-logistico', {lojaKey: lojaKey}, progresso, false);
+        base = itensLogisticos.map(function (item) {
+          var chaveProduto = String(item.produtokey || '').trim();
+          var enderecoTexto = String(item.enderecologisticodescritivo || '').trim();
+          var infoLocal = mapaEnderecosLocais.get(enderecoTexto.toUpperCase());
+          var tipoEnd = infoLocal && String(infoLocal.tipo_endereco || '').toUpperCase() === 'VIRTUAL' ? 'VIRTUAL' : 'FISICO';
+          return {
+            endereco: enderecoTexto,
+            codigo_produto: chaveProduto,
+            gtin: String(item.produtogtin || '').trim(),
+            descricao_produto: String(item.descricaoproduto || '').trim(),
+            quantidade_esperada: Math.max(0, parseFloat(String(item.quantidadedisponivelemunidades || 0).replace(',','.')) || 0),
+            total_unidades_sistema: Math.max(0, parseFloat(String(item.quantidadedisponivelemunidades || 0).replace(',','.')) || 0),
+            fator_caixa: mapaFatorCaixa.get(chaveProduto) || 1, tipo_produto: mapaTipos.get(chaveProduto) || 'NAO CLASSIFICADO', tipo_endereco: tipoEnd,
+            contabiliza_inventario: infoLocal ? infoLocal.contabiliza_inventario !== false : true,
+            permite_multiplos_operadores: tipoEnd === 'VIRTUAL' || (infoLocal && infoLocal.permite_multiplos_operadores === true) || false,
+            lote_produto: tipoEnd === 'VIRTUAL' ? '' : String(item.numerodolote || '').trim(),
+            validade: tipoEnd === 'VIRTUAL' ? '' : normalizeValidity(item.datadevalidade || ''),
+            palete: String(item.paletekey || '').trim(),
+            custo_bruto: 0, setor: '', rua: '', nivel: '', observacao: ''
+          };
+        }).filter(function (row) { return row.endereco && row.codigo_produto; });
+
+        // A Bluesoft só retorna endereços que TÊM produto no momento — se a
+        // loja tem 1.500 endereços cadastrados e só 500 estão com produto
+        // agora, os outros 1.000 não vêm nessa resposta. Sem completar com a
+        // base local de endereços, esses 1.000 ficariam invisíveis para
+        // contagem e o "endereço não bipado" nunca detectaria pendência
+        // neles. Endereços da base local ausentes na resposta da Bluesoft
+        // entram com quantidade esperada zero (rastreáveis como pendentes).
+        var enderecosComDadosBluesoft = new Set(base.map(function (r) { return String(r.endereco || '').trim().toUpperCase(); }));
+        var enderecosLocaisTotal = state().enderecosLista || [];
+        // DEBUG: compara o formato do texto do endereço que a Bluesoft manda
+        // com o formato salvo na base local — se forem escritos diferente
+        // (ex.: ordem dos números, espaços, hífen), a comparação abaixo
+        // nunca casa e todo endereço local entra como "sem produto", mesmo
+        // quando a Bluesoft reportou produto nele.
+        console.info('[Bluesoft] Amostra de endereço (Bluesoft): ' + Array.from(enderecosComDadosBluesoft).slice(0, 5).join(' | '));
+        console.info('[Bluesoft] Amostra de endereço (base local): ' + enderecosLocaisTotal.slice(0, 5).map(function (e) { return e.endereco; }).join(' | '));
+        console.info('[Bluesoft] Base local tem ' + enderecosLocaisTotal.length + ' endereço(s); Bluesoft reportou produto em ' + enderecosComDadosBluesoft.size + ' endereço(s) distinto(s).');
+        var enderecosLocaisFaltantes = enderecosLocaisTotal.filter(function (e) {
+          return e && e.endereco && !enderecosComDadosBluesoft.has(String(e.endereco).trim().toUpperCase());
+        }).map(function (e) {
+          return {
+            endereco: e.endereco, codigo_produto: '', gtin: '', descricao_produto: '',
+            quantidade_esperada: 0, total_unidades_sistema: 0, fator_caixa: 1,
+            tipo_produto: 'SEM PRODUTO NA BLUESOFT', tipo_endereco: e.tipo_endereco || 'FISICO',
+            contabiliza_inventario: e.ativo !== false, permite_multiplos_operadores: false,
+            lote_produto: '', validade: '', palete: '', custo_bruto: 0,
+            setor: e.setor || e.local || '', rua: e.rua || '', nivel: '', observacao: ''
+          };
+        });
+        base = base.concat(enderecosLocaisFaltantes);
+      } else {
+        var itensFicha = await _bluesoftPaginarTudo('/api/comercial/estoques/ficha-estoque', {lojaKey: lojaKey}, progresso);
+        base = itensFicha.map(function (item) {
+          var chaveProduto = String(item.produtokey || '').trim();
+          return {
+            endereco: BLUESOFT_ENDERECO_VIRTUAL,
+            codigo_produto: chaveProduto,
+            gtin: String(item.gtinprincipal || '').trim(),
+            descricao_produto: '',
+            quantidade_esperada: Math.max(0, parseFloat(String(item.quantidade || 0).replace(',','.')) || 0),
+            total_unidades_sistema: Math.max(0, parseFloat(String(item.quantidade || 0).replace(',','.')) || 0),
+            fator_caixa: mapaFatorCaixa.get(chaveProduto) || 1, tipo_produto: mapaTipos.get(chaveProduto) || 'NAO CLASSIFICADO', tipo_endereco: 'VIRTUAL',
+            contabiliza_inventario: true, permite_multiplos_operadores: true,
+            lote_produto: '', validade: '', palete: '',
+            custo_bruto: 0, setor: '', rua: '', nivel: '', observacao: ''
+          };
+        }).filter(function (row) { return row.codigo_produto; });
+      }
+      if (!base.length) throw new Error('O Bluesoft não retornou itens de estoque para esta loja.');
+
+      document.getElementById('inv-nome').value = 'Estoque Bluesoft — ' + new Date().toLocaleDateString('pt-BR');
+      document.getElementById('inv-codigo').value = 'BLS-' + fileStamp();
+      global.AnalistaState.set('ui.inventarioImportCtx', { base: base, arquivo: 'Bluesoft' }, { source: 'apiAbrirInventarioBluesoft' });
+      global.habilitarBtnCriar?.();
+      global.DTV275?.refreshTypes?.();
+
+      var enderecosUnicos = new Set(base.map(function (r) { return r.endereco; })).size;
+      var produtosUnicos = new Set(base.filter(function (r) { return r.codigo_produto; }).map(function (r) { return r.codigo_produto; })).size;
+      var enderecosSemProduto = base.filter(function (r) { return !r.codigo_produto; }).length;
+      var enderecosSemProdutoAtivos = base.filter(function (r) { return !r.codigo_produto && r.contabiliza_inventario !== false; }).length;
+      var chavesProdutosDoEstoque = new Set(base.filter(function (r) { return r.codigo_produto; }).map(function (r) { return r.codigo_produto; }));
+
+      // Só cadastra na Base de Produtos os itens do catálogo que TÊM estoque
+      // nesta loja agora — o catálogo completo da Bluesoft traz até produtos
+      // antigos/descontinuados de toda a rede (18.000+), e a maioria nunca
+      // circula nesta loja. Cadastrar tudo poluiria a Base de Produtos com
+      // itens que o usuário nunca vai usar.
+      _invApiFlowRender('🗂️', 'Completando a Base de Produtos...', 'Cadastrando automaticamente só os produtos com estoque nesta loja — os que já existem não são alterados.');
+      var itensCatalogoComEstoque = itensCatalogo.filter(function (item) {
+        return chavesProdutosDoEstoque.has(String(item.produtokey || '').trim());
+      });
+      var produtosAutoCadastrados = await _bluesoftAutoCadastrarProdutos(itensCatalogoComEstoque);
+
+      var produtosClassificados = 0;
+      chavesProdutosDoEstoque.forEach(function (chave) { if (mapaTipos.get(chave)) produtosClassificados++; });
+      console.info('[Bluesoft] Catálogo: ' + itensCatalogo.length + ' item(ns) recebido(s) · ' +
+        produtosClassificados + ' de ' + chavesProdutosDoEstoque.size + ' produto(s) do estoque desta loja foram classificados.');
+      var avisoSemEndereco = loja.bluesoft_loja_cd === true
+        ? ('<div class="sb-sub" style="margin-top:4px">📍 ' + enderecosSemProduto.toLocaleString('pt-BR') + ' endereço(s) sem produto na Bluesoft agora (de ' +
+           (typeof enderecosLocaisTotal !== 'undefined' ? enderecosLocaisTotal.length.toLocaleString('pt-BR') : '?') +
+           ' na sua base local) — ' + enderecosSemProdutoAtivos.toLocaleString('pt-BR') + ' deles estão ATIVOS (entram como pendentes de contagem); ' +
+           (enderecosSemProduto - enderecosSemProdutoAtivos).toLocaleString('pt-BR') + ' estão INATIVOS (não entram na contagem por definição).</div>')
+        : '<div class="sb-sub" style="margin-top:4px">⚠️ Loja sem endereçamento — a contagem será coletiva, em um endereço único.</div>';
+      var avisoProdutosNovos = produtosAutoCadastrados
+        ? '<div class="sb-sub" style="margin-top:4px">🗂️ ' + produtosAutoCadastrados.toLocaleString('pt-BR') + ' produto(s) novo(s) cadastrado(s) automaticamente na Base de Produtos.</div>'
+        : '';
+      var avisoClassificacao = '<div class="sb-sub" style="margin-top:4px">🏷️ Catálogo Bluesoft: ' + itensCatalogo.length.toLocaleString('pt-BR') +
+        ' produto(s) recebido(s) · ' + produtosClassificados.toLocaleString('pt-BR') + ' de ' + chavesProdutosDoEstoque.size.toLocaleString('pt-BR') +
+        ' produto(s) deste estoque classificado(s).</div>';
+      var produtosComFatorCaixa = 0;
+      chavesProdutosDoEstoque.forEach(function (chave) { if ((mapaFatorCaixa.get(chave) || 1) > 1) produtosComFatorCaixa++; });
+      var avisoFatorCaixa = '<div class="sb-sub" style="margin-top:4px">📦 ' + produtosComFatorCaixa.toLocaleString('pt-BR') + ' de ' +
+        chavesProdutosDoEstoque.size.toLocaleString('pt-BR') + ' produto(s) deste estoque têm fator caixa/fardo real (>1) — os demais contam só em unidade.</div>';
+      _invApiFlowRender('✅', base.length.toLocaleString('pt-BR') + ' registro(s) carregados da Bluesoft',
+        produtosUnicos.toLocaleString('pt-BR') + ' produto(s) único(s) · ' + enderecosUnicos.toLocaleString('pt-BR') + ' endereço(s)',
+        avisoSemEndereco + avisoProdutosNovos + avisoClassificacao + avisoFatorCaixa +
+        '<div class="sb-sub" style="margin-top:8px">👇 Escolha os tipos de produto abaixo (opcional), confira o nome/código do inventário no topo e clique em <b>Criar Inventário</b>.</div>' +
+        '<button type="button" class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="_invApiFlowVoltar()">↩ Cancelar e usar arquivo manual</button>',
+        'ok');
+    } catch (error) {
+      _invApiFlowRender('❌', 'Falha ao buscar estoque no Bluesoft', escapeHtml(error.message),
+        '<button type="button" class="btn btn-ghost btn-sm" style="margin-top:10px" onclick="_invApiFlowVoltar()">↩ Voltar</button>',
+        'err');
+    }
+  };
+
   global.apiAbrirSimulador = function () { fillInventories(); if (el('sim-adapter-sel')) el('sim-adapter-sel').value = value('api-adapter-type') || 'custom'; global.openModal('modal-api-simulador'); global.apiSimularPayload(); };
   global.apiSimularPayload = function () {
     var invId = value('sim-inv-sel'), output = el('sim-payload-out');
@@ -720,5 +1367,9 @@
 
   document.addEventListener('DOMContentLoaded', function () {
     ensureQueuePanel(); updateCounts(); fillInventories(); loadConfig(); renderHistory(); renderQueue();
+    // Carrega a configuração salva no Firestore mesmo sem abrir a aba API,
+    // pois o botão "Via API (Bluesoft)" no modal de Novo Inventário depende
+    // dela (token/URL) e deve funcionar sem exigir uma visita prévia à aba.
+    carregarConfigRemota();
   });
 })(window);

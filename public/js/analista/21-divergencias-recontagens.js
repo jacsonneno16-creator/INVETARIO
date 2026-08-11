@@ -417,7 +417,7 @@
     ));
     const primeiras = contagensValidas.filter(c => String(c?.tipo_contagem || 'PRIMEIRA').toUpperCase() !== 'RECONTAGEM');
     const recContagens = contagensValidas.filter(c => String(c?.tipo_contagem || '').toUpperCase() === 'RECONTAGEM');
-    const somaContagens = lista => lista.reduce((total, c) => total + numero(c?.quantidade ?? c?.qtd_caixas ?? c?.qtd), 0);
+    const somaContagens = lista => lista.reduce((total, c) => total + numero(c?.quantidade_unidades ?? c?.quantidade ?? c?.qtd_caixas ?? c?.qtd), 0);
 
     const divs = (state().divergencias || []).filter(mesmoEndereco);
     const recs = (state().recontagens || []).filter(r => {
@@ -574,8 +574,16 @@
   // ── Helpers de quantidade ────────────────────────────────────────────────────
 
   function _qtdComparavel(c){
-    // A operação conta caixas/paletes. Comparar exatamente a quantidade digitada
-    // pelo operador com a quantidade esperada importada, sem multiplicar pelo fator.
+    // quantidade_unidades já vem do coletor convertida pra unidade base (qty
+    // digitado × fator_caixa quando o código bipado foi um DUN de 14
+    // dígitos; igual à quantidade digitada quando não é caixa/fardo). Usar
+    // isso em vez da quantidade bruta é o mesmo padrão já usado em
+    // 50-inventario-classificacoes-v275.js (tela Acompanhamento por Produto)
+    // — sem essa conversão, bipar 50 caixas de um produto com fator 12 batia
+    // contra uma quantidade esperada em unidades (600) e gerava divergência
+    // falsa de -550.
+    const un = parseFloat(c?.quantidade_unidades);
+    if (!isNaN(un)) return un;
     const qtd = parseFloat(c?.quantidade);
     if (!isNaN(qtd)) return qtd;
     const qtdCx = parseFloat(c?.qtd_caixas);

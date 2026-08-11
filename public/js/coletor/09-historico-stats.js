@@ -65,7 +65,7 @@ function renderHistorico() {
       <div style="flex:1;min-width:0">
         <div style="font-size:.82rem;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHTML(c.descricao)}</div>
         <div style="font-size:.68rem;color:var(--muted);margin-top:2px">
-          📍 ${escHTML(c.endereco)} &nbsp;·&nbsp; CP ${escHTML(c.capa)} &nbsp;·&nbsp; Val ${escHTML(c.validade)}
+          📍 ${escHTML(c.endereco)} &nbsp;·&nbsp; CP ${escHTML(c.capa)}${(c.lote_produto || c.loteProduto) ? ` &nbsp;·&nbsp; Lote ${escHTML(c.lote_produto || c.loteProduto)}` : ''}${c.validade ? ` &nbsp;·&nbsp; Val ${escHTML(c.validade)}` : ''}
         </div>
         ${div ? `<div style="font-size:.68rem;color:var(--warn);margin-top:2px">Esperado: ${c.quantidade_esperada} · Contado: ${c.quantidade}</div>` : ''}
         ${c.bateu_auditoria ? `<div style="font-size:.68rem;color:var(--success);margin-top:2px;font-weight:700">✅ Bateu com auditoria</div>` : ''}
@@ -196,7 +196,17 @@ async function atualizarCacheLocais() {
   function mark(tipo,id,registro,status){
     if(!registro)return; const rid=String(registro.uuid||registro.chave||registro.docId||registro.id||'').trim(); if(!rid)return;
     const all=load(), k=scope(tipo,id), box=all[k]||{itens:{}};
-    box.itens[rid]={status:String(status||'PENDENTE').toUpperCase(),divergente:!!(registro._alertaQtd||registro.divergencia_potencial||registro.divergente||String(registro.status||'').toUpperCase()==='DIVERGENTE'),atualizadoEm:new Date().toISOString()};
+    const novoStatus=String(status||'PENDENTE').toUpperCase();
+    const novoDivergente=!!(registro._alertaQtd||registro.divergencia_potencial||registro.divergente||String(registro.status||'').toUpperCase()==='DIVERGENTE');
+    const atual=box.itens[rid];
+    // Sem isto, marcar um item já marcado com o MESMO status disparava o
+    // evento 'dt-status-ledger-atualizado' de novo, que aciona updateStats(),
+    // que chama mark() de novo pros mesmos itens pendentes, que dispara o
+    // evento de novo — um loop infinito síncrono que travava a aba (bastava
+    // 1 item pendente, não era questão de tamanho de lote). Só grava e avisa
+    // quando algo realmente muda.
+    if(atual && atual.status===novoStatus && atual.divergente===novoDivergente) return;
+    box.itens[rid]={status:novoStatus,divergente:novoDivergente,atualizadoEm:new Date().toISOString()};
     all[k]=box; save(all);
     try{window.dispatchEvent(new CustomEvent('dt-status-ledger-atualizado'));}catch(_){ }
   }
@@ -295,8 +305,17 @@ async function atualizarCacheLocais() {
       const pendIds = new Set(pendInv.map(_invUuid).filter(Boolean));
       const lr = window.DTStatusLedger ? DTStatusLedger.resumo('inventario',invId) : {total:0,enviadas:0,pendentes:0,divergencias:0};
       const total = Math.max(ativas.length, lr.total);
-      const pendentes = Math.max(pendInv.length, lr.pendentes);
-      const enviadas = Math.max(lr.enviadas, total - pendentes);
+      // "Pendentes" tem que ser exatamente a fila real do IndexedDB — nunca
+      // um "piso" vindo do livro-caixa. O Math.max aqui antes deixava o
+      // número travado pra sempre no maior valor já visto (ex.: 101 preso
+      // mesmo com a fila real zerada e tudo já enviado), porque o
+      // livro-caixa é só um histórico local e pode ficar desatualizado
+      // (ex.: quando um item é marcado ENVIADO só depois de já ter sido
+      // marcado PENDENTE de novo por uma chamada concorrente). "Enviadas" é
+      // sempre derivado do total real menos o pendente real, nunca lido
+      // direto do livro-caixa, pelo mesmo motivo.
+      const pendentes = pendInv.length;
+      const enviadas = Math.max(0, total - pendentes);
       const divs = Math.max(ativas.filter(_invDivergenciaLocal).length, lr.divergencias);
       const s = (id,v) => { const el=document.getElementById(id); if(el) el.textContent=v; };
       s('st-total', total); s('st-enviadas', enviadas); s('st-pendentes', pendentes); s('st-div', divs);

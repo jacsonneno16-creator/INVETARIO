@@ -54,6 +54,14 @@
       document.getElementById('loja-edit-responsavel').value=l.responsavel||'';
       document.getElementById('loja-edit-obs').value=l.observacao||l.obs||'';
       const usarBtn=document.getElementById('loja-edit-usar');if(usarBtn){const emUso=l.id===global.getDTLojaAtiva();usarBtn.disabled=emUso;usarBtn.textContent=emUso?'Loja em uso':'Usar esta loja';}
+      const bsSel=document.getElementById('loja-edit-bluesoft-key');
+      if(bsSel){
+        const chaveAtual=l.bluesoft_loja_key?String(l.bluesoft_loja_key):'';
+        bsSel.innerHTML='<option value="">— não vinculada —</option>'+(chaveAtual?`<option value="${esc(chaveAtual)}" data-cd="${l.bluesoft_loja_cd===true?'1':'0'}" selected>Loja Bluesoft #${esc(chaveAtual)} (vínculo atual)</option>`:'');
+        bsSel.value=chaveAtual;
+      }
+      const bsStatus=document.getElementById('loja-edit-bluesoft-status');
+      if(bsStatus)bsStatus.textContent=l.bluesoft_loja_key?('Fluxo: '+(l.bluesoft_loja_cd===true?'CD / endereçamento logístico':'Loja comum')):'Clique em "Buscar" para vincular esta loja a uma loja da Bluesoft.';
       modal.style.display='flex';
       return;
     }
@@ -66,6 +74,32 @@
     catch(e){showToast('Erro ao salvar loja: '+e.message,'error');}
   }
   async function usarLoja(id){if(id===global.getDTLojaAtiva())return;if(typeof global.aplicarTrocaLojaAnalista==='function'){await global.aplicarTrocaLojaAnalista(id);await renderGestaoLojas();return;}global.setDTLojaAtiva(id);await renderGestaoLojas();}
+
+  // Consulta GET /api/lojas (via bluesoftProxy) e preenche o seletor de
+  // vínculo no modal de edição. Cada lojaKey guarda o lojaCd como
+  // data-attribute para que salvarLojaEdicao saiba qual fluxo gravar
+  // (ENDERECAMENTO_LOGISTICO vs PADRAO) sem precisar consultar de novo.
+  async function lojaBuscarLojasBluesoft(){
+    const sel=document.getElementById('loja-edit-bluesoft-key'), status=document.getElementById('loja-edit-bluesoft-status');
+    if(!sel)return;
+    const valorAtual=sel.value;
+    if(status){status.textContent='⏳ Consultando lojas na Bluesoft...';}
+    try{
+      const lojas=await global.apiBluesoftListarLojas(true);
+      if(!lojas.length)throw new Error('Nenhuma loja retornada pela Bluesoft.');
+      sel.innerHTML='<option value="">— não vinculada —</option>'+lojas.map(l=>{
+        const chave=String(l.lojakey||'').trim();
+        const nome=String(l.descricao||l.nomefantasia||('Loja '+chave)).trim();
+        const cd=l.lojacd===true;
+        return `<option value="${esc(chave)}" data-cd="${cd?'1':'0'}">#${esc(chave)} — ${esc(nome)}${cd?' (CD)':''}</option>`;
+      }).join('');
+      if(valorAtual && [...sel.options].some(o=>o.value===valorAtual)) sel.value=valorAtual;
+      if(status)status.textContent=lojas.length+' loja(s) encontrada(s) na Bluesoft. Selecione a correspondente.';
+    }catch(e){
+      if(status)status.textContent='Erro ao consultar Bluesoft: '+(e.message||e);
+      global.showToast?.('Erro ao consultar lojas na Bluesoft: '+(e.message||e),'error');
+    }
+  }
 
   function _pausarMigracao(ms){
     return new Promise(function(resolve){ setTimeout(resolve, ms); });
@@ -319,5 +353,5 @@
   // Capture garante o clique mesmo se outro componente interromper a propagação.
   document.addEventListener('click',tratarCliqueEditarLoja,true);
 
-  Object.assign(global,{renderGestaoLojas,abrirCadastroLoja,editarLoja,editarLojaPorId,salvarLoja,usarLoja,migrarDadosLegadosParaLojaAtual,sincronizarDadosLegadosAutomaticamente,corrigirIsolamentoLojaAtual});
+  Object.assign(global,{renderGestaoLojas,abrirCadastroLoja,editarLoja,editarLojaPorId,salvarLoja,usarLoja,migrarDadosLegadosParaLojaAtual,sincronizarDadosLegadosAutomaticamente,corrigirIsolamentoLojaAtual,lojaBuscarLojasBluesoft});
 })(window);

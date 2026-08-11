@@ -86,6 +86,12 @@
     if (typeof global.renderDashboard === 'function') global.renderDashboard();
     if (typeof global.atualizarBadgesNav === 'function') global.atualizarBadgesNav();
     if (typeof global.atualizarEnderecos === 'function') global.atualizarEnderecos();
+    // Sem isto, se a tela de Produtos tentar assinar o Firestore ANTES do
+    // login terminar (permission-denied esperado, ver comentário em
+    // 52-cadastros-v287.js), nada tenta de novo depois que o login resolve
+    // — só Endereços era re-tentado aqui. A tela ficava com 0 produtos até
+    // o usuário trocar de aba manualmente.
+    if (typeof global.atualizarBaseProdutos === 'function') global.atualizarBaseProdutos();
   }
 
   function updateSyncUI(ok, msg){

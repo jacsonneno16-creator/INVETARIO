@@ -592,8 +592,20 @@ async function verificarInventarioAtivo() {
   }
 }
 
+// Impede que enviarFilaPendente() rode mais de uma vez ao mesmo tempo.
+// Ela é chamada de vários lugares independentes (heartbeat, intervalo de
+// 30s, ao voltar online, logo após enfileirar algo, ao sair da tela...) sem
+// nenhuma coordenação entre si. Com uma fila grande (ex.: um lote de
+// milhares de pallets), um único envio pode legitimamente levar mais de 30s
+// — e sem esta trava, o próximo tick do intervalo disparava OUTRA rodada de
+// envio da mesma fila por cima da que já estava rodando, e a próxima, e a
+// próxima, empilhando várias passagens concorrentes sobre o mesmo lote
+// gigante até travar o aparelho (só resolvia limpando o armazenamento).
+let _enviandoFilaEmAndamento = false;
+
 /** Envia todas as contagens pendentes em background (não bloqueia UI) */
 async function enviarFilaPendente() {
+  if (_enviandoFilaEmAndamento) return;
   if (!navigator.onLine) return;
 
   // Busca pendentes direto do IDB (fonte de verdade)
@@ -616,14 +628,23 @@ async function enviarFilaPendente() {
     return;
   }
 
+  _enviandoFilaEmAndamento = true;
+  try {
+
   atualizarBarraStatus();
 
   const enviados = [];
   const falhas   = [];
   let erroConexao = false;
+  let processados = 0;
 
   for (const c of pendentes) {
     if (erroConexao) break;   // abandona lote se conexão caiu no meio
+
+    // Devolve o controle pro navegador periodicamente — numa fila de
+    // milhares de itens, isso mantém a tela respondendo a toques mesmo
+    // durante um envio longo, em vez de tudo ficar em fila de microtasks.
+    if (++processados % 20 === 0) await new Promise(r => setTimeout(r, 0));
 
     try {
       // Chave única no Firestore = uuid da contagem (garante idempotência)
@@ -715,10 +736,26 @@ async function enviarFilaPendente() {
       }
     }
   }
+
+  } finally {
+    _enviandoFilaEmAndamento = false;
+  }
 }
 
-/** Adiciona contagem à fila IDB + espelho LS e tenta enviar se online */
-async function enfileirarContagem(contagem) {
+/**
+ * Adiciona contagem à fila IDB + espelho LS e tenta enviar se online.
+ *
+ * Passe {silencioso:true} ao enfileirar MUITOS itens em sequência (ex.: o
+ * lançamento rápido em lote) — sem isso, cada chamada relia a fila inteira
+ * do IndexedDB, regravava tudo no localStorage e disparava um envio pro
+ * Firebase, tudo de novo a cada pallet. Num lote grande (centenas/milhares
+ * de pallets), isso empilhava trabalho O(n²) e uma avalanche de chamadas
+ * concorrentes que travava a aba inteira. Com {silencioso:true}, só o IDB é
+ * gravado por item; quem chama em lote deve rodar finalizarEnfileiramento()
+ * uma única vez no final.
+ */
+async function enfileirarContagem(contagem, opts) {
+  const silencioso = !!(opts && opts.silencioso);
   // Garantir UUID único para deduplicação
   const uuid   = contagem.uuid || gerarUUID();
   const record = {
@@ -739,6 +776,13 @@ async function enfileirarContagem(contagem) {
   // 1️⃣ Salvar no IDB (fonte de verdade — sobrevive a reload e fechamento)
   await idbPut(record);
 
+  if (silencioso) return;
+
+  await finalizarEnfileiramento(uuid);
+}
+
+/** Atualiza o espelho local, a UI e dispara o envio — uma única vez. */
+async function finalizarEnfileiramento(uuid) {
   // 2️⃣ Atualizar espelho localStorage (backup de emergência)
   FILA_ENVIO = await idbGetPendentes();
   filaSave(FILA_ENVIO);

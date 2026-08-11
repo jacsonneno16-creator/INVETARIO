@@ -203,7 +203,10 @@ async function _onAnalistaLogado(user) {
     if (!permitidas.length) throw new Error('Este login não possui acesso a nenhuma loja. Solicite a liberação ao administrador.');
     const atual = window.getDTLojaAtiva();
     if (atual && !permitidas.some(l=>l.id===atual)) window.setDTLojaAtiva('');
-    await window.DTLoja.selecionarInterativamente('Selecione a loja do inventário');
+    // forcarEscolha=true: o seletor deve aparecer em toda entrada no sistema,
+    // não só na primeira vez do dispositivo — cada login pede confirmação
+    // explícita da loja antes de qualquer outra tela.
+    await window.DTLoja.selecionarInterativamente('Selecione a loja do inventário', true);
 
     // Corrige uma única vez filiais que receberam dados da raiz por engano nas
     // versões anteriores. A Loja Matriz nunca é limpa por esta rotina.
@@ -220,6 +223,9 @@ async function _onAnalistaLogado(user) {
   _mostrarApp();
   if (typeof window.aplicarPermissoesAnalista === 'function') {
     window.aplicarPermissoesAnalista();
+  }
+  if (typeof window.aplicarSetoresPermitidos === 'function') {
+    window.aplicarSetoresPermitidos();
   }
   atualizarIndicadorLojaAtual();
 

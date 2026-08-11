@@ -232,6 +232,20 @@ function normalizarBase(base) {
 // ── Cache local da base (salva em chunks para evitar cota) ──
 function baseSave(invId, base) {
   try {
+    // Sem isto, a base de CADA inventário testado/usado ficava acumulada
+    // no localStorage pra sempre — nada removia a base de um inventário
+    // antigo quando um novo era baixado. Depois de alguns inventários, a
+    // cota do navegador esgotava (QuotaExceededError), o que quebrava até
+    // a seleção de loja no login (setDTLojaAtiva também grava no
+    // localStorage). Mantém cacheada só a base do inventário atual.
+    const prefixoAtual = LS_BASE + invId + '_';
+    const chavesRemover = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf(LS_BASE) === 0 && k.indexOf(prefixoAtual) !== 0) chavesRemover.push(k);
+    }
+    chavesRemover.forEach(k => localStorage.removeItem(k));
+
     const CHK = 1000;
     const nChunks = Math.ceil(base.length / CHK);
     localStorage.setItem(LS_BASE + invId + '_meta',
@@ -389,8 +403,18 @@ function idbOpen() {
       console.warn('[IDB] Falha ao abrir:', e.target.error);
       reject(e.target.error);
     };
+    // Sem isto, quando outra aba/instância deste app fica seguran do o banco
+    // numa versão antiga, o navegador dispara 'blocked' e a abertura NUNCA
+    // chama onsuccess nem onerror — a Promise ficava pendurada para sempre,
+    // travando toda contagem que dependesse do IDB (mesmo 1 ou 2 itens, não é
+    // uma questão de tamanho de lote). Dá uma folga curta pro bloqueio se
+    // resolver sozinho (a outra aba pode fechar a conexão a qualquer momento)
+    // e, se não resolver, falha explicitamente em vez de travar em silêncio.
     req.onblocked = () => {
       console.warn('[IDB] Banco bloqueado por outra aba. Feche outras abas e recarregue.');
+      setTimeout(() => {
+        if (!_idb) reject(new Error('IndexedDB bloqueado por outra aba/instância do app. Feche as outras abas e recarregue a página.'));
+      }, 4000);
     };
   });
 }

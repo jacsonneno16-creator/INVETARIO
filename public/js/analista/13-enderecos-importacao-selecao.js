@@ -146,7 +146,12 @@ function endFbErr(msg) {
 
 /** Detecta automaticamente qual coluna do arquivo mapeia para cada campo via ALIAS_END */
 function autoDetectCols(headers) {
-  const h = headers.map(x => x.toLowerCase().trim().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,''));
+  // Sem remover acento ANTES de tirar os caracteres não-alfanuméricos, "ç"/"ã"/etc.
+  // eram simplesmente apagados (não virava "c"/"a") — "Tipo Endereço" virava
+  // "tipo_endereo" em vez de "tipo_endereco", nunca batendo com o alias esperado
+  // e deixando a coluna sem detecção automática (mesmo bug de normalização que
+  // outros arquivos de importação já corrigem com normalize('NFD')).
+  const h = headers.map(x => x.toLowerCase().trim().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,''));
   const mapping = {};
   Object.entries(ALIAS_END).forEach(([campo, aliases]) => {
     const idx = h.findIndex(hh => aliases.some(a => hh === a || hh.startsWith(a)));
@@ -467,7 +472,7 @@ function confirmarImportEnderecos() {
 }
 
 async function _finalizarImportacaoEnderecos(built) {
-  built.forEach(e => _addEndDB(e));
+  _addEndDBBatch(built);
 
   const totalImport = built.length;
   const inativos = state().enderecosLista.filter(e => !e.ativo).length;
@@ -510,7 +515,8 @@ async function _finalizarImportacaoEnderecos(built) {
  *   - capacidade_paletes = 0 → força ativo = false (endereço inativo para operação)
  *   - capacidade_paletes > 0 → mantém o valor; ativo não é alterado por aqui
  */
-function _addEndDB(e) {
+/** Normaliza um registro de endereço (mesma regra pro caminho único e em lote). */
+function _normalizarEndDB(e, idAtual) {
   // Suporte à estrutura de 7 partes: loja.local.area.rua.coluna.nivel.seq
   // setor = campo de agrupamento (local > area > local_area > setor)
   const setor = e.nome_local || e.setor || e.local || e.area || e.local_area || 'SEM LOCAL';
@@ -537,9 +543,9 @@ function _addEndDB(e) {
   let ativo = e.ativo !== undefined ? Boolean(e.ativo) : true;
   if (cap === 0) ativo = false;
 
-  const obj = {
+  return {
     ...e,
-    id:                 e.id || _nextEnderecoId(),
+    id:                 idAtual || e.id || _nextEnderecoId(),
     setor,
     rua:                ruaFinal,
     nome_local:         nomLocalFinal,
@@ -547,26 +553,67 @@ function _addEndDB(e) {
     capacidade_paletes: cap,
     ativo,
   };
+}
 
-  // Upsert: se já existe, atualiza; senão, insere
+function _addEndDB(e) {
   const existIdx = state().enderecosLista.findIndex(x => x.endereco === e.endereco);
+  const obj = _normalizarEndDB(e, existIdx >= 0 ? state().enderecosLista[existIdx].id : undefined);
+
+  // Upsert: se já existe, atualiza; senão, insere — sempre com replaceSlice
+  // (nunca mutando o array em memória direto), pra manter a reatividade do
+  // Store consistente e a listagem sempre disparar novo render.
   if (existIdx >= 0) {
-    // Remover do porSetor antigo
     const setorAntigo = state().enderecosLista[existIdx].setor;
-    if (state().enderecosPorSetor[setorAntigo]) {
+    if (setorAntigo !== obj.setor && state().enderecosPorSetor[setorAntigo]) {
       state().enderecosPorSetor[setorAntigo] = state().enderecosPorSetor[setorAntigo].filter(x => x.endereco !== e.endereco);
       if (!state().enderecosPorSetor[setorAntigo].length) delete state().enderecosPorSetor[setorAntigo];
     }
-    obj.id = state().enderecosLista[existIdx].id; // Preservar id
-    state().enderecosLista[existIdx] = obj;
+    const nova = state().enderecosLista.slice();
+    nova[existIdx] = obj;
+    window.AnalistaState.replaceSlice('enderecosLista', nova, { source: 'addEnderecoDB' });
   } else {
     window.AnalistaState.replaceSlice('enderecosLista', [...(state().enderecosLista || []), obj], { source: 'addEnderecoDB' });
   }
   // Inserir/atualizar no porSetor novo
-  if (!state().enderecosPorSetor[setor]) state().enderecosPorSetor[setor] = [];
-  const posSetor = state().enderecosPorSetor[setor].findIndex(x => x.endereco === e.endereco);
-  if (posSetor >= 0) state().enderecosPorSetor[setor][posSetor] = obj;
-  else state().enderecosPorSetor[setor].push(obj);
+  if (!state().enderecosPorSetor[obj.setor]) state().enderecosPorSetor[obj.setor] = [];
+  const posSetor = state().enderecosPorSetor[obj.setor].findIndex(x => x.endereco === e.endereco);
+  if (posSetor >= 0) state().enderecosPorSetor[obj.setor][posSetor] = obj;
+  else state().enderecosPorSetor[obj.setor].push(obj);
+}
+
+/**
+ * Mesma regra do _addEndDB, mas para uma LISTA inteira de uma vez — usada na
+ * importação em massa. O _addEndDB original fazia, pra cada linha
+ * importada, um findIndex() no array inteiro de endereços (~5800) e depois
+ * recriava esse array inteiro de novo (spread) só pra inserir 1 item — um
+ * import de alguns milhares de endereços virava O(n²), travando a tela por
+ * vários segundos. Aqui o upsert acontece num Map em memória (O(1) por
+ * item) e o Store só é atualizado UMA vez no final, com o resultado já
+ * pronto.
+ */
+function _addEndDBBatch(lista) {
+  if (!lista || !lista.length) return;
+  const mapaEnd = new Map((state().enderecosLista || []).map(x => [x.endereco, x]));
+  const porSetor = {};
+  Object.entries(state().enderecosPorSetor || {}).forEach(([k, arr]) => { porSetor[k] = arr.slice(); });
+
+  lista.forEach(e => {
+    const existente = mapaEnd.get(e.endereco);
+    const obj = _normalizarEndDB(e, existente?.id);
+    mapaEnd.set(e.endereco, obj);
+
+    if (existente && existente.setor !== obj.setor && porSetor[existente.setor]) {
+      porSetor[existente.setor] = porSetor[existente.setor].filter(x => x.endereco !== e.endereco);
+      if (!porSetor[existente.setor].length) delete porSetor[existente.setor];
+    }
+    if (!porSetor[obj.setor]) porSetor[obj.setor] = [];
+    const posSetor = porSetor[obj.setor].findIndex(x => x.endereco === e.endereco);
+    if (posSetor >= 0) porSetor[obj.setor][posSetor] = obj;
+    else porSetor[obj.setor].push(obj);
+  });
+
+  window.AnalistaState.replaceSlice('enderecosLista', [...mapaEnd.values()], { source: 'addEnderecoDBBatch' });
+  window.AnalistaState.replaceSlice?.('enderecosPorSetor', porSetor, { source: 'addEnderecoDBBatch' });
 }
 
 // Endereço manual

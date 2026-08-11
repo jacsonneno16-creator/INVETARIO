@@ -176,7 +176,13 @@ async function _verificarEnderecoFirebase(endNorm) {
   // Seguro porque: a gravação da contagem vai SEMPRE direto ao Firebase (nunca usa cache).
   // O único dado em cache é "quem já contou aqui?" — que não muda em 5 min durante operação.
   const _CACHE_END_TTL = 5 * 60 * 1000; // 5 minutos em ms
-  if (_endVerif?.endereco === endNorm && Date.now() - (_endVerif.checkedAt||0) < _CACHE_END_TTL) return;
+  // O cache precisa ser por (endereço + inventário/auditoria atual) — sem o
+  // inventario.id aqui, trocar de inventário/auditoria e cair no mesmo código
+  // de endereço dentro da janela de 5min reaproveitava o status do contexto
+  // ANTERIOR (ex.: "próprio" de uma auditoria já encerrada aparecendo como
+  // status atual em um inventário novo), mesmo a consulta ao Firestore abaixo
+  // já sendo corretamente filtrada por inventario_id.
+  if (_endVerif?.endereco === endNorm && _endVerif.inventario === APP.inventario.id && Date.now() - (_endVerif.checkedAt||0) < _CACHE_END_TTL) return;
 
   try {
     const snap = await FS.collection(FCOL.contagens)
@@ -216,7 +222,7 @@ async function _verificarEnderecoFirebase(endNorm) {
     else if (docsMeus.length > 0)  status = 'proprio';
     else                           status = 'livre';
 
-    _endVerif = { endereco: endNorm, status, docs: docsAtivos, docsMeus, docsOutros, checkedAt: Date.now() };
+    _endVerif = { endereco: endNorm, inventario: APP.inventario.id, status, docs: docsAtivos, docsMeus, docsOutros, checkedAt: Date.now() };
 
     // Atualizar feedback inline se o campo ainda tem esse endereço
     const fbEl = document.getElementById('fb-endereco');
@@ -227,7 +233,7 @@ async function _verificarEnderecoFirebase(endNorm) {
   } catch(err) {
     console.warn('[VerifEnd] Erro na consulta Firebase:', err.message);
     // Em caso de erro, não bloquear — deixa o confirmarEndereco decidir
-    _endVerif = { endereco: endNorm, status: 'livre', docs: [], docsMeus: [], docsOutros: [], checkedAt: Date.now() };
+    _endVerif = { endereco: endNorm, inventario: APP.inventario?.id, status: 'livre', docs: [], docsMeus: [], docsOutros: [], checkedAt: Date.now() };
   }
 }
 
@@ -520,11 +526,26 @@ function _prosseguirComEndereco(valNorm) {
 
   // Em modo recontagem: nova sessão limpa — sem info de contagens anteriores
   if (APP.modoRecontagem) {
-    fb.innerHTML = `<div class="fb ok">✓ Endereço confirmado — iniciando nova rodada</div>`;
     APP.atual.endereco    = valNorm;
     APP.atual._endNorm    = valNorm;
     APP.atual.somentesDun = valNorm.includes('14.1520');
     _aplicarClassificacaoEndereco(valNorm);
+
+    // Pedido do usuário: a recontagem passa a poder oferecer o mesmo
+    // lançamento rápido em lote que a contagem normal já tinha — antes
+    // disto a recontagem era sempre manual, palete por palete.
+    if (!APP.atual.enderecoVirtual) {
+      const capRec = Number(
+        APP.endCapacidade?.[valNorm] ??
+        APP.modoRecontagem.capacidade_pallets ??
+        APP.modoRecontagem.capacidade_paletes ??
+        APP.modoRecontagem.capacidade ?? 0
+      ) || 0;
+      APP.atual.capacidadeEnd = capRec;
+      if (_loteVerificarOferta(valNorm, valNorm, capRec)) return; // painel lote assumiu o controle
+    }
+
+    fb.innerHTML = `<div class="fb ok">✓ Endereço confirmado — iniciando nova rodada</div>`;
     APP.atual.step        = APP.atual.enderecoVirtual ? 3 : 2;
     beepSuave();
     const el2 = document.getElementById('cp-proximo-hint');
@@ -897,7 +918,6 @@ function _loteAtualizarHeader() {
 //  ENTRADA: chamado em _prosseguirComEndereco quando cap >= 10
 // ──────────────────────────────────────────────────────────────────
 function loteOferecer(endNorm, endExib, cap) {
-  if (APP.modoRecontagem) return; // recontagem = sempre manual
   APP.lote = { endNorm, endExib, cap, gtin: null, codigoProduto: null,
                 descricaoProduto: null, qtdPadrao: null, totalPallets: null,
                 capasLidas: [], grupos: [], totalSalvos: 0 };
@@ -1148,29 +1168,27 @@ function loteOnValidadeInput() {
   }
 }
 
-function loteConfirmarValidadeInput() {
-  // Avança para o campo de qtd ao dar Enter na validade
-  document.getElementById('lote-f-val-qtd')?.focus();
-}
-
 function loteConfirmarValidade() {
-  const validade = (document.getElementById('lote-f-validade')?.value || '').trim();
+  const validade     = (document.getElementById('lote-f-validade')?.value || '').trim();
+  const loteProduto  = (document.getElementById('lote-f-lote-produto')?.value || '').trim();
   const qtdPal   = parseInt(document.getElementById('lote-f-val-qtd')?.value);
   const fb       = document.getElementById('lote-fb-validade');
   const pend     = APP.lote.pendenciasValidade?.length || 0;
   if (!validade) { if (fb) fb.innerHTML = `<div class="fb err">Informe a validade</div>`; return; }
+  if (!loteProduto) { if (fb) fb.innerHTML = `<div class="fb err">Informe o número do lote do produto</div>`; return; }
   if (isNaN(qtdPal) || qtdPal <= 0) { if (fb) fb.innerHTML = `<div class="fb err">Informe quantos pallets</div>`; return; }
   if (qtdPal > pend) { if (fb) fb.innerHTML = `<div class="fb err">Máximo: ${pend}</div>`; return; }
 
   // Pegar as primeiras qtdPal capas das pendências
   const capasGrupo = APP.lote.pendenciasValidade.splice(0, qtdPal);
-  APP.lote.grupos.push({ validade, capas: capasGrupo });
+  APP.lote.grupos.push({ validade, loteProduto, capas: capasGrupo });
 
   if (APP.lote.pendenciasValidade.length > 0) {
     // Ainda há pendências
     document.getElementById('lote-f-validade').value = '';
+    document.getElementById('lote-f-lote-produto').value = '';
     _loteAtualizarTelaValidade();
-    if (fb) fb.innerHTML = `<div class="fb ok">✓ ${qtdPal} pallet(s) com validade ${validade} — defina a próxima</div>`;
+    if (fb) fb.innerHTML = `<div class="fb ok">✓ ${qtdPal} pallet(s) com validade ${validade} / lote ${loteProduto} — defina o próximo</div>`;
     setTimeout(() => document.getElementById('lote-f-validade')?.focus(), 80);
   } else {
     // Tudo definido — salvar e ir para continuação
@@ -1181,7 +1199,7 @@ function loteConfirmarValidade() {
 // ──────────────────────────────────────────────────────────────────
 //  SALVAR TODOS OS PALLETS DO LOTE INDIVIDUALMENTE
 // ──────────────────────────────────────────────────────────────────
-function _loteSalvarTudo() {
+async function _loteSalvarTudo() {
   // ── Verificar status do inventário antes de salvar o lote ──
   if (!APP.inventario) {
     toast('⚠ Nenhum inventário ativo — selecione um inventário antes de contar.', 'e');
@@ -1198,10 +1216,41 @@ function _loteSalvarTudo() {
   const l    = APP.lote;
   const agora = new Date();
   let saved  = 0;
+  const novasContagens = [];
+  // Contado uma única vez ANTES do loop — refazer este filter() sobre o
+  // array inteiro a cada pallet (como era antes) é O(n) por item, e some com
+  // o unshift() por item (também O(n) por item, reordena o array inteiro)
+  // virava O(n²): com o histórico da sessão já grande, um lote de centenas/
+  // milhares de pallets travava a aba de verdade (trabalho síncrono, sem
+  // await no meio pra liberar a UI).
+  const numeroBase = APP.contagens.filter(c => c.endereco === l.endNorm).length;
 
-  // Para cada grupo de validade, salvar cada capa individualmente
-  l.grupos.forEach(grupo => {
-    grupo.capas.forEach(capa => {
+  // Mesmos campos "Lido" que o salvamento palete-a-palete calcula (ver
+  // _executarSalvar em 08-etapas-produto-quantidade-salvamento.js). Sem
+  // isto, a tela do analista (que prioriza gtinLido/codigoLido/dunLido e só
+  // usa codigo_produto como último recurso) mostrava o código interno do
+  // produto na coluna DUN/GTIN em vez do código de barras real que foi
+  // bipado uma única vez pra todo o lote.
+  const _gtinBipadoLote  = normProd(l.gtin);
+  const _isDunBipadoLote = _gtinBipadoLote.length === 14;
+  const _produtoGlobalLote = window.DTProdutos?.buscarSync(_gtinBipadoLote) || { encontrado:false };
+  const _codigoLidoLote  = _gtinBipadoLote;
+  const _dunLidoLote     = _isDunBipadoLote ? _gtinBipadoLote : '';
+  const _gtinLidoLote     = !_isDunBipadoLote ? _gtinBipadoLote : (_produtoGlobalLote.gtin || '');
+  const _produtoLidoIdLote = _produtoGlobalLote.encontrado ? _produtoGlobalLote.produtoId : '';
+  const _nomeProdutoLidoLote = _produtoGlobalLote.encontrado
+    ? _produtoGlobalLote.nomeProduto
+    : (l.descricaoProduto || 'Produto não identificado');
+
+  // Para cada grupo de validade, salvar cada capa individualmente.
+  // Enfileira uma de cada vez (silencioso:true) em vez de disparar tudo em
+  // paralelo sem esperar — num lote de centenas/milhares de pallets, chamar
+  // enfileirarContagem() sem await pra cada um empilhava uma avalanche de
+  // leituras do IndexedDB inteiro + regravações no localStorage + tentativas
+  // de envio simultâneas ao Firebase, travando a aba (ver histórico do bug).
+  let ultimoUuid = null;
+  for (const grupo of l.grupos) {
+    for (const capa of grupo.capas) {
       const contagem = {
         id:                Date.now() + Math.random(), // garante uniqueness em loop síncrono
         uuid:              gerarUUID(),
@@ -1213,9 +1262,16 @@ function _loteSalvarTudo() {
         gtin:           normProd(l.gtin),
         codigo_produto: normProd(l.codigoProduto),
         produto_codigo:    l.codigoProduto,
+        codigoLido:        _codigoLidoLote,
+        dunLido:           _dunLidoLote,
+        gtinLido:          _gtinLidoLote,
+        produtoLidoId:     _produtoLidoIdLote,
+        produtoLidoNome:   _nomeProdutoLidoLote,
         descricao:         l.descricaoProduto,
         descricao_produto: l.descricaoProduto,
         validade:          grupo.validade,
+        lote_produto:      grupo.loteProduto || '',
+        loteProduto:       grupo.loteProduto || '',
         quantidade:        l.qtdPadrao,
         quantidade_esperada: '',
         divergente:        false,
@@ -1225,17 +1281,32 @@ function _loteSalvarTudo() {
         operador_email:    APP.operador?.email || '',
         coletor_id:        localStorage.getItem('dt_device_id') || '',
         origem:            'COLETOR',
-        tipo_contagem:     'PRIMEIRA',
+        // Mesmos campos de recontagem usados no salvamento palete-a-palete
+        // (ver _executarSalvar em 08-etapas-produto-quantidade-salvamento.js)
+        // — sem isto, um lote lançado durante recontagem seria gravado como
+        // contagem PRIMEIRA e nunca fecharia a divergência que originou a
+        // recontagem.
+        tipo_contagem:     APP.modoRecontagem ? 'RECONTAGEM' : 'PRIMEIRA',
+        recontagem_id:     APP.modoRecontagem ? (APP.modoRecontagem.id || null) : null,
+        divergencia_id:    APP.modoRecontagem ? (APP.modoRecontagem.divergencia_id || (APP.modoRecontagem._col === 'divergencia' ? APP.modoRecontagem.id : null)) : null,
+        numero_recontagem: APP.modoRecontagem ? Number(APP.modoRecontagem.numero_recontagem || 1) : null,
         lancamento_rapido: true,   // flag para rastreabilidade
         dataHora:          agora,
         criado_em:         agora.toISOString(),
-        numero:            APP.contagens.filter(c => c.endereco === l.endNorm).length + saved + 1,
+        numero:            numeroBase + saved + 1,
       };
-      APP.contagens.unshift(contagem);
-      enfileirarContagem({ ...contagem, dataHora: agora.toISOString() });
+      novasContagens.push(contagem);
+      const registro = { ...contagem, dataHora: agora.toISOString() };
+      await enfileirarContagem(registro, { silencioso: true });
+      ultimoUuid = registro.uuid;
       saved++;
-    });
-  });
+    }
+  }
+  // Uma única inserção no início do histórico local, em vez de uma por
+  // pallet — preserva a mesma ordem (mais recente primeiro) que o unshift()
+  // item a item produzia, mas em O(n) no total em vez de O(n²).
+  APP.contagens = novasContagens.reverse().concat(APP.contagens);
+  if (ultimoUuid) await finalizarEnfileiramento(ultimoUuid);
 
   l.totalSalvos = (l.totalSalvos || 0) + saved;
   if (!isNaN(l.qtdPadrao)) {
@@ -1256,7 +1327,7 @@ function _loteSalvarTudo() {
     toast(`✅ Capacidade do endereço atingida (${_usadosLote}/${_capLote}) — próximo endereço`, 's');
     APP.lote = null;
     _loteSetPainel(false);
-    finalizarEnderecoAtual();
+    if (APP.modoRecontagem) _concluirRecontagem(); else finalizarEnderecoAtual();
     return;
   }
 
@@ -1310,6 +1381,8 @@ function loteEncerrar() {
   const j = _lotePalletsJaUsados(endNorm);
   if (j === 0 && endNorm) {
     _executarVazio(endNorm);      // endereço realmente vazio — salvar vazio
+  } else if (APP.modoRecontagem) {
+    _concluirRecontagem();        // fecha a rodada de recontagem corretamente
   } else {
     finalizarEnderecoAtual();     // pallets já contados — apenas encerrar
     toast('✅ Endereço encerrado', 's');
@@ -1318,7 +1391,6 @@ function loteEncerrar() {
 
 /** Chamado em _prosseguirComEndereco quando o endereço pode ser grande */
 function _loteVerificarOferta(endNorm, endExib, capExplicita) {
-  if (APP.modoRecontagem)    return false; // recontagem = sempre manual
   if (APP.lotePerguntaFeita) return false; // já perguntou neste endereço
 
   const cap = capExplicita || 0;

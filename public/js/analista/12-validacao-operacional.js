@@ -11,8 +11,22 @@ function state(){ return window.AnalistaStore.getState(); }
  * @param {string} endCod — ex: "01.02.03.04.05.01"
  * @returns {object|null}
  */
+// Chamada muitas vezes por render (dentro de .filter()/.map() sobre
+// divergências/recontagens/pendências, que podem ter milhares de itens) —
+// um .find() percorrendo os ~5800 endereços a cada chamada deixava essas
+// telas travando por vários segundos. O Map só é reconstruído quando
+// enderecosLista muda de referência (nova lista após alguma escrita), então
+// no resto do tempo a busca é O(1) em vez de O(n) por chamada.
+let _endInfoCacheArr = null;
+let _endInfoCacheMap = null;
 function getEnderecoInfo(endCod) {
-  return state().enderecosLista.find(e => e.endereco === endCod) || null;
+  const lista = state().enderecosLista;
+  if (lista !== _endInfoCacheArr) {
+    _endInfoCacheMap = new Map();
+    for (const e of (lista || [])) _endInfoCacheMap.set(e.endereco, e);
+    _endInfoCacheArr = lista;
+  }
+  return _endInfoCacheMap.get(endCod) || null;
 }
 
 /**
@@ -35,14 +49,30 @@ function getContagensAtivas(inventarioId, endCod, incluirRecontagem = false) {
 /**
  * Conta quantos paletes já foram registrados para um endereço em um inventário.
  * Cada contagem de tipo PRIMEIRA = 1 palete (independente da quantidade de itens).
+ *
+ * Mesma armadilha do getEnderecoInfo acima: chamada uma vez por endereço em
+ * telas como Pendências (que agora, com a base via API incluindo todos os
+ * endereços locais, pode ter milhares de linhas) — um .filter() completo em
+ * contagens a cada chamada virava endereços×contagens operações e travava a
+ * aba. O índice é reconstruído só quando o array de contagens muda de
+ * referência; fora isso, a busca é O(1).
  */
+let _paletesUsadosCacheArr = null;
+let _paletesUsadosCacheMapa = null;
 function getPaletesUsados(inventarioId, endCod) {
-  return state().contagens.filter(c =>
-    c.inventario_id === inventarioId &&
-    c.endereco === endCod &&
-    !c._excluida &&
-    c.tipo_contagem !== 'RECONTAGEM'
-  ).length;
+  const contagens = state().contagens;
+  if (contagens !== _paletesUsadosCacheArr) {
+    _paletesUsadosCacheArr = contagens;
+    _paletesUsadosCacheMapa = new Map();
+    for (const c of (contagens || [])) {
+      if (c._excluida || c.tipo_contagem === 'RECONTAGEM' || !c.endereco || c.inventario_id == null) continue;
+      let porInventario = _paletesUsadosCacheMapa.get(c.inventario_id);
+      if (!porInventario) { porInventario = new Map(); _paletesUsadosCacheMapa.set(c.inventario_id, porInventario); }
+      porInventario.set(c.endereco, (porInventario.get(c.endereco) || 0) + 1);
+    }
+  }
+  const porInventario = _paletesUsadosCacheMapa.get(inventarioId);
+  return porInventario ? (porInventario.get(endCod) || 0) : 0;
 }
 
 /**

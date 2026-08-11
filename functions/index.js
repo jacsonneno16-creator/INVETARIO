@@ -2,6 +2,7 @@
 
 const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
+const cors = require('cors')({origin: true});
 
 admin.initializeApp();
 
@@ -583,4 +584,67 @@ exports.excluirAuditoriaCompleta = functions.region('southamerica-east1')
       throw new functions.https.HttpsError('internal', 'A exclusão não foi concluída; a auditoria foi preservada para nova tentativa.');
     }
     return {ok: true, apagados};
+  });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Proxy Bluesoft ERP: o servidor da Bluesoft não envia headers de CORS, então
+// o navegador não pode chamá-lo diretamente. Esta function relaia a chamada
+// servidor-para-servidor (sem CORS) e devolve a resposta ao frontend. O token
+// do Bluesoft continua vindo do próprio frontend (mesmo padrão já usado para
+// os outros adaptadores de API) — nunca fica hardcoded aqui nem em nenhum
+// arquivo de código-fonte.
+const BLUESOFT_HOST_PERMITIDO = /^https:\/\/erp\.bluesoft\.com\.br(?:\/[\w-]+)?$/;
+const METODOS_PERMITIDOS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH']);
+
+async function usuarioAutenticadoPorHeader(req) {
+  const cabecalho = String(req.get('Authorization') || '');
+  const partes = cabecalho.match(/^Bearer (.+)$/i);
+  if (!partes) return null;
+  try { return await admin.auth().verifyIdToken(partes[1]); }
+  catch (_) { return null; }
+}
+
+exports.bluesoftProxy = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onRequest((req, res) => {
+    cors(req, res, async () => {
+      if (req.method !== 'POST') {
+        return res.status(405).json({erro: 'Use POST.'});
+      }
+      const usuario = await usuarioAutenticadoPorHeader(req);
+      if (!usuario) {
+        return res.status(401).json({erro: 'Faça login novamente.'});
+      }
+
+      const {method, path, baseUrl, token, body} = req.body || {};
+      const metodo = String(method || 'GET').toUpperCase();
+      const caminho = String(path || '');
+      const base = String(baseUrl || '').replace(/\/+$/, '');
+
+      if (!METODOS_PERMITIDOS.has(metodo)) {
+        return res.status(400).json({erro: 'Método HTTP inválido.'});
+      }
+      if (!caminho.startsWith('/') || !BLUESOFT_HOST_PERMITIDO.test(base) || !token) {
+        return res.status(400).json({
+          erro: "Envie 'baseUrl' (host da Bluesoft), 'path' (iniciando com /) e 'token' válidos."
+        });
+      }
+
+      try {
+        const resposta = await fetch(base + caminho, {
+          method: metodo,
+          headers: {'x-CustomToken': String(token), 'Content-Type': 'application/json'},
+          body: metodo !== 'GET' && metodo !== 'HEAD' && body != null ? JSON.stringify(body) : undefined
+        });
+        const texto = await resposta.text();
+        let dados;
+        try { dados = texto ? JSON.parse(texto) : null; }
+        catch (_) { dados = texto; }
+        return res.status(resposta.status).json(dados);
+      } catch (erro) {
+        console.error('Erro no proxy Bluesoft:', erro);
+        return res.status(502).json({erro: 'Falha ao conectar com a Bluesoft.', detalhe: String(erro.message || erro)});
+      }
+    });
   });

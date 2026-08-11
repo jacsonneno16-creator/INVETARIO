@@ -55,7 +55,7 @@ const ALIAS_BASE = {
   ],
 
   total_unidades_sistema: ['total_unidades_sistema','total_em_unidades','estoque_total_unidades','saldo_unidades','quantidade_sistema_unidades','qtd_total_unidades'],
-  tipo_produto: ['tipo_produto','categoria_produto','categoria_inventario','grupo_produto','classe_produto','tipo_item','familia_produto'],
+  tipo_produto: ['tipo_produto','categoria_produto','categoria_inventario','grupo_produto','classe_produto','tipo_item','familia_produto','tipo','classificacao','classificacao_produto','tipo_de_produto','tipo_do_produto','tipo_do_item'],
   tipo_endereco: ['tipo_endereco','fisico_virtual','endereco_fisico_virtual','classificacao_endereco'],
   contabiliza_inventario: ['contabiliza_inventario','contar_inventario','entra_inventario','considerar_inventario','inventariavel'],
   permite_multiplos_operadores: ['permite_multiplos_operadores','multi_operador','contagem_colaborativa','permite_contagem_simultanea'],

@@ -112,8 +112,23 @@
   async function lojaSalvarEdicao() {
     const id=document.getElementById('loja-edit-id')?.value, nome=document.getElementById('loja-edit-nome')?.value?.trim();
     if(!id||!nome)return global.showToast?.('Loja inválida ou nome não informado.','error');
+    const dados={nome,responsavel:document.getElementById('loja-edit-responsavel')?.value?.trim()||'',observacao:document.getElementById('loja-edit-obs')?.value?.trim()||'',atualizada_em:new Date().toISOString()};
+    const bsSel=document.getElementById('loja-edit-bluesoft-key');
+    if(bsSel){
+      const chave=String(bsSel.value||'').trim();
+      if(chave){
+        const cd=bsSel.selectedOptions?.[0]?.dataset?.cd==='1';
+        Object.assign(dados,{bluesoft_loja_key:chave,bluesoft_loja_cd:cd,bluesoft_tipo_fluxo:cd?'ENDERECAMENTO_LOGISTICO':'PADRAO'});
+      } else {
+        Object.assign(dados,{
+          bluesoft_loja_key:global.firebase.firestore.FieldValue.delete(),
+          bluesoft_loja_cd:global.firebase.firestore.FieldValue.delete(),
+          bluesoft_tipo_fluxo:global.firebase.firestore.FieldValue.delete()
+        });
+      }
+    }
     try{
-      await global.getDTRawFirestore().collection('lojas').doc(id).set({nome,responsavel:document.getElementById('loja-edit-responsavel')?.value?.trim()||'',observacao:document.getElementById('loja-edit-obs')?.value?.trim()||'',atualizada_em:new Date().toISOString()},{merge:true});
+      await global.getDTRawFirestore().collection('lojas').doc(id).set(dados,{merge:true});
       lojaFecharModalEditar();global.showToast?.('Loja atualizada.','success');await global.renderGestaoLojas?.();
     }catch(e){global.showToast?.('Erro ao atualizar loja: '+(e.message||e),'error');}
   }

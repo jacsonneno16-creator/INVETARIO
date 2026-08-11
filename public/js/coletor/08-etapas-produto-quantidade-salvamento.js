@@ -820,14 +820,30 @@ function finalizarEnderecoAtual() {
 
 
 function _manterEnderecoAtivo(endereco, endNorm, cap, somentesDun) {
+  // Pedido do usuário: o endereço já foi confirmado no palete anterior —
+  // não faz sentido pedir pra rebipar de novo a cada palete do mesmo
+  // endereço. Antes disto, o app entrava num modo "travado" exigindo
+  // reescanear o endereço (ver confirmarRebipar()) antes de liberar o
+  // próximo palete; agora segue direto pro passo 2 (capa), reaproveitando
+  // a mesma lógica de "endereço confirmado" usada na primeira entrada.
+  // GTIN e lote continuam sendo pedidos do zero a cada palete (não ficam
+  // pré-preenchidos) — só o reescaneamento do endereço foi removido.
   const palletsContados = _palletsNoEnderecoAtual(endNorm);
 
-  // Guarda estado de "aguardando rebipar" — endereço travado
+  // Recheca capacidade aqui (e não só antes de chamar esta função) porque,
+  // em endereços com múltiplos operadores, outro coletor pode ter enchido
+  // a capacidade entre o salvamento deste palete e agora.
+  if (cap > 0 && palletsContados >= cap) {
+    toast(`✅ Capacidade atingida (${palletsContados}/${cap}) — próximo endereço`, 's');
+    finalizarEnderecoAtual();
+    return;
+  }
+
   APP.atual = {
     step: 1,
     endereco: '',
     _endNorm: '',
-    enderecoValido: true,      // libera botão VAZIO
+    enderecoValido: true,
     capacidadeEnd: cap,
     capa: '',
     gtin: '',
@@ -836,8 +852,6 @@ function _manterEnderecoAtivo(endereco, endNorm, cap, somentesDun) {
     validade: '',
     quantidade: 0,
     somentesDun: somentesDun || false,
-    _pendingEndereco: endNorm,  // sinaliza modo travado
-    _pendingPallets: palletsContados,
   };
 
   // Limpar campos das etapas 2-5
@@ -857,52 +871,15 @@ function _manterEnderecoAtivo(endereco, endNorm, cap, somentesDun) {
   const pb = document.getElementById('prod-found-box');
   if (pb) pb.style.display = 'none';
 
-  // Limpar sf-val de todas as etapas
-  ['sf-val-endereco','sf-val-capa','sf-val-gtin','sf-val-validade'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) { el.textContent = ''; el.style.display = 'none'; }
-    const stepMap = { 'sf-val-endereco':'step-endereco', 'sf-val-capa':'step-capa', 'sf-val-gtin':'step-gtin', 'sf-val-validade':'step-validade' };
-    const stepEl = document.getElementById(stepMap[id]);
-    if (stepEl) { const inp = stepEl.querySelector('.sf-input-wrap .field'); if (inp) inp.style.display = ''; }
-  });
-
-  // Esconder o step-endereco normal e mostrar o bloco travado
+  // Garantir bloco travado oculto e step-endereco visível (não usamos mais
+  // o modo travado, mas o elemento pode ter ficado visível de uma versão
+  // anterior em cache)
   const stepEnd = document.getElementById('step-endereco');
-  if (stepEnd) stepEnd.style.display = 'none';
-
+  if (stepEnd) stepEnd.style.display = '';
   const blocoTravado = document.getElementById('bloco-endereco-travado');
-  if (blocoTravado) blocoTravado.style.display = '';
+  if (blocoTravado) blocoTravado.style.display = 'none';
 
-  // Preencher info no bloco travado
-  const txtEnd = document.getElementById('txt-endereco-travado');
-  if (txtEnd) txtEnd.textContent = endereco.toUpperCase();
-
-  const txtCap = document.getElementById('txt-cap-travado');
-  if (txtCap) {
-    if (cap > 0) {
-      const restantes = Math.max(0, cap - palletsContados);
-      txtCap.innerHTML = `✅ Pallet <b>${palletsContados}</b> salvo &nbsp;·&nbsp; Capacidade: <b>${cap}</b> &nbsp;·&nbsp; Restantes: <b>${restantes}</b>`;
-    } else {
-      txtCap.innerHTML = `✅ Pallet <b>${palletsContados}</b> salvo`;
-    }
-  }
-
-  // Limpar campo de rebipar e feedback
-  const fReb = document.getElementById('f-rebipar-endereco');
-  if (fReb) { fReb.value = ''; fReb.className = 'field'; }
-  const fbReb = document.getElementById('fb-rebipar');
-  if (fbReb) fbReb.innerHTML = '';
-
-  // Mostrar botão VAZIO
-  const vaziow = document.getElementById('btn-vazio-wrap');
-  if (vaziow) vaziow.style.display = '';
-
-  // Esconder botão 🔄 reset (operador não pode sair livremente)
-  const btnReset = document.getElementById('btn-reset-endereco');
-  if (btnReset) btnReset.style.display = 'none';
-
-  updateSteps();
-  setTimeout(() => { try { document.getElementById('f-rebipar-endereco').focus(); } catch(e){ console.warn("[Erro tratado]", e); } }, 100);
+  _prosseguirComEndereco(endNorm);
 }
 
 /** Confirma o rebipar do endereço no estado travado */

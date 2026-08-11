@@ -40,8 +40,16 @@ window.DT_LOJA_KEY = 'dt_loja_ativa_v1';
 window.getDTLojaAtiva = function(){ return localStorage.getItem(window.DT_LOJA_KEY) || ''; };
 window.setDTLojaAtiva = function(id){
   const lojaId = String(id || '').trim();
-  if (lojaId) localStorage.setItem(window.DT_LOJA_KEY, lojaId);
-  else localStorage.removeItem(window.DT_LOJA_KEY);
+  // Sem o try/catch, um localStorage cheio (QuotaExceededError) quebrava
+  // esta função no meio — o evento abaixo nunca disparava, e o clique de
+  // login/seleção de loja morria em silêncio sem terminar. Selecionar a
+  // loja não deveria depender de conseguir PERSISTIR a preferência.
+  try {
+    if (lojaId) localStorage.setItem(window.DT_LOJA_KEY, lojaId);
+    else localStorage.removeItem(window.DT_LOJA_KEY);
+  } catch (e) {
+    console.warn('[DTLoja] Não foi possível salvar a loja ativa (armazenamento cheio?):', e.message);
+  }
   window.dispatchEvent(new CustomEvent('dt-loja-alterada', { detail:{ lojaId } }));
   return lojaId;
 };

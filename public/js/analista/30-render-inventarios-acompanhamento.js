@@ -67,21 +67,21 @@ function renderInvTable() {
               </td>
               <td>
                 <div style="display:flex;gap:4px;flex-wrap:wrap">
-                  <button class="btn btn-ghost btn-sm" onclick="verBase('${inv.id}')">📂 Base</button>
-                  <button class="btn btn-ghost btn-sm" onclick="toggleInvVisibilidade('${inv.id}')" title="${inv.oculto_coletor ? 'Inventário oculto no coletor — clique para mostrar' : 'Inventário visível no coletor — clique para ocultar'}" style="${inv.oculto_coletor ? 'color:var(--danger);border-color:rgba(217,32,32,.3)' : ''}">
+                  <button class="btn btn-ghost btn-sm" data-inv-acao="verBase" data-inv-id="${escapeHTML(inv.id)}">📂 Base</button>
+                  <button class="btn btn-ghost btn-sm" data-inv-acao="toggleInvVisibilidade" data-inv-id="${escapeHTML(inv.id)}" title="${inv.oculto_coletor ? 'Inventário oculto no coletor — clique para mostrar' : 'Inventário visível no coletor — clique para ocultar'}" style="${inv.oculto_coletor ? 'color:var(--danger);border-color:rgba(217,32,32,.3)' : ''}">
                     ${inv.oculto_coletor ? '🙈 Oculto' : '👁 Visível'}
                   </button>
                   ${inv.status === 'ATIVO' ? `
-                    <button class="btn btn-sm" onclick="republicarBaseInventario('${inv.id}')" title="Publicar base no Firebase para que os coletores possam baixar" style="background:rgba(59,130,246,.12);color:#60a5fa;border:1px solid rgba(59,130,246,.3);padding:4px 8px;font-size:.72rem">🔥 Publicar Base</button>
-                    <button class="btn btn-ghost btn-sm" onclick="pausarInventario('${inv.id}')">⏸</button>
-                    <button class="btn btn-danger btn-sm" onclick="abrirFecharInventario('${inv.id}')">Fechar</button>
+                    <button class="btn btn-sm" data-inv-acao="republicarBaseInventario" data-inv-id="${escapeHTML(inv.id)}" title="Publicar base no Firebase para que os coletores possam baixar" style="background:rgba(59,130,246,.12);color:#60a5fa;border:1px solid rgba(59,130,246,.3);padding:4px 8px;font-size:.72rem">🔥 Publicar Base</button>
+                    <button class="btn btn-ghost btn-sm" data-inv-acao="pausarInventario" data-inv-id="${escapeHTML(inv.id)}">⏸</button>
+                    <button class="btn btn-danger btn-sm" data-inv-acao="abrirFecharInventario" data-inv-id="${escapeHTML(inv.id)}">Fechar</button>
                   ` : inv.status === 'PAUSADO' ? `
-                    <button class="btn btn-success btn-sm" onclick="pausarInventario('${inv.id}')">▶ Reativar</button>
+                    <button class="btn btn-success btn-sm" data-inv-acao="pausarInventario" data-inv-id="${escapeHTML(inv.id)}">▶ Reativar</button>
                   ` : `
-                    <button class="btn btn-export btn-sm" onclick="validarExportacaoBluesoft('${inv.id}')" title="Validar e exportar para o Bluesoft">📤 Bluesoft</button>
+                    <button class="btn btn-export btn-sm" data-inv-acao="validarExportacaoBluesoft" data-inv-id="${escapeHTML(inv.id)}" title="Validar e exportar para o Bluesoft">📤 Bluesoft</button>
                     <span style="font-size:.72rem;color:var(--muted)">${fmtData(inv.fechado_em)}</span>
                   `}
-                  <button class="btn btn-sm" onclick="excluirInventario('${inv.id}')" title="Excluir inventário permanentemente" style="background:rgba(217,32,32,.10);color:var(--danger);border:1px solid rgba(217,32,32,.22);padding:4px 8px">🗑 Excluir</button>
+                  <button class="btn btn-sm" data-inv-acao="excluirInventario" data-inv-id="${escapeHTML(inv.id)}" title="Excluir inventário permanentemente" style="background:rgba(217,32,32,.10);color:var(--danger);border:1px solid rgba(217,32,32,.22);padding:4px 8px">🗑 Excluir</button>
                 </div>
               </td>
             </tr>`;
@@ -89,6 +89,23 @@ function renderInvTable() {
         </tbody>
       </table>
     </div>`;
+}
+
+// Causa raiz encontrada: um sanitizador de segurança global (shared/common-utils.js,
+// instalarRenderizacaoSegura) intercepta TODA atribuição a .innerHTML no app e remove
+// qualquer atributo que comece com "on" (onclick, onchange, etc.) para bloquear XSS via
+// HTML dinâmico — efeito colateral: nenhum onclick inline sobrevive em tabelas
+// renderizadas via innerHTML (como esta). A solução correta é delegação de evento com
+// data-atributos, não onclick inline — mesmo padrão já usado em data-loja-editar/
+// data-usuario-editar, que por isso nunca foram afetados por este mesmo problema.
+if (!window.__dtInvAcoesDelegadas) {
+  window.__dtInvAcoesDelegadas = true;
+  document.addEventListener('click', function (event) {
+    const botao = event.target.closest('[data-inv-acao]');
+    if (!botao) return;
+    const fn = window[botao.getAttribute('data-inv-acao')];
+    if (typeof fn === 'function') fn(botao.getAttribute('data-inv-id'));
+  });
 }
 
 // ───────────────────────────────────────────────────────────────────

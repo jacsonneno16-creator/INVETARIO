@@ -450,8 +450,10 @@
 <div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:6px">Validação — Validade dos pallets</div>
 <div id="lote-val-pendente-txt" style="font-size:.82rem;font-weight:800;color:var(--text);margin-bottom:10px"></div>
 <div style="font-size:.82rem;color:var(--text);margin-bottom:6px">Qual a validade?</div>
-<input autocomplete="off" class="field" id="lote-f-validade" inputmode="numeric" maxlength="10" oninput="loteOnValidadeInput()" onkeydown="if(event.key==='Enter')loteConfirmarValidadeInput()" placeholder="MM/AAAA ou DD/MM/AAAA" style="margin-bottom:8px" type="text"/>
-<div style="font-size:.82rem;color:var(--text);margin-bottom:6px">Quantos pallets têm essa validade?</div>
+<input autocomplete="off" class="field" id="lote-f-validade" inputmode="numeric" maxlength="10" oninput="loteOnValidadeInput()" onkeydown="if(event.key==='Enter')document.getElementById('lote-f-lote-produto')?.focus()" placeholder="MM/AAAA ou DD/MM/AAAA" style="margin-bottom:8px" type="text"/>
+<div style="font-size:.82rem;color:var(--text);margin-bottom:6px">Número do lote do produto</div>
+<input autocomplete="off" class="field" id="lote-f-lote-produto" maxlength="30" onkeydown="if(event.key==='Enter')document.getElementById('lote-f-val-qtd')?.focus()" placeholder="Número do lote" style="margin-bottom:8px" type="text"/>
+<div style="font-size:.82rem;color:var(--text);margin-bottom:6px">Quantos pallets têm essa validade e lote?</div>
 <input class="field" id="lote-f-val-qtd" inputmode="numeric" min="1" onkeydown="if(event.key==='Enter')loteConfirmarValidade()" placeholder="Quantidade de pallets" style="margin-bottom:8px" type="number"/>
 <div id="lote-fb-validade" style="margin-bottom:10px;min-height:20px"></div>
 <button class="btn btn-primary" onclick="loteConfirmarValidade()" style="width:100%;padding:11px">Aplicar validade →</button>
@@ -518,13 +520,13 @@
 <button class="btn btn-primary" id="btn-confirmar-gtin" onclick="confirmarGtin()" style="margin-top:8px;padding:11px 14px;font-size:.9rem;width:100%">Confirmar →</button>
 </div>
 </div>
-<!-- ETAPA 4: Validade -->
+<!-- ETAPA 4: Lote do produto (campo antigo de "validade" reaproveitado) -->
 <div class="step-field" id="step-validade" style="display:none">
 <div class="sf-row">
-<div class="sf-label">Validade</div>
+<div class="sf-label">Lote do produto</div>
 <div class="sf-sep"></div>
 <div class="sf-input-wrap">
-<input autocomplete="off" class="field" id="f-validade" inputmode="numeric" maxlength="10" oninput="onValidadeInput()" placeholder="DD/MM/AAAA" type="text"/>
+<input autocomplete="off" class="field" id="f-validade" maxlength="30" oninput="onValidadeInput()" placeholder="Número do lote" type="text"/>
 <span class="sf-val" id="sf-val-validade" style="display:none"></span>
 </div>
 </div>

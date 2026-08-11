@@ -257,7 +257,7 @@
         const docs = snap.docs.map(d => ({ id:d.id, ...d.data() }));
         const grupos = _auditoriaMeta(docs);
         APP.auditoriasMenu = grupos;
-        localStorage.setItem('auditorias_menu_cache_v2', JSON.stringify(grupos));
+        try { localStorage.setItem('auditorias_menu_cache_v2', JSON.stringify(grupos)); } catch(e){ console.warn('[Erro tratado]', e); }
         renderListaAuditorias(grupos);
       })
       .catch(err => {

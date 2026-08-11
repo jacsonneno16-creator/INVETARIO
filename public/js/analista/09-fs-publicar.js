@@ -15,12 +15,32 @@
       const { base, ...invSemBase } = inv;
       const _baseLen = Array.isArray(base) ? base.length : 0;
       const _baseChunkSize = 1000;
-      await FS_AN.collection('dt_inventarios').doc(inv.id).set({
-        ...invSemBase,
-        base_chunks: _baseLen ? Math.ceil(_baseLen / _baseChunkSize) : (invSemBase.base_chunks || 0),
-        base_chunk_size: _baseChunkSize,
-        base_publicada_em: new Date()
-      }, { merge: true });
+      // A regra de 'update' desta coleção (por loja) exige um número de
+      // versão que sobe exatamente +1 a cada escrita (trava optimista contra
+      // sobrescrita concorrente — ver fsAtualizarStatusInventario). Esta
+      // função nunca gerenciou isso e sempre mandava a versão antiga (ou
+      // nenhuma), então TODA republicação de um inventário já existente
+      // violava a regra e caía em "Missing or insufficient permissions" —
+      // silenciosamente, porque o app só mostra erro genérico. Sem o
+      // inventário sendo atualizado aqui, o status dele podia ficar
+      // desatualizado no caminho que o coletor consulta para saber se pode
+      // gravar contagens (ver inventoryOpen() nas regras), fazendo contagens
+      // ficarem "pendente" para sempre mesmo com envio bem-sucedido de outra
+      // forma. A correção é ler a versão atual e gravar +1 numa transação,
+      // igual ao padrão já usado em fsAtualizarStatusInventario.
+      const ref = FS_AN.collection('dt_inventarios').doc(inv.id);
+      const raw = window.getDTRawFirestore ? window.getDTRawFirestore() : FS_AN;
+      await raw.runTransaction(async (transaction) => {
+        const snap = await transaction.get(ref);
+        const versaoAtual = snap.exists ? Number((snap.data() || {}).versao || 0) : 0;
+        transaction.set(ref, {
+          ...invSemBase,
+          base_chunks: _baseLen ? Math.ceil(_baseLen / _baseChunkSize) : (invSemBase.base_chunks || 0),
+          base_chunk_size: _baseChunkSize,
+          base_publicada_em: new Date(),
+          versao: versaoAtual + 1
+        }, { merge: true });
+      });
 
       if (Array.isArray(base) && base.length > 0) {
         const CHUNK = 1000;
@@ -69,7 +89,7 @@
         capacidade_paletes: end.capacidade_paletes ?? null,
         nome_local:         end.nome_local || end.local || '',
         setor:              end.setor || end.local || '',
-        tipo:               end.tipo || '',
+        tipo:               end.tipo_endereco || end.tipo || '',
         rua:                end.rua || '',
         loja:               lojaId
       }));

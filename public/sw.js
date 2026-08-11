@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260808-v297-cache-fix';
+var CACHE='dt-inventario-20260809-v298-css-fix';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -108,7 +108,8 @@ self.addEventListener('fetch',function(e){
   if(local){
     var arquivoCritico=e.request.mode==='navigate' ||
       u.pathname.slice(-5)==='.html' ||
-      u.pathname.slice(-3)==='.js';
+      u.pathname.slice(-3)==='.js' ||
+      u.pathname.slice(-4)==='.css';
     if(arquivoCritico){
       e.respondWith(fetch(e.request,{cache:'no-store'}).then(function(r){
         if(!r||!r.ok)throw new Error('Resposta inválida');

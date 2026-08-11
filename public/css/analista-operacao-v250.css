@@ -88,10 +88,6 @@
 /* Cadastros */
 #page-enderecos .tc-toolbar,#page-produtos .tc-toolbar,#page-coletores .tc-toolbar{display:grid!important;grid-template-columns:minmax(260px,1.6fr) repeat(3,minmax(145px,.7fr))!important}
 #page-enderecos #end-table-wrap,#page-produtos #prod-table-wrap,#page-coletores #coletores-wrap{min-height:480px!important}
-#page-operadores,#page-lojas{width:100%!important;max-width:none!important}
-#page-operadores .admin-management-card,#page-lojas .admin-management-card{width:100%!important;max-width:none!important}
-#page-operadores .admin-management-header,#page-lojas .admin-management-header{margin-bottom:14px!important}
-#page-operadores #operadores-lista,#page-lojas #lojas-lista{width:100%!important;max-width:none!important}
 
 /* Auditoria e rastreabilidade */
 #page-auditoria .tc,#page-rastreabilidade .tc{width:100%!important;max-width:none!important}

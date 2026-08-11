@@ -3,16 +3,24 @@ function state(){ return window.AnalistaStore.getState(); }
 // indicadores do Dashboard enxergam apenas a última rodada física concluída.
 // Assim, uma recontagem substitui integralmente a rodada anterior também nos
 // cards, gráficos, progresso e rankings.
-function _dashContagens(inventarioId){
+function _dashContagens(inventarioId, ignorarFiltroHora){
   const st=state();
+  let rows;
   if(window.InventoryAddressState?.latestPhysicalRows){
-    return window.InventoryAddressState.latestPhysicalRows(st,inventarioId);
+    rows = window.InventoryAddressState.latestPhysicalRows(st,inventarioId);
+  } else {
+    // Falha segura durante bootstrap: não quebra a tela antes do motor carregar.
+    rows = (st.contagens||[]).filter(c=>
+      (!inventarioId || String(c.inventario_id||c.inventarioId||'')===String(inventarioId)) &&
+      !c._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(c.status||'').toUpperCase())
+    );
   }
-  // Falha segura durante bootstrap: não quebra a tela antes do motor carregar.
-  return (st.contagens||[]).filter(c=>
-    (!inventarioId || String(c.inventario_id||c.inventarioId||'')===String(inventarioId)) &&
-    !c._excluida && !['ESTORNADA','EXCLUIDA'].includes(String(c.status||'').toUpperCase())
-  );
+  // Fonte central usada por praticamente todo indicador do dashboard — filtrar
+  // por hora aqui propaga automaticamente pra progresso, rankings e KPIs.
+  // ignorarFiltroHora=true é usado só pelo próprio gráfico "Produção por
+  // hora", que precisa sempre das 24 horas pra desenhar as barras clicáveis.
+  if (ignorarFiltroHora) return rows;
+  return _dashFiltroHora===null ? rows : rows.filter(_dashRegistroNaHora);
 }
 function _dashLocalName(e){
   return String(e?.setor || e?.local || e?.nome_local || e?.nomeLocal || e?.local_area || e?.local_estoque || 'SEM LOCAL').trim() || 'SEM LOCAL';
@@ -26,10 +34,31 @@ function limparFiltrosDash() {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
+  _dashFiltroHora = null;
   renderDashboard();
 }
 
 let _dashCache = null;
+
+// Hora (0-23) selecionada no gráfico "Produção por hora" do dashboard v254 —
+// null = sem filtro. Ao clicar numa hora, TODOS os cards do dashboard
+// (progresso, resumo, rankings, operadores) passam a considerar só o que
+// aconteceu naquela hora específica, não o total acumulado.
+let _dashFiltroHora = null;
+
+function _dashRegistroNaHora(registro) {
+  if (_dashFiltroHora === null) return true;
+  const iso = _dashDataRegistro(registro);
+  if (!iso) return false;
+  const d = new Date(iso);
+  return !isNaN(d) && d.getHours() === _dashFiltroHora;
+}
+
+function dashApplyHoraFilter(hora) {
+  const h = Number(hora);
+  _dashFiltroHora = (_dashFiltroHora === h) ? null : h;
+  renderDashboard();
+}
 
 function renderDashboardInventario() {
   _dashAtualizarRotulosModo('inventario');
@@ -122,6 +151,23 @@ function renderDashboardInventario() {
     return true;
   });
 
+  // Mesma lista, mas ignorando o filtro de hora — usada só pelo gráfico
+  // "Produção por hora", que precisa sempre mostrar as 24 horas pra
+  // continuar clicável mesmo com uma hora já selecionada.
+  const contagensFisicasSemHora = _dashContagens(undefined, true);
+  const contagensConsideradasSemHora = contagensFisicasSemHora.filter(c => {
+    if (c._excluida) return false;
+    if (fInvId && c.inventario_id !== fInvId) return false;
+    if (fRua || fLocal) {
+      const end = state().enderecosLista.find(e => e.endereco === c.endereco) || {};
+      const rua = end.rua || extrairRua(c.endereco) || 'SEM RUA';
+      const local = _dashLocalName(end);
+      if (fRua && rua !== fRua) return false;
+      if (fLocal && local !== fLocal) return false;
+    }
+    return true;
+  });
+
   // Operadores ativos
   const opsAtivos = new Set();
   invsConsiderados.forEach(inv => {
@@ -148,6 +194,7 @@ function renderDashboardInventario() {
     endsBase: endsFiltered.length ? endsFiltered : endsBaseAtivos,
     endsFiltered,
     contagensConsideradas,
+    contagensConsideradasSemHora,
     pctGeral,
     endContadosTotal,
     pendentesTotal,
@@ -435,7 +482,7 @@ function _dashDataRegistro(registro) {
   return isNaN(d) ? '' : d.toISOString();
 }
 
-function _dashRecontagensConsideradas(dc) {
+function _dashRecontagensConsideradas(dc, ignorarFiltroHora) {
   const filtros = dc?.filtros || {};
   const enderecos = state().enderecosLista || [];
   const aceitoNoFiltro = r => {
@@ -446,6 +493,7 @@ function _dashRecontagensConsideradas(dc) {
     const local = end.setor || r?.setor || r?.local || 'SEM LOCAL';
     if (filtros.rua && String(rua) !== String(filtros.rua)) return false;
     if (filtros.local && String(local) !== String(filtros.local)) return false;
+    if (!ignorarFiltroHora && !_dashRegistroNaHora(r)) return false;
     return true;
   };
   const candidatos = [
@@ -565,6 +613,7 @@ function _dashDivergenciasProduto(dc) {
       if (ruaFiltro && String(rua) !== String(ruaFiltro)) return false;
       if (localFiltro && String(local) !== String(localFiltro)) return false;
     }
+    if (!_dashRegistroNaHora(d)) return false;
     return true;
   });
   const agrupado = {};
@@ -597,14 +646,44 @@ function _renderDashboardCharts() {
   const contagensNormais = dc.contagensConsideradas.filter(c => !_dashIsRecontagem(c));
   const recontagens = _dashRecontagensConsideradas(dc);
   const operadores = _dashTopOperadores(contagensNormais);
-  const serieHoras = _dashHourlySeries(contagensNormais);
-  const serieHorasRecontagem = _dashHourlySeries(recontagens.map(r => ({
+  // O gráfico "Produção por hora" precisa sempre das 24 horas pra continuar
+  // clicável — se usasse a lista já filtrada por hora, só a barra da hora
+  // selecionada apareceria depois do primeiro clique.
+  const contagensNormaisSemHora = (dc.contagensConsideradasSemHora || dc.contagensConsideradas).filter(c => !_dashIsRecontagem(c));
+  const recontagensSemHora = _dashRecontagensConsideradas(dc, true);
+
+  // Contagem × recontagem por operador, pro card "Top Operadores" do v254
+  // mostrar as duas colunas separadas em vez de só um total combinado.
+  const recontagensPorOperador = {};
+  recontagens.forEach(r => {
+    const nome = r.operador_recontagem || r.operador_nome || r.operador || r.usuario || 'SEM OPERADOR';
+    recontagensPorOperador[nome] = (recontagensPorOperador[nome] || 0) + 1;
+  });
+  const operadoresDetalhados = operadores.map(o => ({
+    operador: o.operador,
+    contagens: o.total,
+    recontagens: recontagensPorOperador[o.operador] || 0
+  }));
+  Object.keys(recontagensPorOperador).forEach(nome => {
+    if (!operadoresDetalhados.some(o => o.operador === nome)) {
+      operadoresDetalhados.push({ operador: nome, contagens: 0, recontagens: recontagensPorOperador[nome] });
+    }
+  });
+  operadoresDetalhados.sort((a,b) => (b.contagens + b.recontagens) - (a.contagens + a.recontagens));
+
+  // Exposto para os cards "Top Operadores" e "Produção por hora" do dashboard
+  // v254 (49-quatro-telas-v254.js) — que hoje leem o DOM antigo/estático —
+  // igual o modo auditoria já expõe em DTDashboardAuditoriaSnapshot.
+  window.DTDashboardInventarioSnapshot = { operadores: operadoresDetalhados };
+  const serieHoras = _dashHourlySeries(contagensNormaisSemHora);
+  const serieHorasRecontagem = _dashHourlySeries(recontagensSemHora.map(r => ({
     ...r, criado_em: _dashDataRegistro(r)
   })));
   const serieHorasTotal = serieHoras.map((b, idx) => ({
     hora: b.hora,
     total: b.total + (serieHorasRecontagem[idx]?.total || 0)
   }));
+  window.DTDashboardHoraSnapshot = { serieHoras, serieHorasRecontagem, serieHorasTotal, filtroHora: _dashFiltroHora };
   const totalHoraMax = Math.max(...serieHoras.map(x => x.total), 1);
   const totalHoraRecMax = Math.max(...serieHorasRecontagem.map(x => x.total), 1);
   const totalHoraGeralMax = Math.max(...serieHorasTotal.map(x => x.total), 1);
@@ -872,6 +951,7 @@ function limparFiltrosDash(){
     return carregarDashboardAuditoria(false);
   }
   ['dash-finv','dash-frua','dash-flocal'].forEach(id=>{const e=document.getElementById(id);if(e)e.value='';});
+  _dashFiltroHora = null;
   renderDashboardInventario();
 }
 async function carregarDashboardAuditoria(forcar){

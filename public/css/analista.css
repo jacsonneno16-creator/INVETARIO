@@ -1028,79 +1028,33 @@ input,select,textarea{
 /* Correção definitiva v240: páginas sempre no topo, sem posicionamento absoluto */
 .content{display:block !important;padding:20px 30px 28px !important;overflow:auto !important;}
 .page.on{display:flex !important;position:relative !important;top:0 !important;left:0 !important;right:auto !important;margin:0 !important;padding-top:0 !important;transform:none !important;min-height:0 !important;height:auto !important;justify-content:flex-start !important;align-items:stretch !important;align-content:flex-start !important;}
-#page-operadores.on,#page-lojas.on{position:relative !important;top:0 !important;margin:0 !important;padding:0 0 24px !important;}
-#page-operadores.on>.sec-hdr:first-child,#page-lojas.on>.sec-hdr:first-child{margin:0 0 12px !important;padding:0 0 10px !important;}
-#page-lojas [data-loja-editar]{pointer-events:auto !important;position:relative !important;z-index:3 !important;}
 @media(max-width:768px){.content{padding:12px !important;}}
 
-/* Gestão de Usuários e Lojas — layout unificado v241 */
-.admin-management-page{
-  width:100%;
-  max-width:1600px;
-  gap:14px !important;
-  padding-bottom:28px !important;
-}
-.admin-management-header{
-  display:flex;
-  align-items:flex-start;
-  justify-content:space-between;
-  gap:16px;
-  width:100%;
-  margin:0 !important;
-  padding:0 0 14px !important;
-}
-.admin-management-heading{min-width:0}
-.admin-management-heading .sec-title{font-size:1.08rem}
-.admin-management-heading .sec-sub{margin-top:3px;line-height:1.45}
-.admin-management-actions{
-  display:flex;
-  align-items:center;
-  justify-content:flex-end;
-  gap:8px;
-  flex-wrap:wrap;
-  flex:0 0 auto;
-}
-.admin-management-actions .btn{min-height:36px;white-space:nowrap}
-.admin-management-card{
-  width:100%;
-  overflow:hidden;
-  margin:0 !important;
-  border:1px solid var(--border) !important;
-  border-radius:12px !important;
-  background:var(--surface) !important;
-}
-.admin-list-header{
-  display:flex !important;
-  align-items:center !important;
-  justify-content:space-between !important;
-  gap:12px !important;
-  flex-wrap:wrap !important;
-  min-height:54px;
-  padding:12px 16px !important;
-  border-left:0 !important;
-}
-.admin-list-tools{display:flex;align-items:center;gap:8px;margin-left:auto}
-.admin-search-input{
-  width:min(260px,100%);
-  min-height:36px;
-  padding:7px 11px;
-  border:1px solid var(--border);
-  border-radius:8px;
-  background:var(--surface-2);
-  color:var(--text);
-  font-size:.8rem;
-  outline:none;
-}
-.admin-search-input:focus{border-color:var(--orange);box-shadow:0 0 0 3px rgba(255,122,24,.12)}
-.admin-list-body{padding:0 !important;overflow:hidden}
-.admin-list-body .tbl-wrap{border:0 !important;border-radius:0 !important;overflow:auto}
-.admin-list-body table{width:100%;margin:0}
-.admin-list-body thead th{position:sticky;top:0;z-index:2}
-.admin-list-body tbody td{vertical-align:middle !important}
-.admin-list-body .empty{padding:42px 20px}
+/* Matriz de permissões (modal Criar/Editar Usuário) — cards por módulo,
+   contagem "X de Y", indeterminate no toggle do módulo, busca no topo. */
+.perm-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.perm-busca{flex:1;min-width:180px;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-family:var(--sans);font-size:.8rem;outline:none;transition:border-color .15s;background:var(--surface)}
+.perm-busca:focus{border-color:var(--orange);box-shadow:0 0 0 3px var(--orange-soft)}
+.perm-total-geral{font-size:.68rem;font-weight:700;color:var(--muted);white-space:nowrap;padding:0 2px}
+.perm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px}
+.perm-vazio{text-align:center;padding:28px;color:var(--muted);font-size:.8rem}
+.perm-card{border:1.5px solid var(--border);border-radius:12px;background:var(--surface);overflow:hidden;transition:border-color .15s}
+.perm-card:has([data-modulo-all]:checked){border-color:rgba(255,122,24,.4)}
+.perm-card-hdr{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;background:var(--surface-2);border-bottom:1px solid var(--border)}
+.perm-card-toggle{display:flex;align-items:center;gap:7px;cursor:pointer;min-width:0;flex:1}
+.perm-card-toggle input{width:15px;height:15px;accent-color:var(--orange);cursor:pointer;flex:0 0 auto}
+.perm-card-icon{font-size:.88rem;flex:0 0 auto}
+.perm-card-name{font-weight:700;font-size:.78rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.perm-card-count{font-size:.62rem;font-weight:700;padding:2px 9px;border-radius:20px;white-space:nowrap;background:var(--surface-3);color:var(--muted);flex:0 0 auto}
+.perm-card-count.is-complete{background:rgba(0,214,143,.15);color:var(--green-mid)}
+.perm-card-count.is-partial{background:rgba(255,122,24,.15);color:var(--orange)}
+.perm-card-body{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px}
+.perm-chip{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;padding:4px 10px;border-radius:20px;border:1px solid var(--border);cursor:pointer;transition:background .15s,border-color .15s;background:var(--surface)}
+.perm-chip:has(input:checked){background:var(--orange-soft,rgba(255,122,24,.12));border-color:var(--orange);font-weight:600}
+.perm-chip input{accent-color:var(--orange);cursor:pointer}
+
 #page-operadores #opl-page-operadores{display:flex !important;flex-direction:column;gap:14px;width:100%}
 #page-operadores #op-minha-conta-wrap{width:100%}
-#page-lojas .lojas-gestao-tabela{width:100%}
 #page-operadores .op-lista-linhas table{min-width:900px}
 #page-lojas .lojas-lista-linhas table{min-width:720px}
 #page-operadores .op-lista-linhas th:last-child,
@@ -1116,13 +1070,3 @@ input,select,textarea{
 #page-operadores .op-lista-linhas thead th:last-child,
 #page-lojas .lojas-lista-linhas thead th:last-child{z-index:3;background:#f5f7f9 !important}
 .acao-lapis{flex:0 0 36px}
-@media(max-width:768px){
-  .admin-management-page{gap:10px !important;padding-bottom:18px !important}
-  .admin-management-header{align-items:stretch;flex-direction:column;padding-bottom:10px !important}
-  .admin-management-actions{justify-content:stretch;width:100%}
-  .admin-management-actions .btn{flex:1 1 145px}
-  .admin-list-header{align-items:stretch !important;padding:10px 12px !important}
-  .admin-list-tools{width:100%;margin-left:0}
-  .admin-search-input{width:100%}
-  .admin-list-body .empty{padding:30px 14px}
-}

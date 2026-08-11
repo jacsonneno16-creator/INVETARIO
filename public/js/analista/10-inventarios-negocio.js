@@ -84,8 +84,12 @@ function habilitarBtnCriar() {
   if (btn) { btn.disabled = !ok; }
 }
 
-function criarInventario() {
-  const nome = document.getElementById('inv-nome').value.trim();
+// overrides permite criar um inventário sem passar pelo formulário/modal
+// manual — usado pelo fluxo "Abrir Inventário via Bluesoft". Sem overrides,
+// o comportamento é idêntico ao de sempre (lê os campos do modal #modal-inv).
+async function criarInventario(overrides) {
+  const o = overrides || {};
+  const nome = String(o.nome ?? document.getElementById('inv-nome').value).trim();
   if (!nome)              { showToast('Informe o nome do inventário', 'e'); return; }
   if (!state().ui.inventarioImportCtx || !state().ui.inventarioImportCtx.base.length) {
     showToast('Importe a base de dados primeiro', 'e'); return;
@@ -137,7 +141,7 @@ function criarInventario() {
   endsSelecionados = endsSelecionadosAtivos;
   // ─────────────────────────────────────────────────────────────────────
 
-  const codigo = document.getElementById('inv-codigo').value.trim() || ('INV-' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' + String(state().inventarios.length + 1).padStart(3,'0'));
+  const codigo = String(o.codigo ?? document.getElementById('inv-codigo').value).trim() || ('INV-' + new Date().toISOString().slice(0,10).replace(/-/g,'') + '-' + String(state().inventarios.length + 1).padStart(3,'0'));
   // Configuracao operacional fixa: cada operador recebe um bloco de 200 capas.
   const capaInicioBase = 1;
   const capaLotePorOperador = 200;
@@ -146,8 +150,8 @@ function criarInventario() {
     id:                   gerarId('INV'),
     codigo,
     nome,
-    data_inicio:          document.getElementById('inv-data').value || new Date().toISOString().slice(0,10),
-    responsavel:          document.getElementById('inv-resp').value.trim(),
+    data_inicio:          o.data_inicio || document.getElementById('inv-data').value || new Date().toISOString().slice(0,10),
+    responsavel:          String(o.responsavel ?? document.getElementById('inv-resp').value).trim(),
     setor:                '',
     loja_principal:       '',
     lojas_espelho:        [],
@@ -204,13 +208,12 @@ function criarInventario() {
     total:         inv.total_registros,
   });
   const msgInativos = qtdInativos > 0 ? ` (${qtdInativos} endereço(s) inativo(s) excluído(s))` : '';
-  showToast(`✅ Inventário "${inv.nome}" criado! Publicando no Firebase...`, 's');
+  console.info('[criarInventario] Diagnóstico de endereços: ' + baseImportada.length + ' registro(s) na base importada · ' +
+    baseInventario.length + ' após filtro de tipo de produto · ' + endsSelecionados.length + ' endereço(s) único(s) antes do filtro de ativos · ' +
+    endsSelecionadosAtivos.length + ' endereço(s) final(is) no inventário (' + qtdInativos + ' excluído(s) por estarem inativos).');
+  showToast(`✅ Inventário "${inv.nome}" criado! Publicando no Firebase...${msgInativos}`, 's');
 
-  // Publicar no Firestore para o coletor enxergar
-  fsPublicarInventario(inv).then(() => {
-    showToast(`✅ Inventário "${inv.nome}" publicado! Operadores já podem acessá-lo.`, 's');
-  });
-  // Publicar base de endereços para o coletor validar endereços
+  // Publicar base de endereços para o coletor validar endereços (não bloqueia)
   fsPublicarEnderecos();
 
   // Publicar base de produtos extraída da base do inventário
@@ -232,6 +235,20 @@ function criarInventario() {
 
   document.getElementById('btn-inv-ativo').style.display = 'inline-flex';
   document.getElementById('inv-ativo-nome').textContent = inv.codigo;
+
+  // Publicar no Firestore para o coletor enxergar — isto precisa terminar
+  // ANTES de start() rodar de novo. start() relê dt_inventarios do servidor
+  // e substitui a lista local inteira (replaceSlice); se o documento deste
+  // inventário ainda não tiver sido gravado, essa releitura "some" com o
+  // inventário recém-criado da tela (condição de corrida real, mais provável
+  // em bases grandes ou em fluxos rápidos como o "Via API").
+  try {
+    await fsPublicarInventario(inv);
+    showToast(`✅ Inventário "${inv.nome}" publicado! Operadores já podem acessá-lo.`, 's');
+  } catch (error) {
+    console.error('[criarInventario] Falha ao publicar no Firebase:', error);
+    showToast(`⚠️ Inventário criado localmente, mas falhou ao publicar no Firebase: ${error.message}`, 'e');
+  }
 
   window.AnalistaFirebaseService?.start?.();
 
