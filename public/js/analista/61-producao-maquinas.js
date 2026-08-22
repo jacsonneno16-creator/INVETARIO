@@ -114,8 +114,15 @@
     return _registros.filter(r => r.maquina === nome && (r.status === 'pendente' || r.status === 'em_andamento' || !r.status));
   }
 
-  async function renderProducaoMaquinas() {
-    const pagina = document.getElementById('page-producao-maquinas');
+  // PEDIDO AO VIVO (comparação com o original: Config lá é um hub que
+  // mostra o conteúdo da seção DENTRO da mesma tela, não navega pra outra
+  // página do menu principal). Aceita um id de container opcional — sem
+  // ele, comportamento 100% igual a antes (renderiza na própria página do
+  // menu principal).
+  let _containerMaq = 'page-producao-maquinas';
+  async function renderProducaoMaquinas(containerId) {
+    _containerMaq = containerId || 'page-producao-maquinas';
+    const pagina = document.getElementById(_containerMaq);
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     try { await carregarProducaoMaquinas(); }
@@ -124,7 +131,7 @@
   }
 
   function _desenharProducaoMaquinas() {
-    const pagina = document.getElementById('page-producao-maquinas');
+    const pagina = document.getElementById(_containerMaq);
     if (!pagina) return;
     const busca = String(document.getElementById('pmaq-busca')?.value || '').trim().toLowerCase();
     const catFiltro = String(document.getElementById('pmaq-filtro-categoria')?.value || '');

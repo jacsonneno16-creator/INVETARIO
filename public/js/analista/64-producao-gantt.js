@@ -156,7 +156,28 @@
           </div>`}
       </div>
       ${_legendaGantt()}
+      ${_painelDiagnosticoVelocidade()}
       <div class="tc" style="margin-bottom:14px"><div style="padding:8px 12px;display:flex;align-items:center;justify-content:space-between;cursor:pointer" data-pgantt-diagnostico-toggle="1"><div style="font-size:.76rem;font-weight:600">🔧 Diagnóstico de setup faltando</div><div style="font-size:.7rem;color:var(--muted)">${_diagnosticoAberto ? '▲ ocultar' : '▼ mostrar'}</div></div>${_diagnosticoAberto ? _painelDiagnosticoSetup() : ''}</div>`;
+  }
+
+  // PEDIDO AO VIVO (usuário reclamou que o Gantt "tá faltando informação"
+  // quando aparece vazio): a causa mais comum é OP sem velocidade (pcMin)
+  // cadastrada — o motor de agenda descarta esses registros em silêncio
+  // (63-producao-agenda.js). Sem isso, o Gantt vazio não dava nenhuma
+  // pista do motivo. Mostra aqui, na própria tela, quais OPs da semana
+  // estão sumindo por causa disso.
+  function _painelDiagnosticoVelocidade() {
+    if (_modoGantt !== 'semanal') return '';
+    const ini = _isoData(_weekStart), fim = _isoData(_fimSemana());
+    const semVelocidade = _registros.filter(r => r.status !== 'concluido' && r.data >= ini && r.data <= fim && (Number(r.pcMin) || 0) <= 0);
+    if (!semVelocidade.length) return '';
+    return `<div class="tc" style="margin-bottom:14px;border-left:4px solid var(--danger)">
+      <div style="padding:10px 12px">
+        <div style="font-size:.76rem;font-weight:700;color:var(--danger)">⚠️ ${semVelocidade.length} OP(s) desta semana sem velocidade cadastrada — não aparecem na grade abaixo</div>
+        <div style="font-size:.68rem;color:var(--muted);margin-top:2px">Sem velocidade (pcMin) o motor de agenda não sabe quanto tempo a OP ocupa, então ela é ignorada. Edite a OP em Programação e escolha uma máquina/produto com velocidade cadastrada, ou cadastre a velocidade em Máquinas → Produtos compatíveis.</div>
+        <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:5px">${semVelocidade.slice(0, 10).map(r => `<span class="badge b-red" style="font-size:.62rem">${esc(r.produto)} · ${esc(r.maquina || 'sem máquina')} · ${esc(r.data)}</span>`).join('')}${semVelocidade.length > 10 ? `<span style="font-size:.62rem;color:var(--muted)">+${semVelocidade.length - 10}</span>` : ''}</div>
+      </div>
+    </div>`;
   }
 
   function _fimSemana() { const f = new Date(_weekStart); f.setDate(f.getDate() + 6); return f; }

@@ -35,8 +35,10 @@
     _carregado = true;
   }
 
-  async function renderProducaoEstoque() {
-    const pagina = document.getElementById('page-producao-estoque');
+  let _containerEst = 'page-producao-estoque';
+  async function renderProducaoEstoque(containerId) {
+    _containerEst = containerId || 'page-producao-estoque';
+    const pagina = document.getElementById(_containerEst);
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     try { await carregarProducaoEstoque(); }
@@ -45,7 +47,7 @@
   }
 
   function _desenharProducaoEstoque() {
-    const pagina = document.getElementById('page-producao-estoque');
+    const pagina = document.getElementById(_containerEst);
     if (!pagina) return;
 
     if (!_lojas.length) {

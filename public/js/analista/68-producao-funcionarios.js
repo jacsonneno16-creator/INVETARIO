@@ -33,8 +33,10 @@
 
   function _estaAusente(f) { if (f.ativo === false) return true; if (!f.deactivatedUntil) return false; if (f.deactivatedUntil === 'indefinido') return true; const t = new Date(String(f.deactivatedUntil) + (String(f.deactivatedUntil).length === 10 ? 'T23:59:59' : '')).getTime(); return Number.isFinite(t) && t > Date.now(); }
 
-  async function renderProducaoFuncionarios() {
-    const pagina = document.getElementById('page-producao-funcionarios');
+  let _containerFunc = 'page-producao-funcionarios';
+  async function renderProducaoFuncionarios(containerId) {
+    _containerFunc = containerId || 'page-producao-funcionarios';
+    const pagina = document.getElementById(_containerFunc);
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     try { await carregarProducaoFuncionarios(); }
@@ -43,7 +45,7 @@
   }
 
   function _desenharProducaoFuncionarios() {
-    const pagina = document.getElementById('page-producao-funcionarios');
+    const pagina = document.getElementById(_containerFunc);
     if (!pagina) return;
     const busca = String(document.getElementById('pfunc-busca')?.value || '').trim().toLowerCase();
     const linhas = _funcionarios

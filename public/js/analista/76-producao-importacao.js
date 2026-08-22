@@ -3,7 +3,8 @@
 const fs=()=>global.getDTFirestore?.()||global.firebase?.firestore?.();
 const CHIST='producao_import_historico';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function render(){const p=document.getElementById('page-producao-importacao');if(!p)return;p.innerHTML=`
+let _containerImp='page-producao-importacao';
+function render(containerId){_containerImp=containerId||'page-producao-importacao';const p=document.getElementById(_containerImp);if(!p)return;p.innerHTML=`
 <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;margin-bottom:16px"><div><div class="page-title" style="font-size:1.1rem">🔄 Importação / Exportação / API — Produção</div><div style="font-size:.75rem;color:var(--muted)">Centraliza os fluxos de carga e integração que existiam no Sistema de Produção original.</div></div><button class="btn btn-primary btn-sm" data-pimp-backup>⬇ Backup completo Excel</button></div>
 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
  ${card('🗃️','Backup completo','Máquinas, produtos, ficha técnica, setup, programação, realizado, funcionários, estoque de insumos e projeção.','<label class="btn btn-ghost btn-sm" style="cursor:pointer">⬆ Restaurar backup<input type="file" accept=".xlsx,.xls" data-pimp-file="backup" hidden></label>')}

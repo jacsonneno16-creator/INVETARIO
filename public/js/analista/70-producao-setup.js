@@ -51,8 +51,10 @@
     return 'b-red';
   }
 
-  async function renderProducaoSetup() {
-    const pagina = document.getElementById('page-producao-setup');
+  let _containerSetup = 'page-producao-setup';
+  async function renderProducaoSetup(containerId) {
+    _containerSetup = containerId || 'page-producao-setup';
+    const pagina = document.getElementById(_containerSetup);
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     try { await carregarProducaoSetup(); }
@@ -61,7 +63,7 @@
   }
 
   function _desenharProducaoSetup() {
-    const pagina = document.getElementById('page-producao-setup');
+    const pagina = document.getElementById(_containerSetup);
     if (!pagina) return;
     const filtroMaquina = String(document.getElementById('psetup-filtro-maquina')?.value || '');
     const linhas = _setups

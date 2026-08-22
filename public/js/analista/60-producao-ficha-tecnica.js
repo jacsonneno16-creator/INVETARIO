@@ -52,8 +52,10 @@
     });
   }
 
-  async function renderProducaoFichaTecnica() {
-    const pagina = document.getElementById('page-producao-ficha-tecnica');
+  let _containerFicha = 'page-producao-ficha-tecnica';
+  async function renderProducaoFichaTecnica(containerId) {
+    _containerFicha = containerId || 'page-producao-ficha-tecnica';
+    const pagina = document.getElementById(_containerFicha);
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     try { await carregarProducaoDados(); }
@@ -62,7 +64,7 @@
   }
 
   function _desenharProducaoFichaTecnica() {
-    const pagina = document.getElementById('page-producao-ficha-tecnica');
+    const pagina = document.getElementById(_containerFicha);
     if (!pagina) return;
     const busca = String(document.getElementById('pft-busca')?.value || '').trim().toLowerCase();
     const linhas = getProducaoFichaTecnicaMerged()
