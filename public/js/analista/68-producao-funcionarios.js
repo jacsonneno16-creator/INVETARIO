@@ -50,56 +50,60 @@
       .filter(f => !busca || String(f.nome || '').toLowerCase().includes(busca) || String(f.setor || '').toLowerCase().includes(busca))
       .sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
 
+    // PEDIDO AO VIVO (comparação com o original achou isso diferente): a
+    // original mostra "Funcionários da Produção" com badge "Sem login" e
+    // lista de CARTÕES (avatar + nome + setor·função·turno + máquinas +
+    // status), não tabela — e o botão diz só "Adicionar".
     pagina.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;flex-wrap:wrap;gap:10px">
         <div>
-          <div class="page-title" style="font-size:1.1rem">👷 Funcionários</div>
+          <div class="page-title" style="font-size:1.1rem">👷 Funcionários da Produção <span class="badge b-gray" style="font-size:.6rem;vertical-align:middle">Sem login</span></div>
           <div style="font-size:.72rem;color:var(--muted)">${linhas.length.toLocaleString('pt-BR')} funcionário(s)</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input id="pfunc-busca" placeholder="Buscar nome ou setor..." value="${esc(busca)}" class="field" style="min-width:220px">
-          <button type="button" class="btn btn-primary btn-sm" data-pfunc-novo="1">+ Novo Funcionário</button>
+          <button type="button" class="btn btn-primary btn-sm" data-pfunc-novo="1">Adicionar</button>
         </div>
       </div>
-      <div class="tc">
-        <div style="overflow:auto">
-          <table class="dt-table">
-            <thead><tr><th>Nome</th><th>Setor</th><th>Função</th><th>Turno</th><th>Máquinas</th><th>Status</th><th></th></tr></thead>
-            <tbody>
-              ${linhas.length ? linhas.map(f => {
-                const ausente = _estaAusente(f);
-                return `
-                <tr${ausente ? ' style="opacity:.55"' : ''}>
-                  <td><b>${esc(f.nome)}</b></td>
-                  <td>${esc(f.setor || '—')}</td>
-                  <td>${esc(f.funcao || '—')}</td>
-                  <td>${esc(f.turno || '—')}</td>
-                  <td style="font-size:.72rem;color:var(--muted)">${(f.maquinas || []).join(', ') || '—'}</td>
-                  <td>${f.ativo === false ? '<span class="badge b-red">Inativo</span>' : (_estaAusente(f) ? `<span class="badge b-yellow">Ausente ${f.deactivatedUntil==='indefinido'?'por prazo indefinido':'até '+esc(f.deactivatedUntil)}</span>` : '<span class="badge b-green">Ativo</span>')}</td>
-                  <td style="text-align:right;white-space:nowrap">
-                    ${_estaAusente(f) && f.ativo !== false ? `<button type="button" class="acao-lapis" title="Reativar" data-pfunc-reativar="${esc(f._firestoreId)}">▶️</button>` : `<button type="button" class="acao-lapis" title="Desativar temporariamente" data-pfunc-desativar="${esc(f._firestoreId)}">⏸️</button>`}
-                    <button type="button" class="acao-lapis" title="Editar" data-pfunc-editar="${esc(f._firestoreId)}">✏️</button>
-                    <button type="button" class="acao-lapis" title="Excluir" data-pfunc-excluir="${esc(f._firestoreId)}">🗑️</button>
-                  </td>
-                </tr>`;
-              }).join('') : `<tr><td colspan="7"><div class="empty"><div class="empty-icon">👷</div><div class="empty-title">Nenhum funcionário cadastrado</div></div></td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </div>`;
+      <div style="font-size:.72rem;color:var(--muted);margin-bottom:14px">👷 Cadastro de pessoas que trabalham na produção. Não precisam ter login no sistema.</div>
+      ${linhas.length ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">
+        ${linhas.map(f => {
+          const ausente = _estaAusente(f);
+          const inicial = (String(f.nome || '?').trim()[0] || '?').toUpperCase();
+          const statusInfo = f.ativo === false ? { cor: 'var(--danger)', texto: 'Inativo' } : (ausente ? { cor: 'var(--warn)', texto: 'Ausente ' + (f.deactivatedUntil === 'indefinido' ? 'por prazo indefinido' : 'até ' + esc(f.deactivatedUntil)) } : { cor: 'var(--success)', texto: 'Ativo' });
+          return `
+          <div class="tc" style="padding:14px;display:flex;flex-direction:column;gap:8px;${ausente ? 'opacity:.65' : ''}">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="width:38px;height:38px;border-radius:50%;background:var(--orange);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">${esc(inicial)}</div>
+              <div style="min-width:0;flex:1">
+                <div style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.nome)}</div>
+                <div style="font-size:.7rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(f.setor || '—')} · ${esc(f.funcao || '—')} · ${esc(f.turno || '—')}</div>
+              </div>
+            </div>
+            <div style="font-size:.7rem;color:var(--muted)">🏭 ${(f.maquinas || []).join(', ') || 'Nenhuma máquina'}</div>
+            <div style="display:flex;align-items:center;gap:5px;font-size:.7rem"><span style="width:7px;height:7px;border-radius:50%;background:${statusInfo.cor};display:inline-block"></span><span style="color:${statusInfo.cor}">${statusInfo.texto}</span></div>
+            <div style="display:flex;justify-content:flex-end;gap:2px;margin-top:2px">
+              ${ausente && f.ativo !== false ? `<button type="button" class="acao-lapis" title="Reativar" data-pfunc-reativar="${esc(f._firestoreId)}">▶️</button>` : `<button type="button" class="acao-lapis" title="Desativar temporariamente" data-pfunc-desativar="${esc(f._firestoreId)}">⏸️</button>`}
+              <button type="button" class="acao-lapis" title="Editar" data-pfunc-editar="${esc(f._firestoreId)}">✏️</button>
+              <button type="button" class="acao-lapis" title="Excluir" data-pfunc-excluir="${esc(f._firestoreId)}">🗑️</button>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>` : `<div class="empty"><div class="empty-icon">👷</div><div class="empty-title">Nenhum funcionário cadastrado</div></div>`}`;
   }
 
+  // PEDIDO AO VIVO: original usa <select multiple> ("Segure Ctrl para
+  // selecionar várias"), não checkboxes.
   function _redesenharMaquinasEditando() {
-    const wrap = document.getElementById('pfunc-maquinas-list');
-    if (!wrap) return;
-    wrap.innerHTML = _maquinas.map(m => `
-      <label style="display:flex;align-items:center;gap:6px;font-size:.8rem">
-        <input type="checkbox" data-pfunc-maquina-check="${esc(m.nome)}" ${_maquinasEditando.includes(m.nome) ? 'checked' : ''}> ${esc(m.nome)}
-      </label>`).join('') || '<div style="font-size:.75rem;color:var(--muted)">Nenhuma máquina cadastrada ainda.</div>';
+    const sel = document.getElementById('pfunc-maquinas-list');
+    if (!sel) return;
+    sel.innerHTML = _maquinas.map(m => `<option value="${esc(m.nome)}" ${_maquinasEditando.includes(m.nome) ? 'selected' : ''}>${esc(m.nome)}</option>`).join('') || '<option disabled>Nenhuma máquina cadastrada ainda.</option>';
   }
 
   function _abrirModalPfunc(item) {
-    document.getElementById('pfunc-title').textContent = item._novo ? 'Novo funcionário' : 'Editar funcionário';
+    // PEDIDO AO VIVO: título do original é "Novo Funcionário da Produção" /
+    // "Editar Funcionário", não "Novo funcionário" genérico.
+    document.getElementById('pfunc-title').textContent = item._novo ? 'Novo Funcionário da Produção' : 'Editar Funcionário';
     document.getElementById('pfunc-doc-id').value = item._firestoreId || '';
     document.getElementById('pfunc-nome').value = item.nome || '';
     document.getElementById('pfunc-setor').value = item.setor || '';
@@ -112,8 +116,8 @@
     global.openModal?.('modal-pfunc');
   }
 
-  function pfuncMaquinaToggle(nome, marcado) {
-    _maquinasEditando = marcado ? [...new Set([..._maquinasEditando, nome])] : _maquinasEditando.filter(n => n !== nome);
+  function pfuncMaquinasSelecionadas(selectEl) {
+    _maquinasEditando = Array.from(selectEl.selectedOptions).map(o => o.value);
   }
 
   function pfuncEditar(docId) {
@@ -224,8 +228,7 @@
     if (event.target && event.target.id === 'pfunc-busca') _desenharProducaoFuncionarios();
   });
   document.addEventListener('change', function (event) {
-    const maq = event.target.closest('[data-pfunc-maquina-check]');
-    if (maq) pfuncMaquinaToggle(maq.getAttribute('data-pfunc-maquina-check'), maq.checked);
+    if (event.target && event.target.id === 'pfunc-maquinas-list') pfuncMaquinasSelecionadas(event.target);
   });
   global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _funcionarios=[]; _maquinas=[]; _maquinasEditando=[]; });
 })(window);

@@ -686,8 +686,9 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 <div class="form-group"><label>Status</label><select class="field" id="pfunc-ativo"><option value="true">Ativo</option><option value="false">Inativo</option></select></div>
 <div class="form-group">
-<label>Máquinas que opera</label>
-<div id="pfunc-maquinas-list" style="display:flex;flex-direction:column;gap:4px"></div>
+<label>Máquinas que pode operar</label>
+<select id="pfunc-maquinas-list" multiple size="5" class="field" style="height:auto"></select>
+<small style="color:var(--muted);font-size:.68rem">Segure Ctrl para selecionar várias</small>
 </div>
 <div class="form-group"><label>Observação</label><input class="field" id="pfunc-obs" placeholder="Opcional"/></div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-pfunc')">Cancelar</button><button class="btn btn-primary" onclick="pfuncSalvar()">Salvar</button></div>
@@ -3151,7 +3152,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <script src="js/analista/65-producao-insumos.js?v=20260822b-colunas-diarias-subtotal"></script>
 <script src="js/analista/66-producao-projecao.js?v=20260816-producao-integrada-final"></script>
 <script src="js/analista/67-producao-prog-automatica.js?v=20260816-producao-integrada-final"></script>
-<script src="js/analista/68-producao-funcionarios.js?v=20260816-producao-integrada-final"></script>
+<script src="js/analista/68-producao-funcionarios.js?v=20260822-cards-select-multiplo"></script>
 <script src="js/analista/69-producao-relatorios.js?v=20260821-gerencial-pivot-interativo"></script>
 <script src="js/analista/70-producao-setup.js?v=20260822-labels-original"></script>
 <script src="js/analista/71-producao-excel.js?v=20260811-producao-full-1"></script>
