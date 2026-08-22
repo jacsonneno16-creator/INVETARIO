@@ -25,16 +25,22 @@
     _maquinas=m.docs.map(d=>({_firestoreId:d.id,...d.data()}));_registros=r.docs.map(d=>({_firestoreId:d.id,...d.data(),data:d.data().data||d.data().dtDesejada||d.data().dtSolicitacao||'',qntCaixas:n(d.data().qntCaixas??d.data().quantidadeCaixas??d.data().quantidade),prodCod:d.data().prodCod??d.data().cod??d.data().produtoCod??''}));_fichas=f.docs.map(d=>({_firestoreId:d.id,...d.data()}));const atual=e.docs.map(d=>({_firestoreId:d.id,...d.data()}));const antigo=el.docs.map(d=>({_firestoreId:d.id,...d.data(),insumo:d.data().insumo||d.data().nome||'',quantidade:n(d.data().quantidade??d.data().estoqueAtual),unidade:d.data().unidade||'',categoria:d.data().categoria||'Outros'}));_estoque=atual.length?atual:antigo;_carregado=true;
   }
 
+  // PEDIDO AO VIVO (comparação com o original achou isso faltando): o
+  // original mostra o consumo dia-a-dia (7 colunas), não só o total da
+  // semana — cada folha agora carrega {total,porDia:[7]} em vez de um
+  // número solto, pra alimentar as colunas diárias na tela.
   function calcularConsumoInsumosSemana(weekStart){
     if(typeof global.buildProducaoSchedule!=='function')return{porMaquina:{},geral:{}};
     const mp={},rp={},fp={};_maquinas.forEach(m=>mp[m.nome]=m);_registros.forEach(r=>rp[r._firestoreId]=r);_fichas.forEach(f=>{const c=fichaCod(f);if(c)fp[c]=f;});
     const resultado=global.buildProducaoSchedule(weekStart,_registros,mp,[]),porMaquina={},geral={};
+    const addDia=(obj,cat,ins,di,tot)=>{obj[cat]=obj[cat]||{};obj[cat][ins]=obj[cat][ins]||{total:0,porDia:[0,0,0,0,0,0,0]};obj[cat][ins].total+=tot;obj[cat][ins].porDia[di]+=tot;};
     Object.keys(resultado.porMaquina||{}).forEach(maq=>{
-      (resultado.porMaquina[maq].porDia||[]).forEach(dia=>(dia||[]).forEach(seg=>{
+      (resultado.porMaquina[maq].porDia||[]).forEach((dia,di)=>(dia||[]).forEach(seg=>{
         const r=rp[seg.registroId];if(!r)return;const ficha=fp[String(r.prodCod)]||_fichas.find(f=>norm(fichaDesc(f))===norm(r.produto));
         fichaInsumos(ficha).forEach(ins=>{const cat=ins.categoria||'Outros',tot=n(seg.caixasNoDia)*n(ins.qty);if(tot<=0)return;
-          porMaquina[maq]=porMaquina[maq]||{};porMaquina[maq][cat]=porMaquina[maq][cat]||{};porMaquina[maq][cat][ins.insumo]=(porMaquina[maq][cat][ins.insumo]||0)+tot;
-          geral[cat]=geral[cat]||{};geral[cat][ins.insumo]=(geral[cat][ins.insumo]||0)+tot;
+          porMaquina[maq]=porMaquina[maq]||{};
+          addDia(porMaquina[maq],cat,ins.insumo,di,tot);
+          addDia(geral,cat,ins.insumo,di,tot);
         });
       }));
     });return{porMaquina,geral};
@@ -64,7 +70,7 @@
     return {porInsumo:Object.values(porInsumoMap),porOP};
   }
   function estoqueMap(){const m=new Map();_estoque.forEach(e=>m.set(norm(e.insumo||e.nome),e));return m;}
-  function linhasGerais(geral){const em=estoqueMap(),out=[];Object.keys(geral).forEach(cat=>Object.keys(geral[cat]).forEach(ins=>{const est=em.get(norm(ins));const consumo=n(geral[cat][ins]),saldo=n(est?.quantidade)-consumo;out.push({categoria:cat,insumo:ins,consumo,estoque:n(est?.quantidade),unidade:est?.unidade||'',saldo});}));return out;}
+  function linhasGerais(geral){const em=estoqueMap(),out=[];Object.keys(geral).forEach(cat=>Object.keys(geral[cat]).forEach(ins=>{const est=em.get(norm(ins));const item=geral[cat][ins];const consumo=item.total,saldo=n(est?.quantidade)-consumo;out.push({categoria:cat,insumo:ins,consumo,porDia:item.porDia,estoque:n(est?.quantidade),unidade:est?.unidade||'',saldo});}));return out;}
 
   async function renderProducaoInsumos(){const p=document.getElementById('page-producao-insumos');if(!p)return;p.innerHTML='<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';try{await carregarProducaoInsumos();}catch(e){p.innerHTML='<div class="empty">⚠️ '+esc(e.message||e)+'</div>';return;}_desenhar();}
   function _desenhar(){
@@ -72,17 +78,39 @@
     const busca=String(document.getElementById('pins-busca')?.value||'').toLowerCase(),catSel=document.getElementById('pins-cat')?.value||'';
     const cats=[...new Set([...Object.keys(geral),..._estoque.map(x=>x.categoria||'Outros')])].sort((a,b)=>a.localeCompare(b,'pt-BR'));
     const lg=linhasGerais(geral).filter(x=>(!busca||x.insumo.toLowerCase().includes(busca)||x.categoria.toLowerCase().includes(busca))&&(!catSel||x.categoria===catSel));
-    let rows='';
-    if(_modo==='geral') rows=lg.map(x=>`<tr><td>${esc(x.categoria)}</td><td>${esc(x.insumo)}</td><td style="text-align:right">${x.consumo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right">${x.estoque.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td>${esc(x.unidade||'')}</td><td style="text-align:right;font-weight:700;color:${x.saldo<0?'var(--danger)':'var(--green-mid)'}">${x.saldo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td></tr>`).join('');
-    else {
+    const diasSemana = Array.from({ length: 7 }, (_, i) => { const d = new Date(_weekStart); d.setDate(d.getDate() + i); return d; });
+    const DL = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+    const theadDias = diasSemana.map(d => `<th style="text-align:right">${DL[d.getDay()]}<br><span style="font-weight:400;color:var(--muted)">${fmt(d)}</span></th>`).join('');
+    const tdDias = porDia => porDia.map(v => `<td style="text-align:right;color:${v ? 'inherit' : 'var(--muted)'}">${v ? v.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : '—'}</td>`).join('');
+    let rows = '';
+    if (_modo === 'geral') {
+      // PEDIDO AO VIVO: original agrupa por categoria com uma linha
+      // separadora e soma um subtotal quando a categoria tem mais de 1
+      // insumo — e arredonda pra cima ("Math.ceil") só na categoria
+      // MATERIA PRIMA. Faltava tudo isso, virava uma linha corrida só.
+      const porCat = {}; lg.forEach(x => { (porCat[x.categoria] = porCat[x.categoria] || []).push(x); });
+      rows = Object.keys(porCat).sort((a, b) => a.localeCompare(b, 'pt-BR')).map(cat => {
+        const itens = porCat[cat];
+        const ehMateriaPrima = norm(cat) === 'MATERIA PRIMA';
+        const linhasCat = itens.map(x => `<tr><td><b>${esc(x.insumo)}</b></td>${tdDias(x.porDia)}<td style="text-align:right;font-weight:600">${(ehMateriaPrima ? Math.ceil(x.consumo) : x.consumo).toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td style="text-align:right">${x.estoque.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td>${esc(x.unidade || '')}</td><td style="text-align:right;font-weight:700;color:${x.saldo < 0 ? 'var(--danger)' : 'var(--green-mid)'}">${x.saldo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td></tr>`).join('');
+        let subtotal = '';
+        if (itens.length > 1) {
+          const somaDias = [0, 0, 0, 0, 0, 0, 0]; itens.forEach(x => x.porDia.forEach((v, i) => somaDias[i] += v));
+          const somaCons = itens.reduce((s, x) => s + x.consumo, 0), somaEst = itens.reduce((s, x) => s + x.estoque, 0), somaSaldo = itens.reduce((s, x) => s + x.saldo, 0);
+          subtotal = `<tr style="background:var(--surface-2);font-weight:700"><td>Subtotal ${esc(cat)}</td>${tdDias(somaDias)}<td style="text-align:right">${somaCons.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td style="text-align:right">${somaEst.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td></td><td style="text-align:right;color:${somaSaldo < 0 ? 'var(--danger)' : 'inherit'}">${somaSaldo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td></tr>`;
+        }
+        return `<tr><td colspan="12" style="background:var(--surface-2);font-weight:700;color:var(--muted);text-transform:uppercase;font-size:.68rem">${esc(cat)}</td></tr>${linhasCat}${subtotal}`;
+      }).join('');
+    } else {
       Object.keys(porMaquina).sort().forEach(maq => {
         Object.keys(porMaquina[maq]).sort().forEach(cat => {
           Object.keys(porMaquina[maq][cat]).sort().forEach(ins => {
             if (busca && !ins.toLowerCase().includes(busca) && !cat.toLowerCase().includes(busca) && !maq.toLowerCase().includes(busca)) return;
             if (catSel && cat !== catSel) return;
+            const item = porMaquina[maq][cat][ins];
             const est = estoqueMap().get(norm(ins));
-            const consumo = n(porMaquina[maq][cat][ins]), saldo = n(est?.quantidade) - consumo;
-            rows += `<tr><td>${esc(maq)}</td><td>${esc(cat)}</td><td>${esc(ins)}</td><td style="text-align:right">${consumo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right">${n(est?.quantidade).toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right;color:${saldo<0?'var(--danger)':'inherit'}">${saldo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td></tr>`;
+            const consumo = item.total, saldo = n(est?.quantidade) - consumo;
+            rows += `<tr><td>${esc(maq)}</td><td>${esc(cat)}</td><td><b>${esc(ins)}</b></td>${tdDias(item.porDia)}<td style="text-align:right;font-weight:700">${consumo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td>${esc(est?.unidade || '')}</td><td style="text-align:right">${n(est?.quantidade).toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td style="text-align:right;color:${saldo < 0 ? 'var(--danger)' : 'inherit'}">${saldo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td></tr>`;
           });
         });
       });
@@ -91,11 +119,11 @@
     p.innerHTML=`<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:16px"><div><div class="page-title" style="font-size:1.1rem">🧪 Insumos / MRP</div><div style="font-size:.72rem;color:var(--muted)">${fmt(_weekStart)} a ${fmt(fim)}</div></div><div style="display:flex;gap:7px;flex-wrap:wrap"><button class="btn ${_modo==='maquina'?'btn-primary':'btn-ghost'} btn-sm" data-pins-modo="maquina">Por Máquina</button><button class="btn ${_modo==='geral'?'btn-primary':'btn-ghost'} btn-sm" data-pins-modo="geral">Geral / Saldo</button><label class="btn btn-ghost btn-sm" style="cursor:pointer">📥 Estoque Excel<input id="pins-est-input" type="file" accept=".xlsx,.xls,.csv" style="display:none"></label><button class="btn btn-ghost btn-sm" data-pins-export="1">📊 Excel</button><button class="btn btn-ghost btn-sm" data-pins-pdf="1">📄 PDF</button><button class="btn btn-ghost btn-sm" data-pins-semana="-1">‹</button><input type="date" class="field" data-pins-data value="${_weekStart.toISOString().slice(0,10)}" title="Ir para data" style="width:145px;padding:5px 8px"><button class="btn btn-ghost btn-sm" data-pins-hoje="1">Hoje</button><button class="btn btn-ghost btn-sm" data-pins-semana="1">›</button></div></div>
     <div class="kpi-grid" style="margin-bottom:14px"><div class="kpi blue"><span class="kpi-icon">🧪</span><div class="kpi-val">${lg.length}</div><div class="kpi-lbl">Insumos com consumo</div></div><div class="kpi purple"><span class="kpi-icon">📦</span><div class="kpi-val">${cons.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div><div class="kpi-lbl">Consumo previsto</div></div><div class="kpi ${faltas?'orange':'green'}"><span class="kpi-icon">⚠️</span><div class="kpi-val">${faltas}</div><div class="kpi-lbl">Saldos negativos</div></div><div class="kpi teal"><span class="kpi-icon">∑</span><div class="kpi-val">${saldoTotal.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div><div class="kpi-lbl">Saldo líquido agregado</div></div></div>
     <div class="tc" style="padding:10px;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap"><input id="pins-busca" class="field" placeholder="Buscar insumo, categoria ou máquina..." value="${esc(busca)}" style="min-width:260px"><select id="pins-cat" class="field"><option value="">Todas as categorias</option>${cats.map(c=>`<option value="${esc(c)}" ${catSel===c?'selected':''}>${esc(c)}</option>`).join('')}</select><span style="font-size:.68rem;color:var(--muted);align-self:center">Excel de estoque: colunas Insumo | Quantidade | Unidade | Categoria</span></div>
-    ${rows?`<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr>${_modo==='maquina'?'<th>Máquina</th>':''}<th>Categoria</th><th>Insumo</th><th style="text-align:right">Consumo</th><th style="text-align:right">Estoque</th>${_modo==='geral'?'<th>Un.</th>':''}<th style="text-align:right">Saldo</th></tr></thead><tbody>${rows}</tbody></table></div></div>`:'<div class="empty"><div class="empty-icon">🧪</div><div class="empty-title">Nenhum consumo encontrado para o período/filtro.</div></div>'}`;
+    ${rows?`<div class="tc"><div style="overflow:auto"><table class="dt-table" style="font-size:.74rem"><thead><tr>${_modo==='maquina'?'<th>Máquina</th><th>Categoria</th><th>Insumo</th>':'<th>Insumo</th>'}${theadDias}<th style="text-align:right">Total Sem.</th>${_modo==='maquina'?'<th>Un.</th>':''}<th style="text-align:right">Estoque</th>${_modo==='geral'?'<th>Un.</th>':''}<th style="text-align:right">Saldo</th></tr></thead><tbody>${rows}</tbody></table></div></div>`:`<div class="empty"><div class="empty-icon">🧪</div><div class="empty-title">Nenhum consumo encontrado para o período/filtro.</div></div>`}`;
   }
 
   async function importarEstoque(file){if(!file)return;if(!global.XLSX){global.showToast?.('Biblioteca Excel não carregada.','error');return;}try{const b=await file.arrayBuffer(),wb=global.XLSX.read(b,{type:'array'}),rows=global.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});let c=0,u=0;const agora=new Date().toISOString();for(const r of rows){const ins=String(r.Insumo??r.insumo??r.Nome??r.nome??'').trim();if(!ins)continue;const payload={insumo:ins,quantidade:n(r.Quantidade??r.quantidade??r.Estoque??r.estoque),unidade:String(r.Unidade??r.unidade??''),categoria:String(r.Categoria??r.categoria??'Outros'),atualizadoEm:agora};const ex=_estoque.find(x=>norm(x.insumo)===norm(ins));if(ex){await fs().collection(COL_ESTOQUE).doc(ex._firestoreId).set(payload,{merge:true});u++;}else{await fs().collection(COL_ESTOQUE).add({...payload,criadoEm:agora});c++;}}await carregarProducaoInsumos(true);_desenhar();global.showToast?.(`${c} criado(s), ${u} atualizado(s) no estoque de insumos.`,'success');}catch(e){global.showToast?.('Erro ao importar estoque de insumos: '+(e.message||e),'error');}}
-  function exportar(){if(!global.XLSX){global.showToast?.('Biblioteca Excel não carregada.','error');return;}const {porMaquina,geral}=calcularConsumoInsumosSemana(_weekStart),linhas=linhasGerais(geral).map(x=>({Categoria:x.categoria,Insumo:x.insumo,Consumo:x.consumo,Estoque:x.estoque,Unidade:x.unidade,Saldo:x.saldo})),maq=[];Object.keys(porMaquina).forEach(m=>Object.keys(porMaquina[m]).forEach(c=>Object.keys(porMaquina[m][c]).forEach(i=>maq.push({Maquina:m,Categoria:c,Insumo:i,Consumo:porMaquina[m][c][i]}))));const wb=global.XLSX.utils.book_new();global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(linhas),'Saldo_Geral');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(maq),'Por_Maquina');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(_estoque.map(e=>({Insumo:e.insumo,Quantidade:e.quantidade,Unidade:e.unidade||'',Categoria:e.categoria||''}))),'Estoque');global.XLSX.writeFile(wb,'insumos_mrp_'+_weekStart.toISOString().slice(0,10)+'.xlsx');}
+  function exportar(){if(!global.XLSX){global.showToast?.('Biblioteca Excel não carregada.','error');return;}const {porMaquina,geral}=calcularConsumoInsumosSemana(_weekStart),linhas=linhasGerais(geral).map(x=>({Categoria:x.categoria,Insumo:x.insumo,Consumo:x.consumo,Estoque:x.estoque,Unidade:x.unidade,Saldo:x.saldo})),maq=[];Object.keys(porMaquina).forEach(m=>Object.keys(porMaquina[m]).forEach(c=>Object.keys(porMaquina[m][c]).forEach(i=>maq.push({Maquina:m,Categoria:c,Insumo:i,Consumo:porMaquina[m][c][i].total}))));const wb=global.XLSX.utils.book_new();global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(linhas),'Saldo_Geral');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(maq),'Por_Maquina');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(_estoque.map(e=>({Insumo:e.insumo,Quantidade:e.quantidade,Unidade:e.unidade||'',Categoria:e.categoria||''}))),'Estoque');global.XLSX.writeFile(wb,'insumos_mrp_'+_weekStart.toISOString().slice(0,10)+'.xlsx');}
   function pinsModo(m){_modo=m;_desenhar();}function pinsSemana(d){_weekStart.setDate(_weekStart.getDate()+d*7);_desenhar();}function pinsHoje(){_weekStart=domingo(new Date());_desenhar();}function pinsGoDate(v){if(!v)return;const d=new Date(v+'T12:00:00');if(Number.isNaN(d.getTime()))return;_weekStart=domingo(d);_desenhar();}
   global.renderProducaoInsumos=renderProducaoInsumos;global.carregarProducaoInsumos=carregarProducaoInsumos;global.calcularConsumoInsumosSemana=calcularConsumoInsumosSemana;global.calcularNecessidadeInsumosPorOPs=calcularNecessidadeInsumosPorOPs;global.importarEstoqueInsumosProducao=importarEstoque;global.exportarSaldoInsumosProducao=exportar;global._producaoInsumosInternals={getEstoque:()=>_estoque,getRegistros:()=>_registros,getFichas:()=>_fichas};
 // PEDIDO AO VIVO (usuário: a original tem "Insumos / Máq." e "Insumos Geral"
