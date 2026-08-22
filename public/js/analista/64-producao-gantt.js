@@ -265,11 +265,31 @@
     const hojeStr = new Date().toDateString();
     const arrastavel = podeEditarGantt();
 
-    if (!nomesComOPs.length) return `<div class="empty"><div class="empty-icon">📅</div><div class="empty-title">Nenhuma OP agendada nesta semana</div><div class="empty-sub">Cadastre uma Ordem de Produção com data dentro deste período (Programação) e configure os turnos da máquina (Máquinas)</div></div>`;
-
     const registrosPorId = {};
     _registros.forEach(r => { registrosPorId[r._firestoreId] = r; });
     const gridCols = _gridColsGantt();
+
+    // PEDIDO AO VIVO: o cabeçalho de colunas (Produto/Observação/dias) só
+    // aparecia quando já tinha OP com dado suficiente pra desenhar — sem
+    // isso, a tela pulava direto pro aviso "Nenhuma OP", escondendo a
+    // grade inteira. Igual ao Realizado (cabeçalho sempre visível, corpo
+    // vazio mostra a mensagem), agora o cabeçalho aparece sempre.
+    if (!nomesComOPs.length) return `
+      <div class="tc" style="padding:0;overflow:hidden">
+        <div style="overflow:auto">
+          <div class="pgantt-grid-row" style="display:grid;grid-template-columns:${gridCols};background:var(--surface-2);border-bottom:1px solid var(--border)">
+            <div style="padding:5px 8px;font-size:.62rem;font-weight:700;color:var(--muted)">Máquina</div>
+            <div style="padding:5px 8px;font-size:.62rem;font-weight:700;color:var(--muted)">Produto</div>
+            <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">Qtd<br>cx</div>
+            <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">Tempo<br>h</div>
+            <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">Set Up<br>h</div>
+            <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">H.<br>Prog.</div>
+            <div style="padding:5px 8px;font-size:.62rem;font-weight:700;color:var(--muted)">Observação</div>
+            ${diasSemana.map(d => `<div style="padding:5px 4px;font-size:.62rem;font-weight:700;text-align:center;color:${d.toDateString() === hojeStr ? 'var(--orange)' : 'var(--muted)'}">${DIA_LABEL[d.getDay()]}<br>${_fmtDataCurta(d)}</div>`).join('')}
+          </div>
+          <div class="empty" style="padding:40px 20px"><div class="empty-icon">📅</div><div class="empty-title">Nenhuma OP agendada nesta semana</div><div class="empty-sub">Cadastre uma Ordem de Produção com data dentro deste período (Programação) e configure os turnos da máquina (Máquinas)</div></div>
+        </div>
+      </div>`;
 
     return `
       ${_legendaOPsSemana(resultado)}
