@@ -16,12 +16,14 @@
   const COL_REGISTROS = 'producao_registros';
   const COL_CONFIG = 'producao_config';
   const COL_SETUP = 'producao_setup';
+  const COL_CATEGORIAS = 'producao_categorias';
   const DIA_LABEL = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
   const ATALHOS_DEFAULT = { T1: { ini: '06:00', fim: '14:00' }, T2: { ini: '14:00', fim: '22:00' }, T3: { ini: '22:00', fim: '06:00' } };
 
   let _maquinas = [];
   let _registros = [];
   let _setups = [];
+  let _categorias = [];
   let _carregado = false;
   let _produtosEditando = [];
   let _turnosEditando = {};
@@ -32,14 +34,16 @@
 
   async function carregarProducaoMaquinas(forcar) {
     if (_carregado && !forcar) return;
-    const [snapMaq, snapReg, snapSetup] = await Promise.all([
+    const [snapMaq, snapReg, snapSetup, snapCat] = await Promise.all([
       fs().collection(COL_MAQUINAS).get(),
       fs().collection(COL_REGISTROS).get(),
       fs().collection(COL_SETUP).get(),
+      fs().collection(COL_CATEGORIAS).get().catch(() => ({ docs: [] })),
     ]);
     _maquinas = snapMaq.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _registros = snapReg.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _setups = snapSetup.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
+    _categorias = snapCat.docs.map(d => ({ _firestoreId: d.id, ...d.data() })).filter(c => c.ativo !== false).sort((a, b) => (Number(a.ordem) || 0) - (Number(b.ordem) || 0) || String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
     _carregado = true;
   }
 
@@ -84,12 +88,16 @@
   function _calcOcupacaoAgregada(nomes) {
     const resultado = _agendaSemanaAtual();
     const alvo = nomes && nomes.length ? nomes : Object.keys(resultado.porMaquina);
-    let usados = 0, capacidade = 0;
+    let usados = 0, capacidade = 0, caixas = 0, qtdMaquinas = 0;
     alvo.forEach(nome => {
       const d = resultado.porMaquina[nome];
-      if (d) { usados += d.totalMinutosUsados; capacidade += d.capacidadeMinutosSemana; }
+      if (d) {
+        usados += d.totalMinutosUsados; capacidade += d.capacidadeMinutosSemana; qtdMaquinas++;
+        (d.porDia || []).forEach(dia => (dia || []).forEach(seg => { if (seg.tipo === 'producao') caixas += Number(seg.caixasNoDia) || 0; }));
+      }
     });
-    return capacidade > 0 ? Math.min(100, Math.round((usados / capacidade) * 100)) : 0;
+    const pct = capacidade > 0 ? Math.min(100, Math.round((usados / capacidade) * 100)) : 0;
+    return { pct, horasUsadas: usados / 60, horasDisp: capacidade / 60, caixas, qtdMaquinas };
   }
 
   const STATUS_INFO = {
@@ -97,6 +105,14 @@
     manutencao: { label: 'Em manutenção', cor: 'b-yellow' },
     inativa: { label: 'Inativa', cor: 'b-red' },
   };
+
+  // PEDIDO AO VIVO (comparação com o original achou isso faltando no card):
+  // contagem + lista de solicitações ativas (pendente/em andamento) daquela
+  // máquina — antes só mostrava a barra de ocupação, sem dizer o quê tá
+  // pendente ali.
+  function _pedidosAtivosMaquina(nome) {
+    return _registros.filter(r => r.maquina === nome && (r.status === 'pendente' || r.status === 'em_andamento' || !r.status));
+  }
 
   async function renderProducaoMaquinas() {
     const pagina = document.getElementById('page-producao-maquinas');
@@ -111,12 +127,15 @@
     const pagina = document.getElementById('page-producao-maquinas');
     if (!pagina) return;
     const busca = String(document.getElementById('pmaq-busca')?.value || '').trim().toLowerCase();
+    const catFiltro = String(document.getElementById('pmaq-filtro-categoria')?.value || '');
     const cards = _maquinas
       .filter(m => !busca || String(m.nome || '').toLowerCase().includes(busca) || String(m.categoria || '').toLowerCase().includes(busca))
+      .filter(m => !catFiltro || m.categoria === catFiltro)
       .sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
     const ocupacaoTotal = _calcOcupacaoAgregada([]);
     const nomesSelecionados = [..._selecionadas];
-    const ocupacaoSelecionadas = nomesSelecionados.length ? _calcOcupacaoAgregada(nomesSelecionados) : 0;
+    const ocupacaoSelecionadas = nomesSelecionados.length ? _calcOcupacaoAgregada(nomesSelecionados) : null;
+    const categoriasFiltro = [...new Set(_maquinas.map(m => m.categoria).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
     pagina.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
@@ -126,6 +145,7 @@
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input id="pmaq-busca" placeholder="Buscar nome ou categoria..." value="${esc(busca)}" class="field" style="min-width:220px">
+          <select id="pmaq-filtro-categoria" class="field"><option value="">Todas as categorias</option>${categoriasFiltro.map(c => `<option value="${esc(c)}" ${catFiltro === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <button type="button" class="btn btn-ghost btn-sm" data-pmaq-resetar-turnos="1">↺ Resetar turnos de todas</button>
           <button type="button" class="btn btn-ghost btn-sm" data-pexcel-template-baixar="1">📄 Template</button>
           <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">📥 Excel<input type="file" id="pexcel-template-input" accept=".xlsx,.xls" style="display:none"></label>
@@ -135,14 +155,17 @@
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px">
         <div class="tc" style="padding:12px 16px">
           <div style="font-size:.68rem;color:var(--muted)">Ocupação total da semana</div>
-          <div style="font-size:1.3rem;font-weight:700">${ocupacaoTotal}%</div>
+          <div style="font-size:1.3rem;font-weight:700">${ocupacaoTotal.pct}%</div>
+          <div style="height:6px;border-radius:4px;background:var(--border);overflow:hidden;margin:5px 0 4px"><div style="height:100%;width:${ocupacaoTotal.pct}%;background:var(--orange)"></div></div>
+          <div style="font-size:.66rem;color:var(--muted)">${ocupacaoTotal.horasUsadas.toFixed(1)}h prog. / ${ocupacaoTotal.horasDisp.toFixed(1)}h disp. · ${ocupacaoTotal.qtdMaquinas} máquina(s) · ${Math.round(ocupacaoTotal.caixas).toLocaleString('pt-BR')} cx programadas</div>
         </div>
         <div class="tc" style="padding:12px 16px">
           <div style="display:flex;align-items:center;justify-content:space-between">
             <div style="font-size:.68rem;color:var(--muted)">Máquinas selecionadas (${nomesSelecionados.length})</div>
             ${nomesSelecionados.length ? '<button type="button" class="btn btn-ghost btn-sm" data-pmaq-limpar-selecao="1" style="padding:2px 8px">✕ Limpar</button>' : ''}
           </div>
-          <div style="font-size:1.3rem;font-weight:700">${nomesSelecionados.length ? ocupacaoSelecionadas + '%' : '—'}</div>
+          <div style="font-size:1.3rem;font-weight:700">${ocupacaoSelecionadas ? ocupacaoSelecionadas.pct + '%' : '—'}</div>
+          ${ocupacaoSelecionadas ? `<div style="height:6px;border-radius:4px;background:var(--border);overflow:hidden;margin:5px 0 4px"><div style="height:100%;width:${ocupacaoSelecionadas.pct}%;background:var(--orange)"></div></div><div style="font-size:.66rem;color:var(--muted)">${ocupacaoSelecionadas.horasUsadas.toFixed(1)}h prog. / ${ocupacaoSelecionadas.horasDisp.toFixed(1)}h disp. · ${Math.round(ocupacaoSelecionadas.caixas).toLocaleString('pt-BR')} cx programadas</div>` : ''}
         </div>
       </div>
       ${cards.length ? `
@@ -152,24 +175,28 @@
           const ocupacao = calcOcupacaoMaquina(m);
           const produtos = m.produtosCompativeis || [];
           const selecionada = _selecionadas.has(m.nome);
+          const pedidosAtivos = _pedidosAtivosMaquina(m.nome);
+          const caixasAtivas = pedidosAtivos.reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
           return `
           <div class="tc" style="padding:14px;display:flex;flex-direction:column;gap:8px;${selecionada ? 'border:2px solid var(--orange)' : ''}">
             <div style="display:flex;align-items:start;justify-content:space-between;gap:8px">
               <div>
                 <div style="font-weight:600">${esc(m.nome)}</div>
-                <div style="font-size:.72rem;color:var(--muted)">${esc(m.categoria || '—')}</div>
+                <div style="font-size:.72rem;color:var(--muted)">${esc(m.categoria || '—')} · ${pedidosAtivos.length} solicit. · ${Math.round(caixasAtivas).toLocaleString('pt-BR')} cx</div>
               </div>
               <span class="badge ${status.cor}" style="font-size:.62rem">${status.label}</span>
             </div>
+            ${pedidosAtivos.length ? `<div style="font-size:.68rem;color:var(--muted);display:flex;flex-direction:column;gap:2px">${pedidosAtivos.slice(0, 4).map(r => `<div>• ${esc(r.produto)} — ${Math.round(Number(r.qntCaixas) || 0).toLocaleString('pt-BR')} cx</div>`).join('')}${pedidosAtivos.length > 4 ? `<div>+ ${pedidosAtivos.length - 4} outra(s)</div>` : ''}</div>` : ''}
             <div style="font-size:.72rem;color:var(--muted)">
               ${produtos.length ? produtos.map(p => esc(p.produto) + ' (' + esc(p.velocidade) + '/min)').join(', ') : 'Nenhum produto compatível cadastrado'}
             </div>
+            ${ocupacao > 100 ? `<div style="font-size:.66rem;color:var(--danger);font-weight:700">⚠ Excede em ${ocupacao - 100}%</div>` : ''}
             <div>
               <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted);margin-bottom:3px">
                 <span>Ocupação da semana</span><span>${ocupacao}%</span>
               </div>
               <div style="height:6px;border-radius:4px;background:var(--border);overflow:hidden">
-                <div style="height:100%;width:${ocupacao}%;background:var(--orange)"></div>
+                <div style="height:100%;width:${Math.min(100, ocupacao)}%;background:${ocupacao > 100 ? 'var(--danger)' : 'var(--orange)'}"></div>
               </div>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;margin-top:4px">
@@ -189,14 +216,31 @@
     return { 0: [], 1: [{ ini: '08:00', fim: '17:00' }], 2: [{ ini: '08:00', fim: '17:00' }], 3: [{ ini: '08:00', fim: '17:00' }], 4: [{ ini: '08:00', fim: '17:00' }], 5: [{ ini: '08:00', fim: '17:00' }], 6: [] };
   }
 
+  function _calcCapacidade() {
+    const pcMin = Number(document.getElementById('pmaq-pcmin')?.value) || 0;
+    const hTurno = Number(document.getElementById('pmaq-hturno')?.value) || 0;
+    const nTurnos = Number(document.getElementById('pmaq-nturnos')?.value) || 0;
+    const porHora = pcMin * 60, porTurno = porHora * hTurno, porDia = porTurno * nTurnos;
+    const elHora = document.getElementById('pmaq-calc-hora'), elTurno = document.getElementById('pmaq-calc-turno'), elDia = document.getElementById('pmaq-calc-dia');
+    if (elHora) elHora.textContent = porHora > 0 ? Math.round(porHora).toLocaleString('pt-BR') : '—';
+    if (elTurno) elTurno.textContent = porTurno > 0 ? Math.round(porTurno).toLocaleString('pt-BR') : '—';
+    if (elDia) elDia.textContent = porDia > 0 ? Math.round(porDia).toLocaleString('pt-BR') : '—';
+  }
+
   async function _abrirModalPmaq(item) {
-    document.getElementById('pmaq-title').textContent = item._novo ? 'Nova máquina' : 'Editar máquina';
+    // PEDIDO AO VIVO: o original mostra "Editar: NOME_DA_MÁQUINA" no título,
+    // não um "Editar máquina" genérico.
+    document.getElementById('pmaq-title').textContent = item._novo ? 'Nova Máquina' : 'Editar: ' + (item.nome || '');
     document.getElementById('pmaq-doc-id').value = item._firestoreId || '';
     document.getElementById('pmaq-nome').value = item.nome || '';
     document.getElementById('pmaq-codigo').value = item.codigo || '';
     document.getElementById('pmaq-tipo').value = item.tipo || '';
     document.getElementById('pmaq-setor').value = item.setor || '';
-    document.getElementById('pmaq-categoria').value = item.categoria || '';
+    const selCat = document.getElementById('pmaq-categoria');
+    const opcoesCat = _categorias.map(c => c.nome).filter(Boolean);
+    if (item.categoria && !opcoesCat.includes(item.categoria)) opcoesCat.push(item.categoria);
+    selCat.innerHTML = '<option value="">— Sem categoria —</option>' + opcoesCat.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    selCat.value = item.categoria || '';
     document.getElementById('pmaq-classificacao').value = item.classificacao || '';
     document.getElementById('pmaq-pcmin').value = item.pcMin ?? '';
     document.getElementById('pmaq-hturno').value = item.hTurno ?? 8;
@@ -210,6 +254,7 @@
     for (let d = 0; d <= 6; d++) if (!Array.isArray(_turnosEditando[d])) _turnosEditando[d] = [];
     await _carregarAtalhos();
     _redesenharTurnosEditando();
+    _calcCapacidade();
     global.openModal?.('modal-pmaq');
   }
 
@@ -465,8 +510,10 @@
   });
   document.addEventListener('input', function (event) {
     if (event.target && event.target.id === 'pmaq-busca') _desenharProducaoMaquinas();
+    if (event.target && ['pmaq-pcmin', 'pmaq-hturno', 'pmaq-nturnos'].includes(event.target.id)) _calcCapacidade();
   });
   document.addEventListener('change', function (event) {
+    if (event.target && event.target.id === 'pmaq-filtro-categoria') { _desenharProducaoMaquinas(); return; }
     const campo = event.target.closest('[data-pmaq-campo]');
     if (campo) { pmaqProdutoAlterado(Number(campo.getAttribute('data-pmaq-idx')), campo.getAttribute('data-pmaq-campo'), campo.value); return; }
     const turnoCampo = event.target.closest('[data-pmaq-turno-campo]');
