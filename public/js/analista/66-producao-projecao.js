@@ -60,14 +60,28 @@
   // substitui estimativa, sem precisar trocar de tela/método. A projeção
   // manual (`projecaoManual`) continua podendo sobrepor tudo quando o
   // usuário escolhe explicitamente o método "manual".
-  function calcularProjecaoComRisco(metodo) {
+  // PEDIDO AO VIVO (comparação com o original achou faltando): a original
+  // tem um horizonte configurável ("meses" — 1/2/3 à frente, controla
+  // quantos de M1/M2/M3 entram no cálculo) e um "fator de ajuste" (0.5–3.0)
+  // que multiplica a projeção mensal final. Aceita string (compat com quem
+  // já chamava só o método) ou objeto {metodo,meses,fator}.
+  function calcularProjecaoComRisco(params) {
+    const opts = typeof params === 'string' ? { metodo: params } : (params || {});
+    const metodo = opts.metodo || 'simples';
+    const meses = Math.max(1, Math.min(3, Number(opts.meses) || 3));
+    const fator = Number(opts.fator) > 0 ? Number(opts.fator) : 1;
     return _projecao.map(p => {
-      const m1 = Number(p.venda_m1) || 0, m2 = Number(p.venda_m2) || 0, m3 = Number(p.venda_m3) || 0;
+      const vendas = [Number(p.venda_m1) || 0, Number(p.venda_m2) || 0, Number(p.venda_m3) || 0].slice(0, meses);
       const consumoRealBluesoft = Number(p.consumoDiaMedioBluesoft) || 0;
       let projMensal, origemConsumo;
       if (metodo === 'manual') { projMensal = Math.max(0, Number(p.projecaoManual) || 0); origemConsumo = 'manual'; }
       else if (consumoRealBluesoft > 0) { projMensal = consumoRealBluesoft * 30.44; origemConsumo = 'bluesoft'; }
-      else { projMensal = metodo === 'ponderada' ? (m1 * 1 + m2 * 2 + m3 * 3) / 6 : (m1 + m2 + m3) / 3; origemConsumo = 'historico'; }
+      else if (metodo === 'ponderada') {
+        let somaPesos = 0, somaPonderada = 0;
+        vendas.forEach((v, i) => { const peso = i + 1; somaPonderada += v * peso; somaPesos += peso; });
+        projMensal = somaPesos > 0 ? somaPonderada / somaPesos : 0; origemConsumo = 'historico';
+      } else { projMensal = vendas.length ? vendas.reduce((s, v) => s + v, 0) / vendas.length : 0; origemConsumo = 'historico'; }
+      if (origemConsumo === 'historico') projMensal *= fator;
       const projSemanal = projMensal / 4.33;
       const estoque = Number(p.estoqueAtual) || 0;
       const coberturaDias = projSemanal > 0 ? (estoque / projSemanal) * 7 : null;
@@ -77,6 +91,16 @@
       }
       return { ...p, projMensal, projSemanal, coberturaDias, risco, origemConsumo };
     });
+  }
+  // Ponto de integração já esperado por 78-pcp-central.js (projLinhas())
+  // desde uma fase anterior, nunca implementado — lê os parâmetros atuais
+  // da UI desta tela (se estiver aberta) ou usa os padrões do original.
+  function getParametrosProducaoProjecao() {
+    return {
+      metodo: document.getElementById('pproj-metodo')?.value || 'simples',
+      meses: Number(document.getElementById('pproj-meses')?.value) || 3,
+      fator: Number(document.getElementById('pproj-fator')?.value) || 1,
+    };
   }
 
   const RISCO_INFO = {
@@ -101,12 +125,22 @@
     if (!pagina) return;
     const busca = String(document.getElementById('pproj-busca')?.value || '').trim().toLowerCase();
     const metodo = document.getElementById('pproj-metodo')?.value || 'simples';
-    const linhas = calcularProjecaoComRisco(metodo)
+    const meses = Number(document.getElementById('pproj-meses')?.value) || 3;
+    const fator = Number(document.getElementById('pproj-fator')?.value) || 1;
+    const todas = calcularProjecaoComRisco({ metodo, meses, fator });
+    const linhas = todas
       .filter(p => !busca || String(p.produto || '').toLowerCase().includes(busca) || String(p.cod).includes(busca))
       .sort((a, b) => (a.coberturaDias ?? 9999) - (b.coberturaDias ?? 9999));
 
+    // PEDIDO AO VIVO (comparação com o original achou faltando): 5 cartões
+    // de estatística + banner de alerta pra produtos em risco crítico.
+    const criticos = todas.filter(p => p.risco === 'critico');
+    const comCobertura = todas.filter(p => p.coberturaDias != null);
+    const coberturaMedia = comCobertura.length ? comCobertura.reduce((s, p) => s + p.coberturaDias, 0) / comCobertura.length : null;
+    const demandaSemanalTotal = todas.reduce((s, p) => s + (p.projSemanal || 0), 0);
+
     pagina.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px">
         <div>
           <div class="page-title" style="font-size:1.1rem">📈 Projeção de Vendas</div>
           <div style="font-size:.72rem;color:var(--muted)">${linhas.length.toLocaleString('pt-BR')} produto(s)</div>
@@ -114,15 +148,29 @@
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input id="pproj-busca" placeholder="Buscar código ou produto..." value="${esc(busca)}" class="field" style="min-width:220px">
           <select id="pproj-metodo" class="field" title="Método de cálculo da projeção">
-            <option value="simples" ${metodo === 'simples' ? 'selected' : ''}>Média simples</option>
-            <option value="ponderada" ${metodo === 'ponderada' ? 'selected' : ''}>Média ponderada</option>
-            <option value="manual" ${metodo === 'manual' ? 'selected' : ''}>Projeção manual</option>
+            <option value="simples" ${metodo === 'simples' ? 'selected' : ''}>Média Simples</option>
+            <option value="ponderada" ${metodo === 'ponderada' ? 'selected' : ''}>Média Ponderada (mais recente = +peso)</option>
+            <option value="manual" ${metodo === 'manual' ? 'selected' : ''}>Projeção Manual</option>
           </select>
+          <select id="pproj-meses" class="field" title="Horizonte considerado">
+            <option value="1" ${meses === 1 ? 'selected' : ''}>1 mês à frente</option>
+            <option value="2" ${meses === 2 ? 'selected' : ''}>2 meses à frente</option>
+            <option value="3" ${meses === 3 ? 'selected' : ''}>3 meses à frente</option>
+          </select>
+          <input id="pproj-fator" class="field" type="number" min="0.5" max="3" step="0.1" value="${fator}" title="Fator de ajuste (0.5–3.0)" style="width:80px">
           <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">📥 Excel<input type="file" id="pproj-excel-input" accept=".xlsx,.xls" style="display:none"></label>
           <button type="button" class="btn btn-ghost btn-sm" data-pproj-export="1">📊 Exportar</button>
-          <button type="button" class="btn btn-primary btn-sm" data-pproj-novo="1">+ Novo Produto</button>
+          <button type="button" class="btn btn-primary btn-sm" data-pproj-novo="1">+ Adicionar Manual</button>
         </div>
       </div>
+      <div class="kpi-grid" style="margin-bottom:14px">
+        <div class="kpi blue"><span class="kpi-icon">📈</span><div class="kpi-val">${todas.length}</div><div class="kpi-lbl">Produtos c/ Projeção</div></div>
+        <div class="kpi ${criticos.length ? 'orange' : 'green'}"><span class="kpi-icon">⚠️</span><div class="kpi-val">${criticos.length}</div><div class="kpi-lbl">Ruptura Iminente</div></div>
+        <div class="kpi teal"><span class="kpi-icon">📦</span><div class="kpi-val">${coberturaMedia != null ? coberturaMedia.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'd' : '—'}</div><div class="kpi-lbl">Cobertura Média</div></div>
+        <div class="kpi purple"><span class="kpi-icon">📊</span><div class="kpi-val">${demandaSemanalTotal.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</div><div class="kpi-lbl">Demanda Semanal Total</div></div>
+        <div class="kpi yellow"><span class="kpi-icon">🗓️</span><div class="kpi-val">${meses}</div><div class="kpi-lbl">Período Base (meses)</div></div>
+      </div>
+      ${criticos.length ? `<div class="tc" style="padding:10px 14px;margin-bottom:12px;border-left:4px solid var(--danger);background:rgba(217,32,32,.06)"><b style="color:var(--danger)">⚠️ ${criticos.length} produto(s) em risco crítico de ruptura</b> — cobertura ≤ 3 dias: ${criticos.slice(0, 6).map(p => esc(p.produto)).join(', ')}${criticos.length > 6 ? '…' : ''}</div>` : ''}
       <div class="tc">
         <div style="overflow:auto">
           <table class="dt-table">
@@ -255,7 +303,7 @@
 
   function exportarProjecaoXLSX() {
     if (!global.XLSX) { global.showToast?.('Biblioteca do Excel não carregada.', 'error'); return; }
-    const linhas = calcularProjecaoComRisco(document.getElementById('pproj-metodo')?.value || 'simples').map(p => ({
+    const linhas = calcularProjecaoComRisco(getParametrosProducaoProjecao()).map(p => ({
       cod: p.cod, produto: p.produto, venda_m1: p.venda_m1, venda_m2: p.venda_m2, venda_m3: p.venda_m3,
       projecaoManual: p.projecaoManual ?? '', estoqueAtual: p.estoqueAtual ?? '', projMensal: p.projMensal,
       projSemanal: p.projSemanal, coberturaDias: p.coberturaDias ?? '', risco: p.risco,
@@ -269,6 +317,7 @@
   global.importarProjecaoExcel = importarProjecaoExcel;
   global.carregarProducaoProjecao = carregarProducaoProjecao;
   global.calcularProjecaoComRisco = calcularProjecaoComRisco;
+  global.getParametrosProducaoProjecao = getParametrosProducaoProjecao;
   global.aplicarEntradaEstoqueProducao = aplicarEntradaEstoqueProducao;
   global.pprojEditar = pprojEditar;
   global.pprojNovoProduto = pprojNovoProduto;
@@ -289,12 +338,15 @@
     if (event.target && event.target.id === 'pproj-busca') _desenharProducaoProjecao();
   });
   document.addEventListener('change', function (event) {
-    if (event.target && event.target.id === 'pproj-metodo') { _desenharProducaoProjecao(); return; }
+    if (event.target && (event.target.id === 'pproj-metodo' || event.target.id === 'pproj-meses')) { _desenharProducaoProjecao(); return; }
     if (event.target && event.target.id === 'pproj-excel-input') {
       const file = event.target.files && event.target.files[0];
       importarProjecaoExcel(file);
       event.target.value = '';
     }
+  });
+  document.addEventListener('input', function (event) {
+    if (event.target && event.target.id === 'pproj-fator') _desenharProducaoProjecao();
   });
   global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _projecao=[]; });
 })(window);
