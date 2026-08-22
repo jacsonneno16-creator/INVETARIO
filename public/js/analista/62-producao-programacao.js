@@ -9,6 +9,7 @@
   const COL_MAQUINAS = 'producao_maquinas';
   const COL_FICHAS = 'producao_ficha_tecnica';
   const COL_PCP = 'pcp_solicitacoes_producao_global';
+  const COL_ESTOQUE = 'producao_insumos_estoque';
 
   const PAGE_SIZE = 15;
 
@@ -16,6 +17,7 @@
   let _produtos = [];
   let _maquinas = [];
   let _fichas = [];
+  let _estoqueIns = [];
   let _carregado = false;
   let _pagina = 1;
   const _expandidos = new Set();
@@ -103,28 +105,49 @@
 
   async function carregarProducaoProgramacao(forcar) {
     if (_carregado && !forcar) return;
-    const [snapReg, snapProd, snapMaq, snapFicha] = await Promise.all([
+    const [snapReg, snapProd, snapMaq, snapFicha, snapEstoque] = await Promise.all([
       fs().collection(COL_REGISTROS).get(),
       fs().collection(COL_PRODUTOS).get(),
       fs().collection(COL_MAQUINAS).get(),
       fs().collection(COL_FICHAS).get(),
+      fs().collection(COL_ESTOQUE).get().catch(() => ({ docs: [] })),
     ]);
     _registros = snapReg.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _produtos = snapProd.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _maquinas = snapMaq.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _fichas = snapFicha.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
+    _estoqueIns = snapEstoque.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _carregado = true;
   }
 
   const STATUS_INFO = {
     pendente: { label: 'Pendente', cor: 'b-orange' },
-    em_andamento: { label: 'Em andamento', cor: 'b-blue' },
+    em_andamento: { label: 'Em Andamento', cor: 'b-blue' },
     concluido: { label: 'Concluído', cor: 'b-green' },
   };
 
   function _insumosDoProduto(prodCod) {
     const ficha = _fichas.find(f => String(f.cod) === String(prodCod));
     return (ficha && ficha.insumos) || [];
+  }
+
+  function _normIns(v) { return String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim(); }
+  // PEDIDO AO VIVO (comparação com o original achou isso faltando): a coluna
+  // Insumos hoje só contava quantos insumos a ficha tem, sem checar se tem
+  // matéria-prima suficiente. O original cruza necessário × estoque atual e
+  // mostra falta/ok direto na tabela — reproduzido aqui.
+  function _statusInsumosOP(r) {
+    const insumos = _insumosDoProduto(r.prodCod);
+    if (!insumos.length) return { tipo: 'nenhum', insumos };
+    const caixas = Number(r.qntCaixas) || 0;
+    let temDadosEstoque = false, falta = false;
+    insumos.forEach(i => {
+      const necessario = (Number(i.qty) || 0) * caixas;
+      const item = _estoqueIns.find(e => _normIns(e.insumo || e.nome) === _normIns(i.insumo));
+      if (item) { temDadosEstoque = true; if ((Number(item.quantidade ?? item.estoque) || 0) < necessario) falta = true; }
+    });
+    if (!temDadosEstoque) return { tipo: 'semdados', insumos };
+    return { tipo: falta ? 'falta' : 'ok', insumos };
   }
 
   // Prioridade: produtosCompativeis[produto] da máquina > pc_min do produto > 0.
@@ -250,34 +273,43 @@
       <div class="tc">
         <div style="overflow:auto">
           <table class="dt-table">
-            <thead><tr><th>Produto</th><th>Máquina</th><th>Caixas</th><th>Unidades</th><th>Tempo est.</th><th>Data</th><th>Status</th><th>Insumos</th><th></th></tr></thead>
+            <thead><tr><th>#</th><th>Produto</th><th>Máquina</th><th>Caixas</th><th>Unidades</th><th>Tempo est.</th><th>Data</th><th>Status</th><th>Insumos</th><th></th></tr></thead>
             <tbody>
-              ${linhas.length ? linhas.map(r => {
+              ${linhas.length ? linhas.map((r, idx) => {
                 const status = STATUS_INFO[r.status] || STATUS_INFO.pendente;
                 const tempo = _calcTempoHoras(r.qntUnid, r.pcMin);
-                const insumos = _insumosDoProduto(r.prodCod);
                 const expandido = _expandidos.has(r._firestoreId);
+                const statusIns = _statusInsumosOP(r);
+                const insumos = statusIns.insumos;
+                const badgeIns = { falta: { cor: 'b-red', texto: '⚠️ Falta MP' }, ok: { cor: 'b-green', texto: '✅ MP OK' }, semdados: { cor: 'b-gray', texto: '📋 Insumos' }, nenhum: { cor: '', texto: '—' } }[statusIns.tipo];
                 return `
                 <tr>
-                  <td><b>${esc(r.produto)}</b></td>
-                  <td>${esc(r.maquina)}</td>
+                  <td style="color:var(--muted)">${idx + 1}</td>
+                  <td><b>${esc(r.produto)}</b>${r.obs ? `<div style="font-size:.68rem;color:var(--muted);margin-top:2px">${esc(r.obs)}</div>` : ''}</td>
+                  <td><span class="badge b-purple">${esc(r.maquina)}</span></td>
                   <td>${esc(r.qntCaixas)}</td>
                   <td>${esc(r.qntUnid)}</td>
                   <td>${tempo != null ? tempo.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'h' : '—'}</td>
                   <td>${esc(r.data)}</td>
                   <td><span class="badge ${status.cor}">${status.label}</span></td>
-                  <td style="font-size:.75rem;color:var(--muted);cursor:${insumos.length ? 'pointer' : 'default'}" ${insumos.length ? `data-pprog-toggle-insumos="${esc(r._firestoreId)}"` : ''}>${insumos.length ? (expandido ? '▲ ' : '▼ ') + insumos.length + ' insumo(s)' : '—'}</td>
+                  <td style="cursor:${insumos.length ? 'pointer' : 'default'}" ${insumos.length ? `data-pprog-toggle-insumos="${esc(r._firestoreId)}"` : ''}>${statusIns.tipo === 'nenhum' ? '—' : `<span class="badge ${badgeIns.cor}">${badgeIns.texto}</span>`}</td>
                   <td style="text-align:right;white-space:nowrap">
                     <button type="button" class="acao-lapis" title="Editar" data-pprog-editar="${esc(r._firestoreId)}">✏️</button>
                     <button type="button" class="acao-lapis" title="Excluir" data-pprog-excluir="${esc(r._firestoreId)}">🗑️</button>
                   </td>
                 </tr>
-                ${expandido ? `<tr><td colspan="9" style="background:var(--surface-2);padding:8px 16px">
-                  <div style="display:flex;flex-wrap:wrap;gap:12px;font-size:.74rem">
-                    ${insumos.map(i => `<div><b>${esc(i.insumo)}</b>: ${((Number(i.qty) || 0) * (Number(r.qntCaixas) || 0)).toLocaleString('pt-BR', { maximumFractionDigits: 2 })} (${esc(i.qty)}/cx × ${esc(r.qntCaixas)}cx)</div>`).join('')}
-                  </div>
+                ${expandido ? `<tr><td colspan="10" style="background:var(--surface-2);padding:8px 16px">
+                  <table style="width:100%;font-size:.74rem"><thead><tr><th style="text-align:left;color:var(--muted)">Insumo</th><th style="text-align:right;color:var(--muted)">Necessário</th><th style="text-align:right;color:var(--muted)">Estoque Atual</th><th style="text-align:right;color:var(--muted)">Saldo Final</th></tr></thead><tbody>
+                    ${insumos.map(i => {
+                      const necessario = (Number(i.qty) || 0) * (Number(r.qntCaixas) || 0);
+                      const item = _estoqueIns.find(e => _normIns(e.insumo || e.nome) === _normIns(i.insumo));
+                      const estoqueAtual = item ? (Number(item.quantidade ?? item.estoque) || 0) : null;
+                      const saldo = estoqueAtual != null ? estoqueAtual - necessario : null;
+                      return `<tr><td><b>${esc(i.insumo)}</b></td><td style="text-align:right">${necessario.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td><td style="text-align:right">${estoqueAtual != null ? estoqueAtual.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : '—'}</td><td style="text-align:right;font-weight:700;color:${saldo != null && saldo < 0 ? 'var(--danger)' : 'inherit'}">${saldo != null ? saldo.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : '—'}</td></tr>`;
+                    }).join('')}
+                  </tbody></table>
                 </td></tr>` : ''}`;
-              }).join('') : `<tr><td colspan="9"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma ordem de produção cadastrada</div><div class="empty-sub">Clique em "+ Nova OP" pra começar</div></div></td></tr>`}
+              }).join('') : `<tr><td colspan="10"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma ordem de produção cadastrada</div><div class="empty-sub">Clique em "+ Nova OP" pra começar</div></div></td></tr>`}
             </tbody>
           </table>
         </div>
@@ -347,6 +379,12 @@
     const unidPorCx = Math.max(1, Number(produto?.unid) || 1);
     const qntUnid = caixas * unidPorCx;
     const pcMin = _resolvePcMin(produto, maquina);
+    // PEDIDO AO VIVO (comparação com o original encontrou isso como bug
+    // silencioso): OP sem velocidade resolvida (pcMin<=0) nunca aparece no
+    // Gantt/Insumos/Relatórios/Dashboard — todos usam buildProducaoSchedule,
+    // que descarta esses registros sem aviso nenhum. Avisa aqui, no momento
+    // de salvar, em vez de deixar o usuário descobrir sozinho depois.
+    if (pcMin <= 0) global.showToast?.('⚠️ Produto sem velocidade cadastrada (nesta máquina nem no catálogo) — esta OP não vai aparecer no Gantt/Insumos/Relatórios até isso ser configurado.', 'error');
     const categoria = maquina?.categoria || '';
     const agora = new Date().toISOString();
     const docId = document.getElementById('pprog-doc-id').value || '';
@@ -406,7 +444,7 @@
       const book = global.XLSX.read(bytes, { type: 'array', raw: false, cellText: true });
       const linhas = global.XLSX.utils.sheet_to_json(book.Sheets[book.SheetNames[0]], { defval: '' });
       const agora = new Date().toISOString();
-      let criadas = 0, ignoradas = 0;
+      let criadas = 0, ignoradas = 0, semVelocidade = 0;
 
       for (const r of linhas) {
         const valorProduto = String(r.produto ?? r.cod ?? '').trim();
@@ -418,16 +456,22 @@
         if (!produto || !maquina || !data) { ignoradas++; continue; }
         const caixas = Math.max(1, Number(r.caixas) || 1);
         const unidPorCx = Math.max(1, Number(produto.unid) || 1);
+        const pcMin = _resolvePcMin(produto, maquina);
+        if (pcMin <= 0) semVelocidade++;
         await fs().collection(COL_REGISTROS).add({
-          produto: produto.nome, prodCod: produto.cod, maquina: maquinaNome, pcMin: _resolvePcMin(produto, maquina), unidPorCx,
+          produto: produto.nome, prodCod: produto.cod, maquina: maquinaNome, pcMin, unidPorCx,
           qntCaixas: caixas, qntUnid: caixas * unidPorCx, categoria: maquina.categoria || '',
           status: String(r.status || 'pendente'), data, dtSolicitacao: data, dtDesejada: data, horaInicio: '', obs: '',
-          configSnapshot: _buildConfigSnapshot(produto, maquina, _resolvePcMin(produto, maquina), unidPorCx),
+          configSnapshot: _buildConfigSnapshot(produto, maquina, pcMin, unidPorCx),
           sortOrder: Date.now(), criadoEm: agora, atualizadoEm: agora, updatedAt: agora,
         });
         criadas++;
       }
-      global.showToast?.(criadas + ' OP(s) criada(s)' + (ignoradas ? ', ' + ignoradas + ' linha(s) ignorada(s) (produto/máquina/data não encontrados)' : '') + '.', 'success');
+      // PEDIDO AO VIVO (comparação com o original encontrou isso como bug
+      // silencioso): sem esse aviso, o toast dizia só "N OP(s) criada(s)" e
+      // o usuário nunca saberia que parte delas nasceu sem velocidade —
+      // some do Gantt/Insumos/Relatórios sem erro nenhum em lugar nenhum.
+      global.showToast?.(criadas + ' OP(s) criada(s)' + (ignoradas ? ', ' + ignoradas + ' linha(s) ignorada(s) (produto/máquina/data não encontrados)' : '') + (semVelocidade ? ', ⚠️ ' + semVelocidade + ' sem velocidade cadastrada (não vão aparecer no Gantt/Insumos/Relatórios)' : '') + '.', semVelocidade ? 'error' : 'success');
       await carregarProducaoProgramacao(true);
       _desenharProducaoProgramacao();
     } catch (e) {

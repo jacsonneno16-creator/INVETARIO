@@ -21,7 +21,7 @@
   const COL_SETUP = 'producao_setup';
   const DIA_LABEL = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
   const PALETA_CORES = ['#E8751A', '#1E56D4', '#15803D', '#8A5C00', '#5B21B6', '#0A5E56', '#9E1A1A', '#3E5168', '#C45E0E', '#1A4BAD', '#116235', '#873608'];
-  const STATUS_INFO = { pendente: { label: 'Pendente', cor: 'b-orange' }, em_andamento: { label: 'Em andamento', cor: 'b-blue' }, concluido: { label: 'Concluído', cor: 'b-green' } };
+  const STATUS_INFO = { pendente: { label: 'Pendente', cor: 'b-orange' }, em_andamento: { label: 'Em Andamento', cor: 'b-blue' }, concluido: { label: 'Concluído', cor: 'b-green' } };
 
   let _maquinas = [];
   let _registros = [];

@@ -77,15 +77,17 @@
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <select id="psetup-filtro-maquina" class="field"><option value="">Todas as máquinas</option>${opcoesMaquinas}</select>
+          <button type="button" class="btn btn-ghost btn-sm" data-psetup-recarregar="1">🔄 Recarregar</button>
           <button type="button" class="btn btn-ghost btn-sm" data-pexcel-template-baixar="1">📄 Template/Backup</button>
           <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">📥 Importar Excel<input type="file" id="pexcel-template-input" accept=".xlsx,.xls" style="display:none"></label>
           <button type="button" class="btn btn-primary btn-sm" data-psetup-novo="1">+ Novo Tempo de Setup</button>
         </div>
       </div>
+      <div style="font-size:.7rem;color:var(--muted);margin-bottom:10px">Tempo em minutos · 0 = sem setup</div>
       <div class="tc">
         <div style="overflow:auto">
           <table class="dt-table">
-            <thead><tr><th>Máquina</th><th>De</th><th>Para</th><th>Minutos</th><th></th></tr></thead>
+            <thead><tr><th>Máquina</th><th>Produto Origem</th><th>Produto Destino</th><th>Minutos</th><th></th></tr></thead>
             <tbody>
               ${linhas.length ? linhas.map(s => `
                 <tr>
@@ -192,6 +194,8 @@
   document.addEventListener('click', function (event) {
     const novo = event.target.closest('[data-psetup-novo]');
     if (novo) { psetupNovo(); return; }
+    const recarregar = event.target.closest('[data-psetup-recarregar]');
+    if (recarregar) { carregarProducaoSetup(true).then(_desenharProducaoSetup); return; }
     const editar = event.target.closest('[data-psetup-editar]');
     if (editar) { psetupEditar(editar.getAttribute('data-psetup-editar')); return; }
     const excluir = event.target.closest('[data-psetup-excluir]');

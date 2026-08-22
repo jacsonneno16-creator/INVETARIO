@@ -74,7 +74,7 @@
     });
   }
 
-  function _corOcupacao(ocupacao) { return ocupacao >= 90 ? '#D92020' : ocupacao >= 70 ? 'var(--orange)' : 'var(--green-mid)'; }
+  function _corOcupacao(ocupacao) { return ocupacao >= 90 ? 'var(--danger)' : ocupacao >= 70 ? 'var(--orange)' : 'var(--green-mid)'; }
 
   function _desenharProducaoMapaFabrica() {
     const pagina = document.getElementById('page-producao-mapa-fabrica');
@@ -117,7 +117,7 @@
     const kpis = `
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px">
         <div class="tc" style="padding:12px 16px"><div style="font-size:.68rem;color:var(--muted)">Ocupação geral da semana</div><div style="font-size:1.3rem;font-weight:700">${ocupacaoGeral}%</div></div>
-        <div class="tc" style="padding:12px 16px"><div style="font-size:.68rem;color:var(--muted)">Máquinas em alerta (≥90%)</div><div style="font-size:1.3rem;font-weight:700;color:${criticas ? '#D92020' : 'inherit'}">${criticas}</div></div>
+        <div class="tc" style="padding:12px 16px"><div style="font-size:.68rem;color:var(--muted)">Máquinas em alerta (≥90%)</div><div style="font-size:1.3rem;font-weight:700;color:${criticas ? 'var(--danger)' : 'inherit'}">${criticas}</div></div>
         <div class="tc" style="padding:12px 16px"><div style="font-size:.68rem;color:var(--muted)">Máquinas ociosas (&lt;70%)</div><div style="font-size:1.3rem;font-weight:700">${ociosas}</div></div>
       </div>
     `;

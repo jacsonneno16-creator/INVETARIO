@@ -15,7 +15,7 @@
   const COL_SETUP = 'producao_setup';
   const STATUS_INFO = {
     pendente: { label: 'Pendente', cor: 'b-orange' },
-    em_andamento: { label: 'Em andamento', cor: 'b-blue' },
+    em_andamento: { label: 'Em Andamento', cor: 'b-blue' },
     concluido: { label: 'Concluído', cor: 'b-green' },
   };
   // Cores hexa (Chart.js/canvas não lê classe .badge) — mesmos tokens da
@@ -347,7 +347,7 @@
       { label: 'Conclusão (Caixas)', val: pctCx + '%', bar: pctCx, cor: 'var(--orange)' },
       { label: 'Máquinas ativas', val: maqsAtivas + ' máq.', bar: null, cor: 'var(--warn)' },
       { label: 'Total de caixas', val: totalCx.toLocaleString('pt-BR'), bar: null, cor: 'var(--info)' },
-      { label: 'Em andamento', val: and + ' OPs', bar: total > 0 ? Math.round(and / total * 100) : 0, cor: 'var(--orange)' },
+      { label: 'Em Andamento', val: and + ' OPs', bar: total > 0 ? Math.round(and / total * 100) : 0, cor: 'var(--orange)' },
     ];
     wrap.innerHTML = metricas.map(m => `
       <div>

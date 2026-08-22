@@ -5,9 +5,13 @@ const path = require('node:path');
 
 function src(name){ return fs.readFileSync(path.join(__dirname,'..','js','analista',name),'utf8'); }
 
-test('Produção Etapa 5: jornada mantém sábado de 8h como no projeto de Produção original e lê configuração legada', () => {
+test('Produção Etapa 5 (CORRIGIDO): jornada padrão bate com DEFAULT_DAY_HRS do original (sábado 0h, não 8h) e lê configuração legada', () => {
+  // Comparação linha a linha com o original confirmou: app.js define
+  // DEFAULT_DAY_HRS=[0,9,9,9,9,8,0] (Seg-Qui 9h, Sex 8h, Sáb-Dom 0h). A
+  // versão anterior deste teste tinha o valor errado (sábado 8h) travado
+  // como se fosse o comportamento correto do original — não era.
   const s = src('77-producao-config.js');
-  assert.match(s, /function padrao\(\)\{return \[0,9,9,9,9,8,8\];\}/);
+  assert.match(s, /function padrao\(\)\{return \[0,9,9,9,9,8,0\];\}/);
   assert.match(s, /CCFG_LEGACY='configuracoes'/);
   assert.match(s, /normalizarDias\(legacy\.data\(\)\.dias/);
 });

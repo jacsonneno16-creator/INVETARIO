@@ -20,8 +20,12 @@ test('agenda desconta caixas ja realizadas da capacidade', () => {
 
 test('programacao grava snapshot de configuracao em OP manual e Excel', () => {
   const code = fs.readFileSync(path.join(__dirname, '../js/analista/62-producao-programacao.js'), 'utf8');
-  assert.match(code, /configSnapshot:\s*_buildConfigSnapshot\(produto, maquina, pcMin, unidPorCx\)/);
-  assert.match(code, /configSnapshot:\s*_buildConfigSnapshot\(produto, maquina, _resolvePcMin\(produto, maquina\), unidPorCx\)/);
+  // Comparação com o original achou o bug do pcMin<=0 sumindo silenciosamente
+  // da agenda — corrigido reaproveitando o `pcMin` já calculado (em vez de
+  // chamar _resolvePcMin de novo) pra poder avisar o usuário quando for 0,
+  // nos dois caminhos de criação de OP (manual e Excel).
+  const ocorrencias = code.match(/configSnapshot:\s*_buildConfigSnapshot\(produto, maquina, pcMin, unidPorCx\)/g) || [];
+  assert.equal(ocorrencias.length, 2, 'manual e Excel devem gravar o snapshot com o mesmo pcMin já calculado (e já avisado ao usuário se for 0)');
   assert.match(code, /global\.migrarSnapshotsProgramacao\s*=\s*migrarSnapshotsProgramacao/);
 });
 

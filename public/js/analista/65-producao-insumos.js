@@ -73,7 +73,7 @@
     const cats=[...new Set([...Object.keys(geral),..._estoque.map(x=>x.categoria||'Outros')])].sort((a,b)=>a.localeCompare(b,'pt-BR'));
     const lg=linhasGerais(geral).filter(x=>(!busca||x.insumo.toLowerCase().includes(busca)||x.categoria.toLowerCase().includes(busca))&&(!catSel||x.categoria===catSel));
     let rows='';
-    if(_modo==='geral') rows=lg.map(x=>`<tr><td>${esc(x.categoria)}</td><td>${esc(x.insumo)}</td><td style="text-align:right">${x.consumo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right">${x.estoque.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td>${esc(x.unidade||'')}</td><td style="text-align:right;font-weight:700;color:${x.saldo<0?'#D92020':'var(--green-mid)'}">${x.saldo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td></tr>`).join('');
+    if(_modo==='geral') rows=lg.map(x=>`<tr><td>${esc(x.categoria)}</td><td>${esc(x.insumo)}</td><td style="text-align:right">${x.consumo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right">${x.estoque.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td>${esc(x.unidade||'')}</td><td style="text-align:right;font-weight:700;color:${x.saldo<0?'var(--danger)':'var(--green-mid)'}">${x.saldo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td></tr>`).join('');
     else {
       Object.keys(porMaquina).sort().forEach(maq => {
         Object.keys(porMaquina[maq]).sort().forEach(cat => {
@@ -82,7 +82,7 @@
             if (catSel && cat !== catSel) return;
             const est = estoqueMap().get(norm(ins));
             const consumo = n(porMaquina[maq][cat][ins]), saldo = n(est?.quantidade) - consumo;
-            rows += `<tr><td>${esc(maq)}</td><td>${esc(cat)}</td><td>${esc(ins)}</td><td style="text-align:right">${consumo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right">${n(est?.quantidade).toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right;color:${saldo<0?'#D92020':'inherit'}">${saldo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td></tr>`;
+            rows += `<tr><td>${esc(maq)}</td><td>${esc(cat)}</td><td>${esc(ins)}</td><td style="text-align:right">${consumo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right">${n(est?.quantidade).toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right;color:${saldo<0?'var(--danger)':'inherit'}">${saldo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td></tr>`;
           });
         });
       });
