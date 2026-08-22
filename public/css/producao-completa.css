@@ -86,6 +86,35 @@
 /* Badges, vazios, pequenas superfícies */
 .producao-page-completa .badge{display:inline-block!important;padding:3px 9px!important;border-radius:16px!important;font:600 10px 'JetBrains Mono',monospace!important}.producao-page-completa .empty{padding:52px 24px!important;color:var(--prod-text3)!important;text-align:center!important}.producao-page-completa .empty-icon{font-size:38px!important;margin-bottom:8px!important}
 
+/* FIX AO VIVO: o card do Gantt (e outras telas) continuou claro mesmo com
+   tudo acima — a classe .producao-page-completa depende do JS já ter
+   decorado a página (observer/timing), o que nem sempre já rodou quando o
+   conteúdo é redesenhado. Este bloco NÃO depende de nenhuma classe do JS —
+   ancora direto no id="page-producao-*" estático (sempre presente no HTML,
+   desde o primeiro load), garantindo o tema escuro mesmo se a decoração
+   ainda não tiver rodado. */
+#setor-producao-shell [id^="page-producao-"] .tc,
+#setor-producao-shell [id^="page-producao-"] .card,
+#setor-producao-shell [id^="page-producao-"] .kpi{background:var(--prod-s1)!important;border:1px solid var(--prod-border)!important;border-radius:12px!important;box-shadow:var(--prod-shadow-sm)!important;color:var(--prod-text)!important}
+#setor-producao-shell [id^="page-producao-"] .page-title{color:var(--prod-text)!important}
+#setor-producao-shell [id^="page-producao-"] .field,
+#setor-producao-shell [id^="page-producao-"] input:not([type=checkbox]):not([type=radio]),
+#setor-producao-shell [id^="page-producao-"] select,
+#setor-producao-shell [id^="page-producao-"] textarea{background:var(--prod-s1)!important;border:1px solid var(--prod-border)!important;color:var(--prod-text)!important;border-radius:8px!important;outline:none!important}
+#setor-producao-shell [id^="page-producao-"] .dt-table,
+#setor-producao-shell [id^="page-producao-"] table{color:var(--prod-text)!important}
+#setor-producao-shell [id^="page-producao-"] .dt-table thead,
+#setor-producao-shell [id^="page-producao-"] table thead{background:var(--prod-s2)!important;border-bottom:1px solid var(--prod-border)!important}
+#setor-producao-shell [id^="page-producao-"] .dt-table th,
+#setor-producao-shell [id^="page-producao-"] table th{background:var(--prod-s2)!important;color:var(--prod-text3)!important;border-bottom:1px solid var(--prod-border)!important}
+#setor-producao-shell [id^="page-producao-"] .dt-table td,
+#setor-producao-shell [id^="page-producao-"] table td{border-bottom:1px solid var(--prod-td-border)!important;color:var(--prod-text)!important;background:transparent!important}
+#setor-producao-shell [id^="page-producao-"] .dt-table tbody tr:hover td,
+#setor-producao-shell [id^="page-producao-"] table tbody tr:hover td{background:var(--prod-row-hover)!important}
+#setor-producao-shell [id^="page-producao-"] .empty{color:var(--prod-text3)!important}
+#setor-producao-shell [id^="page-producao-"] .btn-ghost{background:var(--prod-s2)!important;border:1px solid var(--prod-border)!important;color:var(--prod-text2)!important}
+#setor-producao-shell [id^="page-producao-"] .btn-primary{background:var(--prod-primary)!important;border-color:var(--prod-primary)!important;color:#fff!important}
+
 /* Gantt: mantém toda a funcionalidade existente e aproxima visual do original */
 #page-producao-gantt .gantt-wrap,#page-producao-gantt [class*="gantt-container"],#page-producao-gantt [class*="gantt-grid"]{background:var(--prod-s1)!important;border-color:var(--prod-border)!important;color:var(--prod-text)!important}
 #page-producao-gantt [class*="gantt-head"],#page-producao-gantt [class*="gantt-header"]{background:var(--prod-s2)!important;color:var(--prod-text2)!important;border-color:var(--prod-border)!important}

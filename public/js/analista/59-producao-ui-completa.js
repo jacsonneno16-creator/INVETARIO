@@ -65,6 +65,12 @@ function criarHeader(){
   const sec=aside.querySelector(':scope > .sb-sec');
   if(sec)sec.classList.add('prod-sb-sec-hidden');
 
+  // PEDIDO AO VIVO (usuário, com print do original + reação forte ao "⋮
+  // Mais" ficando na barra de abas): o original NÃO tem overflow na barra
+  // de abas — o equivalente ao "resto do menu" (Projeção/Config) é um
+  // ícone pequeno no CABEÇALHO abrindo um dropdown, não um item extra na
+  // linha de abas. Movido pra cá: mesmo mecanismo de reparentar nós (não
+  // recriar), só troca de host (header em vez da barra de abas).
   const header=document.createElement('div');
   header.id='prod-original-header';
   header.className='prod-original-header';
@@ -74,6 +80,7 @@ function criarHeader(){
       '<div class="prod-pill"><span class="prod-dot"></span><span>Loja</span><strong id="prod-loja-pill">—</strong></div>'+
       '<button type="button" id="prod-loja-atual" class="prod-store-btn" title="Trocar loja">🏭 Trocar loja</button>'+
       '<button type="button" id="prod-theme-toggle" class="prod-icon-btn" title="Alternar tema">☀️</button>'+
+      '<div class="prod-more-wrap"><button type="button" id="prod-more-btn" class="prod-icon-btn" title="Mais opções">⚙️</button><div class="prod-more-menu" id="prod-more-menu"></div></div>'+
       '<div class="prod-user-chip"><span id="prod-user-avatar" class="prod-user-avatar">U</span><span id="prod-user-name" class="prod-user-name">Usuario</span></div>'+
     '</div>';
   aside.insertBefore(header,aside.firstChild);
@@ -85,15 +92,13 @@ function criarHeader(){
     if(n){n.classList.add('prod-tab-btn','prod-primary-tab');n.dataset.prodRoute=id;}
   });
 
-  // "⋮ Mais" — o resto do menu original (cadastro/config/uso ocasional) não
-  // some, só muda de lugar: os MESMOS nós (com onclick="goPage(...)" intacto)
-  // são REPARENTADOS pra dentro do painel, não recriados — por isso a
-  // navegação, as permissões e o estado "ativo" continuam funcionando
-  // exatamente como antes, não importa se o item está na barra ou no menu.
-  const moreWrap=document.createElement('div');
-  moreWrap.className='prod-more-wrap';
-  moreWrap.innerHTML='<button type="button" id="prod-more-btn" class="prod-tab-btn" title="Mais opções">⋮ Mais</button><div class="prod-more-menu" id="prod-more-menu"></div>';
-  const menu=moreWrap.querySelector('#prod-more-menu');
+  // O resto do menu original (cadastro/config/uso ocasional) não some, só
+  // muda de lugar: os MESMOS nós (com onclick="goPage(...)" intacto) são
+  // REPARENTADOS pra dentro do dropdown do cabeçalho, não recriados — por
+  // isso a navegação, as permissões e o estado "ativo" continuam
+  // funcionando exatamente como antes, não importa onde o item está.
+  const moreWrap=header.querySelector('.prod-more-wrap');
+  const menu=header.querySelector('#prod-more-menu');
   ROTAS_MAIS.forEach(id=>{
     const n=document.getElementById('nav-'+id);
     if(!n)return;
@@ -101,7 +106,6 @@ function criarHeader(){
     n.dataset.prodRoute=id;
     menu.appendChild(n);
   });
-  aside.appendChild(moreWrap);
 
   aside.addEventListener('click',e=>{
     const loja=e.target.closest('#prod-loja-atual');
