@@ -19,7 +19,7 @@ describe('Producao etapa 7 fix - visual sem quebrar navegacao',()=>{
   assert.ok(css.includes('#setor-producao-shell'));
  });
  test('usa nova versao para invalidar cache do navegador',()=>{
-  assert.ok(html.includes('producao-completa.css?v=20260817-menu-mais'));
+  assert.ok(html.includes('producao-completa.css?v=20260822-fix-navbar-100vh'));
   assert.ok(html.includes('59-producao-ui-completa.js?v=20260817-menu-mais'));
  });
 });

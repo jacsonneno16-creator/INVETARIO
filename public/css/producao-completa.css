@@ -13,6 +13,19 @@
  background:var(--prod-bg)!important;color:var(--prod-text)!important;font-family:'Space Grotesk',sans-serif!important;
  flex-direction:column!important;min-height:calc(100vh - 42px)!important;position:relative;overflow:hidden;
 }
+/* Fase 3f/etapa 8 — telas novas (Gantt/Gerencial/Dashboard) foram escritas
+   com os MESMOS nomes de variável do resto do app (--surface/--border/
+   --muted/--orange/...), não os --prod-*. Em vez de reescrever centenas de
+   style="" inline, redefine aqui esses nomes padrão pro valor escuro do
+   original — qualquer elemento novo dentro do setor Produção herda o tema
+   escuro automaticamente, sem precisar saber que existe um --prod-*. */
+#setor-producao-shell{
+ --bg:var(--prod-bg);--surface:var(--prod-s1);--surface-2:var(--prod-s2);--surface-3:var(--prod-s3);
+ --border:var(--prod-border);--border-2:var(--prod-border2);
+ --text:var(--prod-text);--muted:var(--prod-text2);--muted-2:var(--prod-text3);
+ --orange:var(--prod-primary);--orange-h:var(--prod-primary2);--green:var(--prod-green);--green-light:var(--prod-green);
+ --warn:var(--prod-warn);--danger:var(--prod-red);--success:var(--prod-green);--info:var(--prod-primary);
+}
 #setor-producao-shell.prod-light{
  --prod-bg:#ede5da;--prod-s1:#faf5ef;--prod-s2:#ede5da;--prod-s3:#e0d5c5;
  --prod-border:#d6c8b5;--prod-border2:#c4b09a;--prod-text:#2a1a08;--prod-text2:#806346;
@@ -25,7 +38,7 @@
 #setor-producao-shell.prod-light::before{opacity:.25}
 
 /* Cabeçalho original */
-#setor-producao-shell>.producao-original-nav{position:sticky!important;top:0;z-index:100!important;width:100%!important;min-width:0!important;height:auto!important;background:rgba(10,15,12,.97)!important;border:0!important;border-bottom:1px solid rgba(224,112,32,.22)!important;padding:0!important;overflow:visible!important;color:var(--prod-text)!important;box-shadow:none!important;display:block!important}
+#setor-producao-shell>.producao-original-nav{position:sticky!important;top:0;z-index:100!important;width:100%!important;min-width:0!important;height:auto!important;min-height:0!important;max-height:none!important;background:rgba(10,15,12,.97)!important;border:0!important;border-bottom:1px solid rgba(224,112,32,.22)!important;padding:0!important;overflow:visible!important;color:var(--prod-text)!important;box-shadow:none!important;display:block!important}
 #setor-producao-shell.prod-light>.producao-original-nav{background:rgba(61,42,24,.98)!important;border-bottom-color:rgba(232,98,26,.35)!important}
 .prod-original-header{height:64px;padding:0 28px;display:flex;align-items:center;justify-content:space-between;gap:20px;position:relative}
 .prod-original-header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(224,112,32,.35) 30%,rgba(204,40,0,.25) 60%,transparent)}
