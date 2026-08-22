@@ -551,6 +551,13 @@
     }
     .modal-lg { max-width: 880px; }
     .modal-sm { max-width: 480px; }
+    /* Configurações globais (engrenagem no topo) — modal quase em tela
+       cheia, já que hospeda telas inteiras (Usuários/Coletores/Lojas), não
+       um formulário curto como os outros modais. */
+    .modal-config { width: 96%; max-width: 1400px; height: 88vh; max-height: 88vh; }
+    .cfgm-tab { background: transparent; border: 1.5px solid var(--border); border-radius: 8px; padding: 8px 14px; font-size: .8rem; font-weight: 700; color: var(--muted); cursor: pointer; transition: .16s ease; }
+    .cfgm-tab:hover { border-color: var(--orange); color: var(--text); }
+    .cfgm-tab.on { background: var(--orange); border-color: var(--orange); color: #fff; }
     @keyframes mIn { from{ opacity:0; transform:scale(.94) translateY(12px) } to{ opacity:1; transform:scale(1) translateY(0) } }
     .modal-hdr { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
     .modal-title { font-size: .97rem; font-weight: 700; letter-spacing: -.015em; }
@@ -872,6 +879,18 @@
 /* Dropdown de famílias de produto */
 .prod-familia-dropdown{position:relative;display:inline-block}.prod-familia-menu{position:absolute;z-index:10000;top:calc(100% + 6px);left:0;width:min(340px,85vw);max-height:380px;overflow:auto;background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;padding:8px;box-shadow:0 14px 40px rgba(0,0,0,.22)}.prod-familia-menu .search{width:100%;margin-bottom:7px}.prod-familia-item{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;background:transparent;color:inherit;padding:10px 11px;border-radius:8px;cursor:pointer;text-align:left}.prod-familia-item:hover,.prod-familia-item.ativo{background:var(--primary-soft,rgba(255,120,0,.14))}
 
+/* Flyout de setor (fase 15) — hover no botão "Logística" do #setor-bar
+   revela um sub-menu (Inventário/Recebimento); clique também alterna .open
+   pra funcionar em telas touch, onde :hover não dispara de forma confiável. */
+.setor-flyout-trigger{position:relative}
+.setor-flyout-panel{position:absolute;z-index:10000;top:100%;left:0;min-width:210px;background:#16341f;border-radius:12px;padding:6px;box-shadow:0 14px 40px rgba(0,0,0,.35);opacity:0;visibility:hidden;transform:translateY(-6px);transition:opacity .15s ease,transform .15s ease,visibility .15s}
+.setor-flyout-trigger:hover .setor-flyout-panel,.setor-flyout-trigger.open .setor-flyout-panel{opacity:1;visibility:visible;transform:translateY(0)}
+.setor-flyout-item{display:block;width:100%;text-align:left;background:transparent;border:0;color:rgba(255,255,255,.85);padding:9px 12px;font-size:.82rem;font-weight:600;border-radius:8px;cursor:pointer;white-space:nowrap}
+.setor-flyout-item:hover{background:rgba(255,255,255,.1)}
+/* Engrenagem de Configurações fica na ponta direita da barra — o painel
+   abre pra esquerda em vez de direita, senão vazaria da tela. */
+.setor-flyout-panel-right{left:auto;right:0}
+
 /* Listas compactas de Usuários e Lojas */
 .acao-lapis{width:36px;height:36px;border:1px solid var(--border);border-radius:11px;background:var(--surface);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;font-size:.9rem;transition:.16s ease;color:var(--text)}
 .acao-lapis:hover{border-color:var(--orange);background:rgba(255,122,24,.08);transform:translateY(-1px)}
@@ -1032,6 +1051,8 @@ input,select,textarea{
 
 /* Matriz de permissões (modal Criar/Editar Usuário) — cards por módulo,
    contagem "X de Y", indeterminate no toggle do módulo, busca no topo. */
+.perm-presets{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.perm-presets-label{font-size:.68rem;font-weight:700;color:var(--muted);white-space:nowrap}
 .perm-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
 .perm-busca{flex:1;min-width:180px;padding:8px 12px;border:1.5px solid var(--border);border-radius:8px;font-family:var(--sans);font-size:.8rem;outline:none;transition:border-color .15s;background:var(--surface)}
 .perm-busca:focus{border-color:var(--orange);box-shadow:0 0 0 3px var(--orange-soft)}
@@ -1049,9 +1070,50 @@ input,select,textarea{
 .perm-card-count.is-complete{background:rgba(0,214,143,.15);color:var(--green-mid)}
 .perm-card-count.is-partial{background:rgba(255,122,24,.15);color:var(--orange)}
 .perm-card-body{display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px}
-.perm-chip{display:inline-flex;align-items:center;gap:5px;font-size:.7rem;padding:4px 10px;border-radius:20px;border:1px solid var(--border);cursor:pointer;transition:background .15s,border-color .15s;background:var(--surface)}
-.perm-chip:has(input:checked){background:var(--orange-soft,rgba(255,122,24,.12));border-color:var(--orange);font-weight:600}
-.perm-chip input{accent-color:var(--orange);cursor:pointer}
+/* Ação = uma linha por permissão, círculo pequeno + texto — pedido ao vivo
+   do usuário: "quero que fique um embaixo do outro, com um negocinho
+   redondinho pra selecionar e o nome do lado". `appearance:none` +
+   border-radius:50% transforma o checkbox nativo (continua semanticamente
+   um checkbox — multi-seleção) num círculo, sem perder acessibilidade de
+   teclado/leitor de tela. */
+.perm-chip{display:flex;align-items:center;gap:8px;font-size:.76rem;padding:5px 4px;border-radius:6px;cursor:pointer;transition:background .1s}
+.perm-chip:hover{background:var(--surface-2)}
+.perm-chip input[type="checkbox"]{appearance:none;-webkit-appearance:none;width:16px;height:16px;border-radius:50%;border:2px solid var(--border);background:var(--surface);cursor:pointer;flex:0 0 auto;display:grid;place-content:center;margin:0}
+.perm-chip input[type="checkbox"]:checked{border-color:var(--orange);background:var(--orange)}
+.perm-chip input[type="checkbox"]:checked::after{content:'';width:6px;height:6px;border-radius:50%;background:#fff}
+.perm-chip:has(input:checked){font-weight:600}
+/* Árvore Canal→Setor→Módulo→Ação (reforma da tela de Usuários e Permissões)
+   — substitui .perm-grid solto; .perm-card/.perm-card-hdr/.perm-card-toggle/
+   .perm-card-count/.perm-chip acima continuam reaproveitados dentro de
+   .perm-modulo, só ganham um wrapper de setor recolhível por cima. */
+.perm-arvore{display:flex;flex-direction:column;gap:10px}
+.perm-setor{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface)}
+.perm-setor-hdr{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface-2);cursor:pointer;font-weight:800;font-size:.8rem;user-select:none}
+.perm-setor-seta{transition:transform .15s;flex:0 0 auto;font-size:.72rem;color:var(--muted)}
+.perm-setor.is-recolhido .perm-setor-seta{transform:rotate(-90deg)}
+.perm-setor.is-recolhido .perm-setor-modulos{display:none}
+.perm-setor-modulos{display:flex;flex-direction:column;gap:6px;padding:8px}
+.perm-modulo{border:1.5px solid var(--border);border-radius:10px;background:var(--surface);overflow:hidden;transition:border-color .15s}
+.perm-modulo:has([data-modulo-all]:checked){border-color:rgba(255,122,24,.4)}
+.perm-modulo-hdr{display:flex;align-items:center;gap:8px;padding:8px 10px;cursor:pointer;user-select:none}
+.perm-modulo-seta{font-size:.65rem;color:var(--muted);transition:transform .15s;flex:0 0 auto}
+.perm-modulo.is-aberto .perm-modulo-seta{transform:rotate(90deg)}
+.perm-modulo-acoes{display:none;flex-direction:column;gap:2px;margin:0 10px 10px 28px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)}
+.perm-modulo.is-aberto .perm-modulo-acoes{display:flex}
+/* Lojas — mesmo idioma visual do setor/módulo (cabeçalho clicável +
+   conteúdo recolhível), substitui a grade de caixas lado a lado que
+   "tomava conta da tela toda". */
+.op-lojas-secao{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface)}
+.op-lojas-secao-hdr{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--surface-2);cursor:pointer;font-weight:700;font-size:.8rem;user-select:none}
+.op-lojas-secao-seta{transition:transform .15s;flex:0 0 auto;font-size:.72rem;color:var(--muted)}
+.op-lojas-secao.is-aberta .op-lojas-secao-seta{transform:rotate(90deg)}
+.op-lojas-secao-lista{display:none;flex-direction:column;gap:2px;padding:6px 10px}
+.op-lojas-secao.is-aberta .op-lojas-secao-lista{display:flex}
+.op-loja-item{display:flex;align-items:center;gap:8px;font-size:.78rem;padding:6px 4px;border-radius:6px;cursor:pointer;transition:background .1s}
+.op-loja-item:hover{background:var(--surface-2)}
+.op-loja-item input[type="checkbox"]{appearance:none;-webkit-appearance:none;width:16px;height:16px;border-radius:50%;border:2px solid var(--border);background:var(--surface);cursor:pointer;flex:0 0 auto;display:grid;place-content:center;margin:0}
+.op-loja-item input[type="checkbox"]:checked{border-color:var(--orange);background:var(--orange)}
+.op-loja-item input[type="checkbox"]:checked::after{content:'';width:6px;height:6px;border-radius:50%;background:#fff}
 
 #page-operadores #opl-page-operadores{display:flex !important;flex-direction:column;gap:14px;width:100%}
 #page-operadores #op-minha-conta-wrap{width:100%}

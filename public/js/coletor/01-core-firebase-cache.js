@@ -56,6 +56,8 @@ const LS_BVER    = 'col_bver_' + _LOJA_CACHE() + '_';
 const LS_LOCAIS      = 'col_locais_' + _LOJA_CACHE();        // cache de dt_locais (capacidade + set)
 const LS_LOCAIS_VER  = 'col_locais_ver_' + _LOJA_CACHE();    // versão do cache (compara com config/locais_meta)
 const LS_LOCAIS_SET  = 'col_locais_set_' + _LOJA_CACHE();    // set de endereços válidos
+const LS_REC         = 'col_rec_cache_' + _LOJA_CACHE();       // espelho de recebimentos (fase 4 do Recebimento)
+const LS_REC_IDENT   = 'col_rec_ident_cache_' + _LOJA_CACHE(); // espelho de recebimento_identificadores
 
 // ─── Sentinel único para "vazio" ────────────────────────────────────────────
 // Todo produto/gtin ausente é salvo como __VAZIO__, nunca null/undefined/"".
@@ -336,8 +338,9 @@ function endCapLoad(invId) {
 //  localStorage permanece como espelho de emergência
 // ════════════════════════════════════════════════════════════════
 const IDB_NAME    = 'dt_coletor_db';
-const IDB_VERSION = 3;   // v3: recria o banco se a store estiver ausente (corrige corrupção)
+const IDB_VERSION = 4;   // v3: recria o banco se a store estiver ausente (corrige corrupção) · v4: + fila de bips de Recebimento
 const IDB_STORE   = 'contagens_pendentes';
+const REC_IDB_STORE = 'recebimento_bips_pendentes'; // fase 4c — fila offline dos bips de Transbordo
 
 let _idb = null;   // instância aberta do IDB
 
@@ -354,6 +357,8 @@ function _idbRecriar() {
         const store = db.createObjectStore(IDB_STORE, { keyPath: 'uuid' });
         store.createIndex('status_sync',   'status_sync',   { unique: false });
         store.createIndex('inventario_id', 'inventario_id', { unique: false });
+        const recStore = db.createObjectStore(REC_IDB_STORE, { keyPath: 'uuid' });
+        recStore.createIndex('status_sync', 'status_sync', { unique: false });
       };
       req2.onsuccess = e => { _idb = e.target.result; resolve(_idb); };
       req2.onerror   = e => reject(e.target.error);
@@ -383,6 +388,17 @@ function idbOpen() {
         }
         if (!store.indexNames.contains('inventario_id')) {
           store.createIndex('inventario_id', 'inventario_id', { unique: false });
+        }
+      }
+      // v4 — fila offline dos bips de Recebimento (fase 4c), store irmã na mesma base
+      if (!db.objectStoreNames.contains(REC_IDB_STORE)) {
+        const recStore = db.createObjectStore(REC_IDB_STORE, { keyPath: 'uuid' });
+        recStore.createIndex('status_sync', 'status_sync', { unique: false });
+      } else {
+        const tx = e.target.transaction;
+        const recStore = tx.objectStore(REC_IDB_STORE);
+        if (!recStore.indexNames.contains('status_sync')) {
+          recStore.createIndex('status_sync', 'status_sync', { unique: false });
         }
       }
     };
@@ -500,6 +516,60 @@ async function idbExists(uuid) {
   } catch(e) { return false; }
 }
 
+// ── Fila offline dos bips de Recebimento (fase 4c) — store irmã na mesma
+// base, mesmo padrão acima, mantida separada porque o formato do registro
+// (bip de status) e a lógica de sincronização (revalida guarda no servidor)
+// não têm nada em comum com uma contagem. ──
+async function recIdbPut(bip) {
+  try {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx    = db.transaction(REC_IDB_STORE, 'readwrite');
+      const store = tx.objectStore(REC_IDB_STORE);
+      const req   = store.put(bip);
+      req.onsuccess = () => resolve();
+      req.onerror   = e => reject(e.target.error);
+    });
+  } catch(e) { console.warn('[IDB] recIdbPut falhou:', e); }
+}
+async function recIdbDelete(uuid) {
+  try {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx    = db.transaction(REC_IDB_STORE, 'readwrite');
+      const store = tx.objectStore(REC_IDB_STORE);
+      const req   = store.delete(uuid);
+      req.onsuccess = () => resolve();
+      req.onerror   = e => reject(e.target.error);
+    });
+  } catch(e) { console.warn('[IDB] recIdbDelete falhou:', e); }
+}
+async function recIdbGetPendentes() {
+  try {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx    = db.transaction(REC_IDB_STORE, 'readonly');
+      const store = tx.objectStore(REC_IDB_STORE);
+      const idx   = store.index('status_sync');
+      const req   = idx.getAll('pendente');
+      req.onsuccess = e => resolve(e.target.result || []);
+      req.onerror   = e => reject(e.target.error);
+    });
+  } catch(e) { console.warn('[IDB] recIdbGetPendentes falhou:', e); return []; }
+}
+async function recIdbGetAll() {
+  try {
+    const db = await idbOpen();
+    return new Promise((resolve, reject) => {
+      const tx    = db.transaction(REC_IDB_STORE, 'readonly');
+      const store = tx.objectStore(REC_IDB_STORE);
+      const req   = store.getAll();
+      req.onsuccess = e => resolve(e.target.result || []);
+      req.onerror   = e => reject(e.target.error);
+    });
+  } catch(e) { console.warn('[IDB] recIdbGetAll falhou:', e); return []; }
+}
+
 // ── localStorage: espelho de emergência + compatibilidade ──
 function filaSave(fila) {
   try { localStorage.setItem(LS_FILA, JSON.stringify(fila)); } catch(e){ console.warn("[Erro tratado]", e); }
@@ -567,6 +637,21 @@ function invCacheLoad() {
 }
 function invCacheSave(list) {
   try { localStorage.setItem(LS_INV, JSON.stringify(list)); } catch(e){ console.warn("[Erro tratado]", e); }
+}
+
+// Espelho local (fase 4 do Recebimento) — permite que o hub de Recebimento
+// mostre as cargas em andamento mesmo se o app for recarregado offline.
+function recCacheLoad() {
+  try { const r = localStorage.getItem(LS_REC); return r ? JSON.parse(r) : []; } catch(e) { return []; }
+}
+function recCacheSave(list) {
+  try { localStorage.setItem(LS_REC, JSON.stringify(list)); } catch(e){ console.warn("[Erro tratado]", e); }
+}
+function recIdentCacheLoad() {
+  try { const r = localStorage.getItem(LS_REC_IDENT); return r ? JSON.parse(r) : []; } catch(e) { return []; }
+}
+function recIdentCacheSave(list) {
+  try { localStorage.setItem(LS_REC_IDENT, JSON.stringify(list)); } catch(e){ console.warn("[Erro tratado]", e); }
 }
 
 /**

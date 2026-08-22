@@ -31,7 +31,7 @@
     _carregado = true;
   }
 
-  function _estaAusente(f) { return !!f.deactivatedUntil || f.ativo === false; }
+  function _estaAusente(f) { if (f.ativo === false) return true; if (!f.deactivatedUntil) return false; if (f.deactivatedUntil === 'indefinido') return true; const t = new Date(String(f.deactivatedUntil) + (String(f.deactivatedUntil).length === 10 ? 'T23:59:59' : '')).getTime(); return Number.isFinite(t) && t > Date.now(); }
 
   async function renderProducaoFuncionarios() {
     const pagina = document.getElementById('page-producao-funcionarios');
@@ -75,9 +75,9 @@
                   <td>${esc(f.funcao || '—')}</td>
                   <td>${esc(f.turno || '—')}</td>
                   <td style="font-size:.72rem;color:var(--muted)">${(f.maquinas || []).join(', ') || '—'}</td>
-                  <td>${f.deactivatedUntil ? `<span class="badge b-yellow">Ausente até ${esc(f.deactivatedUntil)}</span>` : (f.ativo === false ? '<span class="badge b-red">Inativo</span>' : '<span class="badge b-green">Ativo</span>')}</td>
+                  <td>${f.ativo === false ? '<span class="badge b-red">Inativo</span>' : (_estaAusente(f) ? `<span class="badge b-yellow">Ausente ${f.deactivatedUntil==='indefinido'?'por prazo indefinido':'até '+esc(f.deactivatedUntil)}</span>` : '<span class="badge b-green">Ativo</span>')}</td>
                   <td style="text-align:right;white-space:nowrap">
-                    ${f.deactivatedUntil ? `<button type="button" class="acao-lapis" title="Reativar" data-pfunc-reativar="${esc(f._firestoreId)}">▶️</button>` : `<button type="button" class="acao-lapis" title="Desativar temporariamente" data-pfunc-desativar="${esc(f._firestoreId)}">⏸️</button>`}
+                    ${_estaAusente(f) && f.ativo !== false ? `<button type="button" class="acao-lapis" title="Reativar" data-pfunc-reativar="${esc(f._firestoreId)}">▶️</button>` : `<button type="button" class="acao-lapis" title="Desativar temporariamente" data-pfunc-desativar="${esc(f._firestoreId)}">⏸️</button>`}
                     <button type="button" class="acao-lapis" title="Editar" data-pfunc-editar="${esc(f._firestoreId)}">✏️</button>
                     <button type="button" class="acao-lapis" title="Excluir" data-pfunc-excluir="${esc(f._firestoreId)}">🗑️</button>
                   </td>
@@ -105,6 +105,7 @@
     document.getElementById('pfunc-setor').value = item.setor || '';
     document.getElementById('pfunc-funcao').value = item.funcao || '';
     document.getElementById('pfunc-turno').value = item.turno || '';
+    const ativoEl = document.getElementById('pfunc-ativo'); if (ativoEl) ativoEl.value = item.ativo === false ? 'false' : 'true';
     document.getElementById('pfunc-obs').value = item.obs || '';
     _maquinasEditando = Array.isArray(item.maquinas) ? item.maquinas.slice() : [];
     _redesenharMaquinasEditando();
@@ -129,9 +130,10 @@
     const funcao = String(document.getElementById('pfunc-funcao').value || '').trim();
     const turno = document.getElementById('pfunc-turno').value || '';
     const obs = String(document.getElementById('pfunc-obs').value || '').trim();
+    const ativo = document.getElementById('pfunc-ativo')?.value !== 'false';
     const agora = new Date().toISOString();
     const docId = document.getElementById('pfunc-doc-id').value || '';
-    const payload = { nome, setor, funcao, turno, maquinas: _maquinasEditando, obs, ativo: true, atualizadoEm: agora };
+    const payload = { nome, setor, funcao, turno, maquinas: _maquinasEditando, obs, ativo, atualizadoEm: agora }; if (ativo && docId) { payload.deactivatedUntil = null; payload.motivo = ''; }
 
     try {
       if (docId) {
@@ -225,4 +227,5 @@
     const maq = event.target.closest('[data-pfunc-maquina-check]');
     if (maq) pfuncMaquinaToggle(maq.getAttribute('data-pfunc-maquina-check'), maq.checked);
   });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _funcionarios=[]; _maquinas=[]; _maquinasEditando=[]; });
 })(window);

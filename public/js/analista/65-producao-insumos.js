@@ -1,163 +1,105 @@
-// Setor Produção — Insumos, visão "Por Máquina" e "Geral" (fase 3d da
-// unificação com o Sistema de Produção). Só passou a ter o que mostrar
-// depois do motor de agenda (fase 3c) existir — sem OPs agendadas na
-// semana, ambas as visões ficam vazias (mesmo comportamento da original).
-//
-// Simplificações deliberadas: sem import de estoque de insumos (Excel,
-// era só localStorage na original, sem sincronizar entre usuários) e sem
-// coluna "Saldo" que dependia disso — só o cálculo de consumo semanal.
-// Categoria vem de um campo opcional por insumo na Ficha Técnica (fallback
-// "Outros"), sem o mapa hardcoded de ~380 produtos da original.
+// Setor Produção — Insumos/MRP (paridade funcional V341).
+// Mantém as visões Por Máquina e Geral e restaura estoque de insumos,
+// saldo projetado, filtros e importação/exportação Excel sincronizados no
+// Firestore multi-loja (em vez do localStorage do sistema antigo).
 (function (global) {
   'use strict';
-  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const COL_MAQUINAS = 'producao_maquinas';
-  const COL_REGISTROS = 'producao_registros';
-  const COL_FICHAS = 'producao_ficha_tecnica';
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const COL_MAQUINAS='producao_maquinas', COL_REGISTROS='producao_registros', COL_FICHAS='producao_ficha_tecnica', COL_ESTOQUE='producao_insumos_estoque', COL_ESTOQUE_LEGACY='insumos';
+  let _maquinas=[],_registros=[],_fichas=[],_estoque=[],_carregado=false,_modo='maquina',_weekStart=domingo(new Date());
+  function fs(){return global.getDTFirestore();}
+  function domingo(d){const r=new Date(d);r.setHours(12,0,0,0);r.setDate(r.getDate()-r.getDay());return r;}
+  function fmt(d){return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});}
+  function norm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();}
+  function n(v){const x=Number(v);return Number.isFinite(x)?x:0;}
+  function fichaCod(f){return String(f?.cod??f?.codigo??f?.produtoCod??f?.produto_key??'');}
+  function fichaDesc(f){return f?.desc||f?.descricao||f?.produto||f?.nome||'';}
+  function insNorm(i){i=i||{};return {insumo:i.insumo||i.nome||i.desc_insumo||i.descricao||'',categoria:i.categoria||i.cat||'Outros',qty:n(i.qty??i.qtd??i.quantidade??i.consumoPorCaixa),unidade:i.unidade||i.un||''};}
+  function fichaInsumos(f){return (Array.isArray(f?.insumos)?f.insumos:[]).map(insNorm).filter(i=>i.insumo&&i.qty>0);}
 
-  let _maquinas = [];
-  let _registros = [];
-  let _fichas = [];
-  let _carregado = false;
-  let _modo = 'maquina';
-  let _weekStart = _domingoDaSemana(new Date());
-
-  function fs() { return global.getDTFirestore(); }
-
-  function _domingoDaSemana(d) {
-    const r = new Date(d);
-    r.setHours(0, 0, 0, 0);
-    r.setDate(r.getDate() - r.getDay());
-    return r;
-  }
-  function _fmtDataCurta(d) { return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }); }
-
-  async function carregarProducaoInsumos(forcar) {
-    if (_carregado && !forcar) return;
-    const [snapMaq, snapReg, snapFicha] = await Promise.all([
-      fs().collection(COL_MAQUINAS).get(),
-      fs().collection(COL_REGISTROS).get(),
-      fs().collection(COL_FICHAS).get(),
+  async function carregarProducaoInsumos(forcar){
+    if(_carregado&&!forcar)return;
+    const [m,r,f,e,el]=await Promise.all([
+      fs().collection(COL_MAQUINAS).get(),fs().collection(COL_REGISTROS).get(),fs().collection(COL_FICHAS).get(),fs().collection(COL_ESTOQUE).get().catch(()=>({docs:[]})),fs().collection(COL_ESTOQUE_LEGACY).get().catch(()=>({docs:[]}))
     ]);
-    _maquinas = snapMaq.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
-    _registros = snapReg.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
-    _fichas = snapFicha.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
-    _carregado = true;
+    _maquinas=m.docs.map(d=>({_firestoreId:d.id,...d.data()}));_registros=r.docs.map(d=>({_firestoreId:d.id,...d.data(),data:d.data().data||d.data().dtDesejada||d.data().dtSolicitacao||'',qntCaixas:n(d.data().qntCaixas??d.data().quantidadeCaixas??d.data().quantidade),prodCod:d.data().prodCod??d.data().cod??d.data().produtoCod??''}));_fichas=f.docs.map(d=>({_firestoreId:d.id,...d.data()}));const atual=e.docs.map(d=>({_firestoreId:d.id,...d.data()}));const antigo=el.docs.map(d=>({_firestoreId:d.id,...d.data(),insumo:d.data().insumo||d.data().nome||'',quantidade:n(d.data().quantidade??d.data().estoqueAtual),unidade:d.data().unidade||'',categoria:d.data().categoria||'Outros'}));_estoque=atual.length?atual:antigo;_carregado=true;
   }
 
-  async function renderProducaoInsumos() {
-    const pagina = document.getElementById('page-producao-insumos');
-    if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try { await carregarProducaoInsumos(); }
-    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
-    _desenharProducaoInsumos();
+  function calcularConsumoInsumosSemana(weekStart){
+    if(typeof global.buildProducaoSchedule!=='function')return{porMaquina:{},geral:{}};
+    const mp={},rp={},fp={};_maquinas.forEach(m=>mp[m.nome]=m);_registros.forEach(r=>rp[r._firestoreId]=r);_fichas.forEach(f=>{const c=fichaCod(f);if(c)fp[c]=f;});
+    const resultado=global.buildProducaoSchedule(weekStart,_registros,mp,[]),porMaquina={},geral={};
+    Object.keys(resultado.porMaquina||{}).forEach(maq=>{
+      (resultado.porMaquina[maq].porDia||[]).forEach(dia=>(dia||[]).forEach(seg=>{
+        const r=rp[seg.registroId];if(!r)return;const ficha=fp[String(r.prodCod)]||_fichas.find(f=>norm(fichaDesc(f))===norm(r.produto));
+        fichaInsumos(ficha).forEach(ins=>{const cat=ins.categoria||'Outros',tot=n(seg.caixasNoDia)*n(ins.qty);if(tot<=0)return;
+          porMaquina[maq]=porMaquina[maq]||{};porMaquina[maq][cat]=porMaquina[maq][cat]||{};porMaquina[maq][cat][ins.insumo]=(porMaquina[maq][cat][ins.insumo]||0)+tot;
+          geral[cat]=geral[cat]||{};geral[cat][ins.insumo]=(geral[cat][ins.insumo]||0)+tot;
+        });
+      }));
+    });return{porMaquina,geral};
   }
+  // PCP (fase 9) — diferente de calcularConsumoInsumosSemana (que depende
+  // do motor de agenda em minutos, pensado pra visão semanal por máquina),
+  // esta soma direto por OP num intervalo de datas arbitrário — necessário
+  // porque o horizonte do PCP vai até 90 dias, não uma semana. Reaproveita
+  // o mesmo mapeamento ficha↔registro (por cod, fallback por nome).
+  function calcularNecessidadeInsumosPorOPs(registros,fichas,dataInicio,dataFim){
+    const fp={};(fichas||[]).forEach(f=>{const c=fichaCod(f);if(c)fp[c]=f;});
+    const porInsumoMap={},porOP=[];
+    (registros||[]).filter(r=>r.status!=='concluido'&&r.data>=dataInicio&&r.data<=dataFim).forEach(r=>{
+      const ficha=fp[String(r.prodCod)]||(fichas||[]).find(f=>norm(fichaDesc(f))===norm(r.produto||r.descricao));
+      const caixasRestantes=Math.max(0,n(r.qntCaixas??r.quantidadeCaixas??r.quantidade)-n(r.realizadoCaixas??r.quantidadeRealizada));
+      const insumosOP=fichaInsumos(ficha).map(ins=>{
+        const necessidade=caixasRestantes*n(ins.qty);
+        if(necessidade>0){
+          const chave=ins.insumo;
+          porInsumoMap[chave]=porInsumoMap[chave]||{insumo:chave,categoria:ins.categoria||'Outros',necessidade:0};
+          porInsumoMap[chave].necessidade+=necessidade;
+        }
+        return {insumo:ins.insumo,categoria:ins.categoria||'Outros',necessidade};
+      }).filter(x=>x.necessidade>0);
+      if(insumosOP.length)porOP.push({registroId:r._firestoreId,produto:r.produto,maquina:r.maquina,data:r.data,qntCaixas:caixasRestantes,insumos:insumosOP});
+    });
+    return {porInsumo:Object.values(porInsumoMap),porOP};
+  }
+  function estoqueMap(){const m=new Map();_estoque.forEach(e=>m.set(norm(e.insumo||e.nome),e));return m;}
+  function linhasGerais(geral){const em=estoqueMap(),out=[];Object.keys(geral).forEach(cat=>Object.keys(geral[cat]).forEach(ins=>{const est=em.get(norm(ins));const consumo=n(geral[cat][ins]),saldo=n(est?.quantidade)-consumo;out.push({categoria:cat,insumo:ins,consumo,estoque:n(est?.quantidade),unidade:est?.unidade||'',saldo});}));return out;}
 
-  // Retorna as linhas de consumo semanal, já agrupadas — reusado pelo
-  // Relatórios (visão "Geral") pra não duplicar o cálculo.
-  function calcularConsumoInsumosSemana(weekStart) {
-    if (typeof global.buildProducaoSchedule !== 'function') return { porMaquina: {}, geral: {} };
-    const maquinasPorNome = {};
-    _maquinas.forEach(m => { maquinasPorNome[m.nome] = m; });
-    const registrosPorId = {};
-    _registros.forEach(r => { registrosPorId[r._firestoreId] = r; });
-    const fichasPorCod = {};
-    _fichas.forEach(f => { fichasPorCod[String(f.cod)] = f; });
-
-    const resultado = global.buildProducaoSchedule(weekStart, _registros, maquinasPorNome);
-    const porMaquina = {}; // {maquina: {categoria: {insumo: total}}}
-    const geral = {}; // {categoria: {insumo: total}}
-
-    Object.keys(resultado.porMaquina).forEach(nomeMaquina => {
-      resultado.porMaquina[nomeMaquina].porDia.forEach(segmentosDoDia => {
-        segmentosDoDia.forEach(seg => {
-          const registro = registrosPorId[seg.registroId];
-          if (!registro) return;
-          const ficha = fichasPorCod[String(registro.prodCod)];
-          const insumos = (ficha && ficha.insumos) || [];
-          insumos.forEach(ins => {
-            const categoria = ins.categoria || 'Outros';
-            const total = seg.caixasNoDia * (Number(ins.qty) || 0);
-            if (total <= 0) return;
-            porMaquina[nomeMaquina] = porMaquina[nomeMaquina] || {};
-            porMaquina[nomeMaquina][categoria] = porMaquina[nomeMaquina][categoria] || {};
-            porMaquina[nomeMaquina][categoria][ins.insumo] = (porMaquina[nomeMaquina][categoria][ins.insumo] || 0) + total;
-            geral[categoria] = geral[categoria] || {};
-            geral[categoria][ins.insumo] = (geral[categoria][ins.insumo] || 0) + total;
+  async function renderProducaoInsumos(){const p=document.getElementById('page-producao-insumos');if(!p)return;p.innerHTML='<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';try{await carregarProducaoInsumos();}catch(e){p.innerHTML='<div class="empty">⚠️ '+esc(e.message||e)+'</div>';return;}_desenhar();}
+  function _desenhar(){
+    const p=document.getElementById('page-producao-insumos');if(!p)return;const {porMaquina,geral}=calcularConsumoInsumosSemana(_weekStart);const fim=new Date(_weekStart);fim.setDate(fim.getDate()+6);
+    const busca=String(document.getElementById('pins-busca')?.value||'').toLowerCase(),catSel=document.getElementById('pins-cat')?.value||'';
+    const cats=[...new Set([...Object.keys(geral),..._estoque.map(x=>x.categoria||'Outros')])].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+    const lg=linhasGerais(geral).filter(x=>(!busca||x.insumo.toLowerCase().includes(busca)||x.categoria.toLowerCase().includes(busca))&&(!catSel||x.categoria===catSel));
+    let rows='';
+    if(_modo==='geral') rows=lg.map(x=>`<tr><td>${esc(x.categoria)}</td><td>${esc(x.insumo)}</td><td style="text-align:right">${x.consumo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right">${x.estoque.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td>${esc(x.unidade||'')}</td><td style="text-align:right;font-weight:700;color:${x.saldo<0?'#D92020':'var(--green-mid)'}">${x.saldo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td></tr>`).join('');
+    else {
+      Object.keys(porMaquina).sort().forEach(maq => {
+        Object.keys(porMaquina[maq]).sort().forEach(cat => {
+          Object.keys(porMaquina[maq][cat]).sort().forEach(ins => {
+            if (busca && !ins.toLowerCase().includes(busca) && !cat.toLowerCase().includes(busca) && !maq.toLowerCase().includes(busca)) return;
+            if (catSel && cat !== catSel) return;
+            const est = estoqueMap().get(norm(ins));
+            const consumo = n(porMaquina[maq][cat][ins]), saldo = n(est?.quantidade) - consumo;
+            rows += `<tr><td>${esc(maq)}</td><td>${esc(cat)}</td><td>${esc(ins)}</td><td style="text-align:right">${consumo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right">${n(est?.quantidade).toLocaleString('pt-BR',{maximumFractionDigits:3})}</td><td style="text-align:right;color:${saldo<0?'#D92020':'inherit'}">${saldo.toLocaleString('pt-BR',{maximumFractionDigits:3})}</td></tr>`;
           });
         });
       });
-    });
-    return { porMaquina, geral };
-  }
-
-  function _desenharProducaoInsumos() {
-    const pagina = document.getElementById('page-producao-insumos');
-    if (!pagina) return;
-    const { porMaquina, geral } = calcularConsumoInsumosSemana(_weekStart);
-    const fimSemana = new Date(_weekStart); fimSemana.setDate(fimSemana.getDate() + 6);
-
-    let corpoTabela = '';
-    if (_modo === 'geral') {
-      const categorias = Object.keys(geral).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-      corpoTabela = categorias.length ? categorias.map(cat => {
-        const insumosOrdenados = Object.keys(geral[cat]).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-        const subtotal = insumosOrdenados.reduce((soma, i) => soma + geral[cat][i], 0);
-        return insumosOrdenados.map(insumo => `
-          <tr><td>${esc(cat)}</td><td>${esc(insumo)}</td><td>${geral[cat][insumo].toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td></tr>
-        `).join('') + `<tr style="background:var(--surface-2);font-weight:700"><td colspan="2">Subtotal — ${esc(cat)}</td><td>${subtotal.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td></tr>`;
-      }).join('') : '';
-    } else {
-      const maquinasComDados = Object.keys(porMaquina).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-      corpoTabela = maquinasComDados.length ? maquinasComDados.map(maq => Object.keys(porMaquina[maq]).sort((a, b) => a.localeCompare(b, 'pt-BR')).map(cat => Object.keys(porMaquina[maq][cat]).sort((a, b) => a.localeCompare(b, 'pt-BR')).map(insumo => `
-        <tr><td>${esc(maq)}</td><td>${esc(cat)}</td><td>${esc(insumo)}</td><td>${porMaquina[maq][cat][insumo].toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td></tr>
-      `).join('')).join('')).join('') : '';
     }
-
-    pagina.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-        <div>
-          <div class="page-title" style="font-size:1.1rem">🧪 Insumos</div>
-          <div style="font-size:.72rem;color:var(--muted)">${_fmtDataCurta(_weekStart)} a ${_fmtDataCurta(fimSemana)}</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button type="button" class="btn ${_modo === 'maquina' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-pins-modo="maquina">Por Máquina</button>
-          <button type="button" class="btn ${_modo === 'geral' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-pins-modo="geral">Geral</button>
-          <button type="button" class="btn btn-ghost btn-sm" data-pins-semana="-1">‹ Semana anterior</button>
-          <button type="button" class="btn btn-ghost btn-sm" data-pins-hoje="1">Hoje</button>
-          <button type="button" class="btn btn-ghost btn-sm" data-pins-semana="1">Próxima semana ›</button>
-        </div>
-      </div>
-      ${corpoTabela ? `
-      <div class="tc">
-        <div style="overflow:auto">
-          <table class="dt-table">
-            <thead><tr>${_modo === 'maquina' ? '<th>Máquina</th>' : ''}<th>Categoria</th><th>Insumo</th><th>Total na semana</th></tr></thead>
-            <tbody>${corpoTabela}</tbody>
-          </table>
-        </div>
-      </div>` : `<div class="empty"><div class="empty-icon">🧪</div><div class="empty-title">Nenhum insumo calculado para esta semana</div><div class="empty-sub">Precisa de OPs agendadas (Programação) com produtos que tenham insumos cadastrados na Ficha Técnica</div></div>`}
-    `;
+    const faltas=lg.filter(x=>x.saldo<0).length,cons=lg.reduce((s,x)=>s+x.consumo,0),saldoTotal=lg.reduce((s,x)=>s+x.saldo,0);
+    p.innerHTML=`<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:16px"><div><div class="page-title" style="font-size:1.1rem">🧪 Insumos / MRP</div><div style="font-size:.72rem;color:var(--muted)">${fmt(_weekStart)} a ${fmt(fim)}</div></div><div style="display:flex;gap:7px;flex-wrap:wrap"><button class="btn ${_modo==='maquina'?'btn-primary':'btn-ghost'} btn-sm" data-pins-modo="maquina">Por Máquina</button><button class="btn ${_modo==='geral'?'btn-primary':'btn-ghost'} btn-sm" data-pins-modo="geral">Geral / Saldo</button><label class="btn btn-ghost btn-sm" style="cursor:pointer">📥 Estoque Excel<input id="pins-est-input" type="file" accept=".xlsx,.xls,.csv" style="display:none"></label><button class="btn btn-ghost btn-sm" data-pins-export="1">📊 Excel</button><button class="btn btn-ghost btn-sm" data-pins-pdf="1">📄 PDF</button><button class="btn btn-ghost btn-sm" data-pins-semana="-1">‹</button><input type="date" class="field" data-pins-data value="${_weekStart.toISOString().slice(0,10)}" title="Ir para data" style="width:145px;padding:5px 8px"><button class="btn btn-ghost btn-sm" data-pins-hoje="1">Hoje</button><button class="btn btn-ghost btn-sm" data-pins-semana="1">›</button></div></div>
+    <div class="kpi-grid" style="margin-bottom:14px"><div class="kpi blue"><span class="kpi-icon">🧪</span><div class="kpi-val">${lg.length}</div><div class="kpi-lbl">Insumos com consumo</div></div><div class="kpi purple"><span class="kpi-icon">📦</span><div class="kpi-val">${cons.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div><div class="kpi-lbl">Consumo previsto</div></div><div class="kpi ${faltas?'orange':'green'}"><span class="kpi-icon">⚠️</span><div class="kpi-val">${faltas}</div><div class="kpi-lbl">Saldos negativos</div></div><div class="kpi teal"><span class="kpi-icon">∑</span><div class="kpi-val">${saldoTotal.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div><div class="kpi-lbl">Saldo líquido agregado</div></div></div>
+    <div class="tc" style="padding:10px;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap"><input id="pins-busca" class="field" placeholder="Buscar insumo, categoria ou máquina..." value="${esc(busca)}" style="min-width:260px"><select id="pins-cat" class="field"><option value="">Todas as categorias</option>${cats.map(c=>`<option value="${esc(c)}" ${catSel===c?'selected':''}>${esc(c)}</option>`).join('')}</select><span style="font-size:.68rem;color:var(--muted);align-self:center">Excel de estoque: colunas Insumo | Quantidade | Unidade | Categoria</span></div>
+    ${rows?`<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr>${_modo==='maquina'?'<th>Máquina</th>':''}<th>Categoria</th><th>Insumo</th><th style="text-align:right">Consumo</th><th style="text-align:right">Estoque</th>${_modo==='geral'?'<th>Un.</th>':''}<th style="text-align:right">Saldo</th></tr></thead><tbody>${rows}</tbody></table></div></div>`:'<div class="empty"><div class="empty-icon">🧪</div><div class="empty-title">Nenhum consumo encontrado para o período/filtro.</div></div>'}`;
   }
 
-  function pinsModo(modo) { _modo = modo; _desenharProducaoInsumos(); }
-  function pinsSemana(dir) { _weekStart.setDate(_weekStart.getDate() + dir * 7); _desenharProducaoInsumos(); }
-  function pinsHoje() { _weekStart = _domingoDaSemana(new Date()); _desenharProducaoInsumos(); }
-
-  global.renderProducaoInsumos = renderProducaoInsumos;
-  global.carregarProducaoInsumos = carregarProducaoInsumos;
-  global.calcularConsumoInsumosSemana = calcularConsumoInsumosSemana;
-  global.pinsModo = pinsModo;
-  global.pinsSemana = pinsSemana;
-  global.pinsHoje = pinsHoje;
-
-  document.addEventListener('click', function (event) {
-    const modo = event.target.closest('[data-pins-modo]');
-    if (modo) { pinsModo(modo.getAttribute('data-pins-modo')); return; }
-    const semana = event.target.closest('[data-pins-semana]');
-    if (semana) { pinsSemana(Number(semana.getAttribute('data-pins-semana'))); return; }
-    const hoje = event.target.closest('[data-pins-hoje]');
-    if (hoje) { pinsHoje(); return; }
-  });
+  async function importarEstoque(file){if(!file)return;if(!global.XLSX){global.showToast?.('Biblioteca Excel não carregada.','error');return;}try{const b=await file.arrayBuffer(),wb=global.XLSX.read(b,{type:'array'}),rows=global.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});let c=0,u=0;const agora=new Date().toISOString();for(const r of rows){const ins=String(r.Insumo??r.insumo??r.Nome??r.nome??'').trim();if(!ins)continue;const payload={insumo:ins,quantidade:n(r.Quantidade??r.quantidade??r.Estoque??r.estoque),unidade:String(r.Unidade??r.unidade??''),categoria:String(r.Categoria??r.categoria??'Outros'),atualizadoEm:agora};const ex=_estoque.find(x=>norm(x.insumo)===norm(ins));if(ex){await fs().collection(COL_ESTOQUE).doc(ex._firestoreId).set(payload,{merge:true});u++;}else{await fs().collection(COL_ESTOQUE).add({...payload,criadoEm:agora});c++;}}await carregarProducaoInsumos(true);_desenhar();global.showToast?.(`${c} criado(s), ${u} atualizado(s) no estoque de insumos.`,'success');}catch(e){global.showToast?.('Erro ao importar estoque de insumos: '+(e.message||e),'error');}}
+  function exportar(){if(!global.XLSX){global.showToast?.('Biblioteca Excel não carregada.','error');return;}const {porMaquina,geral}=calcularConsumoInsumosSemana(_weekStart),linhas=linhasGerais(geral).map(x=>({Categoria:x.categoria,Insumo:x.insumo,Consumo:x.consumo,Estoque:x.estoque,Unidade:x.unidade,Saldo:x.saldo})),maq=[];Object.keys(porMaquina).forEach(m=>Object.keys(porMaquina[m]).forEach(c=>Object.keys(porMaquina[m][c]).forEach(i=>maq.push({Maquina:m,Categoria:c,Insumo:i,Consumo:porMaquina[m][c][i]}))));const wb=global.XLSX.utils.book_new();global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(linhas),'Saldo_Geral');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(maq),'Por_Maquina');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(_estoque.map(e=>({Insumo:e.insumo,Quantidade:e.quantidade,Unidade:e.unidade||'',Categoria:e.categoria||''}))),'Estoque');global.XLSX.writeFile(wb,'insumos_mrp_'+_weekStart.toISOString().slice(0,10)+'.xlsx');}
+  function pinsModo(m){_modo=m;_desenhar();}function pinsSemana(d){_weekStart.setDate(_weekStart.getDate()+d*7);_desenhar();}function pinsHoje(){_weekStart=domingo(new Date());_desenhar();}function pinsGoDate(v){if(!v)return;const d=new Date(v+'T12:00:00');if(Number.isNaN(d.getTime()))return;_weekStart=domingo(d);_desenhar();}
+  global.renderProducaoInsumos=renderProducaoInsumos;global.carregarProducaoInsumos=carregarProducaoInsumos;global.calcularConsumoInsumosSemana=calcularConsumoInsumosSemana;global.calcularNecessidadeInsumosPorOPs=calcularNecessidadeInsumosPorOPs;global.importarEstoqueInsumosProducao=importarEstoque;global.exportarSaldoInsumosProducao=exportar;global._producaoInsumosInternals={getEstoque:()=>_estoque,getRegistros:()=>_registros,getFichas:()=>_fichas};
+  document.addEventListener('click',e=>{const m=e.target.closest('[data-pins-modo]');if(m)return pinsModo(m.dataset.pinsModo);const s=e.target.closest('[data-pins-semana]');if(s)return pinsSemana(Number(s.dataset.pinsSemana));if(e.target.closest('[data-pins-hoje]'))return pinsHoje();if(e.target.closest('[data-pins-export]'))return exportar();if(e.target.closest('[data-pins-pdf]'))return global.exportarElementoProducaoPDF?.('page-producao-insumos','insumos_mrp.pdf');});
+  document.addEventListener('change',e=>{if(e.target.matches('[data-pins-data]'))pinsGoDate(e.target.value);});
+  document.addEventListener('input',e=>{if(e.target?.id==='pins-busca')_desenhar();});document.addEventListener('change',e=>{if(e.target?.id==='pins-cat')_desenhar();if(e.target?.id==='pins-est-input'){importarEstoque(e.target.files?.[0]);e.target.value='';}});
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _maquinas=[]; _registros=[]; _fichas=[]; _estoque=[]; });
 })(window);

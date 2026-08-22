@@ -3,7 +3,9 @@
 
   var menuMap = {
     'btn-menu3pts-login': 'menu3pts-dropdown-login',
+    'btn-menu3pts-acesso': 'menu3pts-dropdown-acesso',
     'btn-menu3pts-mode': 'menu3pts-dropdown-mode',
+    'btn-menu3pts-recebimento': 'menu3pts-dropdown-recebimento',
     'btn-menu3pts': 'menu3pts-dropdown'
   };
 
@@ -144,7 +146,7 @@
     }, false);
 
     var version = window.APP_VERSION || '—';
-    var versionIds = ['login-ver-label', 'mode-ver-label', 'app-ver-label'];
+    var versionIds = ['login-ver-label', 'acesso-ver-label', 'mode-ver-label', 'recebimento-ver-label', 'app-ver-label'];
     var i;
     for (i = 0; i < versionIds.length; i += 1) {
       var el = document.getElementById(versionIds[i]);

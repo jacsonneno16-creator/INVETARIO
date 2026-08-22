@@ -28,6 +28,31 @@ window.getDTFirebaseApp = function(){
 };
 window.getDTRawFirestore = function(){ return getDTFirebaseApp().firestore(); };
 
+// Correção estrutural (Prioridade 11 do pedido): "Missing or insufficient
+// permissions"/`permission-denied` cru não diz NADA útil pro operador — só
+// confunde (é a mesma mensagem genérica pra "não tem permissão", "conta sem
+// canal liberado" e "esta carga não é mais sua loja"). Firestore não manda
+// detalhe nenhum sobre POR QUE negou, então a mensagem específica só pode
+// vir do CONTEXTO que quem chamou já sabia (qual ação, em qual módulo) — daí
+// o parâmetro `contexto`, não uma tentativa de adivinhar a partir do erro
+// cru. Compartilhado entre Coletor e Analista (os dois carregam este
+// arquivo) pra não duplicar o mapa de mensagens nos dois bundles. O erro
+// ORIGINAL nunca é escondido — quem chama continua responsável por logar
+// (console.error/window.dtAddDiag) pro diagnóstico técnico; esta função só
+// decide o texto que o OPERADOR vê.
+function traduzirErroPermissao(erro, contexto) {
+  if (!erro || erro.code !== 'permission-denied') return null; // não é esse tipo de erro — quem chamou trata como sempre
+  contexto = contexto || {};
+  if (contexto.mensagem) return contexto.mensagem;
+  const acesso = window.DT_USUARIO_ACESSO_ATUAL;
+  if (acesso && contexto.canalNecessario && acesso.canais_acesso && acesso.canais_acesso[contexto.canalNecessario] !== true) {
+    return 'Seu usuário possui acesso a este aplicativo, mas não ao canal necessário pra esta ação. Peça pro Analista liberar em Usuários e Permissões.';
+  }
+  if (contexto.acao) return 'Você não possui permissão para ' + contexto.acao + '. Peça pro Analista conferir em Usuários e Permissões.';
+  return 'Você não tem permissão para fazer isso (ou esta ação não pertence mais à sua loja). Peça pro Analista conferir em Usuários e Permissões.';
+}
+window.traduzirErroPermissao = traduzirErroPermissao;
+
 window.isDTAdminMestre = function(user, acesso){
   return !!(user && acesso && acesso.uid === user.uid &&
     (acesso.admin_mestre === true || acesso.administrador_mestre === true || acesso.perfil === 'administrador'));
@@ -62,8 +87,17 @@ window.getDTFirestore = function(){
           const path = String(nome || '');
           // Coleções globais: cadastro de lojas, permissões de usuários e
           // aprovação física dos dispositivos. A aprovação de um coletor é do
-          // navegador/aparelho, não da loja selecionada.
-          if (path === 'lojas' || path.startsWith('lojas/') || path === 'usuarios_acessos' || path === 'dt_coletores') return raw.collection(path);
+          // navegador/aparelho, não da loja selecionada. Motorista/veículo de
+          // transbordo também são globais (pedido ao vivo do usuário: "o
+          // motorista cadastrado tem que ficar cadastrado para todas as
+          // lojas") — um motorista cadastrado na Matriz precisa ser
+          // reconhecido pelo código fixo também na Filial. As rotas de
+          // transbordo (origem→destino) também são globais e cadastradas UMA
+          // vez só — um bug ao vivo apareceu quando cada loja precisava
+          // configurar a "loja parceira" separadamente dos dois lados
+          // (esquecer um lado deixava o cruzamento funcionando só num
+          // sentido); uma rota global elimina essa duplicação.
+          if (path === 'lojas' || path.startsWith('lojas/') || path === 'usuarios_acessos' || path === 'dt_coletores' || path === 'recebimento_motoristas' || path === 'recebimento_veiculos' || path === 'recebimento_rotas_transbordo') return raw.collection(path);
           const lojaId = window.getDTLojaAtiva();
           if (!lojaId) throw new Error('Nenhuma loja selecionada. Selecione uma loja para continuar.');
           return raw.collection('lojas').doc(lojaId).collection(path);

@@ -1,0 +1,456 @@
+// Recebimento > Notas Retornadas > Indicadores (FASE 11)
+// "Quais mercados mais devolvem, quais gerentes, quais vendedores têm mais
+// volta" — pedido ao vivo do usuário, modelado no mesmo estilo visual do
+// Acompanhamento (dashRankedBarChart generaliza acompColumnChart de
+// 41-dashboard-acomp-v37.js: CSS feito à mão, sem introduzir Chart.js).
+//
+// PEDIDO AO VIVO (2026-08-20, com print de um dashboard Power BI de
+// referência): "quero que os indicadores de retorno funcionem com essas
+// informações, e que sejam interativos caso clique em alguma informação as
+// outras atualizem". Escopo combinado com o usuário (AskUserQuestion):
+// - Construir agora com o que já é dado real (motivo, vendedor, supervisor,
+//   mercado, pallets, volume, valor, mês) — "Ação"/"Status" do print ficam
+//   de fora até a Fase 12 (fluxo liberado→fiscal→endereçado) existir, esta
+//   ainda deliberadamente adiada.
+// - "Transportadora" do print usa o campo Motorista (mais próximo que já
+//   existe e é preenchido em toda nota).
+// - Valor (R$) passou a ser gravado a partir de agora em
+//   recebimento_recusas_notas (ver 97-recebimento-recusas.js e
+//   functions/index.js) — notas salvas antes disso ficam com valorTotal=0.
+//
+// PEDIDO AO VIVO (2026-08-21, segundo print do mesmo dashboard de
+// referência): a Fase 12 (Status de Retornos) já existe agora, então
+// "Ação" (Tratamento) e "Status" saem do adiamento acima — MAS não como
+// gráfico. Usuário corrigiu explicitamente: "como ta na imagem ação
+// devolução pendente recusa reentregas nao sao graficos é um card que eu
+// seleciono... é que nem os status, o que vira grafico é o que ja te
+// mandei nas imagens". Confirmado abrindo o .pbix real (Report/Layout):
+// os dois são visualType:"slicer", mode:"Basic" — um painel de checkbox
+// multi-seleção, igual a um filtro, nunca uma barra. Implementados aqui
+// como 2 painéis de checkbox (mesma ideia de "só aparece se tiver alguma
+// nota real com aquele valor" — a lista de opções vem dos dados de
+// verdade, nunca uma lista fixa com categoria vazia), combinados via E
+// com o filtro de período e o filtro cruzado por clique-na-barra (esse
+// sim continua só nos OUTROS gráficos: transportadora/motivo/mercado/
+// vendedor/supervisor/mês). Reentrega não usa `statusRetorno` (fluxo
+// próprio — ver 99-recebimento-retornos-status.js), então nunca aparece
+// nas opções do painel de Status.
+(function (global) {
+  'use strict';
+
+  const COL_NOTAS = 'recebimento_recusas_notas';
+  const COL_RECUSAS = 'recebimento_recusas';
+
+  let _recusas = [];
+  let _notas = [];
+  let _notasPorChave = new Map();
+  // Filtro cruzado ÚNICO (clicar numa barra filtra tudo, clicar de novo na
+  // mesma barra limpa) — é o padrão mínimo que atende "clico em alguma
+  // informação, as outras atualizam" sem a complexidade de múltiplos
+  // filtros simultâneos (que o print não exige: é sempre 1 seleção ativa
+  // por vez guiando o resto).
+  let _filtro = null; // { dim, valor }
+  // Pedido ao vivo do usuário: "nos gráficos tem que ter a opção de
+  // período, para filtrar no período" — filtra por criadoEm (data do
+  // retorno) ANTES do filtro cruzado por clique, os dois se combinam.
+  let _periodoInicio = '';
+  let _periodoFim = '';
+  // Painéis de checkbox (Ação/Status — ver comentário no topo do
+  // arquivo): multi-seleção de verdade, igual ao slicer real do Power BI
+  // ("Basic" = checkbox-list). Vazio = sem filtro (todo mundo passa).
+  let _filtroAcaoSet = new Set();
+  let _filtroStatusSet = new Set();
+
+  function fs() {
+    if (typeof global.getDTFirestore === 'function') return global.getDTFirestore();
+    if (global.firebase && typeof global.firebase.firestore === 'function') return global.firebase.firestore();
+    throw new Error('Firestore ainda não foi inicializado. Recarregue a página.');
+  }
+  function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s])); }
+  function fmtBRL(v) { return 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function mesAnoDe(iso) {
+    const d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d)) return '';
+    return String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear();
+  }
+  function ordenarCronologico(itens) {
+    return [...itens].sort((a, b) => {
+      const [ma, ya] = String(a.label).split('/').map(Number);
+      const [mb, yb] = String(b.label).split('/').map(Number);
+      return (ya * 12 + ma) - (yb * 12 + mb);
+    });
+  }
+
+  async function carregarDadosIndicadores() {
+    const [n, r] = await Promise.all([fs().collection(COL_NOTAS).get(), fs().collection(COL_RECUSAS).get()]);
+    _notas = n.docs.map(d => ({ _id: d.id, ...d.data() }));
+    _recusas = r.docs.map(d => ({ _id: d.id, ...d.data() }));
+    _notasPorChave = new Map(_notas.map(x => [x.chave, x]));
+    _filtro = null; // dado novo — um filtro antigo poderia apontar pra um valor que não existe mais
+    _filtroAcaoSet = new Set();
+    _filtroStatusSet = new Set();
+  }
+
+  function notaCompletaDe(n) { return _notasPorChave.get(n.chave) || n; }
+
+  // Cada dimensão sabe extrair, de UMA recusa (carga), os valores distintos
+  // que ela contribui — usado tanto pra agregar (contar) quanto pra
+  // filtrar (uma recusa passa no filtro se um desses valores bate).
+  function valoresUnicosDeNotas(r, campo) {
+    const vistos = new Set();
+    (r.notas || []).forEach(n => {
+      const v = String(notaCompletaDe(n)[campo] || '').trim();
+      if (v) vistos.add(v);
+    });
+    return [...vistos];
+  }
+  const DIMENSOES = {
+    motivo: { titulo: 'Motivos da Volta', icone: '↩️', valoresDaRecusa: r => [String(r.motivoNome || '').trim()].filter(Boolean) },
+    // "Transportadora" (pedido ao vivo, combinado com o usuário): usa
+    // Motorista — mais próximo dado real disponível hoje.
+    transportadora: { titulo: 'Ocorrências por Transportadora', icone: '🚚', valoresDaRecusa: r => [String(r.motoristaNome || '').trim()].filter(Boolean) },
+    mercado: { titulo: 'Notas por Cliente/Mercado', icone: '🏪', valoresDaRecusa: r => valoresUnicosDeNotas(r, 'destinatario') },
+    vendedor: { titulo: 'Notas por Vendedor', icone: '🧑‍💼', valoresDaRecusa: r => valoresUnicosDeNotas(r, 'vendedorNome') },
+    supervisor: { titulo: 'Notas por Supervisor', icone: '👔', valoresDaRecusa: r => valoresUnicosDeNotas(r, 'supervisorNome') },
+    mes: { titulo: 'Retornos por Mês', icone: '📅', valoresDaRecusa: r => [mesAnoDe(r.criadoEm)].filter(Boolean) },
+    // Ação (Tratamento) e Status NÃO viram gráfico (ver comentário no topo
+    // do arquivo) — ficam aqui só como fonte de dado pros PAINÉIS DE
+    // CHECKBOX (painelFiltroHtml), reaproveitando a mesma extração
+    // valoresDaRecusa() que os gráficos usam, sem duplicar lógica. Rótulo
+    // humano vem de TRATAMENTO_LABELS (global, exportado por
+    // 97-recebimento-recusas.js) / STATUS_RETORNO_LABELS (global,
+    // exportado por 99-recebimento-retornos-status.js) — mesma fonte de
+    // verdade usada nas outras telas, sem duplicar o mapa aqui.
+    tratamento: {
+      titulo: 'Ação', icone: '🗂️',
+      valoresDaRecusa: r => {
+        const v = r.tratamento || '';
+        const label = (global.TRATAMENTO_LABELS && global.TRATAMENTO_LABELS[v]) || (v ? v : 'Não classificado');
+        return [label];
+      },
+    },
+    // Reentrega não usa statusRetorno (fluxo próprio — Data Programada/
+    // Saída), então fica de fora desta dimensão específica.
+    status: {
+      titulo: 'Status', icone: '🚦',
+      valoresDaRecusa: r => {
+        if ((r.tratamento || '') === 'REENTREGA') return [];
+        const v = r.statusRetorno || '';
+        const labels = global._recebimentoRetornosStatusInternals && global._recebimentoRetornosStatusInternals.STATUS_RETORNO_LABELS;
+        return [(labels && labels[v]) || (v || 'Aguard. Monitoramento')];
+      },
+    },
+  };
+
+  function recusaPassaPeriodo(r) {
+    if (!_periodoInicio && !_periodoFim) return true;
+    const d = r.criadoEm ? new Date(r.criadoEm) : null;
+    if (!d || isNaN(d)) return false; // sem data não dá pra saber se cai no período — fica de fora quando um período está ativo
+    if (_periodoInicio && d < new Date(_periodoInicio + 'T00:00:00')) return false;
+    if (_periodoFim && d > new Date(_periodoFim + 'T23:59:59')) return false;
+    return true;
+  }
+  // Painéis de checkbox (Ação/Status) — multi-seleção: uma recusa passa se
+  // o valor dela bater com QUALQUER um dos marcados naquele painel (E entre
+  // painéis, OU dentro do mesmo painel — mesmo comportamento de um slicer
+  // "Basic" do Power BI).
+  function recusaPassaPaineis(r) {
+    if (_filtroAcaoSet.size) {
+      const v = DIMENSOES.tratamento.valoresDaRecusa(r)[0];
+      if (!_filtroAcaoSet.has(v)) return false;
+    }
+    if (_filtroStatusSet.size) {
+      const vals = DIMENSOES.status.valoresDaRecusa(r);
+      if (!vals.length || !_filtroStatusSet.has(vals[0])) return false;
+    }
+    return true;
+  }
+  function recusaPassaFiltro(r) {
+    if (!recusaPassaPeriodo(r)) return false;
+    if (!recusaPassaPaineis(r)) return false;
+    if (!_filtro) return true;
+    const def = DIMENSOES[_filtro.dim];
+    if (!def) return true;
+    return def.valoresDaRecusa(r).includes(_filtro.valor);
+  }
+  function recusasFiltradas() { return _recusas.filter(recusaPassaFiltro); }
+
+  function agregarPorDimensao(dim) {
+    const def = DIMENSOES[dim];
+    if (!def) return [];
+    const contagem = new Map();
+    recusasFiltradas().forEach(r => def.valoresDaRecusa(r).forEach(v => contagem.set(v, (contagem.get(v) || 0) + 1)));
+    return [...contagem.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  }
+  // Retrocompatível: nome antigo usado por quem já dependia dele (mercado).
+  function agregarPorCampoDaNota(campo) {
+    const contagem = new Map();
+    recusasFiltradas().forEach(r => valoresUnicosDeNotas(r, campo).forEach(v => contagem.set(v, (contagem.get(v) || 0) + 1)));
+    return [...contagem.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  }
+
+  // "Dias de operação" — não existe ainda um fluxo de status com
+  // abertura/fechamento (isso é a Fase 12, deliberadamente adiada). Proxy
+  // real disponível: tempo entre a emissão da NF (Bluesoft) e o registro da
+  // volta no Coletor (criadoEm) — "quanto tempo depois de emitida essa nota
+  // voltou processada pra gente".
+  function diasOperacaoDaRecusa(r) {
+    const criado = r.criadoEm ? new Date(r.criadoEm) : null;
+    if (!criado || isNaN(criado)) return null;
+    const dias = [];
+    (r.notas || []).forEach(n => {
+      const emissao = notaCompletaDe(n).dataEmissao ? new Date(notaCompletaDe(n).dataEmissao) : null;
+      if (emissao && !isNaN(emissao)) {
+        const d = (criado - emissao) / 86400000;
+        if (d >= 0) dias.push(d);
+      }
+    });
+    if (!dias.length) return null;
+    return dias.reduce((s, x) => s + x, 0) / dias.length;
+  }
+  function agregarMediaDiasPorMes() {
+    const porMes = new Map();
+    recusasFiltradas().forEach(r => {
+      const dias = diasOperacaoDaRecusa(r);
+      const mes = mesAnoDe(r.criadoEm);
+      if (dias == null || !mes) return;
+      const atual = porMes.get(mes) || { soma: 0, n: 0 };
+      atual.soma += dias; atual.n += 1;
+      porMes.set(mes, atual);
+    });
+    return ordenarCronologico([...porMes.entries()].map(([label, { soma, n }]) => ({ label, value: Math.round((soma / n) * 10) / 10 })));
+  }
+  function mediaDiasGeral() {
+    const validos = recusasFiltradas().map(diasOperacaoDaRecusa).filter(d => d != null);
+    if (!validos.length) return null;
+    return Math.round((validos.reduce((s, x) => s + x, 0) / validos.length) * 10) / 10;
+  }
+
+  function kpis() {
+    const filtradas = recusasFiltradas();
+    const somaPallets = filtradas.reduce((s, r) => s + (Number(r.pallets) || 0), 0);
+    const somaVolume = filtradas.reduce((s, r) => s + (Number(r.volumeInformado) || 0), 0);
+    const chavesVistas = new Set();
+    let somaValor = 0;
+    filtradas.forEach(r => (r.notas || []).forEach(n => {
+      if (chavesVistas.has(n.chave)) return;
+      chavesVistas.add(n.chave);
+      somaValor += Number(notaCompletaDe(n).valorTotal) || 0;
+    }));
+    return { totalRetornos: filtradas.length, somaPallets, somaVolume, somaValor, mediaDias: mediaDiasGeral() };
+  }
+
+  // Generalização de acompColumnChart (41-dashboard-acomp-v37.js): mesmas
+  // classes CSS (dash-column-*, já definidas em analista.html), só que UMA
+  // barra por grupo em vez de duas (auditados/divergências) — um ranking
+  // simples de label+valor é exatamente esse caso. `opts.dim` liga o
+  // clique de cada barra ao filtro cruzado; `opts.cronologico` preserva a
+  // ordem de entrada (mês) em vez de reordenar por valor.
+  function dashRankedBarChart(itens, opts) {
+    opts = opts || {};
+    const limit = opts.limit || 10;
+    const dim = opts.dim || null;
+    if (!itens.length) return '<div class="empty"><div class="empty-title">Sem dados para exibir</div><div class="empty-sub">Nenhum retorno com esse dado preenchido ainda.</div></div>';
+    const dados = (opts.cronologico ? itens : [...itens].sort((a, b) => b.value - a.value)).slice(0, limit);
+    const max = Math.max(...dados.map(x => x.value), 1);
+    const teto = Math.max(1, Math.ceil(max / 4) * 4);
+    const linhas = [0, 1, 2, 3, 4].map(n => Math.round(teto * n / 4));
+    return `<div class="dash-column-scroll"><div class="dash-column-chart" style="--chart-count:${dados.length}">
+      <div class="dash-y-axis">${linhas.map((v, i) => `<span style="bottom:${i * 25}%">${v}</span>`).join('')}</div>
+      <div class="dash-grid-lines">${linhas.map((_, i) => `<i style="bottom:${i * 25}%"></i>`).join('')}</div>
+      <div class="dash-column-groups">${dados.map((x, idx) => {
+        const h = x.value ? Math.max(4, x.value / teto * 100) : 0;
+        const ativo = dim && _filtro && _filtro.dim === dim && _filtro.valor === x.label;
+        const atrs = dim ? ` data-indic-dim="${esc(dim)}" data-indic-val="${esc(x.label)}" tabindex="0" role="button"` : '';
+        const estiloAtivo = ativo ? ';outline:2px solid var(--accent);border-radius:8px;background:rgba(0,229,255,.08)' : '';
+        return `<div class="dash-column-group"${atrs} style="${dim ? 'cursor:pointer' : ''}${estiloAtivo}" title="${esc(x.label)}: ${x.value}${dim ? ' — clique pra filtrar tudo por isso' : ''}">
+          <span class="dash-columns"><i class="dash-column auditados" style="height:${h}%"><b>${x.value}</b></i></span>
+          <span class="dash-column-label"><em>${idx + 1}.</em> ${esc(x.label)}</span>
+        </div>`;
+      }).join('')}</div>
+    </div></div>`;
+  }
+
+  // Pedido ao vivo do usuário (com print de referência estilo Power BI):
+  // "os gráficos dos cards quero idênticos, e não tá nada parecidos" — o
+  // dashboard de referência usa barra HORIZONTAL ranqueada pros rankings
+  // (transportadora/motivo/cliente/vendedor/supervisor), não coluna
+  // vertical. CSS puro (dash-hbar-*, definido em analista.html), mesmo
+  // espírito de dashRankedBarChart: sem Chart.js, e mesmo esquema de
+  // data-indic-dim/data-indic-val pro clique-pra-filtrar funcionar igual.
+  function dashHorizontalBarChart(itens, opts) {
+    opts = opts || {};
+    const limit = opts.limit || 15;
+    const dim = opts.dim || null;
+    if (!itens.length) return '<div class="empty"><div class="empty-title">Sem dados para exibir</div><div class="empty-sub">Nenhum retorno com esse dado preenchido ainda.</div></div>';
+    const dados = [...itens].sort((a, b) => b.value - a.value).slice(0, limit);
+    const max = Math.max(...dados.map(x => x.value), 1);
+    return `<div class="dash-hbar-chart">${dados.map((x, idx) => {
+      const largura = x.value ? Math.max(2, x.value / max * 100) : 0;
+      const ativo = dim && _filtro && _filtro.dim === dim && _filtro.valor === x.label;
+      const atrs = dim ? ` data-indic-dim="${esc(dim)}" data-indic-val="${esc(x.label)}" tabindex="0" role="button"` : '';
+      return `<div class="dash-hbar-row${ativo ? ' is-ativo' : ''}"${atrs} title="${esc(x.label)}: ${x.value}${dim ? ' — clique pra filtrar tudo por isso' : ''}">
+        <span class="dash-hbar-label">${idx + 1}. ${esc(x.label)}</span>
+        <span class="dash-hbar-track"><span class="dash-hbar-fill" style="width:${largura}%"></span></span>
+        <span class="dash-hbar-value">${x.value}</span>
+      </div>`;
+    }).join('')}</div>`;
+  }
+
+  function chipFiltroHtml() {
+    if (!_filtro) return '';
+    const def = DIMENSOES[_filtro.dim];
+    return `<div style="display:flex;align-items:center;gap:8px;background:rgba(0,229,255,.08);border:1px solid var(--accent);border-radius:20px;padding:6px 12px;font-size:.78rem;margin:10px 0">
+      <span>Filtrando por <b>${esc(def ? def.titulo : _filtro.dim)}</b>: ${esc(_filtro.valor)}</span>
+      <button class="btn btn-ghost btn-sm" data-indic-limpar-filtro="1" style="padding:2px 8px;font-size:.72rem">✕ limpar</button>
+    </div>`;
+  }
+
+  function resumoHtml() {
+    const k = kpis();
+    return `<div style="display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:10px;margin:12px 0 4px">
+      <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">TOTAL DE RETORNOS</div><div style="font-size:1.45rem;font-weight:850">${k.totalRetornos}</div></div>
+      <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">PALLETS</div><div style="font-size:1.45rem;font-weight:850">${k.somaPallets}</div></div>
+      <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">VOLUME INFORMADO</div><div style="font-size:1.45rem;font-weight:850">${k.somaVolume}</div></div>
+      <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">VALOR</div><div style="font-size:1.3rem;font-weight:850">${fmtBRL(k.somaValor)}</div></div>
+      <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">MÉDIA DE DIAS P/ FINALIZAR</div><div style="font-size:1.45rem;font-weight:850">${k.mediaDias == null ? '—' : k.mediaDias}</div></div>
+    </div>`;
+  }
+
+  // Opções do painel: valores REAIS distintos que existem nos dados (nunca
+  // uma lista fixa) — pedido ao vivo do usuário: "eles só aparecem caso
+  // tenha alguma [nota] com ela". Ignora o próprio filtro da dimensão (só
+  // o de período) — senão desmarcar tudo faria a lista de opções sumir.
+  function opcoesDoPainel(dim) {
+    const vistos = new Set();
+    _recusas.filter(recusaPassaPeriodo).forEach(r => DIMENSOES[dim].valoresDaRecusa(r).forEach(v => vistos.add(v)));
+    return [...vistos].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  }
+  // Painel de checkbox multi-seleção — mesmo comportamento de um slicer
+  // "Basic" do Power BI (confirmado abrindo o .pbix real do usuário).
+  // PEDIDO AO VIVO (usuário mandou print do painel REAL do Power BI:
+  // "assim" — colunas lado a lado, texto simples, sem caixa/borda/sombra):
+  // trocado de card (.tc, com fundo/borda) pra coluna nua, igual ao
+  // slicer de verdade — cada uma só ocupa a largura do próprio texto
+  // (width:fit-content), sem nenhum enfeite de card em volta.
+  function painelFiltroHtml(dim, selecionados) {
+    const opcoes = opcoesDoPainel(dim);
+    if (!opcoes.length) return '';
+    const def = DIMENSOES[dim];
+    return `<div style="width:fit-content;flex:0 0 auto">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <div style="font-size:.74rem;font-weight:700;color:var(--text);text-transform:uppercase;white-space:nowrap">${esc(def.titulo)}</div>
+        ${selecionados.size ? `<button class="btn btn-ghost btn-sm" data-indic-painel-limpar="${esc(dim)}" style="padding:1px 6px;font-size:.64rem;white-space:nowrap">limpar</button>` : ''}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:7px;max-height:180px;overflow:auto">
+        ${opcoes.map(v => `<label style="display:flex;align-items:center;gap:7px;font-size:.78rem;color:var(--text);cursor:pointer;white-space:nowrap">
+          <input type="checkbox" data-indic-painel="${esc(dim)}" data-indic-painel-valor="${esc(v)}" ${selecionados.has(v) ? 'checked' : ''}>
+          ${esc(v)}
+        </label>`).join('')}
+      </div>
+    </div>`;
+  }
+
+  function cardChart(dim, extra) {
+    extra = extra || {};
+    const def = DIMENSOES[dim];
+    const itens = dim === 'mercado' ? agregarPorCampoDaNota('destinatario') : agregarPorDimensao(dim);
+    // Rankings (transportadora/motivo/mercado/vendedor/supervisor) em barra
+    // horizontal, mês em coluna vertical — igual ao dashboard de
+    // referência, que usa as duas formas dependendo do gráfico.
+    const html = extra.cronologico
+      ? dashRankedBarChart(itens, Object.assign({ limit: 24 }, extra, { dim }))
+      : dashHorizontalBarChart(itens, Object.assign({ limit: 15 }, extra, { dim }));
+    return `<div class="tc" style="padding:16px"><div class="tc-title">${def.icone} ${esc(def.titulo)}</div>${html}</div>`;
+  }
+
+  function desenhar() {
+    const pagina = document.getElementById('page-recebimento-retornos-indicadores');
+    if (!pagina) return;
+    pagina.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+        <div><h2 style="margin:0">📊 Indicadores de Retornos</h2><div style="color:var(--muted);font-size:.78rem;margin-top:4px">Mercados, motivos, vendedores e transportadoras com mais notas retornadas. Clique numa barra pra filtrar tudo por ela.</div></div>
+        <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
+          <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">PERÍODO — DE</div><input type="date" class="field" id="indic-periodo-ini" value="${esc(_periodoInicio)}" style="padding:7px"></div>
+          <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input type="date" class="field" id="indic-periodo-fim" value="${esc(_periodoFim)}" style="padding:7px"></div>
+          ${(_periodoInicio || _periodoFim) ? '<button class="btn btn-ghost btn-sm" data-indic-limpar-periodo="1">✕ período</button>' : ''}
+          <button class="btn btn-ghost" data-indic-atualizar="1">↻ Atualizar</button>
+        </div>
+      </div>
+      <div style="display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start;margin:14px 0">
+        ${painelFiltroHtml('tratamento', _filtroAcaoSet)}
+        ${painelFiltroHtml('status', _filtroStatusSet)}
+      </div>
+      ${chipFiltroHtml()}
+      ${resumoHtml()}
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:14px;margin-top:10px">
+        ${cardChart('transportadora')}
+        ${cardChart('motivo')}
+        ${cardChart('mercado')}
+        ${cardChart('vendedor')}
+        ${cardChart('supervisor')}
+        ${cardChart('mes', { cronologico: true, limit: 24 })}
+      </div>
+      <div class="tc" style="padding:16px;margin-top:14px"><div class="tc-title">📈 Média de dias p/ finalizar por mês</div>${dashRankedBarChart(agregarMediaDiasPorMes(), { cronologico: true, limit: 24 })}</div>`;
+
+    // Listener delegado, ligado UMA vez no container (que sobrevive à
+    // troca de innerHTML entre re-renders) — clicar numa barra com
+    // data-indic-dim aplica/alterna o filtro cruzado; clicar em "limpar"
+    // some com ele.
+    if (!pagina._indicListenerBound) {
+      pagina.addEventListener('click', ev => {
+        const limparFiltro = ev.target.closest('[data-indic-limpar-filtro]');
+        if (limparFiltro) { _filtro = null; desenhar(); return; }
+        const limparPeriodo = ev.target.closest('[data-indic-limpar-periodo]');
+        if (limparPeriodo) { _periodoInicio = ''; _periodoFim = ''; desenhar(); return; }
+        const limparPainel = ev.target.closest('[data-indic-painel-limpar]');
+        if (limparPainel) {
+          const dim = limparPainel.getAttribute('data-indic-painel-limpar');
+          (dim === 'tratamento' ? _filtroAcaoSet : _filtroStatusSet).clear();
+          desenhar();
+          return;
+        }
+        const alvo = ev.target.closest('[data-indic-dim]');
+        if (!alvo) return;
+        const dim = alvo.dataset.indicDim, valor = alvo.dataset.indicVal;
+        _filtro = (_filtro && _filtro.dim === dim && _filtro.valor === valor) ? null : { dim, valor };
+        desenhar();
+      });
+      // change (não click) pros campos de data de período e pros checkboxes
+      // dos painéis de Ação/Status — delegado, ligado uma vez só, igual ao
+      // listener de clique acima.
+      pagina.addEventListener('change', ev => {
+        if (ev.target.id === 'indic-periodo-ini') { _periodoInicio = ev.target.value || ''; desenhar(); return; }
+        if (ev.target.id === 'indic-periodo-fim') { _periodoFim = ev.target.value || ''; desenhar(); return; }
+        const chk = ev.target.closest('[data-indic-painel]');
+        if (chk) {
+          const dim = chk.getAttribute('data-indic-painel'), valor = chk.getAttribute('data-indic-painel-valor');
+          const conjunto = dim === 'tratamento' ? _filtroAcaoSet : _filtroStatusSet;
+          if (chk.checked) conjunto.add(valor); else conjunto.delete(valor);
+          desenhar();
+        }
+      });
+      pagina._indicListenerBound = true;
+    }
+    document.querySelector('[data-indic-atualizar]')?.addEventListener('click', async () => { await carregarDadosIndicadores(); desenhar(); });
+  }
+
+  async function renderRecebimentoRetornosIndicadores() {
+    const pagina = document.getElementById('page-recebimento-retornos-indicadores');
+    if (!pagina) return;
+    pagina.innerHTML = '<div class="empty"><div class="empty-title">Carregando Indicadores...</div></div>';
+    try { await carregarDadosIndicadores(); desenhar(); } catch (e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Indicadores</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; }
+  }
+
+  global.renderRecebimentoRetornosIndicadores = renderRecebimentoRetornosIndicadores;
+  global.dashRankedBarChart = dashRankedBarChart;
+  global.dashHorizontalBarChart = dashHorizontalBarChart;
+  global._recebimentoRetornosIndicadoresInternals = {
+    agregarPorCampoDaNota, agregarPorDimensao, dashRankedBarChart, dashHorizontalBarChart, kpis, diasOperacaoDaRecusa,
+    agregarMediaDiasPorMes, mesAnoDe, DIMENSOES, opcoesDoPainel,
+    setFiltro(f) { _filtro = f; }, getFiltro() { return _filtro; },
+    setPeriodo(ini, fim) { _periodoInicio = ini || ''; _periodoFim = fim || ''; }, getPeriodo() { return { ini: _periodoInicio, fim: _periodoFim }; },
+    setFiltroAcao(arr) { _filtroAcaoSet = new Set(arr || []); }, getFiltroAcao() { return [..._filtroAcaoSet]; },
+    setFiltroStatus(arr) { _filtroStatusSet = new Set(arr || []); }, getFiltroStatus() { return [..._filtroStatusSet]; },
+  };
+})(window);

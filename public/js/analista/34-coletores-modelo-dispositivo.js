@@ -136,12 +136,29 @@ function confirmarLoginOperador() {
 }
 
 // ── LOGOUT — coletor permanece, só a sessão é removida ───────────────
-function logoutOperadorColetor(colId) {
+// BUG AO VIVO REAL (relatado pelo usuário: "fica com o nome da pessoa o
+// tempo todo... quando não tiver ninguém logado tem que ficar vazio") —
+// esta função só mexia no estado local (col.sessao/col.status), nunca
+// escrevia no Firestore. A coluna "Operador Logado" da tabela lê
+// `operador_atual` (gravado pelo próprio Coletor no login), que nunca era
+// limpo por aqui — o nome "fantasma" sobrevivia à próxima leitura do
+// Firestore, sobrescrevendo o que este botão tinha acabado de zerar
+// localmente.
+async function logoutOperadorColetor(colId) {
   const col = state().coletores.find(c => c.id === colId);
   if (!col) return;
-  const nomeOp = col.sessao?.operador || 'Operador';
+  const nomeOp = col.sessao?.operador || col.operador_atual || 'Operador';
+  try {
+    await FS_AN.collection(FS_COL_COLETORES).doc(colId).set({
+      sessao: null, status: 'offline',
+      operador_atual: null, operador_email: null, operador_uid: null,
+    }, { merge: true });
+  } catch (e) {
+    console.warn('[Coletores] Falha ao gravar logout forçado:', e.message);
+  }
   col.sessao = null;
   col.status = 'offline';
+  col.operador_atual = null;
   delete window._coletorHeartbeats[colId];
   salvarDB_coletores();
   renderColetores();

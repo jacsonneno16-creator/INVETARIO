@@ -1,0 +1,126 @@
+// FASE 9 (ponta Analista): filtros dedicados (período/tratamento/
+// conferência), campo Tratamento editável e SEPARADO da Natureza da nota
+// e da Conferência de produtos, e a tela de detalhe (nota+retorno+
+// conferência+auditoria) juntando recebimento_recusas com
+// recebimento_recusas_notas por chave.
+const test=require('node:test');const assert=require('node:assert/strict');const fs=require('fs');const path=require('path');
+const { JSDOM } = require('jsdom');
+const base=path.join(__dirname,'../js/analista');
+const recusasCode=fs.readFileSync(path.join(base,'97-recebimento-recusas.js'),'utf8');
+
+function mockColecao(docsIniciais){
+  const registro=new Map((docsIniciais||[]).map(d=>[d.id,d.data]));
+  return {
+    get: async()=>({ empty: registro.size===0, size: registro.size, docs:[...registro.entries()].map(([id,data])=>({id,data:()=>data})) }),
+    doc:(id)=>({
+      id,
+      set: async(payload)=>{ const a=registro.get(id)||{}; registro.set(id,{...a,...payload}); },
+      update: async(payload)=>{ const a=registro.get(id); if(a===undefined) throw new Error('NOT_FOUND'); registro.set(id,{...a,...payload}); },
+    }),
+    _registro: registro,
+  };
+}
+
+function carregarPagina(colecoes){
+  const dom=new JSDOM('<!doctype html><html><body><div id="page-recebimento-recusas"></div></body></html>',{ url:'http://localhost/', runScripts:'outside-only' });
+  const win=dom.window; const document=win.document;
+  win.getDTFirestore=()=>({ collection:(nome)=>colecoes?.[nome]||mockColecao([]) });
+  win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }) };
+  win.showToast=()=>{};
+  win.aplicarPermissoesAnalista=()=>{};
+  win.openModal=()=>{};
+  win.closeModal=()=>{};
+  win.eval(recusasCode);
+  return { win, document };
+}
+
+function baseColecoes(recusas,notas){
+  return {
+    recebimento_recusas: recusas, recebimento_recusas_notas: notas || mockColecao([]),
+    recebimento_recusas_motoristas: mockColecao([]), recebimento_recusas_motivos: mockColecao([]),
+  };
+}
+
+test('filtro de Tratamento esconde recusas com tratamento diferente do selecionado',async()=>{
+  const recusas=mockColecao([
+    {id:'r1',data:{box:'BOX 1',tratamento:'RECUSA',notas:[{numeroNota:'1'}],criadoEm:'2026-08-19T10:00:00.000Z'}},
+    {id:'r2',data:{box:'BOX 2',tratamento:'DEVOLUCAO',notas:[{numeroNota:'2'}],criadoEm:'2026-08-19T11:00:00.000Z'}},
+  ]);
+  const { win, document }=carregarPagina(baseColecoes(recusas));
+  await win.renderRecebimentoRecusas();
+  document.getElementById('recusas-filtro-tratamento').value='RECUSA';
+  document.getElementById('recusas-filtro-tratamento').dispatchEvent(new win.Event('change'));
+  assert.match(document.getElementById('recusas-tabela').innerHTML,/BOX 1/);
+  assert.doesNotMatch(document.getElementById('recusas-tabela').innerHTML,/BOX 2/);
+});
+
+test('filtro de período (DE/ATÉ) usa a data de criadoEm',async()=>{
+  const recusas=mockColecao([
+    {id:'r1',data:{box:'BOX ANTIGA',notas:[],criadoEm:'2026-08-01T10:00:00.000Z'}},
+    {id:'r2',data:{box:'BOX NOVA',notas:[],criadoEm:'2026-08-19T10:00:00.000Z'}},
+  ]);
+  const { win, document }=carregarPagina(baseColecoes(recusas));
+  await win.renderRecebimentoRecusas();
+  document.getElementById('recusas-filtro-periodo-ini').value='2026-08-15';
+  document.getElementById('recusas-filtro-periodo-ini').dispatchEvent(new win.Event('change'));
+  assert.match(document.getElementById('recusas-tabela').innerHTML,/BOX NOVA/);
+  assert.doesNotMatch(document.getElementById('recusas-tabela').innerHTML,/BOX ANTIGA/);
+});
+
+test('filtro de status de Conferência isola CONFERIDA_COM_DIVERGENCIA',async()=>{
+  const recusas=mockColecao([
+    {id:'r1',data:{box:'BOX OK',statusConferenciaOperacional:'CONFERIDA',notas:[],criadoEm:'2026-08-19T10:00:00.000Z'}},
+    {id:'r2',data:{box:'BOX DIV',statusConferenciaOperacional:'CONFERIDA_COM_DIVERGENCIA',notas:[],criadoEm:'2026-08-19T10:00:00.000Z'}},
+  ]);
+  const { win, document }=carregarPagina(baseColecoes(recusas));
+  await win.renderRecebimentoRecusas();
+  document.getElementById('recusas-filtro-conferencia').value='CONFERIDA_COM_DIVERGENCIA';
+  document.getElementById('recusas-filtro-conferencia').dispatchEvent(new win.Event('change'));
+  assert.match(document.getElementById('recusas-tabela').innerHTML,/BOX DIV/);
+  assert.doesNotMatch(document.getElementById('recusas-tabela').innerHTML,/BOX OK/);
+});
+
+test('trocar o select de Tratamento grava tratamento+tratamentoDefinidoPor/Em na recusa, sem mexer em nenhum outro campo',async()=>{
+  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[],criadoEm:'2026-08-19T10:00:00.000Z',statusConferenciaOperacional:'NAO_REALIZADA'}}]);
+  const { win, document }=carregarPagina(baseColecoes(recusas));
+  await win.renderRecebimentoRecusas();
+  const sel=document.querySelector('[data-recusa-tratamento="r1"]');
+  sel.value='DEVOLUCAO';
+  sel.dispatchEvent(new win.Event('change'));
+  await new Promise(r=>setTimeout(r,0));
+  const doc=recusas._registro.get('r1');
+  assert.equal(doc.tratamento,'DEVOLUCAO');
+  assert.equal(doc.tratamentoDefinidoPor,'analista@daterrinha.com');
+  assert.ok(doc.tratamentoDefinidoEm);
+  assert.equal(doc.box,'BOX 1'); // nada além do tratamento foi tocado
+  assert.equal(doc.statusConferenciaOperacional,'NAO_REALIZADA'); // conferência não é sobrescrita pelo tratamento
+});
+
+test('detalhe da recusa junta nota (natureza/CFOP/vendedor) + retorno + conferência com itens + auditoria, sem misturar os conceitos',async()=>{
+  const notas=mockColecao([{id:'CHAVEX',data:{chave:'CHAVEX',numeroNota:'321',cfop:'1202',tipoOperacao:'ENTRADA',pareceDevolucao:true,destinatario:'Mercado X',destinatarioCnpj:'12345678000199',vendedorNome:'João Vendas',vendedorEmail:'joao@x.com'}}]);
+  const recusas=mockColecao([{id:'r1',data:{
+    box:'BOX 7',pallets:3,motoristaNome:'Pedro',motivoNome:'Cliente ausente',volumeEsperado:10,volumeInformado:8,
+    notas:[{chave:'CHAVEX',numeroNota:'321'}],
+    statusConferenciaOperacional:'CONFERIDA_COM_DIVERGENCIA',
+    itensConferidos:[{descricao:'Refrigerante 2L',gtin:'789',qtdPrevista:2,qtdConferida:1}],
+    criadoEm:'2026-08-19T10:00:00.000Z',criadoPorEmail:'coletor@daterrinha.com',
+    conferenciaConcluidaPorEmail:'operador2@daterrinha.com',conferenciaConcluidaEm:'2026-08-19T12:00:00.000Z',
+    tratamento:'RECUSA',tratamentoDefinidoPor:'analista@daterrinha.com',tratamentoDefinidoEm:'2026-08-19T13:00:00.000Z',
+  }}]);
+  const { win, document }=carregarPagina(baseColecoes(recusas,notas));
+  await win.renderRecebimentoRecusas();
+  document.querySelector('[data-recusa-detalhe="r1"]').click();
+  const corpo=document.getElementById('recusa-detalhe-corpo').innerHTML;
+  assert.match(corpo,/NF 321/);
+  assert.match(corpo,/CFOP 1202/);
+  assert.match(corpo,/parece devolução/);
+  assert.match(corpo,/João Vendas/);
+  assert.match(corpo,/Pedro/);
+  assert.match(corpo,/BOX 7/);
+  assert.match(corpo,/3 pallet/);
+  assert.match(corpo,/Refrigerante 2L/);
+  assert.match(corpo,/coletor@daterrinha\.com/);
+  assert.match(corpo,/operador2@daterrinha\.com/);
+  assert.match(corpo,/analista@daterrinha\.com/);
+  assert.match(corpo,/Recusa/); // label do tratamento, não o código RECUSA cru
+});

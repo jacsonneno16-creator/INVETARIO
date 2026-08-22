@@ -610,6 +610,31 @@
     return conts + '##' + bases;
   }
 
+  // Grava as atualizações de status de dt_contagens em LOTES (Firestore
+  // batch, até 300 por vez), em vez de uma escrita solta por documento —
+  // ver comentário no ponto de chamada (processarDivergencias) pro porquê.
+  // Fire-and-forget de propósito, mesma convenção que já existia aqui:
+  // quem chama processarDivergencias() não espera essas escritas
+  // terminarem, só loga erro se um lote falhar.
+  function _gravarPendentesDtContagensEmLotes(pendentes){
+    if (!pendentes || !pendentes.length) return;
+    const TAMANHO_LOTE = 300;
+    (async () => {
+      for (let i = 0; i < pendentes.length; i += TAMANHO_LOTE) {
+        const lote = pendentes.slice(i, i + TAMANHO_LOTE);
+        try {
+          const batch = FS_AN.batch();
+          lote.forEach(({ docId, payload }) => {
+            batch.set(FS_AN.collection('dt_contagens').doc(docId), payload, { merge: true });
+          });
+          await batch.commit();
+        } catch (erro) {
+          console.error('[Divergências] Falha ao gravar lote de status de contagens', { tamanhoLote: lote.length, erro });
+        }
+      }
+    })();
+  }
+
   function processarDivergencias({ criarRecontagens = false, source = 'manual', force = false } = {}){
     const assinatura = _assinaturaDivergencias();
     if (!force && source !== 'manual' && assinatura === _ultimaAssinaturaProcessada) return 0;
@@ -1009,6 +1034,20 @@
         infoContagem.set(c, { itemBase, geral, key });
       });
 
+      // Bug ao vivo real (2026-08-19): os dois loops abaixo faziam uma
+      // escrita SOLTA por documento (fire-and-forget, sem lote) — como
+      // processarDivergencias() roda automaticamente a cada mudança
+      // relevante do Store (scheduleBusinessReprocess, app-controller.js),
+      // um inventário grande com muitas contagens mudando de status de
+      // uma vez disparava centenas/milhares de escritas individuais ao
+      // mesmo tempo e estourava a fila de escrita do Firestore
+      // ("resource-exhausted: Write stream exhausted maximum allowed
+      // queued writes"). Corrigido: as duas passagens só ACUMULAM o que
+      // precisa gravar; a gravação de verdade sai em lotes de até 300
+      // (mesmo padrão já usado em 90-bluesoft-service.js), sem mudar o
+      // contrato síncrono/fire-and-forget desta função pros chamadores.
+      const _pendentesDtContagens = [];
+
       // ── Atualizar status de contagens normais ──
       contsUnicas.forEach(c => {
         const info = infoContagem.get(c) || {};
@@ -1027,14 +1066,12 @@
           });
           contagensMap.set(c.uuid || c.id, updated);
           const docId = c.uuid || String(c.id);
-          if (navigator.onLine) FS_AN.collection('dt_contagens').doc(docId).set({
+          if (navigator.onLine) _pendentesDtContagens.push({ docId, payload: {
             status: novoStatus,
             descricao: updated.descricao,
             descricao_produto: updated.descricao_produto,
             codigo_produto: updated.codigo_produto
-          }, {merge:true}).catch((erro) => {
-            console.error('[Divergências] Falha ao atualizar status da contagem principal', { docId, novoStatus, erro });
-          });
+          }});
         }
       });
 
@@ -1057,11 +1094,11 @@
         if (c.status !== novoStatus){
           contagensMap.set(c.uuid || c.id, Object.assign({}, c, { status: novoStatus }));
           const docId = c.uuid || String(c.id);
-          if (navigator.onLine) FS_AN.collection('dt_contagens').doc(docId).update({ status: novoStatus }).catch((erro) => {
-            console.error('[Divergências] Falha ao atualizar status da recontagem', { docId, novoStatus, erro });
-          });
+          if (navigator.onLine) _pendentesDtContagens.push({ docId, payload: { status: novoStatus } });
         }
       });
+
+      _gravarPendentesDtContagensEmLotes(_pendentesDtContagens);
 
       // Repara divergências antigas criadas como "produto não identificado" quando
       // o GTIN/DUN pertence a um produto cadastrado e também existe na base do inventário.
@@ -2203,5 +2240,10 @@
 
   // Registrar AnalistaRecontagemService para o alias em 01-core-base-storage
   global.AnalistaRecontagemService = { atribuirRecontagemSegura };
+
+  // Testável isoladamente sem precisar montar todo o state()/mock de
+  // processarDivergencias — só a parte que grava em lote no Firestore
+  // (ver correção do bug "Write stream exhausted").
+  global._divergenciasInternals = { _gravarPendentesDtContagensEmLotes };
 
 })(window);

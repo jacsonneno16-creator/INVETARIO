@@ -1,246 +1,32 @@
-// Setor Produção — Realizado / Apontamento (fase 3f da unificação com o
-// Sistema de Produção). A original apontava produção em grade de HORA em
-// HORA (7h–23h, ~17 colunas por dia, guardado em localStorage por
-// dispositivo — nunca sincronizava entre operadores/telas). Aqui: apontamento
-// por DIA (uma coluna por dia da semana), gravado direto no Firestore em
-// `producao_apontamentos` — mesma granularidade diária já usada pelo motor
-// de agenda (fase 3c) e por Relatórios/Gantt, e agora sim sincronizado entre
-// todos os usuários. Cada doc é chaveado por `${registroId}_${data}`.
-//
-// Com este módulo existindo, Relatórios (fase 3d) passa a poder mostrar
-// "Realizado" de verdade em vez de só "Programado" — ver nota no topo de
-// 69-producao-relatorios.js.
-(function (global) {
-  'use strict';
-  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const COL_REGISTROS = 'producao_registros';
-  const COL_APONTAMENTOS = 'producao_apontamentos';
-  const DIA_LABEL = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
-
-  let _registros = [];
-  let _apontamentos = [];
-  let _carregado = false;
-  let _weekStart = _domingoDaSemana(new Date());
-  let _salvando = new Set(); // chaves "registroId_data" em gravação, pra evitar corrida
-
-  function fs() { return global.getDTFirestore(); }
-  function podeEditar() { return typeof global.temPermissao !== 'function' || global.temPermissao('producao-realizado', 'editar'); }
-
-  function _domingoDaSemana(d) {
-    const r = new Date(d);
-    r.setHours(0, 0, 0, 0);
-    r.setDate(r.getDate() - r.getDay());
-    return r;
-  }
-  function _isoData(d) { return d.toISOString().slice(0, 10); }
-  function _fmtDataCurta(d) { return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }); }
-  function _fimSemana() { const f = new Date(_weekStart); f.setDate(f.getDate() + 6); return f; }
-  function _diasDaSemana() { return Array.from({ length: 7 }, (_, i) => { const d = new Date(_weekStart); d.setDate(d.getDate() + i); return d; }); }
-
-  async function carregarProducaoRealizado(forcar) {
-    if (_carregado && !forcar) return;
-    const [snapReg, snapApon] = await Promise.all([
-      fs().collection(COL_REGISTROS).get(),
-      fs().collection(COL_APONTAMENTOS).get(),
-    ]);
-    _registros = snapReg.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
-    _apontamentos = snapApon.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
-    _carregado = true;
-  }
-
-  function _apontamentoDe(registroId, data) {
-    return _apontamentos.find(a => a.registroId === registroId && a.data === data);
-  }
-  function _totalRealizado(registroId) {
-    return _apontamentos.filter(a => a.registroId === registroId).reduce((s, a) => s + (Number(a.qntCaixas) || 0), 0);
-  }
-  function _totalRealizadoNaSemana(registroId, datasSemana) {
-    return _apontamentos
-      .filter(a => a.registroId === registroId && datasSemana.includes(a.data))
-      .reduce((s, a) => s + (Number(a.qntCaixas) || 0), 0);
-  }
-
-  async function renderProducaoRealizado() {
-    const pagina = document.getElementById('page-producao-realizado');
-    if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try { await carregarProducaoRealizado(); }
-    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
-    _desenharProducaoRealizado();
-  }
-
-  function _desenharProducaoRealizado() {
-    const pagina = document.getElementById('page-producao-realizado');
-    if (!pagina) return;
-    const dias = _diasDaSemana();
-    const datasSemana = dias.map(_isoData);
-    const editavel = podeEditar();
-
-    // OPs relevantes nesta semana: data desejada cai na semana OU já tem
-    // algum apontamento gravado na semana (ex.: atrasada, mas foi produzida
-    // agora) — assim uma OP não "some" da tela só porque passou do dia.
-    const linhas = _registros
-      .filter(r => datasSemana.includes(r.data) || _apontamentos.some(a => a.registroId === r._firestoreId && datasSemana.includes(a.data)))
-      .sort((a, b) => (a.data || '').localeCompare(b.data || '') || (a.maquina || '').localeCompare(b.maquina || ''));
-
-    let progTotal = 0, realTotal = 0, concluidasNaSemana = 0;
-    linhas.forEach(r => {
-      progTotal += Number(r.qntCaixas) || 0;
-      realTotal += _totalRealizadoNaSemana(r._firestoreId, datasSemana);
-      if (r.status === 'concluido') concluidasNaSemana++;
-    });
-    const pctSemana = progTotal > 0 ? Math.min(100, Math.round((realTotal / progTotal) * 100)) : 0;
-
-    pagina.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-        <div>
-          <div class="page-title" style="font-size:1.1rem">✅ Realizado — Apontamento de Produção</div>
-          <div style="font-size:.72rem;color:var(--muted)">${_fmtDataCurta(_weekStart)} a ${_fmtDataCurta(_fimSemana())}</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <button type="button" class="btn btn-ghost btn-sm" data-preal-semana="-1">‹ Semana anterior</button>
-          <button type="button" class="btn btn-ghost btn-sm" data-preal-hoje="1">Hoje</button>
-          <button type="button" class="btn btn-ghost btn-sm" data-preal-semana="1">Próxima semana ›</button>
-        </div>
-      </div>
-
-      <div class="kpi-grid" style="margin-bottom:16px">
-        <div class="kpi blue"><span class="kpi-icon">📋</span><div class="kpi-val">${progTotal.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Programado (cx) — semana</div></div>
-        <div class="kpi green"><span class="kpi-icon">✅</span><div class="kpi-val">${realTotal.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Realizado (cx) — semana</div></div>
-        <div class="kpi ${pctSemana >= 100 ? 'teal' : pctSemana > 0 ? 'yellow' : 'purple'}"><span class="kpi-icon">📊</span><div class="kpi-val">${pctSemana}%</div><div class="kpi-lbl">% da semana concluído</div></div>
-        <div class="kpi lime"><span class="kpi-icon">🏁</span><div class="kpi-val">${concluidasNaSemana}</div><div class="kpi-lbl">OPs concluídas</div></div>
-      </div>
-
-      <div class="tc">
-        <div style="overflow:auto">
-          <table class="dt-table">
-            <thead><tr>
-              <th>Produto</th><th>Máquina</th><th style="text-align:right">Program.</th>
-              ${dias.map((d, i) => `<th style="text-align:center;min-width:64px">${DIA_LABEL[i]}<br><span style="font-weight:400;color:var(--muted)">${_fmtDataCurta(d)}</span></th>`).join('')}
-              <th style="text-align:right">Total</th><th style="text-align:center">%</th><th></th>
-            </tr></thead>
-            <tbody>
-              ${linhas.length ? linhas.map(r => {
-                const totalReal = _totalRealizado(r._firestoreId);
-                const programado = Number(r.qntCaixas) || 0;
-                const pct = programado > 0 ? Math.min(100, Math.round((totalReal / programado) * 100)) : 0;
-                const corPct = pct >= 100 ? 'b-green' : pct > 0 ? 'b-blue' : 'b-orange';
-                return `
-                <tr data-preal-linha="${esc(r._firestoreId)}">
-                  <td><b>${esc(r.produto)}</b></td>
-                  <td>${esc(r.maquina)}</td>
-                  <td style="text-align:right">${programado.toLocaleString('pt-BR')}</td>
-                  ${datasSemana.map(ds => {
-                    const apon = _apontamentoDe(r._firestoreId, ds);
-                    const valor = apon ? Number(apon.qntCaixas) || 0 : '';
-                    return `<td style="text-align:center">
-                      <input type="number" min="0" step="1" class="field" style="width:64px;text-align:center;padding:4px 2px"
-                        value="${valor}" ${editavel ? '' : 'disabled'}
-                        data-preal-input="1" data-preal-registro="${esc(r._firestoreId)}" data-preal-data="${esc(ds)}">
-                    </td>`;
-                  }).join('')}
-                  <td style="text-align:right;font-weight:700;color:var(--cyan)" data-preal-total="${esc(r._firestoreId)}">${totalReal.toLocaleString('pt-BR')}</td>
-                  <td style="text-align:center"><span class="badge ${corPct}" data-preal-pct="${esc(r._firestoreId)}">${pct}%</span></td>
-                  <td style="text-align:center;white-space:nowrap">
-                    ${editavel && r.status !== 'concluido' ? `<button type="button" class="acao-lapis" title="Marcar como concluído" data-preal-concluir="${esc(r._firestoreId)}">🏁</button>` : (r.status === 'concluido' ? '<span class="badge b-green">Concluído</span>' : '')}
-                  </td>
-                </tr>`;
-              }).join('') : `<tr><td colspan="12"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma OP nesta semana</div><div class="empty-sub">Cadastre ordens de produção em Programação, com data dentro deste intervalo.</div></div></td></tr>`}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-  }
-
-  function prealSemana(dir) { _weekStart.setDate(_weekStart.getDate() + dir * 7); _desenharProducaoRealizado(); }
-  function prealHoje() { _weekStart = _domingoDaSemana(new Date()); _desenharProducaoRealizado(); }
-
-  async function _salvarApontamento(registroId, data, valorStr) {
-    if (!podeEditar()) return;
-    const chave = registroId + '_' + data;
-    if (_salvando.has(chave)) return;
-    _salvando.add(chave);
-    try {
-      const registro = _registros.find(r => r._firestoreId === registroId);
-      const unidPorCx = Math.max(1, Number(registro && registro.unidPorCx) || 1);
-      const qntCaixas = Math.max(0, Number(valorStr) || 0);
-      const docId = chave;
-      if (!valorStr && valorStr !== 0) {
-        // campo limpo pelo usuário — remove o apontamento do dia
-        await fs().collection(COL_APONTAMENTOS).doc(docId).delete().catch(() => {});
-        _apontamentos = _apontamentos.filter(a => a._firestoreId !== docId);
-      } else {
-        const payload = {
-          registroId, data, qntCaixas, qntUnid: qntCaixas * unidPorCx,
-          atualizadoEm: new Date().toISOString(),
-          atualizadoPor: global._currentAnalistaUser?.email || '',
-        };
-        await fs().collection(COL_APONTAMENTOS).doc(docId).set(payload, { merge: true });
-        const idx = _apontamentos.findIndex(a => a._firestoreId === docId);
-        if (idx >= 0) _apontamentos[idx] = { _firestoreId: docId, ...payload };
-        else _apontamentos.push({ _firestoreId: docId, ...payload });
-      }
-      // Atualiza só a linha afetada, sem redesenhar a tela toda (evita
-      // perder o foco do campo enquanto o usuário ainda está digitando).
-      const totalCell = document.querySelector(`[data-preal-total="${CSS.escape(registroId)}"]`);
-      const pctCell = document.querySelector(`[data-preal-pct="${CSS.escape(registroId)}"]`);
-      const totalReal = _totalRealizado(registroId);
-      const programado = Number(registro && registro.qntCaixas) || 0;
-      const pct = programado > 0 ? Math.min(100, Math.round((totalReal / programado) * 100)) : 0;
-      if (totalCell) totalCell.textContent = totalReal.toLocaleString('pt-BR');
-      if (pctCell) {
-        pctCell.textContent = pct + '%';
-        pctCell.className = 'badge ' + (pct >= 100 ? 'b-green' : pct > 0 ? 'b-blue' : 'b-orange');
-      }
-    } catch (e) {
-      global.showToast?.('Erro ao salvar apontamento: ' + (e.message || e), 'error');
-    } finally {
-      _salvando.delete(chave);
-    }
-  }
-
-  async function prealConcluir(registroId) {
-    const registro = _registros.find(r => r._firestoreId === registroId);
-    if (!registro) return;
-    const executar = async () => {
-      try {
-        await fs().collection(COL_REGISTROS).doc(registroId).set({ status: 'concluido', atualizadoEm: new Date().toISOString() }, { merge: true });
-        registro.status = 'concluido';
-        global.showToast?.('OP marcada como concluída.', 'success');
-        _desenharProducaoRealizado();
-      } catch (e) {
-        global.showToast?.('Erro ao concluir: ' + (e.message || e), 'error');
-      }
-    };
-    const msg = `Marcar a OP do produto "${registro.produto}" como concluída?`;
-    if (global.showConfirm) global.showConfirm(msg, executar, { title: 'Concluir OP', icon: '🏁', okLabel: 'Concluir' });
-    else if (confirm(msg)) await executar();
-  }
-
-  global.renderProducaoRealizado = renderProducaoRealizado;
-  global._desenharProducaoRealizado = _desenharProducaoRealizado;
-  global.prealConcluir = prealConcluir;
-
-  document.addEventListener('click', function (event) {
-    if (!document.getElementById('page-producao-realizado')) return;
-    const semana = event.target.closest('[data-preal-semana]');
-    if (semana) { prealSemana(Number(semana.getAttribute('data-preal-semana'))); return; }
-    const hoje = event.target.closest('[data-preal-hoje]');
-    if (hoje) { prealHoje(); return; }
-    const concluir = event.target.closest('[data-preal-concluir]');
-    if (concluir) { prealConcluir(concluir.getAttribute('data-preal-concluir')); return; }
-  });
-
-  // Debounce por campo — evita disparar uma gravação a cada tecla.
-  const _timers = {};
-  document.addEventListener('input', function (event) {
-    const input = event.target.closest('[data-preal-input]');
-    if (!input) return;
-    const chave = input.getAttribute('data-preal-registro') + '_' + input.getAttribute('data-preal-data');
-    clearTimeout(_timers[chave]);
-    _timers[chave] = setTimeout(() => {
-      _salvarApontamento(input.getAttribute('data-preal-registro'), input.getAttribute('data-preal-data'), input.value);
-    }, 500);
-  });
+// Produção — Realizado V341. Apontamento sincronizado com detalhe horário,
+// sequência, observações, liberação, conclusão/reabertura e Excel.
+(function(global){'use strict';
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const CREG='producao_registros',CAP='producao_apontamentos',CAP_LEGACY='apontamentos_producao',CPROC='producao_processos',CPCP='pcp_solicitacoes_producao_global';const PROC_TIPOS=['mistura','descanso','envase','etiquetagem','embalagem','pesagem','limpeza','inspecao','outro'];let pfData='',pfTipo='',pfBusca='';const DL=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];const HORAS=Array.from({length:17},(_,i)=>7+i);
+// PCP (fase 5) — quando uma OP vinculada a uma solicitação do PCP muda de
+// status aqui, o mesmo status é refletido na solicitação global (coleção
+// raiz, por isso usa o Firestore "cru", sem o namespace por loja).
+const PCP_STATUS_MAP={em_producao:'em_producao',concluido:'produzida'};
+async function syncPCP(r,novoStatus){if(!r||!r.pcpSolicitacaoId)return;const st=PCP_STATUS_MAP[novoStatus];if(!st)return;const raw=global.getDTRawFirestore();const agora=new Date().toISOString(),autor=global._currentAnalistaUser?.email||'';const campos=st==='em_producao'?{producaoIniciadaEm:agora,producaoIniciadaPor:autor}:{produzidoEm:agora,produzidoPor:autor};await raw.collection(CPCP).doc(r.pcpSolicitacaoId).set({status:st,...campos,atualizadoEm:agora},{merge:true}).catch(e=>console.warn('[realizado] syncPCP:',e));}
+let regs=[],aps=[],procs=[],carregado=false,weekStart=domingo(new Date()),fMaq='',fProd='',fStatus='',salvando=new Set();
+function statusNorm(v){const x=String(v||'programado').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[ -]+/g,'_');if(['concluido','concluida','finalizado','finalizada','produzida'].includes(x))return 'concluido';if(['em_producao','producao','iniciado','iniciada'].includes(x))return 'em_producao';return x||'programado';}
+function regNorm(id,d){d=d||{};return {_id:id,...d,data:d.data||d.dtDesejada||d.dtSolicitacao||'',produto:d.produto||d.descricao||d.descProduto||'',maquina:d.maquina||d.maquinaPadrao||'',qntCaixas:n(d.qntCaixas??d.quantidadeCaixas??d.qtdCaixas??d.quantidade),unidPorCx:n(d.unidPorCx??d.unidadesPorCaixa??d.unPorCx)||1,status:statusNorm(d.status)};}
+function aponNorm(id,d){d=d||{};const horas=(d.horas&&typeof d.horas==='object')?d.horas:{};let q=n(d.qntCaixas??d.quantidade??d.realizadoCaixas);if(!q&&Object.keys(horas).length)q=Object.values(horas).reduce((s,v)=>s+n(v),0);return {_id:id,...d,registroId:d.registroId||d.registro_id||d.opId||'',data:String(d.data||d.date||'').slice(0,10),qntCaixas:q,qntUnid:n(d.qntUnid??d.quantidadeUnidades),horas,observacao:d.observacao||d.obs||''};}
+function fs(){return global.getDTFirestore();}function pode(){return typeof global.temPermissao!=='function'||global.temPermissao('producao-realizado','editar');}function domingo(d){const x=new Date(d);x.setHours(0,0,0,0);const dia=x.getDay();x.setDate(x.getDate()-(dia===0?6:dia-1));return x;}function iso(d){return d.toISOString().slice(0,10);}function dias(){return Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(d.getDate()+i);return d;});}function fmt(d){return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});}function n(v){return Number(v)||0;}function apon(id,data){return aps.find(a=>a.registroId===id&&a.data===data);}function total(id){return aps.filter(a=>a.registroId===id).reduce((s,a)=>s+n(a.qntCaixas),0);}function totalSem(id,ds){return aps.filter(a=>a.registroId===id&&ds.includes(a.data)).reduce((s,a)=>s+n(a.qntCaixas),0);}
+async function carregar(forcar){if(carregado&&!forcar)return;const [r,a,al,p]=await Promise.all([fs().collection(CREG).get(),fs().collection(CAP).get(),fs().collection(CAP_LEGACY).get().catch(()=>({docs:[]})),fs().collection(CPROC).get().catch(()=>({docs:[]}))]);regs=r.docs.map(d=>regNorm(d.id,d.data()));const merged=new Map();al.docs.forEach(d=>{const x=aponNorm(d.id,d.data());merged.set((x.registroId||'')+'_'+(x.data||'')||d.id,x);});a.docs.forEach(d=>{const x=aponNorm(d.id,d.data());merged.set((x.registroId||'')+'_'+(x.data||'')||d.id,x);});aps=[...merged.values()];procs=p.docs.map(d=>({_id:d.id,...d.data()}));carregado=true;}
+function seq(r){return Number.isFinite(Number(r.sortOrder))?Number(r.sortOrder):Number.MAX_SAFE_INTEGER;}function bloqueio(r){if(r.liberacaoSequencia===true)return null;const anteriores=regs.filter(x=>x._id!==r._id&&x.maquina===r.maquina&&seq(x)<seq(r)&&x.status!=='concluido'&&total(x._id)<n(x.qntCaixas)).sort((a,b)=>seq(a)-seq(b));return anteriores[0]||null;}
+function linhas(){const ds=dias().map(iso);return regs.filter(r=>(ds.includes(r.data)||aps.some(a=>a.registroId===r._id&&ds.includes(a.data)))&&(!fMaq||r.maquina===fMaq)&&(!fProd||String(r.produto||'').toLowerCase().includes(fProd.toLowerCase()))&&(!fStatus||statusNorm(r.status)===fStatus)).sort((a,b)=>(a.maquina||'').localeCompare(b.maquina||'')||seq(a)-seq(b)||(a.data||'').localeCompare(b.data||''));}
+async function render(){const p=document.getElementById('page-producao-realizado');if(!p)return;p.innerHTML='<div class="empty">Carregando apontamentos...</div>';try{await carregar();desenhar();}catch(e){p.innerHTML='<div class="empty">Falha: '+esc(e.message||e)+'</div>';}}
+function desenhar(){const p=document.getElementById('page-producao-realizado');if(!p)return;const dd=dias(),ds=dd.map(iso),ll=linhas(),edit=pode();let prog=0,real=0,conc=0;ll.forEach(r=>{prog+=n(r.qntCaixas);real+=totalSem(r._id,ds);if(r.status==='concluido')conc++;});const pct=prog?Math.round(real/prog*100):0;const maqs=[...new Set(regs.map(r=>r.maquina).filter(Boolean))].sort();p.innerHTML=`<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px"><div><div class="page-title" style="font-size:1.1rem">✅ Realizado — Apontamento</div><div style="font-size:.72rem;color:var(--muted)">${fmt(weekStart)} a ${fmt(dd[6])}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" data-preal-semana="-1">‹ Semana</button><input type="date" class="field" data-preal-data value="${iso(weekStart)}" title="Ir para data" style="width:145px;padding:5px 8px"><button class="btn btn-ghost btn-sm" data-preal-hoje>Hoje</button><button class="btn btn-ghost btn-sm" data-preal-semana="1">Semana ›</button><button class="btn btn-ghost btn-sm" data-preal-export>⬇ Excel</button>${edit?'<label class="btn btn-ghost btn-sm" style="cursor:pointer">⬆ Importar<input type="file" accept=".xlsx,.xls" data-preal-import hidden></label>':''}</div></div><div class="kpi-grid" style="margin-bottom:12px"><div class="kpi blue"><div class="kpi-val">${prog.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Programado</div></div><div class="kpi green"><div class="kpi-val">${real.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Realizado</div></div><div class="kpi yellow"><div class="kpi-val">${pct}%</div><div class="kpi-lbl">Aderência</div></div><div class="kpi teal"><div class="kpi-val">${conc}</div><div class="kpi-lbl">Concluídas</div></div></div><div class="tc" style="padding:10px;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap"><select class="field" data-preal-fmaq style="max-width:190px"><option value="">Todas máquinas</option>${maqs.map(x=>`<option ${x===fMaq?'selected':''}>${esc(x)}</option>`).join('')}</select><input class="field" data-preal-fprod placeholder="Filtrar produto" value="${esc(fProd)}" style="max-width:220px"><select class="field" data-preal-fstatus style="max-width:170px"><option value="">Todos status</option>${['programado','em_producao','concluido'].map(x=>`<option value="${x}" ${fStatus===x?'selected':''}>${x}</option>`).join('')}</select></div><div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Seq.</th><th>Produto</th><th>Máquina</th><th style="text-align:right">Prog.</th>${dd.map((d,i)=>`<th style="min-width:70px;text-align:center">${DL[i]}<br><small>${fmt(d)}</small></th>`).join('')}<th style="text-align:right">Total</th><th>%</th><th>Ações</th></tr></thead><tbody>${ll.length?ll.map(r=>{const tr=total(r._id),pr=n(r.qntCaixas),pc=pr?Math.round(tr/pr*100):0,bloq=bloqueio(r);return `<tr><td>${seq(r)===Number.MAX_SAFE_INTEGER?'—':seq(r)}</td><td><b>${esc(r.produto)}</b>${bloq?`<div style="font-size:.68rem;color:var(--orange)">🔒 aguarda ${esc(bloq.produto)}</div>`:''}</td><td>${esc(r.maquina)}</td><td style="text-align:right">${pr.toLocaleString('pt-BR')}</td>${ds.map(d=>{const a=apon(r._id,d);return `<td style="text-align:center"><input type="number" min="0" class="field" style="width:62px;padding:4px;text-align:center" value="${a?n(a.qntCaixas):''}" data-preal-input data-id="${esc(r._id)}" data-data="${d}" ${edit&&!bloq&&r.status!=='concluido'?'':'disabled'}><button class="acao-lapis" title="Detalhe por hora / observação" data-preal-detalhe="${esc(r._id)}|${d}">🕐</button></td>`}).join('')}<td style="text-align:right;font-weight:700" data-preal-total="${esc(r._id)}">${tr.toLocaleString('pt-BR')}</td><td><span class="badge ${pc>=100?'b-green':pc?'b-blue':'b-orange'}">${pc}%</span></td><td style="white-space:nowrap">${edit?`${r.status==='concluido'?`<button class="acao-lapis" title="Reabrir" data-preal-reabrir="${esc(r._id)}">↩️</button>`:`<button class="acao-lapis" title="Concluir" data-preal-concluir="${esc(r._id)}">🏁</button>`}${bloq?`<button class="acao-lapis" title="Liberar sequência" data-preal-liberar="${esc(r._id)}">🔓</button>`:''}`:''}</td></tr>`}).join(''):'<tr><td colspan="13"><div class="empty">Nenhuma OP nesta semana.</div></td></tr>'}</tbody></table></div></div><div style="margin-top:16px">${processosHtml(edit)}</div><div id="preal-modal-host"></div>`;}
+function processosHtml(edit){let atuais=procs.slice().filter(x=>(!pfData||x.data===pfData)&&(!pfTipo||x.tipo===pfTipo)&&(!pfBusca||[x.nome,x.descricao,x.maquina,(x.produtos||[]).join?.(' '),(x.funcionarios||[]).map?.(f=>f.nome).join(' ')].join(' ').toLowerCase().includes(pfBusca.toLowerCase()))).sort((a,b)=>(b.data||'').localeCompare(a.data||'')||String(a.horaInicio||a.inicio||'').localeCompare(String(b.horaInicio||b.inicio||'')));const carga={};atuais.forEach(x=>(x.funcionarios||[]).forEach(f=>{const k=f.nome||'Sem nome';carga[k]=(carga[k]||0)+n(f.tempoMin||x.tempoMinutos);}));const cargaHtml=Object.keys(carga).length?`<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0">${Object.entries(carga).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="badge b-blue">${esc(k)}: ${Math.round(v)} min</span>`).join('')}</div>`:'';return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px"><div><b>⚙️ Processos Produtivos</b><div style="font-size:.7rem;color:var(--muted)">Mistura, descanso, envase, limpeza, inspeção e demais processos com equipe e duração.</div></div>${edit?'<button class="btn btn-ghost btn-sm" data-preal-proc-novo>+ Registrar processo</button>':''}</div><div class="tc" style="padding:10px;margin-bottom:8px;display:flex;gap:8px;flex-wrap:wrap"><input type="date" class="field" data-preal-pfdata value="${esc(pfData)}" style="max-width:155px"><select class="field" data-preal-pftipo style="max-width:175px"><option value="">Todos tipos</option>${PROC_TIPOS.map(t=>`<option value="${t}" ${pfTipo===t?'selected':''}>${t}</option>`).join('')}</select><input class="field" data-preal-pfbusca value="${esc(pfBusca)}" placeholder="Buscar processo, máquina ou funcionário" style="min-width:250px;flex:1"></div>${cargaHtml}<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Data</th><th>Processo</th><th>Tipo</th><th>Produtos</th><th>Equipe</th><th>Horário</th><th>Tempo</th><th>Status</th><th>Ações</th></tr></thead><tbody>${atuais.length?atuais.map(x=>`<tr><td>${esc(x.data)}</td><td><b>${esc(x.nome||x.descricao)}</b>${x.maquina?`<div style="font-size:.68rem;color:var(--muted)">${esc(x.maquina)}</div>`:''}</td><td>${esc(x.tipo)}</td><td>${esc(Array.isArray(x.produtos)?x.produtos.join(', '):(x.produto||''))}</td><td>${esc((x.funcionarios||[]).map(f=>f.nome).join(', '))}</td><td>${x.diaInteiro?'Dia inteiro':`${esc(x.horaInicio||x.inicio||'')}–${esc(x.horaFim||x.fim||'')}`}</td><td>${Math.round(n(x.tempoMinutos))} min</td><td><span class="badge ${x.status==='finalizado'?'b-green':'b-orange'}">${esc(x.status||'aberto')}</span></td><td style="white-space:nowrap">${edit?`<button class="acao-lapis" title="Editar" data-preal-proc-editar="${esc(x._id)}">✏️</button>${x.status!=='finalizado'?`<button class="acao-lapis" title="Finalizar" data-preal-proc-finalizar="${esc(x._id)}">🏁</button>`:''}<button class="acao-lapis" title="Excluir" data-preal-proc-excluir="${esc(x._id)}">🗑️</button>`:''}</td></tr>`).join(''):'<tr><td colspan="9">Nenhum processo encontrado.</td></tr>'}</tbody></table></div></div>`;}
+async function salvar(id,data,val,extra){if(!pode())return;const r=regs.find(x=>x._id===id);if(!r)return;const bl=bloqueio(r);if(bl&&!r.liberacaoSequencia){global.showToast?.('Sequência bloqueada. Conclua a OP anterior ou use liberação temporária.','error');desenhar();return;}const key=id+'_'+data;if(salvando.has(key))return;salvando.add(key);try{const un=Math.max(1,n(r.unidPorCx)||1),q=Math.max(0,n(val));const outros=aps.filter(a=>a.registroId===id&&a.data!==data).reduce((s,a)=>s+n(a.qntCaixas),0);if(outros+q>n(r.qntCaixas)&&!r.liberacaoQuantidade){global.showToast?.('Quantidade ultrapassa o programado. Libere a OP antes de apontar excedente.','error');desenhar();return;}const old=apon(id,data);const payload={registroId:id,registro_id:id,opId:id,data,date:data,qntCaixas:q,quantidade:q,realizadoCaixas:q,qntUnid:q*un,quantidadeUnidades:q*un,horas:extra?.horas??old?.horas??{},observacao:extra?.observacao??old?.observacao??'',obs:extra?.observacao??old?.observacao??'',atualizadoEm:new Date().toISOString(),atualizadoPor:global._currentAnalistaUser?.email||''};await fs().collection(CAP).doc(key).set(payload,{merge:true});const ix=aps.findIndex(a=>a._id===key);if(ix>=0)aps[ix]={_id:key,...aps[ix],...payload};else aps.push({_id:key,...payload});const totalReal=total(id), unidPorCx=un;const novoStatus=totalReal>=n(r.qntCaixas)&&n(r.qntCaixas)>0?'concluido':(totalReal>0?'em_producao':(r.status||'programado'));await fs().collection(CREG).doc(id).set({realizadoCaixas:totalReal,quantidadeRealizada:totalReal,realizadoUnid:totalReal * unidPorCx,realizadoAtualizadoEm:new Date().toISOString(),status:novoStatus,statusProducao:novoStatus,concluidoAutomaticamente:novoStatus==='concluido'&&r.status!=='concluido'},{merge:true});r.realizadoCaixas=totalReal;r.status=novoStatus;await syncPCP(r,novoStatus);const cell=document.querySelector(`[data-preal-total="${CSS.escape(id)}"]`);if(cell)cell.textContent=totalReal.toLocaleString('pt-BR');}catch(e){global.showToast?.('Erro ao salvar: '+(e.message||e),'error');}finally{salvando.delete(key);}}
+function detalhe(token){const [id,data]=token.split('|'),r=regs.find(x=>x._id===id),a=apon(id,data)||{},h=a.horas||{};if(!r)return;const host=document.getElementById('preal-modal-host');host.innerHTML=`<div class="modal-backdrop show" data-preal-modal-fechar><div class="modal" style="max-width:900px" onclick="event.stopPropagation()"><div class="modal-header"><div><b>🕐 Apontamento horário</b><div style="font-size:.75rem;color:var(--muted)">${esc(r.produto)} · ${esc(r.maquina)} · ${data}</div></div><button class="modal-close" data-preal-modal-fechar>×</button></div><div class="modal-body"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(80px,1fr));gap:8px">${HORAS.map(hr=>`<label style="font-size:.7rem">${hr}:00<input type="number" min="0" class="field" data-preal-hora="${hr}" value="${h[hr]??''}" ${pode()&&r.status!=='concluido'?'':'disabled'}></label>`).join('')}</div><label style="display:block;margin-top:12px">Observação<textarea class="field" data-preal-obs rows="3" ${pode()?'':'disabled'}>${esc(a.observacao||'')}</textarea></label></div><div class="modal-footer"><button class="btn btn-ghost" data-preal-modal-fechar>Cancelar</button>${pode()?`<button class="btn btn-primary" data-preal-detalhe-salvar="${esc(id)}|${data}">Salvar detalhe</button>`:''}</div></div></div>`;}
+async function salvarDetalhe(token){const [id,data]=token.split('|'),horas={};document.querySelectorAll('[data-preal-hora]').forEach(i=>{if(i.value!=='')horas[i.dataset.prealHora]=Math.max(0,n(i.value));});const q=Object.values(horas).reduce((s,v)=>s+n(v),0),obs=document.querySelector('[data-preal-obs]')?.value||'';await salvar(id,data,q,{horas,observacao:obs});document.getElementById('preal-modal-host').innerHTML='';desenhar();}
+async function status(id,novo){const r=regs.find(x=>x._id===id);if(!r)return;if(novo==='concluido'&&total(id)<n(r.qntCaixas)){const ok=confirm('A quantidade realizada é menor que a programada. Concluir mesmo assim?');if(!ok)return;}await fs().collection(CREG).doc(id).set({status:novo,atualizadoEm:new Date().toISOString()},{merge:true});r.status=novo;desenhar();}
+async function liberar(id){const r=regs.find(x=>x._id===id);if(!r)return;await fs().collection(CREG).doc(id).set({liberacaoSequencia:true,liberacaoQuantidade:true,liberadoEm:new Date().toISOString(),liberadoPor:global._currentAnalistaUser?.email||''},{merge:true});r.liberacaoSequencia=true;r.liberacaoQuantidade=true;global.showToast?.('OP liberada temporariamente para sequência/quantidade.','success');desenhar();}
+function exportar(){if(!global.XLSX){global.showToast?.('Biblioteca Excel não carregada.','error');return;}const rows=[];aps.forEach(a=>{const r=regs.find(x=>x._id===a.registroId)||{};rows.push({registroId:a.registroId,Data:a.data,Produto:r.produto||'',Maquina:r.maquina||'',Programado:n(r.qntCaixas),Realizado:n(a.qntCaixas),Observacao:a.observacao||'',...Object.fromEntries(HORAS.map(h=>['H'+h,n(a.horas?.[h])]))});});const wb=global.XLSX.utils.book_new();global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(rows),'Apontamentos');global.XLSX.writeFile(wb,'realizado_producao_'+iso(weekStart)+'.xlsx');}
+async function importar(file){if(!file||!global.XLSX)return;try{const b=await file.arrayBuffer(),wb=global.XLSX.read(b,{type:'array'}),rows=global.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});let c=0;for(const x of rows){let id=String(x.registroId||'');if(!id){const r=regs.find(z=>String(z.produto||'')===String(x.Produto||x.produto||'')&&String(z.maquina||'')===String(x.Maquina||x.maquina||''));id=r?._id||'';}const data=String(x.Data||x.data||'').slice(0,10);if(!id||!data)continue;const horas={};HORAS.forEach(h=>{const v=x['H'+h];if(v!==''&&v!=null)horas[h]=n(v);});const q=Object.keys(horas).length?Object.values(horas).reduce((s,v)=>s+n(v),0):n(x.Realizado??x.qntCaixas);await salvar(id,data,q,{horas,observacao:String(x.Observacao||x.observacao||'')});c++;}await carregar(true);desenhar();global.showToast?.(`${c} apontamento(s) importado(s).`,'success');}catch(e){global.showToast?.('Erro ao importar realizado: '+(e.message||e),'error');}}
+function procMin(ini,fim,dia,data){if(dia){let j=global.PRODUCAO_JORNADA; if(!Array.isArray(j)||j.length!==7){try{j=JSON.parse(localStorage.getItem('dt_producao_jornada_v341')||'null');}catch(e){j=null;}} const d=data?new Date(data+'T12:00:00'):new Date(),h=Array.isArray(j)?n(j[d.getDay()]):0;return Math.round((h>0?h:8)*60);}if(!ini||!fim)return 0;const [ih,im]=ini.split(':').map(n),[fh,fm]=fim.split(':').map(n);let v=fh*60+fm-(ih*60+im);return v<0?v+1440:v;}function procModal(id=''){const x=procs.find(z=>z._id===id)||{},host=document.getElementById('preal-modal-host');if(!host)return;const funcs=(x.funcionarios||[]).map(f=>`${f.nome||''}|${f.funcao||''}|${f.tempoMin||''}`).join('\n');host.innerHTML=`<div class="modal-overlay" style="display:flex"><div class="modal-card" style="max-width:760px"><div class="modal-header"><b>${id?'Editar':'Novo'} processo produtivo</b><button class="modal-x" data-preal-modal-fechar>×</button></div><div class="modal-body"><div class="grid2"><div><label class="field-label">Nome/descrição</label><input class="field" id="pproc-nome" value="${esc(x.nome||x.descricao||'')}"></div><div><label class="field-label">Tipo</label><select class="field" id="pproc-tipo">${PROC_TIPOS.map(t=>`<option value="${t}" ${x.tipo===t?'selected':''}>${t}</option>`).join('')}</select></div><div><label class="field-label">Data</label><input type="date" class="field" id="pproc-data" value="${esc(x.data||iso(new Date()))}"></div><div><label class="field-label">Máquina (opcional)</label><input class="field" id="pproc-maq" value="${esc(x.maquina||'')}"></div><div><label class="field-label">Produtos (separados por vírgula)</label><input class="field" id="pproc-prod" value="${esc(Array.isArray(x.produtos)?x.produtos.join(', '):(x.produto||''))}"></div><div><label class="field-label">Status</label><select class="field" id="pproc-status"><option value="aberto" ${(x.status||'aberto')==='aberto'?'selected':''}>aberto</option><option value="finalizado" ${x.status==='finalizado'?'selected':''}>finalizado</option></select></div><div><label class="field-label">Hora início</label><input type="time" class="field" id="pproc-ini" value="${esc(x.horaInicio||x.inicio||'')}"></div><div><label class="field-label">Hora fim</label><input type="time" class="field" id="pproc-fim" value="${esc(x.horaFim||x.fim||'')}"></div></div><label style="display:flex;gap:6px;align-items:center;margin:10px 0"><input type="checkbox" id="pproc-dia" ${x.diaInteiro?'checked':''}> Dia inteiro</label><label class="field-label">Funcionários — uma linha por pessoa: nome | função | minutos</label><textarea class="field" id="pproc-funcs" rows="4" placeholder="João | Operador | 90">${esc(funcs)}</textarea><label class="field-label" style="margin-top:8px">Observações</label><textarea class="field" id="pproc-obs" rows="3">${esc(x.observacao||x.obs||'')}</textarea></div><div class="modal-footer"><button class="btn btn-ghost" data-preal-modal-fechar>Cancelar</button><button class="btn btn-primary" data-preal-proc-salvar="${esc(id)}">Salvar</button></div></div></div>`;}function procSalvar(id=''){const g=x=>document.getElementById(x),nome=g('pproc-nome')?.value.trim();if(!nome){global.showToast?.('Informe o nome do processo.','warning');return;}const dia=!!g('pproc-dia')?.checked,ini=g('pproc-ini')?.value||'',fim=g('pproc-fim')?.value||'',dataProc=g('pproc-data')?.value||iso(new Date()),tempo=procMin(ini,fim,dia,dataProc),funcionarios=(g('pproc-funcs')?.value||'').split(/\n+/).map(l=>l.split('|').map(x=>x.trim())).filter(a=>a[0]).map(a=>({nome:a[0],funcao:a[1]||'',tempoMin:n(a[2])||tempo}));const data={nome,descricao:nome,tipo:g('pproc-tipo')?.value||'outro',data:dataProc,maquina:g('pproc-maq')?.value.trim()||'',produtos:(g('pproc-prod')?.value||'').split(',').map(x=>x.trim()).filter(Boolean),horaInicio:ini,horaFim:fim,inicio:ini,fim:fim,diaInteiro:dia,tempoMinutos:tempo,funcionarios,observacao:g('pproc-obs')?.value.trim()||'',status:g('pproc-status')?.value||'aberto',atualizadoEm:new Date().toISOString(),atualizadoPor:global._currentAnalistaUser?.email||''};const ref=id?fs().collection(CPROC).doc(id):fs().collection(CPROC).doc();if(!id){data.criadoEm=data.atualizadoEm;data.criadoPor=data.atualizadoPor;}ref.set(data,{merge:true}).then(()=>carregar(true)).then(()=>{document.getElementById('preal-modal-host').innerHTML='';desenhar();global.showToast?.('Processo salvo.','success');}).catch(e=>global.showToast?.('Erro: '+e.message,'error'));}function procFinalizar(id){fs().collection(CPROC).doc(id).set({status:'finalizado',finalizadoEm:new Date().toISOString(),finalizadoPor:global._currentAnalistaUser?.email||''},{merge:true}).then(()=>carregar(true)).then(desenhar).catch(e=>global.showToast?.('Erro: '+e.message,'error'));}function procExcluir(id){if(!confirm('Excluir este processo produtivo?'))return;fs().collection(CPROC).doc(id).delete().then(()=>carregar(true)).then(desenhar).catch(e=>global.showToast?.('Erro: '+e.message,'error'));}
+global.renderProducaoRealizado=render;global.exportarProducaoRealizado=exportar;const timers={};document.addEventListener('input',e=>{const i=e.target.closest('[data-preal-input]');if(i){const k=i.dataset.id+'_'+i.dataset.data;clearTimeout(timers[k]);timers[k]=setTimeout(()=>salvar(i.dataset.id,i.dataset.data,i.value),500);}const fp=e.target.closest('[data-preal-fprod]');if(fp){fProd=fp.value;clearTimeout(timers.f);timers.f=setTimeout(desenhar,250);}const pb=e.target.closest('[data-preal-pfbusca]');if(pb){pfBusca=pb.value;clearTimeout(timers.pf);timers.pf=setTimeout(desenhar,250);}});document.addEventListener('change',e=>{if(e.target.matches('[data-preal-data]')){const d=new Date(e.target.value+'T12:00:00');if(!Number.isNaN(d.getTime())){weekStart=domingo(d);desenhar();}return;}if(e.target.matches('[data-preal-fmaq]')){fMaq=e.target.value;desenhar();}if(e.target.matches('[data-preal-fstatus]')){fStatus=e.target.value;desenhar();}if(e.target.matches('[data-preal-pfdata]')){pfData=e.target.value;desenhar();}if(e.target.matches('[data-preal-pftipo]')){pfTipo=e.target.value;desenhar();}if(e.target.matches('[data-preal-import]')){importar(e.target.files?.[0]);e.target.value='';}});document.addEventListener('click',e=>{const s=e.target.closest('[data-preal-semana]');if(s){weekStart.setDate(weekStart.getDate()+n(s.dataset.prealSemana)*7);desenhar();return;}if(e.target.closest('[data-preal-hoje]')){weekStart=domingo(new Date());desenhar();return;}const d=e.target.closest('[data-preal-detalhe]');if(d){detalhe(d.dataset.prealDetalhe);return;}const sd=e.target.closest('[data-preal-detalhe-salvar]');if(sd){salvarDetalhe(sd.dataset.prealDetalheSalvar);return;}if(e.target.closest('[data-preal-modal-fechar]')){document.getElementById('preal-modal-host').innerHTML='';return;}const c=e.target.closest('[data-preal-concluir]');if(c){status(c.dataset.prealConcluir,'concluido');return;}const r=e.target.closest('[data-preal-reabrir]');if(r){status(r.dataset.prealReabrir,'em_producao');return;}const l=e.target.closest('[data-preal-liberar]');if(l){liberar(l.dataset.prealLiberar);return;}if(e.target.closest('[data-preal-export]')){exportar();return;}if(e.target.closest('[data-preal-proc-novo]')){procModal();return;}const pe=e.target.closest('[data-preal-proc-editar]');if(pe){procModal(pe.dataset.prealProcEditar);return;}const ps=e.target.closest('[data-preal-proc-salvar]');if(ps){procSalvar(ps.dataset.prealProcSalvar);return;}const pf=e.target.closest('[data-preal-proc-finalizar]');if(pf){procFinalizar(pf.dataset.prealProcFinalizar);return;}const px=e.target.closest('[data-preal-proc-excluir]');if(px){procExcluir(px.dataset.prealProcExcluir);return;}});
+  global.DTProducao?.registrarInvalidacao?.(()=>{ carregado=false; regs=[]; aps=[]; procs=[]; salvando.clear(); });
 })(window);

@@ -929,6 +929,19 @@
           paginasSemNovidade++;
           if (paginasSemNovidade >= 5) {
             console.warn('[Bluesoft] Paginação de ' + caminhoBase + ' parou por estagnação na página ' + paginaAtual + ' (' + itens.length + ' registro(s) coletados' + (total ? ' de ' + total + ' esperados' : '') + ').');
+            // Bug ao vivo real (relatado pelo usuário: "só está vindo produto
+            // não classificado... não sei se você mexeu" — reproduzindo o
+            // mesmo problema em toda tentativa seguinte): quando a
+            // paginação estagna cedo, `itens` fica INCOMPLETO, mas essa
+            // função só lançava erro se passasse do limite de segurança —
+            // um resultado parcial "silencioso" seguia adiante como se
+            // fosse o catálogo inteiro, e (pior) `_bluesoftCatalogoProdutos`
+            // gravava esse catálogo PARCIAL no cache local por 12h — toda
+            // tentativa seguinte reaproveitava o mesmo catálogo quebrado sem
+            // buscar de novo. Marca o resultado como incompleto pra quem
+            // chamou decidir o que fazer (não colocar em cache, avisar o
+            // usuário), em vez de fingir que terminou normal.
+            itens.estagnou = true;
             acabou = true; break;
           }
         } else {
@@ -1070,7 +1083,11 @@
     });
     return mapa;
   }
-  var BLUESOFT_CATALOGO_CACHE_KEY = 'dt_bluesoft_catalogo_cache_v5';
+  // v6 (bug ao vivo real, ver comentário de `itens.estagnou` em
+  // _bluesoftPaginarTudo): a v5 podia gravar um catálogo PARCIAL nesse cache
+  // quando a paginação estagnava cedo — bumping a versão da chave invalida
+  // qualquer cache já quebrado que esteja salvo no navegador de alguém.
+  var BLUESOFT_CATALOGO_CACHE_KEY = 'dt_bluesoft_catalogo_cache_v6';
   var BLUESOFT_CATALOGO_CACHE_VALIDADE_MS = 12 * 60 * 60 * 1000; // 12h
   // Busca o catálogo (/api/comercial/produtos), usado tanto para classificar
   // tipo_produto quanto para o auto-cadastro na Base de Produtos abaixo. É a
@@ -1079,7 +1096,15 @@
   // memória: sem isso, toda vez que a página recarrega (todo "Novo
   // Inventário" do dia) essa busca inteira teria que ser refeita do zero.
   async function _bluesoftCatalogoProdutos() {
-    if (_bluesoftCatalogoCache) return _bluesoftCatalogoCache;
+    // Bug ao vivo real (relatado pelo usuário: "só está vindo produto não
+    // classificado... tentei abrir de novo" — o MESMO problema se repetindo
+    // em toda tentativa): `if (_bluesoftCatalogoCache)` tratava um array
+    // VAZIO (`[]`, resultado de uma falha total) como "já buscado, não
+    // tenta de novo" — `[]` é truthy em JS. Uma falha transitória na
+    // primeira tentativa "envenenava" a sessão inteira: toda tentativa
+    // seguinte devolvia esse `[]` sem NUNCA buscar de novo, e todo produto
+    // caía em NAO CLASSIFICADO por falta de catálogo pra classificar.
+    if (_bluesoftCatalogoCache && _bluesoftCatalogoCache.length) return _bluesoftCatalogoCache;
     var cache = readJson(BLUESOFT_CATALOGO_CACHE_KEY, null);
     if (cache && Array.isArray(cache.itens) && cache.itens.length && (Date.now() - (cache.buscadoEm || 0)) < BLUESOFT_CATALOGO_CACHE_VALIDADE_MS) {
       _bluesoftCatalogoCache = cache.itens;
@@ -1091,8 +1116,18 @@
       var itensCompletos = await _bluesoftPaginarTudo('/api/comercial/produtos', {});
       _bluesoftCatalogoCache = itensCompletos.map(_bluesoftProjetarItemCatalogo);
       console.info('[Bluesoft] Catálogo de produtos: ' + _bluesoftCatalogoCache.length + ' item(ns) único(s) recebido(s) no total.');
-      try { writeJson(BLUESOFT_CATALOGO_CACHE_KEY, {itens: _bluesoftCatalogoCache, buscadoEm: Date.now()}); }
-      catch (erroCache) { console.warn('[Bluesoft] Catálogo buscado, mas não coube no cache local (será refeito na próxima vez):', erroCache); }
+      if (itensCompletos.estagnou) {
+        // Resultado PARCIAL (a paginação estagnou antes de terminar) — nunca
+        // grava isso no cache de 12h: gravar aqui é exatamente o que fazia
+        // "tentei abrir de novo" continuar trazendo o mesmo catálogo
+        // quebrado. Fica só na memória desta sessão, marcado como
+        // incompleto pra quem chamou avisar o usuário.
+        _bluesoftCatalogoCache.estagnou = true;
+        console.warn('[Bluesoft] Catálogo veio INCOMPLETO (paginação estagnou) — não foi salvo no cache local, próxima tentativa busca de novo.');
+      } else {
+        try { writeJson(BLUESOFT_CATALOGO_CACHE_KEY, {itens: _bluesoftCatalogoCache, buscadoEm: Date.now()}); }
+        catch (erroCache) { console.warn('[Bluesoft] Catálogo buscado, mas não coube no cache local (será refeito na próxima vez):', erroCache); }
+      }
     } catch (error) {
       console.warn('[Bluesoft] Não foi possível carregar o catálogo de produtos:', error);
       _bluesoftCatalogoCache = [];
@@ -1334,7 +1369,14 @@
         : '';
       var avisoClassificacao = '<div class="sb-sub" style="margin-top:4px">🏷️ Catálogo Bluesoft: ' + itensCatalogo.length.toLocaleString('pt-BR') +
         ' produto(s) recebido(s) · ' + produtosClassificados.toLocaleString('pt-BR') + ' de ' + chavesProdutosDoEstoque.size.toLocaleString('pt-BR') +
-        ' produto(s) deste estoque classificado(s).</div>';
+        ' produto(s) deste estoque classificado(s).</div>' +
+        // Bug ao vivo real: um catálogo incompleto (paginação estagnou antes
+        // de terminar) fazia MUITOS produtos caírem em NAO CLASSIFICADO
+        // silenciosamente — agora isso aparece bem visível na tela em vez de
+        // só no console, com uma ação clara pro usuário tentar de novo.
+        (itensCatalogo.estagnou
+          ? '<div class="sb-sub" style="margin-top:4px;color:var(--danger);font-weight:700">⚠️ O catálogo de produtos veio INCOMPLETO da Bluesoft (a busca parou antes de terminar) — por isso vários produtos podem estar aparecendo como "NAO CLASSIFICADO". Feche e clique em "Abrir inventário automático" de novo pra tentar buscar o catálogo completo.</div>'
+          : '');
       var produtosComFatorCaixa = 0;
       chavesProdutosDoEstoque.forEach(function (chave) { if ((mapaFatorCaixa.get(chave) || 1) > 1) produtosComFatorCaixa++; });
       var avisoFatorCaixa = '<div class="sb-sub" style="margin-top:4px">📦 ' + produtosComFatorCaixa.toLocaleString('pt-BR') + ' de ' +
@@ -1368,8 +1410,10 @@
   document.addEventListener('DOMContentLoaded', function () {
     ensureQueuePanel(); updateCounts(); fillInventories(); loadConfig(); renderHistory(); renderQueue();
     // Carrega a configuração salva no Firestore mesmo sem abrir a aba API,
-    // pois o botão "Via API (Bluesoft)" no modal de Novo Inventário depende
-    // dela (token/URL) e deve funcionar sem exigir uma visita prévia à aba.
+    // pois o botão "Abrir inventário automático" no modal de Novo
+    // Inventário depende dela (token/URL) e deve funcionar sem exigir uma
+    // visita prévia à aba.
     carregarConfigRemota();
   });
+  global._importarExportarApiInternals = { _bluesoftCatalogoProdutos, _bluesoftPaginarTudo, _bluesoftMapaTiposProduto, _bluesoftClassificarTipoProduto, _resetCacheCatalogoBluesoft: function () { _bluesoftCatalogoCache = null; } };
 })(window);

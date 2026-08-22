@@ -13,7 +13,12 @@ function toast(msg, type='') {
 }
 
 // ── Modal de Confirmação customizado (substitui confirm() nativo) ────
-function showConfirm(msg, onOk, { title = 'Confirmar', icon = '⚠️', okLabel = 'Confirmar', okColor = '#ff4757' } = {}) {
+// `onCancel` (opcional) — botão "Cancelar" só fechava o modal antes;
+// agora também avisa quem chamou, pra fluxos que precisam saber que o
+// operador desistiu (não só ignorar em silêncio). Sobrescreve o
+// onclick a cada chamada, então chamadas antigas sem onCancel continuam
+// funcionando exatamente igual (fecha e não faz nada).
+function showConfirm(msg, onOk, { title = 'Confirmar', icon = '⚠️', okLabel = 'Confirmar', okColor = '#ff4757', onCancel } = {}) {
   const modal = document.getElementById('modal-confirm');
   document.getElementById('mc-icon').textContent  = icon;
   document.getElementById('mc-title').textContent = title;
@@ -23,6 +28,8 @@ function showConfirm(msg, onOk, { title = 'Confirmar', icon = '⚠️', okLabel 
   btnOk.style.background  = okColor;
   btnOk.style.color       = '#fff';
   btnOk.onclick = () => { modal.style.display = 'none'; onOk(); };
+  const btnCancel = document.getElementById('mc-cancel');
+  if (btnCancel) btnCancel.onclick = () => { modal.style.display = 'none'; if (typeof onCancel === 'function') onCancel(); };
   modal.style.display = 'flex';
 }
 

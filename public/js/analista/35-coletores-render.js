@@ -234,7 +234,8 @@ function abrirConfigColetor(colId) {
   const col = state().coletores.find(c => c.id === colId);
   if (!col) return;
 
-  const nomeAtual = esc(col.nome_exibicao || ('Coletor ' + col.numero));
+  const nomeOriginal = col.nome_exibicao || ('Coletor ' + col.numero);
+  const nomeAtual = esc(nomeOriginal);
   const ap = col.aprovado || 'pendente';
   const isOnline = col.status === 'online';
   const statusInfo = _statusColetor(col);
@@ -319,6 +320,28 @@ function abrirConfigColetor(colId) {
     if (e.key === 'Escape') fechar();
   });
 
+  // Extraído pra ser reaproveitado pelos botões de ação (aprovar/reprovar/
+  // ...) — BUG AO VIVO REAL relatado pelo usuário: "sempre que pede
+  // autorização... eu já coloco um nome novo, ele nunca salva com o nome
+  // que eu coloco, só salva quando coloco depois". Causa raiz: o campo de
+  // nome e os botões de ação eram DUAS escritas totalmente separadas —
+  // clicar em "Aprovar acesso" nunca lia o que estava digitado aqui, só o
+  // botão "Salvar nome" fazia isso. Agora qualquer ação de acesso salva
+  // primeiro o nome (se foi alterado), na MESMA interação.
+  async function salvarNomeSeAlterado() {
+    const novoNome = input.value.trim();
+    if (!novoNome || novoNome === nomeOriginal) return;
+    try {
+      await FS_AN.collection('dt_coletores').doc(colId).update({
+        nome_exibicao: novoNome,
+        nome_coletor:  novoNome,   // compatibilidade com o coletor.html
+      });
+    } catch (e) { /* offline — segue só com o estado local abaixo */ }
+    col.nome_exibicao = novoNome;
+    col.nome_coletor  = novoNome;
+    salvarDB_coletores();
+  }
+
   document.getElementById('btn-modal-salvar-nome').onclick = async () => {
     const novoNome = input.value.trim();
     if (!novoNome) { input.style.borderColor = 'var(--danger)'; input.focus(); return; }
@@ -360,16 +383,18 @@ function abrirConfigColetor(colId) {
       const textoOriginal = btnAcao.textContent;
       btnAcao.textContent = '⏳ Processando…';
       try {
+        await salvarNomeSeAlterado();
         let resultado = true;
         if (acao === 'aprovar')          resultado = await aprovarColetor(colId);
         else if (acao === 'reprovar')    resultado = await reprovarColetor(colId);
         else if (acao === 'bloquear')    resultado = await bloquearColetor(colId);
         else if (acao === 'desbloquear') resultado = await desbloquearColetor(colId);
         else if (acao === 'reabrir')     resultado = await reabrirTurnoColetor(colId);
-        else if (acao === 'logout')      { logoutOperadorColetor(colId); resultado = true; }
+        else if (acao === 'logout')      { await logoutOperadorColetor(colId); resultado = true; }
         else if (acao === 'excluir')     resultado = await excluirColetor(colId);
         // Ações com confirm() nativo retornam false quando o usuário cancela.
         if (resultado === false) { btnAcao.disabled = false; btnAcao.textContent = textoOriginal; return; }
+        renderColetores();
         fechar();
       } catch (e) {
         btnAcao.disabled = false;

@@ -80,13 +80,11 @@ function doCriarConta() {
       // Caso o aparelho já estivesse previamente aprovado.
       APP.operador = { email: cred.user.email, name: displayName, uid: cred.user.uid, acesso_todas_lojas: false, lojas_permitidas: [] };
       APP.uid = cred.user.uid;
-      ['op-name-inv','op-name-app','op-name-mode','op-name-aud'].forEach(id => {
+      ['op-name-inv','op-name-app','op-name-mode','op-name-aud','op-name-acesso','op-name-recebimento'].forEach(id => {
         const el = document.getElementById(id); if (el) el.textContent = displayName;
       });
       toast('✅ Conta criada! Bem-vindo, ' + displayName + '!', 's');
-      goScreen('mode');
-      carregarInventarios();
-      carregarAuditoriasMenu();
+      goScreen('acesso');
     })
     .catch(err => {
       const msgs = {
@@ -105,12 +103,16 @@ function _atualizarLojaColetorUI(lojas) {
   const loja = lojas.find(function(item){ return item && item.id === atual; }) || null;
   const card = document.getElementById('coletor-loja-card');
   const nome = document.getElementById('coletor-loja-nome');
-  const trocar = document.getElementById('coletor-trocar-loja');
   if (card) card.style.display = loja ? '' : 'none';
   if (nome) nome.textContent = loja ? (loja.nome || loja.id) : '—';
-  if (trocar) trocar.style.display = lojas.length > 1 ? '' : 'none';
 }
 
+// Chamada a partir do item "🏬 Trocar loja" dos menus de três pontinhos
+// (login/acesso/modo/recebimento — pedido ao vivo: "opção de trocar de loja
+// ficar na parte superior nas telas iniciais de cada etapa"). Não depende
+// mais de um botão fixo (#coletor-trocar-loja) — ancora o menu flutuante no
+// PRÓPRIO botão que disparou o clique (event.currentTarget), então funciona
+// a partir de qualquer tela.
 async function trocarLojaColetor(event) {
   const lojas = window.DT_LOJAS_USUARIO_ATUAL || [];
   if (lojas.length <= 1) {
@@ -118,16 +120,16 @@ async function trocarLojaColetor(event) {
     return;
   }
 
-  // Menu compacto no próprio cartão da loja. Não abre modal e não sai da conta.
+  // Menu compacto ancorado no botão que disparou. Não abre modal e não sai da conta.
   let menu = document.getElementById('coletor-menu-lojas');
   if (menu) {
     menu.remove();
     return;
   }
+  if (typeof window._fecharMenu3pts === 'function') window._fecharMenu3pts();
 
-  const card = document.getElementById('coletor-loja-card');
-  const botao = document.getElementById('coletor-trocar-loja');
-  if (!card || !botao) {
+  const botao = (event && event.currentTarget) || document.getElementById('coletor-trocar-loja');
+  if (!botao) {
     toast('Não foi possível abrir a lista de lojas.', 'e');
     return;
   }
@@ -330,7 +332,7 @@ async function doLogin() {
       APP.lojaFiltroAuditoria = '';
 
       // Atualizar nome em todos os elementos (com guards — nem todos existem na tela de login)
-      ['op-name-inv','op-name-app','op-name-mode','op-name-aud'].forEach(id => {
+      ['op-name-inv','op-name-app','op-name-mode','op-name-aud','op-name-acesso','op-name-recebimento'].forEach(id => {
         const el = document.getElementById(id); if (el) el.textContent = name;
       });
       const stOp     = document.getElementById('st-op');     if (stOp)     stOp.textContent     = name;
@@ -338,11 +340,7 @@ async function doLogin() {
 
       _setBtn('ENTRAR', false);
       _atualizarLojaColetorUI(window.DT_LOJAS_USUARIO_ATUAL || []);
-      goScreen('mode');
-      APP.modoAcesso = 'inventario';
-      APP.modoPendente = 'inventario';
-      carregarInventarios();
-      carregarAuditoriasMenu();
+      goScreen('acesso');
       iniciarSyncBackground();
       toast('Bem-vindo, ' + name + '!', 's');
     })

@@ -23,7 +23,7 @@
 <script src="vendor/firebase-10.12.2/firebase-firestore-compat.js"></script>
 <script src="vendor/firebase-10.12.2/firebase-auth-compat.js"></script>
 <script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script>
-<link rel="stylesheet" href="/css/coletor.css?v=20260806-overscroll2">
+<link rel="stylesheet" href="/css/coletor.css?v=20260821-fix-texto-login-invisivel">
 <link rel="manifest" href="/manifest.webmanifest?v=20260804-1309"><meta name="theme-color" content="#0f5b3a"><script>(function(){window.DT_ERRORS=[];window.addEventListener('error',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:e.message,f:e.filename,l:e.lineno});});window.addEventListener('unhandledrejection',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:String(e.reason&&e.reason.message||e.reason)});});})();</script><link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -99,6 +99,45 @@
 </form>
 </div>
 </div>
+<!-- ══════════ SCREEN: ÁREA (fase 4 do Recebimento) ══════════ -->
+<div class="screen" id="screen-acesso">
+<div class="top-bar">
+<div class="top-logo">DT Inventário</div>
+<div style="display:flex;align-items:center;gap:8px">
+<div class="op-badge"><div class="op-dot"></div><span id="op-name-acesso">Operador</span></div>
+<div style="position:relative">
+<button class="btn-menu3pts" id="btn-menu3pts-acesso" title="Opções">⋮</button>
+<div class="menu3pts-dropdown" id="menu3pts-dropdown-acesso" style="display:none">
+<button class="menu3pts-item" data-menu-action="update-app">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-acesso" data-menu-action="install-app">📲 Baixar aplicativo</button>
+<div class="menu3pts-sep"></div>
+<button class="menu3pts-item" onclick="trocarLojaColetor(event)">🏬 Trocar loja</button>
+<button class="menu3pts-item" data-menu-action="diagnostic">🔍 Diagnóstico</button>
+<button class="menu3pts-item" data-menu-action="logout" style="color:#ff6b6b">🚪 Sair</button>
+<div class="menu3pts-sep"></div>
+<div class="menu3pts-ver">v<span id="acesso-ver-label">—</span></div>
+</div>
+</div>
+</div>
+</div>
+<div class="screen-content">
+<div>
+<div class="screen-title">O que deseja acessar?</div>
+<div class="screen-sub">Escolha o módulo antes de continuar</div>
+</div>
+<div class="inv-card" onclick="abrirAreaInventario()">
+<div class="inv-card-code">📦 ÁREA</div>
+<div class="inv-card-name">Inventário</div>
+<div class="inv-card-meta"><span class="badge badge-ok">Contagem e Auditoria</span></div>
+</div>
+<div class="inv-card" onclick="abrirAreaRecebimento()">
+<div class="inv-card-code">🚚 ÁREA</div>
+<div class="inv-card-name">Recebimento</div>
+<div class="inv-card-meta"><span class="badge badge-info">Transbordo e Notas Retornadas</span></div>
+</div>
+<button class="btn btn-ghost" onclick="doLogout()" style="margin-top:auto">Sair</button>
+</div>
+</div>
 <!-- ══════════ SCREEN: MODO ══════════ -->
 <div class="screen" id="screen-mode">
 <div class="top-bar">
@@ -112,6 +151,7 @@
 <button class="menu3pts-item" data-menu-action="update-base">⬇️ Atualizar base de dados</button>
 <button class="menu3pts-item" id="menu-instalar-pwa-mode" data-menu-action="install-app">📲 Baixar aplicativo</button>
 <div class="menu3pts-sep"></div>
+<button class="menu3pts-item" onclick="trocarLojaColetor(event)">🏬 Trocar loja</button>
 <button class="menu3pts-item" data-menu-action="diagnostic">🔍 Diagnóstico</button>
 <button class="menu3pts-item" data-menu-action="logout" style="color:#ff6b6b">🚪 Sair</button>
 <div class="menu3pts-sep"></div>
@@ -121,18 +161,14 @@
 </div>
 </div>
 <div class="screen-content">
+<button class="btn-back" onclick="goScreen('acesso')">← Voltar</button>
 <div>
 <div class="screen-title">Selecionar modo</div>
 <div class="screen-sub">Escolha se vai entrar no inventário ou na auditoria</div>
 </div>
 <div id="coletor-loja-card" class="card" style="padding:12px 14px;display:none">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-    <div>
-      <div class="card-label">Loja atual</div>
-      <div id="coletor-loja-nome" style="font-weight:800;font-size:.95rem">—</div>
-    </div>
-    <button id="coletor-trocar-loja" class="btn btn-ghost" type="button" onclick="trocarLojaColetor(event)" style="width:auto;padding:9px 13px;display:none">Trocar loja</button>
-  </div>
+  <div class="card-label">Loja atual</div>
+  <div id="coletor-loja-nome" style="font-weight:800;font-size:.95rem">—</div>
 </div>
 <div class="inv-card" onclick="abrirModoInventario()">
 <div class="inv-card-code">📦 MODO</div>
@@ -784,6 +820,181 @@
 })();
 </script>
 
+<!-- ══════════ SCREEN: RECEBIMENTO — escolha do módulo (mesmo padrão de screen-mode) ══════════ -->
+<div class="screen" id="screen-recebimento-modo">
+<div class="top-bar">
+<div class="top-logo">DT Inventário</div>
+<div style="display:flex;align-items:center;gap:8px">
+<div class="op-badge"><div class="op-dot"></div><span id="op-name-recebimento-modo">Operador</span></div>
+<div style="position:relative">
+<button class="btn-menu3pts" id="btn-menu3pts-recebimento-modo" title="Opções">⋮</button>
+<div class="menu3pts-dropdown" id="menu3pts-dropdown-recebimento-modo" style="display:none">
+<button class="menu3pts-item" data-menu-action="update-app">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-recebimento-modo" data-menu-action="install-app">📲 Baixar aplicativo</button>
+<div class="menu3pts-sep"></div>
+<button class="menu3pts-item" onclick="trocarLojaColetor(event)">🏬 Trocar loja</button>
+<button class="menu3pts-item" data-menu-action="diagnostic">🔍 Diagnóstico</button>
+<button class="menu3pts-item" data-menu-action="logout" style="color:#ff6b6b">🚪 Sair</button>
+<div class="menu3pts-sep"></div>
+<div class="menu3pts-ver">v<span id="recebimento-modo-ver-label">—</span></div>
+</div>
+</div>
+</div>
+</div>
+<div class="screen-content">
+<button class="btn-back" onclick="goScreen('acesso')">← Voltar</button>
+<div>
+<div class="screen-title">🚚 Recebimento</div>
+<div class="screen-sub">Escolha o módulo antes de continuar</div>
+</div>
+<div class="inv-card" onclick="abrirTransbordoRecebimento()">
+<div class="inv-card-code">🚛 MÓDULO</div>
+<div class="inv-card-name">Transbordo</div>
+<div class="inv-card-meta"><span class="badge badge-info">Bipe o QR do motorista ou toque numa carga</span></div>
+</div>
+<div class="inv-card" onclick="abrirRecusasRecebimento()">
+<div class="inv-card-code">↩️ MÓDULO</div>
+<div class="inv-card-name">Notas Retornadas</div>
+<div class="inv-card-meta"><span class="badge badge-warn">Recusa, devolução, reentrega</span></div>
+</div>
+<button class="btn btn-ghost" onclick="doLogout()" style="margin-top:auto">Sair</button>
+</div>
+</div>
+<!-- ══════════ SCREEN: RECEBIMENTO — Transbordo (fase 4) ══════════ -->
+<div class="screen" id="screen-recebimento">
+<div class="top-bar">
+<div class="top-logo">DT Inventário</div>
+<div style="display:flex;align-items:center;gap:8px">
+<div class="op-badge"><div class="op-dot"></div><span id="op-name-recebimento">Operador</span></div>
+<div style="position:relative">
+<button class="btn-menu3pts" id="btn-menu3pts-recebimento" title="Opções">⋮</button>
+<div class="menu3pts-dropdown" id="menu3pts-dropdown-recebimento" style="display:none">
+<button class="menu3pts-item" data-menu-action="update-app">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-recebimento" data-menu-action="install-app">📲 Baixar aplicativo</button>
+<div class="menu3pts-sep"></div>
+<button class="menu3pts-item" onclick="trocarLojaColetor(event)">🏬 Trocar loja</button>
+<button class="menu3pts-item" data-menu-action="diagnostic">🔍 Diagnóstico</button>
+<button class="menu3pts-item" data-menu-action="logout" style="color:#ff6b6b">🚪 Sair</button>
+<div class="menu3pts-sep"></div>
+<div class="menu3pts-ver">v<span id="recebimento-ver-label">—</span></div>
+</div>
+</div>
+</div>
+</div>
+<div class="screen-content">
+<button class="btn-back" onclick="goScreen('recebimento-modo')">← Voltar</button>
+<div>
+<div class="screen-title">🚛 Transbordo</div>
+<div class="screen-sub">Bipe o QR do motorista pra gerar ou avançar, ou toque numa carga em andamento</div>
+</div>
+<button class="btn btn-primary" onclick="abrirScanRecebimento()" style="padding:14px;margin-top:8px">📷 Bipar QR do motorista</button>
+<div id="rec-abas" style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap"></div>
+<input type="date" id="rec-gerados-data" style="display:none;margin-top:8px;width:100%;padding:9px;border-radius:8px;border:1px solid #3a5a7a;background:transparent;color:#fff;font-size:.85rem">
+<div id="rec-gerados-atalhos" style="display:none;gap:6px;margin-top:6px">
+<button type="button" data-rec-gerados-ontem="1" style="flex:1;padding:7px;font-size:.72rem;font-weight:700;border-radius:8px;border:1px solid #3a5a7a;background:transparent;color:#8fb3d9">◀ Ontem</button>
+<button type="button" data-rec-gerados-hoje="1" style="flex:1;padding:7px;font-size:.72rem;font-weight:700;border-radius:8px;border:1px solid #3a5a7a;background:transparent;color:#8fb3d9">Hoje</button>
+</div>
+<div id="rec-lista-titulo" style="font-size:.78rem;color:var(--muted,#5a7a9a);font-weight:700;margin-top:6px">CARGAS EM ANDAMENTO</div>
+<div id="rec-lista-andamento"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: RECEBIMENTO — NOTAS RETORNADAS ══════════ -->
+<div class="screen" id="screen-recebimento-recusas">
+<div class="top-bar"><div class="top-logo">DT Inventário</div></div>
+<div class="screen-content">
+<button class="btn-back" onclick="goScreen('recebimento-modo')">← Voltar</button>
+<div id="recusa-fluxo-host" style="display:flex;flex-direction:column;gap:12px;min-height:0"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: RECEBIMENTO — bipar/digitar código (fase 4) ══════════ -->
+<div class="screen" id="screen-recebimento-scan">
+<div class="top-bar">
+<div class="top-logo">DT Inventário</div>
+</div>
+<div class="screen-content">
+<button class="btn-back" onclick="goScreen('recebimento')">← Voltar</button>
+<div>
+<div class="screen-title">Bipar QR do motorista</div>
+<div class="screen-sub">Use o leitor ou digite o código fixo do motorista — sem viagem em andamento, gera o transbordo; com viagem em andamento, avança pro próximo passo</div>
+</div>
+<input id="rec-scan-input" class="field" autocomplete="off" autocapitalize="characters" placeholder="Código do motorista (ex.: MOT-...)" style="font-size:1.1rem;padding:16px;text-align:center;font-weight:700;letter-spacing:.03em">
+<button class="btn btn-primary" onclick="confirmarCodigoRecebimento()" style="padding:16px;font-size:1rem">Confirmar</button>
+<div id="rec-scan-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: RECEBIMENTO — escolha de destino (fase 4g, só aparece
+     quando a loja tem mais de um destino configurado) ══════════ -->
+<div class="screen" id="screen-recebimento-destino">
+<div class="top-bar">
+<div class="top-logo">DT Inventário</div>
+</div>
+<div class="screen-content">
+<button class="btn-back" onclick="goScreen('recebimento-scan')">← Voltar</button>
+<div>
+<div class="screen-title">Pra qual loja vai essa carga?</div>
+<div class="screen-sub">Esse motorista pode levar pra mais de um destino — escolha o desta viagem</div>
+</div>
+<div id="rec-destino-lista"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: RECEBIMENTO — Nota Fiscal na saída/chegada (controle de NF) ══════════ -->
+<!-- Tela única, reaproveitada nos dois sentidos: na SAÍDA (Matriz) informa a NF
+     pela 1ª vez; na CHEGADA (Filial) confere se bate com a registrada na saída.
+     Conteúdo (título/rótulos/botão) é montado em JS por _abrirTelaNfSaida()/
+     _abrirTelaNfRecebimento() (22-recebimento.js), pra não duplicar a tela. -->
+<div class="screen" id="screen-recebimento-nf">
+<div class="top-bar">
+<div class="top-logo">DT Inventário</div>
+</div>
+<div class="screen-content">
+<button class="btn-back" onclick="goScreen('recebimento')">← Voltar</button>
+<div>
+<div class="screen-title" id="rec-nf-titulo">🧾 Nota Fiscal</div>
+<div class="screen-sub" id="rec-nf-subtitulo">—</div>
+</div>
+<div id="rec-obs-bloco" style="display:none">
+<div style="font-size:.76rem;color:var(--muted,#6f89a6);font-weight:700;margin-bottom:5px">OBSERVAÇÃO DA CARGA <span style="font-weight:500">(opcional)</span></div>
+<div style="display:flex;gap:7px;align-items:stretch">
+<button type="button" class="btn btn-ghost" id="rec-obs-seletor-btn" onclick="abrirSeletorObservacaoTransbordo()" style="flex:1;min-width:0;padding:12px 10px;font-size:.9rem;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">📝 Selecionar observação (opcional)</button>
+<button type="button" class="btn btn-ghost" id="rec-obs-limpar-btn" onclick="limparObservacaoTransbordo()" title="Limpar observação" style="display:none;width:44px;padding:0;color:#ff7b7b;font-size:1.05rem">×</button>
+</div>
+</div>
+<!-- Cada linha = Nota Fiscal + Volume. O botão + fica sempre abaixo e cria outro par logo abaixo. -->
+<div id="rec-nf-lista" style="display:flex;flex-direction:column;gap:8px;min-height:0"></div>
+<button class="btn btn-ghost" id="rec-nf-add-btn" onclick="adicionarNotaFiscalRecebimento()" title="Adicionar outra nota fiscal" style="width:100%;padding:11px 16px;font-size:1rem;font-weight:800">+ Adicionar Nota + Volume</button>
+<button class="btn btn-primary" id="rec-nf-btn" onclick="confirmarNotaFiscalRecebimento()" style="padding:16px;font-size:1rem">Confirmar</button>
+<div id="rec-nf-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: RECEBIMENTO — confirmação do bip (fase 4) ══════════ -->
+<div class="screen" id="screen-recebimento-confirmacao">
+<div class="top-bar">
+<div class="top-logo">DT Inventário</div>
+</div>
+<div class="screen-content">
+<div id="rec-conf-icone" style="font-size:3rem;text-align:center">✅</div>
+<div id="rec-conf-titulo" class="screen-title" style="text-align:center">Confirmado</div>
+<div id="rec-conf-corpo" class="card" style="padding:16px;display:flex;flex-direction:column;gap:8px"></div>
+<button class="btn btn-primary" onclick="goScreen('recebimento')" style="padding:16px;font-size:1rem;margin-top:auto">OK, voltar</button>
+</div>
+</div>
+
+<!-- ── Seletor pesquisável de observação do Transbordo ───────────── -->
+<div id="rec-obs-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:10020;align-items:center;justify-content:center;padding:18px">
+<div style="background:#0d1a2d;border:1.5px solid #284567;border-radius:14px;padding:18px;max-width:460px;width:100%;max-height:82vh;display:flex;flex-direction:column;gap:10px;box-shadow:0 20px 60px rgba(0,0,0,.55)">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><div id="rec-obs-titulo" style="font-size:1.05rem;font-weight:800">📝 Selecionar observação</div><button type="button" onclick="fecharSeletorObservacaoTransbordo()" style="background:transparent;border:0;color:#fff;font-size:1.35rem;cursor:pointer">×</button></div>
+<div id="rec-obs-subtitulo" style="font-size:.76rem;color:#6f89a6">Opcional. Pesquise e toque em uma observação cadastrada pelo Analista.</div>
+<input id="rec-obs-busca" class="field" autocomplete="off" placeholder="🔎 Pesquisar observação..." style="font-size:1rem;padding:13px">
+<div id="rec-obs-opcoes" style="display:flex;flex-direction:column;gap:7px;overflow-y:auto;min-height:80px;max-height:52vh"></div>
+<button type="button" id="rec-obs-rodape-btn" class="btn btn-ghost" onclick="_acaoRodapeObservacaoTransbordo()">Continuar sem observação</button>
+</div>
+</div>
+
 <!-- ── Modal de Confirmação Customizado ─────────────────────────── -->
 <div id="modal-confirm" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;padding:24px">
 <div style="background:#111f35;border:1.5px solid #1e3356;border-radius:16px;padding:28px 24px;max-width:360px;width:100%;display:flex;flex-direction:column;gap:16px;box-shadow:0 20px 60px rgba(0,0,0,.5)">
@@ -801,5 +1012,5 @@
 <script src="js/shared/address-state-engine.js?v=20260804-1309"></script>
 <script src="js/shared/address-state-selectors.js?v=20260804-1309"></script>
 <script src="js/shared/address-state-view.js?v=20260804-1309"></script>
-<script src="js/shared/common-utils.js?v=20260804-1309"></script><script src="js/shared/firebase-shared.js?v=20260804-1309"></script><script src="js/shared/enderecos-service.js?v=20260804-1309"></script><script src="js/shared/produtos-service.js?v=20260804-1309"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260804-1309"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260805-cards-v276"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260805-cards-v276"></script><script src="js/coletor/03-estado-app.js?v=20260804-1309"></script><script src="js/coletor/04-auth-login.js?v=20260804-1309"></script><script src="js/coletor/05-inventarios-download.js?v=20260804-1309"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260804-1309"></script><script src="js/coletor/07-etapa-endereco.js?v=20260804-1309"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260804-1309"></script><script src="js/coletor/09-historico-stats.js?v=20260805-cards-v276"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260804-1309"></script><script src="js/coletor/11-recontagens.js?v=20260805-rodada-v259"></script><script src="js/coletor/12-scanner-hardware.js?v=20260804-1309"></script><script src="js/coletor/13-audio-feedback.js?v=20260804-1309"></script><script src="js/coletor/14-toast.js?v=20260804-1309"></script><script src="js/coletor/15-utils-init.js?v=20260804-1309"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260805-cards-v276"></script><script src="js/coletor/17-auditoria-meta.js?v=20260805-cards-v276"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260805-cards-v276"></script><script src="js/coletor/19-runtime-estavel-v15.js?v=20260804-1309"></script><script src="js/coletor/20-menu-compat.js?v=20260805-cards-v276"></script><script src="js/legacy-ui-compat.js?v=20260804-1309"></script><script>(function(){if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js?v=20260805-cards-v276').catch(function(e){console.warn('[PWA]',e);});});}document.addEventListener('DOMContentLoaded',function(){(async function(){try{if(window.DT_AUTH_USER_READY){try{await window.DT_AUTH_USER_READY;}catch(_e){}}if(window.DTProdutos&&DTProdutos.carregar)DTProdutos.carregar().catch(function(e){console.warn('[Produtos] Cache inicial indisponível:',e);});}catch(e){console.warn('[Produtos] Inicialização falhou:',e);}})();});})();</script><div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v276 · 20260805.11</div></body>
+<script src="js/shared/common-utils.js?v=20260804-1309"></script><script src="js/shared/firebase-shared.js?v=20260816-traduzir-erro-permissao"></script><script src="js/shared/enderecos-service.js?v=20260804-1309"></script><script src="js/shared/produtos-service.js?v=20260804-1309"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260804-1309"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260812-fase4c-offline"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260818-limpa-operador-no-logout"></script><script src="js/coletor/03-estado-app.js?v=20260804-1309"></script><script src="js/coletor/04-auth-login.js?v=20260814-fase15f4g-trocar-loja-menu"></script><script src="js/coletor/05-inventarios-download.js?v=20260812-fase4b-recebimento"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260804-1309"></script><script src="js/coletor/07-etapa-endereco.js?v=20260804-1309"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260804-1309"></script><script src="js/coletor/09-historico-stats.js?v=20260805-cards-v276"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260804-1309"></script><script src="js/coletor/11-recontagens.js?v=20260805-rodada-v259"></script><script src="js/coletor/12-scanner-hardware.js?v=20260817-nf-vertical"></script><script src="js/coletor/13-audio-feedback.js?v=20260804-1309"></script><script src="js/coletor/14-toast.js?v=20260816-confirmacao-bips"></script><script src="js/coletor/15-utils-init.js?v=20260812-fase4c-offline"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260805-cards-v276"></script><script src="js/coletor/17-auditoria-meta.js?v=20260805-cards-v276"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260805-cards-v276"></script><script src="js/coletor/19-runtime-estavel-v15.js?v=20260816-diag-uid-visivel"></script><script src="js/coletor/20-menu-compat.js?v=20260814-fase15f4g-menus-topo"></script><script src="js/coletor/22-recebimento.js?v=20260821-motivo-etapa-data-recebidas"></script><script src="js/coletor/23-recebimento-offline.js?v=20260818-fila-offline-criacao"></script><script src="js/coletor/24-recebimento-recusas.js?v=20260821-voltar-e-feedback-volume"></script><script src="js/legacy-ui-compat.js?v=20260804-1309"></script><script>(function(){if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js?v=20260821-motivo-etapa-data-recebidas').catch(function(e){console.warn('[PWA]',e);});});}document.addEventListener('DOMContentLoaded',function(){(async function(){try{if(window.DT_AUTH_USER_READY){try{await window.DT_AUTH_USER_READY;}catch(_e){}}if(window.DTProdutos&&DTProdutos.carregar)DTProdutos.carregar().catch(function(e){console.warn('[Produtos] Cache inicial indisponível:',e);});}catch(e){console.warn('[Produtos] Inicialização falhou:',e);}})();});})();</script><div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v314</div></body>
 </html>

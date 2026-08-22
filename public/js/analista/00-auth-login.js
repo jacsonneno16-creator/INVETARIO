@@ -224,6 +224,12 @@ async function _onAnalistaLogado(user) {
   if (typeof window.aplicarPermissoesAnalista === 'function') {
     window.aplicarPermissoesAnalista();
   }
+  // Escolhe a tela inicial (só faz sentido logo após o login — separado de
+  // aplicarPermissoesAnalista() porque essa roda a toda hora depois disso,
+  // inclusive fora de qualquer navegação de página).
+  if (typeof window.irParaPrimeiraPaginaPermitida === 'function') {
+    window.irParaPrimeiraPaginaPermitida();
+  }
   if (typeof window.aplicarSetoresPermitidos === 'function') {
     window.aplicarSetoresPermitidos();
   }
@@ -468,6 +474,10 @@ async function aplicarTrocaLojaAnalista(novaLojaId){
     }
 
     window.setDTLojaAtiva(nova);
+    // Produção mantém caches próprios por tela; limpe-os antes de qualquer
+    // renderização da nova loja. O evento dt-loja-alterada também executa
+    // esta rotina, mas a chamada explícita deixa a troca determinística.
+    window.DTProducao?.invalidarTudo?.();
     await atualizarIndicadorLojaAtual();
 
     // Recarrega somente o estado e os listeners da loja, sem recarregar a página

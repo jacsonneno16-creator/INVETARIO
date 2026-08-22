@@ -9,21 +9,38 @@
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const COL_SETUP = 'producao_setup';
   const COL_MAQUINAS = 'producao_maquinas';
+  const COL_PRODUTOS = 'producao_produtos';
+
+  // Compatibilidade com o projeto de Produção original: registros antigos usam
+  // produto_origem/produto_destino/tempo_setup, enquanto a integração passou a
+  // usar produtoOrigem/produtoDestino/minutos. Normalizamos na leitura e gravamos
+  // os dois formatos para que Agenda/Gantt e dados legados funcionem juntos.
+  function normalizarSetup(x) {
+    return {
+      ...x,
+      produtoOrigem: x.produtoOrigem ?? x.produto_origem ?? '',
+      produtoDestino: x.produtoDestino ?? x.produto_destino ?? '',
+      minutos: Number(x.minutos ?? x.tempo_setup ?? 0) || 0,
+    };
+  }
 
   let _setups = [];
   let _maquinas = [];
+  let _produtos = [];
   let _carregado = false;
 
   function fs() { return global.getDTFirestore(); }
 
   async function carregarProducaoSetup(forcar) {
     if (_carregado && !forcar) return;
-    const [snapSetup, snapMaq] = await Promise.all([
+    const [snapSetup, snapMaq, snapProd] = await Promise.all([
       fs().collection(COL_SETUP).get(),
       fs().collection(COL_MAQUINAS).get(),
+      fs().collection(COL_PRODUTOS).get(),
     ]);
-    _setups = snapSetup.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
+    _setups = snapSetup.docs.map(d => normalizarSetup({ _firestoreId: d.id, ...d.data() }));
     _maquinas = snapMaq.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
+    _produtos = snapProd.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _carregado = true;
   }
 
@@ -60,6 +77,8 @@
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <select id="psetup-filtro-maquina" class="field"><option value="">Todas as máquinas</option>${opcoesMaquinas}</select>
+          <button type="button" class="btn btn-ghost btn-sm" data-pexcel-template-baixar="1">📄 Template/Backup</button>
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">📥 Importar Excel<input type="file" id="pexcel-template-input" accept=".xlsx,.xls" style="display:none"></label>
           <button type="button" class="btn btn-primary btn-sm" data-psetup-novo="1">+ Novo Tempo de Setup</button>
         </div>
       </div>
@@ -87,8 +106,11 @@
 
   function _popularSelectsProduto(maquinaNome, origemSel, destinoSel) {
     const maquina = _maquinas.find(m => m.nome === maquinaNome);
-    const produtos = (maquina?.produtosCompativeis || []).map(p => p.produto);
-    const opcoes = produtos.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('') || '<option value="">Nenhum produto compatível cadastrado nesta máquina</option>';
+    let produtos = (maquina?.produtosCompativeis || []).map(p => p.produto).filter(Boolean);
+    if (!produtos.length) produtos = _produtos.filter(p => !maquinaNome || !p.maquina || p.maquina === maquinaNome).map(p => p.nome || p.descricao || p.produto).filter(Boolean);
+    if (!produtos.length) produtos = _produtos.map(p => p.nome || p.descricao || p.produto).filter(Boolean);
+    produtos = [...new Set(produtos)].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR'));
+    const opcoes = produtos.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('') || '<option value="">Nenhum produto cadastrado</option>';
     document.getElementById(origemSel).innerHTML = opcoes;
     document.getElementById(destinoSel).innerHTML = opcoes;
   }
@@ -125,7 +147,7 @@
     if (produtoOrigem === produtoDestino) { global.showToast?.('Origem e destino precisam ser produtos diferentes.', 'error'); return; }
     const agora = new Date().toISOString();
     const docId = document.getElementById('psetup-doc-id').value || '';
-    const payload = { maquina, produtoOrigem, produtoDestino, minutos, atualizadoEm: agora };
+    const payload = { maquina, produtoOrigem, produtoDestino, minutos, produto_origem: produtoOrigem, produto_destino: produtoDestino, tempo_setup: minutos, atualizadoEm: agora };
 
     try {
       if (docId) {
@@ -179,4 +201,5 @@
     if (event.target && event.target.id === 'psetup-filtro-maquina') { _desenharProducaoSetup(); return; }
     if (event.target && event.target.id === 'psetup-maquina') _popularSelectsProduto(event.target.value, 'psetup-origem', 'psetup-destino');
   });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _setups=[]; _maquinas=[]; _produtos=[]; });
 })(window);

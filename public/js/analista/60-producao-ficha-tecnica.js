@@ -12,6 +12,7 @@
   let _fichas = [];
   let _carregado = false;
   let _insumosEditando = [];
+  let _lojasProdutoras = [];
 
   function fs() { return global.getDTFirestore(); }
 
@@ -26,6 +27,19 @@
     _carregado = true;
   }
 
+  // PCP (fase 4) — empresa produtora do produto: qual loja/unidade
+  // fabrica este item, usada pelo PCP pra rotear a solicitação de
+  // produção pra loja certa (ao invés de texto solto que não bate com
+  // nenhum ID real de loja).
+  async function _carregarLojasProdutoras() {
+    try { _lojasProdutoras = (await global.DTLoja?.listar(false)) || []; }
+    catch (e) { _lojasProdutoras = []; }
+  }
+  function _empresaProdutoraOpts(sel) {
+    const opts = _lojasProdutoras.map(l => `<option value="${esc(l.id)}" ${String(sel) === String(l.id) ? 'selected' : ''}>${esc(l.nome || l.id)}</option>`).join('');
+    return `<option value="">— Não definida —</option>${opts}`;
+  }
+
   // Junta produtos + fichas — produto sem ficha ainda entra com insumos
   // vazios (mesma lógica do getFichaTecnicaMerged original).
   function getProducaoFichaTecnicaMerged() {
@@ -33,8 +47,8 @@
     _fichas.forEach(f => porCod.set(String(f.cod), f));
     return _produtos.map(p => {
       const ficha = porCod.get(String(p.cod));
-      if (ficha) return ficha;
-      return { cod: p.cod, desc: p.nome || p.desc || '', unid: p.unid || 1, pc_min: p.pc_min || 0, maquina: p.maquina || '', insumos: [], _semFicha: true, _produtoId: p._firestoreId };
+      if (ficha) return { ...p, ...ficha, desc: ficha.desc || p.nome || p.desc || '', categoria: ficha.categoria || p.categoria || '', classificacao: ficha.classificacao || p.classificacao || '', metaCoberturaDias: Number(ficha.metaCoberturaDias ?? p.metaCoberturaDias ?? p.coberturaDias) || 0, producaoMinima: Number(ficha.producaoMinima ?? p.producaoMinima) || 0, multiploProducao: Number(ficha.multiploProducao ?? p.multiploProducao) || 0, tipoMinimo: ficha.tipoMinimo || p.tipoMinimo || '', prioridadeProducao: Number(ficha.prioridadeProducao ?? p.prioridadeProducao) || 2, alergenico: ficha.alergenico === true || p.alergenico === true };
+      return { cod: p.cod, desc: p.nome || p.desc || '', unid: p.unid || 1, pc_min: p.pc_min || 0, maquina: p.maquina || '', categoria: p.categoria || '', classificacao: p.classificacao || '', metaCoberturaDias: Number(p.metaCoberturaDias ?? p.coberturaDias) || 0, producaoMinima: Number(p.producaoMinima) || 0, multiploProducao: Number(p.multiploProducao) || 0, tipoMinimo: p.tipoMinimo || '', prioridadeProducao: Number(p.prioridadeProducao) || 2, alergenico: p.alergenico === true, empresaProdutoraId: p.empresaProdutoraId || '', empresaProdutoraNome: p.empresaProdutoraNome || '', insumos: [], _semFicha: true, _produtoId: p._firestoreId };
     });
   }
 
@@ -58,12 +72,12 @@
     pagina.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
         <div>
-          <div class="page-title" style="font-size:1.1rem">🏭 Ficha Técnica</div>
+          <div class="page-title" style="font-size:1.35rem">📦 Produtos & Ficha Técnica</div><div style="font-size:.78rem;color:var(--muted);margin-top:3px">Cadastro produtivo, cobertura, máquinas, velocidades e composição de insumos</div>
           <div style="font-size:.72rem;color:var(--muted)">${linhas.length.toLocaleString('pt-BR')} produto(s)</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input id="pft-busca" placeholder="Buscar código ou descrição..." value="${esc(busca)}" class="field" style="min-width:220px">
-          <button type="button" class="btn btn-primary btn-sm" data-pft-novo="1">+ Novo Produto</button>
+          <button type="button" class="btn btn-primary btn-sm" data-pft-novo="1">+ Novo Produto</button><button type="button" class="btn btn-ghost btn-sm" onclick="goPage('producao-maquinas',document.getElementById('nav-producao-maquinas'))">🏭 Máquinas</button><button type="button" class="btn btn-ghost btn-sm" onclick="goPage('producao-setup',document.getElementById('nav-producao-setup'))">🔧 Setup</button><button type="button" class="btn btn-ghost btn-sm" style="color:var(--danger,#c0392b)" data-pft-apagar-tudo="1">🗑️ Apagar tudo</button>
         </div>
       </div>
       <div class="tc">
@@ -90,7 +104,7 @@
       </div>`;
   }
 
-  function _abrirModalPft(item) {
+  async function _abrirModalPft(item) {
     document.getElementById('pft-title').textContent = item._novo ? 'Novo produto' : 'Editar ficha técnica';
     document.getElementById('pft-doc-id').value = item._firestoreId || '';
     document.getElementById('pft-cod').value = item.cod ?? '';
@@ -99,6 +113,17 @@
     document.getElementById('pft-unid').value = item.unid || 1;
     document.getElementById('pft-pcmin').value = item.pc_min || 0;
     document.getElementById('pft-maquina').value = item.maquina || '';
+    document.getElementById('pft-categoria').value = item.categoria || '';
+    document.getElementById('pft-classificacao').value = item.classificacao || '';
+    document.getElementById('pft-cobertura').value = item.metaCoberturaDias || item.coberturaDias || '';
+    document.getElementById('pft-prod-min').value = item.producaoMinima || '';
+    document.getElementById('pft-multiplo').value = item.multiploProducao || '';
+    document.getElementById('pft-tipo-min').value = item.tipoMinimo || '';
+    document.getElementById('pft-prioridade').value = item.prioridadeProducao || 2;
+    document.getElementById('pft-alergenico').value = item.alergenico === true ? 'true' : 'false';
+    await _carregarLojasProdutoras();
+    const selEmpresa = document.getElementById('pft-empresa-produtora');
+    if (selEmpresa) { selEmpresa.innerHTML = _empresaProdutoraOpts(item.empresaProdutoraId || ''); }
     _insumosEditando = (item.insumos || []).map(i => ({ insumo: i.insumo || '', qty: i.qty || 0, categoria: i.categoria || '' }));
     _redesenharInsumosEditando();
     global.openModal?.('modal-pft');
@@ -130,7 +155,25 @@
   }
 
   function pftNovoProduto() {
-    _abrirModalPft({ _novo: true, cod: '', desc: '', unid: 1, pc_min: 0, maquina: '', insumos: [] });
+    _abrirModalPft({ _novo: true, cod: '', desc: '', unid: 1, pc_min: 0, maquina: '', categoria: '', classificacao: '', metaCoberturaDias: 0, producaoMinima: 0, multiploProducao: 0, tipoMinimo: '', prioridadeProducao: 2, alergenico: false, insumos: [] });
+  }
+
+  async function _pftSincronizarProdutoNaMaquina(nomeMaquina, nomeProduto, velocidade) {
+    if (!nomeMaquina || !nomeProduto) return;
+    try {
+      const snap = await fs().collection('producao_maquinas').where('nome', '==', nomeMaquina).limit(1).get();
+      if (snap.empty) return;
+      const doc = snap.docs[0];
+      const dados = doc.data() || {};
+      const lista = Array.isArray(dados.produtosCompativeis) ? dados.produtosCompativeis.slice() : [];
+      const idx = lista.findIndex(p => String(p?.produto || '').trim().toLowerCase() === nomeProduto.trim().toLowerCase());
+      const item = { produto: nomeProduto, velocidade: Number(velocidade) || 0 };
+      if (idx >= 0) lista[idx] = { ...lista[idx], ...item };
+      else lista.push(item);
+      await fs().collection('producao_maquinas').doc(doc.id).set({ produtosCompativeis: lista, atualizadoEm: new Date().toISOString() }, { merge: true });
+    } catch (e) {
+      console.warn('[PRODUCAO][FICHA] Falha ao sincronizar produto na máquina:', e);
+    }
   }
 
   async function pftSalvar() {
@@ -140,21 +183,49 @@
     const unid = Math.max(1, Number(document.getElementById('pft-unid').value) || 1);
     const pc_min = Math.max(0, Number(document.getElementById('pft-pcmin').value) || 0);
     const maquina = String(document.getElementById('pft-maquina').value || '').trim();
+    const categoria = String(document.getElementById('pft-categoria').value || '').trim();
+    const classificacao = String(document.getElementById('pft-classificacao').value || '').trim();
+    const metaCoberturaDias = Math.max(0, Number(document.getElementById('pft-cobertura').value) || 0);
+    const producaoMinima = Math.max(0, Number(document.getElementById('pft-prod-min').value) || 0);
+    const multiploProducao = Math.max(0, Number(document.getElementById('pft-multiplo').value) || 0);
+    const tipoMinimo = String(document.getElementById('pft-tipo-min').value || '');
+    const prioridadeProducao = Math.min(99, Math.max(1, Number(document.getElementById('pft-prioridade').value) || 2));
+    const alergenico = document.getElementById('pft-alergenico').value === 'true';
+    const empresaProdutoraId = String(document.getElementById('pft-empresa-produtora')?.value || '');
+    const empresaProdutoraNome = empresaProdutoraId ? String(document.getElementById('pft-empresa-produtora')?.selectedOptions?.[0]?.textContent || '') : '';
     const insumos = _insumosEditando.filter(i => i.insumo);
     const agora = new Date().toISOString();
     const docIdFicha = document.getElementById('pft-doc-id').value || '';
 
     try {
-      const produtoExistente = _produtos.find(p => String(p.cod) === cod);
-      const payloadProduto = { cod, nome: desc, unid, pc_min, maquina, ativo: true, atualizadoEm: agora };
+      // Compatibilidade com o modelo da Produção original: além dos campos
+      // usados pelo módulo integrado, persistimos os aliases que programação,
+      // Gantt/importadores antigos esperam (descricao/velocidadePadrao/maquinaPadrao).
+      // A Produção original permite o mesmo código em máquinas diferentes, então
+      // a identidade do produto é código + máquina, e não apenas o código.
+      const produtoExistente = _produtos.find(p => String(p.cod) === cod && String(p.maquina || p.maquinaPadrao || '') === maquina)
+        || _produtos.find(p => String(p.cod) === cod && !String(p.maquina || p.maquinaPadrao || ''));
+      const payloadProduto = {
+        cod, nome: desc, descricao: desc, unid,
+        pc_min, velocidadePadrao: pc_min,
+        maquina, maquinaPadrao: maquina,
+        categoria, classificacao,
+        metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao,
+        alergenico, produtoAtivo: true,
+        empresaProdutoraId, empresaProdutoraNome, ativo: true, atualizadoEm: agora
+      };
       if (produtoExistente) {
         await fs().collection(COL_PRODUTOS).doc(produtoExistente._firestoreId).set(payloadProduto, { merge: true });
       } else {
         payloadProduto.criadoEm = agora;
         await fs().collection(COL_PRODUTOS).add(payloadProduto);
       }
+      // Mantém o vínculo bidirecional Produto <-> Máquina existente no projeto
+      // de Produção de referência. Sem isso a máquina pode ser cadastrada, mas
+      // programação automática e seleção de compatibilidade ficam divergentes.
+      await _pftSincronizarProdutoNaMaquina(maquina, desc, pc_min);
 
-      const payloadFicha = { cod, desc, unid, pc_min, maquina, insumos, atualizadoEm: agora };
+      const payloadFicha = { cod, desc, unid, pc_min, maquina, categoria, classificacao, metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, alergenico, insumos, atualizadoEm: agora };
       const fichaExistente = _fichas.find(f => String(f.cod) === cod);
       if (fichaExistente) {
         await fs().collection(COL_FICHAS).doc(fichaExistente._firestoreId).set(payloadFicha, { merge: true });
@@ -189,6 +260,39 @@
     else if (confirm('Excluir a ficha técnica do produto ' + cod + '?')) await executar();
   }
 
+  // Apaga TUDO — produtos e fichas técnicas, sem distinguir origem (manual,
+  // Excel ou Bluesoft). Ferramenta de reset explícito pedida pra zerar a
+  // base de uma vez e recomeçar (via template Excel ou sincronização
+  // Bluesoft), não uma limpeza seletiva como as de 90-bluesoft-service.js —
+  // por isso exige o usuário digitar a confirmação, em vez de só um OK/Cancelar.
+  async function pftApagarTudo() {
+    await carregarProducaoDados(true);
+    const totalProdutos = _produtos.length, totalFichas = _fichas.length;
+    if (!totalProdutos && !totalFichas) { global.showToast?.('Nada para apagar — a base já está vazia.', 'success'); return; }
+    const digitado = prompt('Isso vai apagar TODOS os ' + totalProdutos.toLocaleString('pt-BR') + ' produto(s) e ' + totalFichas.toLocaleString('pt-BR') + ' ficha(s) técnica(s) cadastrados — incluindo máquina, insumos e parâmetros de PCP configurados manualmente. Essa ação NÃO pode ser desfeita.\n\nDigite APAGAR TUDO para confirmar:');
+    if (digitado !== 'APAGAR TUDO') { if (digitado != null) global.showToast?.('Texto não confere — nada foi apagado.', 'warning'); return; }
+    try {
+      const rawFs = global.getDTRawFirestore();
+      const idsProdutos = _produtos.map(p => p._firestoreId);
+      const idsFichas = _fichas.map(f => f._firestoreId);
+      for (let i = 0; i < idsProdutos.length; i += 300) {
+        const batch = rawFs.batch();
+        idsProdutos.slice(i, i + 300).forEach(id => batch.delete(fs().collection(COL_PRODUTOS).doc(id)));
+        await batch.commit();
+      }
+      for (let i = 0; i < idsFichas.length; i += 300) {
+        const batch = rawFs.batch();
+        idsFichas.slice(i, i + 300).forEach(id => batch.delete(fs().collection(COL_FICHAS).doc(id)));
+        await batch.commit();
+      }
+      await carregarProducaoDados(true);
+      _desenharProducaoFichaTecnica();
+      global.showToast?.('Apagado: ' + totalProdutos.toLocaleString('pt-BR') + ' produto(s) e ' + totalFichas.toLocaleString('pt-BR') + ' ficha(s) técnica(s).', 'success');
+    } catch (e) {
+      global.showToast?.('Erro ao apagar tudo: ' + (e.message || e), 'error');
+    }
+  }
+
   global.renderProducaoFichaTecnica = renderProducaoFichaTecnica;
   global._desenharProducaoFichaTecnica = _desenharProducaoFichaTecnica;
   global.pftAdicionarInsumo = pftAdicionarInsumo;
@@ -198,6 +302,7 @@
   global.pftNovoProduto = pftNovoProduto;
   global.pftSalvar = pftSalvar;
   global.pftExcluir = pftExcluir;
+  global.pftApagarTudo = pftApagarTudo;
 
   // Tudo abaixo é gerado via innerHTML (tabela, linhas de insumo) — usa
   // data-* + escutador delegado em vez de onclick/oninput/onchange inline,
@@ -211,6 +316,8 @@
     if (excluir) { pftExcluir(excluir.getAttribute('data-pft-excluir')); return; }
     const remover = event.target.closest('[data-pft-remover-insumo]');
     if (remover) { pftRemoverInsumo(Number(remover.getAttribute('data-pft-remover-insumo'))); return; }
+    const apagarTudo = event.target.closest('[data-pft-apagar-tudo]');
+    if (apagarTudo) { pftApagarTudo(); return; }
   });
   document.addEventListener('input', function (event) {
     if (event.target && event.target.id === 'pft-busca') _desenharProducaoFichaTecnica();
@@ -219,4 +326,5 @@
     const campo = event.target.closest('[data-pft-campo]');
     if (campo) pftInsumoAlterado(Number(campo.getAttribute('data-pft-idx')), campo.getAttribute('data-pft-campo'), campo.value);
   });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _produtos=[]; _fichas=[]; _insumosEditando=[]; _lojasProdutoras=[]; });
 })(window);

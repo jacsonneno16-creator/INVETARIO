@@ -1,20 +1,45 @@
-// Setor Produção — Projeção de Vendas (fase 3d da unificação com o Sistema
-// de Produção). Entrada manual por produto (venda dos últimos 3 meses, em
-// caixas) + estoque atual opcional, pra calcular cobertura e risco de
-// ruptura. Simplificação deliberada: só média simples dos 3 meses (a
-// original tinha também média ponderada e um modo "manual" via dropdown —
-// não essencial pra validar o cálculo). Firestore-backed (a original era só
-// localStorage, sem sincronizar entre usuários — mesma correção já aplicada
-// em Turnos na fase 3c).
+// Produção — Projeção V341. Médias simples/ponderada, projeção manual,
+// estoque/cobertura/risco, CRUD, importação e exportação Excel em Firestore.
 (function (global) {
   'use strict';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const COL_PROJECAO = 'producao_projecao';
+  const COL_MOVIMENTOS = 'producao_estoque_movimentos';
 
   let _projecao = [];
   let _carregado = false;
 
   function fs() { return global.getDTFirestore(); }
+
+  // PCP (fase 6) — ledger de estoque compartilhado por Compras (recebimento)
+  // e Produção/Realizado (entrada de produção acabada). Idempotente por
+  // movimentoId: se o documento do movimento já existe, a transação não
+  // soma de novo (protege contra reprocessar o mesmo recebimento/OP duas
+  // vezes por retry de rede ou clique duplo).
+  async function aplicarEntradaEstoqueProducao({ prodKey, produto, qtdCx, movimentoId, tipo, origemId } = {}) {
+    const qtd = Number(qtdCx) || 0;
+    if (!movimentoId || qtd <= 0) return { aplicado: false };
+    await carregarProducaoProjecao();
+    const item = _projecao.find(p => String(p.cod) === String(prodKey)) ||
+      _projecao.find(p => String(p.produto || '').trim().toLowerCase() === String(produto || '').trim().toLowerCase());
+    if (!item) throw new Error('Produto não encontrado na Projeção/Estoque: ' + (produto || prodKey));
+    const raw = global.getDTRawFirestore();
+    const movRef = fs().collection(COL_MOVIMENTOS).doc(movimentoId);
+    const projRef = fs().collection(COL_PROJECAO).doc(item._firestoreId);
+    const agora = new Date().toISOString();
+    const autor = global._currentAnalistaUser?.email || '';
+    await raw.runTransaction(async tx => {
+      const mov = await tx.get(movRef);
+      if(mov.exists)return;
+      const snap = await tx.get(projRef);
+      const estoqueAtual = Number(snap.data()?.estoqueAtual) || 0;
+      const novoEstoque = estoqueAtual + qtd;
+      tx.update(projRef,{estoqueAtual:novoEstoque, estoqueAtualizadoEm: agora, estoqueAtualizadoPor: autor});
+      tx.set(movRef, { prodKey: prodKey || '', produto: item.produto || produto || '', qtdCx: qtd, tipo: tipo || 'entrada', origemId: origemId || '', criadoEm: agora, criadoPor: autor });
+    });
+    await carregarProducaoProjecao(true);
+    return { aplicado: true };
+  }
 
   async function carregarProducaoProjecao(forcar) {
     if (_carregado && !forcar) return;
@@ -23,15 +48,26 @@
     _carregado = true;
   }
 
-  // Reusada pela Programação Automática (fase 3d) pra decidir o que sugerir.
-  // metodo: 'simples' (média dos 3 meses) ou 'ponderada' (peso maior pro mês
-  // mais recente, m3) — mesmas duas opções reais da original (a original
-  // também tinha um 3º modo "manual" que não é necessário aqui, já que a
-  // tela já é 100% CRUD manual por natureza).
+  // Reusada pela Programação Automática (fase 3d), pelo PCP e por
+  // Relatórios pra decidir o que sugerir. metodo: 'simples' (média dos 3
+  // meses) ou 'ponderada' (peso maior pro mês mais recente, m3) — mesmas
+  // duas opções reais da original (a original também tinha um 3º modo
+  // "manual" que não é necessário aqui, já que a tela já é 100% CRUD manual
+  // por natureza).
+  // Fase 12 — quando a Bluesoft já forneceu um consumo diário médio real
+  // (`consumoDiaMedioBluesoft`, sincronizado via 90-bluesoft-service.js),
+  // ele tem prioridade sobre a média M1/M2/M3 calculada — dado real
+  // substitui estimativa, sem precisar trocar de tela/método. A projeção
+  // manual (`projecaoManual`) continua podendo sobrepor tudo quando o
+  // usuário escolhe explicitamente o método "manual".
   function calcularProjecaoComRisco(metodo) {
     return _projecao.map(p => {
       const m1 = Number(p.venda_m1) || 0, m2 = Number(p.venda_m2) || 0, m3 = Number(p.venda_m3) || 0;
-      const projMensal = metodo === 'ponderada' ? (m1 * 1 + m2 * 2 + m3 * 3) / 6 : (m1 + m2 + m3) / 3;
+      const consumoRealBluesoft = Number(p.consumoDiaMedioBluesoft) || 0;
+      let projMensal, origemConsumo;
+      if (metodo === 'manual') { projMensal = Math.max(0, Number(p.projecaoManual) || 0); origemConsumo = 'manual'; }
+      else if (consumoRealBluesoft > 0) { projMensal = consumoRealBluesoft * 30.44; origemConsumo = 'bluesoft'; }
+      else { projMensal = metodo === 'ponderada' ? (m1 * 1 + m2 * 2 + m3 * 3) / 6 : (m1 + m2 + m3) / 3; origemConsumo = 'historico'; }
       const projSemanal = projMensal / 4.33;
       const estoque = Number(p.estoqueAtual) || 0;
       const coberturaDias = projSemanal > 0 ? (estoque / projSemanal) * 7 : null;
@@ -39,7 +75,7 @@
       if (coberturaDias != null) {
         risco = coberturaDias <= 3 ? 'critico' : coberturaDias <= 7 ? 'alto' : coberturaDias <= 14 ? 'medio' : 'ok';
       }
-      return { ...p, projMensal, projSemanal, coberturaDias, risco };
+      return { ...p, projMensal, projSemanal, coberturaDias, risco, origemConsumo };
     });
   }
 
@@ -80,8 +116,10 @@
           <select id="pproj-metodo" class="field" title="Método de cálculo da projeção">
             <option value="simples" ${metodo === 'simples' ? 'selected' : ''}>Média simples</option>
             <option value="ponderada" ${metodo === 'ponderada' ? 'selected' : ''}>Média ponderada</option>
+            <option value="manual" ${metodo === 'manual' ? 'selected' : ''}>Projeção manual</option>
           </select>
           <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">📥 Excel<input type="file" id="pproj-excel-input" accept=".xlsx,.xls" style="display:none"></label>
+          <button type="button" class="btn btn-ghost btn-sm" data-pproj-export="1">📊 Exportar</button>
           <button type="button" class="btn btn-primary btn-sm" data-pproj-novo="1">+ Novo Produto</button>
         </div>
       </div>
@@ -99,7 +137,7 @@
                   <td>${esc(p.venda_m1)}</td>
                   <td>${esc(p.venda_m2)}</td>
                   <td>${esc(p.venda_m3)}</td>
-                  <td>${p.projSemanal.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</td>
+                  <td>${p.projSemanal.toLocaleString('pt-BR', { maximumFractionDigits: 1 })} ${p.origemConsumo === 'bluesoft' ? '<span class="badge b-blue" style="font-size:.6rem" title="Consumo real vindo da Bluesoft">🔗</span>' : ''}</td>
                   <td>${esc(p.estoqueAtual ?? '—')}</td>
                   <td>${p.coberturaDias != null ? p.coberturaDias.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'd' : '—'}</td>
                   <td><span class="badge ${risco.cor}">${risco.label}</span></td>
@@ -123,6 +161,7 @@
     document.getElementById('pproj-m1').value = item.venda_m1 ?? 0;
     document.getElementById('pproj-m2').value = item.venda_m2 ?? 0;
     document.getElementById('pproj-m3').value = item.venda_m3 ?? 0;
+    const manual = document.getElementById('pproj-manual'); if (manual) manual.value = item.projecaoManual ?? '';
     document.getElementById('pproj-estoque').value = item.estoqueAtual ?? '';
     global.openModal?.('modal-pproj');
   }
@@ -143,9 +182,11 @@
     const venda_m3 = Number(document.getElementById('pproj-m3').value) || 0;
     const estoqueVal = document.getElementById('pproj-estoque').value;
     const estoqueAtual = estoqueVal === '' ? null : (Number(estoqueVal) || 0);
+    const manualVal = document.getElementById('pproj-manual')?.value ?? '';
+    const projecaoManual = manualVal === '' ? null : Math.max(0, Number(manualVal) || 0);
     const agora = new Date().toISOString();
     const docId = document.getElementById('pproj-doc-id').value || '';
-    const payload = { cod, produto, venda_m1, venda_m2, venda_m3, estoqueAtual, atualizadoEm: agora };
+    const payload = { cod, produto, venda_m1, venda_m2, venda_m3, projecaoManual, estoqueAtual, atualizadoEm: agora };
 
     try {
       if (docId) {
@@ -197,7 +238,8 @@
         const cod = String(r.cod ?? '').trim();
         const produtoNome = String(r.produto ?? '').trim();
         if (!cod || !produtoNome) continue;
-        const payload = { cod, produto: produtoNome, venda_m1: Number(r.venda_m1) || 0, venda_m2: Number(r.venda_m2) || 0, venda_m3: Number(r.venda_m3) || 0, atualizadoEm: agora };
+        const payload = { cod, produto: produtoNome, venda_m1: Number(r.venda_m1) || 0, venda_m2: Number(r.venda_m2) || 0, venda_m3: Number(r.venda_m3) || 0, projecaoManual: r.projecaoManual === '' || r.projecaoManual == null ? null : Math.max(0, Number(r.projecaoManual) || 0), estoqueAtual: r.estoqueAtual === '' || r.estoqueAtual == null ? undefined : Math.max(0, Number(r.estoqueAtual) || 0), atualizadoEm: agora };
+        if (payload.estoqueAtual === undefined) delete payload.estoqueAtual;
         const existente = _projecao.find(p => String(p.cod) === cod);
         if (existente) { await fs().collection(COL_PROJECAO).doc(existente._firestoreId).set(payload, { merge: true }); atualizados++; }
         else { await fs().collection(COL_PROJECAO).add({ ...payload, estoqueAtual: null, criadoEm: agora }); criados++; }
@@ -210,16 +252,32 @@
     }
   }
 
+
+  function exportarProjecaoXLSX() {
+    if (!global.XLSX) { global.showToast?.('Biblioteca do Excel não carregada.', 'error'); return; }
+    const linhas = calcularProjecaoComRisco(document.getElementById('pproj-metodo')?.value || 'simples').map(p => ({
+      cod: p.cod, produto: p.produto, venda_m1: p.venda_m1, venda_m2: p.venda_m2, venda_m3: p.venda_m3,
+      projecaoManual: p.projecaoManual ?? '', estoqueAtual: p.estoqueAtual ?? '', projMensal: p.projMensal,
+      projSemanal: p.projSemanal, coberturaDias: p.coberturaDias ?? '', risco: p.risco,
+    }));
+    const wb = global.XLSX.utils.book_new();
+    global.XLSX.utils.book_append_sheet(wb, global.XLSX.utils.json_to_sheet(linhas), 'Projecao');
+    global.XLSX.writeFile(wb, 'projecao_vendas.xlsx');
+  }
+
   global.renderProducaoProjecao = renderProducaoProjecao;
   global.importarProjecaoExcel = importarProjecaoExcel;
   global.carregarProducaoProjecao = carregarProducaoProjecao;
   global.calcularProjecaoComRisco = calcularProjecaoComRisco;
+  global.aplicarEntradaEstoqueProducao = aplicarEntradaEstoqueProducao;
   global.pprojEditar = pprojEditar;
   global.pprojNovoProduto = pprojNovoProduto;
   global.pprojSalvar = pprojSalvar;
   global.pprojExcluir = pprojExcluir;
+  global.exportarProjecaoXLSX = exportarProjecaoXLSX;
 
   document.addEventListener('click', function (event) {
+    if (event.target.closest('[data-pproj-export]')) { exportarProjecaoXLSX(); return; }
     const novo = event.target.closest('[data-pproj-novo]');
     if (novo) { pprojNovoProduto(); return; }
     const editar = event.target.closest('[data-pproj-editar]');
@@ -238,4 +296,5 @@
       event.target.value = '';
     }
   });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _projecao=[]; });
 })(window);

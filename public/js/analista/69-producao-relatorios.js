@@ -1,243 +1,60 @@
-// Setor Produção — Relatórios, bem simplificado (fase 3d da unificação com
-// o Sistema de Produção). A original tinha TRÊS implementações concorrentes
-// do mesmo painel (uma delas morta na prática) e um relatório "Por
-// Funcionário" que nunca teve dado real (o campo usado nunca era gravado no
-// apontamento, mesmo na original). Aqui: um painel único, 100% derivado do
-// motor de agenda (fase 3c) — sem depender de Apontamento (que ainda não
-// existe), mostrando só "Programado", nunca um falso "Realizado = 0%" como
-// a original fazia silenciosamente.
-(function (global) {
-  'use strict';
-  const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const COL_MAQUINAS = 'producao_maquinas';
-  const COL_REGISTROS = 'producao_registros';
+// Produção — Relatórios V341: programado x realizado, desvios, ocupação,
+// alertas e exportação. Usa os mesmos registros/apontamentos operacionais.
+(function(global){'use strict';
+const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const CREG='producao_registros', CAP='producao_apontamentos', CMAQ='producao_maquinas', CPROD='producao_produtos', CPROJ='producao_projecao', CFICHA='producao_ficha_tecnica', CEST='producao_insumos_estoque', CPROC='producao_processos';
+let regs=[],aps=[],maqs=[],produtos=[],projecao=[],fichas=[],estoqueIns=[],processos=[],weekStart=domingo(new Date()),aba='resumo',carregado=false,charts=[];
+// Gerencial — pivot table interativo (paridade com a original: Gráficos/Tabela/Pivot, filtros busca+máquina+categoria, tabela ordenável, pivot linhas×colunas×valor×agregação com heatmap).
+let gerView='graficos',gerBusca='',gerMaquina='',gerCategoria='',gerPivot={linhas:'maquina',colunas:'dia',valor:'realizado',agregacao:'soma'},gerSort={col:'real',asc:false},gerChartTipoMaq='horizontal',gerChartTipoDia='line',gerChartTipoCat='doughnut',gerCharts=[];
+function fs(){return global.getDTFirestore();} function domingo(d){const x=new Date(d);x.setHours(0,0,0,0);x.setDate(x.getDate()-x.getDay());return x;} function iso(d){return d.toISOString().slice(0,10);} function fim(){const d=new Date(weekStart);d.setDate(d.getDate()+6);return d;} function fmt(d){return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});} function n(v){return Number(v)||0;} function datas(){return Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(d.getDate()+i);return iso(d);});}
+async function carregar(forcar){if(carregado&&!forcar)return;const vazio={docs:[]};const [r,a,m,pj,pr,fi,ei,pc]=await Promise.all([fs().collection(CREG).get(),fs().collection(CAP).get(),fs().collection(CMAQ).get(),fs().collection(CPROD).get().catch(()=>vazio),fs().collection(CPROJ).get().catch(()=>vazio),fs().collection(CFICHA).get().catch(()=>vazio),fs().collection(CEST).get().catch(()=>vazio),fs().collection(CPROC).get().catch(()=>vazio)]);regs=r.docs.map(d=>({_id:d.id,...d.data()}));aps=a.docs.map(d=>({_id:d.id,...d.data()}));maqs=m.docs.map(d=>({_id:d.id,...d.data()}));produtos=pj.docs.map(d=>({_id:d.id,...d.data()}));projecao=pr.docs.map(d=>({_id:d.id,...d.data()}));fichas=fi.docs.map(d=>({_id:d.id,...d.data()}));estoqueIns=ei.docs.map(d=>({_id:d.id,...d.data()}));processos=pc.docs.map(d=>({_id:d.id,...d.data()}));carregado=true;}
+function semanaRegs(){const ds=datas();return regs.filter(r=>ds.includes(r.data)||aps.some(a=>a.registroId===r._id&&ds.includes(a.data)));} function realReg(id){const ds=datas();return aps.filter(a=>a.registroId===id&&ds.includes(a.data)).reduce((s,a)=>s+n(a.qntCaixas),0);} function totalReal(id){return aps.filter(a=>a.registroId===id).reduce((s,a)=>s+n(a.qntCaixas),0);}
+function dados(){const rr=semanaRegs(), porM={}, porP={}, porD={}; datas().forEach(d=>porD[d]={prog:0,real:0});let prog=0,real=0,concl=0,atras=0;rr.forEach(r=>{const p=n(r.qntCaixas),x=realReg(r._id),m=r.maquina||'Sem máquina',pr=r.produto||'Sem produto';prog+=p;real+=x;if(r.status==='concluido')concl++;if(r.data&&r.data<iso(new Date())&&totalReal(r._id)<p&&r.status!=='concluido')atras++;(porM[m]??={prog:0,real:0,ops:0}).prog+=p;porM[m].real+=x;porM[m].ops++;(porP[pr]??={prog:0,real:0,ops:0}).prog+=p;porP[pr].real+=x;porP[pr].ops++;if(porD[r.data])porD[r.data].prog+=p;});aps.filter(a=>datas().includes(a.data)).forEach(a=>{if(porD[a.data])porD[a.data].real+=n(a.qntCaixas);});return{rr,prog,real,concl,atras,porM,porP,porD,ader:prog?Math.round(real/prog*100):0};}
+function ocupacao(nome){if(typeof global.buildProducaoSchedule!=='function')return 0;const mm={};maqs.forEach(m=>mm[m.nome]=m);const s=global.buildProducaoSchedule(weekStart,regs,mm,global._producaoSetups||[]);const x=s?.porMaquina?.[nome];return x&&x.capacidadeMinutosSemana?Math.round(x.totalMinutosUsados/x.capacidadeMinutosSemana*100):0;}
+function tabelaMapa(obj,label){const rows=Object.entries(obj).sort((a,b)=>b[1].prog-a[1].prog);return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>${label}</th><th style="text-align:right">Programado</th><th style="text-align:right">Realizado</th><th style="text-align:right">Desvio</th><th style="text-align:center">Aderência</th>${label==='Máquina'?'<th style="text-align:center">Ocupação</th>':''}</tr></thead><tbody>${rows.length?rows.map(([k,v])=>{const ad=v.prog?Math.round(v.real/v.prog*100):0,des=v.real-v.prog;return `<tr><td><b>${esc(k)}</b></td><td style="text-align:right">${v.prog.toLocaleString('pt-BR')}</td><td style="text-align:right">${v.real.toLocaleString('pt-BR')}</td><td style="text-align:right">${des.toLocaleString('pt-BR')}</td><td style="text-align:center"><span class="badge ${ad>=100?'b-green':ad>=80?'b-blue':'b-orange'}">${ad}%</span></td>${label==='Máquina'?`<td style="text-align:center">${ocupacao(k)}%</td>`:''}</tr>`}).join(''):'<tr><td colspan="6"><div class="empty">Sem dados na semana.</div></td></tr>'}</tbody></table></div></div>`;}
 
-  const DIA_LABEL = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+function norm(v){return String(v??'').trim().toLowerCase();}
+function categoriaReg(r){const p=produtos.find(x=>String(x.cod||'')===String(r.prodCod||r.cod||'')||norm(x.descricao||x.produto)===norm(r.produto));return r.configSnapshot?.produto?.categoria||r.categoria||p?.categoria||'Sem categoria';}
+function tabelaCategorias(d){const map={};d.rr.forEach(r=>{const k=categoriaReg(r);const x=(map[k]??={prog:0,real:0,ops:0});x.prog+=n(r.qntCaixas);x.real+=realReg(r._id);x.ops++;});return tabelaMapa(map,'Categoria');}
+function coberturaHtml(){let lin=[];if(typeof global.calcularProjecaoComRisco==='function'){try{lin=global.calcularProjecaoComRisco('ponderada')||[];}catch(e){lin=[];}}if(!lin.length)lin=projecao.map(p=>{const m1=n(p.venda_m1),m2=n(p.venda_m2),m3=n(p.venda_m3),mens=(m1+2*m2+3*m3)/6,sem=mens/4.33,est=n(p.estoqueAtual),cob=sem>0?est/sem*7:null;return {...p,projSemanal:sem,coberturaDias:cob,risco:cob==null?'nd':cob<=3?'critico':cob<=7?'alto':cob<=14?'medio':'ok'};});lin.sort((a,b)=>(a.coberturaDias??999999)-(b.coberturaDias??999999));return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Produto</th><th style="text-align:right">Estoque</th><th style="text-align:right">Demanda/sem.</th><th style="text-align:right">Cobertura</th><th>Risco</th></tr></thead><tbody>${lin.length?lin.map(p=>`<tr><td><b>${esc(p.produto||p.descricao||'')}</b></td><td style="text-align:right">${n(p.estoqueAtual).toLocaleString('pt-BR')}</td><td style="text-align:right">${n(p.projSemanal).toLocaleString('pt-BR',{maximumFractionDigits:1})}</td><td style="text-align:right">${p.coberturaDias==null?'—':Number(p.coberturaDias).toLocaleString('pt-BR',{maximumFractionDigits:1})+'d'}</td><td><span class="badge ${p.risco==='critico'?'b-red':p.risco==='alto'?'b-orange':p.risco==='medio'?'b-yellow':p.risco==='ok'?'b-green':'b-gray'}">${esc(p.risco||'nd')}</span></td></tr>`).join(''):'<tr><td colspan="5">Sem dados de projeção/estoque.</td></tr>'}</tbody></table></div></div>`;}
+function funcionariosHtml(){const ds=datas(),map={};processos.filter(p=>ds.includes(p.data)).forEach(p=>(p.funcionarios||[]).forEach(f=>{const k=f.nome||'Sem nome',x=(map[k]??={min:0,processos:0,funcoes:new Set()});x.min+=n(f.tempoMin||p.tempoMinutos);x.processos++;if(f.funcao)x.funcoes.add(f.funcao);}));const rows=Object.entries(map).sort((a,b)=>b[1].min-a[1].min);return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Funcionário</th><th>Funções</th><th style="text-align:right">Processos</th><th style="text-align:right">Tempo</th></tr></thead><tbody>${rows.length?rows.map(([k,v])=>`<tr><td><b>${esc(k)}</b></td><td>${esc([...v.funcoes].join(', ')||'—')}</td><td style="text-align:right">${v.processos}</td><td style="text-align:right">${Math.round(v.min)} min</td></tr>`).join(''):'<tr><td colspan="4">Sem processos com funcionários nesta semana.</td></tr>'}</tbody></table></div></div>`;}
+function fichaDoReg(r){return fichas.find(f=>String(f.cod||f.prodCod||'')===String(r.prodCod||r.cod||'')||norm(f.produto||f.descricao)===norm(r.produto));}
+function insumosHtml(d){const map={};d.rr.forEach(r=>{const f=fichaDoReg(r);const its=r.configSnapshot?.insumos||f?.insumos||[];its.forEach(i=>{const nome=i.insumo||i.nome;if(!nome)return;const x=(map[nome]??={necessario:0,unidade:i.unidade||'',categoria:i.categoria||''});x.necessario+=n(i.qty??i.quantidade)*n(r.qntCaixas);});});estoqueIns.forEach(e=>{const key=Object.keys(map).find(k=>norm(k)===norm(e.insumo||e.nome));if(key){map[key].estoque=n(e.quantidade??e.estoque);map[key].unidade=map[key].unidade||e.unidade||'';map[key].categoria=map[key].categoria||e.categoria||'';}});const rows=Object.entries(map).sort((a,b)=>((a[1].estoque??0)-a[1].necessario)-((b[1].estoque??0)-b[1].necessario));return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Insumo</th><th>Categoria</th><th style="text-align:right">Necessário</th><th style="text-align:right">Estoque</th><th style="text-align:right">Saldo</th><th>Un.</th></tr></thead><tbody>${rows.length?rows.map(([k,v])=>{const est=v.estoque??0,s=est-v.necessario;return `<tr><td><b>${esc(k)}</b></td><td>${esc(v.categoria||'—')}</td><td style="text-align:right">${v.necessario.toLocaleString('pt-BR',{maximumFractionDigits:2})}</td><td style="text-align:right">${est.toLocaleString('pt-BR',{maximumFractionDigits:2})}</td><td style="text-align:right"><span class="badge ${s<0?'b-red':'b-green'}">${s.toLocaleString('pt-BR',{maximumFractionDigits:2})}</span></td><td>${esc(v.unidade||'')}</td></tr>`;}).join(''):'<tr><td colspan="6">Sem consumo de insumos calculável.</td></tr>'}</tbody></table></div></div>`;}
+function gerFiltrarRegs(rr){const b=norm(gerBusca);return rr.filter(r=>{if(gerMaquina&&(r.maquina||'')!==gerMaquina)return false;if(gerCategoria&&categoriaReg(r)!==gerCategoria)return false;if(b&&!norm(r.produto).includes(b)&&!norm(r.maquina).includes(b))return false;return true;});}
+function gerCalcular(rrFiltrado){const porM={},porP={},porCat={},porD={};datas().forEach(dt=>porD[dt]={prog:0,real:0});let prog=0,real=0;rrFiltrado.forEach(r=>{const p=n(r.qntCaixas),x=realReg(r._id),m=r.maquina||'Sem máquina',pr=r.produto||'Sem produto',cat=categoriaReg(r);prog+=p;real+=x;(porM[m]??={prog:0,real:0,ops:0,produtos:{}}).prog+=p;porM[m].real+=x;porM[m].ops++;porM[m].produtos[pr]=(porM[m].produtos[pr]||0)+x;(porP[pr]??={prog:0,real:0,ops:0}).prog+=p;porP[pr].real+=x;porP[pr].ops++;(porCat[cat]??={prog:0,real:0,ops:0}).prog+=p;porCat[cat].real+=x;porCat[cat].ops++;if(porD[r.data]){porD[r.data].prog+=p;porD[r.data].real+=x;}});return {porM,porP,porCat,porD,prog,real,ordens:rrFiltrado.length,ader:prog?Math.round(real/prog*100):0};}
+function gerFiltrosHtml(rrBase){const maquinasOpts=[...new Set(rrBase.map(r=>r.maquina).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));const categoriasOpts=[...new Set(rrBase.map(r=>categoriaReg(r)))].sort((a,b)=>a.localeCompare(b,'pt-BR'));return `<div class="tc" style="padding:10px 12px;margin-bottom:12px;display:flex;gap:10px;flex-wrap:wrap;align-items:center"><input type="text" class="field" data-ger-busca value="${esc(gerBusca)}" placeholder="Buscar produto/máquina..." style="max-width:220px;padding:6px 10px;font-size:.75rem"><select class="field" data-ger-maquina style="padding:6px 10px;font-size:.75rem"><option value="">Todas as máquinas</option>${maquinasOpts.map(m=>`<option value="${esc(m)}" ${gerMaquina===m?'selected':''}>${esc(m)}</option>`).join('')}</select><select class="field" data-ger-categoria style="padding:6px 10px;font-size:.75rem"><option value="">Todas as categorias</option>${categoriasOpts.map(c=>`<option value="${esc(c)}" ${gerCategoria===c?'selected':''}>${esc(c)}</option>`).join('')}</select>${(gerBusca||gerMaquina||gerCategoria)?'<button type="button" class="btn btn-ghost btn-sm" data-ger-limpar-filtros>✕ Limpar filtros</button>':''}<div style="margin-left:auto;display:flex;gap:4px"><button type="button" class="btn ${gerView==='graficos'?'btn-primary':'btn-ghost'} btn-sm" data-ger-view="graficos">📊 Gráficos</button><button type="button" class="btn ${gerView==='tabela'?'btn-primary':'btn-ghost'} btn-sm" data-ger-view="tabela">📋 Tabela</button><button type="button" class="btn ${gerView==='pivot'?'btn-primary':'btn-ghost'} btn-sm" data-ger-view="pivot">🔀 Pivot</button></div></div>`;}
+function gerKpisHtml(gd){const gap=gd.real-gd.prog,maqAtivas=Object.keys(gd.porM).length,acimaMeta=Object.values(gd.porM).filter(v=>v.prog&&Math.round(v.real/v.prog*100)>=85).length;return `<div class="kpi-grid" style="margin-bottom:12px"><div class="kpi blue"><div class="kpi-val">${gd.prog.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Programado</div></div><div class="kpi green"><div class="kpi-val">${gd.real.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Realizado</div></div><div class="kpi ${gap>=0?'teal':'orange'}"><div class="kpi-val">${gap>=0?'+':''}${gap.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Gap</div></div><div class="kpi ${gd.ader>=85?'teal':gd.ader>=60?'yellow':'purple'}"><div class="kpi-val">${gd.ader}%</div><div class="kpi-lbl">Eficiência</div></div><div class="kpi purple"><div class="kpi-val">${maqAtivas}</div><div class="kpi-lbl">Máquinas ativas</div></div><div class="kpi orange"><div class="kpi-val">${acimaMeta}</div><div class="kpi-lbl">Acima da meta (85%)</div></div></div>`;}
+function gerInsightsHtml(gd){const entries=Object.entries(gd.porM);if(!entries.length)return '';const comEfic=entries.map(([k,v])=>[k,v,v.prog?Math.round(v.real/v.prog*100):0]);const melhorEfic=[...comEfic].sort((a,b)=>b[2]-a[2])[0];const piorDesvio=[...entries].sort((a,b)=>(a[1].real-a[1].prog)-(b[1].real-b[1].prog))[0];const maiorVolume=[...entries].sort((a,b)=>b[1].real-a[1].real)[0];const cards=[melhorEfic?{icone:'🏆',titulo:'Melhor eficiência',texto:`${esc(melhorEfic[0])} — ${melhorEfic[2]}%`}:null,piorDesvio?{icone:'📉',titulo:'Maior desvio negativo',texto:`${esc(piorDesvio[0])} — ${(piorDesvio[1].real-piorDesvio[1].prog).toLocaleString('pt-BR')} cx`}:null,maiorVolume?{icone:'📦',titulo:'Maior volume realizado',texto:`${esc(maiorVolume[0])} — ${maiorVolume[1].real.toLocaleString('pt-BR')} cx`}:null].filter(Boolean);return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-bottom:14px">${cards.map(c=>`<div class="tc" style="padding:12px"><div style="font-size:1.1rem;margin-bottom:4px">${c.icone}</div><div style="font-size:.68rem;color:var(--muted);font-weight:700;text-transform:uppercase">${c.titulo}</div><div style="font-size:.85rem;font-weight:600;margin-top:3px">${c.texto}</div></div>`).join('')}</div>`;}
+function gerTabelaHtml(gd){const totalReal=gd.real||1;let rows=Object.entries(gd.porM).map(([k,v])=>{const gap=v.real-v.prog,ad=v.prog?Math.round(v.real/v.prog*100):0,pctTotal=Math.round(v.real/totalReal*100);const topProdutos=Object.entries(v.produtos||{}).sort((a,b)=>b[1]-a[1]).slice(0,3).map(([p])=>p);return {maquina:k,prog:v.prog,real:v.real,gap,ad,pctTotal,ops:v.ops,topProdutos};});const col=gerSort.col,asc=gerSort.asc;rows.sort((a,b)=>{const va=a[col],vb=b[col];const cmp=typeof va==='string'?String(va).localeCompare(String(vb),'pt-BR'):(va-vb);return asc?cmp:-cmp;});const th=(label,campo)=>`<th data-ger-sort="${campo}" style="cursor:pointer;user-select:none">${label} ${col===campo?(asc?'▲':'▼'):''}</th>`;return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr>${th('Máquina','maquina')}${th('Programado','prog')}${th('Realizado','real')}${th('Gap','gap')}${th('Efic.','ad')}<th>Top produtos</th><th style="text-align:center">% do total</th></tr></thead><tbody>${rows.length?rows.map(r=>`<tr><td><b>${esc(r.maquina)}</b></td><td style="text-align:right">${r.prog.toLocaleString('pt-BR')}</td><td style="text-align:right">${r.real.toLocaleString('pt-BR')}</td><td style="text-align:right">${r.gap.toLocaleString('pt-BR')}</td><td style="text-align:center"><span class="badge ${r.ad>=100?'b-green':r.ad>=80?'b-blue':'b-orange'}">${r.ad}%</span></td><td style="font-size:.7rem;color:var(--muted)">${esc(r.topProdutos.join(', ')||'—')}</td><td><div style="display:flex;align-items:center;gap:6px"><div style="flex:1;height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden"><div style="height:100%;width:${r.pctTotal}%;background:var(--orange)"></div></div><span style="font-size:.65rem;color:var(--muted);min-width:28px;text-align:right">${r.pctTotal}%</span></div></td></tr>`).join(''):'<tr><td colspan="7"><div class="empty">Sem dados com os filtros atuais.</div></td></tr>'}</tbody></table></div></div>`;}
+function gerValorDimensao(r,dim){if(dim==='maquina')return r.maquina||'Sem máquina';if(dim==='produto')return r.produto||'Sem produto';if(dim==='categoria')return categoriaReg(r);if(dim==='dia'){const z=r.data?new Date(r.data+'T12:00:00'):null;return z?z.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit'}):'Sem data';}return '—';}
+function gerValorMetrica(r,valor){const p=n(r.qntCaixas),x=realReg(r._id);if(valor==='programado')return p;if(valor==='gap')return x-p;if(valor==='eficiencia')return p?Math.round(x/p*100):0;if(valor==='ordens')return 1;return x;}
+function gerAgregar(valores,agregacao){if(!valores.length)return 0;const soma=valores.reduce((s,v)=>s+v,0);if(agregacao==='media')return Math.round(soma/valores.length*10)/10;if(agregacao==='max')return Math.max(...valores);if(agregacao==='contagem')return valores.length;return soma;}
+function gerPivotHtml(rrFiltrado){const linhasVals=[...new Set(rrFiltrado.map(r=>gerValorDimensao(r,gerPivot.linhas)))].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR'));const colunasVals=[...new Set(rrFiltrado.map(r=>gerValorDimensao(r,gerPivot.colunas)))].sort((a,b)=>String(a).localeCompare(String(b),'pt-BR'));const matriz={};linhasVals.forEach(l=>{matriz[l]={};colunasVals.forEach(c=>matriz[l][c]=[]);});rrFiltrado.forEach(r=>{const l=gerValorDimensao(r,gerPivot.linhas),c=gerValorDimensao(r,gerPivot.colunas);matriz[l]?.[c]?.push(gerValorMetrica(r,gerPivot.valor));});const celulas={};let max=0;linhasVals.forEach(l=>{celulas[l]={};colunasVals.forEach(c=>{const v=gerAgregar(matriz[l][c],gerPivot.agregacao);celulas[l][c]=v;if(Math.abs(v)>max)max=Math.abs(v);});});const totalLinha=l=>gerAgregar(colunasVals.flatMap(c=>matriz[l][c]),gerPivot.agregacao);const totalColuna=c=>gerAgregar(linhasVals.flatMap(l=>matriz[l][c]),gerPivot.agregacao);const totalGeral=gerAgregar(rrFiltrado.map(r=>gerValorMetrica(r,gerPivot.valor)),gerPivot.agregacao);const dimOpts=[['maquina','Máquina'],['produto','Produto'],['categoria','Categoria'],['dia','Dia']];const valorOpts=[['realizado','Realizado'],['programado','Programado'],['gap','Gap'],['eficiencia','Eficiência %'],['ordens','Nº de OPs']];const agregOpts=[['soma','Soma'],['media','Média'],['max','Máximo'],['contagem','Contagem']];const sel=(name,opts,atual)=>`<select class="field" data-ger-pivot-campo="${name}" style="padding:5px 8px;font-size:.72rem">${opts.map(([v,l])=>`<option value="${v}" ${atual===v?'selected':''}>${l}</option>`).join('')}</select>`;return `<div class="tc" style="padding:10px 12px;margin-bottom:10px;display:flex;gap:14px;flex-wrap:wrap;align-items:center"><label style="display:flex;align-items:center;gap:5px;font-size:.68rem;color:var(--muted)">Linhas ${sel('linhas',dimOpts,gerPivot.linhas)}</label><label style="display:flex;align-items:center;gap:5px;font-size:.68rem;color:var(--muted)">Colunas ${sel('colunas',dimOpts,gerPivot.colunas)}</label><label style="display:flex;align-items:center;gap:5px;font-size:.68rem;color:var(--muted)">Valor ${sel('valor',valorOpts,gerPivot.valor)}</label><label style="display:flex;align-items:center;gap:5px;font-size:.68rem;color:var(--muted)">Agregação ${sel('agregacao',agregOpts,gerPivot.agregacao)}</label></div><div class="tc"><div style="overflow:auto;max-height:520px"><table class="dt-table" style="font-size:.72rem"><thead><tr><th style="position:sticky;left:0;top:0;background:var(--surface-2);z-index:2">${dimOpts.find(x=>x[0]===gerPivot.linhas)[1]} \\ ${dimOpts.find(x=>x[0]===gerPivot.colunas)[1]}</th>${colunasVals.map(c=>`<th style="position:sticky;top:0;background:var(--surface-2);text-align:right">${esc(c)}</th>`).join('')}<th style="position:sticky;top:0;right:0;background:var(--surface-2);text-align:right">Total</th></tr></thead><tbody>${linhasVals.length?linhasVals.map(l=>`<tr><td style="position:sticky;left:0;background:var(--surface);font-weight:700">${esc(l)}</td>${colunasVals.map(c=>{const v=celulas[l][c];const intensidade=max?Math.min(1,Math.abs(v)/max):0;const bg=v===0?'transparent':`rgba(232,117,26,${(0.06+intensidade*0.34).toFixed(2)})`;return `<td style="text-align:right;background:${bg}">${v?v.toLocaleString('pt-BR',{maximumFractionDigits:1}):'—'}</td>`;}).join('')}<td style="text-align:right;font-weight:700;background:var(--surface-2)">${totalLinha(l).toLocaleString('pt-BR',{maximumFractionDigits:1})}</td></tr>`).join(''):`<tr><td colspan="${colunasVals.length+2}"><div class="empty">Sem dados com os filtros atuais.</div></td></tr>`}</tbody>${linhasVals.length?`<tfoot><tr style="font-weight:700;background:var(--surface-2)"><td style="position:sticky;left:0;background:var(--surface-2)">Total</td>${colunasVals.map(c=>`<td style="text-align:right">${totalColuna(c).toLocaleString('pt-BR',{maximumFractionDigits:1})}</td>`).join('')}<td style="text-align:right">${totalGeral.toLocaleString('pt-BR',{maximumFractionDigits:1})}</td></tr></tfoot>`:''}</table></div></div>`;}
+function gerGraficosHtml(){return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px"><div class="tc" style="padding:14px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b>Prog. × Real. por máquina</b><div style="display:flex;gap:4px"><button type="button" class="btn ${gerChartTipoMaq==='horizontal'?'btn-primary':'btn-ghost'} btn-sm" data-ger-chart-tipo="maq:horizontal">↔</button><button type="button" class="btn ${gerChartTipoMaq==='vertical'?'btn-primary':'btn-ghost'} btn-sm" data-ger-chart-tipo="maq:vertical">↕</button></div></div><canvas id="ger-chart-maq" height="220"></canvas></div><div class="tc" style="padding:14px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b>Evolução diária</b><div style="display:flex;gap:4px"><button type="button" class="btn ${gerChartTipoDia==='line'?'btn-primary':'btn-ghost'} btn-sm" data-ger-chart-tipo="dia:line">📈</button><button type="button" class="btn ${gerChartTipoDia==='bar'?'btn-primary':'btn-ghost'} btn-sm" data-ger-chart-tipo="dia:bar">▭</button></div></div><canvas id="ger-chart-dia" height="220"></canvas></div><div class="tc" style="padding:14px"><b>Eficiência por máquina</b><canvas id="ger-chart-efic" height="220"></canvas></div><div class="tc" style="padding:14px"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px"><b>Mix por categoria</b><div style="display:flex;gap:4px"><button type="button" class="btn ${gerChartTipoCat==='doughnut'?'btn-primary':'btn-ghost'} btn-sm" data-ger-chart-tipo="cat:doughnut">◔</button><button type="button" class="btn ${gerChartTipoCat==='bar'?'btn-primary':'btn-ghost'} btn-sm" data-ger-chart-tipo="cat:bar">▭</button></div></div><canvas id="ger-chart-cat" height="220"></canvas></div></div>`;}
+function gerDestruirGraficos(){while(gerCharts.length){try{gerCharts.pop().destroy();}catch(e){}}}
+function gerCriarGraficos(gd){gerDestruirGraficos();if(typeof global.Chart!=='function')return;const cMaq=document.getElementById('ger-chart-maq');if(cMaq){const nomes=Object.keys(gd.porM).sort((a,b)=>gd.porM[b].real-gd.porM[a].real);gerCharts.push(new global.Chart(cMaq,{type:'bar',data:{labels:nomes,datasets:[{label:'Programado',data:nomes.map(x=>gd.porM[x].prog),backgroundColor:'#DDE3EC'},{label:'Realizado',data:nomes.map(x=>gd.porM[x].real),backgroundColor:'#E8751A'}]},options:{indexAxis:gerChartTipoMaq==='horizontal'?'y':'x',responsive:true,maintainAspectRatio:false}}));}const cDia=document.getElementById('ger-chart-dia');if(cDia){const ds=datas(),labs=ds.map(x=>{const z=new Date(x+'T12:00:00');return z.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit'});});gerCharts.push(new global.Chart(cDia,{type:gerChartTipoDia,data:{labels:labs,datasets:[{label:'Programado',data:ds.map(x=>gd.porD[x]?.prog||0),borderColor:'#5A6B80',backgroundColor:'#5A6B80'},{label:'Realizado',data:ds.map(x=>gd.porD[x]?.real||0),borderColor:'#E8751A',backgroundColor:'#E8751A'}]},options:{responsive:true,maintainAspectRatio:false}}));}const cEfic=document.getElementById('ger-chart-efic');if(cEfic){const nomes=Object.keys(gd.porM),eficPorM=nomes.map(x=>gd.porM[x].prog?Math.round(gd.porM[x].real/gd.porM[x].prog*100):0);gerCharts.push(new global.Chart(cEfic,{type:'bar',data:{labels:nomes,datasets:[{label:'Eficiência %',data:eficPorM,backgroundColor:eficPorM.map(v=>v>=85?'#15803D':v>=60?'#C97A06':'#D92020')}]},options:{responsive:true,maintainAspectRatio:false}}));}const cCat=document.getElementById('ger-chart-cat');if(cCat){const nomes=Object.keys(gd.porCat);gerCharts.push(new global.Chart(cCat,{type:gerChartTipoCat,data:{labels:nomes,datasets:[{label:'Realizado',data:nomes.map(x=>gd.porCat[x].real),backgroundColor:nomes.map((_,i)=>`hsl(${25+i*35},65%,50%)`)}]},options:{responsive:true,maintainAspectRatio:false}}));}}
+function gerencialHtml(d){const rrFiltrado=gerFiltrarRegs(d.rr);const gd=gerCalcular(rrFiltrado);const conteudo=gerView==='tabela'?gerTabelaHtml(gd):gerView==='pivot'?gerPivotHtml(rrFiltrado):gerGraficosHtml();if(gerView==='graficos')setTimeout(()=>gerCriarGraficos(gd),0);else gerDestruirGraficos();return gerFiltrosHtml(d.rr)+gerKpisHtml(gd)+gerInsightsHtml(gd)+conteudo;}
 
-  let _maquinas = [];
-  let _registros = [];
-  let _carregado = false;
-  let _aba = 'maquina';
-  let _tipoDia = 'bar';
-  let _tipoCategoria = 'doughnut';
-  const _charts = [];
-
-  function fs() { return global.getDTFirestore(); }
-  function _domingoDaSemana(d) { const r = new Date(d); r.setHours(0, 0, 0, 0); r.setDate(r.getDate() - r.getDay()); return r; }
-
-  async function carregarProducaoRelatorios(forcar) {
-    if (_carregado && !forcar) return;
-    const [snapMaq, snapReg] = await Promise.all([
-      fs().collection(COL_MAQUINAS).get(),
-      fs().collection(COL_REGISTROS).get(),
-    ]);
-    _maquinas = snapMaq.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
-    _registros = snapReg.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
-    _carregado = true;
-  }
-
-  async function renderProducaoRelatorios() {
-    const pagina = document.getElementById('page-producao-relatorios');
-    if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try {
-      await carregarProducaoRelatorios();
-      await global.carregarProducaoInsumos?.();
-    } catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
-    _desenharProducaoRelatorios();
-  }
-
-  function _tabelaPorMaquina() {
-    if (typeof global.buildProducaoSchedule !== 'function') return '<div class="empty"><div class="empty-title">Motor de agenda não carregado</div></div>';
-    const maquinasPorNome = {}; _maquinas.forEach(m => { maquinasPorNome[m.nome] = m; });
-    const resultado = global.buildProducaoSchedule(_domingoDaSemana(new Date()), _registros, maquinasPorNome);
-    const nomes = Object.keys(resultado.porMaquina).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-    if (!nomes.length) return '<div class="empty"><div class="empty-icon">🏭</div><div class="empty-title">Nenhuma OP programada nesta semana</div></div>';
-    return `<div class="tc"><div style="overflow:auto"><table class="dt-table">
-      <thead><tr><th>Máquina</th><th>Ocupação da semana</th></tr></thead>
-      <tbody>${nomes.map(nome => {
-        const d = resultado.porMaquina[nome];
-        const oc = d.capacidadeMinutosSemana > 0 ? Math.round((d.totalMinutosUsados / d.capacidadeMinutosSemana) * 100) : 0;
-        return `<tr><td><b>${esc(nome)}</b></td><td>
-          <div style="display:flex;align-items:center;gap:8px">
-            <div style="flex:1;height:6px;border-radius:4px;background:var(--border);overflow:hidden;max-width:200px"><div style="height:100%;width:${oc}%;background:var(--orange)"></div></div>
-            <span style="font-size:.72rem;color:var(--muted)">${oc}%</span>
-          </div></td></tr>`;
-      }).join('')}</tbody></table></div></div>`;
-  }
-
-  function _tabelaPorProduto() {
-    if (typeof global.buildProducaoSchedule !== 'function') return '<div class="empty"><div class="empty-title">Motor de agenda não carregado</div></div>';
-    const maquinasPorNome = {}; _maquinas.forEach(m => { maquinasPorNome[m.nome] = m; });
-    const resultado = global.buildProducaoSchedule(_domingoDaSemana(new Date()), _registros, maquinasPorNome);
-    const porProduto = {};
-    Object.values(resultado.porMaquina).forEach(dados => dados.porDia.forEach(segs => segs.forEach(s => {
-      porProduto[s.produto] = (porProduto[s.produto] || 0) + s.caixasNoDia;
-    })));
-    const produtos = Object.keys(porProduto).sort((a, b) => porProduto[b] - porProduto[a]);
-    if (!produtos.length) return '<div class="empty"><div class="empty-icon">📦</div><div class="empty-title">Nenhuma OP programada nesta semana</div></div>';
-    const maximo = porProduto[produtos[0]] || 1;
-    return `<div class="tc"><div style="overflow:auto"><table class="dt-table">
-      <thead><tr><th>Produto</th><th>Caixas programadas na semana</th></tr></thead>
-      <tbody>${produtos.map(p => `<tr><td><b>${esc(p)}</b></td><td>
-        <div style="display:flex;align-items:center;gap:8px">
-          <div style="flex:1;height:6px;border-radius:4px;background:var(--border);overflow:hidden;max-width:200px"><div style="height:100%;width:${Math.round(porProduto[p] / maximo * 100)}%;background:var(--green-mid)"></div></div>
-          <span style="font-size:.72rem;color:var(--muted)">${porProduto[p].toLocaleString('pt-BR')}</span>
-        </div></td></tr>`).join('')}</tbody>
-      </table></div></div>`;
-  }
-
-  function _tabelaInsumos() {
-    if (typeof global.calcularConsumoInsumosSemana !== 'function') return '<div class="empty"><div class="empty-title">Módulo de Insumos não carregado</div></div>';
-    const { geral } = global.calcularConsumoInsumosSemana(_domingoDaSemana(new Date()));
-    const categorias = Object.keys(geral).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-    if (!categorias.length) return '<div class="empty"><div class="empty-icon">🧪</div><div class="empty-title">Nenhum insumo calculado para esta semana</div></div>';
-    return `<div class="tc"><div style="overflow:auto"><table class="dt-table">
-      <thead><tr><th>Categoria</th><th>Insumo</th><th>Total na semana</th></tr></thead>
-      <tbody>${categorias.map(cat => Object.keys(geral[cat]).sort((a, b) => a.localeCompare(b, 'pt-BR')).map(ins => `<tr><td>${esc(cat)}</td><td>${esc(ins)}</td><td>${geral[cat][ins].toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td></tr>`).join('')).join('')}</tbody>
-      </table></div></div>`;
-  }
-
-  function _kpisSemana() {
-    if (typeof global.buildProducaoSchedule !== 'function') return { totalCaixas: 0, maquinasAtivas: 0, produtoTop: '—' };
-    const maquinasPorNome = {}; _maquinas.forEach(m => { maquinasPorNome[m.nome] = m; });
-    const resultado = global.buildProducaoSchedule(_domingoDaSemana(new Date()), _registros, maquinasPorNome);
-    let totalCaixas = 0; const porProduto = {};
-    Object.values(resultado.porMaquina).forEach(d => d.porDia.forEach(segs => segs.forEach(s => {
-      totalCaixas += s.caixasNoDia;
-      porProduto[s.produto] = (porProduto[s.produto] || 0) + s.caixasNoDia;
-    })));
-    const maquinasAtivas = Object.values(resultado.porMaquina).filter(d => d.porDia.some(dia => dia.length)).length;
-    const produtoTop = Object.keys(porProduto).sort((a, b) => porProduto[b] - porProduto[a])[0] || '—';
-    return { totalCaixas, maquinasAtivas, produtoTop };
-  }
-
-  function _destruirGraficos() {
-    while (_charts.length) { try { _charts.pop().destroy(); } catch (e) { /* canvas já removido */ } }
-  }
-
-  function _dadosSemana() {
-    const maquinasPorNome = {}; _maquinas.forEach(m => { maquinasPorNome[m.nome] = m; });
-    const resultado = global.buildProducaoSchedule?.(_domingoDaSemana(new Date()), _registros, maquinasPorNome) || { porMaquina: {} };
-    return { resultado, maquinasPorNome };
-  }
-
-  function _blocoGraficos() {
-    if (typeof global.Chart !== 'function') return '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Chart.js não carregado</div></div>';
-    return `
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px">
-        <div class="tc" style="padding:14px">
-          <div style="font-weight:700;margin-bottom:8px">Programado por Máquina</div>
-          <canvas id="pgraf-maquina" height="220"></canvas>
-        </div>
-        <div class="tc" style="padding:14px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="font-weight:700">Evolução Diária</div>
-            <div style="display:flex;gap:4px">
-              <button type="button" class="btn ${_tipoDia === 'bar' ? 'btn-primary' : 'btn-ghost'} btn-sm" style="padding:2px 8px" data-prel-tipo-dia="bar">Barras</button>
-              <button type="button" class="btn ${_tipoDia === 'line' ? 'btn-primary' : 'btn-ghost'} btn-sm" style="padding:2px 8px" data-prel-tipo-dia="line">Linha</button>
-            </div>
-          </div>
-          <canvas id="pgraf-dia" height="220"></canvas>
-        </div>
-        <div class="tc" style="padding:14px">
-          <div style="font-weight:700;margin-bottom:8px">Ocupação por Máquina (meta 85%)</div>
-          <canvas id="pgraf-ocupacao" height="220"></canvas>
-        </div>
-        <div class="tc" style="padding:14px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <div style="font-weight:700">Mix por Categoria</div>
-            <div style="display:flex;gap:4px">
-              <button type="button" class="btn ${_tipoCategoria === 'doughnut' ? 'btn-primary' : 'btn-ghost'} btn-sm" style="padding:2px 8px" data-prel-tipo-cat="doughnut">Rosca</button>
-              <button type="button" class="btn ${_tipoCategoria === 'pie' ? 'btn-primary' : 'btn-ghost'} btn-sm" style="padding:2px 8px" data-prel-tipo-cat="pie">Pizza</button>
-              <button type="button" class="btn ${_tipoCategoria === 'bar' ? 'btn-primary' : 'btn-ghost'} btn-sm" style="padding:2px 8px" data-prel-tipo-cat="bar">Barras</button>
-            </div>
-          </div>
-          <canvas id="pgraf-categoria" height="220"></canvas>
-        </div>
-      </div>
-      <div class="empty" style="display:flex;padding:10px 16px;margin-top:14px;text-align:left;flex-direction:row;gap:10px;align-items:center">
-        <div class="empty-icon" style="margin:0;font-size:1.2rem">ℹ️</div>
-        <div class="empty-sub" style="margin:0">Sem série "Realizado" ainda — entra quando a fase de Apontamento existir. Por enquanto todos os gráficos mostram só o <b>Programado</b>.</div>
-      </div>
-    `;
-  }
-
-  function _renderGraficos() {
-    if (typeof global.Chart !== 'function') return;
-    _destruirGraficos();
-    const { resultado, maquinasPorNome } = _dadosSemana();
-    const nomes = Object.keys(resultado.porMaquina).sort((a, b) => a.localeCompare(b, 'pt-BR'));
-
-    // 1. Programado por Máquina
-    const caixasPorMaquina = nomes.map(n => resultado.porMaquina[n].porDia.reduce((s, dia) => s + dia.reduce((s2, seg) => s2 + (seg.tipo === 'producao' ? seg.caixasNoDia : 0), 0), 0));
-    const c1 = document.getElementById('pgraf-maquina');
-    if (c1) _charts.push(new global.Chart(c1, { type: 'bar', data: { labels: nomes, datasets: [{ label: 'Caixas programadas', data: caixasPorMaquina, backgroundColor: '#E8751A' }] }, options: { responsive: true, plugins: { legend: { display: false } } } }));
-
-    // 2. Evolução Diária
-    const caixasPorDia = DIA_LABEL.map((_, dayIdx) => nomes.reduce((s, n) => s + resultado.porMaquina[n].porDia[dayIdx].reduce((s2, seg) => s2 + (seg.tipo === 'producao' ? seg.caixasNoDia : 0), 0), 0));
-    const c2 = document.getElementById('pgraf-dia');
-    if (c2) _charts.push(new global.Chart(c2, { type: _tipoDia, data: { labels: DIA_LABEL, datasets: [{ label: 'Caixas programadas', data: caixasPorDia, backgroundColor: '#1E56D4', borderColor: '#1E56D4', fill: _tipoDia === 'line' ? false : true }] }, options: { responsive: true, plugins: { legend: { display: false } } } }));
-
-    // 3. Ocupação por Máquina + meta 85%
-    const ocupacoes = nomes.map(n => { const d = resultado.porMaquina[n]; return d.capacidadeMinutosSemana > 0 ? Math.round((d.totalMinutosUsados / d.capacidadeMinutosSemana) * 100) : 0; });
-    const c3 = document.getElementById('pgraf-ocupacao');
-    if (c3) _charts.push(new global.Chart(c3, { type: 'bar', data: { labels: nomes, datasets: [{ label: 'Ocupação %', data: ocupacoes, backgroundColor: ocupacoes.map(o => o >= 85 ? '#D92020' : '#15803D') }, { label: 'Meta (85%)', data: nomes.map(() => 85), type: 'line', borderColor: '#8A5C00', borderDash: [6, 4], pointRadius: 0 }] }, options: { responsive: true, scales: { y: { max: 100 } } } }));
-
-    // 4. Mix por Categoria
-    const porCategoria = {};
-    nomes.forEach((n, idx) => { const cat = maquinasPorNome[n]?.categoria || 'Sem categoria'; porCategoria[cat] = (porCategoria[cat] || 0) + caixasPorMaquina[idx]; });
-    const catLabels = Object.keys(porCategoria);
-    const c4 = document.getElementById('pgraf-categoria');
-    if (c4) _charts.push(new global.Chart(c4, { type: _tipoCategoria, data: { labels: catLabels, datasets: [{ data: catLabels.map(c => porCategoria[c]), backgroundColor: ['#E8751A', '#1E56D4', '#15803D', '#8A5C00', '#5B21B6', '#0A5E56', '#9E1A1A'] }] }, options: { responsive: true } }));
-  }
-
-  function _desenharProducaoRelatorios() {
-    const pagina = document.getElementById('page-producao-relatorios');
-    if (!pagina) return;
-    _destruirGraficos();
-    const kpis = _kpisSemana();
-    const conteudo = _aba === 'maquina' ? _tabelaPorMaquina() : _aba === 'produto' ? _tabelaPorProduto() : _aba === 'insumos' ? _tabelaInsumos() : _blocoGraficos();
-    pagina.innerHTML = `
-      <div style="margin-bottom:16px">
-        <div class="page-title" style="font-size:1.1rem">📊 Relatórios</div>
-        <div style="font-size:.72rem;color:var(--muted)">Semana atual — baseado no que está programado (Programação/Gantt)</div>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px">
-        <div class="tc" style="padding:12px 16px"><div style="font-size:.68rem;color:var(--muted)">Caixas programadas</div><div style="font-size:1.3rem;font-weight:700">${kpis.totalCaixas.toLocaleString('pt-BR')}</div></div>
-        <div class="tc" style="padding:12px 16px"><div style="font-size:.68rem;color:var(--muted)">Máquinas ativas</div><div style="font-size:1.3rem;font-weight:700">${kpis.maquinasAtivas}</div></div>
-        <div class="tc" style="padding:12px 16px"><div style="font-size:.68rem;color:var(--muted)">Produto mais programado</div><div style="font-size:.95rem;font-weight:700">${esc(kpis.produtoTop)}</div></div>
-      </div>
-      ${_aba !== 'graficos' ? `<div class="empty" style="display:flex;padding:10px 16px;margin-bottom:14px;text-align:left;flex-direction:row;gap:10px;align-items:center">
-        <div class="empty-icon" style="margin:0;font-size:1.2rem">ℹ️</div>
-        <div class="empty-sub" style="margin:0">Comparação com produção realizada entra quando a fase de Apontamento existir. Por enquanto, os números abaixo são só o que está <b>programado</b>.</div>
-      </div>` : ''}
-      <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap">
-        <button type="button" class="btn ${_aba === 'maquina' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-prel-aba="maquina">Por Máquina</button>
-        <button type="button" class="btn ${_aba === 'produto' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-prel-aba="produto">Por Produto</button>
-        <button type="button" class="btn ${_aba === 'insumos' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-prel-aba="insumos">Insumos</button>
-        <button type="button" class="btn ${_aba === 'graficos' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-prel-aba="graficos">📊 Gráficos</button>
-      </div>
-      ${conteudo}
-    `;
-    if (_aba === 'graficos') _renderGraficos();
-  }
-
-  function prelAba(aba) { _aba = aba; _desenharProducaoRelatorios(); }
-  function prelTipoDia(tipo) { _tipoDia = tipo; _desenharProducaoRelatorios(); }
-  function prelTipoCategoria(tipo) { _tipoCategoria = tipo; _desenharProducaoRelatorios(); }
-
-  global.renderProducaoRelatorios = renderProducaoRelatorios;
-  global.prelAba = prelAba;
-  global.prelTipoDia = prelTipoDia;
-  global.prelTipoCategoria = prelTipoCategoria;
-
-  document.addEventListener('click', function (event) {
-    const aba = event.target.closest('[data-prel-aba]');
-    if (aba) { prelAba(aba.getAttribute('data-prel-aba')); return; }
-    const tipoDia = event.target.closest('[data-prel-tipo-dia]');
-    if (tipoDia) { prelTipoDia(tipoDia.getAttribute('data-prel-tipo-dia')); return; }
-    const tipoCat = event.target.closest('[data-prel-tipo-cat]');
-    if (tipoCat) { prelTipoCategoria(tipoCat.getAttribute('data-prel-tipo-cat')); return; }
-  });
+function tabelaOps(d){return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Data</th><th>Produto</th><th>Máquina</th><th style="text-align:right">Prog.</th><th style="text-align:right">Real.</th><th style="text-align:center">%</th><th>Status</th></tr></thead><tbody>${d.rr.length?d.rr.sort((a,b)=>(a.data||'').localeCompare(b.data||'')).map(r=>{const x=realReg(r._id),p=n(r.qntCaixas),ad=p?Math.round(x/p*100):0;return `<tr><td>${esc(r.data||'')}</td><td><b>${esc(r.produto)}</b></td><td>${esc(r.maquina)}</td><td style="text-align:right">${p.toLocaleString('pt-BR')}</td><td style="text-align:right">${x.toLocaleString('pt-BR')}</td><td style="text-align:center">${ad}%</td><td>${esc(r.status||'programado')}</td></tr>`}).join(''):'<tr><td colspan="7">Sem OPs.</td></tr>'}</tbody></table></div></div>`;}
+function alertas(d){const arr=[];if(d.atras)arr.push(`⚠️ ${d.atras} OP(s) atrasada(s) ou incompleta(s).`);Object.entries(d.porM).forEach(([m])=>{const o=ocupacao(m);if(o>100)arr.push(`🔥 ${m}: ${o}% de ocupação (sobrecarga).`);});if(d.ader<80&&d.prog)arr.push(`📉 Aderência semanal em ${d.ader}% — abaixo de 80%.`);if(!arr.length)arr.push('✅ Nenhum alerta crítico detectado na semana.');return `<div class="tc" style="padding:14px">${arr.map(x=>`<div style="padding:7px 0;border-bottom:1px solid var(--border)">${esc(x)}</div>`).join('')}</div>`;}
+function destruir(){while(charts.length){try{charts.pop().destroy();}catch(e){}}} function grafHtml(){return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:16px"><div class="tc" style="padding:14px"><b>Programado × Realizado por dia</b><canvas id="prel-dia" height="210"></canvas></div><div class="tc" style="padding:14px"><b>Programado × Realizado por máquina</b><canvas id="prel-maq" height="210"></canvas></div></div>`;}
+function criarGraficos(d){destruir();if(typeof global.Chart!=='function')return;const ds=datas(),labs=ds.map(x=>{const z=new Date(x+'T12:00:00');return z.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit'});});const c1=document.getElementById('prel-dia');if(c1)charts.push(new global.Chart(c1,{type:'bar',data:{labels:labs,datasets:[{label:'Programado',data:ds.map(x=>d.porD[x].prog)},{label:'Realizado',data:ds.map(x=>d.porD[x].real)}]},options:{responsive:true,maintainAspectRatio:false}}));const nomes=Object.keys(d.porM);const c2=document.getElementById('prel-maq');if(c2)charts.push(new global.Chart(c2,{type:'bar',data:{labels:nomes,datasets:[{label:'Programado',data:nomes.map(x=>d.porM[x].prog)},{label:'Realizado',data:nomes.map(x=>d.porM[x].real)}]},options:{responsive:true,maintainAspectRatio:false}}));}
+function desenhar(){const p=document.getElementById('page-producao-relatorios');if(!p)return;const d=dados();p.innerHTML=`<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px"><div><div class="page-title" style="font-size:1.1rem">📊 Relatórios de Produção</div><div style="font-size:.72rem;color:var(--muted)">${fmt(weekStart)} a ${fmt(fim())}</div></div><div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn btn-ghost btn-sm" data-prel-semana="-1">‹ Semana</button><button class="btn btn-ghost btn-sm" data-prel-hoje>Hoje</button><button class="btn btn-ghost btn-sm" data-prel-semana="1">Semana ›</button><button class="btn btn-primary btn-sm" data-prel-export>⬇ Excel</button><button class="btn btn-ghost btn-sm" data-prel-pdf>📄 PDF</button><button class="btn btn-ghost btn-sm" data-prel-img>🖼️ Imagem</button></div></div><div class="kpi-grid" style="margin-bottom:14px"><div class="kpi blue"><span class="kpi-icon">📋</span><div class="kpi-val">${d.prog.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Programado (cx)</div></div><div class="kpi green"><span class="kpi-icon">✅</span><div class="kpi-val">${d.real.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Realizado (cx)</div></div><div class="kpi ${d.ader>=100?'teal':d.ader>=80?'yellow':'purple'}"><span class="kpi-icon">🎯</span><div class="kpi-val">${d.ader}%</div><div class="kpi-lbl">Aderência</div></div><div class="kpi orange"><span class="kpi-icon">⚠️</span><div class="kpi-val">${d.atras}</div><div class="kpi-lbl">OPs atrasadas</div></div></div><div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${[['resumo','Resumo'],['maquina','Por máquina'],['produto','Por produto'],['categorias','Categorias'],['cobertura','Cobertura'],['funcionarios','Funcionários'],['insumos','Insumos'],['gerencial','Gerencial'],['ops','OPs'],['alertas','Alertas'],['graficos','Gráficos']].map(x=>`<button class="btn ${aba===x[0]?'btn-primary':'btn-ghost'} btn-sm" data-prel-aba="${x[0]}">${x[1]}</button>`).join('')}</div><div id="prel-conteudo">${aba==='resumo'?tabelaMapa(d.porM,'Máquina'):aba==='maquina'?tabelaMapa(d.porM,'Máquina'):aba==='produto'?tabelaMapa(d.porP,'Produto'):aba==='categorias'?tabelaCategorias(d):aba==='cobertura'?coberturaHtml():aba==='funcionarios'?funcionariosHtml():aba==='insumos'?insumosHtml(d):aba==='gerencial'?gerencialHtml(d):aba==='ops'?tabelaOps(d):aba==='alertas'?alertas(d):grafHtml()}</div>`;if(aba==='graficos')setTimeout(()=>criarGraficos(d),0);}
+async function render(){const p=document.getElementById('page-producao-relatorios');if(!p)return;p.innerHTML='<div class="empty">Carregando relatórios...</div>';try{await carregar();desenhar();}catch(e){p.innerHTML='<div class="empty">Falha: '+esc(e.message||e)+'</div>';}}
+function exportar(){if(!global.XLSX){global.showToast?.('Biblioteca Excel não carregada.','error');return;}const d=dados(),wb=global.XLSX.utils.book_new();const ops=d.rr.map(r=>({Data:r.data,Produto:r.produto,Maquina:r.maquina,Programado:n(r.qntCaixas),Realizado:realReg(r._id),Desvio:realReg(r._id)-n(r.qntCaixas),Status:r.status||''}));const pm=Object.entries(d.porM).map(([k,v])=>({Maquina:k,Programado:v.prog,Realizado:v.real,Desvio:v.real-v.prog,Aderencia:v.prog?v.real/v.prog:0,Ocupacao:ocupacao(k)/100}));const pp=Object.entries(d.porP).map(([k,v])=>({Produto:k,Programado:v.prog,Realizado:v.real,Desvio:v.real-v.prog,Aderencia:v.prog?v.real/v.prog:0}));const dia=Object.entries(d.porD).map(([k,v])=>({Data:k,Programado:v.prog,Realizado:v.real,Desvio:v.real-v.prog}));global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(ops),'OPs');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(pm),'Maquinas');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(pp),'Produtos');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(dia),'Diario');const cat={};d.rr.forEach(r=>{const k=categoriaReg(r),x=(cat[k]??={Categoria:k,Programado:0,Realizado:0});x.Programado+=n(r.qntCaixas);x.Realizado+=realReg(r._id);});global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(Object.values(cat)),'Categorias');const cob=projecao.map(p=>{const mens=(n(p.venda_m1)+2*n(p.venda_m2)+3*n(p.venda_m3))/6,sem=mens/4.33,c=sem>0?n(p.estoqueAtual)/sem*7:null;return {Produto:p.produto||'',Estoque:n(p.estoqueAtual),DemandaSemanal:sem,CoberturaDias:c??''};});global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(cob),'Cobertura');const fun=[];processos.filter(p=>datas().includes(p.data)).forEach(p=>(p.funcionarios||[]).forEach(f=>fun.push({Data:p.data,Processo:p.nome||p.descricao||'',Funcionario:f.nome||'',Funcao:f.funcao||'',TempoMin:n(f.tempoMin||p.tempoMinutos)})));global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(fun),'Funcionarios');global.XLSX.writeFile(wb,'relatorio_producao_'+iso(weekStart)+'.xlsx');}
+global.renderProducaoRelatorios=render;global.exportarProducaoRelatorios=exportar;document.addEventListener('click',e=>{const s=e.target.closest('[data-prel-semana]');if(s){weekStart.setDate(weekStart.getDate()+Number(s.dataset.prelSemana)*7);desenhar();return;}if(e.target.closest('[data-prel-hoje]')){weekStart=domingo(new Date());desenhar();return;}const a=e.target.closest('[data-prel-aba]');if(a){aba=a.dataset.prelAba;desenhar();return;}if(e.target.closest('[data-prel-export]'))exportar();if(e.target.closest('[data-prel-pdf]'))global.exportarElementoProducaoPDF?.('page-producao-relatorios','relatorio_producao.pdf');if(e.target.closest('[data-prel-img]'))global.exportarElementoProducaoImagem?.('page-producao-relatorios','relatorio_producao.png');
+  const gv=e.target.closest('[data-ger-view]');if(gv){gerView=gv.getAttribute('data-ger-view');desenhar();return;}
+  const gl=e.target.closest('[data-ger-limpar-filtros]');if(gl){gerBusca='';gerMaquina='';gerCategoria='';desenhar();return;}
+  const gs=e.target.closest('[data-ger-sort]');if(gs){const campo=gs.getAttribute('data-ger-sort');gerSort=gerSort.col===campo?{col:campo,asc:!gerSort.asc}:{col:campo,asc:false};desenhar();return;}
+  const gt=e.target.closest('[data-ger-chart-tipo]');if(gt){const [dim,tipo]=gt.getAttribute('data-ger-chart-tipo').split(':');if(dim==='maq')gerChartTipoMaq=tipo;else if(dim==='dia')gerChartTipoDia=tipo;else if(dim==='cat')gerChartTipoCat=tipo;desenhar();return;}
+});
+document.addEventListener('change',e=>{
+  if(e.target.matches('[data-ger-maquina]')){gerMaquina=e.target.value;desenhar();return;}
+  if(e.target.matches('[data-ger-categoria]')){gerCategoria=e.target.value;desenhar();return;}
+  if(e.target.matches('[data-ger-pivot-campo]')){gerPivot={...gerPivot,[e.target.getAttribute('data-ger-pivot-campo')]:e.target.value};desenhar();return;}
+});
+document.addEventListener('input',e=>{
+  if(e.target.matches('[data-ger-busca]')){gerBusca=e.target.value;const pos=e.target.selectionStart;desenhar();const el=document.querySelector('[data-ger-busca]');if(el){el.focus();try{el.setSelectionRange(pos,pos);}catch(_){}}return;}
+});
+  global.DTProducao?.registrarInvalidacao?.(()=>{ carregado=false; regs=[]; aps=[]; maqs=[]; produtos=[]; projecao=[]; fichas=[]; estoqueIns=[]; processos=[]; charts.forEach(c=>{try{c?.destroy?.();}catch(_){}}); charts=[]; gerCharts.forEach(c=>{try{c?.destroy?.();}catch(_){}}); gerCharts=[]; });
 })(window);

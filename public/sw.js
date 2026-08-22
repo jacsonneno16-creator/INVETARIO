@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260809-v298-css-fix';
+var CACHE='dt-inventario-20260822-7117582a57eb';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -7,7 +7,6 @@ var PRECACHE=[
   '/manifest.webmanifest',
   '/manifest-coletor.json',
   '/css/analista.css',
-  '/css/analista-cadastros-v287.css',
   '/css/coletor.css',
   '/vendor/xlsx-0.18.5/xlsx.full.min.js',
   '/vendor/firebase-10.12.2/firebase-app-compat.js',
@@ -55,7 +54,6 @@ var PRECACHE=[
   '/js/analista/42-topbar-tools.js',
   '/js/analista/43-importar-exportar-api.js',
   '/js/analista/44-auditoria-remediacoes.js',
-  '/js/analista/52-cadastros-v287.js',
   '/js/analista/app-controller.js',
   '/js/analista/firebaseService.js',
   '/js/analista/services/inventarioService.js',
@@ -108,8 +106,7 @@ self.addEventListener('fetch',function(e){
   if(local){
     var arquivoCritico=e.request.mode==='navigate' ||
       u.pathname.slice(-5)==='.html' ||
-      u.pathname.slice(-3)==='.js' ||
-      u.pathname.slice(-4)==='.css';
+      u.pathname.slice(-3)==='.js';
     if(arquivoCritico){
       e.respondWith(fetch(e.request,{cache:'no-store'}).then(function(r){
         if(!r||!r.ok)throw new Error('Resposta inválida');

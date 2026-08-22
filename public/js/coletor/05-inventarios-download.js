@@ -18,6 +18,12 @@ async function carregarAtribuicoesContagem(invId) {
 //  INVENTÁRIOS  (Firestore)
 // ═══════════════════════════════════════════════════
 
+// Tela de área (fase 4 do Recebimento) — "Inventário" continua entrando
+// exatamente no fluxo de sempre (screen-mode, com Inventário/Auditoria
+// dentro), sem nenhuma mudança de comportamento.
+function abrirAreaInventario() {
+  goScreen('mode');
+}
 function abrirModoInventario() {
   APP.modoAcesso = 'inventario';
   APP.modoPendente = 'inventario';

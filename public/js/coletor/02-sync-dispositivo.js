@@ -223,6 +223,13 @@ async function registrarColetorNoFirestore(operadorInfo) {
 
   } catch (e) {
     console.warn('[Coletor] registrarColetorNoFirestore falhou:', { code: e.code || null, message: e.message, deviceId: deviceId, uid: operadorInfo && operadorInfo.uid });
+    // Sem isto, esse erro nunca aparecia na tela de Diagnóstico (bug ao vivo
+    // relatado: "diagnóstico tá tudo correto" mesmo com o registro
+    // falhando) — o try/catch aqui trata o erro internamente e nunca vira
+    // um unhandledrejection, que é o único tipo capturado automaticamente.
+    if (typeof window.dtAddDiag === 'function') {
+      window.dtAddDiag('Registro do aparelho falhou: ' + (e.code || 'sem código') + ' — ' + (e.message || String(e)) + ' (uid: ' + (operadorInfo && operadorInfo.uid || '—') + ')');
+    }
     // Em caso de erro de rede, permitir acesso se já tinha sessão local
     return 'erro';
   }
@@ -355,20 +362,28 @@ function iniciarListenerColetor() {
 }
 
 /**
- * Logout: marca offline e limpa APENAS a sessão.
+ * Logout: marca offline e limpa a sessão.
  * O documento do coletor permanece intacto.
+ *
+ * BUG AO VIVO REAL (relatado pelo usuário: "fica com o nome da pessoa o
+ * tempo todo... quando não tiver ninguém logado tem que ficar vazio") —
+ * `operador_atual`/`operador_email`/`operador_uid` só eram GRAVADOS no
+ * login, nunca LIMPOS no logout normal (só quando o turno era formalmente
+ * encerrado) — a tela do Analista ("Operador Logado") lê exatamente esse
+ * campo, então continuava mostrando o último operador pra sempre, mesmo
+ * com o coletor offline e ninguém usando. `sessao` tinha o mesmo problema.
  */
 async function marcarColetorOffline() {
   const deviceId = obterDeviceId();
   try {
     const updateData = {
-      status:      'offline',
-      ultimo_ping: ST(),
+      status:         'offline',
+      ultimo_ping:    ST(),
+      sessao:         null,
+      operador_atual: null,
+      operador_email: null,
+      operador_uid:   null,
     };
-    // Se o turno foi encerrado, limpamos a sessão no Firebase para o analista ver
-    if (APP.turnoEncerrado) {
-      updateData.sessao = null;
-    }
     await FS.collection(FCOL.coletores).doc(deviceId).update(updateData);
     dbg('[Coletor] Marcado offline.');
   } catch (e) {

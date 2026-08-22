@@ -30,7 +30,22 @@ const PAGE_NAMES = {
   'producao-relatorios': 'Relatórios (Produção)',
   'producao-setup': 'Tempos de Setup (Produção)',
   'producao-mapa-fabrica': 'Mapa da Fábrica (Produção)',
+  'producao-config': 'Configurações (Produção)',
+  'producao-importacao': 'Importação / API (Produção)',
   'producao-estoque': 'Estoque (Produção)',
+  'pcp-central': 'Central de Planejamento (PCP)',
+  'compras-central': 'Central de Compras',
+  'recebimento-dashboard': 'Recebimento · Dashboard',
+  'recebimento-operacao': 'Recebimento · Recebimentos',
+  'recebimento-notas': 'Recebimento · Notas Fiscais',
+  'recebimento-fornecedores': 'Recebimento · Fornecedores',
+  'recebimento-agendamentos': 'Recebimento · Agenda / Cargas',
+  'recebimento-transbordo': 'Recebimento · Transbordo',
+  'recebimento-recusas': 'Recebimento · Recusas',
+  'recebimento-recusas-cadastros': 'Recebimento · Notas Retornadas · Cadastros',
+  'recebimento-tempos': 'Recebimento · Tempos / Performance',
+  'recebimento-historico': 'Recebimento · Histórico',
+  'recebimento-config': 'Recebimento · Configurações',
 };
 
 let _currentPage = 'dashboard';
@@ -122,7 +137,24 @@ function renderPage(id) {
       case 'producao-relatorios':    return _callPage('renderProducaoRelatorios');
       case 'producao-setup':         return _callPage('renderProducaoSetup');
       case 'producao-mapa-fabrica':  return _callPage('renderProducaoMapaFabrica');
+      case 'producao-config':        return _callPage('renderProducaoConfig');
+      case 'producao-importacao':    return _callPage('renderProducaoImportacao');
       case 'producao-estoque':       return _callPage('renderProducaoEstoque');
+      case 'pcp-central':            return _callPage('renderPCPCentral');
+      case 'compras-central':        return _callPage('renderComprasCentral');
+      case 'recebimento-dashboard':      return _callPage('renderRecebimentoDashboard');
+      case 'recebimento-operacao':       return _callPage('renderRecebimentoOperacao');
+      case 'recebimento-notas':          return _callPage('renderRecebimentoNotas');
+      case 'recebimento-fornecedores':   return _callPage('renderRecebimentoFornecedores');
+      case 'recebimento-agendamentos':   return _callPage('renderRecebimentoAgendamentos');
+      case 'recebimento-transbordo':     return _callPage('renderRecebimentoTransbordo');
+      case 'recebimento-recusas':        return _callPage('renderRecebimentoRecusas');
+      case 'recebimento-recusas-cadastros': return _callPage('renderRecebimentoRecusasCadastros');
+      case 'recebimento-retornos-indicadores': return _callPage('renderRecebimentoRetornosIndicadores');
+      case 'recebimento-retornos-status': return _callPage('renderRecebimentoRetornosStatus');
+      case 'recebimento-tempos':         return _callPage('renderRecebimentoTempos');
+      case 'recebimento-historico':      return _callPage('renderRecebimentoHistorico');
+      case 'recebimento-config':         return _callPage('renderRecebimentoConfig');
     }
   } catch (e) {
     console.error('[Navegação] Falha ao renderizar a página "' + id + '":', e);

@@ -38,6 +38,12 @@ async function sincronizarTudoEmSegundoPlano(origem = 'automatico') {
       }
     } catch (e) { erros.push(e); console.warn('[SYNC] Auditorias permanecem pendentes:', e); }
 
+    try {
+      if (typeof window.sincronizarFilaRecebimento === 'function') {
+        await window.sincronizarFilaRecebimento();
+      }
+    } catch (e) { erros.push(e); console.warn('[SYNC] Bips de Recebimento permanecem pendentes:', e); }
+
     try { await atualizarFilaStatus(); } catch(e){ console.warn("[Erro tratado]", e); }
     try { if (typeof atualizarBarraStatus === 'function') atualizarBarraStatus(); } catch(e){ console.warn("[Erro tratado]", e); }
     return { origem, erros: erros.length };

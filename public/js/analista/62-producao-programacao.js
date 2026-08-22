@@ -1,10 +1,6 @@
-// Setor Produção — Programação (fase 3b da unificação com o Sistema de
-// Produção). Porta só a LISTA/CADASTRO de Ordens de Produção (CRUD puro),
-// sem o Gantt visual nem o motor buildSchedule (rateio diário por turno) —
-// esses ficam pra fases futuras. Tempo estimado e insumos são calculados
-// on-the-fly a partir de Ficha Técnica/Máquinas já portadas, lendo sempre o
-// dado atual (sem congelar snapshot histórico — simplificação deliberada
-// desta fase).
+// Produção — Programação V341. CRUD de OPs, snapshot histórico de configuração,
+// hora inicial, observações, insumos, paginação e importação Excel. O Gantt e
+// o motor de agenda reutilizam os mesmos registros Firestore.
 (function (global) {
   'use strict';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -12,6 +8,7 @@
   const COL_PRODUTOS = 'producao_produtos';
   const COL_MAQUINAS = 'producao_maquinas';
   const COL_FICHAS = 'producao_ficha_tecnica';
+  const COL_PCP = 'pcp_solicitacoes_producao_global';
 
   const PAGE_SIZE = 15;
 
@@ -22,8 +19,87 @@
   let _carregado = false;
   let _pagina = 1;
   const _expandidos = new Set();
+  let _pcpSolic = [];
+  let _pcpSolicCarregado = false;
 
   function fs() { return global.getDTFirestore(); }
+  function _podeCriar() { return typeof global.temPermissao !== 'function' || global.temPermissao('producao-programacao', 'criar'); }
+
+  // PCP (fase 4) — solicitações de produção roteadas pra esta loja como
+  // unidade produtora (empresaProdutoraId). Coleção raiz (não escopada por
+  // /lojas/{id}/) porque cruza a loja de origem do pedido com a loja que
+  // produz, então filtra manualmente pela loja ativa.
+  async function carregarPCPSolicitacoes(forcar) {
+    if (_pcpSolicCarregado && !forcar) return;
+    const lojaId = global.getDTLojaAtiva?.() || '';
+    if (!lojaId) { _pcpSolic = []; _pcpSolicCarregado = true; return; }
+    const raw = global.getDTRawFirestore();
+    const snap = await raw.collection(COL_PCP).where('empresaProdutoraId','==',lojaId).get().catch(() => ({ docs: [] }));
+    _pcpSolic = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    _pcpSolicCarregado = true;
+  }
+
+  // Recebe a solicitação do PCP e converte em OP oficial de Programação —
+  // só quem tem permissão de criar OP (mesma do botão "+ Nova OP") pode
+  // puxar trabalho externo pra fila de produção da loja.
+  async function pprogReceberPCP(id){
+    if(!_podeCriar())return;
+    const r = _pcpSolic.find(x => x._id === id);
+    if (!r || r.status !== 'solicitada') return;
+    const produto = _produtos.find(p => String(p.cod) === String(r.prodKey || r.cod || '')) ||
+      _produtos.find(p => String(p.nome || '').trim().toLowerCase() === String(r.produto || '').trim().toLowerCase());
+    const unidPorCx = Math.max(1, Number(produto?.unid) || 1);
+    const caixas = Math.max(1, Math.ceil(Number(r.quantidade) || 1));
+    const agora = new Date().toISOString();
+    const payload = {
+      produto: r.produto || produto?.nome || '', prodCod: produto?.cod || r.prodKey || r.cod || '', maquina: '',
+      pcMin: produto ? _resolvePcMin(produto, null) : 0, unidPorCx, qntCaixas: caixas, qntUnid: caixas * unidPorCx,
+      categoria: produto?.categoria || '', status: 'pendente', data: r.dataProgramada || '', horaInicio: '', obs: r.observacao || '',
+      pcpSolicitacaoId:id, sortOrder: Date.now(), criadoEm: agora, atualizadoEm: agora,
+    };
+    const ref = await fs().collection(COL_REGISTROS).add(payload);
+    const raw = global.getDTRawFirestore();
+    await raw.collection(COL_PCP).doc(id).set({
+      status:'programada',opId:ref.id, opLojaId: global.getDTLojaAtiva() || '',
+      recebidoEm: agora, recebidoPor: global._currentAnalistaUser?.email || '',
+      programadoEm: agora, programadoPor: global._currentAnalistaUser?.email || '', atualizadoEm: agora,
+    }, { merge: true });
+    await carregarPCPSolicitacoes(true);
+    await carregarProducaoProgramacao(true);
+    _desenharProducaoProgramacao();
+    global.showToast?.('Solicitação do PCP recebida e programada como OP.', 'success');
+  }
+
+  // Finaliza a solicitação depois que a OP foi produzida (Realizado já
+  // sincronizou o status pra 'produzida' via syncPCP) — lança a entrada no
+  // estoque uma única vez (idempotente por movimentoId) e fecha o ciclo.
+  async function pprogFinalizarPCP(id) {
+    if (!_podeCriar()) return;
+    const r = _pcpSolic.find(x => x._id === id);
+    if (!r || r.status !== 'produzida') return;
+    const op = _registros.find(x => x._firestoreId === r.opId) || {};
+    const qtdEntrada=Math.max(0,Number(op.realizadoCaixas)||0);
+    if (typeof global.aplicarEntradaEstoqueProducao !== 'function') throw new Error('Motor de estoque da Produção indisponível.');
+    await global.aplicarEntradaEstoqueProducao({ prodKey: r.prodKey || r.cod || '', produto: r.produto || '', qtdCx: qtdEntrada, movimentoId:'producao_pcp_'+id, tipo: 'producao_pcp', origemId: id });
+    const raw = global.getDTRawFirestore();
+    const agora = new Date().toISOString();
+    await raw.collection(COL_PCP).doc(id).set({ status:'finalizada', estoqueEntradaCx:qtdEntrada, finalizadoEm: agora, finalizadoPor: global._currentAnalistaUser?.email || '', atualizadoEm: agora }, { merge: true });
+    await carregarPCPSolicitacoes(true);
+    _desenharProducaoProgramacao();
+    global.showToast?.('Solicitação do PCP finalizada.', 'success');
+  }
+
+  function _pcpPainelHtml() {
+    const pendentes = _pcpSolic.filter(r => r.status === 'solicitada');
+    const produzidas = _pcpSolic.filter(r => r.status === 'produzida');
+    if (!pendentes.length && !produzidas.length) return '';
+    return `<div class="tc" style="padding:12px;margin-bottom:12px">
+      <b>📥 Solicitações do PCP</b>
+      <div style="font-size:.72rem;color:var(--muted);margin-bottom:8px">Pedidos de produção roteados pelo PCP pra esta unidade produtora.</div>
+      ${pendentes.length ? `<div style="margin-bottom:8px"><div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Pendentes de recebimento</div><div style="display:flex;flex-wrap:wrap;gap:6px">${pendentes.map(r => `<button type="button" class="btn btn-ghost btn-sm" ${r.status==='solicitada'&&_podeCriar() ? `data-pprog-pcp-programar="${esc(r._id)}"` : 'disabled'}>${esc(r.produto)} · ${(Number(r.quantidade) || 0).toLocaleString('pt-BR')}cx${r.dataProgramada ? ' · ' + esc(r.dataProgramada) : ''}</button>`).join('')}</div></div>` : ''}
+      ${produzidas.length ? `<div><div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Produzidas — aguardando finalização</div><div style="display:flex;flex-wrap:wrap;gap:6px">${produzidas.map(r => `<button type="button" class="btn btn-ghost btn-sm" ${_podeCriar() ? `data-pprog-pcp-finalizar="${esc(r._id)}"` : 'disabled'}>${esc(r.produto)} · finalizar</button>`).join('')}</div></div>` : ''}
+    </div>`;
+  }
 
   async function carregarProducaoProgramacao(forcar) {
     if (_carregado && !forcar) return;
@@ -66,11 +142,62 @@
     return qntUnid / pcMin / 60;
   }
 
+  // Congela a configuracao usada pela OP. Isso evita que uma alteracao futura
+  // de velocidade, unidade por caixa, categoria ou ficha tecnica reescreva o
+  // passado dos relatorios/apontamentos.
+  function _buildConfigSnapshot(produto, maquina, pcMin, unidPorCx) {
+    const ficha = _fichas.find(f => String(f.cod) === String(produto?.cod));
+    const compat = Array.isArray(maquina?.produtosCompativeis)
+      ? maquina.produtosCompativeis.find(p => String(p.produto) === String(produto?.nome)) : null;
+    return {
+      version: 1,
+      frozenAt: new Date().toISOString(),
+      produto: {
+        cod: produto?.cod ?? '', descricao: produto?.nome || '', unidPorCx,
+        categoria: produto?.categoria || maquina?.categoria || '',
+        classificacao: produto?.classificacao || '', alergenico: produto?.alergenico === true,
+        metaCoberturaDias: Number(produto?.metaCoberturaDias || produto?.coberturaDias) || 0,
+        producaoMinima: Number(produto?.producaoMinima) || 0, multiploProducao: Number(produto?.multiploProducao) || 0,
+        tipoMinimo: produto?.tipoMinimo || '', prioridadeProducao: Number(produto?.prioridadeProducao) || 2,
+        pcMinCatalogo: Number(produto?.pc_min) || 0,
+      },
+      maquina: {
+        nome: maquina?.nome || '', categoria: maquina?.categoria || '',
+        setupPadraoMin: Number(maquina?.setupPadraoMin) || 0,
+      },
+      velocidade: { valor: Number(pcMin) || 0, fonte: compat && Number(compat.velocidade) > 0 ? 'maquina_produto' : 'produto' },
+      insumos: (ficha?.insumos || []).map(i => ({ insumo: i.insumo || '', qty: Number(i.qty) || 0, categoria: i.categoria || '' })),
+    };
+  }
+
+  function _snapshotDoRegistro(r) { return r && r.configSnapshot && r.configSnapshot.version ? r.configSnapshot : null; }
+
+  async function migrarSnapshotsProgramacao() {
+    const legados = _registros.filter(r => r._firestoreId && !_snapshotDoRegistro(r));
+    for (const r of legados) {
+      const produto = _produtos.find(p => String(p.cod) === String(r.prodCod));
+      const maquina = _maquinas.find(m => m.nome === r.maquina);
+      if (!produto || !maquina) continue;
+      const unidPorCx = Math.max(1, Number(r.unidPorCx) || Number(produto.unid) || 1);
+      const pcMin = Number(r.pcMin) || _resolvePcMin(produto, maquina);
+      const snap = _buildConfigSnapshot(produto, maquina, pcMin, unidPorCx);
+      await fs().collection(COL_REGISTROS).doc(r._firestoreId).set({ configSnapshot: snap, pcMin, unidPorCx, atualizadoEm: new Date().toISOString() }, { merge: true });
+      r.configSnapshot = snap; r.pcMin = pcMin; r.unidPorCx = unidPorCx;
+    }
+    return legados.length;
+  }
+
   async function renderProducaoProgramacao() {
     const pagina = document.getElementById('page-producao-programacao');
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try { await carregarProducaoProgramacao(); }
+    try {
+      await carregarProducaoProgramacao();
+      try { await carregarPCPSolicitacoes(); } catch (e) { console.warn('[producao] solicitações PCP:', e); }
+      if (typeof global.temPermissao === 'function' && global.temPermissao('producao-programacao', 'editar')) {
+        try { await migrarSnapshotsProgramacao(); } catch (e) { console.warn('[producao] snapshot legado:', e); }
+      }
+    }
     catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
     _desenharProducaoProgramacao();
   }
@@ -119,6 +246,7 @@
           <button type="button" class="btn btn-primary btn-sm" data-pprog-novo="1">+ Nova OP</button>
         </div>
       </div>
+      ${_pcpPainelHtml()}
       <div class="tc">
         <div style="overflow:auto">
           <table class="dt-table">
@@ -225,7 +353,11 @@
     const payload = {
       produto: produto?.nome || '', prodCod, maquina: maquinaNome, pcMin, unidPorCx,
       qntCaixas: caixas, qntUnid, categoria, status, data, horaInicio, obs,
-      atualizadoEm: agora,
+      // aliases do sistema de Produção original. Mantê-los evita quebrar
+      // Gantt/relatórios/importações legadas durante a integração.
+      dtSolicitacao: data, dtDesejada: data,
+      configSnapshot: _buildConfigSnapshot(produto, maquina, pcMin, unidPorCx),
+      atualizadoEm: agora, updatedAt: agora,
     };
 
     try {
@@ -289,8 +421,9 @@
         await fs().collection(COL_REGISTROS).add({
           produto: produto.nome, prodCod: produto.cod, maquina: maquinaNome, pcMin: _resolvePcMin(produto, maquina), unidPorCx,
           qntCaixas: caixas, qntUnid: caixas * unidPorCx, categoria: maquina.categoria || '',
-          status: String(r.status || 'pendente'), data, horaInicio: '', obs: '',
-          sortOrder: Date.now(), criadoEm: agora, atualizadoEm: agora,
+          status: String(r.status || 'pendente'), data, dtSolicitacao: data, dtDesejada: data, horaInicio: '', obs: '',
+          configSnapshot: _buildConfigSnapshot(produto, maquina, _resolvePcMin(produto, maquina), unidPorCx),
+          sortOrder: Date.now(), criadoEm: agora, atualizadoEm: agora, updatedAt: agora,
         });
         criadas++;
       }
@@ -303,12 +436,17 @@
   }
 
   global.renderProducaoProgramacao = renderProducaoProgramacao;
+  global.migrarSnapshotsProgramacao = migrarSnapshotsProgramacao;
+  global.buildProducaoConfigSnapshot = _buildConfigSnapshot;
   global.importarProgramacaoExcel = importarProgramacaoExcel;
   global._desenharProducaoProgramacao = _desenharProducaoProgramacao;
   global.pprogEditar = pprogEditar;
   global.pprogNovaOp = pprogNovaOp;
   global.pprogSalvar = pprogSalvar;
   global.pprogExcluir = pprogExcluir;
+  global.carregarPCPSolicitacoes = carregarPCPSolicitacoes;
+  global.pprogReceberPCP = pprogReceberPCP;
+  global.pprogFinalizarPCP = pprogFinalizarPCP;
 
   // Tudo abaixo é gerado via innerHTML (tabela, filtros) — usa data-* +
   // escutador delegado em vez de onclick/oninput/onchange inline, mesma
@@ -324,6 +462,10 @@
     if (pg) { pprogIrPara(Number(pg.getAttribute('data-pprog-pg'))); return; }
     const toggleInsumos = event.target.closest('[data-pprog-toggle-insumos]');
     if (toggleInsumos) { pprogToggleInsumos(toggleInsumos.getAttribute('data-pprog-toggle-insumos')); return; }
+    const pcpRec = event.target.closest('[data-pprog-pcp-programar]');
+    if (pcpRec) { pprogReceberPCP(pcpRec.getAttribute('data-pprog-pcp-programar')).catch(e => global.showToast?.(e.message || e, 'error')); return; }
+    const pcpFin = event.target.closest('[data-pprog-pcp-finalizar]');
+    if (pcpFin) { pprogFinalizarPCP(pcpFin.getAttribute('data-pprog-pcp-finalizar')).catch(e => global.showToast?.(e.message || e, 'error')); return; }
   });
   document.addEventListener('input', function (event) {
     if (event.target && event.target.id === 'pprog-busca') { _pagina = 1; _desenharProducaoProgramacao(); }
@@ -336,4 +478,5 @@
       event.target.value = '';
     }
   });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _registros=[]; _produtos=[]; _maquinas=[]; _fichas=[]; _pcpSolic=[]; _pcpSolicCarregado=false; _pagina=1; _expandidos.clear(); });
 })(window);

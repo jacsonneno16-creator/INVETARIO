@@ -77,11 +77,13 @@ function podeGerirAlvo(solicitante, alvo) {
 }
 
 function validarSenha(senha) {
-  if (typeof senha !== 'string' || senha.length < 8 || senha.length > 128 ||
-      !/[A-Za-z]/.test(senha) || !/\d/.test(senha)) {
+  // Mínimo 6: é o piso real do Firebase Authentication (auth/invalid-password
+  // abaixo disso) — não dá pra aceitar 4 dígitos como pedido, então usamos o
+  // menor valor que a plataforma realmente aceita. Só números é permitido.
+  if (typeof senha !== 'string' || senha.length < 6 || senha.length > 128) {
     throw new functions.https.HttpsError(
       'invalid-argument',
-      'A senha deve ter entre 8 e 128 caracteres e conter letras e números.'
+      'A senha deve ter entre 6 e 128 caracteres.'
     );
   }
 }
@@ -606,7 +608,14 @@ async function usuarioAutenticadoPorHeader(req) {
 
 exports.bluesoftProxy = functions
   .region('southamerica-east1')
-  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  // BUG AO VIVO REAL (2026-08-19): /api/forca-de-vendas/comissoes-vendedores
+  // é mais lento que os outros endpoints da Bluesoft pra essa conta. Um
+  // timeout de 60s foi adicionado no lado do navegador (90-bluesoft-
+  // service.js) achando que resolveria — mas essa função é MATADA pelo
+  // Google aos 30s independente disso, derrubando a conexão de um jeito que
+  // o navegador só reporta como "Failed to fetch" (nem chega a virar um
+  // erro de timeout limpo). O limite real que precisava mudar era este.
+  .runWith({timeoutSeconds: 120, memory: '256MB'})
   .https.onRequest((req, res) => {
     cors(req, res, async () => {
       if (req.method !== 'POST') {
@@ -647,4 +656,431 @@ exports.bluesoftProxy = functions
         return res.status(502).json({erro: 'Falha ao conectar com a Bluesoft.', detalhe: String(erro.message || erro)});
       }
     });
+  });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Notas Retornadas — sincronização automática (Cloud Scheduler)
+// Pedido ao vivo do usuário: "essas atualizações via api tem como colocar
+// horarios programados para atualizar automaticamente" — escolheu
+// explicitamente "buscar E salvar sozinho" pra Notas Retornadas, 2-3x ao
+// dia. Roda servidor-a-servidor (sem passar pelo bluesoftProxy — aqui já
+// SOMOS o servidor, com o token vindo direto de dt_config, sem precisar de
+// usuário logado nem token de ID do Firebase).
+//
+// O que é gravado (lojas/{lojaId}/recebimento_recusas_notas/{chave}) é só
+// uma tabela de REFERÊNCIA — o mesmo destino do botão manual "Salvar
+// importação" em 97-recebimento-recusas.js. NÃO é o registro final de
+// recebimento: isso continua exigindo um operador no Coletor escanear a
+// nota e passar pelo fluxo de motorista/motivo/box/volume contado
+// fisicamente (24-recebimento-recusas.js) — o volume aqui é só ponto de
+// partida (lido do XML quando disponível), nunca a contagem oficial. Por
+// isso `volumes` pode ficar `null` aqui (a validação de "volumes
+// obrigatório" do botão manual não se aplica a esta gravação de
+// referência).
+//
+// Duplica de propósito a lógica de descoberta/normalização já existente em
+// 90-bluesoft-service.js — não dá pra reusar aquele arquivo direto: ele
+// espera window.fetch/getDTFirestore()/token de auth do navegador, nada
+// disso existe aqui. Se a lógica de devolução mudar de um lado, replicar
+// a mudança no outro.
+const CFOPS_DEVOLUCAO_VENDA_SRV = ['1201', '1202', '1203', '1204', '1410', '1411', '2201', '2202', '2203', '2204', '2410', '2411'];
+const RE_NATUREZA_NAO_RECEBIMENTO_SRV = /\bDEV(OL|\.)|\bRETORNO\b/;
+function _normTxtSrv(v) { return String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(); }
+function _ehDevolucaoSrv(nota) {
+  if (['DEVOLUCAO_ENTRE_LOJAS', 'DEVOLUCAO_CLIENTE'].includes(nota && nota.tipoTransferencia)) return true;
+  return RE_NATUREZA_NAO_RECEBIMENTO_SRV.test(_normTxtSrv(nota && nota.natureza));
+}
+// PEDIDO AO VIVO (usuário, com print real das telas do Bluesoft: "hoje ela
+// traz notas canceladas e recusadas, também não é para vim essas notas") —
+// duplica o mesmo filtro aplicado em 90-bluesoft-service.js (ver comentário
+// completo lá): "Status da NF-e" (Rejeitada/Inutilizada) e "Status"
+// (Cancelada) confirmados ao vivo contra as telas reais do Bluesoft.
+const RE_STATUS_NAO_VALIDO_SRV = /CANCELAD|REJEITAD|INUTILIZAD|DENEGAD/;
+function _notaComStatusValidoSrv(x) {
+  return !RE_STATUS_NAO_VALIDO_SRV.test(_normTxtSrv(x && x.status));
+}
+function _pareceDevolucaoSrv(n) {
+  if (CFOPS_DEVOLUCAO_VENDA_SRV.includes(String(n.cfop || '').replace(/\D/g, ''))) return true;
+  return RE_NATUREZA_NAO_RECEBIMENTO_SRV.test(_normTxtSrv(n.naturezaOperacao || n.natureza || ''));
+}
+function _normalizarNotaRetornoSrv(n) {
+  const origem = (n.itens || []).map(it => it.notaFiscalOrigem).find(Boolean) || null;
+  const pareceDevolucao = _pareceDevolucaoSrv(n);
+  return {
+    chave: n.nfChave || '', numeroNota: n.nfNumero != null ? String(n.nfNumero) : '', serie: n.nfSerie != null ? String(n.nfSerie) : '',
+    cfop: n.cfop || '', tipoOperacao: n.tipoNota || '', naturezaLabel: pareceDevolucao ? 'Devolução' : 'Venda',
+    dataEmissao: n.dataEmissao || null, valorTotal: Number(n.valorTotalNota) || 0,
+    destinatarioNome: n.nomeRazaoFornecedor || '', destinatarioCnpj: n.cpfCnpjFornecedor || '',
+    itens: (n.itens || []).map(it => ({produtoKey: it.produtoKey != null ? it.produtoKey : null, descricao: it.descricao || '', quantidade: Number(it.quantidade) || 0, gtin: it.gtin || '', ncm: it.ncm || ''})),
+    notaOriginalChave: origem && origem.chave || null, notaOriginalNumero: origem && origem.numero != null ? String(origem.numero) : null,
+    pareceDevolucao,
+  };
+}
+function _extrairVolumesSrv(xmlTexto) {
+  const blocos = String(xmlTexto || '').match(/<vol>[\s\S]*?<\/vol>/gi) || [];
+  let total = 0, achou = false;
+  blocos.forEach(bloco => { const m = bloco.match(/<qVol>(\d+)<\/qVol>/i); if (m) { total += Number(m[1]) || 0; achou = true; } });
+  return achou ? total : null;
+}
+function _fmtDataBRSrv(d) { return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear(); }
+
+async function _bluesoftGetSrv(baseUrl, path, token, timeoutMs) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs || 30000);
+  try {
+    const resp = await fetch(baseUrl.replace(/\/+$/, '') + path, {
+      method: 'GET', headers: {'x-CustomToken': String(token), 'Content-Type': 'application/json'}, signal: controller.signal,
+    });
+    const texto = await resp.text();
+    let dados; try { dados = texto ? JSON.parse(texto) : null; } catch (_) { dados = texto; }
+    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' em ' + path + (dados && dados.erro ? ': ' + dados.erro : ''));
+    return dados;
+  } finally { clearTimeout(timer); }
+}
+// Pedido ao vivo do usuário (2026-08-20): "vou deixar no automático" — a
+// sincronização agendada tem 540s pra TODAS as lojas, uma de cada vez. Essa
+// função paginava UMA página por vez, em série — o mesmo ponto lento que
+// deixou a busca manual "mais de 5m sem trazer nada" do lado do cliente.
+// Paginação concorrente (mesmo padrão de 90-bluesoft-service.js), com
+// dedup por chave de identidade pra nunca duplicar item por causa da
+// concorrência.
+const CONCORRENCIA_PAGINAS_SRV = 3;
+async function _paginarTudoSrv(baseUrl, path, params, token, chaveIdentidade) {
+  const itens = [];
+  const vistos = new Set();
+  let pagina = 0, acabou = false, paginasSemNovidade = 0;
+  while (!acabou) {
+    const indices = Array.from({length: CONCORRENCIA_PAGINAS_SRV}, (_, i) => pagina + i);
+    const respostas = await Promise.all(indices.map(p => {
+      const qs = new URLSearchParams(Object.assign({}, params, {currentPage: p, pageSize: 200})).toString();
+      return _bluesoftGetSrv(baseUrl, path + '?' + qs, token);
+    }));
+    for (const dados of respostas) {
+      const linhas = Array.isArray(dados) ? dados : ((dados && (dados.data || dados.items || dados.results)) || []);
+      if (!linhas.length) { acabou = true; break; }
+      let novos = 0;
+      linhas.forEach(item => {
+        const chave = chaveIdentidade ? String(chaveIdentidade(item)) : JSON.stringify(item);
+        if (!vistos.has(chave)) { vistos.add(chave); itens.push(item); novos++; }
+      });
+      if (novos === 0) { paginasSemNovidade++; if (paginasSemNovidade >= 5) { acabou = true; break; } }
+      else paginasSemNovidade = 0;
+      if (linhas.length < 200) { acabou = true; break; }
+    }
+    pagina += CONCORRENCIA_PAGINAS_SRV;
+    if (pagina > 300) throw new Error('Limite de páginas excedido em ' + path);
+  }
+  return itens;
+}
+// Mesmo helper de lotes paralelos de 90-bluesoft-service.js — lookups
+// targetados (1 chamada por cliente/vendedor único) rodavam um de cada vez.
+// Reduzido de 8 pra 4 no mesmo dia (ver comentário em 90-bluesoft-
+// service.js): lote grande demais provavelmente esbarrava no limite de
+// requisições simultâneas da Bluesoft.
+const TAMANHO_LOTE_LOOKUP_SRV = 4;
+async function _emLotesParalelosSrv(itens, fn, tamanhoLote) {
+  tamanhoLote = tamanhoLote || TAMANHO_LOTE_LOOKUP_SRV;
+  for (let i = 0; i < itens.length; i += tamanhoLote) {
+    await Promise.all(itens.slice(i, i + tamanhoLote).map(fn));
+  }
+}
+
+// Fonte de descoberta de devolução "em aberto": recebimento_notas, já
+// sincronizado pelo Dashboard (sincronizarRecebimentoBluesoft, endpoint
+// PROVADO em produção) — ver histórico completo do bug em 90-bluesoft-
+// service.js. Enriquecida com um lookup targetado por chave (com lojaKey,
+// obrigatório mesmo com nfChave informado — outro bug ao vivo real já
+// corrigido do lado do cliente).
+// BUG AO VIVO REAL (usuário: "não esquece que tem que puxar as notas de
+// devolução que não foram dado entrada no nosso sistema ainda") — mesmo
+// bug do lado do cliente (ver comentário completo em 90-bluesoft-
+// service.js): filtrar por `dataRecebimento` excluía exatamente as notas
+// ainda não recebidas (esse campo só é preenchido depois). Corrigido pra
+// filtrar por `processamento`, que sempre vem preenchido.
+async function _descobrirNotasDevolucaoSrv(lojaId, baseUrl, lojaKey, token) {
+  const snap = await db.collection('lojas').doc(lojaId).collection('recebimento_notas').get();
+  const agora = new Date();
+  const inicio = new Date(); inicio.setDate(inicio.getDate() - 30);
+  const candidatas = snap.docs.map(d => d.data() || {}).filter(x => _ehDevolucaoSrv(x)).filter(_notaComStatusValidoSrv).filter(x => {
+    const dp = x.processamento ? new Date(x.processamento) : null;
+    return dp && !isNaN(dp) && dp >= inicio && dp <= agora;
+  });
+  return Promise.all(candidatas.map(async x => {
+    try {
+      const qs = new URLSearchParams({nfChave: x.chaveNota, lojaKey, currentPage: 0, pageSize: 10}).toString();
+      const dados = await _bluesoftGetSrv(baseUrl, '/api/estoques/notas-fiscais?' + qs, token);
+      const linha = Array.isArray(dados) ? dados[0] : ((dados && dados.data) || [])[0];
+      if (linha) return _normalizarNotaRetornoSrv(linha);
+    } catch (e) { /* cai pro fallback abaixo */ }
+    return {
+      chave: x.chaveNota || '', numeroNota: x.numeroNota != null ? String(x.numeroNota) : '', serie: x.serieNota != null ? String(x.serieNota) : '',
+      cfop: '', tipoOperacao: '', naturezaLabel: 'Devolução', dataEmissao: null, valorTotal: Number(x.valor) || 0,
+      destinatarioNome: '', destinatarioCnpj: String(x.cnpjRemetente || '').replace(/\D/g, ''), itens: [],
+      notaOriginalChave: null, notaOriginalNumero: null, pareceDevolucao: true, statusRecebimento: x.statusRecebimento || '',
+    };
+  }));
+}
+
+// Venda faturada ainda não entregue — GET /api/forca-de-vendas/pedidos.
+// HISTÓRICO (ver comentário completo em 90-bluesoft-service.js): a
+// primeira versão usava /api/venda/pedidovenda, testado ao vivo com o
+// token real e CONFIRMADO sem nenhuma atividade de 2026. O usuário mandou
+// print de dentro do próprio Bluesoft mostrando 6.732 pedidos reais de
+// junho/2026 numa tela DIFERENTE — "Pedido Força de Venda", objeto
+// diferente no schema. Endpoint certo, confirmado ao vivo: filtra por
+// filialKey+dataEmissaoInicial/Final+pedidoVendaStatus (valor único, não
+// array). Cada pedido tem clientes[], e cada cliente já traz nfChave/
+// nfNumero/nfSerie DIRETO — nenhum lookup extra por nota é necessário.
+const STATUS_FATURADO_NAO_ENTREGUE_SRV = ['FATURADO_POR_NOTA_FISCAL', 'FATURADO_POR_CUPOM', 'ROTEIRIZADO'];
+async function _obterPedidosVendaFaturadosSrv(baseUrl, filialKey, token) {
+  const fim = new Date(); const inicio = new Date(); inicio.setMonth(inicio.getMonth() - 6);
+  const porKey = new Map();
+  const itensPorStatus = await Promise.all(STATUS_FATURADO_NAO_ENTREGUE_SRV.map(status => _paginarTudoSrv(baseUrl, '/api/forca-de-vendas/pedidos', {
+    filialKey, pedidoVendaStatus: status,
+    dataEmissaoInicial: _fmtDataBRSrv(inicio) + ' 00:00', dataEmissaoFinal: _fmtDataBRSrv(fim) + ' 23:59',
+  }, token, item => item.pedidoForcaVendaKey)));
+  itensPorStatus.forEach(itens => itens.forEach(it => porKey.set(it.pedidoForcaVendaKey, it)));
+  const notas = [];
+  porKey.forEach(p => {
+    (p.clientes || []).filter(c => c.nfChave || c.nfNumero).forEach(c => {
+      notas.push({
+        chave: c.nfChave || '', numeroNota: c.nfNumero != null ? String(c.nfNumero) : '', serie: c.nfSerie != null ? String(c.nfSerie) : '',
+        cfop: '', tipoOperacao: 'SAIDA', naturezaLabel: 'Venda',
+        dataEmissao: c.nfDataEmissao || p.dataEmissao || null, valorTotal: Number(c.valorNf != null ? c.valorNf : c.valorTotal) || 0,
+        destinatarioNome: '', destinatarioCnpj: '',
+        itens: (p.itens || []).filter(it => it.clienteKey === c.clienteKey).map(it => ({produtoKey: it.produtoKey != null ? it.produtoKey : null, descricao: '', quantidade: Number(it.quantidadePedida) || 0, gtin: '', ncm: ''})),
+        notaOriginalChave: null, notaOriginalNumero: null, pareceDevolucao: false,
+        vendedorKey: p.vendedorExternoKey != null ? p.vendedorExternoKey : null, clienteKey: c.clienteKey != null ? c.clienteKey : null,
+      });
+    });
+  });
+  const clienteKeysUnicos = [...new Set(notas.map(n => n.clienteKey).filter(k => k != null))];
+  const clientePorKey = new Map();
+  await _emLotesParalelosSrv(clienteKeysUnicos, async ck => {
+    try {
+      const dados = await _bluesoftGetSrv(baseUrl, '/api/clientes?' + new URLSearchParams({clienteKey: ck, currentPage: 0, pageSize: 1}).toString(), token);
+      const linha = Array.isArray(dados) ? dados[0] : ((dados && dados.data) || [])[0];
+      if (linha) clientePorKey.set(ck, linha);
+    } catch (e) { /* um cliente faltando não trava os outros */ }
+  });
+  // BUG AO VIVO REAL (2026-08-21, mesmo bug do lado do cliente): forca-de-
+  // vendas/pedidos nunca traz descrição do item, só produtoKey. Lookup
+  // targetado, um por produtoKey único.
+  const produtoKeysUnicos = [...new Set(notas.flatMap(n => n.itens.map(it => it.produtoKey)).filter(k => k != null))];
+  const produtoPorKey = new Map();
+  await _emLotesParalelosSrv(produtoKeysUnicos, async pk => {
+    try {
+      const dados = await _bluesoftGetSrv(baseUrl, '/api/comercial/produtos?' + new URLSearchParams({produtoKey: pk, currentPage: 0, pageSize: 1}).toString(), token);
+      const linha = Array.isArray(dados) ? dados[0] : ((dados && dados.data) || [])[0];
+      if (linha) produtoPorKey.set(pk, linha);
+    } catch (e) { /* um produto faltando não trava os outros */ }
+  });
+  return notas.map(n => {
+    const cli = clientePorKey.get(n.clienteKey);
+    return {
+      ...n, destinatarioNome: (cli && (cli.nomeRazao || cli.nomeFantasia || cli.nomeAbreviado)) || '', destinatarioCnpj: String((cli && cli.cpfCnpj) || '').replace(/\D/g, ''),
+      itens: n.itens.map(it => ({...it, descricao: (produtoPorKey.get(it.produtoKey) && produtoPorKey.get(it.produtoKey).descricao) || ''})),
+    };
+  });
+}
+async function _buscarVendedorSrv(baseUrl, vendedorKey, token) {
+  if (vendedorKey == null) return null;
+  const dados = await _bluesoftGetSrv(baseUrl, '/api/forca-de-vendas/vendedores?vendedorKey=' + encodeURIComponent(vendedorKey), token);
+  const linha = Array.isArray(dados) ? dados[0] : ((dados && dados.data) || [])[0];
+  if (!linha) return null;
+  // Gerente removido (pedido ao vivo do usuário: "o gerente pode tirar,
+  // que sempre será 1 pq de gerente só tem ele").
+  return {
+    nome: linha.vendedorNomeAbreviado || '', email: linha.vendedorEmail || '',
+    supervisorNome: linha.supervisorNomeAbreviado || '', supervisorEmail: linha.supervisorEmail || '',
+  };
+}
+
+async function _sincronizarNotasRetornadasDaLoja(lojaId, loja) {
+  const cfgSnap = await db.collection('lojas').doc(lojaId).collection('dt_config').doc('integracao_api').get();
+  const cfg = cfgSnap.exists ? (cfgSnap.data() || {}) : {};
+  const baseUrl = cfg.ambiente === 'producao' ? cfg.url_prd : cfg.url_hml;
+  if (!baseUrl || !cfg.token) return {loja: loja.nome || lojaId, pulou: 'sem configuração de API'};
+  const lojaKey = loja.bluesoft_loja_key;
+  const fim = new Date(); const inicio = new Date(); inicio.setDate(inicio.getDate() - 30);
+  const paramsEntrada = {lojaKey, tipoNota: 'ENTRADA', dataRecebimentoInicial: _fmtDataBRSrv(inicio), dataRecebimentoFinal: _fmtDataBRSrv(fim)};
+
+  // Cada fonte é melhor esforço (mesmo padrão do lado do cliente, ver
+  // 90-bluesoft-service.js) — uma fonte falhando (timeout, 429, etc.) nunca
+  // derruba as outras duas nem zera a loja inteira nesse ciclo.
+  const [brutasEntrada, extras, pedidosFaturados] = await Promise.all([
+    _paginarTudoSrv(baseUrl, '/api/estoques/notas-fiscais', paramsEntrada, cfg.token, item => item.nfChave)
+      .catch(e => { console.error('[NotasRetornadas automático] Falha na fonte principal (notas de entrada)', lojaId, e.message || e); return []; }),
+    _descobrirNotasDevolucaoSrv(lojaId, baseUrl, lojaKey, cfg.token)
+      .catch(e => { console.error('[NotasRetornadas automático] Falha na 2ª fonte (devolução)', lojaId, e.message || e); return []; }),
+    _obterPedidosVendaFaturadosSrv(baseUrl, lojaKey, cfg.token).catch(e => { console.error('[NotasRetornadas automático] Falha na 3ª fonte (venda faturada)', lojaId, e.message || e); return []; }),
+  ]);
+  // BUG AO VIVO REAL (2026-08-20, mesmo bug do lado do cliente — ver
+  // comentário completo em 90-bluesoft-service.js): essa fonte (tipoNota=
+  // ENTRADA) só traz notas onde a loja RECEBE a mercadoria — nunca uma
+  // venda de verdade. Compra normal de fornecedor (sem relação com
+  // devolução) caía no "senão" e virava "Venda" por engano. Filtra só o
+  // que realmente parece devolução; venda de verdade vem só da 3ª fonte
+  // (_obterPedidosVendaFaturadosSrv).
+  const notasEntrada = brutasEntrada.map(_normalizarNotaRetornoSrv).filter(n => n.pareceDevolucao);
+  const chavesConhecidas = new Set(notasEntrada.filter(n => n.chave).map(n => n.chave));
+  const numerosConhecidos = new Set(notasEntrada.filter(n => n.numeroNota).map(n => n.numeroNota));
+  const extrasNovas = extras.filter(n => !(n.chave && chavesConhecidas.has(n.chave)) && !(n.numeroNota && numerosConhecidos.has(n.numeroNota)));
+  extrasNovas.forEach(n => { if (n.chave) chavesConhecidas.add(n.chave); if (n.numeroNota) numerosConhecidos.add(n.numeroNota); });
+
+  // _obterPedidosVendaFaturadosSrv já devolve cada nota com chave/número/
+  // destinatário resolvidos (a NF já vem direto no cliente do pedido) — só
+  // falta dedup e vendedor.
+  const pedidosNovos = pedidosFaturados.filter(n => (n.chave || n.numeroNota) && !(n.chave && chavesConhecidas.has(n.chave)) && !(n.numeroNota && numerosConhecidos.has(n.numeroNota)));
+  const vendedorKeysUnicos = [...new Set(pedidosNovos.map(n => n.vendedorKey).filter(k => k != null))];
+  const vendedorPorKey = new Map();
+  await _emLotesParalelosSrv(vendedorKeysUnicos, async vk => {
+    try { const v = await _buscarVendedorSrv(baseUrl, vk, cfg.token); if (v) vendedorPorKey.set(vk, v); }
+    catch (e) { /* um vendedor faltando não trava os outros */ }
+  });
+  const extrasVenda = pedidosNovos.map(n => {
+    const vd = vendedorPorKey.get(n.vendedorKey);
+    return {...n, vendedorNome: (vd && vd.nome) || '', vendedorEmail: (vd && vd.email) || '', supervisorNome: (vd && vd.supervisorNome) || '', supervisorEmail: (vd && vd.supervisorEmail) || ''};
+  });
+
+  const todasNotas = notasEntrada.concat(extrasNovas, extrasVenda);
+
+  // Pedido ao vivo do usuário: "se eu fizer outra busca... ela já tem as
+  // notas salvas, e já com o XML gravado... não precisaria buscar de
+  // novo" — carrega ANTES do loop quais notas de Venda já estão salvas com
+  // volume > 0 (genuinamente resolvido, não só o 0 padrão de quem nunca
+  // chegou a carregar). Reaproveitado também pela limpeza de venda já
+  // entregue logo abaixo (uma leitura só pras duas coisas).
+  let salvasVendaSnap = null;
+  const volumeJaSalvoPorChave = new Map();
+  try {
+    salvasVendaSnap = await db.collection('lojas').doc(lojaId).collection('recebimento_recusas_notas')
+      .where('naturezaLabel', '==', 'Venda').get();
+    salvasVendaSnap.docs.forEach(d => {
+      const x = d.data() || {};
+      if (Number(x.volumes) > 0) volumeJaSalvoPorChave.set(d.id, Number(x.volumes));
+    });
+  } catch (e) { console.error('[NotasRetornadas automático] Falha ao carregar vendas já salvas (segue sem cache)', lojaId, e.message || e); }
+
+  const agora = new Date().toISOString();
+  let salvas = 0, comMotivoOuVolume = 0, erros = 0, reaproveitadas = 0;
+  for (let i = 0; i < todasNotas.length; i += 20) {
+    const lote = todasNotas.slice(i, i + 20);
+    await Promise.all(lote.map(async n => {
+      if (!n.chave) return;
+      let motivo = '', volumes = null;
+      // Pedido ao vivo do usuário (2026-08-20): "não quero mais o motivo e
+      // nem o volume das notas de devolução" — devolução NUNCA mais lê o
+      // XML; só venda lê, e só pra pegar o volume (venda nunca teve motivo).
+      const volumeCache = !n.pareceDevolucao ? volumeJaSalvoPorChave.get(n.chave) : undefined;
+      if (volumeCache != null) {
+        volumes = volumeCache;
+        reaproveitadas++;
+      } else if (!n.pareceDevolucao) {
+        try {
+          const linkDados = await _bluesoftGetSrv(baseUrl, '/api/estoques/notas-fiscais/xml/' + n.chave.replace(/\D/g, ''), cfg.token);
+          const url = (linkDados && (linkDados.URL_S3 || linkDados.url_s3)) || '';
+          if (url) {
+            const resp = await fetch(url);
+            if (resp.ok) {
+              const xmlTexto = await resp.text();
+              volumes = _extrairVolumesSrv(xmlTexto);
+              if (volumes != null) comMotivoOuVolume++;
+            }
+          }
+        } catch (e) { /* volume segue vazio — nota ainda é salva */ }
+      }
+      try {
+        await db.collection('lojas').doc(lojaId).collection('recebimento_recusas_notas').doc(n.chave).set({
+          chave: n.chave, numeroNota: n.numeroNota, volumes, destinatario: n.destinatarioNome || '', dataEmissao: n.dataEmissao || '',
+          valorTotal: Number(n.valorTotal) || 0,
+          transportadora: '', arquivoOrigem: '', serie: n.serie || '', cfop: n.cfop || '', naturezaLabel: n.naturezaLabel || '',
+          tipoOperacao: n.tipoOperacao || '', destinatarioCnpj: n.destinatarioCnpj || '',
+          notaOriginalChave: n.notaOriginalChave || null, notaOriginalNumero: n.notaOriginalNumero || null,
+          informacoesComplementares: motivo, itens: n.itens || [], pareceDevolucao: !!n.pareceDevolucao,
+          // BUG AO VIVO REAL (2026-08-20): "muitos mercados não trouxe [o
+          // vendedor]" — a sincronização automática já calculava vendedor/
+          // supervisor (venda faturada, via vendedorKey do pedido) mas
+          // nunca salvava isso aqui. Só a busca MANUAL ("Buscar" no
+          // Analista) gravava esses campos — qualquer nota que só passou
+          // pelo automático (06h/14h/17h) ficava sem vendedor pra sempre,
+          // mesmo já tendo o dado calculado em memória.
+          vendedorNome: n.vendedorNome || '', vendedorEmail: n.vendedorEmail || '',
+          supervisorNome: n.supervisorNome || '', supervisorEmail: n.supervisorEmail || '',
+          origemImportacao: 'BLUESOFT_AUTOMATICO', ativo: true, atualizadoEm: agora, atualizadoPor: 'sistema-automatico',
+        }, {merge: true});
+        salvas++;
+      } catch (e) { erros++; console.error('[NotasRetornadas automático] Falha ao salvar', n.chave, e.message || e); }
+    }));
+  }
+
+  // Pedido ao vivo do usuário: "toda vez que uma nota que ta publicada for
+  // atualizado que ela foi entregue, pode excluir ela da base anterior" —
+  // qualquer "venda faturada" já salva que NÃO está mais no conjunto atual
+  // de pendentes (pedidosFaturados, com os 3 status FATURADO/ROTEIRIZADO)
+  // significa que ela mudou de status — virou ENTREGUE (ou CANCELADO/
+  // DEVOLVIDO) — e não precisa mais ficar na tabela de referência. Só
+  // limpa o que a própria automação salvou (BLUESOFT_AUTOMATICO) com
+  // naturezaLabel=Venda — nunca mexe em devolução nem em importação
+  // manual por PDF.
+  let removidas = 0;
+  try {
+    const chavesVendaPendentesAgora = new Set(pedidosFaturados.filter(n => n.chave).map(n => n.chave));
+    // Reaproveita o snapshot carregado ANTES do loop (mesma leitura já usada
+    // pro cache de volume acima) — evita ler a coleção inteira duas vezes.
+    const paraRemover = (salvasVendaSnap ? salvasVendaSnap.docs : []).filter(d => {
+      const x = d.data() || {};
+      return x.origemImportacao === 'BLUESOFT_AUTOMATICO' && !chavesVendaPendentesAgora.has(d.id);
+    });
+    for (let i = 0; i < paraRemover.length; i += 300) {
+      const lote = paraRemover.slice(i, i + 300);
+      const batch = db.batch();
+      lote.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+      removidas += lote.length;
+    }
+  } catch (e) { console.error('[NotasRetornadas automático] Falha ao limpar vendas já entregues', lojaId, e.message || e); }
+
+  return {loja: loja.nome || lojaId, encontradas: todasNotas.length, salvas, comMotivoOuVolume, erros, removidas, reaproveitadas};
+}
+
+async function _sincronizarNotasRetornadasTodasLojas() {
+  const lojasSnap = await db.collection('lojas').get();
+  const resultados = [];
+  for (const doc of lojasSnap.docs) {
+    const loja = doc.data() || {};
+    if (!loja.bluesoft_loja_key) continue;
+    try {
+      resultados.push(await _sincronizarNotasRetornadasDaLoja(doc.id, loja));
+    } catch (e) {
+      resultados.push({loja: loja.nome || doc.id, erro: e.message || String(e)});
+      console.error('[NotasRetornadas automático] Falha na loja', doc.id, e);
+    }
+  }
+  console.log('[NotasRetornadas automático] Resumo:', JSON.stringify(resultados));
+  return resultados;
+}
+
+exports.sincronizarNotasRetornadasAgendado = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 540, memory: '512MB'})
+  .pubsub.schedule('0 6,14,17 * * *')
+  .timeZone('America/Sao_Paulo')
+  .onRun(async () => { await _sincronizarNotasRetornadasTodasLojas(); return null; });
+
+// Gatilho manual (callable) — pra testar sem esperar o próximo horário
+// agendado, mesma checagem de permissão do botão "Buscar"/"Salvar" manual.
+exports.sincronizarNotasRetornadasAgora = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 540, memory: '512MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const solicitante = await acessoSolicitante(context);
+    const podeImportarRecusas = solicitante && solicitante.permissoes && solicitante.permissoes['recebimento-recusas'] &&
+      solicitante.permissoes['recebimento-recusas'].importar === true;
+    if (!administrador(solicitante) && !podeImportarRecusas) {
+      throw new functions.https.HttpsError('permission-denied', 'Seu login não pode rodar essa sincronização.');
+    }
+    const resultados = await _sincronizarNotasRetornadasTodasLojas();
+    return {ok: true, resultados};
   });

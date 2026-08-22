@@ -1,6 +1,14 @@
 /* Extraído de coletor.html em melhoria de performance (CSS externo cacheável) */
 
     :root {
+      /* Sem isso, o WebView/Chrome do coletor (Zebra/Android) tenta
+         "escurecer automaticamente" campos nativos (o spinner de
+         type=number, select, etc.) achando que a página é clara — e como a
+         página JÁ é escura de propósito, o resultado é texto escuro sobre
+         fundo escuro (invisível), mesmo com --text/.field corretos no CSS.
+         Bug ao vivo relatado: dígitos somem ao digitar quantidade no
+         "Bipe os produtos". */
+      color-scheme: dark;
       --bg:      #060d1a;
       --surface: #0d1829;
       --card:    #111f35;
@@ -45,13 +53,18 @@ html{overscroll-behavior-y:contain}
     .login-sub{color:rgba(255,255,255,.55);font-size:0.82rem;margin-bottom:32px;font-weight:500;text-align:center}
     .login-box{width:100%;max-width:360px;background:rgba(255,255,255,.97);border:none;border-radius:20px;padding:28px 24px;display:flex;flex-direction:column;gap:18px;box-shadow:0 20px 60px rgba(0,0,0,.3)}
     .f-label{font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#64748b;margin-bottom:6px}
-    .login-box .field{background:#f8fafc;border:1.5px solid #e2e8f0;color:#1F2937}
+    /* BUG AO VIVO REAL: a regra genérica .field (abaixo) força
+       -webkit-text-fill-color pro texto claro do tema escuro do app — no
+       WebKit/Android (onde o Coletor roda) essa propriedade tem prioridade
+       sobre `color`, deixando o texto quase invisível sobre o fundo claro
+       da caixa de login. Precisa sobrescrever as duas juntas. */
+    .login-box .field{background:#f8fafc;border:1.5px solid #e2e8f0;color:#1F2937;-webkit-text-fill-color:#1F2937}
     .login-box .field:focus{border-color:#1E6F4E !important;box-shadow:0 0 0 3px rgba(30,111,78,.12) !important}
     .login-box .btn-primary{background:linear-gradient(135deg,#1E6F4E,#155d3f) !important;color:#fff !important;box-shadow:0 4px 16px rgba(30,111,78,.35) !important}
     .coletor-remember{display:flex;align-items:center;gap:8px;font-size:.78rem;color:#64748b;cursor:pointer;user-select:none}.coletor-remember input{width:16px;height:16px;accent-color:#1E6F4E}
     .login-link{background:transparent;border:none;color:#1E6F4E;font-size:.78rem;cursor:pointer;font-family:var(--sans);text-decoration:underline;opacity:.85}
     .f-wrap{position:relative}
-    .field{width:100%;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:14px 16px;font-size:1rem;font-family:var(--mono);color:var(--text);outline:none;transition:border-color .2s,box-shadow .2s;-webkit-appearance:none}
+    .field{width:100%;background:var(--surface);border:1.5px solid var(--border);border-radius:10px;padding:14px 16px;font-size:1rem;font-family:var(--mono);color:var(--text);-webkit-text-fill-color:var(--text);outline:none;transition:border-color .2s,box-shadow .2s;-webkit-appearance:none}
     .field:focus{border-color:var(--accent);box-shadow:var(--glow)}
     .field.icon-r{padding-right:50px}
     .f-icon{position:absolute;right:14px;top:50%;transform:translateY(-50%);font-size:1.2rem;cursor:pointer;opacity:.5;transition:opacity .2s}
@@ -66,6 +79,9 @@ html{overscroll-behavior-y:contain}
     .screen-content{flex:1;padding:24px 20px;display:flex;flex-direction:column;gap:16px;overflow-y:auto;overscroll-behavior-y:contain}
     .screen-title{font-size:1.3rem;font-weight:800;color:var(--text)}
     .screen-sub{font-size:0.82rem;color:var(--muted);margin-top:2px}
+#screen-recebimento .screen-content{min-height:0}
+#rec-lista-andamento{display:flex;flex-direction:column;gap:10px;min-height:0;max-height:calc(100dvh - 315px);overflow-y:auto;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;padding:0 2px 28px}
+#rec-lista-andamento .inv-card{flex:0 0 auto}
     .inv-card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);padding:20px;cursor:pointer;transition:all .2s;position:relative;overflow:hidden}
     .inv-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),var(--accent2));opacity:0;transition:opacity .2s}
     .inv-card:hover,.inv-card:active{border-color:var(--accent);box-shadow:var(--glow)}
@@ -282,6 +298,10 @@ html{overscroll-behavior-y:contain}
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(232,117,26,.12), var(--glow);
     }
+
+    /* Combo de busca (motorista/motivo, Notas Retornadas) */
+    .combo-lista{-webkit-overflow-scrolling:touch}
+    .combo-opcao:active{background:var(--card2)}
 
     /* Cards premium */
     .card { 

@@ -65,6 +65,455 @@ service cloud.firestore {
       );
     }
 
+    // Variante de hasPermission() que TAMBÉM aceita canal Coletor — usada só
+    // nos pontos (transbordo cruzando loja) onde uma ação disparada DIRETO
+    // pelo Coletor precisa da mesma permissão administrativa que o Analista
+    // usa. Deliberadamente uma função SEPARADA, não uma mudança na
+    // hasPermission() original: hasPermission() é chamada centenas de vezes
+    // em TODO o arquivo (PCP, produção, inventário, etc.) — trocar sua
+    // definição pra sempre checar os dois canais dobra o custo de avaliação
+    // de CADA uma dessas centenas de chamadas pra qualquer conta sem canal
+    // Analista, e isso realmente estourou o limite de 1000 sub-expressões
+    // do motor de regras do Firestore numa verificação real contra o
+    // emulador — o erro "permission-denied" que aparecia pro usuário não
+    // era de permissão nenhuma, era esse limite sendo estourado (mensagem
+    // real do motor: "Unable to evaluate the expression as the maximum of
+    // 1000 expressions to evaluate has been reached"). Por isso essa
+    // variante só existe nos poucos lugares que genuinamente precisam dela.
+    //
+    // Recebimento/transbordo checa DUAS áreas de permissão
+    // ('recebimento-operacao' e 'recebimento-transbordo') pra cada operação
+    // — a primeira versão desta correção fazia isso chamando
+    // hasPermissionColetor(area, operation) DUAS vezes em cada `||`
+    // (`hasPermissionColetor('recebimento-operacao', op) ||
+    // hasPermissionColetor('recebimento-transbordo', op)`). Confirmado via
+    // Firestore Rules Unit Testing contra o emulador real (não só leitura
+    // estática do texto): cada chamada reavalia admin()+canUseColetor()+
+    // access() do zero (o motor cacheia a BUSCA do documento por trás de
+    // access(), mas não a reavaliação da lógica booleana em volta) — chamar
+    // duas vezes por operação, em várias regras/operações do mesmo arquivo
+    // já perto do teto, estourava o limite de 1000 sub-expressões OUTRA VEZ
+    // (mesmo sintoma "permission-denied" genérico, causa raiz diferente da
+    // vez anterior). hasPermissionColetorRecebimento(operation) resolve as
+    // DUAS áreas dentro de uma ÚNICA chamada — paga o custo de
+    // admin()/canUseColetor()/access() só UMA vez por operação, não duas.
+    // Mesma ideia de hasPermissionColetorRecebimento(), mas pro lado
+    // Analista/canAccessStore: recebimento/transbordo é checado em DUAS
+    // áreas de permissão pra cada operação (`hasPermission('recebimento-
+    // operacao', op) || hasPermission('recebimento-transbordo', op)`) — e
+    // hasPermission() já é cara sozinha (chama admin() E DEPOIS
+    // canUseAnalista(), que chama admin() DE NOVO por dentro). Duplicar
+    // isso por área, multiplicado pelas 4 ramificações da regra de update
+    // de `recebimentos` (editar/corrigir-horario/cancelar/finalizar),
+    // ainda estourava o limite de 1000 sub-expressões do motor de regras
+    // do Firestore mesmo depois de consolidar o lado Coletor — confirmado
+    // via Rules Unit Testing contra o emulador real. Função separada (não
+    // mudança em hasPermission()) pelo mesmo motivo de sempre: hasPermission()
+    // é chamada centenas de vezes no resto do arquivo.
+    // Otimização (correção estrutural desta sessão): a forma original desta
+    // função chamava `canUseAnalista()`, que por dentro chama admin() DE
+    // NOVO — ou seja, `admin() || (canUseAnalista() && ...)` pagava
+    // admin() DUAS vezes por chamada (uma direta, uma escondida). Multiplicado
+    // pelos vários pontos que chamam esta função no mesmo request (a regra de
+    // `create`, mais os 4 ramos de `update`, cada um potencialmente
+    // avaliado), isso sozinho já consumia boa parte do limite de 1000
+    // sub-expressões — confirmado via Rules Unit Testing contra o emulador
+    // real (uma conta só-Coletor fazendo `create` já estourava o limite só
+    // com esta função + hasPermissionColetorRecebimento(), sem nem chegar a
+    // avaliar nada da correção de posse). Mesmo truque de
+    // hasPermissionRecebimentoQualquerCanal(): `let a = access()` uma vez
+    // só, sem chamar canUseAnalista()/admin() de novo por dentro.
+    function hasPermissionRecebimento(operation) {
+      let a = access();
+      return admin() || (
+        active() &&
+        (
+          (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true)
+        ) &&
+        a.keys().hasAny(['permissoes']) &&
+        a.permissoes is map &&
+        (
+          (
+            a.permissoes.keys().hasAny(['recebimento-operacao']) &&
+            a.permissoes['recebimento-operacao'] is map &&
+            a.permissoes['recebimento-operacao'].keys().hasAny([operation]) &&
+            a.permissoes['recebimento-operacao'][operation] == true
+          ) ||
+          (
+            a.permissoes.keys().hasAny(['recebimento-transbordo']) &&
+            a.permissoes['recebimento-transbordo'] is map &&
+            a.permissoes['recebimento-transbordo'].keys().hasAny([operation]) &&
+            a.permissoes['recebimento-transbordo'][operation] == true
+          )
+        )
+      );
+    }
+
+    // Mesma otimização que hasPermissionRecebimento() acima — canUseColetor()
+    // também chama admin() por dentro; `let a = access()` evita pagar
+    // admin() duas vezes por chamada.
+    // Recusas foi adicionado depois que vários Analistas de Recebimento já
+    // tinham o mapa de permissões salvo. Quando a área nova ainda não existe
+    // nesse mapa, herda temporariamente o acesso de Recebimento para não
+    // esconder/bloquear o módulo recém-publicado. Assim que a chave
+    // `recebimento-recusas` existir, ela passa a ser a fonte de verdade.
+    function hasPermissionRecusas(operation) {
+      let a = access();
+      let ehAnalista = active() && (
+        (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+        (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true)
+      );
+      let temMapa = a.keys().hasAny(['permissoes']) && a.permissoes is map;
+      let temRecusas = temMapa && a.permissoes.keys().hasAny(['recebimento-recusas']);
+      let permitidoExplicito = temRecusas &&
+        a.permissoes['recebimento-recusas'] is map &&
+        a.permissoes['recebimento-recusas'].keys().hasAny([operation]) &&
+        a.permissoes['recebimento-recusas'][operation] == true;
+      let legadoRecebimento = !temRecusas && temMapa && (
+        (a.permissoes.keys().hasAny(['recebimento-operacao']) && a.permissoes['recebimento-operacao'] is map && a.permissoes['recebimento-operacao'].keys().hasAny(['visualizar']) && a.permissoes['recebimento-operacao'].visualizar == true) ||
+        (a.permissoes.keys().hasAny(['recebimento-transbordo']) && a.permissoes['recebimento-transbordo'] is map && a.permissoes['recebimento-transbordo'].keys().hasAny(['visualizar']) && a.permissoes['recebimento-transbordo'].visualizar == true) ||
+        (a.permissoes.keys().hasAny(['recebimento-notas']) && a.permissoes['recebimento-notas'] is map && a.permissoes['recebimento-notas'].keys().hasAny(['visualizar']) && a.permissoes['recebimento-notas'].visualizar == true)
+      );
+      return admin() || (ehAnalista && (permitidoExplicito || legadoRecebimento));
+    }
+
+    function hasPermissionColetorRecebimento(operation) {
+      let a = access();
+      return admin() || (
+        active() &&
+        (
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.coletor == true) ||
+          (a.keys().hasAny(['perfil']) && a.perfil == 'operador')
+        ) &&
+        a.keys().hasAny(['permissoes']) &&
+        a.permissoes is map &&
+        (
+          (
+            a.permissoes.keys().hasAny(['recebimento-operacao']) &&
+            a.permissoes['recebimento-operacao'] is map &&
+            a.permissoes['recebimento-operacao'].keys().hasAny([operation]) &&
+            a.permissoes['recebimento-operacao'][operation] == true
+          ) ||
+          (
+            a.permissoes.keys().hasAny(['recebimento-transbordo']) &&
+            a.permissoes['recebimento-transbordo'] is map &&
+            a.permissoes['recebimento-transbordo'].keys().hasAny([operation]) &&
+            a.permissoes['recebimento-transbordo'][operation] == true
+          )
+        )
+      );
+    }
+
+    // Terceira variante, só pra regra de UPDATE de `recebimentos`: lá, ao
+    // contrário de read/create, a checagem de loja (canAccessStore x
+    // TRANSBORDO) foi fatorada UMA vez só no topo da regra — então CADA
+    // ramificação de permissão (editar/corrigir-horario/...) precisa
+    // aceitar os DOIS canais (Analista dentro da própria loja E Coletor
+    // cruzando loja) na MESMA ramificação. A primeira versão desta função
+    // fazia isso com `canUseAnalista() || canUseColetor()` — mas cada uma
+    // dessas duas funções chama admin() por dentro, então só essa linha já
+    // dispara admin() DUAS vezes A MAIS (a chamada direta no topo desta
+    // função + mais uma escondida dentro de canUseAnalista() OU
+    // canUseColetor()) = 3 chamadas a admin() no total por operação.
+    // Confirmado via Rules Unit Testing contra o emulador real: isso
+    // sozinho já estourava o limite de 1000 sub-expressões, mesmo sem
+    // nenhuma outra checagem na mesma ramificação. Esta versão NÃO chama
+    // canUseAnalista()/canUseColetor() — reimplementa a mesma lógica delas
+    // inline, usando `let` pra buscar `access()` uma única vez, e paga
+    // admin() UMA vez só (a chamada no topo da função).
+    function hasPermissionRecebimentoQualquerCanal(operation) {
+      let a = access();
+      return admin() || (
+        active() &&
+        (
+          (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true) ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.coletor == true) ||
+          (a.keys().hasAny(['perfil']) && a.perfil == 'operador')
+        ) &&
+        a.keys().hasAny(['permissoes']) &&
+        a.permissoes is map &&
+        (
+          (
+            a.permissoes.keys().hasAny(['recebimento-operacao']) &&
+            a.permissoes['recebimento-operacao'] is map &&
+            a.permissoes['recebimento-operacao'].keys().hasAny([operation]) &&
+            a.permissoes['recebimento-operacao'][operation] == true
+          ) ||
+          (
+            a.permissoes.keys().hasAny(['recebimento-transbordo']) &&
+            a.permissoes['recebimento-transbordo'] is map &&
+            a.permissoes['recebimento-transbordo'].keys().hasAny([operation]) &&
+            a.permissoes['recebimento-transbordo'][operation] == true
+          )
+        )
+      );
+    }
+
+    // Variantes "NaLoja" — usadas SÓ no ramo cross-loja do update de
+    // `recebimentos`, quando quem está escrevendo não é dono da loja onde o
+    // documento mora (`lojaId`, sempre a ORIGEM), mas precisa ser dono de
+    // verdade da loja de DESTINO (correção estrutural da posse operacional
+    // — antes disso, `active()` sozinho bastava, então QUALQUER conta com a
+    // permissão podia escrever em QUALQUER transbordo de QUALQUER loja, não
+    // só a que era realmente o destino dela). A tentação óbvia seria só
+    // chamar `canAccessStore(destino)` a mais — mas isso paga admin()/
+    // access() DE NOVO (uma 3ª vez, já que o ramo cross-loja já paga a 1ª
+    // com `canAccessStore(lojaId)` avaliando falso, e a 2ª com a checagem
+    // de permissão) — confirmado via Rules Unit Testing contra o emulador
+    // real que isso sozinho estourava o limite de 1000 sub-expressões, de
+    // novo. Estas variantes fundem a checagem de loja PRA DENTRO do mesmo
+    // `let a = access()` que a checagem de permissão já paga — nenhuma
+    // chamada a mais a admin()/access(), só mais alguns campos lidos do
+    // MESMO documento de conta já buscado.
+    function hasPermissionRecebimentoQualquerCanalNaLoja(operation, loja) {
+      let a = access();
+      return admin() || (
+        (
+          (a.keys().hasAny(['acesso_todas_lojas']) && a.acesso_todas_lojas == true) ||
+          (a.keys().hasAny(['lojas_permitidas']) && a.lojas_permitidas is list && loja in a.lojas_permitidas)
+        ) &&
+        active() &&
+        (
+          (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true) ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.coletor == true) ||
+          (a.keys().hasAny(['perfil']) && a.perfil == 'operador')
+        ) &&
+        a.keys().hasAny(['permissoes']) &&
+        a.permissoes is map &&
+        (
+          (
+            a.permissoes.keys().hasAny(['recebimento-operacao']) &&
+            a.permissoes['recebimento-operacao'] is map &&
+            a.permissoes['recebimento-operacao'].keys().hasAny([operation]) &&
+            a.permissoes['recebimento-operacao'][operation] == true
+          ) ||
+          (
+            a.permissoes.keys().hasAny(['recebimento-transbordo']) &&
+            a.permissoes['recebimento-transbordo'] is map &&
+            a.permissoes['recebimento-transbordo'].keys().hasAny([operation]) &&
+            a.permissoes['recebimento-transbordo'][operation] == true
+          )
+        )
+      );
+    }
+
+    // Mesma ideia, mas só canal Analista — usada nos ramos administrativos
+    // (cancelar/finalizar) que hoje já são Analista-only mesmo dentro da
+    // própria loja (sem variante Coletor); o Coletor nunca passa por aqui
+    // cruzando loja (seu bip de finalização vai pelo ramo "editar").
+    function hasPermissionRecebimentoNaLoja(operation, loja) {
+      let a = access();
+      return admin() || (
+        (
+          (a.keys().hasAny(['acesso_todas_lojas']) && a.acesso_todas_lojas == true) ||
+          (a.keys().hasAny(['lojas_permitidas']) && a.lojas_permitidas is list && loja in a.lojas_permitidas)
+        ) &&
+        active() &&
+        (
+          (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true)
+        ) &&
+        a.keys().hasAny(['permissoes']) &&
+        a.permissoes is map &&
+        (
+          (
+            a.permissoes.keys().hasAny(['recebimento-operacao']) &&
+            a.permissoes['recebimento-operacao'] is map &&
+            a.permissoes['recebimento-operacao'].keys().hasAny([operation]) &&
+            a.permissoes['recebimento-operacao'][operation] == true
+          ) ||
+          (
+            a.permissoes.keys().hasAny(['recebimento-transbordo']) &&
+            a.permissoes['recebimento-transbordo'] is map &&
+            a.permissoes['recebimento-transbordo'].keys().hasAny([operation]) &&
+            a.permissoes['recebimento-transbordo'][operation] == true
+          )
+        )
+      );
+    }
+
+    // Causa raiz real do estouro de 1000 sub-expressões no update de
+    // `recebimentos` (achado ao vivo, não suposição): as 4 operações do
+    // ramo dentro-da-loja (editar/corrigir-horario/cancelar/finalizar) cada
+    // uma chamava sua própria hasPermissionXxx() — 4 chamadas totalmente
+    // independentes, cada uma refazendo admin()+active()+canal+2 varreduras
+    // de `.keys().hasAny(...)` no mapa `permissoes` DO ZERO. Os testes desta
+    // sessão usavam contas sintéticas com só 1-2 módulos em `permissoes` —
+    // contas REAIS têm ~50 módulos (a UI de permissões marca TODOS com
+    // `false` por padrão, não só os usados), e o custo de `.keys().hasAny()`
+    // aparenta escalar com o TAMANHO do mapa, não ser O(1). 4 chamadas × 2
+    // varreduras cada × ~50 módulos ficou caro o bastante pra estourar o
+    // limite do motor de regras contra uma conta real — e uma escrita que
+    // deveria ser negada de forma limpa às vezes NÃO foi negada de forma
+    // confiável (bug ao vivo confirmado: Rafael, só com acesso à loja
+    // "matriz", conseguiu escrever num transbordo cujo destinoLojaId já era
+    // outra loja havia várias etapas). Esta função consolida as 4 operações
+    // numa ÚNICA passada por access()/admin()/canal/módulo — as duas
+    // varreduras caras no mapa `permissoes` (presença de
+    // recebimento-operacao/recebimento-transbordo) acontecem UMA vez só,
+    // reaproveitadas pelas 4 operações; só o campo de cada ação
+    // individual (ex.: `op['editar']`) é lido por operação, e isso é barato
+    // porque o submapa de cada módulo tem só ~8 chaves, não ~50.
+    function _recPodeEditarNaPropriaLoja() {
+      let a = access();
+      return admin() || (
+        active() &&
+        (
+          (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true) ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.coletor == true) ||
+          (a.keys().hasAny(['perfil']) && a.perfil == 'operador')
+        ) &&
+        a.keys().hasAny(['permissoes']) && a.permissoes is map &&
+        _recAcaoConsolidada(a, resource, request)
+      );
+    }
+
+    // Mesma consolidação, variante cross-loja (ver hasPermissionRecebimentoQualquerCanalNaLoja/
+    // hasPermissionRecebimentoNaLoja) — a checagem de loja de destino entra
+    // ANTES do canal, mesmo padrão de custo das funções *NaLoja já
+    // existentes (uma só passada por access(), sem 3ª chamada a admin()).
+    function _recPodeEditarCrossLoja(loja) {
+      let a = access();
+      return admin() || (
+        (
+          (a.keys().hasAny(['acesso_todas_lojas']) && a.acesso_todas_lojas == true) ||
+          (a.keys().hasAny(['lojas_permitidas']) && a.lojas_permitidas is list && loja in a.lojas_permitidas)
+        ) &&
+        active() &&
+        (
+          (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true) ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.coletor == true) ||
+          (a.keys().hasAny(['perfil']) && a.perfil == 'operador')
+        ) &&
+        a.keys().hasAny(['permissoes']) && a.permissoes is map &&
+        _recAcaoConsolidada(a, resource, request)
+      );
+    }
+
+    // `cancelar`/`finalizar` são administrativos — só Analista (nunca só-
+    // Coletor), igual hasPermissionRecebimento(Na Loja) já fazia. Separado
+    // do canal "qualquer" pra não reabrir pra Coletor por engano.
+    function _recSouAnalistaConsolidado(a) {
+      return (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+        (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true);
+    }
+
+    // As 4 operações de verdade, reaproveitando as MESMAS `temOp`/`temTb`
+    // (calculadas uma vez) em vez de repetir `.keys().hasAny()` no mapa
+    // grande 4 vezes — essa é a otimização que importa de verdade.
+    function _recAcaoConsolidada(a, resource, request) {
+      let temOp = a.permissoes.keys().hasAny(['recebimento-operacao']) && a.permissoes['recebimento-operacao'] is map;
+      let temTb = a.permissoes.keys().hasAny(['recebimento-transbordo']) && a.permissoes['recebimento-transbordo'] is map;
+      return (
+        (
+          (
+            (temOp && a.permissoes['recebimento-operacao'].keys().hasAny(['editar']) && a.permissoes['recebimento-operacao']['editar'] == true) ||
+            (temTb && a.permissoes['recebimento-transbordo'].keys().hasAny(['editar']) && a.permissoes['recebimento-transbordo']['editar'] == true)
+          ) && _recebTransicaoHorarioValida()
+        )
+        ||
+        (
+          (
+            (temOp && a.permissoes['recebimento-operacao'].keys().hasAny(['corrigir-horario']) && a.permissoes['recebimento-operacao']['corrigir-horario'] == true) ||
+            (temTb && a.permissoes['recebimento-transbordo'].keys().hasAny(['corrigir-horario']) && a.permissoes['recebimento-transbordo']['corrigir-horario'] == true)
+          ) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','horaChegada','horaInicioDescarga','horaFimDescarga','horaFechamentoRecebimento','horaSaida','tempoViagemMin','tempoEsperaMin','tempoDescargaMin','tempoTotalMin','tempoAteFechamentoMin','atualizadoEm','atualizadoPor','notaFiscalTransferencia','notasVolumesTransferencia','volumes','notaFiscalConfirmadaEm','notaFiscalConfirmadaPor','motoristaId','motoristaNome','transportadora'])
+        )
+        ||
+        (
+          _recSouAnalistaConsolidado(a) &&
+          (
+            (temOp && a.permissoes['recebimento-operacao'].keys().hasAny(['cancelar']) && a.permissoes['recebimento-operacao']['cancelar'] == true) ||
+            (temTb && a.permissoes['recebimento-transbordo'].keys().hasAny(['cancelar']) && a.permissoes['recebimento-transbordo']['cancelar'] == true)
+          ) && request.resource.data.status == 'CANCELADO'
+        )
+        ||
+        (
+          _recSouAnalistaConsolidado(a) &&
+          (
+            (temOp && a.permissoes['recebimento-operacao'].keys().hasAny(['finalizar']) && a.permissoes['recebimento-operacao']['finalizar'] == true) ||
+            (temTb && a.permissoes['recebimento-transbordo'].keys().hasAny(['finalizar']) && a.permissoes['recebimento-transbordo']['finalizar'] == true)
+          ) && request.resource.data.status == 'FINALIZADO'
+        )
+      );
+    }
+
+    // Correção estrutural (posse operacional de Transbordo): antes desta
+    // função, a regra de update de `recebimentos` só checava PERMISSÃO —
+    // nunca `resource.data.status`/`destinoLojaId` — então uma conta com a
+    // permissão administrativa podia escrever em QUALQUER etapa de
+    // QUALQUER TRANSBORDO que conseguisse ler, mesmo depois de despachado
+    // (bug ao vivo confirmado em auditoria de código: a origem continuava
+    // conseguindo "Registrar chegada" numa carga que já era só do destino).
+    // Puramente leitura de campo (nenhuma chamada a admin()/access()) —
+    // aplicada no ramo `canAccessStore(lojaId)` (dono do caminho = sempre a
+    // ORIGEM), then custo extra é zero. Documento legado sem `destinoLojaId`
+    // (ou não-TRANSBORDO) não é restringido por esta função — comportamento
+    // idêntico ao de antes, só quem tem rota cruzada real paga a restrição.
+    function _lojaAindaTemAVez() {
+      return resource.data.tipo != 'TRANSBORDO'
+        || !resource.data.keys().hasAny(['destinoLojaId'])
+        || resource.data.destinoLojaId == null
+        || resource.data.status == 'PREVISTO';
+    }
+
+    // A checagem de "transição normal pra frente" do update de
+    // `recebimentos` chamava `request.resource.data.diff(resource.data)`
+    // NOVE vezes (uma por campo de horário/NF, mais uma pro hasAny geral)
+    // — cada `.diff()` recalcula o diff inteiro entre os dois documentos do
+    // zero; o motor de regras não cacheia isso entre chamadas repetidas na
+    // mesma condição. Combinado com os novos hasPermissionColetorRecebimento()/
+    // hasPermissionRecebimento() desta mesma regra, estourava o limite de
+    // 1000 sub-expressões do motor do Firestore (confirmado via Rules Unit
+    // Testing contra o emulador real). `let` calcula o diff UMA vez só e
+    // reaproveita pros 8 campos.
+    function _recebTransicaoHorarioValida() {
+      let d = request.resource.data.diff(resource.data).affectedKeys();
+      let antigo = resource.data;
+      return !d.hasAny(['horaChegada','horaInicioDescarga','horaFimDescarga','horaFechamentoRecebimento','horaSaida','notaFiscalTransferencia','notasVolumesTransferencia','notaFiscalConfirmadaEm','notaFiscalConfirmadaPor']) ||
+        (
+          (!d.hasAny(['horaChegada']) || antigo.horaChegada == null) &&
+          (!d.hasAny(['horaInicioDescarga']) || antigo.horaInicioDescarga == null) &&
+          (!d.hasAny(['horaFimDescarga']) || antigo.horaFimDescarga == null) &&
+          (!d.hasAny(['horaFechamentoRecebimento']) || antigo.horaFechamentoRecebimento == null) &&
+          (!d.hasAny(['horaSaida']) || antigo.horaSaida == null) &&
+          (!d.hasAny(['notaFiscalTransferencia']) || antigo.notaFiscalTransferencia == null) &&
+          (!d.hasAny(['notasVolumesTransferencia']) || (antigo.keys().hasAny(['notasVolumesTransferencia']) ? antigo.notasVolumesTransferencia == null : true)) &&
+          (!d.hasAny(['notaFiscalConfirmadaEm']) || antigo.notaFiscalConfirmadaEm == null) &&
+          (!d.hasAny(['notaFiscalConfirmadaPor']) || antigo.notaFiscalConfirmadaPor == null)
+        );
+    }
+
+    // Analista pode corrigir SOMENTE a rota de um TRANSBORDO que foi
+    // gerado com a loja ativa errada. Esta permissão é deliberadamente
+    // estreita: só aceita origem/origemLojaId/destino/destinoLojaId e exige
+    // acesso à loja física do documento + permissão editar de Transbordo.
+    // Nenhum horário, status, NF, volume ou metadado entra neste diff.
+    function _recPodeCorrigirRotaNaLoja(loja) {
+      let a = access();
+      let d = request.resource.data.diff(resource.data).affectedKeys();
+      let temTb = a.keys().hasAny(['permissoes']) && a.permissoes is map && a.permissoes.keys().hasAny(['recebimento-transbordo']) && a.permissoes['recebimento-transbordo'] is map;
+      let acessoLoja = (a.keys().hasAny(['acesso_todas_lojas']) && a.acesso_todas_lojas == true) ||
+        (a.keys().hasAny(['lojas_permitidas']) && a.lojas_permitidas is list && loja in a.lojas_permitidas);
+      return resource.data.tipo == 'TRANSBORDO' &&
+        d.hasOnly(['origem','origemLojaId','destino','destinoLojaId']) &&
+        request.resource.data.keys().hasAll(['origem','origemLojaId','destino','destinoLojaId']) &&
+        request.resource.data.origemLojaId != null && request.resource.data.destinoLojaId != null &&
+        request.resource.data.origemLojaId != request.resource.data.destinoLojaId &&
+        (
+          admin() ||
+          (
+            acessoLoja && active() && _recSouAnalistaConsolidado(a) && temTb &&
+            a.permissoes['recebimento-transbordo'].keys().hasAny(['editar']) &&
+            a.permissoes['recebimento-transbordo']['editar'] == true
+          )
+        );
+    }
+
     function canCreateAudit() {
       return hasPermission('auditoria', 'criar') ||
         hasPermission('auditoria', 'editar');
@@ -305,6 +754,36 @@ service cloud.firestore {
       allow write: if admin();
     }
 
+    // Motorista/veículo do Transbordo (fase 15/FASE 4d) — globais, fora de
+    // qualquer loja: pedido ao vivo do usuário, "o motorista cadastrado tem
+    // que ficar cadastrado para todas as lojas". O mesmo motorista bipa o
+    // MESMO código fixo tanto saindo da Matriz quanto chegando na Filial —
+    // se ficasse preso a uma loja só, o código "não seria encontrado" do
+    // outro lado (bug ao vivo relatado). Cadastro/edição continua exigindo a
+    // mesma permissão administrativa de sempre; leitura é liberada pra
+    // qualquer conta ativa do sistema (Coletor e Analista de qualquer loja
+    // precisam enxergar o mesmo cadastro).
+    match /recebimento_motoristas/{docId} {
+      allow read: if active();
+      allow write: if hasPermission('recebimento-config', 'editar');
+    }
+
+    match /recebimento_veiculos/{docId} {
+      allow read: if active();
+      allow write: if hasPermission('recebimento-config', 'editar');
+    }
+
+    // Rotas de transbordo (origem→destino), fase 15/FASE 4h — globais e
+    // cadastradas uma vez só (pedido ao vivo: duas caixinhas, loja
+    // remetente + loja destino). Substituem a config antiga por loja
+    // (`lojasParceiras`/`lojaParceiraId` em recebimento_config_geral, que
+    // exigia configurar dos dois lados e causava assimetria quando um lado
+    // esquecia).
+    match /recebimento_rotas_transbordo/{docId} {
+      allow read: if active();
+      allow write: if hasPermission('recebimento-config', 'editar');
+    }
+
     match /lojas/{lojaId} {
       allow read: if canAccessStore(lojaId);
       allow create, update: if admin() && validText(request.resource.data.nome, 120);
@@ -439,18 +918,428 @@ service cloud.firestore {
       // Unificação com o Sistema de Produção (fase 2) — receita/BOM por
       // produto. Coleção própria (prefixo producao_), separada do catálogo
       // dt_produtos (que é pra contagem física, não pra receita).
+      // PCP (fase 7) — além de quem edita a Ficha Técnica (fabricação), o
+      // PCP pode administrar os parâmetros de cobertura/compra do MESMO
+      // cadastro de produto (não é um cadastro paralelo) — mas só pode
+      // tocar os campos de planejamento, nunca BOM/velocidade/máquina.
+      // Fase 11 — sincronização real com a Bluesoft (catálogo de produtos)
+      // ganha uma terceira via de escrita, restrita aos campos de catálogo
+      // (nunca toca nos parâmetros de planejamento do PCP nem no `unid` de
+      // fabricação). `create` também precisa dessa permissão porque a
+      // sincronização faz upsert (cria produto novo quando não existe
+      // ainda no cadastro).
       match /producao_produtos/{docId} {
         allow read: if canAccessStore(lojaId);
 
-        allow write: if canAccessStore(lojaId) &&
-          hasPermission('producao-ficha-tecnica', 'editar');
+        allow create: if canAccessStore(lojaId) && (
+          hasPermission('producao-ficha-tecnica', 'editar') ||
+          hasPermission('producao-importacao', 'importar')
+        );
+
+        allow update: if canAccessStore(lojaId) && (
+          hasPermission('producao-ficha-tecnica', 'editar') ||
+          (
+            hasPermission('pcp-central', 'configurar') &&
+            request.resource.data
+              .diff(resource.data)
+              .affectedKeys().hasOnly(['metaCoberturaDias','estoqueMinimo','estoqueMaximo','estoqueSeguranca','leadTimeDias','loteMinimoCompra','multiploCompra','criticidade','fornecedorPadrao','atualizadoEm','atualizadoPor'])
+          ) ||
+          (
+            hasPermission('producao-importacao', 'importar') &&
+            request.resource.data
+              .diff(resource.data)
+              .affectedKeys().hasOnly(['nome','unidadeMedidaBluesoft','gtin','ativo','categoria','fornecedorPadrao','fornecedorPadraoKey','bluesoftProdutoKey','bluesoftTipoProduto','bluesoftSincronizadoEm','multiploCompra','atualizadoEm','atualizadoPor'])
+          )
+        );
+
+        // Fase 12h — reconciliação/limpeza da sincronização Bluesoft só pode
+        // apagar produto que ela mesma criou (bluesoftProdutoKey presente);
+        // nunca um produto cadastrado manualmente via Ficha Técnica.
+        allow delete: if canAccessStore(lojaId) && (
+          hasPermission('producao-ficha-tecnica', 'editar') ||
+          (
+            hasPermission('producao-importacao', 'importar') &&
+            resource.data.bluesoftProdutoKey != null
+          )
+        );
+      }
+
+      // PCP (fase 7) — auditoria genérica de alterações (antes/depois),
+      // append-only. Reaproveitável por qualquer módulo, não só Parâmetros.
+      match /pcp_auditoria/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow create: if canAccessStore(lojaId) && (
+          hasPermission('pcp-central', 'configurar') ||
+          hasPermission('pcp-central', 'editar') ||
+          hasPermission('producao-ficha-tecnica', 'editar') ||
+          hasPermission('compras-central', 'editar')
+        );
+
+        allow update, delete: if false;
       }
 
       match /producao_ficha_tecnica/{docId} {
         allow read: if canAccessStore(lojaId);
 
-        allow write: if canAccessStore(lojaId) &&
+        // Fase 12i — sincronização de ficha técnica real da Bluesoft
+        // também pode criar/atualizar aqui, restrita aos campos que ela
+        // realmente traz (nunca máquina/pc_min/cobertura/etc — isso
+        // continua só do editor manual de Ficha Técnica). A própria
+        // sincronização nunca sobrescreve uma ficha que já tem insumos
+        // preenchidos manualmente (ver 90-bluesoft-service.js), mas a regra
+        // aqui é a barreira de segurança contra qualquer bypass.
+        allow create: if canAccessStore(lojaId) && (
+          hasPermission('producao-ficha-tecnica', 'editar') ||
+          hasPermission('producao-importacao', 'importar')
+        );
+
+        allow update: if canAccessStore(lojaId) && (
+          hasPermission('producao-ficha-tecnica', 'editar') ||
+          (
+            hasPermission('producao-importacao', 'importar') &&
+            request.resource.data
+              .diff(resource.data)
+              .affectedKeys().hasOnly(['cod','desc','insumos','bluesoftFichaTecnicaKey','bluesoftSincronizadoEm','atualizadoEm'])
+          )
+        );
+
+        allow delete: if canAccessStore(lojaId) &&
           hasPermission('producao-ficha-tecnica', 'editar');
+      }
+
+      // Logística · Recebimento (fase 15) — histórico de notas recebidas
+      // real da Bluesoft (status-processamento-nfe + entregas de pedido de
+      // compra, cruzadas pra calcular divergência). Nunca apaga (é
+      // histórico mês a mês) e a sincronização nunca toca em
+      // `chegadaPortaria` (campo manual — não existe API de portaria/YMS
+      // confirmada) — por isso os dois conjuntos de campo são separados em
+      // ramos de update diferentes, com permissões diferentes.
+      match /recebimento_notas/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow create: if canAccessStore(lojaId) &&
+          hasPermission('recebimento-notas', 'importar');
+
+        allow update: if canAccessStore(lojaId) && (
+          (
+            hasPermission('recebimento-notas', 'importar') &&
+            request.resource.data
+              .diff(resource.data)
+              .affectedKeys().hasOnly(['notaFiscalKey','numeroNota','serieNota','chaveNota','cnpjRemetente','valor','status','statusRecebimento','fechada','natureza','processamento','dataRecebimento','inicioLancamento','fimLancamento','tempoLancamentoMin','fornecedorNome','movimentacaoCargaKey','tipoTransferencia','comparavel','quantidadePedidaTotal','quantidadeRecebidaTotal','divergencia','temDivergencia','bluesoftSincronizadoEm','atualizadoEm'])
+          ) ||
+          (
+            hasPermission('recebimento-notas', 'editar') &&
+            request.resource.data
+              .diff(resource.data)
+              .affectedKeys().hasOnly(['chegadaPortaria','tempoPortariaAteRecebimentoMin','atualizadoEm','atualizadoPor'])
+          )
+        );
+
+        allow delete: if false;
+      }
+
+      match /recebimento_cargas/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow create, update: if canAccessStore(lojaId) &&
+          hasPermission('recebimento-notas', 'importar');
+
+        allow delete: if false;
+      }
+
+      // Recebimento operacional (fase 15/FASE 2) — cadastro simples de apoio
+      // (doca), a coleção núcleo (uma só pra fornecedor e transbordo, nunca
+      // duas bases pro mesmo processo — ver 90-bluesoft-service.js/
+      // 91-logistica-recebimento.js pro histórico via Bluesoft, que é uma
+      // fonte diferente), agendamento e auditoria append-only. Motorista e
+      // veículo NÃO ficam aqui dentro — viraram coleção global (ver match
+      // /recebimento_motoristas// /recebimento_veiculos lá em cima, fora de
+      // lojas/{lojaId}): pedido ao vivo do usuário, "o motorista cadastrado
+      // tem que ficar cadastrado para todas as lojas", porque o mesmo
+      // motorista bipa o mesmo código fixo tanto na Matriz quanto na Filial.
+      match /recebimento_docas/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) && hasPermission('recebimento-config', 'editar');
+      }
+
+      // Ajustes gerais do Transbordo (fase 15/FASE 4b) — hoje só guarda o
+      // destino padrão usado quando o Coletor cria um transbordo sozinho a
+      // partir do bip do código fixo do motorista (sem o Analista preencher
+      // formulário). Leitura liberada pro Coletor (mesma regra de
+      // motoristas/veículos/docas); escrita continua exigindo
+      // recebimento-config:editar, igual o resto dessa tela.
+      match /recebimento_config_geral/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) && hasPermission('recebimento-config', 'editar');
+      }
+
+      // Catálogo de observações opcionais do Transbordo. O Analista cadastra
+      // e o Coletor apenas lê/pesquisa para selecionar na saída da carga.
+      match /recebimento_observacoes_transbordo/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow create, update, delete: if canAccessStore(lojaId) && (
+          hasPermission('recebimento-transbordo', 'editar') ||
+          hasPermission('recebimento-config', 'editar')
+        );
+      }
+
+      // Recebimento > Recusas — notas importadas do DANFE, cadastros de apoio
+      // e conferências feitas no Coletor. O Coletor só lê a base/cadastros e
+      // cria a conferência; importação/cadastros/ajustes ficam no Analista.
+      match /recebimento_recusas_notas/{docId} {
+        allow read: if canAccessStore(lojaId) && (canUseAnalista() || canUseColetor());
+        allow create, update: if canAccessStore(lojaId) && hasPermissionRecusas('importar');
+        allow delete: if canAccessStore(lojaId) && hasPermissionRecusas('excluir');
+      }
+
+      match /recebimento_recusas_motoristas/{docId} {
+        allow read: if canAccessStore(lojaId) && (canUseAnalista() || canUseColetor());
+        allow create, update, delete: if canAccessStore(lojaId) && hasPermissionRecusas('editar');
+      }
+
+      match /recebimento_recusas_motivos/{docId} {
+        allow read: if canAccessStore(lojaId) && (canUseAnalista() || canUseColetor());
+        allow create, update, delete: if canAccessStore(lojaId) && hasPermissionRecusas('editar');
+      }
+
+      // Pedido ao vivo do usuário (planilha real de controle): "Conferente"
+      // é a pessoa da equipe que confere a carga na chegada — cadastro
+      // próprio, mesmo dueto de permissão de Motoristas/Motivos acima.
+      match /recebimento_recusas_conferentes/{docId} {
+        allow read: if canAccessStore(lojaId) && (canUseAnalista() || canUseColetor());
+        allow create, update, delete: if canAccessStore(lojaId) && hasPermissionRecusas('editar');
+      }
+
+      match /recebimento_recusas/{docId} {
+        allow read: if canAccessStore(lojaId) && (canUseAnalista() || canUseColetor());
+        allow create: if canAccessStore(lojaId) && (
+          hasPermissionRecusas('criar') ||
+          hasPermissionColetorRecebimento('criar')
+        );
+        // FASE 8 — Coletor também precisa gravar update aqui pra concluir
+        // uma conferência delegada (statusConferenciaOperacional/
+        // itensConferidos na MESMA recusa já registrada) — mesmo dueto de
+        // permissão já usado em create, logo acima.
+        allow update: if canAccessStore(lojaId) && (
+          hasPermissionRecusas('editar') ||
+          hasPermissionColetorRecebimento('editar')
+        );
+        allow delete: if canAccessStore(lojaId) && hasPermissionRecusas('excluir');
+      }
+
+      // FASE 8 — fila de conferência delegada (Analista pede, um operador
+      // específico do Coletor executa depois), no molde de
+      // dt_atribuicoes_contagem. Criar/cancelar é do Analista; concluir é
+      // do Coletor (mesmo dueto de permissão de recebimento_recusas acima).
+      match /recebimento_recusas_tarefas_conferencia/{docId} {
+        allow read: if canAccessStore(lojaId) && (canUseAnalista() || canUseColetor());
+        allow create: if canAccessStore(lojaId) && hasPermissionRecusas('criar');
+        allow update: if canAccessStore(lojaId) && (
+          hasPermissionRecusas('editar') ||
+          hasPermissionColetorRecebimento('editar')
+        );
+        allow delete: if canAccessStore(lojaId) && hasPermissionRecusas('excluir');
+      }
+
+      match /recebimento_agendamentos/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) && (
+          hasPermission('recebimento-agendamentos', 'criar') ||
+          hasPermission('recebimento-agendamentos', 'editar') ||
+          hasPermission('recebimento-agendamentos', 'excluir')
+        );
+      }
+
+      // Correção de horário (`horaChegada/horaInicioDescarga/horaFimDescarga/
+      // horaFechamentoRecebimento`) é um ramo à parte, restrito à ação
+      // `corrigir-horario` — nunca some junto de um update comum de status
+      // (seção 12 do pedido: corrigir horário exige permissão administrativa
+      // e sempre gera auditoria, que o cliente grava em recebimento_auditoria
+      // na mesma operação).
+      // Fase 3 — Transbordo usa a MESMA coleção (tipo:'TRANSBORDO') e por
+      // isso qualquer permissão de 'recebimento-operacao' OU
+      // 'recebimento-transbordo' é aceita nos mesmos ramos (nunca duas
+      // regras pra mesma coleção). `horaSaida` entra aqui como mais um
+      // campo de horário só-primeira-vez (registrar saída da Matriz), no
+      // mesmo espírito de horaChegada/horaInicioDescarga/etc.
+      // Controle de Nota Fiscal (seção adicional): `notaFiscalTransferencia`
+      // é gravada na saída e NUNCA recriada — mesmo tratamento
+      // só-primeira-vez dos campos de horário, pra não deixar a Filial (ou
+      // qualquer reenvio) sobrescrever a NF registrada pela Matriz.
+      // `notaFiscalConfirmadaEm/Por` são gravados uma única vez na chegada,
+      // quando a Filial confere o número (a conferência em si — comparar o
+      // número digitado com o registrado — é feita no app antes de chamar
+      // esta escrita; a regra só garante que ninguém sobrescreve por engano
+      // depois de já confirmado).
+      // Transbordo é, por natureza, uma operação ENTRE lojas — o doc mora
+      // fisicamente numa (a de origem), mas quem opera na loja de DESTINO
+      // precisa ler/escrever ele também. `canAccessStore(lojaId)` sozinho
+      // barra isso pra contas restritas a uma única loja (bug ao vivo
+      // relatado: "Missing or insufficient permissions" ao cruzar a leitura
+      // com a loja parceira, com um login só-Coletor de uma loja só —
+      // "já dei permissão pro usuário" não resolvia porque o bloqueio era
+      // por LOJA, não por permissão). Documento de tipo TRANSBORDO ganha uma
+      // segunda via de acesso baseada só na PERMISSÃO administrativa
+      // (recebimento-operacao/recebimento-transbordo), sem depender de
+      // lojas_permitidas cobrir as duas lojas. Fornecedor comum (tipo
+      // diferente) continua exigindo canAccessStore normalmente — não é
+      // operação entre lojas, não precisa desse escape.
+      match /recebimentos/{docId} {
+        // Escape cross-loja usa hasPermissionColetor() (não hasPermission) e
+        // vem SEMPRE depois do ramo normal (canAccessStore) num ||— o motor
+        // do Firestore faz curto-circuito: pra escrita/leitura dentro da
+        // PRÓPRIA loja (o caso comum, quase todo mundo), o 2º ramo nunca
+        // chega a ser avaliado, então o custo de avaliação continua
+        // IDÊNTICO ao de antes. Só quem realmente está cruzando loja paga o
+        // custo extra. Isso importa de verdade: a versão anterior desta
+        // correção juntava os dois ramos com AND logo no topo da regra
+        // (checando permissão pros dois casos ANTES de saber qual se
+        // aplica) — isso estourou o limite de 1000 sub-expressões do motor
+        // de regras do Firestore numa verificação real contra o emulador (o
+        // "erro de permissão" que aparecia pro usuário não era permissão
+        // nenhuma, era esse limite sendo violado).
+        allow read: if canAccessStore(lojaId) || (
+          active() && resource.data.tipo == 'TRANSBORDO' &&
+          hasPermissionColetorRecebimento('editar')
+        );
+
+        // `hasAny(['tipo']) &&` na frente (correção defensiva, mesma classe
+        // do bug de `horaSaida`/`notaFiscalTransferencia` null-vs-ausente já
+        // corrigido antes neste arquivo): um `.set(doc,{merge:true})` num
+        // documento que JÁ EXISTE é ambíguo pro Firestore (não sabe de
+        // antemão se é create ou update), e a regra de CREATE é avaliada
+        // com o payload PARCIAL do merge como se fosse o documento inteiro —
+        // todo bip normal (`_aplicarBipRecebimento`) manda só `{status,
+        // horaXxx, notaFiscal...}`, NUNCA `tipo` (só gravado na criação), e
+        // acessar um campo de mapa ausente sem checar antes com
+        // `.keys().hasAny(...)` é sempre arriscado. Isso NÃO elimina
+        // sozinho o estouro de 1000 sub-expressões visto nos updates
+        // cross-loja negados (ver comentário no `allow update` logo abaixo
+        // — a causa completa ainda não foi isolada com certeza), mas é uma
+        // correção correta por si só, mantida independente disso.
+        allow create: if (
+          (canAccessStore(lojaId) && hasPermissionRecebimento('criar'))
+          ||
+          (
+            active() &&
+            request.resource.data.keys().hasAny(['tipo']) &&
+            request.resource.data.tipo == 'TRANSBORDO' &&
+            hasPermissionColetorRecebimento('criar')
+          )
+        );
+
+        // A checagem de loja saiu do topo do `if` — a versão anterior desta
+        // correção duplicava TODA a árvore de condições (uma cópia com
+        // hasPermission pra dentro-da-loja, outra cópia inteira com
+        // hasPermissionColetor pra cross-loja), o que na prática dobrava o
+        // custo já alto desta regra (cada `.diff().affectedKeys().hasAny([
+        // 8 campos])` conta várias sub-expressões) e estourava o limite de
+        // 1000 sub-expressões do motor do Firestore numa verificação real
+        // contra o emulador. Cada permissão agora só ganha
+        // `|| hasPermissionColetor(...)` no PONTO exato onde já checava
+        // hasPermission — sem duplicar o resto (diff/hasAny/hasOnly). A
+        // condição de loja (`canAccessStore(lojaId) || tipo TRANSBORDO`)
+        // fica isolada UMA vez só, fora de tudo.
+        //
+        // Posse operacional (correção estrutural, ver _lojaAindaTemAVez()):
+        // dois ramos bem separados, cada um com a PRÓPRIA árvore de
+        // permissão — parece repetir a árvore 2x (o que a sessão anterior
+        // evitava com cuidado), mas o custo NÃO dobra: pra escrita dentro
+        // da PRÓPRIA loja (o caso comum) o 1º `||` já resolve verdadeiro
+        // dentro do 1º ramo, e o Firestore NUNCA chega a avaliar o 2º ramo
+        // (curto-circuito no `||` de fora) — custo idêntico ao de antes.
+        // Só quem está cruzando loja paga o 2º ramo, e só ELE precisa da
+        // variante *NaLoja (que confirma acesso real à loja de DESTINO,
+        // reaproveitando o mesmo `access()` da checagem de permissão — ver
+        // comentário em hasPermissionRecebimentoQualquerCanalNaLoja).
+        // Confirmado via Rules Unit Testing contra o emulador real: uma
+        // 3ª chamada a admin()/access() aqui (ex.: um `canAccessStore(destino)`
+        // separado antes das permissões) estourava o limite de 1000
+        // sub-expressões de novo — por isso a checagem de loja fica DENTRO
+        // da própria função de permissão, nunca ao lado dela.
+        //
+        // CORREÇÃO ESTRUTURAL REAL (bug ao vivo confirmado em produção, não
+        // suposição): as 4 chamadas hasPermissionXxx() por ramo (8 no total)
+        // foram substituídas por UMA chamada consolidada por ramo
+        // (_recPodeEditarNaPropriaLoja/_recPodeEditarCrossLoja, definidas
+        // acima) — cada uma faz UMA passada só pelas 2 varreduras caras de
+        // `.keys().hasAny()` no mapa `permissoes` (que numa conta real, com
+        // ~50 módulos, custava caro o bastante repetido 8 vezes pra estourar
+        // o limite de 1000 sub-expressões do motor de regras). O sintoma
+        // real foi Rafael (só acesso à loja "matriz") conseguindo escrever
+        // em início/fim de descarga e fechamento de um transbordo cujo
+        // destinoLojaId já apontava pra outra loja havia várias etapas —
+        // confirmado reproduzindo os dados exatos da conta e do documento
+        // reais contra o motor de regras do emulador, que consistentemente
+        // batia no limite de 1000 nesse cenário.
+        // `?:` (ternário) em vez de `||` no topo — achado real desta sessão:
+        // o `||` não garante economia de custo aqui, mesmo com o lado
+        // esquerdo curto-circuitando pra `false` de forma óbvia (confirmado
+        // reproduzindo o bug ao vivo contra o emulador: o motor de regras
+        // parece "pagar" pelos dois ramos de um `||` mesmo quando só um
+        // precisaria ser avaliado). Um ternário de verdade garante que só
+        // UM ramo é avaliado. `_lojaAindaTemAVez()` já cobre exatamente a
+        // condição que decidia qual ramo usar (`tipo!=TRANSBORDO ||
+        // sem-destino-real || status==PREVISTO` = ramo própria loja; o
+        // contrário = ramo cross-loja) — não precisa repetir a checagem.
+        allow update: if resource != null && (
+          _recPodeCorrigirRotaNaLoja(lojaId) ||
+          (
+            _lojaAindaTemAVez()
+            ? (canAccessStore(lojaId) && _recPodeEditarNaPropriaLoja())
+            : (active() && _recPodeEditarCrossLoja(resource.data.destinoLojaId))
+          )
+        );
+
+        // Exclusão de verdade (pedido ao vivo do usuário: cargas de TESTE,
+        // geradas durante validação do fluxo, precisam sumir de vez —
+        // diferente de "Cancelar" acima, que só muda o status pra CANCELADO
+        // e mantém o histórico). Analista-only (hasPermissionRecebimento já
+        // restringe a esse canal — mesma família de "cancelar"/"finalizar"),
+        // gate único e barato (reaproveita a MESMA função já usada no `allow
+        // create` acima, já verificada contra o limite de 1000
+        // sub-expressões nesta regra). Funciona em QUALQUER status,
+        // inclusive FINALIZADO/CANCELADO, de propósito — era exatamente o
+        // caso que antes não tinha saída nenhuma.
+        allow delete: if canAccessStore(lojaId) && hasPermissionRecebimento('excluir');
+      }
+
+      // Identificadores/QR de transbordo (fase 3, seção 13) — nunca
+      // apagados (viram histórico de rastreabilidade de qual QR foi usado
+      // em qual carga); status muda por update normal.
+      match /recebimento_identificadores/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow create, update: if canAccessStore(lojaId) && hasPermission('recebimento-transbordo', 'gerar-qrcode');
+        allow delete: if false;
+      }
+
+      match /recebimento_auditoria/{docId} {
+        allow read: if canAccessStore(lojaId);
+        // Mesmo escape cross-loja que `recebimentos` (ver comentário lá,
+        // inclusive sobre o limite de 1000 sub-expressões do motor de
+        // regras) — um bip de transbordo na loja de destino grava auditoria
+        // na loja de ORIGEM (onde o documento mora). Ramo normal
+        // (canAccessStore) continua com o mesmo custo de sempre; só quem
+        // cruza loja paga o custo extra do 2º ramo. Também aceita
+        // recebimento-transbordo agora (só aceitava recebimento-operacao
+        // antes — um login com permissão só em "Transbordo" tinha a
+        // auditoria negada até na PRÓPRIA loja, silenciosamente, porque
+        // essa escrita nunca trava o bip principal).
+        allow create: if (
+          (canAccessStore(lojaId) && (
+            hasPermissionRecebimento('criar') ||
+            hasPermissionRecebimento('editar') ||
+            hasPermissionRecebimento('corrigir-horario')
+          ))
+          ||
+          (active() && (
+            hasPermissionColetorRecebimento('criar') ||
+            hasPermissionColetorRecebimento('editar') ||
+            hasPermissionColetorRecebimento('corrigir-horario')
+          ))
+        );
+        allow update, delete: if false;
       }
 
       // Unificação com o Sistema de Produção (fase 3a) — cadastro de
@@ -460,7 +1349,7 @@ service cloud.firestore {
         allow read: if canAccessStore(lojaId);
 
         allow write: if canAccessStore(lojaId) &&
-          hasPermission('producao-maquinas', 'editar');
+          (hasPermission('producao-maquinas', 'editar') || hasPermission('producao-config', 'editar'));
       }
 
       // Unificação com o Sistema de Produção (fase 3b) — lista/cadastro de
@@ -492,12 +1381,169 @@ service cloud.firestore {
 
       // Unificação com o Sistema de Produção (fase 3d) — projeção manual de
       // vendas por produto (entrada do motor simplificado de Programação
-      // Automática).
+      // Automática). A partir da fase 6 do PCP, também guarda o saldo de
+      // estoque (estoqueAtual) — que pode ser atualizado por Compras
+      // (recebimento) e por Produção/Realizado (entrada de produção),
+      // além de quem edita a Projeção. Esses papéis externos só podem
+      // tocar os 3 campos do saldo, nunca o resto da projeção.
       match /producao_projecao/{docId} {
         allow read: if canAccessStore(lojaId);
 
+        // Fase 12 — sincronização real de estoque da Bluesoft também pode
+        // criar/atualizar aqui, restrita aos campos de saldo/custo/consumo
+        // que vêm de lá — nunca projecaoManual nem os demais campos que a
+        // tela de Projeção controla manualmente.
+        allow create: if canAccessStore(lojaId) && (
+          hasPermission('producao-projecao', 'editar') ||
+          hasPermission('producao-importacao', 'importar')
+        );
+
+        allow update: if canAccessStore(lojaId) && (
+          hasPermission('producao-projecao', 'editar') ||
+          (
+            (
+              hasPermission('compras-central', 'editar') ||
+              hasPermission('producao-programacao', 'criar') ||
+              hasPermission('producao-realizado', 'editar')
+            ) &&
+            request.resource.data
+              .diff(resource.data)
+              .affectedKeys().hasOnly(['estoqueAtual','estoqueAtualizadoEm','estoqueAtualizadoPor'])
+          ) ||
+          (
+            hasPermission('producao-importacao', 'importar') &&
+            request.resource.data
+              .diff(resource.data)
+              .affectedKeys().hasOnly(['cod','produto','estoqueAtual','estoqueReservado','estoqueEmTransito','estoqueReservadoVenda','custoUltimaCompra','custoMedioContabil','consumoDiaMedioBluesoft','bluesoftSincronizadoEm','atualizadoEm','atualizadoPor'])
+          )
+        );
+
+        // Fase 12c — limpeza do ruído deixado pela sincronização antiga só
+        // pode apagar documento que realmente veio da Bluesoft
+        // (bluesoftSincronizadoEm presente), nunca uma linha criada
+        // manualmente na tela de Projeção.
+        allow delete: if canAccessStore(lojaId) && (
+          hasPermission('producao-projecao', 'editar') ||
+          (
+            hasPermission('producao-importacao', 'importar') &&
+            resource.data.bluesoftSincronizadoEm != null
+          )
+        );
+      }
+
+      // PCP (fase 6) — ledger de movimentos de estoque, um documento por
+      // movimentoId (recebimento de compra ou entrada de produção). Nunca
+      // editado/apagado depois de criado — é o que torna aplicarEntradaEsto
+      // queProducao() idempotente (reprocessar o mesmo movimentoId não soma
+      // duas vezes, só encontra o documento já existente e para).
+      match /producao_estoque_movimentos/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow create: if canAccessStore(lojaId) && (
+          hasPermission('producao-projecao', 'editar') ||
+          hasPermission('compras-central', 'editar') ||
+          hasPermission('producao-programacao', 'criar') ||
+          hasPermission('producao-realizado', 'editar')
+        );
+
+        allow update, delete: if false;
+      }
+
+      // PCP (fase 2) — pedidos recebidos das lojas/canais de venda, usados
+      // como demanda comprometida no cálculo de saldo/cobertura.
+      match /pcp_pedidos/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow create: if canAccessStore(lojaId) &&
+          hasPermission('pcp-central', 'criar');
+
+        allow update: if canAccessStore(lojaId) &&
+          hasPermission('pcp-central', 'editar');
+
+        allow delete: if canAccessStore(lojaId) &&
+          hasPermission('pcp-central', 'excluir');
+      }
+
+      // PCP (fase 2/3) — requisições de compra criadas pelo PCP e roteadas
+      // automaticamente pra um comprador (compras_regras_comprador). O
+      // comprador só edita os campos de andamento/registro da própria
+      // requisição (nunca produto/quantidade/data, que são do PCP); quem
+      // configura o roteamento só edita os campos da regra/roteamento, não
+      // ganha edição operacional irrestrita da requisição.
+      match /pcp_requisicoes_compra/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow create: if canAccessStore(lojaId) &&
+          hasPermission('pcp-central', 'criar');
+
+        allow update: if canAccessStore(lojaId) && (
+          hasPermission('compras-central', 'configurar') ||
+          hasPermission('pcp-central', 'editar') ||
+          hasPermission('compras-central', 'editar')
+        ) && (
+          hasPermission('pcp-central', 'editar') ||
+          (
+            hasPermission('compras-central', 'editar') &&
+            resource.data.compradorUid == request.auth.uid &&
+            request.resource.data.compradorUid == request.auth.uid &&
+            request.resource.data
+              .diff(resource.data)
+              .affectedKeys().hasOnly(['status','numeroCompra','fornecedor','quantidadeComprada','precoUnitario','valorTotal','dataPrevista','observacaoCompras','compradoEm','compradoPor','atualizadoEm','atualizadoPor'])
+          ) ||
+          (
+            hasPermission('compras-central', 'configurar') &&
+            request.resource.data
+              .diff(resource.data)
+              .affectedKeys().hasOnly(['compradorUid','compradorEmail','compradorNome','regraId','regraTipo','regraValor','status','roteadoEm','roteadoPor','atualizadoEm'])
+          )
+        );
+
+        allow delete: if canAccessStore(lojaId) &&
+          hasPermission('pcp-central', 'excluir');
+      }
+
+      // PCP (fase 2/5) — agendamentos de entrada (compra prevista/recebida),
+      // criados manualmente pelo PCP ou automaticamente quando Compras
+      // efetiva uma compra (doc 'req_'+requisicaoId).
+      match /pcp_agendamentos/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow create: if canAccessStore(lojaId) && (
+          hasPermission('pcp-central', 'criar') ||
+          hasPermission('compras-central', 'editar')
+        );
+
+        allow update: if canAccessStore(lojaId) && (
+          hasPermission('pcp-central', 'editar') ||
+          hasPermission('compras-central', 'editar')
+        );
+
+        allow delete: if canAccessStore(lojaId) &&
+          hasPermission('pcp-central', 'excluir');
+      }
+
+      // Compras (fase 3) — regras de roteamento automático (produto >
+      // categoria > fornecedor) que decidem qual comprador recebe cada
+      // requisição criada pelo PCP.
+      match /compras_regras_comprador/{docId} {
+        allow read: if canAccessStore(lojaId);
+
         allow write: if canAccessStore(lojaId) &&
-          hasPermission('producao-projecao', 'editar');
+          hasPermission('compras-central', 'configurar');
+      }
+
+      // PCP (fase 8) — 1 documento agregado por dia (não por produto, pra
+      // não explodir em milhares de docs), gravado de forma passiva quando
+      // o Dashboard do PCP é aberto e o snapshot do dia ainda não existe.
+      // Alimenta os gráficos de evolução de estoque/cobertura.
+      match /pcp_snapshots_diarios/{docId} {
+        allow read: if canAccessStore(lojaId);
+
+        allow create, update: if canAccessStore(lojaId) &&
+          hasPermission('pcp-central', 'visualizar') &&
+          request.resource.data.keys().hasOnly(['data','estoqueTotalCx','coberturaMediaDias','produtosCriticos','produtosAbaixoMinimo','comprasAbertasQtd','comprasAbertasValor','criadoEm','atualizadoEm']);
+
+        allow delete: if false;
       }
 
       // Unificação com o Sistema de Produção (fase 3d) — cadastro de
@@ -526,8 +1572,36 @@ service cloud.firestore {
       match /producao_config/{docId} {
         allow read: if canAccessStore(lojaId);
 
+        allow write: if canAccessStore(lojaId) && (
+          hasPermission('producao-maquinas', 'editar') ||
+          hasPermission('producao-config', 'editar')
+        );
+      }
+
+
+      // V341 — categorias compartilhadas da Produção.
+      match /producao_categorias/{docId} {
+        allow read: if canAccessStore(lojaId);
         allow write: if canAccessStore(lojaId) &&
-          hasPermission('producao-maquinas', 'editar');
+          hasPermission('producao-config', 'editar');
+      }
+
+      // V341 — estoque de insumos do MRP, sincronizado por loja.
+      match /producao_insumos_estoque/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) && (
+          hasPermission('producao-insumos', 'editar') ||
+          hasPermission('producao-prog-automatica', 'executar') ||
+          hasPermission('producao-importacao', 'importar') ||
+          hasPermission('producao-ficha-tecnica', 'editar')
+        );
+      }
+
+      // V341 — processos realizados dentro da produção.
+      match /producao_processos/{docId} {
+        allow read: if canAccessStore(lojaId);
+        allow write: if canAccessStore(lojaId) &&
+          hasPermission('producao-realizado', 'editar');
       }
 
       match /dt_operadores/{docId} {
@@ -718,21 +1792,51 @@ service cloud.firestore {
       }
     }
 
-    match /dt_coletores/{deviceId} {
-      // Mesmo critério do 'list' abaixo: qualquer signedIn() aqui permitia
-      // que um operador/coletor buscasse por ID o documento de QUALQUER
-      // outro dispositivo (de qualquer loja) e lesse operador_email/ip/sessao.
-      allow get: if active() && (
-        canUseAnalista() ||
-        resource.data.uid == request.auth.uid ||
-        resource.data.operador_uid == request.auth.uid
-      );
+    // PCP (fase 4) — solicitações de produção roteadas pra unidade
+    // produtora do produto (empresaProdutoraId), que pode ser uma loja
+    // diferente da que abriu a solicitação (origemLojaId). Por cruzar
+    // lojas, não pode viver sob /lojas/{lojaId}/ como o resto da Produção
+    // — fica raiz e a autorização é 100% pelos dois campos de loja.
+    // A unidade produtora (quem recebe/programa/produz/finaliza) só pode
+    // tocar os campos de ciclo de vida — nunca o pedido original
+    // (produto/quantidade/data/origem), que continua sendo do PCP.
+    match /pcp_solicitacoes_producao_global/{docId} {
+      allow read: if canAccessStore(resource.data.origemLojaId) ||
+        canAccessStore(resource.data.empresaProdutoraId);
 
-      allow list: if active() && (
-        canUseAnalista() ||
-        resource.data.uid == request.auth.uid ||
-        resource.data.operador_uid == request.auth.uid
-      );
+      allow create: if hasPermission('pcp-central', 'criar') &&
+        canAccessStore(request.resource.data.origemLojaId);
+
+      allow update: if canAccessStore(resource.data.empresaProdutoraId) && (
+        hasPermission('producao-programacao', 'criar') ||
+        hasPermission('producao-realizado', 'editar')
+      ) &&
+      request.resource.data
+        .diff(resource.data)
+        .affectedKeys().hasOnly(['status','recebidoEm','recebidoPor','opId','opLojaId','maquina','programadoEm','programadoPor','producaoIniciadaEm','producaoIniciadaPor','produzidoEm','produzidoPor','finalizadoEm','finalizadoPor','estoqueEntradaCx','atualizadoEm']);
+
+      allow delete: if false;
+    }
+
+    match /dt_coletores/{deviceId} {
+      // Um aparelho físico é compartilhado entre VÁRIOS operadores ao longo
+      // do tempo (turnos diferentes, mesma tablet/coletor) — é assim que
+      // registrarColetorNoFirestore() foi desenhado desde o início: qualquer
+      // conta pode "assumir" um device_id (o update já permite isso, veja
+      // abaixo). O `get` restrito a "só o dono atual (uid) ou Analista"
+      // quebrava exatamente essa troca de operador: a conta B não conseguia
+      // nem LER o doc pra descobrir que já existe e está aprovado, porque o
+      // `uid`/`operador_uid` gravado ainda era da conta A (o último a logar
+      // ali) — "um login vai, o outro não" era sempre A funcionando (é o
+      // dono salvo) e B falhando (bug ao vivo relatado e confirmado com o
+      // erro real: permission-denied na conta só-Coletor, nunca na conta
+      // Analista, mesmo aparelho). Restrito a active() (conta ativa desta
+      // empresa) em vez de signedIn() — evita voltar ao problema original
+      // documentado aqui antes (enumerar device_id de qualquer usuário
+      // autenticado), mas permite qualquer colaborador ativo assumir
+      // qualquer aparelho, que é o uso real do sistema.
+      allow get: if active();
+      allow list: if active();
 
       allow create: if signedIn() &&
         request.resource.data.uid == request.auth.uid &&

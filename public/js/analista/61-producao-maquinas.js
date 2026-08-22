@@ -193,10 +193,17 @@
     document.getElementById('pmaq-title').textContent = item._novo ? 'Nova máquina' : 'Editar máquina';
     document.getElementById('pmaq-doc-id').value = item._firestoreId || '';
     document.getElementById('pmaq-nome').value = item.nome || '';
+    document.getElementById('pmaq-codigo').value = item.codigo || '';
+    document.getElementById('pmaq-tipo').value = item.tipo || '';
+    document.getElementById('pmaq-setor').value = item.setor || '';
     document.getElementById('pmaq-categoria').value = item.categoria || '';
+    document.getElementById('pmaq-classificacao').value = item.classificacao || '';
+    document.getElementById('pmaq-pcmin').value = item.pcMin ?? '';
+    document.getElementById('pmaq-hturno').value = item.hTurno ?? 8;
+    document.getElementById('pmaq-nturnos').value = item.nTurnos ?? 1;
     document.getElementById('pmaq-status').value = item.status || 'ativa';
     document.getElementById('pmaq-eficiencia').value = item.eficiencia ?? 100;
-    document.getElementById('pmaq-setup-padrao').value = item.setupPadraoMin ?? '';
+    document.getElementById('pmaq-setup-padrao').value = item.setupPadraoMin ?? item.tempoSetupPadrao ?? '';
     _produtosEditando = (item.produtosCompativeis || []).map(p => ({ produto: p.produto || '', velocidade: p.velocidade || 0 }));
     _redesenharProdutosEditando();
     _turnosEditando = item.turnos ? JSON.parse(JSON.stringify(item.turnos)) : _turnosDefault();
@@ -279,7 +286,7 @@
   }
 
   function pmaqNovaMaquina() {
-    _abrirModalPmaq({ _novo: true, nome: '', categoria: '', status: 'ativa', eficiencia: 100, produtosCompativeis: [] });
+    _abrirModalPmaq({ _novo: true, nome: '', codigo: '', tipo: '', setor: '', categoria: '', classificacao: '', status: 'ativa', pcMin: 0, eficiencia: 100, hTurno: 8, nTurnos: 1, tempoSetupPadrao: 0, produtosCompativeis: [] });
   }
 
   function pmaqSelecionarToggle(nome) {
@@ -289,9 +296,19 @@
   function pmaqLimparSelecao() { _selecionadas.clear(); _desenharProducaoMaquinas(); }
 
   async function pmaqSalvar() {
-    const nome = String(document.getElementById('pmaq-nome').value || '').trim();
+    const nome = String(document.getElementById('pmaq-nome').value || '').trim().toUpperCase();
     if (!nome) { global.showToast?.('Informe o nome da máquina.', 'error'); return; }
+    const docId = document.getElementById('pmaq-doc-id').value || '';
+    const duplicada = _maquinas.find(m => String(m.nome || '').trim().toUpperCase() === nome && m._firestoreId !== docId);
+    if (duplicada) { global.showToast?.('Máquina já cadastrada.', 'error'); return; }
+    const codigo = String(document.getElementById('pmaq-codigo').value || '').trim();
+    const tipo = String(document.getElementById('pmaq-tipo').value || '').trim();
+    const setor = String(document.getElementById('pmaq-setor').value || '').trim();
     const categoria = String(document.getElementById('pmaq-categoria').value || '').trim();
+    const classificacao = String(document.getElementById('pmaq-classificacao').value || '').trim();
+    const pcMin = Math.max(0, Number(document.getElementById('pmaq-pcmin').value) || 0);
+    const hTurno = Math.max(0, Number(document.getElementById('pmaq-hturno').value) || 8);
+    const nTurnos = Math.max(1, Number(document.getElementById('pmaq-nturnos').value) || 1);
     const status = document.getElementById('pmaq-status').value || 'ativa';
     const eficiencia = Math.max(0, Math.min(100, Number(document.getElementById('pmaq-eficiencia').value) || 100));
     const setupPadraoMinVal = document.getElementById('pmaq-setup-padrao').value;
@@ -300,8 +317,10 @@
     const turnos = {};
     for (let d = 0; d <= 6; d++) turnos[d] = (_turnosEditando[d] || []).filter(f => f.ini && f.fim);
     const agora = new Date().toISOString();
-    const docId = document.getElementById('pmaq-doc-id').value || '';
-    const payload = { nome, categoria, status, eficiencia, setupPadraoMin, produtosCompativeis, turnos, ativo: status === 'ativa', atualizadoEm: agora };
+    // Compatibilidade total com o modelo da Produção original.
+    // Mantemos os aliases setupPadraoMin/tempoSetupPadrao porque módulos antigos e novos
+    // usam nomes diferentes para o mesmo dado.
+    const payload = { nome, codigo, tipo, setor, categoria, classificacao, status, pcMin, eficiencia, hTurno, nTurnos, setupPadraoMin, tempoSetupPadrao: setupPadraoMin, produtosCompativeis, turnos, ativo: status === 'ativa', atualizadoEm: agora };
 
     try {
       if (docId) {
@@ -455,4 +474,5 @@
     const atalhoCampo = event.target.closest('[data-pmaq-atalho-campo]');
     if (atalhoCampo) pmaqAtalhoCampoAlterado(atalhoCampo.getAttribute('data-pmaq-atalho-chave'), atalhoCampo.getAttribute('data-pmaq-atalho-campo'), atalhoCampo.value);
   });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _maquinas=[]; _registros=[]; _setups=[]; _produtosEditando=[]; _turnosEditando={}; _atalhos=null; _selecionadas.clear(); });
 })(window);

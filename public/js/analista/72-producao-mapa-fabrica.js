@@ -184,4 +184,5 @@
   document.addEventListener('input', function (event) {
     if (event.target && event.target.id === 'pmf-busca') _desenharProducaoMapaFabrica();
   });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _maquinas=[]; _registros=[]; _setups=[]; });
 })(window);

@@ -33,6 +33,12 @@ document.addEventListener('keydown', e => {
     if (id === 'f-gtin')     { e.preventDefault(); confirmarGtin();     return; }
     if (id === 'f-validade') { e.preventDefault(); confirmarValidade(); return; }
     if (id === 'f-qty')      { e.preventDefault(); salvarContagem();    return; }
+    if (id === 'rec-scan-input') { e.preventDefault(); confirmarCodigoRecebimento(); return; }
+    // Enter/leitor de código de barras ADICIONA à lista (não confirma
+    // direto) — pedido ao vivo do usuário: dá pra bipar/digitar mais de uma
+    // NF em sequência antes de confirmar. "Confirmar" (botão, não Enter) é
+    // que fecha de vez, adicionando qualquer texto ainda não adicionado.
+    if (document.activeElement?.matches?.('[data-nf-input]')) { e.preventDefault(); adicionarNotaFiscalRecebimento(); return; }
   }
   if (e.ctrlKey && (e.key === '+' || e.key === '-' || e.key === '=')) {
     e.preventDefault();
