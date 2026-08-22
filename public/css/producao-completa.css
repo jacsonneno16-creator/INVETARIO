@@ -50,10 +50,18 @@
 
 /* Barra de abas como no original */
 .prod-original-tabs{display:flex;gap:2px;align-items:center;overflow:visible;padding:8px 28px 10px;background:var(--prod-bg);border-bottom:1px solid var(--prod-border);position:relative;z-index:101;flex-wrap:wrap}
-#setor-producao-shell .prod-tab-btn{appearance:none;border:0!important;background:transparent!important;color:var(--prod-text2)!important;padding:8px 15px!important;min-height:34px!important;border-radius:7px!important;display:inline-flex!important;align-items:center!important;gap:6px!important;font:600 12px 'Space Grotesk',sans-serif!important;cursor:pointer!important;transition:all .18s!important;width:auto!important;white-space:nowrap!important}
-#setor-producao-shell .prod-tab-btn:hover{color:var(--prod-text)!important;background:var(--prod-s3)!important}
-#setor-producao-shell .prod-tab-btn.on{background:var(--prod-primary)!important;color:#fff!important;box-shadow:0 2px 12px rgba(224,112,32,.35)!important}
-.prod-tab-icon{font-size:14px}.prod-more-wrap{position:relative}.prod-more-menu{display:none;position:absolute;right:0;top:calc(100% + 7px);z-index:250;background:var(--prod-s1);border:1px solid var(--prod-border2);border-radius:10px;box-shadow:var(--prod-shadow);padding:6px;min-width:240px}.prod-more-menu.on{display:flex;flex-direction:column}.prod-more-menu .prod-tab-btn{width:100%!important;justify-content:flex-start!important}
+/* Especificidade reforçada (ID + .nav-item + .prod-tab-btn) — o projeto
+   tem 5 arquivos CSS legados (analista-centro-operacoes-v247/248/249.css,
+   analista-operacao-v250.css, analista-premium-v246.css) que estilizam
+   `#app-main .nav-item{...!important}` na MESMA especificidade que a regra
+   de baixo tinha antes (id+classe). Empate de especificidade+!important
+   vira loteria de ordem de carregamento — por isso a cor clara às vezes
+   "vencia". Adicionar `.nav-item` na própria regra sobe a especificidade
+   (id + 2 classes) e garante vitória sempre, não só quando dá sorte. */
+#setor-producao-shell .nav-item.prod-tab-btn{appearance:none;border:0!important;background:transparent!important;color:var(--prod-text2)!important;padding:8px 15px!important;min-height:34px!important;border-radius:7px!important;display:inline-flex!important;align-items:center!important;gap:6px!important;font:600 12px 'Space Grotesk',sans-serif!important;cursor:pointer!important;transition:all .18s!important;width:auto!important;white-space:nowrap!important}
+#setor-producao-shell .nav-item.prod-tab-btn:hover{color:var(--prod-text)!important;background:var(--prod-s3)!important}
+#setor-producao-shell .nav-item.prod-tab-btn.on{background:var(--prod-primary)!important;color:#fff!important;box-shadow:0 2px 12px rgba(224,112,32,.35)!important}
+.prod-tab-icon{font-size:14px}.prod-more-wrap{position:relative}.prod-more-menu{display:none;position:absolute;right:0;top:calc(100% + 7px);z-index:250;background:var(--prod-s1)!important;border:1px solid var(--prod-border2)!important;border-radius:10px;box-shadow:var(--prod-shadow);padding:6px;min-width:240px}.prod-more-menu.on{display:flex;flex-direction:column}.prod-more-menu .nav-item.prod-tab-btn{width:100%!important;justify-content:flex-start!important}
 
 /* Conteúdo */
 #setor-producao-shell>.content{position:relative;z-index:1;flex:1!important;padding:0!important;overflow:auto!important;background:transparent!important;color:var(--prod-text)!important}
@@ -84,7 +92,21 @@
 #page-producao-gantt [class*="gantt-bar"]{box-shadow:0 2px 8px rgba(0,0,0,.22)!important;border-radius:5px!important}
 
 /* Modais da Produção ficam no padrão original quando abertos a partir do módulo. */
+/* Modais vivem fora de #setor-producao-shell no DOM (irmãos, não
+   descendentes) — não herdam as variáveis --prod-* dali. `body` não tem
+   ancestral nenhum com --prod-*, então os valores escuros precisam ser
+   redeclarados aqui (não dá pra reusar var(--prod-s1) etc.). JS
+   (59-producao-ui-completa.js) adiciona/remove esta classe no <body>
+   quando um modal abre/fecha com o setor Produção ativo. */
+body.prod-modal-context{
+ --bg:#0e1210;--surface:#161c18;--surface-2:#0e1210;--surface-3:#1c2420;
+ --border:#22301e;--border-2:#2e4428;--text:#d8ecd0;--muted:#6a9058;--muted-2:#2e4428;
+ --orange:#e07020;--orange-h:#c05a10;--green:#5ab848;--green-light:#5ab848;
+ --warn:#b89030;--danger:#cc2800;--success:#5ab848;--info:#e07020;
+}
 body.prod-modal-context .modal,.producao-page-completa .modal{font-family:'Space Grotesk',sans-serif}
+body.prod-modal-context .modal-bg{background:rgba(0,0,0,.65)!important}
+body.prod-modal-context .modal-close:hover{background:rgba(204,40,0,.15)!important}
 
 @media(max-width:1100px){.prod-user-name{display:none}.prod-pill span:not(.prod-dot){display:none}.prod-original-tabs{padding-left:16px;padding-right:16px}.prod-original-header{padding:0 18px}.producao-page-completa{padding:20px 18px 34px!important}}
 @media(max-width:760px){.prod-original-header{height:auto;min-height:60px;flex-wrap:wrap;padding:10px 12px}.prod-logo-copy{display:none}.prod-original-logo{min-width:auto}.prod-pill{display:none}.prod-store-btn{max-width:140px;overflow:hidden;text-overflow:ellipsis}.prod-user-chip{display:none}.prod-original-tabs{padding:7px 8px;flex-wrap:nowrap;overflow-x:auto;overflow-y:visible}.prod-original-tabs>.prod-tab-btn{flex:0 0 auto}.prod-more-wrap{flex:0 0 auto}.producao-page-completa{padding:14px 9px 28px!important}}

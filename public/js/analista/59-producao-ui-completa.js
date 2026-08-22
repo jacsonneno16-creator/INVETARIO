@@ -12,9 +12,16 @@
 // atrás do "⋮ Mais" (mesmo padrão de flyout já usado em Usuários e
 // Permissões). O CSS de .prod-more-wrap/.prod-more-menu já existia
 // (producao-completa.css) mas nunca tinha sido ligado a elemento nenhum.
+// PEDIDO AO VIVO (usuário, com print do original: "esse menus que eu
+// coloquei nem ficam aí nos 3 pontinhos" — a barra principal do original
+// (index.html:173-184) tem 9 abas fixas, sem "Mais": Dashboard, Programação,
+// Máquinas, Prog. Visual, Realizado, Insumos/Máq., Insumos Geral, Prog.
+// Automática, Relatórios. Ajustado pra bater exatamente com isso —
+// "Insumos Geral" é uma 2ª entrada de menu pro MESMO módulo (a original
+// também tem os dois como abas separadas, mas é o mesmo dado por baixo).
 const ROTAS_PRINCIPAIS=[
  'producao-dashboard','producao-programacao','producao-maquinas','producao-gantt',
- 'producao-realizado','producao-insumos','producao-prog-automatica','producao-relatorios',
+ 'producao-realizado','producao-insumos','producao-insumos-geral','producao-prog-automatica','producao-relatorios',
 ];
 // Rótulo/ícone de cada item NÃO precisa ser recriado aqui — o node original
 // (com <span class="nav-icon"> + texto) é reaproveitado tal como está,
@@ -147,7 +154,34 @@ function observarConteudo(){
   mo.observe(content,{subtree:true,childList:true});
 }
 
-function init(){criarHeader();decorarTudo();observarConteudo();atualizarContextoHeader();}
+// Pedido ao vivo do usuário: "mexer em tudo" — modais (edição de máquina,
+// setup, ficha técnica, funcionário, reordenar fila do Gantt...) são
+// elementos <div class="modal-bg"> que vivem FORA de #setor-producao-shell
+// no DOM (irmãos, não descendentes), então não herdam as variáveis
+// --prod-* mapeadas nele. Marca o <body> quando o setor ativo é Produção
+// e o CSS (producao-completa.css) escurece qualquer modal aberto nesse
+// contexto, sem precisar duplicar a lógica por modal.
+function _shellProducaoVisivel(){
+  const shell=document.getElementById('setor-producao-shell');
+  return !!shell&&global.getComputedStyle(shell).display!=='none';
+}
+function _patchModaisParaTemaProducao(){
+  const origOpen=global.openModal, origClose=global.closeModal;
+  if(typeof origOpen!=='function'||origOpen._prodPatched)return;
+  function open(id){
+    if(_shellProducaoVisivel())document.body.classList.add('prod-modal-context');
+    return origOpen.apply(this,arguments);
+  }
+  function close(id){
+    const r=origClose.apply(this,arguments);
+    if(!document.querySelector('.modal-bg.open'))document.body.classList.remove('prod-modal-context');
+    return r;
+  }
+  open._prodPatched=true;
+  global.openModal=open;global.closeModal=close;
+}
+
+function init(){criarHeader();decorarTudo();observarConteudo();atualizarContextoHeader();_patchModaisParaTemaProducao();}
 if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 
 global.ProducaoUICompleta={montarSidebar:criarHeader,montarShellOriginal:criarHeader,toggleTheme};

@@ -105,7 +105,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <link rel="stylesheet" href="css/analista-dashboard-acomp-v252.css?v=20260804-2245">
 <link rel="stylesheet" href="css/analista-quatro-telas-v254.css?v=20260809-v298-rewrite">
 <link rel="stylesheet" href="css/analista-cadastros-v287.css?v=20260806-v296.1">
-<link rel="stylesheet" href="css/producao-completa.css?v=20260822-fix-navbar-100vh">
+<link rel="stylesheet" href="css/producao-completa.css?v=20260822b-fix-especificidade-nav-item">
 </head>
 <body>
 <!-- ══════════ TELA DE LOGIN ══════════ -->
@@ -172,8 +172,11 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="nav-item" id="nav-producao-realizado" onclick="goPage('producao-realizado',this)">
 <span class="nav-icon">✅</span>Realizado
 </div>
-<div class="nav-item" id="nav-producao-insumos" onclick="goPage('producao-insumos',this)">
-<span class="nav-icon">🧪</span>Insumos / Máquina + Geral
+<div class="nav-item" id="nav-producao-insumos" onclick="window.pinsModo&&window.pinsModo('maquina');goPage('producao-insumos',this)">
+<span class="nav-icon">🧪</span>Insumos / Máq.
+</div>
+<div class="nav-item" id="nav-producao-insumos-geral" onclick="window.pinsModo&&window.pinsModo('geral');goPage('producao-insumos',this)">
+<span class="nav-icon">📦</span>Insumos Geral
 </div>
 <div class="nav-item" id="nav-producao-projecao" onclick="goPage('producao-projecao',this)">
 <span class="nav-icon">📈</span>Projeção
@@ -3134,13 +3137,13 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <script src="js/analista/50-inventario-classificacoes-v275.js?v=20260805-v275"></script>
 <script src="js/analista/51-inventario-por-produto-v286.js?v=20260805-v286"></script>
 <script src="js/analista/52-cadastros-v287.js?v=20260810-v326-fix-dispatch-enderecos"></script>
-<script src="js/analista/59-producao-ui-completa.js?v=20260817-menu-mais"></script>
+<script src="js/analista/59-producao-ui-completa.js?v=20260822-nav-9-abas-modal-escuro"></script>
 <script src="js/analista/60-producao-ficha-tecnica.js?v=20260816-producao-integrada-final"></script>
 <script src="js/analista/63-producao-agenda.js?v=20260811-producao-full-1"></script>
 <script src="js/analista/61-producao-maquinas.js?v=20260816-producao-integrada-final"></script>
 <script src="js/analista/62-producao-programacao.js?v=20260816-producao-integrada-final"></script>
 <script src="js/analista/64-producao-gantt.js?v=20260821-grade-linha-por-produto"></script>
-<script src="js/analista/65-producao-insumos.js?v=20260816-producao-integrada-final"></script>
+<script src="js/analista/65-producao-insumos.js?v=20260822-insumos-geral-aba-separada"></script>
 <script src="js/analista/66-producao-projecao.js?v=20260816-producao-integrada-final"></script>
 <script src="js/analista/67-producao-prog-automatica.js?v=20260816-producao-integrada-final"></script>
 <script src="js/analista/68-producao-funcionarios.js?v=20260816-producao-integrada-final"></script>
