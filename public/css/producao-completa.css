@@ -84,7 +84,7 @@
 /* PEDIDO AO VIVO (auditoria, seção 5): barra de abas idêntica à original
    (css/style.css .tabs/.tab-btn) — pílula com fundo --s2, borda,
    padding:3px, largura pelo conteúdo, não mais uma tira cheia. */
-.prod-original-tabs{display:flex;gap:2px;align-items:center;overflow:visible;background:var(--prod-s2);border:1px solid var(--prod-border);border-radius:10px;padding:3px;width:fit-content;margin:14px 28px 22px;flex-wrap:wrap}
+.prod-original-tabs{display:flex;gap:2px;align-items:center;overflow:visible;background:var(--prod-s2);border:1px solid var(--prod-border);border-radius:10px;padding:3px;width:fit-content;margin:24px 28px 22px;flex-wrap:wrap}
 /* Especificidade reforçada (ID + .nav-item + .prod-tab-btn) — o projeto
    tem 5 arquivos CSS legados (analista-centro-operacoes-v247/248/249.css,
    analista-operacao-v250.css, analista-premium-v246.css) que estilizam
@@ -108,7 +108,13 @@
 
 /* Conteúdo */
 #setor-producao-shell>.content{position:relative;z-index:1;flex:1!important;padding:0!important;overflow:auto!important;background:transparent!important;color:var(--prod-text)!important}
-.producao-page-completa{padding:24px 28px 40px!important;max-width:1480px!important;margin:0 auto!important;color:var(--prod-text)!important;font-family:'Space Grotesk',sans-serif!important}
+/* PEDIDO AO VIVO (auditoria 2ª rodada, seção 4): no original só existe UM
+   padding-top (o de .wrap, 24px), consumido pelas abas — o painel em si
+   (filho direto de .wrap, irmão das abas) não tem padding-top próprio.
+   Aqui abas (.prod-original-tabs, margin-top:24px) e painel são elementos
+   separados; dar padding-top:24px também ao painel duplicava o espaço
+   entre abas e conteúdo. */
+.producao-page-completa{padding:0 28px 40px!important;max-width:1480px!important;margin:0 auto!important;color:var(--prod-text)!important;font-family:'Space Grotesk',sans-serif!important}
 .producao-page-completa .page-title{font-size:1.3rem!important;font-weight:700!important;color:var(--prod-text)!important;letter-spacing:-.2px!important}.producao-page-completa .page-subtitle,.producao-page-completa .muted{color:var(--prod-text2)!important}
 
 /* Cards e painéis atuais recebem o acabamento do original */
@@ -118,16 +124,25 @@
 
 /* Toolbar, inputs e botões */
 .producao-page-completa .toolbar{display:flex!important;gap:8px!important;align-items:center!important;flex-wrap:wrap!important;margin-bottom:14px!important}
-.producao-page-completa .field,.producao-page-completa input:not([type=checkbox]):not([type=radio]),.producao-page-completa select,.producao-page-completa textarea{background:var(--prod-s1)!important;border:1px solid var(--prod-border)!important;color:var(--prod-text)!important;border-radius:8px!important;font-family:'Space Grotesk',sans-serif!important;outline:none!important}
-.producao-page-completa .field:focus,.producao-page-completa input:focus,.producao-page-completa select:focus,.producao-page-completa textarea:focus{border-color:var(--prod-primary)!important;box-shadow:0 0 0 3px rgba(224,112,32,.1)!important}
-.producao-page-completa .btn{padding:8px 14px!important;border-radius:8px!important;font:600 12px 'Space Grotesk',sans-serif!important;display:inline-flex!important;align-items:center!important;gap:6px!important;transition:.18s!important}.producao-page-completa .btn-primary{background:var(--prod-primary)!important;border-color:var(--prod-primary)!important;color:#fff!important}.producao-page-completa .btn-primary:hover{background:var(--prod-primary2)!important;transform:translateY(-1px)!important;box-shadow:0 4px 16px rgba(224,112,32,.35)!important}.producao-page-completa .btn-secondary,.producao-page-completa .btn-ghost{background:var(--prod-s2)!important;border:1px solid var(--prod-border)!important;color:var(--prod-text2)!important}.producao-page-completa .btn-danger{background:rgba(204,40,0,.1)!important;color:var(--prod-red)!important;border:1px solid rgba(204,40,0,.25)!important}
+.producao-page-completa .field,.producao-page-completa input:not([type=checkbox]):not([type=radio]),.producao-page-completa select,.producao-page-completa textarea{background:var(--prod-s1)!important;border:1px solid var(--prod-border)!important;color:var(--prod-text)!important;border-radius:8px!important;padding:9px 12px!important;font:13px 'Space Grotesk',sans-serif!important;outline:none!important}
+.producao-page-completa .field:focus,.producao-page-completa input:focus,.producao-page-completa select:focus,.producao-page-completa textarea:focus{border-color:var(--prod-primary)!important;box-shadow:0 0 0 3px rgba(224,112,32,.12)!important}
+/* PEDIDO AO VIVO (auditoria 2ª rodada, seção 2): medidas exatas do
+   .btn original (style.css:161) — padding 9px 16px, fonte 13px, não
+   8px 14px/12px como estava. */
+.producao-page-completa .btn{padding:9px 16px!important;border-radius:8px!important;font:600 13px 'Space Grotesk',sans-serif!important;display:inline-flex!important;align-items:center!important;gap:6px!important;transition:.18s!important}.producao-page-completa .btn-primary{background:var(--prod-primary)!important;border-color:var(--prod-primary)!important;color:#fff!important}.producao-page-completa .btn-primary:hover{background:var(--prod-primary2)!important;transform:translateY(-1px)!important;box-shadow:0 4px 16px rgba(224,112,32,.35)!important}.producao-page-completa .btn-secondary,.producao-page-completa .btn-ghost{background:var(--prod-s2)!important;border:1px solid var(--prod-border)!important;color:var(--prod-text2)!important}.producao-page-completa .btn-danger{background:rgba(204,40,0,.1)!important;color:var(--prod-red)!important;border:1px solid rgba(204,40,0,.25)!important}
+/* .btn-sm continua compacto de propósito — são os "botões realmente
+   compactos previstos no projeto original" (ex.: ações de linha, ⚡
+   atalhos) que a auditoria pediu pra preservar fora da medida padrão. */
+.producao-page-completa .btn-sm{padding:5px 10px!important;font-size:11.5px!important}
 
-/* Tabelas */
-.producao-page-completa .dt-table,.producao-page-completa table{width:100%!important;border-collapse:collapse!important;font-size:12.5px!important;color:var(--prod-text)!important}.producao-page-completa .dt-table thead,.producao-page-completa table thead{background:var(--prod-s2)!important;border-bottom:1px solid var(--prod-border)!important}.producao-page-completa .dt-table th,.producao-page-completa table th{background:var(--prod-s2)!important;padding:11px 14px!important;text-align:left!important;font:500 10px 'JetBrains Mono',monospace!important;text-transform:uppercase!important;letter-spacing:.8px!important;color:var(--prod-text3)!important;border-bottom:1px solid var(--prod-border)!important;white-space:nowrap!important}.producao-page-completa .dt-table td,.producao-page-completa table td{padding:10px 14px!important;border-bottom:1px solid var(--prod-td-border)!important;color:var(--prod-text)!important;background:transparent!important}.producao-page-completa .dt-table tbody tr:hover td,.producao-page-completa table tbody tr:hover td{background:var(--prod-row-hover)!important}
-.producao-page-completa .table-wrap,.producao-page-completa .tbl-wrap{background:var(--prod-s1)!important;border:1px solid var(--prod-border)!important;border-radius:12px!important;overflow:auto!important;box-shadow:var(--prod-shadow-sm)!important}
+/* Tabelas — medidas exatas do original (style.css:177-182) */
+.producao-page-completa .dt-table,.producao-page-completa table{width:100%!important;border-collapse:collapse!important;font-size:12.5px!important;color:var(--prod-text)!important}.producao-page-completa .dt-table thead,.producao-page-completa table thead{background:var(--prod-s2)!important;border-bottom:1px solid var(--prod-border)!important}.producao-page-completa .dt-table th,.producao-page-completa table th{background:var(--prod-s2)!important;padding:11px 14px!important;text-align:left!important;font:500 10px 'JetBrains Mono',monospace!important;text-transform:uppercase!important;letter-spacing:.9px!important;color:var(--prod-text3)!important;border-bottom:1px solid var(--prod-border)!important;white-space:nowrap!important}.producao-page-completa .dt-table td,.producao-page-completa table td{padding:10px 14px!important;line-height:1.4!important;border-bottom:1px solid var(--prod-td-border)!important;color:var(--prod-text)!important;background:transparent!important}.producao-page-completa .dt-table tbody tr:hover td,.producao-page-completa table tbody tr:hover td{background:var(--prod-row-hover)!important}
+.producao-page-completa .table-wrap,.producao-page-completa .tbl-wrap,.producao-page-completa .tc{border-radius:12px!important}
+.producao-page-completa .table-wrap,.producao-page-completa .tbl-wrap{background:var(--prod-s1)!important;border:1px solid var(--prod-border)!important;overflow:auto!important;box-shadow:var(--prod-shadow-sm)!important}
 
-/* Badges, vazios, pequenas superfícies */
-.producao-page-completa .badge{display:inline-block!important;padding:3px 9px!important;border-radius:16px!important;font:600 10px 'JetBrains Mono',monospace!important}.producao-page-completa .empty{padding:52px 24px!important;color:var(--prod-text3)!important;text-align:center!important}.producao-page-completa .empty-icon{font-size:38px!important;margin-bottom:8px!important}
+/* Badges, vazios, pequenas superfícies — medidas exatas do original
+   (style.css:183-184,189) */
+.producao-page-completa .badge{display:inline-block!important;padding:2px 9px!important;border-radius:16px!important;font:600 11px 'JetBrains Mono',monospace!important;white-space:nowrap!important}.producao-page-completa .empty{padding:56px 24px!important;color:var(--prod-text3)!important;text-align:center!important;font-size:13px!important}.producao-page-completa .empty-icon{font-size:40px!important;margin-bottom:10px!important}
 
 /* FIX AO VIVO: o card do Gantt (e outras telas) continuou claro mesmo com
    tudo acima — a classe .producao-page-completa depende do JS já ter
@@ -190,6 +205,17 @@ body.prod-modal-context{
 body.prod-modal-context .modal,.producao-page-completa .modal{font-family:'Space Grotesk',sans-serif}
 body.prod-modal-context .modal-bg{background:rgba(0,0,0,.65)!important}
 body.prod-modal-context .modal-close:hover{background:rgba(204,40,0,.15)!important}
+/* PEDIDO AO VIVO (auditoria 2ª rodada, seção 2): medidas exatas do modal
+   original (.modal-box em style.css:205-209) — max-width 680px (não 640),
+   max-height 94vh, raio 16px, título 16px/700. O original separa
+   header/body/footer com paddings próprios (20px 24px / 22px 24px /
+   16px 24px); o .modal deste projeto é compartilhado com todo o app
+   (Logística/PCP/Compras/Recebimento também usam) e não tem essa
+   estrutura em 3 blocos — mantido como um único container com padding
+   30px pra não arriscar quebrar os outros setores; documentado como
+   diferença estrutural conhecida, não um esquecimento.  */
+body.prod-modal-context .modal{max-width:680px!important;max-height:94vh!important;border-radius:16px!important}
+body.prod-modal-context .modal-title{font-size:16px!important;font-weight:700!important}
 
 @media(max-width:1100px){.prod-original-header{padding:0 18px}.prod-original-tabs{margin-left:18px;margin-right:18px}.producao-page-completa{padding:20px 18px 34px!important}}
 @media(max-width:760px){.prod-original-header{height:auto;min-height:60px;flex-wrap:wrap;padding:10px 12px}.prod-logo-copy{display:none}.prod-loja-wrap span:not(.prod-loja-icon){display:none}.prod-original-tabs{margin:10px 12px;padding:4px;flex-wrap:nowrap;overflow-x:auto}.producao-page-completa{padding:14px 9px 28px!important}}
