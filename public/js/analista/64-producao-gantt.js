@@ -143,8 +143,9 @@
               <button class="btn btn-ghost btn-sm" data-pgantt-hoje="1">Hoje</button>
               <input type="date" class="field" data-pgantt-data value="${_isoData(_weekStart)}" title="Ir para semana" style="width:145px;padding:5px 8px">
             </div>
-            <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               ${podeReordenarGantt() ? `<button class="btn btn-ghost btn-sm" data-pgantt-reordenar="1">⇅ Reordenar</button>` : ''}
+              <div style="font-size:.68rem;color:var(--muted)">${_horasJornadaLabel()}</div>
               <button class="btn btn-ghost btn-sm" data-pgantt-export="1">📊 Excel</button><button class="btn btn-ghost btn-sm" data-pgantt-pdf="1">📄 PDF</button>
             </div>
           </div>
@@ -156,6 +157,7 @@
           </div>`}
       </div>
       ${_legendaGantt()}
+      ${_avisoSetupNaoConfiguradoHtml()}
       ${_painelDiagnosticoVelocidade()}
       <div class="tc" style="margin-bottom:14px"><div style="padding:8px 12px;display:flex;align-items:center;justify-content:space-between;cursor:pointer" data-pgantt-diagnostico-toggle="1"><div style="font-size:.76rem;font-weight:600">🔧 Diagnóstico de setup faltando</div><div style="font-size:.7rem;color:var(--muted)">${_diagnosticoAberto ? '▲ ocultar' : '▼ mostrar'}</div></div>${_diagnosticoAberto ? _painelDiagnosticoSetup() : ''}</div>`;
   }
@@ -182,6 +184,39 @@
 
   function _fimSemana() { const f = new Date(_weekStart); f.setDate(f.getDate() + 6); return f; }
 
+  // PEDIDO AO VIVO (auditoria RELATORIO-COMPARACAO-PRODUCAO.md, item 6): o
+  // original (app.js:3605-3619, #gantt-setup-diag) mostra um aviso simples
+  // e sempre visível — não um accordion — quando alguma máquina não tem
+  // setup padrão configurado NEM nenhum par específico cadastrado. Texto
+  // literal reproduzido aqui; o accordion "Diagnóstico de setup faltando"
+  // logo abaixo é outra coisa (mostra os PARES origem→destino sem tempo
+  // específico, mesmo quando a máquina TEM um padrão) — mantido como
+  // recurso extra desta integração, não existe no original.
+  // PEDIDO AO VIVO (auditoria, item 6): "Seg–Qui: 9h · Sex: 8h" (gantt-
+  // hrs-label no original) — aqui generalizado pra qualquer jornada (o
+  // original tinha os dias fixos no código; esta integração já suporta
+  // jornada configurável por dia em Configurações → Jornada).
+  function _horasJornadaLabel() {
+    const j = global.PRODUCAO_JORNADA, DLL = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+    if (!Array.isArray(j)) return '';
+    const grupos = []; let atual = null;
+    [1, 2, 3, 4, 5, 6, 0].forEach(i => {
+      const h = Number(j[i]) || 0;
+      if (h <= 0) { atual = null; return; }
+      if (atual && atual.h === h) { atual.fim = i; }
+      else { atual = { ini: i, fim: i, h }; grupos.push(atual); }
+    });
+    return grupos.map(g => `${DLL[g.ini]}${g.ini !== g.fim ? '–' + DLL[g.fim] : ''}: ${g.h}h`).join(' · ');
+  }
+  function _avisoSetupNaoConfiguradoHtml() {
+    const semSetup = _maquinas.filter(m => {
+      const padrao = Number(m.setupPadraoMin ?? m.tempoSetupPadrao) || 0;
+      const temEspecifico = _setups.some(s => s.maquina === m.nome);
+      return padrao <= 0 && !temEspecifico;
+    });
+    if (!semSetup.length) return '';
+    return `<div style="margin:0 0 8px 0;padding:8px 14px;background:rgba(255,153,0,.1);border:1px solid var(--warn);border-radius:6px;font-size:.72rem;color:var(--warn);line-height:1.5">⚠ <b>Setup não configurado</b> nas máquinas: ${semSetup.map(m => esc(m.nome)).join(', ')} — a coluna SET UP mostrará "—". Configure o tempo padrão em <b>Configurações → Máquinas → Setup Padrão (min)</b>.</div>`;
+  }
   function _painelDiagnosticoSetup() {
     const maquinasPorNome = {}; _maquinas.forEach(m => { maquinasPorNome[m.nome] = m; });
     const pares = [];
