@@ -27,9 +27,37 @@
 
   function fs() { return global.getDTFirestore(); }
 
+  // PEDIDO AO VIVO (usuário: "o arquivo que eu subo... não salva nada que
+  // nem no original"): o template REAL do original (app.js:9444-9552,
+  // _baixarTemplateCompleto) grava 3 linhas antes dos dados — título,
+  // aviso, e só na 3ª linha os nomes de coluna de verdade (app.js:9586-
+  // 9658, importarArquivoPadrao, sempre lê com header:1 e pula 3 linhas
+  // por índice numérico, nunca por nome de coluna). O código antigo aqui
+  // usava sheet_to_json no modo padrão (linha 1 = cabeçalho), então lia o
+  // TÍTULO como se fosse nome de coluna — toda linha subsequente virava
+  // lixo e nenhuma OP era salva. Detecta os dois formatos: se as duas
+  // primeiras linhas têm só 1 célula preenchida cada (título+aviso) e a
+  // 3ª tem várias, pula pra 3ª como cabeçalho real (formato do original);
+  // senão usa a 1ª linha como cabeçalho (formato desta integração).
+  function _lerLinhasInteligente(sheet) {
+    const raw = global.XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+    if (!raw.length) return [];
+    const preenchidas = row => (row || []).filter(c => String(c ?? '').trim() !== '').length;
+    let headerIdx = 0;
+    if (raw.length > 3 && preenchidas(raw[0]) === 1 && preenchidas(raw[1]) === 1 && preenchidas(raw[2]) > 1) headerIdx = 2;
+    const headers = (raw[headerIdx] || []).map(h => String(h ?? '').trim());
+    return raw.slice(headerIdx + 1).filter(r => preenchidas(r) > 0).map(r => {
+      const obj = {}; headers.forEach((h, i) => { if (h) obj[h] = r[i] ?? ''; }); return obj;
+    });
+  }
   function _achaAba(book, pedacoNome) {
     const nome = book.SheetNames.find(n => n.toLowerCase().includes(pedacoNome));
-    return nome ? global.XLSX.utils.sheet_to_json(book.Sheets[nome], { defval: '' }) : [];
+    return nome ? _lerLinhasInteligente(book.Sheets[nome]) : [];
+  }
+  function _parseAtivoStatus(val) {
+    if (val === null || val === undefined || val === '') return true;
+    const s = String(val).trim().toLowerCase();
+    return !['desativado', 'desativo', 'inativo', 'nao', 'não', 'n', '0', 'false', 'no'].includes(s);
   }
 
   function _json(v, fallback={}) { try { return v ? JSON.parse(String(v)) : fallback; } catch (e) { return fallback; } }
@@ -92,12 +120,12 @@
       const linhasMaquinas = _achaAba(book, 'maquina');
       const linhasProdutos = _achaAba(book, 'produto');
       const linhasInsumos = _achaAba(book, 'insumo');
-      const linhasFichaFull = book.SheetNames.includes('Ficha_Tecnica') ? global.XLSX.utils.sheet_to_json(book.Sheets['Ficha_Tecnica'], {defval:''}) : [];
+      const linhasFichaFull = book.SheetNames.includes('Ficha_Tecnica') ? _lerLinhasInteligente(book.Sheets['Ficha_Tecnica']) : [];
       const linhasSetup = _achaAba(book, 'setup');
       const linhasProgramacao = _achaAba(book, 'programacao');
       const linhasRealizado = _achaAba(book, 'realizado');
       const linhasFuncionarios = _achaAba(book, 'funcionario');
-      const linhasEstoqueInsumos = book.SheetNames.includes('Estoque_Insumos') ? global.XLSX.utils.sheet_to_json(book.Sheets['Estoque_Insumos'], {defval:''}) : [];
+      const linhasEstoqueInsumos = book.SheetNames.includes('Estoque_Insumos') ? _lerLinhasInteligente(book.Sheets['Estoque_Insumos']) : [];
       const linhasProjecao = _achaAba(book, 'projecao');
       const linhasProcessos = _achaAba(book, 'processo');
       const linhasCategorias = _achaAba(book, 'categoria');
@@ -118,7 +146,26 @@
       for (const r of linhasMaquinas) {
         const nome = String(r.nome || '').trim();
         if (!nome) continue;
-        const full=_dadosLinha(r), payload = { ...full, nome, categoria: String(r.categoria ?? full.categoria ?? ''), status: String(r.status ?? full.status ?? 'ativa'), eficiencia: Number(r.eficiencia ?? full.eficiencia) || 100, setupPadraoMin: Number(r.setupPadraoMin ?? full.setupPadraoMin) || 0, produtosCompativeis:_json(r.produtosCompativeisJson, full.produtosCompativeis||[]), turnos:_json(r.turnosJson, full.turnos||{}), atualizadoEm: agora };
+        // PEDIDO AO VIVO: nomes de coluna EXATOS do template real do original
+        // (app.js:9468 hdrMaq / app.js:9638-9658 importarArquivoPadrao) —
+        // 'undMin'→pcMin, 'setup'→setupPadraoMin, 'produtos' é lista separada
+        // por vírgula (sem velocidade específica, igual ao original faz).
+        const full=_dadosLinha(r);
+        const listaProdutos=String(r.produtos??'').split(',').map(p=>p.trim()).filter(Boolean).map(p=>({produto:p,velocidade:null}));
+        const payload = { ...full, nome,
+          codigo: String(r.codigo ?? full.codigo ?? ''),
+          tipo: String(r.tipo ?? full.tipo ?? ''),
+          setor: String(r.setor ?? full.setor ?? ''),
+          categoria: String(r.categoria ?? full.categoria ?? ''),
+          status: String(r.status ?? full.status ?? 'ativa').toLowerCase(),
+          pcMin: Number(r.undMin ?? r.pcMin ?? full.pcMin) || 0,
+          eficiencia: Number(r.eficiencia ?? full.eficiencia) || 100,
+          hTurno: Number(r.hTurno ?? full.hTurno) || 8,
+          nTurnos: Number(r.nTurnos ?? full.nTurnos) || 1,
+          setupPadraoMin: Number(r.setup ?? r.setupPadraoMin ?? full.setupPadraoMin) || 0,
+          produtosCompativeis: listaProdutos.length ? listaProdutos : _json(r.produtosCompativeisJson, full.produtosCompativeis||[]),
+          turnos:_json(r.turnosJson, full.turnos||{}), atualizadoEm: agora };
+        payload.tempoSetupPadrao = payload.setupPadraoMin;
         const existente = maquinasExistentes.find(m => m.nome === nome); const id=String(r.id||'').trim();
         if (existente) { await fs().collection(COL_MAQUINAS).doc(existente._id).set(payload, { merge: true }); atualizados++; }
         else if(id){ await fs().collection(COL_MAQUINAS).doc(id).set({...payload,ativo:payload.ativo!==false,criadoEm:payload.criadoEm||agora},{merge:true}); criados++; }
@@ -128,15 +175,23 @@
       for (const r of linhasProdutos) {
         const cod = String(r.cod || '').trim();
         if (!cod) continue;
-        const full=_dadosLinha(r), payload = { ...full, cod, nome: String(r.nome || r.descricao || full.nome || ''), unid: Number(r.unid ?? full.unid) || 1, pc_min: Number(r.pc_min ?? full.pc_min) || 0, maquina: String(r.maquina ?? full.maquina ?? ''), categoria:String(r.categoria??full.categoria??''), classificacao:String(r.classificacao??full.classificacao??''), metaCoberturaDias:Number(r.metaCoberturaDias??r.coberturaDias??full.metaCoberturaDias??full.coberturaDias)||0, producaoMinima:Number(r.producaoMinima??full.producaoMinima)||0, multiploProducao:Number(r.multiploProducao??full.multiploProducao)||0, tipoMinimo:String(r.tipoMinimo??full.tipoMinimo??''), prioridadeProducao:Math.max(1,Number(r.prioridadeProducao??full.prioridadeProducao)||2), alergenico:String(r.alergenico??'').trim().toUpperCase()==='SIM'||r.alergenico===true||full.alergenico===true, atualizadoEm: agora };
+        // PEDIDO AO VIVO: original usa 'descricao' (não 'nome') e
+        // 'alergênico' com acento (app.js:9479 hdrProd); 'status' é
+        // ATIVO/DESATIVADO, vira o campo 'ativo' (booleano).
+        const full=_dadosLinha(r);
+        const statusCol = r.status ?? full.status;
+        const payload = { ...full, cod, nome: String(r.descricao ?? r.nome ?? full.nome ?? ''), unid: Number(r.unid ?? full.unid) || 1, pc_min: Number(r.pc_min ?? full.pc_min) || 0, maquina: String(r.maquina ?? full.maquina ?? ''), categoria:String(r.categoria??full.categoria??''), classificacao:String(r.classificacao??full.classificacao??''), metaCoberturaDias:Number(r.coberturaDias??r.metaCoberturaDias??full.metaCoberturaDias??full.coberturaDias)||0, producaoMinima:Number(r.producaoMinima??full.producaoMinima)||0, multiploProducao:Number(r.multiploProducao??full.multiploProducao)||0, tipoMinimo:String(r.tipoMinimo??full.tipoMinimo??'').toLowerCase(), prioridadeProducao:Math.max(1,Number(r.prioridadeProducao??full.prioridadeProducao)||2), alergenico:String(r['alergênico']??r.alergenico??'').trim().toUpperCase()==='SIM'||r.alergenico===true||full.alergenico===true, ativo: statusCol!=null&&statusCol!=='' ? _parseAtivoStatus(statusCol) : (full.ativo!==false), atualizadoEm: agora };
         const existente = produtosExistentes.find(p => String(p.cod) === cod); const id=String(r.id||'').trim();
         if (existente) { await fs().collection(COL_PRODUTOS).doc(existente._id).set(payload, { merge: true }); atualizados++; }
-        else if(id){ await fs().collection(COL_PRODUTOS).doc(id).set({...payload,ativo:payload.ativo!==false,criadoEm:payload.criadoEm||agora},{merge:true}); criados++; }
-        else { await fs().collection(COL_PRODUTOS).add({ ...payload, ativo: payload.ativo!==false, criadoEm: payload.criadoEm||agora }); criados++; }
+        else if(id){ await fs().collection(COL_PRODUTOS).doc(id).set({...payload,criadoEm:payload.criadoEm||agora},{merge:true}); criados++; }
+        else { await fs().collection(COL_PRODUTOS).add({ ...payload, criadoEm: payload.criadoEm||agora }); criados++; }
       }
 
       const insumosPorCod = {};
       linhasInsumos.forEach(r => {
+        // PEDIDO AO VIVO: original filtra por 'status' ATIVO/DESATIVADO
+        // (app.js:9518-9522) — linha DESATIVADO não entra na ficha.
+        if (!_parseAtivoStatus(r.status)) return;
         const cod = String(r.cod_produto || '').trim();
         if (!cod || !r.insumo) return;
         (insumosPorCod[cod] = insumosPorCod[cod] || []).push({ insumo: String(r.insumo), qty: Number(r.qty) || 0, categoria: String(r.categoria || '') });
@@ -144,7 +199,7 @@
       for (const cod of Object.keys(insumosPorCod)) {
         const produto = produtosExistentes.find(p => String(p.cod) === cod) || linhasProdutos.find(p => String(p.cod) === cod);
         const existente = fichasExistentes.find(f => String(f.cod) === cod);
-        const payload = { cod, desc: produto?.nome || existente?.desc || '', unid: Number(produto?.unid) || existente?.unid || 1, pc_min: Number(produto?.pc_min) || existente?.pc_min || 0, maquina: produto?.maquina || existente?.maquina || '', insumos: insumosPorCod[cod], atualizadoEm: agora };
+        const payload = { cod, desc: produto?.nome || produto?.descricao || existente?.desc || '', unid: Number(produto?.unid) || existente?.unid || 1, pc_min: Number(produto?.pc_min) || existente?.pc_min || 0, maquina: produto?.maquina || existente?.maquina || '', insumos: insumosPorCod[cod], atualizadoEm: agora };
         if (existente) { await fs().collection(COL_FICHAS).doc(existente._id).set(payload, { merge: true }); atualizados++; }
         else { await fs().collection(COL_FICHAS).add({ ...payload, criadoEm: agora }); criados++; }
       }
@@ -160,7 +215,9 @@
       }
 
       for (const r of linhasSetup) {
-        const maquina = String(r.maquina || '').trim(), origem = String(r.produtoOrigem || '').trim(), destino = String(r.produtoDestino || '').trim();
+        // PEDIDO AO VIVO: original usa 'de'/'para' (app.js:9526 hdrSetup),
+        // não 'produtoOrigem'/'produtoDestino'.
+        const maquina = String(r.maquina || '').trim(), origem = String(r.de ?? r.produtoOrigem ?? '').trim(), destino = String(r.para ?? r.produtoDestino ?? '').trim();
         if (!maquina || !origem || !destino) continue;
         const full=_dadosLinha(r), payload = { ...full, maquina, produtoOrigem: origem, produtoDestino: destino, minutos: Number(r.minutos ?? full.minutos) || 0, atualizadoEm: agora };
         const existente = setupsExistentes.find(s => s.maquina === maquina && s.produtoOrigem === origem && s.produtoDestino === destino), id=String(r.id||'').trim();

@@ -105,7 +105,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <link rel="stylesheet" href="css/analista-dashboard-acomp-v252.css?v=20260804-2245">
 <link rel="stylesheet" href="css/analista-quatro-telas-v254.css?v=20260809-v298-rewrite">
 <link rel="stylesheet" href="css/analista-cadastros-v287.css?v=20260806-v296.1">
-<link rel="stylesheet" href="css/producao-completa.css?v=20260822e-config-tela-cheia">
+<link rel="stylesheet" href="css/producao-completa.css?v=20260822c-fix-tema-anchor-id">
 </head>
 <body>
 <!-- ══════════ TELA DE LOGIN ══════════ -->
@@ -3156,7 +3156,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   window.addEventListener('DOMContentLoaded',function(){obs.observe(document.body,{childList:true,subtree:true});obs.takeRecords();['cont-table-wrap','rec-table-wrap','div-table-wrap'].forEach(function(id){var el=document.getElementById(id);if(el) ativar(el);});});
 })();
 </script>
-<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v448</div>
+<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v436</div>
 
 <script src="js/analista/45-ui-centro-operacoes-v250.js?v=20260804-v250"></script>
 <script src="js/analista/47-dashboard-acomp-v252.js?v=20260805-v274"></script>
@@ -3165,25 +3165,25 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <script src="js/analista/50-inventario-classificacoes-v275.js?v=20260805-v275"></script>
 <script src="js/analista/51-inventario-por-produto-v286.js?v=20260805-v286"></script>
 <script src="js/analista/52-cadastros-v287.js?v=20260810-v326-fix-dispatch-enderecos"></script>
-<script src="js/analista/59-producao-ui-completa.js?v=20260822d-config-tela-cheia"></script>
+<script src="js/analista/59-producao-ui-completa.js?v=20260822b-mais-no-header"></script>
 <script src="js/analista/60-producao-ficha-tecnica.js?v=20260822-embed-container"></script>
 <script src="js/analista/63-producao-agenda.js?v=20260811-producao-full-1"></script>
-<script src="js/analista/61-producao-maquinas.js?v=20260822d-separa-operacional-cadastro"></script>
-<script src="js/analista/62-producao-programacao.js?v=20260822c-fix-texto-nova"></script>
-<script src="js/analista/64-producao-gantt.js?v=20260822d-toolbar-auditoria"></script>
-<script src="js/analista/65-producao-insumos.js?v=20260822c-toolbar-auditoria"></script>
+<script src="js/analista/61-producao-maquinas.js?v=20260822b-embed-container"></script>
+<script src="js/analista/62-producao-programacao.js?v=20260822-paridade-mrp-badges"></script>
+<script src="js/analista/64-producao-gantt.js?v=20260822c-cabecalho-sempre-visivel"></script>
+<script src="js/analista/65-producao-insumos.js?v=20260822b-colunas-diarias-subtotal"></script>
 <script src="js/analista/66-producao-projecao.js?v=20260822-stats-horizonte-fator"></script>
-<script src="js/analista/67-producao-prog-automatica.js?v=20260822-toolbar-auditoria"></script>
+<script src="js/analista/67-producao-prog-automatica.js?v=20260816-producao-integrada-final"></script>
 <script src="js/analista/68-producao-funcionarios.js?v=20260822b-embed-container"></script>
-<script src="js/analista/69-producao-relatorios.js?v=20260822-abas-auditoria"></script>
+<script src="js/analista/69-producao-relatorios.js?v=20260821-gerencial-pivot-interativo"></script>
 <script src="js/analista/70-producao-setup.js?v=20260822b-embed-container"></script>
 <script src="js/analista/71-producao-excel.js?v=20260811-producao-full-1"></script>
-<script src="js/analista/72-producao-mapa-fabrica.js?v=20260822-embed-container"></script>
-<script src="js/analista/73-producao-realizado.js?v=20260822e-paridade-completa-original"></script>
-<script src="js/analista/74-producao-dashboard.js?v=20260822b-auditoria-central-comando"></script>
+<script src="js/analista/72-producao-mapa-fabrica.js?v=20260816-producao-integrada-final"></script>
+<script src="js/analista/73-producao-realizado.js?v=20260822d-hora-a-hora-total-semana"></script>
+<script src="js/analista/74-producao-dashboard.js?v=20260822-label-em-andamento"></script>
 <script src="js/analista/75-producao-estoque.js?v=20260822-embed-container"></script>
 <script src="js/analista/76-producao-importacao.js?v=20260822-embed-container"></script>
-<script src="js/analista/77-producao-config.js?v=20260822g-tela-cheia-voltar"></script>
+<script src="js/analista/77-producao-config.js?v=20260822c-hub-embutido"></script>
 <script src="js/analista/120-pcp-demand-engine.js?v=20260822-profissional-1"></script>
 <script src="js/analista/78-pcp-central.js?v=20260822-demanda-cobertura-1"></script>
 <script src="js/analista/79-compras-central.js?v=20260812-bluesoft-fase12e-cachefix"></script>
@@ -3199,6 +3199,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <script src="js/analista/89-compras-dashboard.js?v=20260811-pcp-fase10-1"></script>
 <script src="js/analista/90-bluesoft-service.js?v=20260821b-filtra-cancelada-rejeitada"></script>
 <script src="js/analista/121-compras-profissional.js?v=20260822-profissional-1"></script>
+<script src="js/analista/122-pcp-compras-bluesoft-sync.js?v=20260823-corrige-sync-real-1"></script>
 <script src="js/analista/91-logistica-recebimento.js?v=20260817-performance-frota-v1"></script>
 <script src="js/analista/92-recebimento-config.js?v=20260814-fase15f4h-rotas-globais"></script>
 <script src="js/analista/93-recebimento-operacao.js?v=20260819-rebt-editar-completo"></script>
