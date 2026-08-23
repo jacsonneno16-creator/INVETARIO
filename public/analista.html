@@ -229,10 +229,11 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
      próprio, mesmo padrão do setor Produção. -->
 <div id="setor-pcp-shell" style="display:none;flex:1;flex-direction:row;min-height:100vh">
 <aside class="sidebar">
-<div class="sb-sec">PCP</div>
+<div class="sb-sec">Visão geral</div>
 <div class="nav-item" id="nav-pcp-dashboard" onclick="pcpIrParaAba('dashboard',this)">
 <span class="nav-icon">📊</span>Dashboard
 </div>
+<div class="sb-sec">Planejamento</div>
 <div class="nav-item" id="nav-pcp-pedidos" onclick="pcpIrParaAba('pedidos',this)">
 <span class="nav-icon">📥</span>Pedidos
 </div>
@@ -243,8 +244,9 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <span class="nav-icon">🔀</span>Pedidos x Estoque
 </div>
 <div class="nav-item" id="nav-pcp-compras" onclick="pcpIrParaAba('compras',this)">
-<span class="nav-icon">🛒</span>Compras / Necessidades
+<span class="nav-icon">🛒</span>Necessidades de Compra
 </div>
+<div class="sb-sec">Execução</div>
 <div class="nav-item" id="nav-pcp-agendamentos" onclick="pcpIrParaAba('agendamentos',this)">
 <span class="nav-icon">📅</span>Agendamentos
 </div>
@@ -260,6 +262,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="nav-item" id="nav-pcp-timeline" onclick="pcpIrParaAba('timeline',this)">
 <span class="nav-icon">🗓️</span>Linha do Tempo
 </div>
+<div class="sb-sec">Controle</div>
 <div class="nav-item" id="nav-pcp-alertas" onclick="pcpIrParaAba('alertas',this)">
 <span class="nav-icon">🚨</span>Alertas
 </div>
@@ -287,17 +290,36 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
      próprio, mesmo padrão do setor Produção. -->
 <div id="setor-compras-shell" style="display:none;flex:1;flex-direction:row;min-height:100vh">
 <aside class="sidebar">
-<div class="sb-sec">Compras</div>
+<div class="sb-sec">Visão geral</div>
 <div class="nav-item" id="nav-compras-dashboard" onclick="comprasIrParaPagina('dashboard',this)">
 <span class="nav-icon">📊</span>Dashboard
 </div>
 <div class="nav-item" id="nav-compras-central" onclick="comprasIrParaPagina('central',this)">
 <span class="nav-icon">🛒</span>Central de Compras
 </div>
+<div class="sb-sec">Operação</div>
+<div class="nav-item" id="nav-compras-solicitacoes" onclick="comprasIrParaPagina('solicitacoes',this)"><span class="nav-icon">📥</span>Solicitações</div>
+<div class="nav-item" id="nav-compras-cotacoes" onclick="comprasIrParaPagina('cotacoes',this)"><span class="nav-icon">⚖️</span>Cotações</div>
+<div class="nav-item" id="nav-compras-pedidos" onclick="comprasIrParaPagina('pedidos',this)"><span class="nav-icon">🧾</span>Pedidos</div>
+<div class="nav-item" id="nav-compras-recebimentos" onclick="comprasIrParaPagina('recebimentos',this)"><span class="nav-icon">🚚</span>Recebimentos</div>
+<div class="sb-sec">Análises</div>
+<div class="nav-item" id="nav-compras-produtos" onclick="comprasIrParaPagina('produtos',this)"><span class="nav-icon">🔎</span>Produtos 360°</div>
+<div class="nav-item" id="nav-compras-fornecedores" onclick="comprasIrParaPagina('fornecedores',this)"><span class="nav-icon">🏢</span>Fornecedores</div>
+<div class="nav-item" id="nav-compras-relatorios" onclick="comprasIrParaPagina('relatorios',this)"><span class="nav-icon">📈</span>Relatórios</div>
+<div class="sb-sec">Configuração</div>
+<div class="nav-item" id="nav-compras-administracao" onclick="comprasIrParaPagina('administracao',this)"><span class="nav-icon">⚙️</span>Administração</div>
 </aside>
 <div class="content" style="flex:1">
 <div class="page" id="page-compras-dashboard"></div>
 <div class="page" id="page-compras-central"></div>
+<div class="page" id="page-compras-solicitacoes"></div>
+<div class="page" id="page-compras-cotacoes"></div>
+<div class="page" id="page-compras-pedidos"></div>
+<div class="page" id="page-compras-recebimentos"></div>
+<div class="page" id="page-compras-produtos"></div>
+<div class="page" id="page-compras-fornecedores"></div>
+<div class="page" id="page-compras-relatorios"></div>
+<div class="page" id="page-compras-administracao"></div>
 </div>
 </div>
 <!-- Setor Logística · Recebimento (fase 15/FASE 1) — contexto próprio,
@@ -3134,7 +3156,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   window.addEventListener('DOMContentLoaded',function(){obs.observe(document.body,{childList:true,subtree:true});obs.takeRecords();['cont-table-wrap','rec-table-wrap','div-table-wrap'].forEach(function(id){var el=document.getElementById(id);if(el) ativar(el);});});
 })();
 </script>
-<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v444</div>
+<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v445</div>
 
 <script src="js/analista/45-ui-centro-operacoes-v250.js?v=20260804-v250"></script>
 <script src="js/analista/47-dashboard-acomp-v252.js?v=20260805-v274"></script>
@@ -3147,7 +3169,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <script src="js/analista/60-producao-ficha-tecnica.js?v=20260822-embed-container"></script>
 <script src="js/analista/63-producao-agenda.js?v=20260811-producao-full-1"></script>
 <script src="js/analista/61-producao-maquinas.js?v=20260822c-toolbar-auditoria"></script>
-<script src="js/analista/62-producao-programacao.js?v=20260822b-toolbar-auditoria"></script>
+<script src="js/analista/62-producao-programacao.js?v=20260822c-fix-texto-nova"></script>
 <script src="js/analista/64-producao-gantt.js?v=20260822c-cabecalho-sempre-visivel"></script>
 <script src="js/analista/65-producao-insumos.js?v=20260822c-toolbar-auditoria"></script>
 <script src="js/analista/66-producao-projecao.js?v=20260822-stats-horizonte-fator"></script>
@@ -3161,8 +3183,9 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <script src="js/analista/74-producao-dashboard.js?v=20260822b-auditoria-central-comando"></script>
 <script src="js/analista/75-producao-estoque.js?v=20260822-embed-container"></script>
 <script src="js/analista/76-producao-importacao.js?v=20260822-embed-container"></script>
-<script src="js/analista/77-producao-config.js?v=20260822e-sidebar-grupos"></script>
-<script src="js/analista/78-pcp-central.js?v=20260812-bluesoft-fase12e-cachefix"></script>
+<script src="js/analista/77-producao-config.js?v=20260822f-fix-largura-sidebar"></script>
+<script src="js/analista/120-pcp-demand-engine.js?v=20260822-profissional-1"></script>
+<script src="js/analista/78-pcp-central.js?v=20260822-demanda-cobertura-1"></script>
 <script src="js/analista/79-compras-central.js?v=20260812-bluesoft-fase12e-cachefix"></script>
 <script src="js/analista/80-pcp-auditoria.js?v=20260811-pcp-fase7-1"></script>
 <script src="js/analista/81-pcp-parametros.js?v=20260811-pcp-fase7-1"></script>
@@ -3175,6 +3198,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <script src="js/analista/88-pcp-relatorios.js?v=20260811-pcp-fase10-1"></script>
 <script src="js/analista/89-compras-dashboard.js?v=20260811-pcp-fase10-1"></script>
 <script src="js/analista/90-bluesoft-service.js?v=20260821b-filtra-cancelada-rejeitada"></script>
+<script src="js/analista/121-compras-profissional.js?v=20260822-profissional-1"></script>
 <script src="js/analista/91-logistica-recebimento.js?v=20260817-performance-frota-v1"></script>
 <script src="js/analista/92-recebimento-config.js?v=20260814-fase15f4h-rotas-globais"></script>
 <script src="js/analista/93-recebimento-operacao.js?v=20260819-rebt-editar-completo"></script>

@@ -323,7 +323,7 @@
                     }).join('')}
                   </tbody></table>
                 </td></tr>` : ''}`;
-              }).join('') : `<tr><td colspan="10"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma ordem de produção cadastrada</div><div class="empty-sub">Clique em "+ Nova OP" pra começar</div></div></td></tr>`}
+              }).join('') : `<tr><td colspan="10"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma ordem de produção cadastrada</div><div class="empty-sub">Clique em "+ Nova" pra começar</div></div></td></tr>`}
             </tbody>
           </table>
         </div>

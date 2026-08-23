@@ -73,7 +73,7 @@ function _navCfgHtml(){
     <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:2px 10px 6px">Extras desta integração</div>
     ${NAV_CFG_EXTRAS.map(n=>itemHtml(n.id,n.icone,n.titulo,false)).join('')}
   </div>`;
-  return `<div class="tc" style="padding:8px;min-width:210px;flex-shrink:0;align-self:flex-start">${corpo}${extras}</div>`;
+  return `<div class="tc" style="padding:8px;width:210px;min-width:210px;max-width:210px;flex:0 0 210px;align-self:flex-start">${corpo}${extras}</div>`;
 }
 function _conteudoSemTelaHtml(titulo){
   return `<div class="tc" style="padding:40px 24px;text-align:center">
