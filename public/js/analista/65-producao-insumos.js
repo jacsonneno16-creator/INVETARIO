@@ -136,9 +136,8 @@
       </div>
     </div>
     <div class="tc" style="padding:8px 10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-      <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn ${_modo==='maquina'?'btn-primary':'btn-ghost'} btn-sm" data-pins-modo="maquina">Por Máquina</button><button class="btn ${_modo==='geral'?'btn-primary':'btn-ghost'} btn-sm" data-pins-modo="geral">Geral / Saldo</button></div>
       <input id="pins-busca" class="field" placeholder="Buscar insumo, categoria ou máquina..." value="${esc(busca)}" style="min-width:220px;flex:1">
-      <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0" title="Colunas: Insumo | Quantidade | Unidade | Categoria">📥 Estoque Excel<input id="pins-est-input" type="file" accept=".xlsx,.xls,.csv" style="display:none"></label>
+      <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0;color:var(--muted)" title="Recurso extra desta integração — colunas: Insumo | Quantidade | Unidade | Categoria">📥 Estoque Excel<input id="pins-est-input" type="file" accept=".xlsx,.xls,.csv" style="display:none"></label>
     </div>
     ${rows?`<div class="tc"><div style="overflow:auto"><table class="dt-table" style="font-size:.74rem"><thead><tr>${_modo==='maquina'?'<th>Máquina</th><th>Categoria</th><th>Insumo</th>':'<th>Insumo</th>'}${theadDias}<th style="text-align:right">Total Sem.</th>${_modo==='maquina'?'<th>Un.</th>':''}<th style="text-align:right">Estoque</th>${_modo==='geral'?'<th>Un.</th>':''}<th style="text-align:right">Saldo</th></tr></thead><tbody>${rows}</tbody></table></div></div>`:`<div class="empty"><div class="empty-icon">🧪</div><div class="empty-title">Nenhum consumo encontrado para o período/filtro.</div></div>`}`;
   }
