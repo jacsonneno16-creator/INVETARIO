@@ -115,10 +115,31 @@
         });
       });
     }
-    const faltas=lg.filter(x=>x.saldo<0).length,cons=lg.reduce((s,x)=>s+x.consumo,0),saldoTotal=lg.reduce((s,x)=>s+x.saldo,0);
-    p.innerHTML=`<div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:16px"><div><div class="page-title" style="font-size:1.1rem">🧪 Insumos / MRP</div><div style="font-size:.72rem;color:var(--muted)">${fmt(_weekStart)} a ${fmt(fim)}</div></div><div style="display:flex;gap:7px;flex-wrap:wrap"><button class="btn ${_modo==='maquina'?'btn-primary':'btn-ghost'} btn-sm" data-pins-modo="maquina">Por Máquina</button><button class="btn ${_modo==='geral'?'btn-primary':'btn-ghost'} btn-sm" data-pins-modo="geral">Geral / Saldo</button><label class="btn btn-ghost btn-sm" style="cursor:pointer">📥 Estoque Excel<input id="pins-est-input" type="file" accept=".xlsx,.xls,.csv" style="display:none"></label><button class="btn btn-ghost btn-sm" data-pins-export="1">📊 Excel</button><button class="btn btn-ghost btn-sm" data-pins-pdf="1">📄 PDF</button><button class="btn btn-ghost btn-sm" data-pins-semana="-1">‹</button><input type="date" class="field" data-pins-data value="${_weekStart.toISOString().slice(0,10)}" title="Ir para data" style="width:145px;padding:5px 8px"><button class="btn btn-ghost btn-sm" data-pins-hoje="1">Hoje</button><button class="btn btn-ghost btn-sm" data-pins-semana="1">›</button></div></div>
-    <div class="kpi-grid" style="margin-bottom:14px"><div class="kpi blue"><span class="kpi-icon">🧪</span><div class="kpi-val">${lg.length}</div><div class="kpi-lbl">Insumos com consumo</div></div><div class="kpi purple"><span class="kpi-icon">📦</span><div class="kpi-val">${cons.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div><div class="kpi-lbl">Consumo previsto</div></div><div class="kpi ${faltas?'orange':'green'}"><span class="kpi-icon">⚠️</span><div class="kpi-val">${faltas}</div><div class="kpi-lbl">Saldos negativos</div></div><div class="kpi teal"><span class="kpi-icon">∑</span><div class="kpi-val">${saldoTotal.toLocaleString('pt-BR',{maximumFractionDigits:1})}</div><div class="kpi-lbl">Saldo líquido agregado</div></div></div>
-    <div class="tc" style="padding:10px;margin-bottom:12px;display:flex;gap:8px;flex-wrap:wrap"><input id="pins-busca" class="field" placeholder="Buscar insumo, categoria ou máquina..." value="${esc(busca)}" style="min-width:260px"><select id="pins-cat" class="field"><option value="">Todas as categorias</option>${cats.map(c=>`<option value="${esc(c)}" ${catSel===c?'selected':''}>${esc(c)}</option>`).join('')}</select><span style="font-size:.68rem;color:var(--muted);align-self:center">Excel de estoque: colunas Insumo | Quantidade | Unidade | Categoria</span></div>
+    // PEDIDO AO VIVO (auditoria RELATORIO-COMPARACAO-PRODUCAO.md, item 8):
+    // o original (index.html:393-417) NÃO tem cards de KPI nessa tela —
+    // só navegação de semana (‹ Ant./label/Próx./Hoje) à esquerda e
+    // data-goto + categoria + Excel/PDF à direita, igual ao padrão do
+    // Realizado/Gantt. Removidos os 4 cards que eu tinha adicionado sem
+    // corresponder a nada no original.
+    p.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" data-pins-semana="-1">‹ Ant.</button>
+        <div class="field" style="padding:8px 16px;color:var(--orange);font-weight:600">${fmt(_weekStart)} a ${fmt(fim)}</div>
+        <button class="btn btn-ghost btn-sm" data-pins-semana="1">Próx. ›</button>
+        <button class="btn btn-ghost btn-sm" data-pins-hoje="1">Hoje</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <input type="date" class="field" data-pins-data value="${_weekStart.toISOString().slice(0,10)}" title="Ir para data" style="width:145px;padding:5px 8px">
+        <select id="pins-cat" class="field"><option value="">Todas as categorias</option>${cats.map(c=>`<option value="${esc(c)}" ${catSel===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
+        <button class="btn btn-ghost btn-sm" data-pins-export="1">📊 Excel</button>
+        <button class="btn btn-ghost btn-sm" data-pins-pdf="1">📄 PDF</button>
+      </div>
+    </div>
+    <div class="tc" style="padding:8px 10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+      <div style="display:flex;gap:6px;flex-wrap:wrap"><button class="btn ${_modo==='maquina'?'btn-primary':'btn-ghost'} btn-sm" data-pins-modo="maquina">Por Máquina</button><button class="btn ${_modo==='geral'?'btn-primary':'btn-ghost'} btn-sm" data-pins-modo="geral">Geral / Saldo</button></div>
+      <input id="pins-busca" class="field" placeholder="Buscar insumo, categoria ou máquina..." value="${esc(busca)}" style="min-width:220px;flex:1">
+      <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0" title="Colunas: Insumo | Quantidade | Unidade | Categoria">📥 Estoque Excel<input id="pins-est-input" type="file" accept=".xlsx,.xls,.csv" style="display:none"></label>
+    </div>
     ${rows?`<div class="tc"><div style="overflow:auto"><table class="dt-table" style="font-size:.74rem"><thead><tr>${_modo==='maquina'?'<th>Máquina</th><th>Categoria</th><th>Insumo</th>':'<th>Insumo</th>'}${theadDias}<th style="text-align:right">Total Sem.</th>${_modo==='maquina'?'<th>Un.</th>':''}<th style="text-align:right">Estoque</th>${_modo==='geral'?'<th>Un.</th>':''}<th style="text-align:right">Saldo</th></tr></thead><tbody>${rows}</tbody></table></div></div>`:`<div class="empty"><div class="empty-icon">🧪</div><div class="empty-title">Nenhum consumo encontrado para o período/filtro.</div></div>`}`;
   }
 
