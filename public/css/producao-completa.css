@@ -224,6 +224,11 @@
 
 /* Gantt: mantém toda a funcionalidade existente, com o acabamento visual do original (fundo/borda/cabeçalho) */
 #page-producao-gantt .gantt-wrap,#page-producao-gantt [class*="gantt-container"],#page-producao-gantt [class*="gantt-grid"]{background:var(--prod-s1)!important;border-color:var(--prod-border)!important;color:var(--prod-text)!important}
+/* PEDIDO AO VIVO (auditoria 2ª rodada, seção 17/8): largura mínima de
+   900px do original (.gantt-wrap, style.css) — sem isso, as colunas de
+   dia (1fr) espremiam até ilegível em telas estreitas em vez de rolar
+   horizontalmente dentro do próprio card (que já tem overflow:auto). */
+.pgantt-grid-row{min-width:900px}
 #page-producao-gantt [class*="gantt-head"],#page-producao-gantt [class*="gantt-header"]{background:var(--prod-s2)!important;color:var(--prod-text2)!important;border-color:var(--prod-border)!important}
 #page-producao-gantt [class*="gantt-bar"]{box-shadow:0 2px 8px rgba(0,0,0,.22)!important;border-radius:5px!important}
 
