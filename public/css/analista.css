@@ -594,6 +594,23 @@
       background: #fff;
     }
     .fi textarea { resize: vertical; min-height: 72px; }
+    /* .form-group/.field: mesmo padrão visual do .fi/.fl acima, usado em
+       112+ modais (loja, produção etc.) que nunca tiveram CSS de layout
+       próprio — label e input ficavam sobrepostos sem isso. */
+    .form-group { display: flex; flex-direction: column; gap: 5px; }
+    .field {
+      padding: 9px 13px;
+      border: 1.5px solid var(--border);
+      border-radius: var(--r);
+      font-family: var(--sans); font-size: .83rem; color: var(--text);
+      outline: none; transition: border-color .2s, box-shadow .2s; background: var(--surface);
+      width: 100%;
+    }
+    .field:focus {
+      border-color: var(--orange);
+      box-shadow: 0 0 0 3.5px var(--orange-soft);
+      background: #fff;
+    }
 
     /* ════════════════════════════════════════
        IMPORT ZONE
