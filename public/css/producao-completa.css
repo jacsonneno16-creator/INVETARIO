@@ -191,6 +191,20 @@
 #setor-producao-shell table td{color:var(--prod-text)!important}
 #setor-producao-shell table th{color:var(--prod-text2)!important}
 
+/* Resumo "📦 Qtd por Dia" do Gantt semanal — mesmo formato de tabela do
+   original (style.css:345-355: .gs-maq/.gs-table), mantido visível nesta
+   integração (ver comentário em 64-producao-gantt.js sobre o original
+   escondê-lo com display:none e nunca reexibir). */
+.gs-maq{background:var(--prod-s1);border:1px solid var(--prod-border);border-radius:10px;overflow:hidden;box-shadow:var(--prod-shadow-sm)}
+.gs-maq-title{background:var(--prod-s2);padding:10px 16px;font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--prod-primary);border-bottom:1px solid var(--prod-border);border-left:3px solid var(--prod-primary)}
+.gs-table{width:100%;border-collapse:collapse;font-size:12px}
+.gs-table th{padding:8px 12px;font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--prod-text3);border-bottom:1px solid var(--prod-border);text-align:center}
+.gs-table th:first-child{text-align:left}
+.gs-table td{padding:8px 12px;border-bottom:1px solid var(--prod-td-border);text-align:center;font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--prod-text2)}
+.gs-table td:first-child{text-align:left;color:var(--prod-text);font-size:11px;max-width:250px}
+.gs-table tr:last-child td{border-bottom:none}
+.gs-table tr.total-row td{color:var(--prod-primary);font-weight:600;background:rgba(224,112,32,.04);border-top:1px solid rgba(224,112,32,.18)}
+
 /* Gantt: mantém toda a funcionalidade existente, com o acabamento visual do original (fundo/borda/cabeçalho) */
 #page-producao-gantt .gantt-wrap,#page-producao-gantt [class*="gantt-container"],#page-producao-gantt [class*="gantt-grid"]{background:var(--prod-s1)!important;border-color:var(--prod-border)!important;color:var(--prod-text)!important}
 #page-producao-gantt [class*="gantt-head"],#page-producao-gantt [class*="gantt-header"]{background:var(--prod-s2)!important;color:var(--prod-text2)!important;border-color:var(--prod-border)!important}

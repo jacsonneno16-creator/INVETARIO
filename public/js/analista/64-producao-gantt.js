@@ -121,39 +121,42 @@
     </div>`;
   }
 
+  // PEDIDO AO VIVO (auditoria 2ª rodada, seção 8): removido o título grande
+  // "Gantt — Programação de Produção" — o original (index.html:282-297)
+  // não tem bloco de título nenhum, começa direto no seletor Semanal/
+  // Mensal (pills soltas, própria linha, rótulo "Visualização:" à
+  // esquerda), com a toolbar de navegação embaixo, exatamente como abaixo.
   function _toolbarComum() {
     const periodo = _modoGantt === 'semanal'
       ? _fmtDataCurta(_weekStart) + ' a ' + _fmtDataCurta(_fimSemana())
       : _mesRef.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
     return `
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px">
+        <span style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-right:4px">Visualização:</span>
+        <button type="button" class="btn ${_modoGantt === 'semanal' ? 'btn-primary' : 'btn-ghost'}" style="border-radius:20px" data-pgantt-modo="semanal">Semanal</button>
+        <button type="button" class="btn ${_modoGantt === 'mensal' ? 'btn-primary' : 'btn-ghost'}" style="border-radius:20px" data-pgantt-modo="mensal">Mensal</button>
+      </div>
       <div class="tc" style="padding:14px 16px;margin-bottom:12px">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap">
-          <div><div class="page-title" style="font-size:1.18rem;margin:0">📅 Gantt — Programação de Produção</div>
-            <div style="font-size:.72rem;color:var(--muted);margin-top:3px">${periodo} · agenda calculada por turnos, velocidade e setup</div></div>
-          <div style="display:flex;align-items:center;gap:5px"><span style="font-size:.66rem;font-weight:700;color:var(--muted);text-transform:uppercase">Visualização</span>
-            <button type="button" class="btn ${_modoGantt === 'semanal' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-pgantt-modo="semanal">Semanal</button>
-            <button type="button" class="btn ${_modoGantt === 'mensal' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-pgantt-modo="mensal">Mensal</button></div>
-        </div>
         ${_modoGantt === 'semanal' ? `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
             <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
-              <button class="btn btn-ghost btn-sm" data-pgantt-semana="-1">‹ Ant.</button>
+              <button class="btn btn-ghost" data-pgantt-semana="-1">‹ Ant.</button>
               <div style="font-family:monospace;font-weight:700;color:var(--orange);padding:6px 10px;border:1px solid var(--border);border-radius:7px">${periodo}</div>
-              <button class="btn btn-ghost btn-sm" data-pgantt-semana="1">Próx. ›</button>
-              <button class="btn btn-ghost btn-sm" data-pgantt-hoje="1">Hoje</button>
+              <button class="btn btn-ghost" data-pgantt-semana="1">Próx. ›</button>
+              <button class="btn btn-ghost" data-pgantt-hoje="1">Hoje</button>
               <input type="date" class="field" data-pgantt-data value="${_isoData(_weekStart)}" title="Ir para semana" style="width:145px;padding:5px 8px">
             </div>
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-              ${podeReordenarGantt() ? `<button class="btn btn-ghost btn-sm" data-pgantt-reordenar="1">⇅ Reordenar</button>` : ''}
+              ${podeReordenarGantt() ? `<button class="btn btn-ghost" data-pgantt-reordenar="1">⇅ Reordenar</button>` : ''}
               <div style="font-size:.68rem;color:var(--muted)">${_horasJornadaLabel()}</div>
-              <button class="btn btn-ghost btn-sm" data-pgantt-export="1">📊 Excel</button><button class="btn btn-ghost btn-sm" data-pgantt-pdf="1">📄 PDF</button>
+              <button class="btn btn-ghost" data-pgantt-export="1">📊 Excel</button><button class="btn btn-ghost" data-pgantt-pdf="1">📄 PDF</button>
             </div>
           </div>
           <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin-top:9px"><span style="font-size:.65rem;font-weight:700;color:var(--muted);text-transform:uppercase">Semana:</span>${_pillsSemana()}</div>
         ` : `
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-            <div style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" data-pgantt-mes="-1">‹ Mês Ant.</button><button class="btn btn-ghost btn-sm" data-pgantt-mes-hoje="1">Hoje</button><button class="btn btn-ghost btn-sm" data-pgantt-mes="1">Próx. Mês ›</button></div>
-            <div style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" data-pgantt-export="1">📊 Excel</button><button class="btn btn-ghost btn-sm" data-pgantt-pdf="1">📄 PDF</button></div>
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+            <div style="display:flex;gap:6px"><button class="btn btn-ghost" data-pgantt-mes="-1">‹ Mês Ant.</button><button class="btn btn-ghost" data-pgantt-mes-hoje="1">Hoje</button><button class="btn btn-ghost" data-pgantt-mes="1">Próx. Mês ›</button></div>
+            <div style="display:flex;gap:6px"><button class="btn btn-ghost" data-pgantt-export="1">📊 Excel</button><button class="btn btn-ghost" data-pgantt-pdf="1">📄 PDF</button></div>
           </div>`}
       </div>
       ${_legendaGantt()}
@@ -420,10 +423,62 @@
     `;
   }
 
+  // PEDIDO AO VIVO (auditoria 2ª rodada, seção 8): o original TEM essa
+  // tabela por máquina/produto/dia pronta (renderGanttSummary, app.js:
+  // 4299-4349 — mesmo formato reproduzido abaixo, com .gs-table/.gs-maq),
+  // mas o container #gantt-summary nasce com style="display:none" no HTML
+  // (index.html:353) e nada no app.js remove isso — é uma tela morta,
+  // calculada e nunca mostrada de verdade no original. Reproduzir a
+  // "paridade" literal aqui seria esconder um recurso que já funciona
+  // nesta integração; em vez disso, mantido VISÍVEL (largura cheia, não
+  // painel lateral de 340px — essa combinação nunca foi exercitada no
+  // original) com o mesmo formato de dados que o original calculava.
   function _resumoSemanal(resultado, diasSemana) {
-    const totais = diasSemana.map(() => 0);
-    Object.values(resultado.porMaquina || {}).forEach(dados => dados.porDia.forEach((segs, i) => segs.forEach(seg => { if (seg.tipo === 'producao') totais[i] += Number(seg.caixasNoDia) || 0; })));
-    return `<div class=\"tc\" style=\"padding:10px 12px;margin-top:12px\"><div style=\"font-size:.72rem;font-weight:700;margin-bottom:8px\">📦 Quantidade programada por dia</div><div style=\"display:grid;grid-template-columns:repeat(7,1fr);gap:6px\">${diasSemana.map((d,i)=>`<div style=\"background:var(--surface-2);border-radius:7px;padding:8px;text-align:center\"><div style=\"font-size:.62rem;color:var(--muted)\">${DIA_LABEL[d.getDay()]} ${_fmtDataCurta(d)}</div><div style=\"font-size:.9rem;font-weight:800;margin-top:2px\">${Math.round(totais[i]).toLocaleString('pt-BR')} cx</div></div>`).join('')}</div></div>`;
+    const diasComHoras = diasSemana.map((d, i) => ({ d, i })).filter(({ d }) => {
+      const j = global.PRODUCAO_JORNADA;
+      return !Array.isArray(j) || (Number(j[d.getDay()]) || 0) > 0;
+    });
+    const nomesComOPs = Object.keys(resultado.porMaquina || {})
+      .filter(nome => resultado.porMaquina[nome].porDia.some(dia => dia.some(seg => seg.tipo === 'producao')))
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    if (!nomesComOPs.length) return `<div class="tc" style="padding:20px;margin-top:12px;text-align:center;color:var(--muted);font-size:.8rem">Nenhuma solicitação ativa</div>`;
+    return `<div style="margin-top:12px">
+      <div style="font-family:var(--mono,monospace);font-size:.62rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:10px">📦 Qtd por Dia</div>
+      <div style="display:grid;gap:12px">
+      ${nomesComOPs.map(nome => {
+        const dados = resultado.porMaquina[nome];
+        const grupos = {};
+        dados.porDia.forEach((segs, di) => segs.forEach(seg => {
+          if (seg.tipo !== 'producao') return;
+          const nomeProduto = seg.produto;
+          if (!grupos[nomeProduto]) grupos[nomeProduto] = diasSemana.map(() => 0);
+          grupos[nomeProduto][di] += Number(seg.caixasNoDia) || 0;
+        }));
+        const linhas = Object.entries(grupos);
+        const dayTotals = diasSemana.map(() => 0);
+        linhas.forEach(([, valores]) => valores.forEach((v, i) => { dayTotals[i] += v; }));
+        const weekTotal = dayTotals.reduce((a, b) => a + b, 0);
+        return `<div class="gs-maq">
+          <div class="gs-maq-title">⚙ ${esc(nome)}</div>
+          <table class="gs-table">
+            <thead><tr>
+              <th style="text-align:left">Produto</th>
+              ${diasComHoras.map(({ d }) => `<th>${DIA_LABEL[d.getDay()]}<br><span style="font-size:.55rem;font-weight:400">${_fmtDataCurta(d)}</span></th>`).join('')}
+              <th>Tot</th>
+            </tr></thead>
+            <tbody>
+              ${linhas.map(([produto, valores]) => {
+                const nomeCurto = produto.length > 22 ? produto.slice(0, 22) + '…' : produto;
+                const totalLinha = valores.reduce((a, b) => a + b, 0);
+                return `<tr><td title="${esc(produto)}">${esc(nomeCurto)}</td>${diasComHoras.map(({ i }) => `<td>${valores[i] > 0 ? Math.round(valores[i]).toLocaleString('pt-BR') : '—'}</td>`).join('')}<td style="color:var(--text);font-weight:600">${Math.round(totalLinha).toLocaleString('pt-BR')}</td></tr>`;
+              }).join('')}
+              <tr class="total-row"><td>TOTAL</td>${diasComHoras.map(({ i }) => `<td>${dayTotals[i] > 0 ? Math.round(dayTotals[i]).toLocaleString('pt-BR') : '—'}</td>`).join('')}<td>${Math.round(weekTotal).toLocaleString('pt-BR')}</td></tr>
+            </tbody>
+          </table>
+        </div>`;
+      }).join('')}
+      </div>
+    </div>`;
   }
 
   function _corpoMensal() {
