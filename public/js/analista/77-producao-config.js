@@ -34,6 +34,18 @@ const NAV_CFG=[
   {tipo:'item',id:'importacao',icone:'🔄',titulo:'Importação / API'},
   {tipo:'item',id:'importzip',icone:'🔄',titulo:'Importar ZIP'},
 ];
+// PEDIDO AO VIVO (auditoria 2ª rodada, seção 14): "Administração" no
+// original (index.html:1066-1075) tem Gestão de Lojas e Usuários do
+// Sistema — telas que JÁ EXISTEM de verdade neste projeto (o modal de
+// Usuários/Coletores/Lojas que a engrenagem do topo do Analista abre,
+// 37-usuarios-permissoes.js), só não estavam alcançáveis a partir de
+// Configurações da Produção. Em vez de duplicar essas telas, os itens
+// abaixo abrem o MESMO modal real, na aba certa — zero tela nova, zero
+// risco de dessincronizar dois cadastros de loja/usuário.
+const NAV_CFG_ADMIN=[
+  {id:'gestao-lojas',icone:'🏭',titulo:'Gestão de Lojas',abreModal:'lojas'},
+  {id:'usuarios',icone:'👤',titulo:'Usuários do Sistema',abreModal:'operadores'},
+];
 // Fora da hierarquia do original (recursos que só existem nesta integração
 // — Mapa da Fábrica era código morto no original, Estoque via Bluesoft é
 // exclusivo deste projeto) — mantidos alcançáveis mas claramente separados,
@@ -71,11 +83,15 @@ function _navCfgHtml(){
     </div>`;
   };
   const corpo=NAV_CFG.map(n=>n.tipo==='grupo'?grupoHtml(n):itemHtml(n.id,n.icone,n.titulo,false)).join('');
+  const admin=`<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
+    <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:2px 10px 6px">Administração</div>
+    ${NAV_CFG_ADMIN.map(n=>itemHtml(n.id,n.icone,n.titulo,false)).join('')}
+  </div>`;
   const extras=`<div style="margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
     <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:2px 10px 6px">Extras desta integração</div>
     ${NAV_CFG_EXTRAS.map(n=>itemHtml(n.id,n.icone,n.titulo,false)).join('')}
   </div>`;
-  return `<div class="tc" style="padding:8px;width:210px;min-width:210px;max-width:210px;flex:0 0 210px;align-self:flex-start">${corpo}${extras}</div>`;
+  return corpo+admin+extras;
 }
 function _conteudoSemTelaHtml(titulo){
   return `<div class="tc" style="padding:40px 24px;text-align:center">
@@ -92,14 +108,27 @@ function desenhar(){
     :secaoAtiva==='categorias-cfg'?_categoriasHtml()
     :SEM_TELA.has(secaoAtiva)?_conteudoSemTelaHtml((NAV_CFG.flatMap(n=>n.tipo==='grupo'?n.itens:[n]).find(i=>i.id===secaoAtiva)||{}).titulo||'Esta seção')
     :'<div id="pcfg-embed-host"><div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div></div>';
-  p.innerHTML=`<button type="button" class="prod-config-voltar" data-pcfg-voltar>‹ Voltar</button>
-    <div style="margin-bottom:16px"><div class="page-title" style="font-size:1.1rem">⚙️ Configurações de Produção</div><div style="font-size:.74rem;color:var(--muted)">Máquinas, produtos, funcionários, jornada e demais cadastros da produção.</div></div>
-    <div style="display:flex;gap:16px;align-items:flex-start">${_navCfgHtml()}<div style="flex:1;min-width:0">${conteudo}</div></div>`;
+  // PEDIDO AO VIVO (auditoria 2ª rodada, seção 13): Configurações no
+  // original é um overlay de tela cheia de verdade (#settings-page,
+  // index.html:984: position:fixed;inset:0;z-index:500), com uma topbar
+  // própria de 52px (só "‹ Voltar" + "⚙ Configurações", sem logo/loja/
+  // tema/3-pontos) — não um título grande dentro do fluxo normal da
+  // página. #setor-producao-shell.prod-config-modo (producao-completa.css)
+  // vira esse overlay e esconde o <aside> com o cabeçalho/abas originais;
+  // aqui dentro só desenha a topbar de 52px + sidebar 210px + conteúdo.
+  p.innerHTML=`<div class="prod-config-topbar">
+      <button type="button" class="prod-config-voltar" data-pcfg-voltar>‹ Voltar</button>
+      <span class="prod-config-titulo">⚙ Configurações</span>
+    </div>
+    <div class="prod-config-body">
+      <div class="prod-config-sidebar">${_navCfgHtml()}</div>
+      <div class="prod-config-content">${conteudo}</div>
+    </div>`;
   if(RENDER_EMBED[secaoAtiva])RENDER_EMBED[secaoAtiva]();
 }
 async function salvarJornada(){jornada=DL.map((_,i)=>Math.max(0,Number(document.querySelector(`[data-pcfg-dia="${i}"]`)?.value)||0));persistirLocal();const agora=new Date().toISOString(),por=global._currentAnalistaUser?.email||'',diasObj={dom:jornada[0],seg:jornada[1],ter:jornada[2],qua:jornada[3],qui:jornada[4],sex:jornada[5],sab:jornada[6]};await Promise.all([fs().collection(CCFG).doc('jornada').set({horas:jornada,dias:diasObj,atualizadoEm:agora,atualizadoPor:por},{merge:true}),fs().collection(CCFG_LEGACY).doc('jornada').set({dias:diasObj,horas:jornada,atualizadoEm:agora,atualizadoPor:por},{merge:true})]);global.showToast?.('Jornada salva e aplicada ao planejamento.','success');global.AnalistaNavigation?.renderCurrentPage?.();}
 async function catEditar(id){const c=cats.find(x=>x._id===id)||{},nome=prompt('Nome da categoria:',c.nome||'');if(nome==null||!nome.trim())return;const ordem=Number(prompt('Ordem:',String(c.ordem??0)))||0,ativo=confirm('OK = categoria ativa. Cancelar = inativa.');const dup=cats.find(x=>x._id!==id&&String(x.nome||'').trim().toLowerCase()===nome.trim().toLowerCase());if(dup){global.showToast?.('Categoria já cadastrada.','error');return;}const payload={nome:nome.trim(),ordem,ativo,atualizadoEm:new Date().toISOString()};if(id)await fs().collection(CCAT).doc(id).set(payload,{merge:true});else await fs().collection(CCAT).add({...payload,criadoEm:new Date().toISOString()});await carregar(true);desenhar();}
 async function catDel(id){const c=cats.find(x=>x._id===id);if(!c||!confirm('Excluir categoria "'+c.nome+'"?'))return;await fs().collection(CCAT).doc(id).delete();await carregar(true);desenhar();}
-global.renderProducaoConfig=render;document.addEventListener('input',e=>{if(e.target.matches('[data-pcfg-dia]'))jornada[Number(e.target.dataset.pcfgDia)]=Math.max(0,Number(e.target.value)||0);if(e.target.matches('[data-pcfg-cat-busca]')){catBusca=e.target.value||'';desenhar();const i=document.querySelector('[data-pcfg-cat-busca]');if(i){i.focus();i.setSelectionRange?.(i.value.length,i.value.length);}}});document.addEventListener('click',e=>{if(e.target.closest('[data-pcfg-jornada-save]'))salvarJornada();if(e.target.closest('[data-pcfg-jornada-reset]')&&confirm('Restaurar a jornada padrão da fábrica?')){jornada=padrao();persistirLocal();desenhar();}if(e.target.closest('[data-pcfg-cat-new]'))catEditar('');const ed=e.target.closest('[data-pcfg-cat-edit]');if(ed)catEditar(ed.dataset.pcfgCatEdit);const dl=e.target.closest('[data-pcfg-cat-del]');if(dl)catDel(dl.dataset.pcfgCatDel);const sec=e.target.closest('[data-pcfg-secao]');if(sec){secaoAtiva=sec.getAttribute('data-pcfg-secao');const g=_grupoDaSecao(secaoAtiva);if(g)gruposAbertos[g]=true;desenhar();return;}const grp=e.target.closest('[data-pcfg-grupo]');if(grp){const id=grp.getAttribute('data-pcfg-grupo');gruposAbertos[id]=!gruposAbertos[id];desenhar();return;}if(e.target.closest('[data-pcfg-voltar]')){const pid=global._prodPaginaAntesConfig||'producao-dashboard';global.goPage?.(pid,document.getElementById('nav-'+pid));}});
+global.renderProducaoConfig=render;document.addEventListener('input',e=>{if(e.target.matches('[data-pcfg-dia]'))jornada[Number(e.target.dataset.pcfgDia)]=Math.max(0,Number(e.target.value)||0);if(e.target.matches('[data-pcfg-cat-busca]')){catBusca=e.target.value||'';desenhar();const i=document.querySelector('[data-pcfg-cat-busca]');if(i){i.focus();i.setSelectionRange?.(i.value.length,i.value.length);}}});document.addEventListener('click',e=>{if(e.target.closest('[data-pcfg-jornada-save]'))salvarJornada();if(e.target.closest('[data-pcfg-jornada-reset]')&&confirm('Restaurar a jornada padrão da fábrica?')){jornada=padrao();persistirLocal();desenhar();}if(e.target.closest('[data-pcfg-cat-new]'))catEditar('');const ed=e.target.closest('[data-pcfg-cat-edit]');if(ed)catEditar(ed.dataset.pcfgCatEdit);const dl=e.target.closest('[data-pcfg-cat-del]');if(dl)catDel(dl.dataset.pcfgCatDel);const sec=e.target.closest('[data-pcfg-secao]');if(sec){const id=sec.getAttribute('data-pcfg-secao');const admin=NAV_CFG_ADMIN.find(n=>n.id===id);if(admin){global.abrirModalConfiguracoes?.(admin.abreModal);return;}secaoAtiva=id;const g=_grupoDaSecao(secaoAtiva);if(g)gruposAbertos[g]=true;desenhar();return;}const grp=e.target.closest('[data-pcfg-grupo]');if(grp){const id=grp.getAttribute('data-pcfg-grupo');gruposAbertos[id]=!gruposAbertos[id];desenhar();return;}if(e.target.closest('[data-pcfg-voltar]')){const pid=global._prodPaginaAntesConfig||'producao-dashboard';global.goPage?.(pid,document.getElementById('nav-'+pid));}});
 global.DTProducao?.registrarInvalidacao?.(()=>{carregado=false;cats=[];catBusca='';jornada=lerJornada();global.PRODUCAO_JORNADA=[...jornada];});
 })(window);

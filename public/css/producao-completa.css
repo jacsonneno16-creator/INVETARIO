@@ -98,13 +98,30 @@
 #setor-producao-shell .nav-item.prod-tab-btn.on{background:var(--prod-primary)!important;color:#fff!important;box-shadow:0 2px 12px rgba(224,112,32,.35)!important}
 #setor-producao-shell .nav-item.prod-tab-btn.on::after{content:'';position:absolute;bottom:-3px;left:50%;transform:translateX(-50%);width:20px;height:2px;background:var(--prod-primary);border-radius:2px}
 
-/* PEDIDO AO VIVO (usuário: Configurações não pode aparecer "junto com"
-   Gantt/Dashboard/Máquinas na barra de cima). No original, Configurações
-   substitui a tela inteira — a barra de 9 abas some. .prod-config-modo é
-   ligada/desligada por 59-producao-ui-completa.js conforme a página ativa. */
-#setor-producao-shell.prod-config-modo .prod-original-tabs{display:none!important}
-.prod-config-voltar{display:inline-flex;align-items:center;gap:6px;background:var(--prod-s1);border:1px solid var(--prod-border);border-radius:7px;padding:6px 14px;color:var(--prod-text);font:600 12px 'Space Grotesk',sans-serif;cursor:pointer;margin-bottom:14px;transition:.18s}
+/* PEDIDO AO VIVO (auditoria 2ª rodada, seção 13): Configurações no
+   original é um overlay de página inteira de verdade (#settings-page,
+   index.html:984) — position:fixed;inset:0;z-index:500, topbar própria
+   de 52px (só Voltar + "⚙ Configurações", sem logo/loja/tema/3-pontos),
+   sidebar 210px (padding:12px 8px) + conteúdo (padding:16px 20px).
+   .prod-config-modo é ligada/desligada por 59-producao-ui-completa.js
+   conforme a página ativa (#page-producao-config.on ou não). Esconder só
+   .prod-original-tabs não bastava — o cabeçalho completo (logo/loja/
+   tema/3-pontos) continuava visível, diferente do original. */
+#setor-producao-shell.prod-config-modo{
+  position:fixed!important;inset:0!important;z-index:500!important;
+  display:flex!important;flex-direction:column!important;
+  background:var(--prod-bg)!important;min-height:0!important;
+}
+#setor-producao-shell.prod-config-modo>aside{display:none!important}
+#setor-producao-shell.prod-config-modo>.content{flex:1!important;min-height:0!important;display:flex!important;flex-direction:column!important}
+#setor-producao-shell.prod-config-modo #page-producao-config.on{flex:1!important;display:flex!important;flex-direction:column!important;min-height:0!important}
+.prod-config-topbar{flex-shrink:0;background:var(--prod-header-bg);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);border-bottom:1px solid var(--prod-border);padding:0 20px;height:52px;display:flex;align-items:center;gap:12px}
+.prod-config-titulo{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--prod-primary);font-weight:600}
+.prod-config-voltar{display:inline-flex;align-items:center;gap:6px;background:var(--prod-s1);border:1px solid var(--prod-border);border-radius:7px;padding:5px 12px;color:var(--prod-text);font:600 12px 'Space Grotesk',sans-serif;cursor:pointer;transition:.18s}
 .prod-config-voltar:hover{border-color:var(--prod-primary);color:var(--prod-primary)}
+.prod-config-body{flex:1;min-height:0;display:flex;overflow:hidden}
+.prod-config-sidebar{width:210px;flex-shrink:0;border-right:1px solid var(--prod-border);background:var(--prod-s1);padding:12px 8px;display:flex;flex-direction:column;gap:2px;overflow-y:auto;overflow-x:hidden}
+.prod-config-content{flex:1;min-width:0;overflow-y:auto;padding:16px 20px}
 
 /* Conteúdo */
 #setor-producao-shell>.content{position:relative;z-index:1;flex:1!important;padding:0!important;overflow:auto!important;background:transparent!important;color:var(--prod-text)!important}
