@@ -153,8 +153,23 @@
   // menu principal).
   let _viewMaq = 'grid'; // 'grid' | 'list' — PEDIDO AO VIVO (auditoria, item 5): toggle Miniaturas/Lista do original
   let _containerMaq = 'page-producao-maquinas';
+  // PEDIDO AO VIVO (usuário: "na tela de maquina e setup estao
+  // misturados" — na verdade são a aba principal Máquinas e Configurações
+  // → Cadastro de Máquinas que estavam misturadas numa tela só). No
+  // original são DUAS telas diferentes: a aba principal (app.js:2326,
+  // index.html:260-279) é só monitoramento — cards de carga/ocupação,
+  // filtro categoria+semana, Miniaturas/Lista, botão "Selecionar" — sem
+  // criar/editar/excluir máquina. O CRUD de verdade (+Adicionar, Template,
+  // Excel, editar/excluir) só existe em Configurações → Cadastro de
+  // Máquinas (app.js:9470, tabela própria). Aqui as duas telas continuam
+  // reaproveitando o mesmo card/grid (não dá pra recriar a tabela exata
+  // do CRUD original nesta rodada), mas os controles administrativos só
+  // aparecem quando a tela é aberta a partir de Configurações — nunca na
+  // aba principal.
+  let _modoCadastroMaq = false;
   async function renderProducaoMaquinas(containerId) {
     _containerMaq = containerId || 'page-producao-maquinas';
+    _modoCadastroMaq = !!containerId;
     const pagina = document.getElementById(_containerMaq);
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
@@ -180,23 +195,26 @@
     pagina.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
         <div>
-          <div class="page-title" style="font-size:1.1rem">⚙️ Máquinas</div>
-          <div style="font-size:.72rem;color:var(--muted)">${cards.length.toLocaleString('pt-BR')} máquina(s)</div>
+          ${_modoCadastroMaq
+            ? `<div class="page-title" style="font-size:1.1rem">⚙️ Cadastro de Máquinas</div><div style="font-size:.72rem;color:var(--muted)">${cards.length.toLocaleString('pt-BR')} máquina(s)</div>`
+            : `<div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Carga por Máquina · Solicitações Ativas (Pendente + Em Andamento)</div>`}
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <input id="pmaq-busca" placeholder="Buscar nome ou categoria..." value="${esc(busca)}" class="field" style="min-width:220px">
+          ${_modoCadastroMaq ? `<input id="pmaq-busca" placeholder="Buscar nome ou categoria..." value="${esc(busca)}" class="field" style="min-width:220px">` : ''}
           <select id="pmaq-filtro-categoria" class="field"><option value="">Todas as categorias</option>${categoriasFiltro.map(c => `<option value="${esc(c)}" ${catFiltro === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <select id="pmaq-filtro-semana" class="field"><option value="">Todas as semanas</option>${_semanasComOP().map(s => { const d = new Date(s + 'T12:00:00'), sun = new Date(d); sun.setDate(d.getDate() + 6); return `<option value="${s}" ${_semanaMaqFiltro === s ? 'selected' : ''}>${_fmtDataCurta(d)} – ${_fmtDataCurta(sun)}</option>`; }).join('')}</select>
           <div style="display:flex;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden">
             <button type="button" class="btn ${_viewMaq === 'grid' ? 'btn-primary' : 'btn-ghost'} btn-sm" style="border-radius:0;border:none" data-pmaq-view="grid">⊞ Miniaturas</button>
             <button type="button" class="btn ${_viewMaq === 'list' ? 'btn-primary' : 'btn-ghost'} btn-sm" style="border-radius:0;border:none" data-pmaq-view="list">☰ Lista</button>
           </div>
+          ${_modoCadastroMaq ? `
           <button type="button" class="btn btn-ghost btn-sm" data-pmaq-resetar-turnos="1">↺ Resetar turnos de todas</button>
           <button type="button" class="btn btn-ghost btn-sm" data-pexcel-template-baixar="1">📄 Template</button>
           <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">📥 Excel<input type="file" id="pexcel-template-input" accept=".xlsx,.xls" style="display:none"></label>
-          <button type="button" class="btn btn-primary btn-sm" data-pmaq-novo="1">+ Nova Máquina</button>
+          <button type="button" class="btn btn-primary btn-sm" data-pmaq-novo="1">+ Nova Máquina</button>` : ''}
         </div>
       </div>
+      ${!_modoCadastroMaq ? `<div style="font-size:.66rem;color:var(--muted);margin:-8px 0 12px">Cadastro, edição e exclusão de máquinas ficam em <b>Configurações → Máquinas → Cadastro de Máquinas</b>.</div>` : ''}
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px">
         <div class="tc" style="padding:12px 16px">
           <div style="font-size:.68rem;color:var(--muted)">Ocupação total da semana</div>
@@ -254,10 +272,10 @@
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;margin-top:4px">
               <button type="button" class="btn ${selecionada ? 'btn-primary' : 'btn-ghost'} btn-sm" data-pmaq-selecionar="${esc(m.nome)}" style="padding:3px 10px;font-size:.68rem">${selecionada ? 'Selecionado' : 'Selecionar'}</button>
-              <div>
+              ${_modoCadastroMaq ? `<div>
                 <button type="button" class="acao-lapis" title="Editar" data-pmaq-editar="${esc(m._firestoreId)}">✏️</button>
                 <button type="button" class="acao-lapis" title="Excluir" data-pmaq-excluir="${esc(m._firestoreId)}">🗑️</button>
-              </div>
+              </div>` : ''}
             </div>
             <button type="button" data-pmaq-detalhes="${esc(m.nome)}" style="background:none;border:none;color:var(--muted);font-size:.66rem;cursor:pointer;text-align:center;padding:2px 0">${expandidoDet ? '▴' : '▾'} detalhes</button>
             ${expandidoDet ? _detalheMaquinaHtml(m) : ''}
