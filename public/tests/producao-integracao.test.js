@@ -47,7 +47,7 @@ test('programacao automatica V341 mantem planejamento avancado', () => {
   assert.match(code, /planejamento em até 4 semanas/);
   assert.match(code, /maxCaixasPorInsumos/);
   assert.match(code, /auditoria de capacidade/i);
-  assert.match(code, /Simular cenário/);
+  assert.match(code, /Simular Cenário/i);
 });
 
 test('realizado V341 mantem grade horaria, sequencia e excel', () => {

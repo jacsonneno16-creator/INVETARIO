@@ -287,34 +287,46 @@
     const hrs=reais.reduce((a,s)=>a+n(s.minutos),0)/60, risco=new Set(reais.filter(s=>s.risco==='critico').map(s=>s.cod)).size;
     const maquinasOpts=_maquinas.map(m=>`<option value="${esc(m.nome)}" ${filtro===m.nome?'selected':''}>${esc(m.nome)}</option>`).join('');
     const avisoSemMaq=_sugestoes.filter(s=>s.semMaquina).length;
+    const periodoAlvoLabel = p.modo==='semana' ? (document.getElementById('ppa-semana')?.selectedOptions?.[0]?.textContent||'—') : (document.getElementById('ppa-mes')?.selectedOptions?.[0]?.textContent||'—');
     pagina.innerHTML=`
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:16px">
-        <div><div class="page-title" style="font-size:1.1rem">🤖 Programação Automática</div><div style="font-size:.72rem;color:var(--muted)">Planejamento equilibrado por cobertura, capacidade, setup, velocidade e insumos — simulação de até 4 semanas.</div></div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary btn-sm" data-ppa-gerar="1">🤖 Gerar programação</button><button class="btn btn-ghost btn-sm" data-ppa-simular="1">🔬 Simular cenário</button>${reais.length?'<button class="btn btn-primary btn-sm" data-ppa-aplicar="1">✅ Aplicar no Gantt / Programação</button>':''}</div>
-      </div>
+      <div style="margin-bottom:16px"><div class="page-title" style="font-size:1.1rem">🤖 Programação Automática</div><div style="font-size:.72rem;color:var(--muted)">Planejamento equilibrado por cobertura, capacidade, setup, velocidade e insumos — simulação de até 4 semanas.</div></div>
       <div class="kpi-grid" style="margin-bottom:16px">
-        <div class="kpi orange"><span class="kpi-icon">⚠️</span><div class="kpi-val">${risco}</div><div class="kpi-lbl">Em risco crítico</div></div>
-        <div class="kpi blue"><span class="kpi-icon">📋</span><div class="kpi-val">${reais.length}</div><div class="kpi-lbl">Sugestões geradas</div></div>
-        <div class="kpi purple"><span class="kpi-icon">🏭</span><div class="kpi-val">${maqSet.size}</div><div class="kpi-lbl">Máquinas envolvidas</div></div>
-        <div class="kpi green"><span class="kpi-icon">⏱️</span><div class="kpi-val">${hrs.toLocaleString('pt-BR',{maximumFractionDigits:1})}h</div><div class="kpi-lbl">Horas sugeridas</div></div>
+        <div class="kpi orange"><span class="kpi-icon">⚠️</span><div class="kpi-val">${risco}</div><div class="kpi-lbl">Em Risco de Ruptura</div></div>
+        <div class="kpi blue"><span class="kpi-icon">📋</span><div class="kpi-val">${reais.length}</div><div class="kpi-lbl">Sugestões Geradas</div></div>
+        <div class="kpi purple"><span class="kpi-icon">🏭</span><div class="kpi-val">${maqSet.size}</div><div class="kpi-lbl">Máquinas Envolvidas</div></div>
+        <div class="kpi green"><span class="kpi-icon">⏱️</span><div class="kpi-val">${hrs.toLocaleString('pt-BR',{maximumFractionDigits:1})}h</div><div class="kpi-lbl">Horas de Produção</div></div>
+        <div class="kpi"><div class="kpi-val" style="font-size:1rem">${esc(periodoAlvoLabel)}</div><div class="kpi-lbl">Período Alvo</div></div>
+      </div>
+      <div class="tc" style="padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:.68rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;min-width:60px">Período</span>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 14px;border-radius:20px;border:1px solid ${p.modo==='mes'?'var(--orange)':'var(--border)'};font-size:.76rem;font-weight:600"><input type="radio" name="ppa-modo" value="mes" ${p.modo==='mes'?'checked':''}> 📅 Mês</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 14px;border-radius:20px;border:1px solid ${p.modo==='semana'?'var(--orange)':'var(--border)'};font-size:.76rem;font-weight:600"><input type="radio" name="ppa-modo" value="semana" ${p.modo==='semana'?'checked':''}> 📆 Semana</label>
+        <select id="ppa-mes" class="field" style="min-width:180px;${p.modo==='mes'?'':'display:none'}">${optionsMeses()}</select>
+        <select id="ppa-semana" class="field" style="min-width:220px;${p.modo==='semana'?'':'display:none'}">${optionsSemanas()}</select>
+        <span style="font-size:.64rem;color:var(--muted)">venda + estoque desejado − estoque atual, distribuído nas semanas</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
+        <button class="btn btn-primary" data-ppa-gerar="1">🤖 Gerar Programação Automática</button>
+        <button class="btn btn-ghost" data-ppa-recalcular="1">🔄 Recalcular</button>
+        ${reais.length?'<button class="btn btn-primary" data-ppa-aplicar="1" style="background:var(--success)">✅ Aplicar no Gantt / Programação</button>':''}
+        <button class="btn btn-ghost" data-ppa-simular="1">🔬 Simular Cenário</button>
+        <div style="flex:1"></div>
+        <select id="ppa-maq-filter" class="field" style="min-width:160px"><option value="">Todas as máquinas</option>${maquinasOpts}</select>
       </div>
       <div class="tc" style="padding:14px;margin-bottom:16px">
-        <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-          <b style="font-size:.76rem">Período:</b>
-          <label><input type="radio" name="ppa-modo" value="mes" ${p.modo==='mes'?'checked':''}> 📅 Mês</label>
-          <label><input type="radio" name="ppa-modo" value="semana" ${p.modo==='semana'?'checked':''}> 📆 Semana</label>
-          <select id="ppa-mes" class="field" style="min-width:180px;${p.modo==='mes'?'':'display:none'}">${optionsMeses()}</select>
-          <select id="ppa-semana" class="field" style="min-width:220px;${p.modo==='semana'?'':'display:none'}">${optionsSemanas()}</select>
-          <select id="ppa-maq-filter" class="field" style="min-width:180px"><option value="">Todas as máquinas</option>${maquinasOpts}</select>
-        </div>
+        <div style="font-weight:700;font-size:.8rem;margin-bottom:10px">⚙️ Parâmetros da Programação Automática</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
-          <div class="form-group" style="margin:0"><label>Cobertura mínima (dias)</label><input id="ppa-cobertura-min" class="field" type="number" min="1" value="${p.coberturaMin}"></div>
-          <div class="form-group" style="margin:0"><label>Cobertura alvo (dias)</label><input id="ppa-cobertura-alvo" class="field" type="number" min="1" value="${p.coberturaAlvo}"></div>
-          <div class="form-group" style="margin:0"><label>Risco crítico abaixo de</label><input id="ppa-risco-critico" class="field" type="number" min="1" value="${p.riscoCritico}"></div>
-          <div class="form-group" style="margin:0"><label>% máx. máquina/produto</label><input id="ppa-max-pct" class="field" type="number" min="10" max="100" value="${Math.round(p.maxPct*100)}"></div>
-          <div class="form-group" style="margin:0"><label>Fechamento última semana</label><select id="ppa-fechamento" class="field"><option value="mes-seguinte" ${p.fechamento==='mes-seguinte'?'selected':''}>Pode cruzar mês</option><option value="este-mes" ${p.fechamento==='este-mes'?'selected':''}>Só dias deste mês</option></select></div>
+          <div class="form-group" style="margin:0"><label>Cobertura Mínima Desejada (dias)</label><input id="ppa-cobertura-min" class="field" type="number" min="1" value="${p.coberturaMin}"></div>
+          <div class="form-group" style="margin:0"><label>Cobertura Alvo Após Produção (dias)</label><input id="ppa-cobertura-alvo" class="field" type="number" min="1" value="${p.coberturaAlvo}"></div>
+          <div class="form-group" style="margin:0"><label>Risco Crítico Abaixo de (dias)</label><input id="ppa-risco-critico" class="field" type="number" min="1" value="${p.riscoCritico}"></div>
+          <div class="form-group" style="margin:0"><label>% Máx. da Máquina por Produto</label><input id="ppa-max-pct" class="field" type="number" min="10" max="100" value="${Math.round(p.maxPct*100)}"></div>
+          <div class="form-group" style="margin:0"><label>Fechamento da Última Semana</label><select id="ppa-fechamento" class="field"><option value="mes-seguinte" ${p.fechamento==='mes-seguinte'?'selected':''}>↪ Pode cruzar para o mês seguinte</option><option value="este-mes" ${p.fechamento==='este-mes'?'selected':''}>🔒 Só dias deste mês (corta na virada)</option></select></div>
         </div>
-        <div style="margin-top:10px;padding:9px;border:1px solid var(--border);border-radius:8px;display:flex;gap:16px;flex-wrap:wrap"><b style="font-size:.72rem">📦 Insumos:</b><label><input type="radio" name="ppa-insumo" value="total" ${p.insumo==='total'?'checked':''}> Programar necessidade total e avisar faltas</label><label><input type="radio" name="ppa-insumo" value="limitado" ${p.insumo==='limitado'?'checked':''}> Limitar pelo estoque disponível</label></div>
+        <div style="margin-top:10px;padding:10px 12px;background:rgba(224,112,32,.06);border:1px solid rgba(224,112,32,.2);border-radius:8px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <span style="font-size:.68rem;font-weight:700;color:var(--orange);text-transform:uppercase;letter-spacing:.05em">📦 Insumos</span>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.76rem"><input type="radio" name="ppa-insumo" value="total" ${p.insumo==='total'?'checked':''}> <span><b>Opção A</b> — Programar necessidade total <small style="color:var(--muted)">(mantém aviso se faltar insumo)</small></span></label>
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.76rem"><input type="radio" name="ppa-insumo" value="limitado" ${p.insumo==='limitado'?'checked':''}> <span><b>Opção B</b> — Limitar pelo estoque de insumos disponível <small style="color:var(--muted)">(programa só o que os insumos permitem)</small></span></label>
+        </div>
       </div>
       ${_simulacao && reais.length?'<div class="tc" style="padding:10px 14px;margin-bottom:12px;border-left:4px solid var(--orange)"><b>🔬 Modo simulação:</b> nenhuma OP foi gravada. Ajuste os parâmetros e compare o cenário.</div>':''}
       ${avisoSemMaq?`<div class="tc" style="padding:10px 14px;margin-bottom:12px;border-left:4px solid var(--danger)">⚠️ ${avisoSemMaq} produto(s) em risco não possuem máquina compatível cadastrada.</div>`:''}
@@ -357,6 +369,7 @@
 
   document.addEventListener('click',e=>{
     if(e.target.closest('[data-ppa-gerar]')){gerarSugestoes(false);return;}
+    if(e.target.closest('[data-ppa-recalcular]')){gerarSugestoes(false);return;}
     if(e.target.closest('[data-ppa-simular]')){gerarSugestoes(true);return;}
     if(e.target.closest('[data-ppa-aplicar]')){aplicarSugestoesSelecionadas();return;}
     if(e.target.hasAttribute('data-ppa-check-todos')){document.querySelectorAll('[data-ppa-check]').forEach(c=>{if(!c.disabled)c.checked=e.target.checked;});}
