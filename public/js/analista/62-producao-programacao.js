@@ -257,12 +257,7 @@
     const opcoesMaquinas = _maquinas.map(m => `<option value="${esc(m.nome)}" ${filtroMaquina === m.nome ? 'selected' : ''}>${esc(m.nome)}</option>`).join('');
 
     pagina.innerHTML = `
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-        <div>
-          <div class="page-title" style="font-size:1.1rem">📋 Programação</div>
-          <div style="font-size:.72rem;color:var(--muted)">${linhasFiltradas.length.toLocaleString('pt-BR')} ordem(ns) de produção</div>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <div class="toolbar">
           <input id="pprog-busca" placeholder="Buscar produto..." value="${esc(busca)}" class="field" style="min-width:180px">
           <select id="pprog-filtro-maquina" class="field"><option value="">Todas as máquinas</option>${opcoesMaquinas}</select>
           <select id="pprog-filtro-status" class="field">
@@ -276,20 +271,19 @@
             <span data-pprog-semana-reset style="font-size:.72rem;color:var(--orange);white-space:nowrap;min-width:120px;text-align:center;cursor:pointer" title="Clique para ver todas">${_semanaFiltro ? `${_fmtDataCurta(_semanaFiltro)} – ${_fmtDataCurta(new Date(new Date(_semanaFiltro).setDate(_semanaFiltro.getDate() + 6)))}` : 'Todas as semanas'}</span>
             <button type="button" data-pprog-semana="1" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 4px;line-height:1" title="Próxima semana">›</button>
           </div>
-          <button type="button" class="btn btn-ghost btn-sm" data-pprog-limpar-filtros>✕ Filtros</button>
-          <button type="button" class="btn btn-sm" style="background:rgba(204,40,0,.12);border:1px solid rgba(204,40,0,.4);color:var(--danger)" data-pprog-limpar-tudo>🗑 Limpar Tudo</button>
-          <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0" title="Importar programação via Excel — colunas: Produto, Quantidade, Data">📥 Importar Excel<input type="file" id="pprog-excel-input" accept=".xlsx,.xls" style="display:none"></label>
-          <button type="button" class="btn btn-ghost btn-sm" style="color:var(--muted)" data-pprog-template title="Baixar planilha modelo">⬇ Template</button>
-          <button type="button" class="btn btn-primary btn-sm" data-pprog-novo="1">+ Nova</button>
-        </div>
+          <button type="button" class="btn btn-ghost" data-pprog-limpar-filtros>✕ Filtros</button>
+          <button type="button" class="btn btn-danger" data-pprog-limpar-tudo>🗑 Limpar Tudo</button>
+          <label class="btn btn-ghost" style="cursor:pointer;margin:0" title="Importar programação via Excel — colunas: Produto, Quantidade, Data">📥 Importar Excel<input type="file" id="pprog-excel-input" accept=".xlsx,.xls" style="display:none"></label>
+          <button type="button" class="btn btn-ghost" style="color:var(--muted)" data-pprog-template title="Baixar planilha modelo">⬇ Template</button>
+          <button type="button" class="btn btn-primary" data-pprog-novo="1">+ Nova</button>
       </div>
-      ${_pcpPainelHtml()}
       <div class="tc">
         <div style="overflow:auto">
           <table class="dt-table">
-            <thead><tr><th>#</th><th>Produto</th><th>Máquina</th><th>Caixas</th><th>Unidades</th><th>Tempo est.</th><th>Data</th><th>Status</th><th>Insumos</th><th></th></tr></thead>
+            <thead><tr><th>#</th><th>Produto</th><th>Máquina</th><th>Caixas</th><th>Unidades</th><th>Tempo</th><th>Dt Início</th><th>Status</th><th>Insumos</th><th>Ações</th></tr></thead>
             <tbody>
               ${linhas.length ? linhas.map((r, idx) => {
+                const numLinha = (_pagina - 1) * PAGE_SIZE + idx + 1;
                 const status = STATUS_INFO[r.status] || STATUS_INFO.pendente;
                 const tempo = _calcTempoHoras(r.qntUnid, r.pcMin);
                 const expandido = _expandidos.has(r._firestoreId);
@@ -298,7 +292,7 @@
                 const badgeIns = { falta: { cor: 'b-red', texto: '⚠️ Falta MP' }, ok: { cor: 'b-green', texto: '✅ MP OK' }, semdados: { cor: 'b-gray', texto: '📋 Insumos' }, nenhum: { cor: '', texto: '—' } }[statusIns.tipo];
                 return `
                 <tr>
-                  <td style="color:var(--muted)">${idx + 1}</td>
+                  <td style="color:var(--muted)">${numLinha}</td>
                   <td><b>${esc(r.produto)}</b>${r.obs ? `<div style="font-size:.68rem;color:var(--muted);margin-top:2px">${esc(r.obs)}</div>` : ''}</td>
                   <td><span class="badge b-purple">${esc(r.maquina)}</span></td>
                   <td>${esc(r.qntCaixas)}</td>
@@ -323,7 +317,7 @@
                     }).join('')}
                   </tbody></table>
                 </td></tr>` : ''}`;
-              }).join('') : `<tr><td colspan="10"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma ordem de produção cadastrada</div><div class="empty-sub">Clique em "+ Nova" pra começar</div></div></td></tr>`}
+              }).join('') : `<tr><td colspan="10"><div class="empty"><div class="empty-icon">🔍</div>Nenhum registro encontrado</div></td></tr>`}
             </tbody>
           </table>
         </div>
@@ -334,6 +328,7 @@
         <span style="font-size:.72rem;color:var(--muted)">Página ${_pagina} de ${totalPaginas}</span>
         <button type="button" class="btn btn-ghost btn-sm" data-pprog-pg="${_pagina + 1}" ${_pagina >= totalPaginas ? 'disabled' : ''}>Próxima ›</button>
       </div>` : ''}
+      ${_pcpPainelHtml()}
     `;
   }
 
