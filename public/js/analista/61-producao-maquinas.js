@@ -232,7 +232,7 @@
         </div>
       </div>
       ${cards.length ? (_viewMaq === 'list' ? _listaMaquinasHtml(cards) : `
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px">
+      <div class="maq-grid">
         ${cards.map(m => {
           const status = STATUS_INFO[m.status] || STATUS_INFO.ativa;
           const ocupacao = calcOcupacaoMaquina(m);
@@ -245,10 +245,10 @@
           const turnosResumo = _resumoTurnosSegunda(m);
           const expandidoDet = _detalhesAbertos.has(m.nome);
           return `
-          <div class="tc" style="padding:14px;display:flex;flex-direction:column;gap:8px;${selecionada ? 'border:2px solid var(--orange)' : ''}">
+          <div class="tc" style="padding:18px;display:flex;flex-direction:column;gap:8px;${selecionada ? 'border:2px solid var(--orange)' : ''}">
             <div style="display:flex;align-items:start;justify-content:space-between;gap:8px">
               <div>
-                <div style="font-weight:600">${esc(m.nome)}</div>
+                <div style="font-family:'JetBrains Mono',monospace;font-weight:500;font-size:13px;color:var(--orange)">${esc(m.nome)}</div>
                 <div style="font-size:.72rem;color:var(--muted)">${esc(m.categoria || '—')} · ${pedidosAtivos.length} solicit. · ${Math.round(caixasAtivas).toLocaleString('pt-BR')} cx</div>
                 ${turnosResumo ? `<div style="font-size:.66rem;color:var(--muted);margin-top:2px">${esc(turnosResumo)}</div>` : ''}
               </div>
@@ -310,9 +310,10 @@
       <div><span style="color:var(--muted)">Setup padrão:</span> ${(m.setupPadraoMin || m.tempoSetupPadrao) ? esc(m.setupPadraoMin || m.tempoSetupPadrao) + ' min' : '—'}</div>
     </div>`;
   }
-  // PEDIDO AO VIVO (auditoria, item 5): modo "☰ Lista" — uma linha por
-  // máquina em vez de cards, mesmas colunas do original (Máquina/Ocupação/
-  // Caixas/Prog. Disp./% Máquina).
+  // PEDIDO AO VIVO (auditoria 2ª rodada, seção 7): grid exata do original
+  // (.maq-list-row, app.js:2518-2543) — 200px 1fr 120px 120px 100px, não
+  // mais uma <table>. Mesmas colunas de sempre (Máquina/Ocupação/Caixas/
+  // Prog. Disp./% Máquina), só a marcação mudou pra bater com o original.
   function _listaMaquinasHtml(cards) {
     const linhas = cards.map(m => {
       const ocupacao = calcOcupacaoMaquina(m);
@@ -320,18 +321,23 @@
       const pedidosAtivos = _pedidosAtivosMaquina(m.nome);
       const caixasAtivas = pedidosAtivos.reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
       const cor = ocupacao > 100 ? 'var(--danger)' : ocupacao >= 80 ? 'var(--warn)' : 'var(--orange)';
-      return `<tr>
-        <td><b>${esc(m.nome)}</b></td>
-        <td style="min-width:160px">
-          <div style="height:6px;border-radius:4px;background:var(--border);overflow:hidden"><div style="height:100%;width:${Math.min(100, ocupacao)}%;background:${cor}"></div></div>
-          <div style="font-size:.64rem;color:var(--muted);margin-top:3px">${pedidosAtivos.length} solicit.</div>
-        </td>
-        <td style="color:${cor};font-weight:700">${Math.round(caixasAtivas).toLocaleString('pt-BR')} cx</td>
-        <td><span style="color:${cor};font-weight:700">${horasProg.toFixed(1)}h</span> <span style="color:var(--muted)">/ ${horasDisp.toFixed(1)}h</span></td>
-        <td style="color:${cor};font-weight:700">${ocupacao}%${ocupacao > 100 ? ` <span style="color:var(--danger);font-size:.6rem">+${ocupacao - 100}% over</span>` : ''}</td>
-      </tr>`;
+      return `<div class="maq-list-row">
+        <div style="font-family:'JetBrains Mono',monospace;font-weight:500;font-size:13px;color:var(--orange)">${esc(m.nome)}</div>
+        <div>
+          <div style="height:6px;border-radius:4px;background:var(--border);overflow:hidden;margin:0"><div style="height:100%;width:${Math.min(100, ocupacao)}%;background:${cor}"></div></div>
+          <div style="font-size:10px;color:var(--muted);margin-top:3px;font-family:'JetBrains Mono',monospace">${pedidosAtivos.length} solicit.</div>
+        </div>
+        <div style="color:${cor};font-family:'JetBrains Mono',monospace;font-weight:600">${Math.round(caixasAtivas).toLocaleString('pt-BR')} cx</div>
+        <div style="color:var(--muted);font-family:'JetBrains Mono',monospace;font-size:11px"><span style="color:${cor};font-weight:700">${horasProg.toFixed(1)}h</span> <span style="color:var(--muted)"> / ${horasDisp.toFixed(1)}h</span></div>
+        <div style="color:${cor};font-family:'JetBrains Mono',monospace;font-weight:700">${ocupacao}%${ocupacao > 100 ? ` <span style="color:var(--danger);font-size:9px;margin-left:4px">+${ocupacao - 100}% over</span>` : ''}</div>
+      </div>`;
     }).join('');
-    return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Máquina</th><th>Ocupação da Semana</th><th>Caixas</th><th>Prog. / Disp.</th><th>% Máquina</th></tr></thead><tbody>${linhas}</tbody></table></div></div>`;
+    return `<div class="maq-list-view">
+      <div class="maq-list-row" style="background:var(--surface-2);font-family:'JetBrains Mono',monospace;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted)">
+        <span>Máquina</span><span>Ocupação da Semana</span><span>Caixas</span><span>Prog. / Disp.</span><span>% Máquina</span>
+      </div>
+      ${linhas}
+    </div>`;
   }
 
   function _turnosDefault() {

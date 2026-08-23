@@ -124,6 +124,13 @@
 
 /* Toolbar, inputs e botões */
 .producao-page-completa .toolbar{display:flex!important;gap:8px!important;align-items:center!important;flex-wrap:wrap!important;margin-bottom:14px!important}
+/* PEDIDO AO VIVO (auditoria 2ª rodada, seção 7): grid/lista de Máquinas
+   com as medidas exatas do original (style.css:246-258) — cards
+   minmax(290px,1fr) gap 12px, linhas de lista com a grade fixa
+   200px 1fr 120px 120px 100px. */
+.maq-grid{display:grid!important;grid-template-columns:repeat(auto-fill,minmax(290px,1fr))!important;gap:12px!important}
+.maq-list-view{display:flex!important;flex-direction:column!important;gap:8px!important}
+.maq-list-row{background:var(--prod-s1)!important;border:1px solid var(--prod-border)!important;border-radius:10px!important;padding:14px 18px!important;display:grid!important;grid-template-columns:200px 1fr 120px 120px 100px!important;align-items:center!important;gap:16px!important;box-shadow:var(--prod-shadow-sm)!important}
 .producao-page-completa .field,.producao-page-completa input:not([type=checkbox]):not([type=radio]),.producao-page-completa select,.producao-page-completa textarea{background:var(--prod-s1)!important;border:1px solid var(--prod-border)!important;color:var(--prod-text)!important;border-radius:8px!important;padding:9px 12px!important;font:13px 'Space Grotesk',sans-serif!important;outline:none!important}
 .producao-page-completa .field:focus,.producao-page-completa input:focus,.producao-page-completa select:focus,.producao-page-completa textarea:focus{border-color:var(--prod-primary)!important;box-shadow:0 0 0 3px rgba(224,112,32,.12)!important}
 /* PEDIDO AO VIVO (auditoria 2ª rodada, seção 2): medidas exatas do
