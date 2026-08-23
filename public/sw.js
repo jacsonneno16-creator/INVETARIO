@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260823-12fd2cbefc86';
+var CACHE='dt-inventario-20260823-59358d50d938';
 var PRECACHE=[
   '/',
   '/index.html',

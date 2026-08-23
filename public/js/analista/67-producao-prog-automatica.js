@@ -289,7 +289,6 @@
     const avisoSemMaq=_sugestoes.filter(s=>s.semMaquina).length;
     const periodoAlvoLabel = p.modo==='semana' ? (document.getElementById('ppa-semana')?.selectedOptions?.[0]?.textContent||'—') : (document.getElementById('ppa-mes')?.selectedOptions?.[0]?.textContent||'—');
     pagina.innerHTML=`
-      <div style="margin-bottom:16px"><div class="page-title" style="font-size:1.1rem">🤖 Programação Automática</div><div style="font-size:.72rem;color:var(--muted)">Planejamento equilibrado por cobertura, capacidade, setup, velocidade e insumos — simulação de até 4 semanas.</div></div>
       <div class="kpi-grid" style="margin-bottom:16px">
         <div class="kpi orange"><span class="kpi-icon">⚠️</span><div class="kpi-val">${risco}</div><div class="kpi-lbl">Em Risco de Ruptura</div></div>
         <div class="kpi blue"><span class="kpi-icon">📋</span><div class="kpi-val">${reais.length}</div><div class="kpi-lbl">Sugestões Geradas</div></div>
