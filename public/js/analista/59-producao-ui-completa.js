@@ -226,7 +226,33 @@ function decorarPagina(page){
   if(!page||page.dataset.prodDecorada==='1')return;
   page.dataset.prodDecorada='1';page.classList.add('producao-page-completa');
 }
-function decorarTudo(){document.querySelectorAll('#setor-producao-shell [id^="page-producao-"]').forEach(decorarPagina);}
+function decorarTudo(){document.querySelectorAll('#setor-producao-shell [id^="page-producao-"]').forEach(decorarPagina);_sincronizarModoConfig();}
+
+// PEDIDO AO VIVO (usuário: "quando entra nas configurações, não aparece
+// Gantt, não aparece Dashboard, não aparece máquinas" — no original,
+// Configurações SUBSTITUI a tela inteira: some a barra de 9 abas, fica só
+// "‹ Voltar" + "⚙ Configurações" (index.html:986-992). Eu tinha deixado a
+// barra de abas sempre visível por cima, inclusive dentro de
+// Configurações — errado. #setor-producao-shell ganha a classe
+// .prod-config-modo sempre que a página ativa é producao-config (CSS
+// esconde .prod-original-tabs nesse estado); sai sozinha ao navegar pra
+// qualquer outra página, sem precisar que cada tela saiba disso.
+function _sincronizarModoConfig(){
+  const shell=document.getElementById('setor-producao-shell');
+  if(!shell)return;
+  const pagConfig=document.getElementById('page-producao-config');
+  shell.classList.toggle('prod-config-modo',!!pagConfig&&pagConfig.classList.contains('on'));
+}
+// Guarda a última página não-config visitada, pra "‹ Voltar" saber pra
+// onde ir — captura ANTES do clique navegar (fase de captura roda antes
+// do onclick="goPage(...)" inline nos próprios nav-items).
+global._prodPaginaAntesConfig='producao-dashboard';
+function _rastrearPaginaAntesConfig(e){
+  const shell=document.getElementById('setor-producao-shell');
+  if(!shell||!shell.contains(e.target))return;
+  const atual=shell.querySelector(':scope > .content > .page.on');
+  if(atual&&atual.id!=='page-producao-config')global._prodPaginaAntesConfig=atual.id.replace(/^page-/,'');
+}
 
 function observarConteudo(){
   const content=document.querySelector('#setor-producao-shell > .content');
@@ -236,6 +262,7 @@ function observarConteudo(){
   // evitando ciclos com goPage/permissoes.
   const mo=new MutationObserver(()=>decorarTudo());
   mo.observe(content,{subtree:true,childList:true});
+  document.addEventListener('click',_rastrearPaginaAntesConfig,true);
 }
 
 // Pedido ao vivo do usuário: "mexer em tudo" — modais (edição de máquina,

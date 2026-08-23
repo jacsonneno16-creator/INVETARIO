@@ -98,6 +98,14 @@
 #setor-producao-shell .nav-item.prod-tab-btn.on{background:var(--prod-primary)!important;color:#fff!important;box-shadow:0 2px 12px rgba(224,112,32,.35)!important}
 #setor-producao-shell .nav-item.prod-tab-btn.on::after{content:'';position:absolute;bottom:-3px;left:50%;transform:translateX(-50%);width:20px;height:2px;background:var(--prod-primary);border-radius:2px}
 
+/* PEDIDO AO VIVO (usuário: Configurações não pode aparecer "junto com"
+   Gantt/Dashboard/Máquinas na barra de cima). No original, Configurações
+   substitui a tela inteira — a barra de 9 abas some. .prod-config-modo é
+   ligada/desligada por 59-producao-ui-completa.js conforme a página ativa. */
+#setor-producao-shell.prod-config-modo .prod-original-tabs{display:none!important}
+.prod-config-voltar{display:inline-flex;align-items:center;gap:6px;background:var(--prod-s1);border:1px solid var(--prod-border);border-radius:7px;padding:6px 14px;color:var(--prod-text);font:600 12px 'Space Grotesk',sans-serif;cursor:pointer;margin-bottom:14px;transition:.18s}
+.prod-config-voltar:hover{border-color:var(--prod-primary);color:var(--prod-primary)}
+
 /* Conteúdo */
 #setor-producao-shell>.content{position:relative;z-index:1;flex:1!important;padding:0!important;overflow:auto!important;background:transparent!important;color:var(--prod-text)!important}
 .producao-page-completa{padding:24px 28px 40px!important;max-width:1480px!important;margin:0 auto!important;color:var(--prod-text)!important;font-family:'Space Grotesk',sans-serif!important}
