@@ -106,6 +106,68 @@
       </div>`;
   }
 
+  // PEDIDO AO VIVO (auditoria 2ª rodada, seção 14/15): no original,
+  // "Cadastro de Produtos" (scontent-produtos, index.html:1143-1168) e
+  // "Ficha Técnica" (scontent-ficha-tecnica-cfg, index.html:1123-1140)
+  // são DUAS telas diferentes — Produtos é o CRUD completo (+Adicionar/
+  // Importar/Exportar/Limpar), Ficha Técnica é só uma LISTA DE CONSULTA,
+  // somente leitura ("Gerada automaticamente ao importar produtos" —
+  // texto literal do original), sem nenhum botão de edição. Aqui as duas
+  // rotas apontavam pra mesma função/tela; esta é a versão somente
+  // leitura, reaproveitando os mesmos dados (getProducaoFichaTecnicaMerged)
+  // sem duplicar a fonte de verdade.
+  let _containerFichaRO = 'page-producao-ficha-tecnica';
+  let _fichaROBusca = '';
+  async function renderProducaoFichaTecnicaSomenteLeitura(containerId) {
+    _containerFichaRO = containerId || 'page-producao-ficha-tecnica';
+    const pagina = document.getElementById(_containerFichaRO);
+    if (!pagina) return;
+    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
+    try { await carregarProducaoDados(); }
+    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
+    _desenharFichaTecnicaSomenteLeitura();
+  }
+  function _desenharFichaTecnicaSomenteLeitura() {
+    const pagina = document.getElementById(_containerFichaRO);
+    if (!pagina) return;
+    const busca = _fichaROBusca.trim().toLowerCase();
+    const linhas = getProducaoFichaTecnicaMerged()
+      .filter(f => !busca || String(f.cod).includes(busca) || String(f.desc || '').toLowerCase().includes(busca))
+      .sort((a, b) => String(a.cod).localeCompare(String(b.cod), 'pt-BR', { numeric: true }));
+    pagina.innerHTML = `
+      <div class="tc" style="padding:0;overflow:hidden">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="font-weight:700">🏭 Ficha Técnica de Produtos</span>
+            <span style="font-size:.72rem;color:var(--muted)">(${linhas.length.toLocaleString('pt-BR')} produtos)</span>
+          </div>
+          <span style="font-size:.68rem;color:var(--muted)">Gerada automaticamente ao importar produtos</span>
+        </div>
+        <div style="padding:8px 12px;border-bottom:1px solid var(--border)">
+          <input id="pftro-busca" class="field" placeholder="Filtrar por código ou descrição..." value="${esc(_fichaROBusca)}" style="width:100%">
+        </div>
+        <div style="max-height:520px;overflow-y:auto">
+          <table class="dt-table">
+            <thead><tr><th>Cód.</th><th>Descrição</th><th>Unid/Cx</th><th>Peças/min</th><th>Máquina</th><th>Insumos</th></tr></thead>
+            <tbody>
+              ${linhas.length ? linhas.map(f => `
+                <tr>
+                  <td class="mono">${esc(f.cod)}</td>
+                  <td><b>${esc(f.desc)}</b>${f._semFicha ? ' <span class="badge b-yellow" style="font-size:.6rem">sem ficha</span>' : ''}</td>
+                  <td>${esc(f.unid)}</td>
+                  <td>${esc(f.pc_min)}</td>
+                  <td>${esc(f.maquina)}</td>
+                  <td style="font-size:.75rem;color:var(--muted)">${(f.insumos || []).length ? (f.insumos || []).map(i => esc(i.insumo) + ' (' + esc(i.qty) + ')').join(', ') : '—'}</td>
+                </tr>`).join('') : `<tr><td colspan="6"><div class="empty"><div class="empty-icon">🏭</div><div class="empty-title">Nenhuma ficha técnica encontrada</div></div></td></tr>`}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+  document.addEventListener('input', e => {
+    if (e.target && e.target.id === 'pftro-busca') { _fichaROBusca = e.target.value || ''; _desenharFichaTecnicaSomenteLeitura(); const el = document.getElementById('pftro-busca'); if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch (_) {} } }
+  });
+
   async function _abrirModalPft(item) {
     document.getElementById('pft-title').textContent = item._novo ? 'Novo produto' : 'Editar ficha técnica';
     document.getElementById('pft-doc-id').value = item._firestoreId || '';
@@ -296,6 +358,7 @@
   }
 
   global.renderProducaoFichaTecnica = renderProducaoFichaTecnica;
+  global.renderProducaoFichaTecnicaSomenteLeitura = renderProducaoFichaTecnicaSomenteLeitura;
   global._desenharProducaoFichaTecnica = _desenharProducaoFichaTecnica;
   global.pftAdicionarInsumo = pftAdicionarInsumo;
   global.pftRemoverInsumo = pftRemoverInsumo;
