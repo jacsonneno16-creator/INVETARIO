@@ -9,17 +9,27 @@ describe('Producao etapa 7 fix - visual sem quebrar navegacao',()=>{
   assert.equal(js.includes('aside.innerHTML='),false);
   assert.ok(js.includes("n.classList.add('prod-tab-btn'"));
  });
- test('nao cria listener concorrente que chama goPage',()=>{
-  assert.equal(js.includes("global.goPage("),false);
+ test('as 9 abas principais continuam sendo os MESMOS nós reparentados (nao clonados, sem onclick duplicado)',()=>{
+  // As abas do dia a dia sao o proprio #nav-producao-* original, reaproveitado
+  // (dataset.prodRoute so serve pra achar o node, nao dispara goPage sozinho).
+  assert.ok(js.includes("n.dataset.prodRoute=id;"));
   assert.equal(js.includes('data-prod-route'),false);
+ });
+ test('PEDIDO AO VIVO (auditoria RELATORIO-COMPARACAO-PRODUCAO.md): itens do dropdown de 3-pontos chamam goPage/logout de verdade — nao sao so paginas reparentadas',()=>{
+  // Auditoria seção 4: Meu Perfil/Projeção de Vendas/Configurações/Sair do
+  // dropdown original SÃO botões próprios que disparam ação (switchTab/
+  // openSettings/logout) — não é mais um "Mais" que só reparenta páginas.
+  assert.ok(js.includes("global.goPage?.('producao-projecao')"));
+  assert.ok(js.includes("global.goPage?.('producao-config')"));
+  assert.ok(js.includes('global.doLogoutAnalista?.()'));
  });
  test('mantem cabecalho, loja e tema escopados a Producao',()=>{
   assert.ok(js.includes('prod-original-header'));
-  assert.ok(js.includes('trocarLojaInventario'));
+  assert.ok(js.includes('aplicarTrocaLojaAnalista'));
   assert.ok(css.includes('#setor-producao-shell'));
  });
  test('usa nova versao para invalidar cache do navegador',()=>{
-  assert.ok(html.includes('producao-completa.css?v=20260822c-fix-tema-anchor-id'));
-  assert.ok(html.includes('59-producao-ui-completa.js?v=20260822b-mais-no-header'));
+  assert.ok(html.includes('producao-completa.css?v=20260822d-auditoria-header-abas'));
+  assert.ok(html.includes('59-producao-ui-completa.js?v=20260822c-auditoria-header-abas'));
  });
 });

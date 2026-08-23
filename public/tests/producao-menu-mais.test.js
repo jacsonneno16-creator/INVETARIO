@@ -1,12 +1,9 @@
-// Pedido ao vivo do usuário: a barra de abas do Produção mostrava TODOS os
-// 16 itens do menu original de uma vez (a mesma barra horizontal +
-// wrapping deixava um bloco de itens "sobrando" com aparência de menu
-// duplicado). Pedido: só o fluxo do dia a dia fica na barra principal; o
-// resto entra num "⋮ Mais" — mesmo padrão de flyout já usado em Usuários e
-// Permissões. O CSS (.prod-more-wrap/.prod-more-menu) já existia em
-// producao-completa.css mas nunca tinha sido ligado a nenhum elemento —
-// por isso só um teste de EXECUÇÃO real (não regex no texto) prova que a
-// funcionalidade existe de verdade.
+// Substitui o antigo teste do "⋮ Mais" (padrão que o usuário rejeitou
+// explicitamente e que a auditoria RELATORIO-COMPARACAO-PRODUCAO.md (seções
+// 4 e 5) confirmou não existir no original de verdade). O original tem:
+// nove abas fixas na barra principal, e um menu de 3-pontos no cabeçalho
+// com exatamente 5 itens fixos (usuário, Meu Perfil, Projeção de Vendas,
+// Configurações, Sair) — nada de um flyout genérico com 8 páginas soltas.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
@@ -16,14 +13,18 @@ const { JSDOM } = require('jsdom');
 const dir = path.join(__dirname, '..', 'js', 'analista');
 const codigo = fs.readFileSync(path.join(dir, '59-producao-ui-completa.js'), 'utf8');
 
-const ROTAS = [
-  'dashboard', 'ficha-tecnica', 'maquinas', 'programacao', 'gantt', 'realizado',
-  'insumos', 'projecao', 'prog-automatica', 'funcionarios', 'relatorios', 'setup',
+const ROTAS_PRINCIPAIS = [
+  'dashboard', 'programacao', 'maquinas', 'gantt', 'realizado',
+  'insumos', 'insumos-geral', 'prog-automatica', 'relatorios',
+];
+const ROTAS_OCULTAS = [
+  'ficha-tecnica', 'projecao', 'funcionarios', 'setup',
   'mapa-fabrica', 'config', 'importacao', 'estoque',
 ];
 
 function carregarShell() {
-  const navItems = ROTAS.map(r => `<div class="nav-item" id="nav-producao-${r}" onclick="void(0)">${r}</div>`).join('');
+  const navItems = ROTAS_PRINCIPAIS.concat(ROTAS_OCULTAS)
+    .map(r => `<div class="nav-item" id="nav-producao-${r}" onclick="void(0)"><span class="nav-icon">X</span>${r}</div>`).join('');
   const html = `<!doctype html><html><body>
     <div id="setor-producao-shell"><aside class="sidebar"><div class="sb-sec">Producao</div>${navItems}</aside>
     <div class="content"></div></div>
@@ -31,47 +32,82 @@ function carregarShell() {
   const dom = new JSDOM(html, { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
   win.getDTLojaAtiva = () => 'loja1';
-  win.DTLoja = { listar: async () => [] };
+  win.DTLoja = { listar: async () => [{ id: 'loja1', nome: 'Matriz' }] };
+  win.aplicarTrocaLojaAnalista = () => {};
+  win.doLogoutAnalista = () => { win.__logout = true; };
+  win.goPage = (id) => { win.__lastGoPage = id; };
+  win._currentAnalistaUser = { email: 'op@dt.com', nome: 'Operador Teste' };
   win.firebase = { auth: () => ({ currentUser: null }) };
   win.eval(codigo);
   win.ProducaoUICompleta.montarSidebar();
   return win;
 }
 
-test('PEDIDO AO VIVO: "⋮ Mais" existe de verdade — reparenta (não recria) os itens secundários do menu original, preservando onclick/permissões', () => {
+test('PEDIDO AO VIVO (auditoria seção 5): barra principal tem exatamente as nove abas do original, nesta ordem, sem "Mais"', () => {
   const win = carregarShell();
-  const menu = win.document.getElementById('prod-more-menu');
-  assert.ok(menu, 'painel #prod-more-menu precisa existir');
-  const idsNoMenu = [...menu.children].map(n => n.id);
-  // Os itens do dia a dia continuam na barra principal, fora do menu.
-  ['nav-producao-dashboard', 'nav-producao-programacao', 'nav-producao-maquinas', 'nav-producao-gantt', 'nav-producao-realizado', 'nav-producao-insumos', 'nav-producao-prog-automatica', 'nav-producao-relatorios'].forEach(id => {
-    assert.ok(!idsNoMenu.includes(id), id + ' é item do dia a dia, não pode estar dentro do "Mais"');
-    assert.ok(win.document.getElementById(id).classList.contains('prod-primary-tab'), id + ' precisa estar na barra principal');
-  });
-  // O resto (cadastro/config/uso ocasional) foi pro menu.
-  ['nav-producao-ficha-tecnica', 'nav-producao-projecao', 'nav-producao-funcionarios', 'nav-producao-setup', 'nav-producao-mapa-fabrica', 'nav-producao-config', 'nav-producao-importacao', 'nav-producao-estoque'].forEach(id => {
-    assert.ok(idsNoMenu.includes(id), id + ' precisa estar dentro do "⋮ Mais"');
-  });
-  assert.equal(idsNoMenu.length, 8);
+  const tabs = win.document.querySelector('.prod-original-tabs');
+  assert.ok(tabs, '.prod-original-tabs (pílula de abas) precisa existir');
+  const ids = [...tabs.children].map(n => n.id);
+  assert.deepEqual(ids, ROTAS_PRINCIPAIS.map(r => 'nav-producao-' + r), 'ordem e conjunto das 9 abas precisa bater exatamente com o original');
+  ids.forEach(id => assert.ok(win.document.getElementById(id).classList.contains('prod-primary-tab')));
   // MESMO node (reparentado, não clonado) — o onclick original continua intacto.
-  assert.equal(win.document.getElementById('nav-producao-config').getAttribute('onclick'), 'void(0)');
+  assert.equal(win.document.getElementById('nav-producao-realizado').getAttribute('onclick'), 'void(0)');
 });
 
-test('PEDIDO AO VIVO: clicar em "⋮ Mais" abre o painel; clicar num item dentro dele fecha o painel de novo', () => {
+test('PEDIDO AO VIVO (auditoria seção 5): rótulos divergentes são corrigidos sem recriar o nó (Máquinas, Prog. Visual)', () => {
+  const win = carregarShell();
+  assert.equal(win.document.getElementById('nav-producao-maquinas').textContent.trim(), 'XMáquinas');
+  assert.equal(win.document.getElementById('nav-producao-gantt').textContent.trim(), 'XProg. Visual');
+});
+
+test('PEDIDO AO VIVO (auditoria seção 4/7.10): rotas sem entrada própria no original ficam escondidas da navegação principal (só em Configurações)', () => {
+  const win = carregarShell();
+  ROTAS_OCULTAS.forEach(r => {
+    const n = win.document.getElementById('nav-producao-' + r);
+    assert.equal(n.style.display, 'none', 'nav-producao-' + r + ' precisa estar oculto da navegação principal');
+  });
+  // Nenhum nó foi removido do DOM — permissões/goPage continuam funcionando.
+  assert.equal(win.document.querySelectorAll('.nav-item').length, ROTAS_PRINCIPAIS.length + ROTAS_OCULTAS.length);
+});
+
+test('PEDIDO AO VIVO (auditoria seção 4): menu de 3 pontos tem exatamente os 5 itens fixos do original', () => {
+  const win = carregarShell();
+  const menu = win.document.getElementById('prod-more-menu');
+  assert.ok(menu, '#prod-more-menu precisa existir');
+  const itens = [...menu.querySelectorAll('.prod-more-item')].map(b => b.dataset.prodMenuAcao);
+  assert.deepEqual(itens, ['meu-perfil', 'projecao', 'config', 'sair']);
+  assert.ok(menu.querySelector('.prod-more-user'), 'bloco de usuário precisa aparecer antes dos itens, como no original');
+});
+
+test('PEDIDO AO VIVO: clicar em "Configurações"/"Projeção de Vendas" navega via goPage; "Sair" chama o logout real', () => {
+  const win = carregarShell();
+  win.document.getElementById('prod-more-btn').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  win.document.querySelector('[data-prod-menu-acao="config"]').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.equal(win.__lastGoPage, 'producao-config');
+
+  win.document.getElementById('prod-more-btn').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  win.document.querySelector('[data-prod-menu-acao="projecao"]').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.equal(win.__lastGoPage, 'producao-projecao');
+
+  win.document.getElementById('prod-more-btn').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  win.document.querySelector('[data-prod-menu-acao="sair"]').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  assert.equal(win.__logout, true);
+});
+
+test('PEDIDO AO VIVO: clicar em "⋮" (3 pontos) abre o painel; escolher um item fecha ele de novo', () => {
   const win = carregarShell();
   const menu = win.document.getElementById('prod-more-menu');
   const btn = win.document.getElementById('prod-more-btn');
-  assert.ok(btn, 'botão "⋮ Mais" precisa existir');
   assert.equal(menu.classList.contains('on'), false);
 
   btn.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
   assert.equal(menu.classList.contains('on'), true, 'clicar no botão abre o painel');
 
-  menu.children[0].dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+  win.document.querySelector('[data-prod-menu-acao="meu-perfil"]').dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
   assert.equal(menu.classList.contains('on'), false, 'escolher um item dentro do painel fecha ele de novo');
 });
 
-test('PEDIDO AO VIVO: clicar fora do "⋮ Mais" com o painel aberto fecha ele', () => {
+test('PEDIDO AO VIVO: clicar fora do menu de 3 pontos, com o painel aberto, fecha ele', () => {
   const win = carregarShell();
   const menu = win.document.getElementById('prod-more-menu');
   const btn = win.document.getElementById('prod-more-btn');
@@ -82,11 +118,8 @@ test('PEDIDO AO VIVO: clicar fora do "⋮ Mais" com o painel aberto fecha ele', 
   assert.equal(menu.classList.contains('on'), false, 'clique fora do menu tem que fechar o painel');
 });
 
-test('estrutura: nenhum item aparece duas vezes (nem na barra, nem faltando)', () => {
+test('PEDIDO AO VIVO (auditoria seção 4): seletor de loja é um <select> real, populado a partir de DTLoja.listar', () => {
   const win = carregarShell();
-  const barra = [...win.document.querySelectorAll('.prod-primary-tab')].map(n => n.id);
-  const menu = [...win.document.getElementById('prod-more-menu').children].map(n => n.id);
-  const todos = barra.concat(menu);
-  assert.equal(todos.length, ROTAS.length, 'todo item do menu original tem que aparecer em algum lugar (barra ou "Mais"), nunca duas vezes nem nenhuma');
-  assert.equal(new Set(todos).size, todos.length, 'nenhum id repetido entre a barra e o "Mais"');
+  const sel = win.document.getElementById('prod-loja-sel');
+  assert.ok(sel, '#prod-loja-sel precisa existir (o original usa #topbar-loja-sel, um <select>)');
 });

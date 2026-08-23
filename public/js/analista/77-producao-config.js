@@ -12,6 +12,14 @@ async function render(){const p=document.getElementById('page-producao-config');
 // 6 seções reaproveitam as páginas já existentes, mas RENDERIZADAS AQUI
 // DENTRO (não navegam pra outra aba do menu principal) — cada render*()
 // já aceita um id de container opcional pra isso.
+// PEDIDO AO VIVO (auditoria RELATORIO-COMPARACAO-PRODUCAO.md, seção 7.10):
+// no original, Configurações tem nav lateral com grupos Máquinas (Cadastro
+// /Turnos/Setup) e Produtos (Cadastro/Ficha/Categorias) + Funcionários/
+// Processos/Jornada/Importação soltos. A reorganização completa nesse
+// exato agrupamento é o item 13 da execução do relatório (ainda pendente
+// nesta rodada — aqui só entrou 'producao-mapa-fabrica', que a auditoria
+// não localizou em nenhum menu do original e por isso fica temporariamente
+// aqui, pra não ficar inalcançável, até localizar o lugar certo).
 const SECOES_CFG=[
   ['jornada','🕐','Jornada'],
   ['categorias','🏷️','Categorias'],
@@ -21,6 +29,7 @@ const SECOES_CFG=[
   ['producao-setup','🔧','Tempos de Setup'],
   ['producao-importacao','🔄','Importação / API'],
   ['producao-estoque','📦','Estoque'],
+  ['producao-mapa-fabrica','🗺️','Mapa da Fábrica'],
 ];
 const RENDER_EMBED={
   'producao-maquinas':()=>global.renderProducaoMaquinas?.('pcfg-embed-host'),
@@ -29,6 +38,7 @@ const RENDER_EMBED={
   'producao-setup':()=>global.renderProducaoSetup?.('pcfg-embed-host'),
   'producao-importacao':()=>global.renderProducaoImportacao?.('pcfg-embed-host'),
   'producao-estoque':()=>global.renderProducaoEstoque?.('pcfg-embed-host'),
+  'producao-mapa-fabrica':()=>global.renderProducaoMapaFabrica?.('pcfg-embed-host'),
 };
 let secaoAtiva='jornada';
 function _navCfgHtml(){return `<div class="tc" style="padding:6px;margin-bottom:16px;display:flex;gap:4px;flex-wrap:wrap">${SECOES_CFG.map(([id,icone,titulo])=>`<button type="button" class="btn ${secaoAtiva===id?'btn-primary':'btn-ghost'} btn-sm" data-pcfg-secao="${id}">${icone} ${esc(titulo)}</button>`).join('')}</div>`;}

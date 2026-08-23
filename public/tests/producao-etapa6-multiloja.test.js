@@ -31,10 +31,10 @@ test('Produção Etapa 6: jornada local é isolada por loja, não reaproveita co
   assert.match(s, /localStorage\.setItem\(jornadaKey\(\),JSON\.stringify\(jornada\)\)/);
 });
 
-test('Produção Etapa 6: seletor de loja aparece dentro do módulo e reutiliza o switcher oficial do projeto maior', () => {
+test('Produção Etapa 6: seletor de loja aparece dentro do módulo e reutiliza o troca-de-loja oficial do projeto maior', () => {
   const s = src('59-producao-ui-completa.js');
-  assert.match(s, /id="prod-loja-atual"/);
-  assert.match(s, /trocarLojaInventario/);
+  assert.match(s, /id="prod-loja-sel"/);
+  assert.match(s, /aplicarTrocaLojaAnalista/);
   assert.match(s, /atualizarLojaSidebar/);
 });
 

@@ -3,12 +3,18 @@
 /* Etapa 7 — paridade visual do módulo Produção com o sistema original.
    Tudo fica estritamente escopado em #setor-producao-shell para não alterar
    Inventário, Recebimento, Compras ou PCP. */
+/* PEDIDO AO VIVO (auditoria RELATORIO-COMPARACAO-PRODUCAO.md, seção 6):
+   valores copiados literalmente de css/style.css do original (:root, linhas
+   6-34), não mais aproximados — inclusive --text3, que antes estava errado
+   (usava o texto2 claro por engano). */
 #setor-producao-shell{
  --prod-bg:#0e1210;--prod-s1:#161c18;--prod-s2:#0e1210;--prod-s3:#1c2420;
  --prod-border:#22301e;--prod-border2:#2e4428;--prod-text:#d8ecd0;--prod-text2:#6a9058;
- --prod-text3:#48633e;--prod-primary:#e07020;--prod-primary2:#c05a10;--prod-orange:#cc2800;
+ --prod-text3:#2e4428;--prod-text4:#1a2418;--prod-primary:#e07020;--prod-primary2:#c05a10;--prod-orange:#cc2800;
  --prod-purple:#b89030;--prod-green:#5ab848;--prod-warn:#b89030;--prod-red:#cc2800;
  --prod-shadow:0 8px 24px rgba(0,0,0,.35);--prod-shadow-sm:0 2px 8px rgba(0,0,0,.22);
+ --prod-noise-opacity:.018;--prod-grid-opacity:.01;
+ --prod-header-bg:rgba(10,15,12,.97);--prod-header-border:rgba(224,112,32,.22);
  --prod-row-hover:rgba(90,184,72,.04);--prod-td-border:rgba(34,48,30,.7);
  background:var(--prod-bg)!important;color:var(--prod-text)!important;font-family:'Space Grotesk',sans-serif!important;
  flex-direction:column!important;min-height:calc(100vh - 42px)!important;position:relative;overflow:hidden;
@@ -28,28 +34,57 @@
 }
 #setor-producao-shell.prod-light{
  --prod-bg:#ede5da;--prod-s1:#faf5ef;--prod-s2:#ede5da;--prod-s3:#e0d5c5;
- --prod-border:#d6c8b5;--prod-border2:#c4b09a;--prod-text:#2a1a08;--prod-text2:#806346;
- --prod-text3:#9a7a5a;--prod-primary:#e8621a;--prod-primary2:#c04010;--prod-orange:#7a2800;
+ --prod-border:#d6c8b5;--prod-border2:#c4b09a;--prod-text:#2a1a08;--prod-text2:#9a7a5a;
+ --prod-text3:#c0a880;--prod-text4:#ddd0be;--prod-primary:#e8621a;--prod-primary2:#c04010;--prod-orange:#7a2800;
  --prod-purple:#8c5a20;--prod-green:#3d7030;--prod-warn:#a07020;--prod-red:#7a2800;
  --prod-shadow:0 8px 20px rgba(42,26,8,.12);--prod-shadow-sm:0 2px 8px rgba(42,26,8,.08);
+ --prod-noise-opacity:0;--prod-grid-opacity:.004;
+ --prod-header-bg:rgba(61,42,24,.98);--prod-header-border:rgba(232,98,26,.35);
  --prod-row-hover:rgba(42,26,8,.03);--prod-td-border:rgba(214,200,181,.8);
 }
-#setor-producao-shell::before{content:'';position:absolute;inset:0;pointer-events:none;z-index:0;background-image:linear-gradient(rgba(224,112,32,.012) 1px,transparent 1px),linear-gradient(90deg,rgba(224,112,32,.012) 1px,transparent 1px);background-size:48px 48px}
-#setor-producao-shell.prod-light::before{opacity:.25}
+/* PEDIDO AO VIVO (auditoria, seção 6): original desenha ruído (body::before,
+   SVG feTurbulence) + grade (body::after) com opacidades vindas de
+   --noise-opacity/--grid-opacity — aqui replicado como duas camadas
+   próprias, escopadas ao shell, com as MESMAS opacidades por tema. */
+#setor-producao-shell::before{content:'';position:absolute;inset:0;pointer-events:none;z-index:0;opacity:var(--prod-noise-opacity);background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")}
+#setor-producao-shell::after{content:'';position:absolute;inset:0;pointer-events:none;z-index:0;background-image:linear-gradient(rgba(224,112,32,var(--prod-grid-opacity)) 1px,transparent 1px),linear-gradient(90deg,rgba(224,112,32,var(--prod-grid-opacity)) 1px,transparent 1px);background-size:48px 48px}
 
 /* Cabeçalho original */
-#setor-producao-shell>.producao-original-nav{position:sticky!important;top:0;z-index:100!important;width:100%!important;min-width:0!important;height:auto!important;min-height:0!important;max-height:none!important;background:rgba(10,15,12,.97)!important;border:0!important;border-bottom:1px solid rgba(224,112,32,.22)!important;padding:0!important;overflow:visible!important;color:var(--prod-text)!important;box-shadow:none!important;display:block!important}
-#setor-producao-shell.prod-light>.producao-original-nav{background:rgba(61,42,24,.98)!important;border-bottom-color:rgba(232,98,26,.35)!important}
+#setor-producao-shell>.producao-original-nav{position:sticky!important;top:0;z-index:100!important;width:100%!important;min-width:0!important;height:auto!important;min-height:0!important;max-height:none!important;background:var(--prod-header-bg)!important;backdrop-filter:blur(24px)!important;-webkit-backdrop-filter:blur(24px)!important;border:0!important;border-bottom:1px solid var(--prod-header-border)!important;padding:0!important;overflow:visible!important;color:var(--prod-text)!important;box-shadow:none!important;display:block!important}
 .prod-original-header{height:64px;padding:0 28px;display:flex;align-items:center;justify-content:space-between;gap:20px;position:relative}
 .prod-original-header::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,rgba(224,112,32,.35) 30%,rgba(204,40,0,.25) 60%,transparent)}
-.prod-original-logo{display:flex;align-items:center;gap:12px;min-width:210px}.prod-logo-mark{width:44px;height:44px;border-radius:10px;background:var(--prod-primary);color:#fff;display:grid;place-items:center;font-family:'Space Grotesk',sans-serif;font-weight:800;font-size:17px;box-shadow:0 4px 18px rgba(224,112,32,.25)}
-.prod-logo-copy{display:flex;flex-direction:column;gap:2px}.prod-logo-name{font-weight:700;font-size:17px;letter-spacing:-.2px;color:var(--prod-text);line-height:1}.prod-logo-name span{color:var(--prod-primary)}.prod-logo-sub{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--prod-text3);margin-top:2px}
-.prod-header-actions{display:flex;gap:8px;align-items:center;min-width:0}.prod-pill{display:flex;align-items:center;gap:6px;background:var(--prod-s2);border:1px solid var(--prod-border);border-radius:20px;padding:5px 12px;font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--prod-text2);max-width:240px}.prod-pill strong{color:var(--prod-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.prod-dot{width:5px;height:5px;border-radius:50%;background:var(--prod-primary);box-shadow:0 0 6px var(--prod-primary)}
-.prod-store-btn,.prod-icon-btn{height:36px;background:var(--prod-s2);border:1px solid var(--prod-border);border-radius:8px;color:var(--prod-text2);font:600 12px 'Space Grotesk',sans-serif;cursor:pointer;transition:.18s}.prod-store-btn{padding:0 12px}.prod-icon-btn{width:36px;font-size:16px}.prod-store-btn:hover,.prod-icon-btn:hover{border-color:var(--prod-primary);color:var(--prod-text);transform:translateY(-1px)}
-.prod-user-chip{display:flex;align-items:center;gap:7px;max-width:180px}.prod-user-avatar{width:32px;height:32px;border-radius:50%;display:grid;place-items:center;background:var(--prod-primary);color:#fff;font-weight:800;font-size:12px}.prod-user-name{font-size:11px;font-weight:600;color:var(--prod-text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prod-original-logo{display:flex;align-items:center;gap:12px}.prod-logo-mark{width:44px;height:44px;border-radius:10px;overflow:hidden;flex-shrink:0;background:var(--prod-primary);display:flex;align-items:center;justify-content:center}.prod-logo-mark img{width:100%;height:100%;object-fit:cover;border-radius:10px}
+.prod-logo-copy{display:flex;flex-direction:column;gap:1px}.prod-logo-name{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:17px;letter-spacing:-.2px;color:var(--prod-text);line-height:1}.prod-logo-name span{color:var(--prod-primary)}.prod-logo-sub{font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:var(--prod-text3);margin-top:2px}
+.prod-header-actions{display:flex;align-items:center;gap:8px}
+/* PEDIDO AO VIVO (auditoria, seção 4): seletor de loja é um <select> real
+   dentro de uma pill (como o original #topbar-loja-sel), não mais um botão
+   "Trocar loja" que abre outro fluxo. */
+.prod-loja-wrap{display:flex;align-items:center;gap:6px;background:var(--prod-s1);border:1px solid var(--prod-border);border-radius:8px;padding:4px 10px;height:36px}
+.prod-loja-wrap select{background:transparent;border:none;color:var(--prod-primary);font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:700;cursor:pointer;outline:none;min-width:90px;max-width:160px}
+#prod-theme-toggle{background:var(--prod-s1);border:1px solid var(--prod-border);border-radius:8px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--prod-text2);transition:all .18s;font-size:15px}
+/* Botão de "3 pontos verticais", idêntico ao #hd-menu-btn original — não é
+   mais uma engrenagem "⚙️". */
+#prod-more-btn{background:var(--prod-s1);border:1px solid var(--prod-border);border-radius:8px;width:36px;height:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--prod-text2);transition:all .18s;flex-direction:column;gap:3px}
+#prod-more-btn span{display:block;width:4px;height:4px;border-radius:50%;background:currentColor}
+.prod-more-wrap{position:relative}
+/* Dropdown do menu (mesma composição do #hd-menu-dropdown original: bloco
+   de usuário, Meu Perfil, Projeção de Vendas, Configurações, Sair). */
+.prod-more-menu{display:none;position:absolute;right:0;top:calc(100% + 7px);background:var(--prod-s1);border:1px solid var(--prod-border2);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:250;min-width:220px;overflow:hidden}
+.prod-more-menu.on{display:block}
+.prod-more-user{padding:12px 16px;border-bottom:1px solid var(--prod-border);display:flex;align-items:center;gap:10px}
+.prod-more-avatar{width:34px;height:34px;border-radius:50%;background:var(--prod-primary);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff;flex-shrink:0}
+.prod-more-nome{font-size:12px;font-weight:600;color:var(--prod-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prod-more-cargo{font-size:10px;color:var(--prod-text2);margin-top:2px}
+.prod-more-item{width:100%;text-align:left;background:none;border:none;padding:11px 16px;color:var(--prod-text);font-family:'Space Grotesk',sans-serif;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:10px;transition:background .15s}
+.prod-more-item:hover{background:rgba(255,255,255,.05)}
+.prod-more-item.prod-sair{color:var(--prod-red)}
+.prod-more-item.prod-sair:hover{background:rgba(204,40,0,.12)}
+.prod-more-sep{height:1px;background:var(--prod-border);margin:2px 0}
 
-/* Barra de abas como no original */
-.prod-original-tabs{display:flex;gap:2px;align-items:center;overflow:visible;padding:8px 28px 10px;background:var(--prod-bg);border-bottom:1px solid var(--prod-border);position:relative;z-index:101;flex-wrap:wrap}
+/* PEDIDO AO VIVO (auditoria, seção 5): barra de abas idêntica à original
+   (css/style.css .tabs/.tab-btn) — pílula com fundo --s2, borda,
+   padding:3px, largura pelo conteúdo, não mais uma tira cheia. */
+.prod-original-tabs{display:flex;gap:2px;align-items:center;overflow:visible;background:var(--prod-s2);border:1px solid var(--prod-border);border-radius:10px;padding:3px;width:fit-content;margin:14px 28px 22px;flex-wrap:wrap}
 /* Especificidade reforçada (ID + .nav-item + .prod-tab-btn) — o projeto
    tem 5 arquivos CSS legados (analista-centro-operacoes-v247/248/249.css,
    analista-operacao-v250.css, analista-premium-v246.css) que estilizam
@@ -58,10 +93,10 @@
    vira loteria de ordem de carregamento — por isso a cor clara às vezes
    "vencia". Adicionar `.nav-item` na própria regra sobe a especificidade
    (id + 2 classes) e garante vitória sempre, não só quando dá sorte. */
-#setor-producao-shell .nav-item.prod-tab-btn{appearance:none;border:0!important;background:transparent!important;color:var(--prod-text2)!important;padding:8px 15px!important;min-height:34px!important;border-radius:7px!important;display:inline-flex!important;align-items:center!important;gap:6px!important;font:600 12px 'Space Grotesk',sans-serif!important;cursor:pointer!important;transition:all .18s!important;width:auto!important;white-space:nowrap!important}
+#setor-producao-shell .nav-item.prod-tab-btn{appearance:none;border:0!important;background:transparent!important;color:var(--prod-text2)!important;padding:8px 20px!important;min-height:34px!important;border-radius:7px!important;display:inline-flex!important;align-items:center!important;gap:6px!important;font:600 13px 'Space Grotesk',sans-serif!important;letter-spacing:.2px!important;cursor:pointer!important;transition:all .18s!important;width:auto!important;white-space:nowrap!important;position:relative!important}
 #setor-producao-shell .nav-item.prod-tab-btn:hover{color:var(--prod-text)!important;background:var(--prod-s3)!important}
 #setor-producao-shell .nav-item.prod-tab-btn.on{background:var(--prod-primary)!important;color:#fff!important;box-shadow:0 2px 12px rgba(224,112,32,.35)!important}
-.prod-tab-icon{font-size:14px}.prod-more-wrap{position:relative}.prod-more-menu{display:none;position:absolute;right:0;top:calc(100% + 7px);z-index:250;background:var(--prod-s1)!important;border:1px solid var(--prod-border2)!important;border-radius:10px;box-shadow:var(--prod-shadow);padding:6px;min-width:240px}.prod-more-menu.on{display:flex;flex-direction:column}.prod-more-menu .nav-item.prod-tab-btn{width:100%!important;justify-content:flex-start!important}
+#setor-producao-shell .nav-item.prod-tab-btn.on::after{content:'';position:absolute;bottom:-3px;left:50%;transform:translateX(-50%);width:20px;height:2px;background:var(--prod-primary);border-radius:2px}
 
 /* Conteúdo */
 #setor-producao-shell>.content{position:relative;z-index:1;flex:1!important;padding:0!important;overflow:auto!important;background:transparent!important;color:var(--prod-text)!important}
@@ -115,7 +150,7 @@
 #setor-producao-shell [id^="page-producao-"] .btn-ghost{background:var(--prod-s2)!important;border:1px solid var(--prod-border)!important;color:var(--prod-text2)!important}
 #setor-producao-shell [id^="page-producao-"] .btn-primary{background:var(--prod-primary)!important;border-color:var(--prod-primary)!important;color:#fff!important}
 
-/* Gantt: mantém toda a funcionalidade existente e aproxima visual do original */
+/* Gantt: mantém toda a funcionalidade existente, com o acabamento visual do original (fundo/borda/cabeçalho) */
 #page-producao-gantt .gantt-wrap,#page-producao-gantt [class*="gantt-container"],#page-producao-gantt [class*="gantt-grid"]{background:var(--prod-s1)!important;border-color:var(--prod-border)!important;color:var(--prod-text)!important}
 #page-producao-gantt [class*="gantt-head"],#page-producao-gantt [class*="gantt-header"]{background:var(--prod-s2)!important;color:var(--prod-text2)!important;border-color:var(--prod-border)!important}
 #page-producao-gantt [class*="gantt-bar"]{box-shadow:0 2px 8px rgba(0,0,0,.22)!important;border-radius:5px!important}
@@ -137,31 +172,16 @@ body.prod-modal-context .modal,.producao-page-completa .modal{font-family:'Space
 body.prod-modal-context .modal-bg{background:rgba(0,0,0,.65)!important}
 body.prod-modal-context .modal-close:hover{background:rgba(204,40,0,.15)!important}
 
-@media(max-width:1100px){.prod-user-name{display:none}.prod-pill span:not(.prod-dot){display:none}.prod-original-tabs{padding-left:16px;padding-right:16px}.prod-original-header{padding:0 18px}.producao-page-completa{padding:20px 18px 34px!important}}
-@media(max-width:760px){.prod-original-header{height:auto;min-height:60px;flex-wrap:wrap;padding:10px 12px}.prod-logo-copy{display:none}.prod-original-logo{min-width:auto}.prod-pill{display:none}.prod-store-btn{max-width:140px;overflow:hidden;text-overflow:ellipsis}.prod-user-chip{display:none}.prod-original-tabs{padding:7px 8px;flex-wrap:nowrap;overflow-x:auto;overflow-y:visible}.prod-original-tabs>.prod-tab-btn{flex:0 0 auto}.prod-more-wrap{flex:0 0 auto}.producao-page-completa{padding:14px 9px 28px!important}}
+@media(max-width:1100px){.prod-original-header{padding:0 18px}.prod-original-tabs{margin-left:18px;margin-right:18px}.producao-page-completa{padding:20px 18px 34px!important}}
+@media(max-width:760px){.prod-original-header{height:auto;min-height:60px;flex-wrap:wrap;padding:10px 12px}.prod-logo-copy{display:none}.prod-loja-wrap span:not(.prod-loja-icon){display:none}.prod-original-tabs{margin:10px 12px;padding:4px;flex-wrap:nowrap;overflow-x:auto}.producao-page-completa{padding:14px 9px 28px!important}}
 
-/* FIX funcional da Etapa 7: a navegacao original nao e mais recriada. */
+/* FIX funcional da Etapa 7: a navegacao original nao e mais recriada — os
+   MESMOS nós #nav-producao-* seguem existindo, só reparentados/decorados.
+   .producao-original-nav agora é uma coluna: linha do cabeçalho, depois a
+   pílula de abas (.prod-original-tabs), como no original (header fixo +
+   .tabs logo abaixo, dentro do fluxo, não numa 2ª tira grudada). */
 #setor-producao-shell>.producao-original-nav{
   display:flex!important;
-  flex-direction:row!important;
-  flex-wrap:wrap!important;
-  align-items:center!important;
-}
-#setor-producao-shell>.producao-original-nav>.prod-original-header{
-  flex:0 0 100%!important;
-  width:100%!important;
+  flex-direction:column!important;
 }
 #setor-producao-shell>.producao-original-nav>.prod-sb-sec-hidden{display:none!important}
-#setor-producao-shell>.producao-original-nav>.prod-tab-btn{
-  flex:0 0 auto!important;
-  margin:4px 0 6px 4px!important;
-}
-#setor-producao-shell>.producao-original-nav>.prod-tab-btn:first-of-type{margin-left:28px!important}
-#setor-producao-shell>.producao-original-nav::after{
-  content:'';flex:0 0 100%;height:1px;background:var(--prod-border);
-}
-@media(max-width:760px){
-  #setor-producao-shell>.producao-original-nav{overflow-x:auto!important;flex-wrap:nowrap!important}
-  #setor-producao-shell>.producao-original-nav>.prod-original-header{position:sticky;left:0;min-width:100vw;flex:0 0 100vw!important}
-  #setor-producao-shell>.producao-original-nav>.prod-tab-btn{flex:0 0 auto!important}
-}

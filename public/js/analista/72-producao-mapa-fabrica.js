@@ -48,8 +48,10 @@
     _carregado = true;
   }
 
-  async function renderProducaoMapaFabrica() {
-    const pagina = document.getElementById('page-producao-mapa-fabrica');
+  let _containerMapa = 'page-producao-mapa-fabrica';
+  async function renderProducaoMapaFabrica(containerId) {
+    _containerMapa = containerId || 'page-producao-mapa-fabrica';
+    const pagina = document.getElementById(_containerMapa);
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     try { await carregarProducaoMapaFabrica(); }
@@ -77,7 +79,7 @@
   function _corOcupacao(ocupacao) { return ocupacao >= 90 ? 'var(--danger)' : ocupacao >= 70 ? 'var(--orange)' : 'var(--green-mid)'; }
 
   function _desenharProducaoMapaFabrica() {
-    const pagina = document.getElementById('page-producao-mapa-fabrica');
+    const pagina = document.getElementById(_containerMapa);
     if (!pagina) return;
     const fimSemana = new Date(_weekStart); fimSemana.setDate(fimSemana.getDate() + 6);
     const cabecalho = `
