@@ -13,9 +13,10 @@ async function render(){const p=document.getElementById('page-producao-config');
 // botões horizontais que existia aqui antes (rejeitada pelo usuário com
 // print lado a lado). Reescrito para bater com essa hierarquia exata
 // (index.html:996-1076). Duas seções não têm tela própria neste projeto
-// ainda (Turnos por Máquina, Processos como cadastro, Importar ZIP) —
-// aparecem no menu do jeito certo, mas mostram um aviso honesto de "ainda
-// não implementado" em vez de fingir uma tela que não existe.
+// ainda (Processos como cadastro, Importar ZIP) — aparecem no menu do
+// jeito certo, mas mostram um aviso honesto de "ainda não implementado"
+// em vez de fingir uma tela que não existe. Turnos por Máquina ganhou
+// tela própria (matriz com todas as máquinas) em 61-producao-maquinas.js.
 const NAV_CFG=[
   {tipo:'grupo',id:'maquinas',icone:'🏭',titulo:'Máquinas',itens:[
     {id:'cadastro-maquinas',titulo:'Cadastro de Máquinas'},
@@ -42,9 +43,10 @@ const NAV_CFG_EXTRAS=[
   {id:'producao-estoque',icone:'📦',titulo:'Estoque (Bluesoft)'},
 ];
 // Seções que ainda não têm implementação própria neste projeto.
-const SEM_TELA=new Set(['turnos','processos','importzip']);
+const SEM_TELA=new Set(['processos','importzip']);
 const RENDER_EMBED={
   'cadastro-maquinas':()=>global.renderProducaoMaquinas?.('pcfg-embed-host'),
+  'turnos':()=>global.renderProducaoTurnosMaquinas?.('pcfg-embed-host'),
   'cadastro-produtos':()=>global.renderProducaoFichaTecnica?.('pcfg-embed-host'),
   'ficha-tecnica-cfg':()=>global.renderProducaoFichaTecnica?.('pcfg-embed-host'),
   'funcionarios':()=>global.renderProducaoFuncionarios?.('pcfg-embed-host'),

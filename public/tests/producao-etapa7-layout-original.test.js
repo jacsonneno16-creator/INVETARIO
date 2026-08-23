@@ -29,7 +29,7 @@ describe('Producao etapa 7 fix - visual sem quebrar navegacao',()=>{
   assert.ok(css.includes('#setor-producao-shell'));
  });
  test('usa nova versao para invalidar cache do navegador',()=>{
-  assert.ok(html.includes('producao-completa.css?v=20260822e-config-tela-cheia'));
+  assert.ok(html.includes('producao-completa.css?v=20260823-turnos-texto-tabela'));
   assert.ok(html.includes('59-producao-ui-completa.js?v=20260822d-config-tela-cheia'));
  });
 });

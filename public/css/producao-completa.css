@@ -158,6 +158,17 @@
 #setor-producao-shell [id^="page-producao-"] .btn-ghost{background:var(--prod-s2)!important;border:1px solid var(--prod-border)!important;color:var(--prod-text2)!important}
 #setor-producao-shell [id^="page-producao-"] .btn-primary{background:var(--prod-primary)!important;border-color:var(--prod-primary)!important;color:#fff!important}
 
+/* Reforço direto (usuário reportou texto de tabela ilegível em telas
+   embutidas de Configurações — ex.: Produtos & Ficha Técnica dentro de
+   Configurações → Produtos). As regras acima dependem de .producao-page-completa
+   (aplicada via JS, decorarTudo) ou de [id^="page-producao-"] bater
+   exatamente — esta aqui não depende de nenhuma classe/timing, só de estar
+   dentro do shell, cobrindo qualquer tabela renderizada em qualquer
+   container (inclusive #pcfg-embed-host). */
+#setor-producao-shell table,
+#setor-producao-shell table td{color:var(--prod-text)!important}
+#setor-producao-shell table th{color:var(--prod-text2)!important}
+
 /* Gantt: mantém toda a funcionalidade existente, com o acabamento visual do original (fundo/borda/cabeçalho) */
 #page-producao-gantt .gantt-wrap,#page-producao-gantt [class*="gantt-container"],#page-producao-gantt [class*="gantt-grid"]{background:var(--prod-s1)!important;border-color:var(--prod-border)!important;color:var(--prod-text)!important}
 #page-producao-gantt [class*="gantt-head"],#page-producao-gantt [class*="gantt-header"]{background:var(--prod-s2)!important;color:var(--prod-text2)!important;border-color:var(--prod-border)!important}

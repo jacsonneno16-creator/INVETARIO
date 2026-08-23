@@ -562,6 +562,173 @@
     else if (confirm(msg)) await executar();
   }
 
+  // ── Turnos por Máquina: tela dedicada (Configurações → Máquinas → Turnos
+  // por Máquina), matriz com TODAS as máquinas de uma vez — o mesmo dado já
+  // dava pra editar máquina por máquina no modal (_turnosEditando acima),
+  // mas faltava a visão de tabela única que o original tem (renderTurnosMaquinas
+  // de turnosMaquinas.js). Grava direto no Firestore a cada alteração (sem
+  // botão Salvar), igual ao comportamento do original.
+  let _containerTurnos = 'pcfg-embed-host';
+  function _horasFaixaTurno(f) {
+    const [hi, mi] = String(f.ini || '0:0').split(':').map(Number);
+    const [hf, mf] = String(f.fim || '0:0').split(':').map(Number);
+    let ini = (hi || 0) * 60 + (mi || 0), fim = (hf || 0) * 60 + (mf || 0);
+    if (fim <= ini) fim += 1440;
+    return Math.max(0, (fim - ini) / 60);
+  }
+  function _horasSemanaMaquinaTurnos(m) {
+    let t = 0;
+    for (let d = 0; d <= 6; d++) t += ((m.turnos && m.turnos[d]) || []).reduce((a, f) => a + _horasFaixaTurno(f), 0);
+    return Math.round(t * 10) / 10;
+  }
+  async function renderProducaoTurnosMaquinas(containerId) {
+    _containerTurnos = containerId || 'pcfg-embed-host';
+    const pagina = document.getElementById(_containerTurnos);
+    if (!pagina) return;
+    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
+    try { await carregarProducaoMaquinas(); }
+    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
+    _desenharTurnosMatriz();
+  }
+  function _desenharTurnosMatriz() {
+    const pagina = document.getElementById(_containerTurnos);
+    if (!pagina) return;
+    const maquinasOrd = [..._maquinas].sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
+    const atalhos = _atalhos || ATALHOS_DEFAULT;
+    pagina.innerHTML = `<div class="tc" style="padding:0;overflow:hidden">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <div>
+          <div class="page-title" style="font-size:1.1rem">🕐 Turnos por Máquina</div>
+          <div style="font-size:.72rem;color:var(--muted)">Configure as faixas de horário reais de cada máquina por dia da semana.</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-ghost btn-sm" data-ptm-atalhos-abrir="1">⚡ Atalhos T1/T2/T3</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-ptm-resetar-tudo="1">↺ Resetar tudo</button>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+      <table class="dt-table" style="min-width:960px">
+        <thead><tr>
+          <th style="min-width:140px">Máquina</th>
+          ${DIA_LABEL.map(d => `<th style="text-align:center;min-width:120px">${d}</th>`).join('')}
+          <th style="text-align:center">H/sem</th>
+          <th style="text-align:center">Copiar</th>
+        </tr></thead>
+        <tbody>
+        ${maquinasOrd.length ? maquinasOrd.map(m => {
+          const semana = _horasSemanaMaquinaTurnos(m);
+          return `<tr>
+            <td><b>${esc(m.nome)}</b></td>
+            ${[0, 1, 2, 3, 4, 5, 6].map(d => {
+              const faixas = (m.turnos && m.turnos[d]) || [];
+              const horasDia = faixas.reduce((a, f) => a + _horasFaixaTurno(f), 0);
+              return `<td style="vertical-align:top;padding:6px">
+                ${faixas.length ? faixas.map((f, i) => `
+                  <div style="display:flex;gap:3px;align-items:center;margin-bottom:3px">
+                    <input type="time" value="${esc(f.ini)}" class="field" data-ptm-ini data-ptm-maq="${esc(m._firestoreId)}" data-ptm-dia="${d}" data-ptm-idx="${i}" style="width:74px;font-size:.65rem;padding:2px 4px">
+                    <input type="time" value="${esc(f.fim)}" class="field" data-ptm-fim data-ptm-maq="${esc(m._firestoreId)}" data-ptm-dia="${d}" data-ptm-idx="${i}" style="width:74px;font-size:.65rem;padding:2px 4px">
+                    <button type="button" data-ptm-del data-ptm-maq="${esc(m._firestoreId)}" data-ptm-dia="${d}" data-ptm-idx="${i}" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:.8rem;padding:0 2px">×</button>
+                  </div>`).join('') : `<div style="text-align:center;color:var(--muted);font-size:.62rem;padding:4px 0">— inativa</div>`}
+                <div style="display:flex;gap:3px;flex-wrap:wrap;align-items:center;margin-top:2px">
+                  <span style="font-size:.6rem;color:var(--muted);min-width:26px">${horasDia > 0 ? horasDia.toFixed(1) + 'h' : ''}</span>
+                  <button type="button" data-ptm-add data-ptm-maq="${esc(m._firestoreId)}" data-ptm-dia="${d}" style="font-size:.58rem;padding:1px 5px;border:1px dashed var(--border);border-radius:4px;background:none;color:var(--muted);cursor:pointer">+faixa</button>
+                  ${Object.keys(atalhos).map(k => `<button type="button" data-ptm-atalho data-ptm-maq="${esc(m._firestoreId)}" data-ptm-dia="${d}" data-ptm-chave="${k}" style="font-size:.55rem;padding:1px 4px;border:1px solid var(--border);border-radius:4px;background:none;color:var(--muted);cursor:pointer">${esc(k)}</button>`).join('')}
+                </div>
+              </td>`;
+            }).join('')}
+            <td style="text-align:center;font-weight:700">${semana > 0 ? semana + 'h' : '—'}</td>
+            <td style="text-align:center"><button type="button" class="btn btn-ghost btn-sm" data-ptm-copiar-linha="${esc(m._firestoreId)}" style="font-size:.62rem;padding:3px 8px">→ Todas</button></td>
+          </tr>`;
+        }).join('') : `<tr><td colspan="9"><div class="empty"><div class="empty-icon">⚙️</div><div class="empty-title">Nenhuma máquina cadastrada</div></div></td></tr>`}
+        </tbody>
+      </table>
+      </div>
+      <div style="margin:10px 16px 16px;padding:10px 14px;background:var(--surface-2);border-radius:7px;font-size:.66rem;color:var(--muted);line-height:1.7">
+        💡 Use <b>+faixa</b> pra múltiplos períodos no mesmo dia (ex.: manhã + tarde com intervalo). Use os atalhos T1/T2/T3 pra preencher rápido. As mudanças salvam direto ao editar.
+      </div>
+    </div>`;
+  }
+  async function _ptmSalvarMaquina(docId, dia, faixas) {
+    const m = _maquinas.find(x => x._firestoreId === docId);
+    if (!m) return;
+    m.turnos = m.turnos || {};
+    m.turnos[dia] = faixas;
+    try {
+      await fs().collection(COL_MAQUINAS).doc(docId).set({ turnos: m.turnos, atualizadoEm: new Date().toISOString() }, { merge: true });
+    } catch (e) {
+      global.showToast?.('Erro ao salvar: ' + (e.message || e), 'error');
+    }
+  }
+  function ptmFaixaAlterada(docId, dia, idx, campo, valor) {
+    const m = _maquinas.find(x => x._firestoreId === docId);
+    if (!m) return;
+    const faixas = (m.turnos && m.turnos[dia]) || [];
+    if (!faixas[idx]) return;
+    faixas[idx][campo] = valor;
+    _ptmSalvarMaquina(docId, dia, faixas);
+    _desenharTurnosMatriz();
+  }
+  function ptmAdicionarFaixa(docId, dia) {
+    const m = _maquinas.find(x => x._firestoreId === docId);
+    if (!m) return;
+    m.turnos = m.turnos || {};
+    const faixas = (m.turnos[dia] = m.turnos[dia] || []);
+    faixas.push({ ini: '08:00', fim: '17:00' });
+    _ptmSalvarMaquina(docId, dia, faixas);
+    _desenharTurnosMatriz();
+  }
+  function ptmRemoverFaixa(docId, dia, idx) {
+    const m = _maquinas.find(x => x._firestoreId === docId);
+    if (!m) return;
+    const faixas = (m.turnos && m.turnos[dia]) || [];
+    faixas.splice(idx, 1);
+    _ptmSalvarMaquina(docId, dia, faixas);
+    _desenharTurnosMatriz();
+  }
+  function ptmAplicarAtalho(docId, dia, chave) {
+    const atalho = (_atalhos || ATALHOS_DEFAULT)[chave];
+    if (!atalho) return;
+    _ptmSalvarMaquina(docId, dia, [{ ini: atalho.ini, fim: atalho.fim }]);
+    _desenharTurnosMatriz();
+  }
+  async function ptmCopiarLinha(docId) {
+    const origem = _maquinas.find(x => x._firestoreId === docId);
+    if (!origem) return;
+    const destino = _maquinas.filter(m => m._firestoreId !== docId);
+    if (!destino.length) { global.showToast?.('Não há outras máquinas cadastradas.', 'error'); return; }
+    const executar = async () => {
+      try {
+        const turnos = JSON.parse(JSON.stringify(origem.turnos || _turnosDefault()));
+        await Promise.all(destino.map(m => fs().collection(COL_MAQUINAS).doc(m._firestoreId).set({ turnos, atualizadoEm: new Date().toISOString() }, { merge: true })));
+        global.showToast?.('Turnos de "' + origem.nome + '" copiados pra ' + destino.length + ' máquina(s).', 'success');
+        await carregarProducaoMaquinas(true);
+        _desenharTurnosMatriz();
+      } catch (e) {
+        global.showToast?.('Erro ao copiar: ' + (e.message || e), 'error');
+      }
+    };
+    const msg = 'Copiar os turnos de "' + origem.nome + '" pra TODAS as outras ' + destino.length + ' máquina(s)? Isso substitui a configuração atual delas.';
+    if (global.showConfirm) global.showConfirm(msg, executar, { title: 'Copiar turnos', icon: '📋', okLabel: 'Copiar' });
+    else if (confirm(msg)) await executar();
+  }
+  async function ptmResetarTudo() {
+    if (!_maquinas.length) return;
+    const executar = async () => {
+      try {
+        const turnosPadrao = _turnosDefault();
+        await Promise.all(_maquinas.map(m => fs().collection(COL_MAQUINAS).doc(m._firestoreId).set({ turnos: turnosPadrao, atualizadoEm: new Date().toISOString() }, { merge: true })));
+        global.showToast?.('Turnos resetados pro padrão em todas as máquinas.', 'success');
+        await carregarProducaoMaquinas(true);
+        _desenharTurnosMatriz();
+      } catch (e) {
+        global.showToast?.('Erro ao resetar: ' + (e.message || e), 'error');
+      }
+    };
+    const msg = 'Resetar os turnos de TODAS as ' + _maquinas.length + ' máquina(s) pro padrão (Seg-Sex 08h-17h, fim de semana sem turno)? Essa ação não pode ser desfeita.';
+    if (global.showConfirm) global.showConfirm(msg, executar, { title: 'Resetar turnos', icon: '↺', okLabel: 'Resetar', okClass: 'btn-danger' });
+    else if (confirm(msg)) await executar();
+  }
+
   // ── Modal de atalhos T1/T2/T3 (editáveis, Firestore-backed por loja) ────
   async function pmaqAtalhosAbrir() {
     await _carregarAtalhos();
@@ -590,6 +757,7 @@
   }
 
   global.renderProducaoMaquinas = renderProducaoMaquinas;
+  global.renderProducaoTurnosMaquinas = renderProducaoTurnosMaquinas;
   global._desenharProducaoMaquinas = _desenharProducaoMaquinas;
   global.pmaqAdicionarProduto = pmaqAdicionarProduto;
   global.pmaqRemoverProduto = pmaqRemoverProduto;
@@ -633,6 +801,19 @@
     if (viewBtn) { _viewMaq = viewBtn.getAttribute('data-pmaq-view'); _desenharProducaoMaquinas(); return; }
     const detBtn = event.target.closest('[data-pmaq-detalhes]');
     if (detBtn) { const nome = detBtn.getAttribute('data-pmaq-detalhes'); if (_detalhesAbertos.has(nome)) _detalhesAbertos.delete(nome); else _detalhesAbertos.add(nome); _desenharProducaoMaquinas(); return; }
+    // Turnos por Máquina (tela dedicada, matriz com todas as máquinas)
+    const ptmAtalhosBtn = event.target.closest('[data-ptm-atalhos-abrir]');
+    if (ptmAtalhosBtn) { pmaqAtalhosAbrir(); return; }
+    const ptmResetar = event.target.closest('[data-ptm-resetar-tudo]');
+    if (ptmResetar) { ptmResetarTudo(); return; }
+    const ptmAdd = event.target.closest('[data-ptm-add]');
+    if (ptmAdd) { ptmAdicionarFaixa(ptmAdd.getAttribute('data-ptm-maq'), Number(ptmAdd.getAttribute('data-ptm-dia'))); return; }
+    const ptmDel = event.target.closest('[data-ptm-del]');
+    if (ptmDel) { ptmRemoverFaixa(ptmDel.getAttribute('data-ptm-maq'), Number(ptmDel.getAttribute('data-ptm-dia')), Number(ptmDel.getAttribute('data-ptm-idx'))); return; }
+    const ptmAtalho = event.target.closest('[data-ptm-atalho]');
+    if (ptmAtalho) { ptmAplicarAtalho(ptmAtalho.getAttribute('data-ptm-maq'), Number(ptmAtalho.getAttribute('data-ptm-dia')), ptmAtalho.getAttribute('data-ptm-chave')); return; }
+    const ptmCopiar = event.target.closest('[data-ptm-copiar-linha]');
+    if (ptmCopiar) { ptmCopiarLinha(ptmCopiar.getAttribute('data-ptm-copiar-linha')); return; }
   });
   document.addEventListener('input', function (event) {
     if (event.target && event.target.id === 'pmaq-busca') _desenharProducaoMaquinas();
@@ -646,7 +827,11 @@
     const turnoCampo = event.target.closest('[data-pmaq-turno-campo]');
     if (turnoCampo) { pmaqTurnoFaixaAlterada(Number(turnoCampo.getAttribute('data-pmaq-turno-dia')), Number(turnoCampo.getAttribute('data-pmaq-turno-idx')), turnoCampo.getAttribute('data-pmaq-turno-campo'), turnoCampo.value); return; }
     const atalhoCampo = event.target.closest('[data-pmaq-atalho-campo]');
-    if (atalhoCampo) pmaqAtalhoCampoAlterado(atalhoCampo.getAttribute('data-pmaq-atalho-chave'), atalhoCampo.getAttribute('data-pmaq-atalho-campo'), atalhoCampo.value);
+    if (atalhoCampo) { pmaqAtalhoCampoAlterado(atalhoCampo.getAttribute('data-pmaq-atalho-chave'), atalhoCampo.getAttribute('data-pmaq-atalho-campo'), atalhoCampo.value); return; }
+    const ptmIni = event.target.closest('[data-ptm-ini]');
+    if (ptmIni) { ptmFaixaAlterada(ptmIni.getAttribute('data-ptm-maq'), Number(ptmIni.getAttribute('data-ptm-dia')), Number(ptmIni.getAttribute('data-ptm-idx')), 'ini', ptmIni.value); return; }
+    const ptmFim = event.target.closest('[data-ptm-fim]');
+    if (ptmFim) { ptmFaixaAlterada(ptmFim.getAttribute('data-ptm-maq'), Number(ptmFim.getAttribute('data-ptm-dia')), Number(ptmFim.getAttribute('data-ptm-idx')), 'fim', ptmFim.value); return; }
   });
   global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _maquinas=[]; _registros=[]; _setups=[]; _produtosEditando=[]; _turnosEditando={}; _atalhos=null; _selecionadas.clear(); _semanaMaqFiltro=''; _detalhesAbertos.clear(); });
 })(window);
