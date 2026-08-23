@@ -1,11 +1,17 @@
 // Setor Produção — Dashboard (fase 3f da unificação com o Sistema de
-// Produção). A original mostrava 4 cards (total/pendente/andamento/
-// concluído) + tabela de últimas solicitações, e delegava o resto pro
-// painel de Relatório (já coberto por 69-producao-relatorios.js, então não
-// duplicado aqui). Esta versão soma: Programado vs Realizado da semana
-// (usa o apontamento da fase 3f) e ocupação de máquinas na semana (reusa o
-// motor de agenda da fase 3c) — dado que a original não tinha, porque não
-// existia visão unificada de capacidade antes desta unificação.
+// Produção). PEDIDO AO VIVO (auditoria RELATORIO-COMPARACAO-PRODUCAO.md,
+// item 3 da execução): a tela real ativa no original não é o esqueleto
+// estático de index.html (4 cards + tabela) — é js/dashboard-enhanced.js
+// (o único dos 3 arquivos "dashboard*" realmente carregado; js/dashboard.js
+// e pages/dashboard.js são código morto, nunca referenciados em index.html)
+// que SUBSTITUI panel-dashboard inteiro por um HTML bem mais rico:
+// cabeçalho "Central de Comando" + indicador ao vivo, 4 KPIs com
+// sparkline, gráfico de fluxo por máquina, donut de status, top produtos,
+// métricas rápidas, grade de máquinas e barras + tabela recente no rodapé.
+// Essa estrutura foi copiada literalmente aqui (textos, ordem, cores hex
+// exatas do tema escuro, inclusive uma inconsistência real do original: a
+// legenda da grade de máquinas diz "Com OP ativa"/verde mas o card em si
+// nunca usa essa cor — reproduzido como está, não corrigido).
 (function (global) {
   'use strict';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -18,11 +24,12 @@
     em_andamento: { label: 'Em Andamento', cor: 'b-blue' },
     concluido: { label: 'Concluído', cor: 'b-green' },
   };
-  // Cores hexa (Chart.js/canvas não lê classe .badge) — mesmos tokens da
-  // paleta clara do sistema (analista.css), pra bater com o resto da tela.
-  const COR_STATUS_HEX = { pendente: '#C97A06', em_andamento: '#E8751A', concluido: '#15803D' };
-  const COR_MUTED = '#5A6B80';
-  const COR_BORDER = '#DDE3EC';
+  // Cores hexa exatas do original (dashboard-enhanced.js: renderStatusChart/
+  // renderFluxoChart — Pendente #b89030, Em Andamento #e07020, Concluído
+  // #5ab848), não mais os tokens claros do resto do sistema.
+  const COR_STATUS_HEX = { pendente: '#b89030', em_andamento: '#e07020', concluido: '#5ab848' };
+  const COR_MUTED = '#6a9058';
+  const COR_BORDER = 'rgba(34,48,30,0.5)';
 
   let _registros = [];
   let _maquinas = [];
@@ -75,94 +82,42 @@
     const andCx = _registros.filter(r => r.status === 'em_andamento').reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
     const okCx = _registros.filter(r => r.status === 'concluido').reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
 
-    const weekStart = _domingoDaSemana(new Date());
-    const dias = Array.from({ length: 7 }, (_, i) => { const d = new Date(weekStart); d.setDate(d.getDate() + i); return d; });
-    const datasSemana = dias.map(_isoData);
-
-    const progSemana = _registros.filter(r => datasSemana.includes(r.data)).reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
-    const realSemana = _apontamentos.filter(a => datasSemana.includes(a.data)).reduce((s, a) => s + (Number(a.qntCaixas) || 0), 0);
-    const pctSemana = progSemana > 0 ? Math.min(100, Math.round((realSemana / progSemana) * 100)) : 0;
-
-    // Ocupação de máquinas na semana — reusa o motor de agenda já usado
-    // pelo Gantt/Insumos/Relatórios (fase 3c).
-    let ocupacao = [];
-    if (typeof global.buildProducaoSchedule === 'function') {
-      const maquinasPorNome = {};
-      _maquinas.forEach(m => { maquinasPorNome[m.nome] = m; });
-      const agenda = global.buildProducaoSchedule(weekStart, _registros, maquinasPorNome, _setups);
-      ocupacao = _maquinas.map(m => {
-        const info = agenda.porMaquina[m.nome];
-        const usado = info ? info.totalMinutosUsados : 0;
-        const capacidade = info ? info.capacidadeMinutosSemana : 0;
-        const pct = capacidade > 0 ? Math.min(100, Math.round((usado / capacidade) * 100)) : 0;
-        return { nome: m.nome, pct, capacidade };
-      }).filter(m => m.capacidade > 0).sort((a, b) => b.pct - a.pct);
-    }
-
     const recentes = [..._registros]
       .sort((a, b) => (b.atualizadoEm || b.criadoEm || '').localeCompare(a.atualizadoEm || a.criadoEm || ''))
       .slice(0, 8);
 
+    // PEDIDO AO VIVO (auditoria, item 3): estrutura, textos e ordem
+    // copiados literalmente de buildDashHTML() em dashboard-enhanced.js —
+    // header "Central de Comando" com indicador ao vivo, 4 KPIs+sparkline,
+    // fluxo por máquina + donut de status, top produtos + métricas
+    // rápidas, grade de máquinas, e barras + tabela recente no rodapé
+    // (nessa ordem exata — não mais uma tabela/ocupação extra no topo).
     pagina.innerHTML = `
-      <div style="margin-bottom:16px">
-        <div class="page-title" style="font-size:1.1rem">📊 Dashboard — Produção</div>
-        <div style="font-size:.72rem;color:var(--muted)">Visão geral das ordens de produção</div>
-      </div>
-
-      <div class="kpi-grid" style="margin-bottom:16px">
-        <div class="kpi blue"><span class="kpi-icon">📋</span><div class="kpi-val" id="pdash-kpi-total">${total.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Total de OPs</div><div class="kpi-sub">${totalCx.toLocaleString('pt-BR')} caixas programadas</div><canvas id="pdash-spark-total" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
-        <div class="kpi orange"><span class="kpi-icon">⏳</span><div class="kpi-val" id="pdash-kpi-pend">${pend.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Pendentes</div><div class="kpi-sub">${pendCx.toLocaleString('pt-BR')} caixas aguardando</div><canvas id="pdash-spark-pend" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
-        <div class="kpi yellow"><span class="kpi-icon">⚙️</span><div class="kpi-val" id="pdash-kpi-and">${and.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Em andamento</div><div class="kpi-sub">${andCx.toLocaleString('pt-BR')} caixas em prod.</div><canvas id="pdash-spark-and" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
-        <div class="kpi green"><span class="kpi-icon">✅</span><div class="kpi-val" id="pdash-kpi-ok">${ok.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Concluídas</div><div class="kpi-sub">${okCx.toLocaleString('pt-BR')} caixas finalizadas</div><canvas id="pdash-spark-ok" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
-      </div>
-
-      <div class="kpi-grid" style="margin-bottom:16px">
-        <div class="kpi teal"><span class="kpi-icon">📦</span><div class="kpi-val">${progSemana.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Programado (cx) — semana</div></div>
-        <div class="kpi lime"><span class="kpi-icon">🏭</span><div class="kpi-val">${realSemana.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Realizado (cx) — semana</div></div>
-        <div class="kpi ${pctSemana >= 100 ? 'teal' : pctSemana > 0 ? 'yellow' : 'purple'}"><span class="kpi-icon">📈</span><div class="kpi-val">${pctSemana}%</div><div class="kpi-lbl">% da semana concluído</div></div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1.3fr 1fr;gap:16px;align-items:start" class="pdash-grid">
-        <div class="tc">
-          <div style="padding:10px 14px;font-weight:700;font-size:.85rem;border-bottom:1px solid var(--border)">🕒 Últimas OPs atualizadas</div>
-          <div style="overflow:auto">
-            <table class="dt-table">
-              <thead><tr><th>Produto</th><th>Máquina</th><th style="text-align:right">Caixas</th><th>Status</th><th>Data</th></tr></thead>
-              <tbody>
-                ${recentes.length ? recentes.map(r => {
-                  const status = STATUS_INFO[r.status] || STATUS_INFO.pendente;
-                  return `<tr>
-                    <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><b>${esc(r.produto)}</b></td>
-                    <td>${esc(r.maquina)}</td>
-                    <td style="text-align:right">${esc(r.qntCaixas)}</td>
-                    <td><span class="badge ${status.cor}">${status.label}</span></td>
-                    <td style="color:var(--muted);font-size:.75rem">${esc(r.data || '—')}</td>
-                  </tr>`;
-                }).join('') : `<tr><td colspan="5"><div class="empty"><div class="empty-icon">📋</div><div class="empty-title">Nenhuma OP cadastrada ainda</div></div></td></tr>`}
-              </tbody>
-            </table>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:22px;flex-wrap:wrap;gap:10px">
+        <div>
+          <h1 style="font-size:1.4rem;font-weight:700;color:var(--text);letter-spacing:-.4px;line-height:1;margin:0">Central de Comando</h1>
+          <p style="font-size:.75rem;color:var(--muted);margin-top:4px">Visão consolidada da produção</p>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <div style="display:flex;align-items:center;gap:6px;background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:5px 12px;font-size:.68rem;color:var(--muted)">
+            <div style="width:6px;height:6px;border-radius:50%;background:var(--success);box-shadow:0 0 8px var(--success)"></div>
+            <span id="pdash-ultima-att">Atualizando…</span>
           </div>
-        </div>
-
-        <div class="tc" style="padding:14px">
-          <div style="font-weight:700;font-size:.85rem;margin-bottom:10px">🏭 Ocupação de máquinas — semana</div>
-          ${ocupacao.length ? ocupacao.map(m => `
-            <div style="margin-bottom:10px">
-              <div style="display:flex;justify-content:space-between;font-size:.76rem;margin-bottom:3px">
-                <span>${esc(m.nome)}</span><span style="color:var(--muted)">${m.pct}%</span>
-              </div>
-              <div style="height:8px;background:var(--surface-2);border-radius:99px;overflow:hidden">
-                <div style="height:100%;width:${m.pct}%;background:${m.pct >= 90 ? 'var(--red, #e11d48)' : m.pct >= 60 ? 'var(--cyan)' : 'var(--info)'};transition:width .2s"></div>
-              </div>
-            </div>
-          `).join('') : '<div class="empty"><div class="empty-icon">🏭</div><div class="empty-title">Sem máquinas com turno configurado</div></div>'}
+          <button type="button" class="btn btn-ghost btn-sm" data-pdash-atualizar>↺ Atualizar</button>
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-top:16px" class="pdash-grid">
+      <div class="kpi-grid" style="margin-bottom:16px">
+        <div class="kpi blue"><span class="kpi-icon">📋</span><div class="kpi-val" id="pdash-kpi-total">${total.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Total de OPs</div><div class="kpi-sub" id="pdash-kpi-total-sub">caixas programadas</div><canvas id="pdash-spark-total" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
+        <div class="kpi orange"><span class="kpi-icon">⏳</span><div class="kpi-val" id="pdash-kpi-pend">${pend.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Pendentes</div><div class="kpi-sub" id="pdash-kpi-pend-sub">aguardando início</div><canvas id="pdash-spark-pend" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
+        <div class="kpi yellow"><span class="kpi-icon">⚙️</span><div class="kpi-val" id="pdash-kpi-and">${and.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Em Andamento</div><div class="kpi-sub" id="pdash-kpi-and-sub">em produção agora</div><canvas id="pdash-spark-and" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
+        <div class="kpi green"><span class="kpi-icon">✅</span><div class="kpi-val" id="pdash-kpi-ok">${ok.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Concluídos</div><div class="kpi-sub" id="pdash-kpi-ok-sub">finalizados</div><canvas id="pdash-spark-ok" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:16px" class="pdash-grid">
         <div class="tc" style="padding:14px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-            <div style="font-weight:700;font-size:.85rem">📊 Programação por Máquina</div>
+            <div style="font-weight:700;font-size:.85rem">Programação por Máquina</div>
             <div style="display:flex;gap:4px">
               <button type="button" class="btn ${_dashModoFluxo === 'caixas' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-pdash-fluxo-modo="caixas">Caixas</button>
               <button type="button" class="btn ${_dashModoFluxo === 'ops' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-pdash-fluxo-modo="ops">OPs</button>
@@ -171,7 +126,7 @@
           <div style="height:220px;position:relative"><canvas id="pdash-chart-fluxo"></canvas></div>
         </div>
         <div class="tc" style="padding:14px">
-          <div style="font-weight:700;font-size:.85rem;margin-bottom:12px">🥯 Status das OPs</div>
+          <div style="font-weight:700;font-size:.85rem;margin-bottom:12px">Status das OPs</div>
           <div style="height:150px;position:relative;display:flex;align-items:center;justify-content:center">
             <canvas id="pdash-chart-status"></canvas>
             <div style="position:absolute;text-align:center;pointer-events:none">
@@ -183,40 +138,72 @@
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:3fr 2fr;gap:16px;margin-top:16px" class="pdash-grid">
+      <div style="display:grid;grid-template-columns:3fr 2fr;gap:16px;margin-bottom:16px" class="pdash-grid">
         <div class="tc" style="padding:14px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-            <div style="font-weight:700;font-size:.85rem">🏆 Top Produtos Programados</div>
+            <div style="font-weight:700;font-size:.85rem">Top Produtos Programados</div>
             <div style="font-size:.65rem;color:var(--muted)">por caixas</div>
           </div>
           <div style="height:180px;position:relative"><canvas id="pdash-chart-top-prod"></canvas></div>
         </div>
         <div class="tc" style="padding:14px">
-          <div style="font-weight:700;font-size:.85rem;margin-bottom:10px">📈 Métricas Rápidas</div>
+          <div style="font-weight:700;font-size:.85rem;margin-bottom:10px">Métricas Rápidas</div>
           <div id="pdash-metricas-wrap" style="display:flex;flex-direction:column;gap:9px"></div>
         </div>
       </div>
 
-      <div class="tc" style="padding:14px;margin-top:16px">
+      <div class="tc" style="padding:14px;margin-bottom:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
-          <div style="font-weight:700;font-size:.85rem">🏭 Status por Máquina</div>
+          <div style="font-weight:700;font-size:.85rem">Status por Máquina</div>
           <div style="display:flex;gap:10px;font-size:.65rem">
-            <span style="display:flex;align-items:center;gap:4px;color:var(--orange)"><span style="width:7px;height:7px;border-radius:50%;background:var(--orange);display:inline-block"></span>Em produção</span>
-            <span style="display:flex;align-items:center;gap:4px;color:var(--info)"><span style="width:7px;height:7px;border-radius:50%;background:var(--info);display:inline-block"></span>Pendente</span>
+            <span style="display:flex;align-items:center;gap:4px;color:var(--success)"><span style="width:7px;height:7px;border-radius:50%;background:var(--success);display:inline-block"></span>Com OP ativa</span>
+            <span style="display:flex;align-items:center;gap:4px;color:var(--warn)"><span style="width:7px;height:7px;border-radius:50%;background:var(--warn);display:inline-block"></span>Pendente</span>
             <span style="display:flex;align-items:center;gap:4px;color:var(--muted)"><span style="width:7px;height:7px;border-radius:50%;background:var(--muted);display:inline-block"></span>Livre</span>
           </div>
         </div>
         <div id="pdash-maquinas-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px"></div>
       </div>
 
-      <div class="tc" style="padding:14px;margin-top:16px">
-        <div style="font-weight:700;font-size:.85rem;margin-bottom:2px">📦 Caixas por Máquina</div>
-        <div style="font-size:.65rem;color:var(--muted);margin-bottom:12px">programado vs. concluído (total de todas as OPs)</div>
-        <div id="pdash-maq-bars-wrap" style="display:flex;flex-direction:column;gap:7px;max-height:240px;overflow-y:auto"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="pdash-grid">
+        <div class="tc" style="padding:14px">
+          <div style="font-weight:700;font-size:.85rem;margin-bottom:4px">Caixas por Máquina</div>
+          <div style="font-size:.65rem;color:var(--muted);margin-bottom:12px">programado vs. concluído</div>
+          <div id="pdash-maq-bars-wrap" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto"></div>
+        </div>
+        <div class="tc" style="padding:14px">
+          <div style="font-weight:700;font-size:.85rem;margin-bottom:12px">Últimas Solicitações</div>
+          <div id="pdash-recent" style="overflow-x:auto">
+            ${recentes.length ? '' : '<div style="text-align:center;padding:22px;color:var(--muted);font-size:.72rem">📋 Nenhuma solicitação ainda</div>'}
+          </div>
+        </div>
       </div>
     `;
 
+    _desenharTabelaRecenteDash(recentes);
     _desenharGraficosDashboardExtra(total, pend, and, ok, totalCx, pendCx, andCx, okCx);
+  }
+  function _desenharTabelaRecenteDash(recentes) {
+    const el = document.getElementById('pdash-recent');
+    if (!el || !recentes.length) return;
+    const statusCor = { pendente: 'var(--warn)', em_andamento: 'var(--orange)', concluido: 'var(--success)' };
+    const statusBg = { pendente: 'rgba(184,144,48,.12)', em_andamento: 'rgba(224,112,32,.12)', concluido: 'rgba(90,184,72,.12)' };
+    el.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:.72rem">
+      <thead><tr style="border-bottom:1px solid var(--border)">
+        <th style="padding:6px 8px;text-align:left;font-size:.58rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600">Produto</th>
+        <th style="padding:6px 8px;text-align:left;font-size:.58rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600">Máq.</th>
+        <th style="padding:6px 8px;text-align:right;font-size:.58rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600">Cxs</th>
+        <th style="padding:6px 8px;text-align:center;font-size:.58rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600">Status</th>
+      </tr></thead>
+      <tbody>${recentes.map((r, i) => {
+        const st = STATUS_INFO[r.status] || STATUS_INFO.pendente, key = statusCor[r.status] ? r.status : 'pendente';
+        return `<tr style="border-bottom:1px solid var(--border)${i % 2 ? ';background:rgba(255,255,255,.01)' : ''}">
+          <td style="padding:7px 8px;color:var(--text);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.produto)}">${esc(r.produto) || '—'}</td>
+          <td style="padding:7px 8px;font-size:.66rem;color:var(--orange)">${esc(r.maquina) || '—'}</td>
+          <td style="padding:7px 8px;text-align:right;color:var(--muted)">${(Number(r.qntCaixas) || 0).toLocaleString('pt-BR')}</td>
+          <td style="padding:7px 8px;text-align:center"><span style="display:inline-block;padding:2px 7px;border-radius:10px;font-size:.6rem;font-weight:700;color:${statusCor[key]};background:${statusBg[key]}">${esc(st.label)}</span></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
   }
 
   // ── Sparkline decorativa (tendência simulada terminando no valor real —
@@ -320,14 +307,15 @@
     _registros.forEach(r => {
       const produto = String(r.produto || '').trim();
       if (!produto) return;
-      const nome = produto.length > 26 ? produto.slice(0, 26) + '…' : produto;
+      const nome = produto.length > 28 ? produto.slice(0, 28) + '…' : produto;
       mapa[nome] = (mapa[nome] || 0) + (Number(r.qntCaixas) || 0);
     });
     const sorted = Object.entries(mapa).sort((a, b) => b[1] - a[1]).slice(0, 8);
-    const paleta = sorted.map((_, i) => `hsl(${25 + i * 22}, 65%, 48%)`);
+    const paleta = sorted.map((_, i) => `hsl(${25 + i * 22}, 70%, 55%)`);
+    const paletaFill = paleta.map(p => p.replace('hsl', 'hsla').replace(')', ', 0.8)'));
     _chartTopProdDash = new global.Chart(canvas.getContext('2d'), {
       type: 'bar',
-      data: { labels: sorted.map(x => x[0]), datasets: [{ label: 'Caixas', data: sorted.map(x => x[1]), backgroundColor: paleta, borderColor: paleta, borderWidth: 1, borderRadius: 4 }] },
+      data: { labels: sorted.map(x => x[0]), datasets: [{ label: 'Caixas', data: sorted.map(x => x[1]), backgroundColor: paletaFill, borderColor: paleta, borderWidth: 1, borderRadius: 4 }] },
       options: {
         indexAxis: 'y', responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + ctx.parsed.x.toLocaleString('pt-BR') + ' caixas' } } },
@@ -342,12 +330,17 @@
     const maqsAtivas = [...new Set(_registros.map(r => r.maquina).filter(Boolean))].length;
     const pctConc = total > 0 ? Math.round(ok / total * 100) : 0;
     const pctCx = totalCx > 0 ? Math.round(okCx / totalCx * 100) : 0;
+    // PEDIDO AO VIVO (auditoria, item 3): valores/cores/rótulos exatos de
+    // renderEficienciaGauge() no original — inclusive a barra "Máquinas
+    // ativas" (maqs*10, só escondida com 0 máquinas) e "Total de caixas"
+    // sem barra nenhuma (não é maqsAtivas/totalCx que ficam sem barra, é
+    // literalmente assim no original).
     const metricas = [
-      { label: 'Conclusão (OPs)', val: pctConc + '%', bar: pctConc, cor: 'var(--success)' },
-      { label: 'Conclusão (Caixas)', val: pctCx + '%', bar: pctCx, cor: 'var(--orange)' },
-      { label: 'Máquinas ativas', val: maqsAtivas + ' máq.', bar: null, cor: 'var(--warn)' },
-      { label: 'Total de caixas', val: totalCx.toLocaleString('pt-BR'), bar: null, cor: 'var(--info)' },
-      { label: 'Em Andamento', val: and + ' OPs', bar: total > 0 ? Math.round(and / total * 100) : 0, cor: 'var(--orange)' },
+      { label: 'Conclusão (OPs)', val: pctConc + '%', bar: pctConc, cor: '#5ab848' },
+      { label: 'Conclusão (Caixas)', val: pctCx + '%', bar: pctCx, cor: '#e07020' },
+      { label: 'Máquinas ativas', val: maqsAtivas + ' máq.', bar: maqsAtivas === 0 ? null : maqsAtivas * 10, cor: '#b89030' },
+      { label: 'Total de caixas', val: totalCx.toLocaleString('pt-BR'), bar: null, cor: '#5090c0' },
+      { label: 'Em andamento', val: and + ' OPs', bar: total > 0 ? Math.round(and / total * 100) : 0, cor: '#e07020' },
     ];
     wrap.innerHTML = metricas.map(m => `
       <div>
@@ -373,7 +366,7 @@
       const pct = totalCxM > 0 ? Math.round(okCxM / totalCxM * 100) : 0;
       let cor = 'var(--muted)', label = 'Livre';
       if (andReg) { cor = 'var(--orange)'; label = 'Em produção'; }
-      else if (pendRegs.length) { cor = 'var(--info)'; label = pendRegs.length + ' pend.'; }
+      else if (pendRegs.length) { cor = 'var(--warn)'; label = pendRegs.length + ' pend.'; }
       const curProduto = andReg ? String(andReg.produto || '').slice(0, 22) : '—';
       return `<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;position:relative;overflow:hidden">
         <div style="position:absolute;top:0;left:0;right:0;height:2px;background:${cor}"></div>
@@ -409,7 +402,7 @@
           <span style="font-size:.62rem;font-family:monospace;color:var(--muted)">${totalM.toLocaleString('pt-BR')} cx</span>
         </div>
         <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden;position:relative">
-          <div style="position:absolute;top:0;left:0;height:100%;width:${pctBar}%;background:rgba(232,117,26,.22);border-radius:4px"></div>
+          <div style="position:absolute;top:0;left:0;height:100%;width:${pctBar}%;background:rgba(224,112,32,.25);border-radius:4px"></div>
           <div style="position:absolute;top:0;left:0;height:100%;width:${pctOk * pctBar / 100}%;background:var(--success);border-radius:4px"></div>
         </div>
       </div>`;
@@ -421,21 +414,28 @@
     _animNumDash(document.getElementById('pdash-kpi-pend'), pend);
     _animNumDash(document.getElementById('pdash-kpi-and'), and);
     _animNumDash(document.getElementById('pdash-kpi-ok'), ok);
-    _desenharSparklineDash('pdash-spark-total', _sparkDataDash(total, 8), COR_STATUS_HEX.em_andamento);
-    _desenharSparklineDash('pdash-spark-pend', _sparkDataDash(pend, 8), COR_STATUS_HEX.pendente);
-    _desenharSparklineDash('pdash-spark-and', _sparkDataDash(and, 8), COR_STATUS_HEX.em_andamento);
-    _desenharSparklineDash('pdash-spark-ok', _sparkDataDash(ok, 8), COR_STATUS_HEX.concluido);
+    // PEDIDO AO VIVO (auditoria, item 3): cores exatas de renderKPIs() no
+    // original — cada sparkline tem sua própria cor fixa, não reaproveita
+    // as cores de status (repare que "pend" usa vermelho/#cc2800, não a
+    // cor de status "pendente"; é assim no original).
+    _desenharSparklineDash('pdash-spark-total', _sparkDataDash(total, 8), '#e07020');
+    _desenharSparklineDash('pdash-spark-pend', _sparkDataDash(pend, 8), '#cc2800');
+    _desenharSparklineDash('pdash-spark-and', _sparkDataDash(and, 8), '#b89030');
+    _desenharSparklineDash('pdash-spark-ok', _sparkDataDash(ok, 8), '#5ab848');
     _desenharGraficoFluxoDash();
     _desenharGraficoStatusDash(total, pend, and, ok);
     _desenharGraficoTopProdutosDash();
     _desenharMetricasRapidasDash(total, ok, and, totalCx, okCx);
     _desenharGradeMaquinasDash();
     _desenharBarrasCaixasMaquinaDash();
+    const ts = document.getElementById('pdash-ultima-att');
+    if (ts) ts.textContent = 'Atualizado ' + new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   }
 
   document.addEventListener('click', function (event) {
     const modo = event.target.closest('[data-pdash-fluxo-modo]');
     if (modo) { _dashModoFluxo = modo.getAttribute('data-pdash-fluxo-modo'); _desenharProducaoDashboard(); }
+    if (event.target.closest('[data-pdash-atualizar]')) { carregarProducaoDashboard(true).then(_desenharProducaoDashboard); }
   });
 
   global.renderProducaoDashboard = renderProducaoDashboard;
