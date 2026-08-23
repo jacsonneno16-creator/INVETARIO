@@ -44,6 +44,7 @@
     _registros = snapReg.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _setups = snapSetup.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _categorias = snapCat.docs.map(d => ({ _firestoreId: d.id, ...d.data() })).filter(c => c.ativo !== false).sort((a, b) => (Number(a.ordem) || 0) - (Number(b.ordem) || 0) || String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
+    await _carregarAtalhos();
     _carregado = true;
   }
 
@@ -64,12 +65,43 @@
     hoje.setDate(hoje.getDate() - hoje.getDay());
     return hoje;
   }
+  function _domingoDaSemana(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); x.setDate(x.getDate() - x.getDay()); return x; }
+  function _isoData(d) { return d.toISOString().slice(0, 10); }
+  function _fmtDataCurta(d) { return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }); }
 
+  // PEDIDO AO VIVO (auditoria RELATORIO-COMPARACAO-PRODUCAO.md, item 5): o
+  // original tem um filtro de semana no topo (maq-week-filter, populado com
+  // as semanas que realmente têm OP cadastrada) — "Todas as semanas" no
+  // original agrega TODAS as OPs ativas independente da data; aqui,
+  // "Todas as semanas" mantém o comportamento já existente (semana atual),
+  // porque agregar datas de semanas diferentes sob um único denominador de
+  // capacidade seria enganoso — adaptação deliberada, não uma omissão.
+  let _semanaMaqFiltro = '';
+  function _semanasComOP() {
+    const doms = new Set();
+    _registros.forEach(r => { if (r.data) doms.add(_isoData(_domingoDaSemana(new Date(r.data + 'T12:00:00')))); });
+    return [...doms].sort();
+  }
   function _agendaSemanaAtual() {
     if (typeof global.buildProducaoSchedule !== 'function') return { porMaquina: {} };
     const maquinasPorNome = {};
     _maquinas.forEach(m => { maquinasPorNome[m.nome] = m; });
-    return global.buildProducaoSchedule(_domingoDaSemanaAtual(), _registros, maquinasPorNome, _setups);
+    const base = _semanaMaqFiltro ? new Date(_semanaMaqFiltro + 'T12:00:00') : _domingoDaSemanaAtual();
+    return global.buildProducaoSchedule(base, _registros, maquinasPorNome, _setups);
+  }
+  // PEDIDO AO VIVO (auditoria, item 5): resumo "Turnos Seg: T1 + T2" no
+  // card — compara a 1ª faixa de turno de segunda-feira (index 1) da
+  // máquina com os atalhos T1/T2/T3 cadastrados; se não bater com nenhum
+  // atalho, mostra o horário cru.
+  function _resumoTurnosSegunda(m) {
+    const faixas = (m.turnos && m.turnos[1]) || [];
+    if (!faixas.length) return '';
+    const atalhos = _atalhos || ATALHOS_DEFAULT;
+    const nomes = faixas.map(f => {
+      const chave = Object.keys(atalhos).find(k => atalhos[k].ini === f.ini && atalhos[k].fim === f.fim);
+      return chave || `${f.ini}-${f.fim}`;
+    });
+    return `Turnos Seg: ${nomes.join(' + ')}`;
   }
 
   // Ocupação real desde a fase 3c: usa o motor de agenda (mesmo usado pelo
@@ -119,6 +151,7 @@
   // página do menu principal). Aceita um id de container opcional — sem
   // ele, comportamento 100% igual a antes (renderiza na própria página do
   // menu principal).
+  let _viewMaq = 'grid'; // 'grid' | 'list' — PEDIDO AO VIVO (auditoria, item 5): toggle Miniaturas/Lista do original
   let _containerMaq = 'page-producao-maquinas';
   async function renderProducaoMaquinas(containerId) {
     _containerMaq = containerId || 'page-producao-maquinas';
@@ -153,6 +186,11 @@
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <input id="pmaq-busca" placeholder="Buscar nome ou categoria..." value="${esc(busca)}" class="field" style="min-width:220px">
           <select id="pmaq-filtro-categoria" class="field"><option value="">Todas as categorias</option>${categoriasFiltro.map(c => `<option value="${esc(c)}" ${catFiltro === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
+          <select id="pmaq-filtro-semana" class="field"><option value="">Todas as semanas</option>${_semanasComOP().map(s => { const d = new Date(s + 'T12:00:00'), sun = new Date(d); sun.setDate(d.getDate() + 6); return `<option value="${s}" ${_semanaMaqFiltro === s ? 'selected' : ''}>${_fmtDataCurta(d)} – ${_fmtDataCurta(sun)}</option>`; }).join('')}</select>
+          <div style="display:flex;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden">
+            <button type="button" class="btn ${_viewMaq === 'grid' ? 'btn-primary' : 'btn-ghost'} btn-sm" style="border-radius:0;border:none" data-pmaq-view="grid">⊞ Miniaturas</button>
+            <button type="button" class="btn ${_viewMaq === 'list' ? 'btn-primary' : 'btn-ghost'} btn-sm" style="border-radius:0;border:none" data-pmaq-view="list">☰ Lista</button>
+          </div>
           <button type="button" class="btn btn-ghost btn-sm" data-pmaq-resetar-turnos="1">↺ Resetar turnos de todas</button>
           <button type="button" class="btn btn-ghost btn-sm" data-pexcel-template-baixar="1">📄 Template</button>
           <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">📥 Excel<input type="file" id="pexcel-template-input" accept=".xlsx,.xls" style="display:none"></label>
@@ -175,21 +213,26 @@
           ${ocupacaoSelecionadas ? `<div style="height:6px;border-radius:4px;background:var(--border);overflow:hidden;margin:5px 0 4px"><div style="height:100%;width:${ocupacaoSelecionadas.pct}%;background:var(--orange)"></div></div><div style="font-size:.66rem;color:var(--muted)">${ocupacaoSelecionadas.horasUsadas.toFixed(1)}h prog. / ${ocupacaoSelecionadas.horasDisp.toFixed(1)}h disp. · ${Math.round(ocupacaoSelecionadas.caixas).toLocaleString('pt-BR')} cx programadas</div>` : ''}
         </div>
       </div>
-      ${cards.length ? `
+      ${cards.length ? (_viewMaq === 'list' ? _listaMaquinasHtml(cards) : `
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px">
         ${cards.map(m => {
           const status = STATUS_INFO[m.status] || STATUS_INFO.ativa;
           const ocupacao = calcOcupacaoMaquina(m);
+          const horasProg = _horasProgMaquina(m);
+          const horasDisp = _horasDispMaquina(m);
           const produtos = m.produtosCompativeis || [];
           const selecionada = _selecionadas.has(m.nome);
           const pedidosAtivos = _pedidosAtivosMaquina(m.nome);
           const caixasAtivas = pedidosAtivos.reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
+          const turnosResumo = _resumoTurnosSegunda(m);
+          const expandidoDet = _detalhesAbertos.has(m.nome);
           return `
           <div class="tc" style="padding:14px;display:flex;flex-direction:column;gap:8px;${selecionada ? 'border:2px solid var(--orange)' : ''}">
             <div style="display:flex;align-items:start;justify-content:space-between;gap:8px">
               <div>
                 <div style="font-weight:600">${esc(m.nome)}</div>
                 <div style="font-size:.72rem;color:var(--muted)">${esc(m.categoria || '—')} · ${pedidosAtivos.length} solicit. · ${Math.round(caixasAtivas).toLocaleString('pt-BR')} cx</div>
+                ${turnosResumo ? `<div style="font-size:.66rem;color:var(--muted);margin-top:2px">${esc(turnosResumo)}</div>` : ''}
               </div>
               <span class="badge ${status.cor}" style="font-size:.62rem">${status.label}</span>
             </div>
@@ -199,11 +242,14 @@
             </div>
             ${ocupacao > 100 ? `<div style="font-size:.66rem;color:var(--danger);font-weight:700">⚠ Excede em ${ocupacao - 100}%</div>` : ''}
             <div>
-              <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted);margin-bottom:3px">
-                <span>Ocupação da semana</span><span>${ocupacao}%</span>
-              </div>
               <div style="height:6px;border-radius:4px;background:var(--border);overflow:hidden">
                 <div style="height:100%;width:${Math.min(100, ocupacao)}%;background:${ocupacao > 100 ? 'var(--danger)' : 'var(--orange)'}"></div>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:.68rem;margin-top:4px">
+                <span style="color:var(--muted)">Prog:</span>
+                <span style="color:${ocupacao > 100 ? 'var(--danger)' : 'var(--orange)'};font-weight:700">${horasProg.toFixed(1)}h</span>
+                <span style="color:var(--muted)">/ ${horasDisp.toFixed(1)}h disp.</span>
+                <span style="color:${ocupacao > 100 ? 'var(--danger)' : 'var(--orange)'};font-weight:700;font-size:.76rem">${ocupacao}%</span>
               </div>
             </div>
             <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;margin-top:4px">
@@ -213,10 +259,61 @@
                 <button type="button" class="acao-lapis" title="Excluir" data-pmaq-excluir="${esc(m._firestoreId)}">🗑️</button>
               </div>
             </div>
+            <button type="button" data-pmaq-detalhes="${esc(m.nome)}" style="background:none;border:none;color:var(--muted);font-size:.66rem;cursor:pointer;text-align:center;padding:2px 0">${expandidoDet ? '▴' : '▾'} detalhes</button>
+            ${expandidoDet ? _detalheMaquinaHtml(m) : ''}
           </div>`;
         }).join('')}
-      </div>` : `<div class="empty"><div class="empty-icon">⚙️</div><div class="empty-title">Nenhuma máquina cadastrada</div><div class="empty-sub">Clique em "+ Nova Máquina" pra começar</div></div>`}
+      </div>`) : `<div class="empty"><div class="empty-icon">⚙️</div><div class="empty-title">Nenhuma máquina cadastrada</div><div class="empty-sub">Clique em "+ Nova Máquina" pra começar</div></div>`}
     `;
+  }
+  function _horasProgMaquina(m) {
+    const resultado = _agendaSemanaAtual();
+    const d = resultado.porMaquina[m.nome];
+    return d ? d.totalMinutosUsados / 60 : 0;
+  }
+  function _horasDispMaquina(m) {
+    const resultado = _agendaSemanaAtual();
+    const d = resultado.porMaquina[m.nome];
+    return d ? d.capacidadeMinutosSemana / 60 : 0;
+  }
+  const _detalhesAbertos = new Set();
+  // PEDIDO AO VIVO (auditoria, item 5): accordion "▾ detalhes" do card —
+  // mesmos campos que buildMaqCardDetail() do original mostra (setor,
+  // status, velocidade, eficiência, turnos/dia, setup padrão).
+  function _detalheMaquinaHtml(m) {
+    const cor = m.status === 'inativa' ? 'var(--danger)' : 'var(--success)';
+    const diasComTurno = [0, 1, 2, 3, 4, 5, 6].filter(d => (m.turnos && m.turnos[d] || []).length).length;
+    return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:.68rem;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
+      <div><span style="color:var(--muted)">Setor:</span> ${esc(m.setor || '—')}</div>
+      <div><span style="color:var(--muted)">Status:</span> <span style="color:${cor};font-weight:700">${esc((m.status || 'ativa').toUpperCase())}</span></div>
+      <div><span style="color:var(--muted)">Vel. padrão:</span> ${m.pcMin ? esc(m.pcMin) + ' und/min' : '<span style="color:var(--danger)">⚠ não config.</span>'}</div>
+      <div><span style="color:var(--muted)">Eficiência:</span> ${m.eficiencia != null ? esc(m.eficiencia) + '%' : '—'}</div>
+      <div><span style="color:var(--muted)">Dias c/ turno:</span> ${diasComTurno}/7</div>
+      <div><span style="color:var(--muted)">Setup padrão:</span> ${(m.setupPadraoMin || m.tempoSetupPadrao) ? esc(m.setupPadraoMin || m.tempoSetupPadrao) + ' min' : '—'}</div>
+    </div>`;
+  }
+  // PEDIDO AO VIVO (auditoria, item 5): modo "☰ Lista" — uma linha por
+  // máquina em vez de cards, mesmas colunas do original (Máquina/Ocupação/
+  // Caixas/Prog. Disp./% Máquina).
+  function _listaMaquinasHtml(cards) {
+    const linhas = cards.map(m => {
+      const ocupacao = calcOcupacaoMaquina(m);
+      const horasProg = _horasProgMaquina(m), horasDisp = _horasDispMaquina(m);
+      const pedidosAtivos = _pedidosAtivosMaquina(m.nome);
+      const caixasAtivas = pedidosAtivos.reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
+      const cor = ocupacao > 100 ? 'var(--danger)' : ocupacao >= 80 ? 'var(--warn)' : 'var(--orange)';
+      return `<tr>
+        <td><b>${esc(m.nome)}</b></td>
+        <td style="min-width:160px">
+          <div style="height:6px;border-radius:4px;background:var(--border);overflow:hidden"><div style="height:100%;width:${Math.min(100, ocupacao)}%;background:${cor}"></div></div>
+          <div style="font-size:.64rem;color:var(--muted);margin-top:3px">${pedidosAtivos.length} solicit.</div>
+        </td>
+        <td style="color:${cor};font-weight:700">${Math.round(caixasAtivas).toLocaleString('pt-BR')} cx</td>
+        <td><span style="color:${cor};font-weight:700">${horasProg.toFixed(1)}h</span> <span style="color:var(--muted)">/ ${horasDisp.toFixed(1)}h</span></td>
+        <td style="color:${cor};font-weight:700">${ocupacao}%${ocupacao > 100 ? ` <span style="color:var(--danger);font-size:.6rem">+${ocupacao - 100}% over</span>` : ''}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Máquina</th><th>Ocupação da Semana</th><th>Caixas</th><th>Prog. / Disp.</th><th>% Máquina</th></tr></thead><tbody>${linhas}</tbody></table></div></div>`;
   }
 
   function _turnosDefault() {
@@ -514,6 +611,10 @@
     if (copiarTurnos) { pmaqCopiarTurnos(); return; }
     const resetarTurnos = event.target.closest('[data-pmaq-resetar-turnos]');
     if (resetarTurnos) { pmaqResetarTurnos(); return; }
+    const viewBtn = event.target.closest('[data-pmaq-view]');
+    if (viewBtn) { _viewMaq = viewBtn.getAttribute('data-pmaq-view'); _desenharProducaoMaquinas(); return; }
+    const detBtn = event.target.closest('[data-pmaq-detalhes]');
+    if (detBtn) { const nome = detBtn.getAttribute('data-pmaq-detalhes'); if (_detalhesAbertos.has(nome)) _detalhesAbertos.delete(nome); else _detalhesAbertos.add(nome); _desenharProducaoMaquinas(); return; }
   });
   document.addEventListener('input', function (event) {
     if (event.target && event.target.id === 'pmaq-busca') _desenharProducaoMaquinas();
@@ -521,6 +622,7 @@
   });
   document.addEventListener('change', function (event) {
     if (event.target && event.target.id === 'pmaq-filtro-categoria') { _desenharProducaoMaquinas(); return; }
+    if (event.target && event.target.id === 'pmaq-filtro-semana') { _semanaMaqFiltro = event.target.value || ''; _desenharProducaoMaquinas(); return; }
     const campo = event.target.closest('[data-pmaq-campo]');
     if (campo) { pmaqProdutoAlterado(Number(campo.getAttribute('data-pmaq-idx')), campo.getAttribute('data-pmaq-campo'), campo.value); return; }
     const turnoCampo = event.target.closest('[data-pmaq-turno-campo]');
@@ -528,5 +630,5 @@
     const atalhoCampo = event.target.closest('[data-pmaq-atalho-campo]');
     if (atalhoCampo) pmaqAtalhoCampoAlterado(atalhoCampo.getAttribute('data-pmaq-atalho-chave'), atalhoCampo.getAttribute('data-pmaq-atalho-campo'), atalhoCampo.value);
   });
-  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _maquinas=[]; _registros=[]; _setups=[]; _produtosEditando=[]; _turnosEditando={}; _atalhos=null; _selecionadas.clear(); });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _maquinas=[]; _registros=[]; _setups=[]; _produtosEditando=[]; _turnosEditando={}; _atalhos=null; _selecionadas.clear(); _semanaMaqFiltro=''; _detalhesAbertos.clear(); });
 })(window);
