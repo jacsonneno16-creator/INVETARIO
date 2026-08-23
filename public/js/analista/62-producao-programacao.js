@@ -23,6 +23,15 @@
   const _expandidos = new Set();
   let _pcpSolic = [];
   let _pcpSolicCarregado = false;
+  // PEDIDO AO VIVO (auditoria RELATORIO-COMPARACAO-PRODUCAO.md, item 4): o
+  // original (index.html:223-227, tableWeekNav/tableWeekReset em app.js)
+  // não tem filtro De/Até — a lista mostra TODAS as OPs por padrão
+  // ("Todas as semanas") e um botão ‹/› avança por semana quando o usuário
+  // quer restringir. null = sem filtro de semana.
+  let _semanaFiltro = null;
+  function _segundaDaSemana(d) { const x = new Date(d); x.setHours(0, 0, 0, 0); const dia = x.getDay(); x.setDate(x.getDate() - (dia === 0 ? 6 : dia - 1)); return x; }
+  function _isoData(d) { return d.toISOString().slice(0, 10); }
+  function _fmtDataCurta(d) { return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }); }
 
   function fs() { return global.getDTFirestore(); }
   function _podeCriar() { return typeof global.temPermissao !== 'function' || global.temPermissao('producao-programacao', 'criar'); }
@@ -231,15 +240,14 @@
     const busca = String(document.getElementById('pprog-busca')?.value || '').trim().toLowerCase();
     const filtroMaquina = String(document.getElementById('pprog-filtro-maquina')?.value || '');
     const filtroStatus = String(document.getElementById('pprog-filtro-status')?.value || '');
-    const filtroDe = String(document.getElementById('pprog-filtro-de')?.value || '');
-    const filtroAte = String(document.getElementById('pprog-filtro-ate')?.value || '');
+    const semanaIni = _semanaFiltro ? _isoData(_semanaFiltro) : null;
+    const semanaFim = _semanaFiltro ? _isoData(new Date(new Date(_semanaFiltro).setDate(_semanaFiltro.getDate() + 6))) : null;
 
     const linhasFiltradas = _registros
       .filter(r => !busca || String(r.produto || '').toLowerCase().includes(busca))
       .filter(r => !filtroMaquina || r.maquina === filtroMaquina)
       .filter(r => !filtroStatus || r.status === filtroStatus)
-      .filter(r => !filtroDe || String(r.data || '') >= filtroDe)
-      .filter(r => !filtroAte || String(r.data || '') <= filtroAte)
+      .filter(r => !semanaIni || (String(r.data || '') >= semanaIni && String(r.data || '') <= semanaFim))
       .sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0));
 
     const totalPaginas = Math.max(1, Math.ceil(linhasFiltradas.length / PAGE_SIZE));
@@ -263,10 +271,16 @@
             <option value="em_andamento" ${filtroStatus === 'em_andamento' ? 'selected' : ''}>Em andamento</option>
             <option value="concluido" ${filtroStatus === 'concluido' ? 'selected' : ''}>Concluído</option>
           </select>
-          <input id="pprog-filtro-de" type="date" class="field" title="Data de" value="${esc(filtroDe)}" style="max-width:135px">
-          <input id="pprog-filtro-ate" type="date" class="field" title="Data até" value="${esc(filtroAte)}" style="max-width:135px">
-          <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">📥 Excel<input type="file" id="pprog-excel-input" accept=".xlsx,.xls" style="display:none"></label>
-          <button type="button" class="btn btn-primary btn-sm" data-pprog-novo="1">+ Nova OP</button>
+          <div style="display:flex;align-items:center;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 8px">
+            <button type="button" data-pprog-semana="-1" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 4px;line-height:1" title="Semana anterior">‹</button>
+            <span data-pprog-semana-reset style="font-size:.72rem;color:var(--orange);white-space:nowrap;min-width:120px;text-align:center;cursor:pointer" title="Clique para ver todas">${_semanaFiltro ? `${_fmtDataCurta(_semanaFiltro)} – ${_fmtDataCurta(new Date(new Date(_semanaFiltro).setDate(_semanaFiltro.getDate() + 6)))}` : 'Todas as semanas'}</span>
+            <button type="button" data-pprog-semana="1" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 4px;line-height:1" title="Próxima semana">›</button>
+          </div>
+          <button type="button" class="btn btn-ghost btn-sm" data-pprog-limpar-filtros>✕ Filtros</button>
+          <button type="button" class="btn btn-sm" style="background:rgba(204,40,0,.12);border:1px solid rgba(204,40,0,.4);color:var(--danger)" data-pprog-limpar-tudo>🗑 Limpar Tudo</button>
+          <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0" title="Importar programação via Excel — colunas: Produto, Quantidade, Data">📥 Importar Excel<input type="file" id="pprog-excel-input" accept=".xlsx,.xls" style="display:none"></label>
+          <button type="button" class="btn btn-ghost btn-sm" style="color:var(--muted)" data-pprog-template title="Baixar planilha modelo">⬇ Template</button>
+          <button type="button" class="btn btn-primary btn-sm" data-pprog-novo="1">+ Nova</button>
         </div>
       </div>
       ${_pcpPainelHtml()}
@@ -432,6 +446,35 @@
     else if (confirm('Excluir a OP do produto "' + item.produto + '"?')) await executar();
   }
 
+  // PEDIDO AO VIVO (auditoria, item 4): "🗑 Limpar Tudo" (confirmClearAll no
+  // original) — apaga TODAS as OPs cadastradas, não só a página filtrada.
+  async function pprogLimparTudo() {
+    if (!_registros.length) { global.showToast?.('Não há OPs cadastradas.', 'info'); return; }
+    const executar = async () => {
+      try {
+        await Promise.all(_registros.map(r => fs().collection(COL_REGISTROS).doc(r._firestoreId).delete()));
+        global.showToast?.('Todas as OPs foram excluídas.', 'success');
+        await carregarProducaoProgramacao(true);
+        _pagina = 1;
+        _desenharProducaoProgramacao();
+      } catch (e) { global.showToast?.('Erro ao limpar: ' + (e.message || e), 'error'); }
+    };
+    const msg = `Excluir TODAS as ${_registros.length} ordem(ns) de produção cadastradas? Essa ação não pode ser desfeita.`;
+    if (global.showConfirm) global.showConfirm(msg, executar, { title: 'Limpar toda a programação', icon: '🗑️', okLabel: 'Excluir tudo', okClass: 'btn-danger' });
+    else if (confirm(msg)) await executar();
+  }
+
+  // PEDIDO AO VIVO (auditoria, item 4): "⬇ Template" — planilha modelo com
+  // as colunas esperadas pela importação (mesmo padrão de download usado
+  // em 71-producao-excel.js).
+  function pprogTemplate() {
+    if (!global.XLSX) { global.showToast?.('Biblioteca do Excel não carregada.', 'error'); return; }
+    const wb = global.XLSX.utils.book_new();
+    const ws = global.XLSX.utils.json_to_sheet([{ Produto: '', Maquina: '', Caixas: '', Data: '', Status: 'pendente' }]);
+    global.XLSX.utils.book_append_sheet(wb, ws, 'Modelo');
+    global.XLSX.writeFile(wb, 'modelo_programacao_producao.xlsx');
+  }
+
   // Import Excel — colunas esperadas: produto (nome ou código), maquina,
   // caixas, data (AAAA-MM-DD), status (opcional, default "pendente").
   // Sempre cria novas OPs (não há chave natural pra upsert numa OP).
@@ -510,12 +553,21 @@
     if (pcpRec) { pprogReceberPCP(pcpRec.getAttribute('data-pprog-pcp-programar')).catch(e => global.showToast?.(e.message || e, 'error')); return; }
     const pcpFin = event.target.closest('[data-pprog-pcp-finalizar]');
     if (pcpFin) { pprogFinalizarPCP(pcpFin.getAttribute('data-pprog-pcp-finalizar')).catch(e => global.showToast?.(e.message || e, 'error')); return; }
+    const semNav = event.target.closest('[data-pprog-semana]');
+    if (semNav) { const dir = Number(semNav.getAttribute('data-pprog-semana')); _semanaFiltro = _segundaDaSemana(_semanaFiltro || new Date()); _semanaFiltro.setDate(_semanaFiltro.getDate() + dir * 7); _pagina = 1; _desenharProducaoProgramacao(); return; }
+    if (event.target.closest('[data-pprog-semana-reset]')) { _semanaFiltro = null; _pagina = 1; _desenharProducaoProgramacao(); return; }
+    if (event.target.closest('[data-pprog-limpar-filtros]')) {
+      const b = document.getElementById('pprog-busca'), m = document.getElementById('pprog-filtro-maquina'), s = document.getElementById('pprog-filtro-status');
+      if (b) b.value = ''; if (m) m.value = ''; if (s) s.value = ''; _semanaFiltro = null; _pagina = 1; _desenharProducaoProgramacao(); return;
+    }
+    if (event.target.closest('[data-pprog-limpar-tudo]')) { pprogLimparTudo(); return; }
+    if (event.target.closest('[data-pprog-template]')) { pprogTemplate(); return; }
   });
   document.addEventListener('input', function (event) {
     if (event.target && event.target.id === 'pprog-busca') { _pagina = 1; _desenharProducaoProgramacao(); }
   });
   document.addEventListener('change', function (event) {
-    if (event.target && ['pprog-filtro-maquina', 'pprog-filtro-status', 'pprog-filtro-de', 'pprog-filtro-ate'].includes(event.target.id)) { _pagina = 1; _desenharProducaoProgramacao(); return; }
+    if (event.target && ['pprog-filtro-maquina', 'pprog-filtro-status'].includes(event.target.id)) { _pagina = 1; _desenharProducaoProgramacao(); return; }
     if (event.target && event.target.id === 'pprog-excel-input') {
       const file = event.target.files && event.target.files[0];
       importarProgramacaoExcel(file);
