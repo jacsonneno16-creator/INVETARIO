@@ -106,6 +106,18 @@
   let _filtroTratamento = '';
   let _periodoInicio = '';
   let _periodoFim = '';
+  // PEDIDO AO VIVO (2026-09-09): a estrutura da tela (título, filtros,
+  // botão Atualizar) não depende do Firestore pra existir — só a tabela
+  // depende. desenhar() já é seguro com _recusas vazio (mostra zerado).
+  let _statusCarregando = false;
+  let _statusErro = '';
+  // PEDIDO AO VIVO (2026-09-09): "os indicadores que tá demorando" —
+  // carregarDados() buscava recebimento_recusas do zero toda vez, mesmo
+  // reentrando na tela segundos depois. Só busca de novo quando ainda não
+  // carregou nada, ou quando pedido explicitamente (Atualizar/Tentar de
+  // novo).
+  const DIAS_MAX_PERIODO = 92; // ~3 meses — PEDIDO AO VIVO (2026-09-10)
+  let _periodoBuscado = ''; // chave "ini|fim" do último período buscado com sucesso — vazio = ainda não buscou
 
   function fs() {
     if (typeof global.getDTFirestore === 'function') return global.getDTFirestore();
@@ -125,21 +137,33 @@
   }
   function ehReentrega(r) { return (r.tratamento || '') === 'REENTREGA'; }
 
-  // BUG AO VIVO REAL (2026-09-09): "entrei no site, uma página já tá
-  // carregando há uns 10 minutos e não aparece nada" — esse .get() nunca
-  // teve limite de tempo nenhum; numa rede degradada (confirmado que não
-  // era Service Worker nem extensão — reproduziu em 2 navegadores
-  // diferentes, e o Firebase Status Dashboard não mostrava nenhuma
-  // interrupção), a tela ficava presa em "Carregando..." pra sempre, sem
-  // nenhum erro — o catch em renderRecebimentoRetornosStatus() só pega
-  // REJEIÇÃO, e uma promise que nunca resolve nem rejeita não aciona ele.
-  // Mesmo padrão de timeout já usado em produtos-service.js (30s) — depois
-  // disso, mostra erro claro com opção de tentar de novo, em vez de travar
-  // silenciosamente pro sempre.
-  async function carregarDados() {
-    const snap = await Promise.race([fs().collection(COL_RECUSAS).get(), new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Tempo excedido ao carregar retornos — conexão lenta ou instável. Tente de novo.')), 30000);
-    })]);
+  // Sem timeout artificial: uma coleção grande pode legitimamente levar
+  // mais tempo, e Promise.race com timeout não cancela a busca real, só
+  // desiste de esperar — a estrutura da tela já aparece na hora (ver
+  // renderRecebimentoRetornosStatus/_atualizarDados), então uma consulta
+  // lenta não deixa mais a tela em branco, só demora um pouco pra
+  // atualizar os dados.
+  function _periodoPadrao() {
+    const fim = new Date();
+    const inicio = new Date(fim.getTime() - (DIAS_MAX_PERIODO - 1) * 86400000);
+    return { ini: inicio.toISOString().slice(0, 10), fim: fim.toISOString().slice(0, 10) };
+  }
+  function _periodoValido(ini, fim) {
+    if (!ini || !fim) return false;
+    const dIni = new Date(ini + 'T00:00:00'), dFim = new Date(fim + 'T23:59:59');
+    if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime()) || dIni > dFim) return false;
+    return (dFim - dIni) / 86400000 <= DIAS_MAX_PERIODO;
+  }
+  // PEDIDO AO VIVO (2026-09-10): busca manual por período (máx. 3 meses),
+  // filtrada no servidor por criadoEm — não traz mais a coleção inteira.
+  async function carregarDados(ini, fim, forcar) {
+    if (!_periodoValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
+    const chave = ini + '|' + fim;
+    if (_periodoBuscado === chave && !forcar) return;
+    const snap = await fs().collection(COL_RECUSAS)
+      .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
+      .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
+      .get();
     // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
     // 'AUTOMATICO') já nasce CONFERIDA — não tem sentido nenhum ela ficar
     // "Aguard. Monitoramento"/fiscal/CTE, esse fluxo é só pra recebimento
@@ -150,6 +174,7 @@
     // têm esse campo, mas sempre tiveram `motivoAutomaticoTexto` (exclusivo
     // desse fluxo), que serve de marcador retroativo.
     _recusas = snap.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
+    _periodoBuscado = chave;
   }
 
   // PEDIDO AO VIVO (2026-09-08): roda sobre `linhasPorNota(_recusas)` (1
@@ -319,6 +344,8 @@
       </select></div>
       <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">PERÍODO — DE</div><input type="date" class="field" id="status-periodo-ini" value="${esc(_periodoInicio)}" style="padding:8px"></div>
       <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input type="date" class="field" id="status-periodo-fim" value="${esc(_periodoFim)}" style="padding:8px"></div>
+      <button class="btn btn-primary btn-sm" id="status-buscar-periodo" style="padding:8px 14px">🔍 Buscar</button>
+      <div style="font-size:.64rem;color:var(--muted);align-self:center">Máx. 3 meses</div>
     </div>`;
   }
 
@@ -355,6 +382,7 @@
   }
 
   function tabelaHtml() {
+    if (!_periodoBuscado) return '<div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">Escolha o período e clique em Buscar</div></div>';
     const lista = recusasFiltradas();
     if (!lista.length) return '<div class="empty"><div class="empty-icon">🧾</div><div class="empty-title">Nenhum retorno com esses filtros</div></div>';
     const podeEditarFlag = podeEditar();
@@ -372,6 +400,14 @@
     }).join('')}</tbody></table></div>`;
   }
 
+  // Banner pequeno, só sobre a área de dados — nunca substitui a tela
+  // inteira (pedido ao vivo: a estrutura tem que aparecer na hora).
+  function _statusCarregandoHtml() {
+    if (_statusCarregando) return '<div style="font-size:.76rem;color:var(--muted);margin:8px 0">🔄 Atualizando...</div>';
+    if (_statusErro) return '<div style="font-size:.76rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;gap:10px"><span>⚠️ Não foi possível atualizar: ' + esc(_statusErro) + '</span><button type="button" class="btn btn-ghost btn-sm" data-status-tentar-de-novo="1">Tentar de novo</button></div>';
+    return '';
+  }
+
   function desenhar() {
     const pagina = document.getElementById('page-recebimento-retornos-status');
     if (!pagina) return;
@@ -380,6 +416,7 @@
         <div><h2 style="margin:0">🧾 Status de Retornos</h2><div style="color:var(--muted);font-size:.78rem;margin-top:4px">Aguard. Monitoramento, Aguard. Fiscal, OK, Em tratativa, CTE, Endereçando ou Finalizado — escolha livre, sem ordem obrigatória. Reentrega usa Data Programada/Saída em vez disso.</div></div>
         <button class="btn btn-ghost" data-status-atualizar="1">↻ Atualizar</button>
       </div>
+      ${_statusCarregandoHtml()}
       ${resumoHtml()}
       <div class="tc" style="padding:16px;margin:14px 0"><div class="tc-title">📊 Tempo médio (dias)</div>${global.dashHorizontalBarChart ? global.dashHorizontalBarChart(graficoResumo(), { limit: 10 }) : ''}</div>
       <div class="tc" style="padding:16px">
@@ -389,13 +426,27 @@
 
     if (!pagina._statusListenerBound) {
       pagina.addEventListener('click', ev => {
-        if (ev.target.closest('[data-status-atualizar]')) { carregarDados().then(desenhar); }
+        if (ev.target.closest('[data-status-tentar-de-novo]')) { _atualizarDadosNoPeriodo(true); return; }
+        if (ev.target.closest('[data-status-atualizar]')) { _atualizarDadosNoPeriodo(true); return; }
+        if (ev.target.id === 'status-buscar-periodo') {
+          if (!_periodoValido(_periodoInicio, _periodoFim)) { global.showToast?.('Escolha um período válido de até 3 meses.', 'error'); return; }
+          _atualizarDadosNoPeriodo(true);
+        }
       });
       pagina.addEventListener('change', ev => {
         if (ev.target.id === 'status-filtro-status') { _filtroStatus = ev.target.value || ''; desenhar(); return; }
         if (ev.target.id === 'status-filtro-tratamento') { _filtroTratamento = ev.target.value || ''; desenhar(); return; }
-        if (ev.target.id === 'status-periodo-ini') { _periodoInicio = ev.target.value || ''; desenhar(); return; }
-        if (ev.target.id === 'status-periodo-fim') { _periodoFim = ev.target.value || ''; desenhar(); return; }
+        if (ev.target.id === 'status-periodo-ini' || ev.target.id === 'status-periodo-fim') {
+          _periodoInicio = document.getElementById('status-periodo-ini')?.value || '';
+          _periodoFim = document.getElementById('status-periodo-fim')?.value || '';
+          if (_periodoInicio && _periodoFim && !_periodoValido(_periodoInicio, _periodoFim)) {
+            if (ev.target.id === 'status-periodo-ini') _periodoFim = new Date(new Date(_periodoInicio + 'T00:00:00').getTime() + DIAS_MAX_PERIODO * 86400000).toISOString().slice(0, 10);
+            else _periodoInicio = new Date(new Date(_periodoFim + 'T00:00:00').getTime() - DIAS_MAX_PERIODO * 86400000).toISOString().slice(0, 10);
+            global.showToast?.('Período ajustado — máximo de 3 meses.', 'i');
+          }
+          desenhar();
+          return;
+        }
         const selectStatus = ev.target.closest('[data-status-mudar]');
         if (selectStatus) {
           const [recusaId, notaChave] = String(selectStatus.dataset.statusMudar).split('|');
@@ -413,14 +464,33 @@
     }
   }
 
+  // PEDIDO AO VIVO (2026-09-09): "a tela precisa ficar o tempo todo em
+  // carregamento sem mostrar nem a estrutura?" — desenhar() já é seguro com
+  // _recusas vazio, então chama ela ANTES do fetch (estrutura/filtros/
+  // botão aparecem na hora) e de novo depois (com o dado real ou o aviso de
+  // erro, sem nunca esconder a estrutura). Usada tanto no 1º carregamento
+  // quanto nos botões "Atualizar"/"Tentar de novo".
+  // PEDIDO AO VIVO (2026-09-10): busca manual — só chama carregarDados()
+  // quando pedida de verdade (Buscar/Atualizar/Tentar de novo), nunca
+  // sozinha ao entrar na tela.
+  async function _atualizarDadosNoPeriodo(forcar) {
+    _statusCarregando = true;
+    _statusErro = '';
+    desenhar();
+    try { await carregarDados(_periodoInicio, _periodoFim, forcar); } catch (e) { _statusErro = e.message || String(e); }
+    _statusCarregando = false;
+    desenhar();
+  }
+
   async function renderRecebimentoRetornosStatus() {
     const pagina = document.getElementById('page-recebimento-retornos-status');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-title">Carregando Status de Retornos...</div></div>';
-    try { await carregarDados(); desenhar(); } catch (e) {
-      pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Status de Retornos</div><div class="empty-sub">${esc(e.message || e)}</div><button class="btn btn-primary" style="margin-top:10px" data-status-tentar-de-novo="1">Tentar de novo</button></div>`;
-      pagina.addEventListener('click', ev => { if (ev.target.closest('[data-status-tentar-de-novo]')) renderRecebimentoRetornosStatus(); }, { once: true });
+    if (!_periodoInicio || !_periodoFim) {
+      const p = _periodoPadrao();
+      _periodoInicio = _periodoInicio || p.ini;
+      _periodoFim = _periodoFim || p.fim;
     }
+    desenhar();
   }
 
   global.renderRecebimentoRetornosStatus = renderRecebimentoRetornosStatus;

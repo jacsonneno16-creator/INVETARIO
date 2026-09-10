@@ -21,6 +21,8 @@
   let _filtroBusca = '';
   let _cargaExpandidaId = null; // _id da carga com o detalhe aberto
   const _itensPorCarga = {}; // cache: cargaId -> [{_id,capa,codigoProduto,nomeProduto,quantidade}]
+  let _cargasCarregando = false;
+  let _cargasErro = '';
 
   function raw() { return global.getDTRawFirestore(); }
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s])); }
@@ -32,17 +34,33 @@
   const STATUS_LABEL = { PENDENTE: 'Em montagem', EM_TRANSITO: 'Expedida', RECEBIDA: 'Recebida', CANCELADA: 'Cancelada' };
   const STATUS_CLASSE = { PENDENTE: 'b-yellow', EM_TRANSITO: 'b-blue', RECEBIDA: 'b-green', CANCELADA: 'b-red' };
 
-  async function carregarCargasAnalista(forcar) {
-    if (_cargas.length && !forcar) return;
+  // PEDIDO AO VIVO (2026-09-10): "tela de carga montagem demorando" — essa
+  // tela sempre buscou a coleção COL_CARGAS INTEIRA (todo o histórico, pra
+  // sempre) de TODAS as lojas (hoje 8 cadastradas), mesmo consolidar
+  // multi-loja sendo intencional (comentário original no topo do arquivo).
+  // Cargas RECEBIDA/CANCELADA são histórico fechado que só cresce; por
+  // padrão a busca passa a trazer só as ATIVAS (PENDENTE/EM_TRANSITO, o que
+  // realmente importa no dia a dia operacional) — bem menor e mais rápido.
+  // O histórico completo (RECEBIDA/CANCELADA/"Todos os status") só é
+  // buscado quando o próprio filtro de status pede explicitamente (ver
+  // listener de 'cargas-f-status' abaixo), nunca sozinho.
+  let _cargasComFinalizadas = false;
+  async function carregarCargasAnalista(forcar, incluirFinalizadas) {
+    if (_cargas.length && !forcar && (!incluirFinalizadas || _cargasComFinalizadas)) return;
     const vazio = { docs: [] };
     const lojasSnap = await raw().collection('lojas').get().catch(() => vazio);
     _lojas = lojasSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.ativa !== false);
-    const porLoja = await Promise.all(_lojas.map(loja => raw().collection('lojas').doc(loja.id).collection(COL_CARGAS).get().catch(() => vazio)));
+    const porLoja = await Promise.all(_lojas.map(loja => {
+      const colecao = raw().collection('lojas').doc(loja.id).collection(COL_CARGAS);
+      const query = incluirFinalizadas ? colecao : colecao.where('status', 'in', ['PENDENTE', 'EM_TRANSITO']);
+      return query.get().catch(() => vazio);
+    }));
     _cargas = [];
     porLoja.forEach((snap, i) => {
       const loja = _lojas[i];
       snap.docs.forEach(d => _cargas.push({ _id: d.id, lojaId: loja.id, ...d.data() }));
     });
+    _cargasComFinalizadas = !!incluirFinalizadas;
   }
 
   async function _carregarItensDaCarga(carga) {
@@ -242,13 +260,28 @@
     return '<div style="padding:12px;text-align:center;color:var(--muted)">Carregando itens...</div>';
   }
 
+  // Shell-first (mesmo padrão de 99-recebimento-retornos-status.js):
+  // _desenharCargas() já é seguro com _cargas vazio, então chama ela ANTES
+  // do fetch (título/filtros/botão aparecem na hora) e de novo depois,
+  // nunca escondendo a estrutura atrás de um "Carregando..." de página
+  // inteira.
   async function renderRecebimentoCargas() {
     const pagina = document.getElementById('page-recebimento-cargas');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try { await carregarCargasAnalista(); }
-    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
+    _cargasCarregando = true;
+    _cargasErro = '';
     _desenharCargas();
+    try { await carregarCargasAnalista(); } catch (e) { _cargasErro = e.message || String(e); }
+    _cargasCarregando = false;
+    _desenharCargas();
+  }
+
+  function _cargasCarregandoHtml() {
+    return _cargasCarregando ? '<div style="font-size:.76rem;color:var(--muted);padding:6px 0">⏳ Carregando...</div>' : '';
+  }
+  function _cargasErroHtml() {
+    if (_cargasErro) return '<div style="font-size:.76rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;gap:10px"><span>⚠️ Falha ao carregar: ' + esc(_cargasErro) + '</span><button type="button" class="btn btn-ghost btn-sm" data-cargas-atualizar="1">Tentar de novo</button></div>';
+    return '';
   }
 
   function _desenharCargas() {
@@ -260,6 +293,8 @@
         <div><div class="page-title" style="font-size:1.15rem">📦 Cargas (Montagem/Expedição)</div><div style="font-size:.74rem;color:var(--muted)">Todas as lojas consolidadas</div></div>
         <button type="button" class="btn btn-ghost btn-sm" data-cargas-atualizar="1">↻ Atualizar</button>
       </div>
+      ${_cargasCarregandoHtml()}
+      ${_cargasErroHtml()}
       <div class="tc" style="padding:12px;margin-bottom:14px">
         <div class="fg" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
           <select class="field" id="cargas-f-loja">
@@ -607,7 +642,7 @@
     if (event.target.closest('[data-cargas-atualizar]')) {
       (async () => {
         try {
-          await carregarCargasAnalista(true);
+          await carregarCargasAnalista(true, _cargasComFinalizadas);
           // PEDIDO AO VIVO (2026-09-08): "esse palete depois da correção a
           // linha dele também tem que ficar em amarela" — o Coletor corrige
           // a capa em outro aparelho, mas _itensPorCarga nunca era
@@ -649,9 +684,21 @@
   document.addEventListener('input', function (event) {
     if (event.target.id === 'cargas-f-busca') { _filtroBusca = event.target.value || ''; _desenharCargas(); }
   });
-  document.addEventListener('change', function (event) {
+  document.addEventListener('change', async function (event) {
     if (event.target.id === 'cargas-f-loja') { _filtroLoja = event.target.value || ''; _desenharCargas(); }
-    if (event.target.id === 'cargas-f-status') { _filtroStatus = event.target.value || ''; _desenharCargas(); }
+    if (event.target.id === 'cargas-f-status') {
+      _filtroStatus = event.target.value || '';
+      // "Recebida"/"Cancelada"/"Todos os status" precisam do histórico
+      // completo, que não veio na busca padrão (só ativas) — busca sob
+      // demanda, só na 1ª vez que o filtro pedir isso nesta sessão.
+      const precisaHistorico = !_filtroStatus || _filtroStatus === 'RECEBIDA' || _filtroStatus === 'CANCELADA';
+      if (precisaHistorico && !_cargasComFinalizadas) {
+        _cargasCarregando = true; _desenharCargas();
+        try { await carregarCargasAnalista(true, true); } catch (e) { _cargasErro = e.message || String(e); }
+        _cargasCarregando = false;
+      }
+      _desenharCargas();
+    }
     const marcarCapa = event.target.matches && event.target.matches('[data-item-bluesoft-pendente]');
     if (marcarCapa) {
       const partes = event.target.getAttribute('data-item-bluesoft-pendente').split('|');
@@ -665,6 +712,7 @@
   global._recebimentoCargasCardsInternals = {
     carregarCargasAnalista,
     getCargas: () => _cargas,
+    getCargasComFinalizadas: () => _cargasComFinalizadas,
     getLojas: () => _lojas,
     setFiltroLoja: v => { _filtroLoja = v || ''; },
     setFiltroStatus: v => { _filtroStatus = v || ''; },

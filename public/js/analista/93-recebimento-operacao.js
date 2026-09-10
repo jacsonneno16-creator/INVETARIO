@@ -19,6 +19,8 @@
   let _docas = [];
   let _rotas = [];
   let _carregado = false;
+  let _carregando = false;
+  let _erroCarregamento = '';
   let _lojaCarregada = '';
   let _assinaturaTempoReal = '';
   let _unsubsTempoReal = [];
@@ -232,30 +234,45 @@
     } catch (e) { /* auditoria nunca trava a operação principal */ }
   }
 
+  // PEDIDO AO VIVO (2026-09-09): "a tela precisa ficar o tempo todo em
+  // carregamento?" — Promise.allSettled em vez de Promise.all: antes, UMA
+  // coleção lenta (ex.: rotas) segurava as outras 4 já prontas e derrubava
+  // a tela inteira num erro genérico. Agora cada fonte que responde é
+  // usada normalmente; só uma REJEIÇÃO real vira aviso pontual — sem
+  // timeout artificial por fonte (Promise.race com timeout não cancela a
+  // busca real, só desiste de esperar; numa coleção só lenta isso
+  // transformava "vai chegar" em "erro pra sempre").
   async function carregarRecebimentoOperacao(forcar) {
     const lojaAtual = _lojaAtivaOp();
     if (_lojaCarregada && _lojaCarregada !== lojaAtual) forcar = true;
     if (_carregado && !forcar) return;
-    const [snapRec, snapMot, snapVeic, snapDoca, snapRotas] = await Promise.all([
-      fs().collection(COL_RECEBIMENTOS).get(),
-      fs().collection('recebimento_motoristas').get(),
-      fs().collection('recebimento_veiculos').get(),
-      fs().collection('recebimento_docas').get(),
-      fs().collection(COL_ROTAS).get(),
-    ]);
+    if (_carregando) return;
+    _carregando = true;
+    _erroCarregamento = '';
+    const fontes = [
+      ['recebimentos', fs().collection(COL_RECEBIMENTOS).get()],
+      ['motoristas', fs().collection('recebimento_motoristas').get()],
+      ['veículos', fs().collection('recebimento_veiculos').get()],
+      ['docas', fs().collection('recebimento_docas').get()],
+      ['rotas', fs().collection(COL_ROTAS).get()],
+    ];
+    const resultados = await Promise.allSettled(fontes.map(([, promise]) => promise));
+    const snap = indice => resultados[indice].status === 'fulfilled' ? resultados[indice].value : { docs: [] };
+    const falhas = resultados.map((r, i) => r.status === 'rejected' ? fontes[i][0] : '').filter(Boolean);
+    const [snapRec, snapMot, snapVeic, snapDoca, snapRotas] = [snap(0), snap(1), snap(2), snap(3), snap(4)];
     const _lojaDaLeitura = _lojaAtivaOp();
-    _recebimentos = snapRec.docs.map(d => ({ _id: d.id, _lojaId: _lojaDaLeitura, ...d.data() }));
-    _motoristas = snapMot.docs.map(d => ({ _id: d.id, ...d.data() })).filter(m => m.ativo !== false);
-    _veiculos = snapVeic.docs.map(d => ({ _id: d.id, ...d.data() })).filter(v => v.ativo !== false);
-    _docas = snapDoca.docs.map(d => ({ _id: d.id, ...d.data() })).filter(d => d.ativo !== false);
-    _rotas = snapRotas.docs.map(d => ({ _id: d.id, ...d.data() }));
+    if (resultados[0].status === 'fulfilled') _recebimentos = snapRec.docs.map(d => ({ _id: d.id, _lojaId: _lojaDaLeitura, ...d.data() }));
+    if (resultados[1].status === 'fulfilled') _motoristas = snapMot.docs.map(d => ({ _id: d.id, ...d.data() })).filter(m => m.ativo !== false);
+    if (resultados[2].status === 'fulfilled') _veiculos = snapVeic.docs.map(d => ({ _id: d.id, ...d.data() })).filter(v => v.ativo !== false);
+    if (resultados[3].status === 'fulfilled') _docas = snapDoca.docs.map(d => ({ _id: d.id, ...d.data() })).filter(d => d.ativo !== false);
+    if (resultados[4].status === 'fulfilled') _rotas = snapRotas.docs.map(d => ({ _id: d.id, ...d.data() }));
     // Cruza com TODAS as origens que têm rota pra esta loja — mesmo padrão
     // do Coletor (ver comentário em _refRecCrossLoja acima). Nunca trava o
     // carregamento por conta disso: sem rota configurada, ou se alguma
     // consulta cross-loja falhar, o resto continua funcionando normalmente.
     const origens = _origensParaCruzar();
     if (origens.length) {
-      const resultados = await Promise.all(origens.map(async p => {
+      const resultadosParceira = await Promise.all(origens.map(async p => {
         try {
           // `.where('tipo','==','TRANSBORDO')` exigido pela regra do
           // Firestore (mesmo motivo do Coletor) — sem o filtro, a consulta
@@ -267,31 +284,49 @@
           return [];
         }
       }));
-      resultados.forEach(recsParceira => { _recebimentos = _recebimentos.concat(recsParceira); });
+      resultadosParceira.forEach(recsParceira => { _recebimentos = _recebimentos.concat(recsParceira); });
     }
     _recebimentos = _deduplicarRecebimentos(_recebimentos);
     _lojaCarregada = lojaAtual;
     _carregado = true;
+    _carregando = false;
+    _erroCarregamento = falhas.length ? 'Não responderam: ' + falhas.join(', ') + '. Os demais dados foram carregados.' : '';
     _ativarTempoRealRecebimento();
   }
 
-  async function renderRecebimentoOperacao() {
+  // BUG NO PRÓPRIO FIX (2026-09-09): precisa ser função comum, NÃO async —
+  // `return atualizacao` dentro de uma `async function` faz a função devolver
+  // uma Promise NOVA que só "adota" o resultado de `atualizacao`, sem
+  // carregar as propriedades marcadas nela (`.__dtBackground` desaparecia,
+  // confirmado ao testar isolado: `async function` sempre embrulha o
+  // retorno numa Promise própria). Sem `async`/`await` nenhum aqui dentro,
+  // não muda nada retornar `atualizacao` direto — e aí a marcação chega
+  // intacta em quem chama (_callPage).
+  function renderRecebimentoOperacao(forcar) {
     const pagina = document.getElementById('page-recebimento-operacao');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    // force=true (bug ao vivo real, confirmado no console do usuário: canal
-    // de tempo real do Firestore — onSnapshot — caindo repetidamente na
-    // rede dele: ERR_CONNECTION_CLOSED/504/erro de transporte no stream
-    // 'Listen'). Sem forçar aqui, quando esse canal cai a tela CONGELA na
-    // última leitura bem-sucedida e nunca mais atualiza sozinha — nem F5
-    // ajuda, porque a mesma instabilidade de rede se repete na hora. Um
-    // `.get()` único (não uma conexão que fica presa) sempre busca fresco
-    // ao reabrir a tela, funcionando como um fallback confiável quando o
-    // tempo real falha — e continua sendo complementado por ele quando a
-    // rede permite.
-    try { await carregarRecebimentoOperacao(true); }
-    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
+    // PEDIDO AO VIVO (2026-09-09): a estrutura aparece imediatamente (com o
+    // que já estiver em memória); a rede atualiza os dados em segundo
+    // plano. Uma consulta lenta nunca mais produz página branca.
     _desenharRecebimentoOperacao();
+    // BUG AO VIVO REAL (2026-09-10): "trocar de tela continua lento" — esta
+    // tela forçava `forcar=true` em TODA reentrada (motivo original: canal
+    // onSnapshot instável, ver histórico), diferente do resto do sistema
+    // que já respeita cache. Agora só força quando pedido explicitamente
+    // (botão "↻ Atualizar", ou "Tentar novamente" depois de uma falha) —
+    // carregarRecebimentoOperacao() já tem seu próprio cache por sessão.
+    const atualizacao = carregarRecebimentoOperacao(forcar);
+    // Marca pro timeout genérico de navegação (03-core-navigation.js,
+    // _callPage) não cobrir esta tela com o aviso dele por cima — esta tela
+    // já cuida do próprio carregamento/erro em segundo plano, granular por
+    // fonte.
+    atualizacao.__dtBackground = true;
+    atualizacao.then(_desenharRecebimentoOperacao).catch(e => {
+      _carregando = false;
+      _erroCarregamento = e.message || String(e);
+      _desenharRecebimentoOperacao();
+    });
+    return atualizacao;
   }
 
   function fmtMin(m) { return m == null ? '—' : (m >= 60 ? (m / 60).toFixed(1) + 'h' : Math.round(m) + 'min'); }
@@ -312,9 +347,14 @@
     const linhasPagina = linhas.slice((_pagina - 1) * ITENS_POR_PAGINA, _pagina * ITENS_POR_PAGINA);
 
     pagina.innerHTML = `
+      ${_carregando ? '<div style="font-size:.76rem;color:var(--muted);margin-bottom:10px">🔄 Atualizando recebimentos...</div>' : ''}
+      ${_erroCarregamento ? '<div style="font-size:.76rem;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;margin-bottom:10px">⚠️ ' + esc(_erroCarregamento) + ' <button type="button" class="btn btn-ghost btn-sm" data-recop-recarregar="1">Tentar novamente</button></div>' : ''}
       <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">
         <div><div class="page-title" style="font-size:1.15rem">🚚 Recebimentos</div><div style="font-size:.74rem;color:var(--muted)">${_recebimentos.length.toLocaleString('pt-BR')} carga(s) registrada(s)</div></div>
-        <button type="button" class="btn btn-primary btn-sm" data-recop-novo="1">+ Novo Recebimento</button>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-ghost btn-sm" data-recop-atualizar="1" title="Buscar os dados mais recentes">↻ Atualizar</button>
+          <button type="button" class="btn btn-primary btn-sm" data-recop-novo="1">+ Novo Recebimento</button>
+        </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
         ${Object.keys(ABA_INFO).map(aba => `<button type="button" class="btn ${aba === _abaRecebimento ? 'btn-primary' : 'btn-ghost'} btn-sm" data-recop-aba="${aba}">${ABA_INFO[aba].label} (${contagemAba[aba]})</button>`).join('')}
@@ -655,6 +695,8 @@
   global.recopVoltarEtapa = recopVoltarEtapa;
 
   document.addEventListener('click', function (event) {
+    if (event.target.closest('[data-recop-recarregar]')) { renderRecebimentoOperacao(true); return; }
+    if (event.target.closest('[data-recop-atualizar]')) { renderRecebimentoOperacao(true); return; }
     if (event.target.closest('[data-recop-novo]')) { recopNovo(); return; }
     const pg = event.target.closest('[data-recop-pg]'); if (pg) { _pagina += Number(pg.dataset.recopPg); _desenharRecebimentoOperacao(); return; }
     if (event.target.closest('[data-recop-nota-adicionar]')) { recopNotaAdicionar(); return; }

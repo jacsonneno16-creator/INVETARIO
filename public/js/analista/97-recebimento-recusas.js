@@ -66,6 +66,15 @@
 
   let _notas = [];
   let _recusas = [];
+  // PEDIDO AO VIVO (2026-09-09): "o código refaz sete consultas completas
+  // toda vez que você entra" — carregarDados() rodava sem NENHUM cache,
+  // mesmo trocando só entre "Notas Retornadas" e "Cadastros" (mesmos 7
+  // dados, chamado de novo do zero). Chamadas depois de SALVAR algo
+  // (criar/editar/excluir cadastro, atribuir conferência, importar BI)
+  // continuam forçando busca nova de propósito — só os dois pontos de
+  // ENTRADA na tela (renderRecebimentoRecusas/RecusasCadastros) e os
+  // botões "Atualizar" respeitam/pedem a atualização.
+  let _carregadoRecusas = false;
   let _motoristas = [];
   let _motivos = [];
   let _conferentes = [];
@@ -76,6 +85,14 @@
   let _filtroConferencia = ''; // FASE 9
   let _filtroPeriodoInicio = ''; // FASE 9 — data (yyyy-mm-dd), sobre criadoEm
   let _filtroPeriodoFim = ''; // FASE 9
+  const DIAS_MAX_PERIODO_RECUSAS = 92; // ~3 meses — PEDIDO AO VIVO (2026-09-10)
+  // PEDIDO AO VIVO (2026-09-10): "quero que tenha período... busca manual,
+  // não automática" — recebimento_recusas é o log permanente de retornos
+  // já processados, só cresce, nunca é limpo. Buscar a coleção inteira sem
+  // filtro (como sempre foi) virou pesado com o tempo de uso real. Chave do
+  // último período buscado com sucesso — vazia = "ainda não buscou nesta
+  // sessão", te mostra o convite pra escolher o período em vez da tabela.
+  let _recusasPeriodoBuscado = '';
   let _recusaAtribuindoId = '';
   let _recusaDetalheId = '';
   // Diagnóstico persistente do último "Buscar do BI" — mesma ideia dos
@@ -428,17 +445,24 @@
     const docs = individualSnap.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     const rawFs = raw();
     const { porChunk, comChunkIndex } = _empacotarEmChunks(docs);
-    for (const [chunkIndex, mapaChunk] of porChunk) {
+    // Cada chunk é um documento independente dos outros — grava todos em
+    // paralelo (Promise.all) em vez de um de cada vez. Numa base grande
+    // (dezenas de chunks), sequencial significava dezenas de idas e voltas
+    // à rede, uma atrás da outra, segurando essa migração (e qualquer outra
+    // consulta que tivesse que esperar na mesma fila de requisições) por
+    // minutos — ver BUG AO VIVO REAL no comentário de _carregarCadastrosRecusas.
+    await Promise.all([...porChunk].map(([chunkIndex, mapaChunk]) => {
       const batchChunk = rawFs.batch();
       batchChunk.set(fs().collection(COL_NOTAS_CHUNKS).doc('chunk_' + chunkIndex), { notas: mapaChunk }, { merge: true });
-      await batchChunk.commit();
-    }
-    for (let j = 0; j < comChunkIndex.length; j += 300) {
-      const sublote = comChunkIndex.slice(j, j + 300);
+      return batchChunk.commit();
+    }));
+    const sublotes = [];
+    for (let j = 0; j < comChunkIndex.length; j += 300) sublotes.push(comChunkIndex.slice(j, j + 300));
+    await Promise.all(sublotes.map(sublote => {
       const batchIndex = rawFs.batch();
       sublote.forEach(d => batchIndex.set(fs().collection(COL_NOTAS).doc(d.chave), { chunkIndex: d.chunkIndex }, { merge: true }));
-      await batchIndex.commit();
-    }
+      return batchIndex.commit();
+    }));
     return comChunkIndex;
   }
 
@@ -495,17 +519,85 @@
     return { porChunk, comChunkIndex, estadoFinal };
   }
 
-  async function carregarDados() {
-    const [notasChunks, r, m, mot, conf, tar, vm] = await Promise.all([
-      _migrarParaChunksSeNecessario(),
-      fs().collection(COL_RECUSAS).get(),
+  function _periodoPadraoRecusas() {
+    const fim = new Date();
+    const inicio = new Date(fim.getTime() - (DIAS_MAX_PERIODO_RECUSAS - 1) * 86400000);
+    return { ini: inicio.toISOString().slice(0, 10), fim: fim.toISOString().slice(0, 10) };
+  }
+  function _periodoRecusasValido(ini, fim) {
+    if (!ini || !fim) return false;
+    const dIni = new Date(ini + 'T00:00:00'), dFim = new Date(fim + 'T23:59:59');
+    if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime()) || dIni > dFim) return false;
+    return (dFim - dIni) / 86400000 <= DIAS_MAX_PERIODO_RECUSAS;
+  }
+  // Coleção pequena/cadastro (motoristas, motivos, conferentes, tarefas,
+  // vendedores de mercado) — sempre segura de carregar sozinha na entrada,
+  // nunca é o gargalo. Separada da busca pesada (ledger de recusas) abaixo.
+  //
+  // BUG AO VIVO REAL (2026-09-10): `_migrarParaChunksSeNecessario()` morava
+  // aqui dentro, rodando toda vez que a tela abria — na 1ª vez que roda de
+  // verdade em produção (chunks ainda não existem, `recebimento_recusas_
+  // notas` pode ter dezenas de milhares de notas do BI), ela lê a coleção
+  // inteira de uma vez e grava dezenas de chunks em sequência. Isso sozinho
+  // já demora, e enquanto essa leitura/gravação gigante está em voo, até o
+  // clique em "🔍 Buscar" (que só mexe em `recebimento_recusas`, sem
+  // nenhuma relação) ficava preso atrás dela na fila de requisições —
+  // parecia a tela inteira travada. Virou uma função separada
+  // (`_carregarNotasVendaLedger`), chamada em segundo plano (nunca
+  // aguardada pelo render da tela) e só de verdade aguardada onde a
+  // correção precisa ser garantida (`_importarNotasVendaBiRegistros`, antes
+  // de `_gravarNotasVenda` usar `_notas` pra saber o que já existe).
+  let _cadastrosRecusasCarregados = false;
+  async function _carregarCadastrosRecusas(forcar) {
+    if (_cadastrosRecusasCarregados && !forcar) return;
+    const [m, mot, conf, tar, vm] = await Promise.all([
       fs().collection(COL_MOTORISTAS).get(),
       fs().collection(COL_MOTIVOS).get(),
       fs().collection(COL_CONFERENTES).get(),
       fs().collection(COL_TAREFAS).get(),
       fs().collection(COL_VENDEDORES_MERCADO).get(),
     ]);
-    _notas = notasChunks;
+    _motoristas = m.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
+    _motivos = mot.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
+    _conferentes = conf.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
+    _vendedoresMercado = vm.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nomeMercado || '').localeCompare(String(b.nomeMercado || ''), 'pt-BR'));
+    // FASE 8 — indexado por recusaId (o mesmo id do doc de tarefa, ver
+    // confirmarAtribuicaoConferenciaRecusa) pra achar rápido se já existe
+    // uma conferência delegada em andamento pra cada linha da tabela.
+    _tarefas = new Map(tar.docs.map(d => [d.id, { _id:d.id, ...d.data() }]));
+    _cadastrosRecusasCarregados = true;
+  }
+
+  // Ledger de vendas (_notas) — separado dos cadastros leves acima de
+  // propósito (ver comentário acima). `forcar` sempre revalida contra
+  // COL_NOTAS_CHUNKS (barato quando já existe); só reprocessa do zero
+  // quando os chunks ainda não existem de verdade.
+  let _notasVendaCarregando = false;
+  let _notasCarregadas = false;
+  async function _carregarNotasVendaLedger(forcar) {
+    if (_notasCarregadas && !forcar) return _notas;
+    _notasVendaCarregando = true;
+    try {
+      _notas = await _migrarParaChunksSeNecessario();
+      _notasCarregadas = true;
+    } finally {
+      _notasVendaCarregando = false;
+    }
+    return _notas;
+  }
+  // PEDIDO AO VIVO (2026-09-10): "quero que tenha período... busca manual,
+  // não automática" — busca direcionada por `.where('criadoEm', ...)` no
+  // servidor (não traz mais a coleção inteira pra filtrar depois no
+  // cliente) e só roda quando pedida (botão Buscar), nunca sozinha ao
+  // entrar na tela. Período máximo de 3 meses, validado antes de buscar.
+  async function _buscarRecusasPeriodo(ini, fim, forcar) {
+    if (!_periodoRecusasValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
+    const chave = ini + '|' + fim;
+    if (_recusasPeriodoBuscado === chave && !forcar) return;
+    const r = await fs().collection(COL_RECUSAS)
+      .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
+      .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
+      .get();
     // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada por
     // 100-consulta-notas-fiscais.js (origem:'AUTOMATICO') não é um
     // recebimento físico processado pelo Coletor — não deve aparecer na
@@ -516,14 +608,18 @@
     // têm esse campo, mas sempre tiveram `motivoAutomaticoTexto` (exclusivo
     // desse fluxo), que serve de marcador retroativo (ver 102-devolucoes-bi-indicadores.js).
     _recusas = r.docs.map(d => ({ _id:d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a,b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
-    _motoristas = m.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
-    _motivos = mot.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
-    _conferentes = conf.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
-    _vendedoresMercado = vm.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nomeMercado || '').localeCompare(String(b.nomeMercado || ''), 'pt-BR'));
-    // FASE 8 — indexado por recusaId (o mesmo id do doc de tarefa, ver
-    // confirmarAtribuicaoConferenciaRecusa) pra achar rápido se já existe
-    // uma conferência delegada em andamento pra cada linha da tabela.
-    _tarefas = new Map(tar.docs.map(d => [d.id, { _id:d.id, ...d.data() }]));
+    _recusasPeriodoBuscado = chave;
+  }
+  // Mantida pra compatibilidade com os call sites já existentes (depois de
+  // criar/editar/excluir cadastro, atribuir conferência, etc.) — sempre
+  // atualiza os cadastros; só refaz a busca pesada de recusas se já tinha
+  // uma busca feita nesta sessão (nunca dispara ela sozinha do nada).
+  async function carregarDados(forcar) {
+    await _carregarCadastrosRecusas(forcar);
+    if (_recusasPeriodoBuscado) {
+      const [ini, fim] = _recusasPeriodoBuscado.split('|');
+      await _buscarRecusasPeriodo(ini, fim, true);
+    }
   }
 
   function resumoCards() {
@@ -533,7 +629,7 @@
     const vols = _recusas.reduce((s,r) => s + Number(r.volumeInformado || 0), 0);
     return `
       <div style="display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px;margin:12px 0 16px">
-        <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">NOTAS DE VENDA (LEDGER)</div><div style="font-size:1.45rem;font-weight:850">${_notas.length}</div></div>
+        <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">NOTAS DE VENDA (LEDGER)</div><div style="font-size:1.45rem;font-weight:850">${_notasVendaCarregando ? '⏳' : _notas.length.toLocaleString('pt-BR')}</div>${_notasVendaCarregando ? '<div style="font-size:.64rem;color:var(--muted);margin-top:2px">Organizando em segundo plano — o resto da tela já funciona normalmente</div>' : ''}</div>
         <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">RETORNOS HOJE</div><div style="font-size:1.45rem;font-weight:850">${hojeQtd}</div></div>
         <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">VOLUMES RETORNADOS</div><div style="font-size:1.45rem;font-weight:850">${vols}</div></div>
         <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">COM DIVERGÊNCIA</div><div style="font-size:1.45rem;font-weight:850;color:${diverg ? '#dc2626':'inherit'}">${diverg}</div></div>
@@ -562,12 +658,17 @@
     return `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px">
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">DE</div><input class="field" id="recusas-filtro-periodo-ini" type="date" value="${esc(_filtroPeriodoInicio)}" style="padding:8px"></div>
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input class="field" id="recusas-filtro-periodo-fim" type="date" value="${esc(_filtroPeriodoFim)}" style="padding:8px"></div>
+      <button class="btn btn-primary btn-sm" id="recusas-buscar-periodo" style="padding:8px 14px">🔍 Buscar</button>
+      <div style="font-size:.68rem;color:var(--muted);align-self:center">Período máximo de 3 meses</div>
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">TRATAMENTO</div><select class="field" id="recusas-filtro-tratamento" style="padding:8px">${Object.keys(TRATAMENTO_LABELS).map(k=>`<option value="${k}" ${k===_filtroTratamento?'selected':''}>${esc(TRATAMENTO_LABELS[k])}</option>`).join('')}</select></div>
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">CONFERÊNCIA</div><select class="field" id="recusas-filtro-conferencia" style="padding:8px"><option value="" ${!_filtroConferencia?'selected':''}>Todas</option><option value="NAO_REALIZADA" ${_filtroConferencia==='NAO_REALIZADA'?'selected':''}>Não realizada</option><option value="CONFERIDA" ${_filtroConferencia==='CONFERIDA'?'selected':''}>Conferida</option><option value="CONFERIDA_COM_DIVERGENCIA" ${_filtroConferencia==='CONFERIDA_COM_DIVERGENCIA'?'selected':''}>Conferida c/ divergência</option></select></div>
       <input class="field" id="recusas-filtro" value="${esc(_filtro)}" placeholder="Pesquisar NF, motorista, motivo, box..." style="max-width:280px;padding:8px">
     </div>`;
   }
   function renderRecusasTabela() {
+    if (!_recusasPeriodoBuscado) {
+      return '<div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">Escolha o período e clique em Buscar</div><div class="empty-sub">A lista não carrega sozinha — evita buscar a coleção inteira à toa toda vez que você entra nesta tela.</div></div>';
+    }
     const lista = filtrarRecusas();
     return `<div style="overflow:auto"><table class="dt-table"><thead><tr><th>Data/Hora</th><th>Notas</th><th>Origem</th><th>Motorista</th><th>Conferente</th><th>Motivo</th><th>Box</th><th>Esperado</th><th>Contado</th><th>Dif.</th><th>Status</th><th>Conferência de produtos</th><th>Tratamento</th><th>Status do retorno</th><th></th></tr></thead><tbody>${lista.length ? lista.map(r => {
       const dif = Number(r.diferencaVolumes || 0);
@@ -678,7 +779,7 @@
       }
       const resumo = `Importação concluída: ${p.motoristasNovos.length} motorista(s) novo(s), ${p.motivosNovos.length} motivo(s) novo(s), ${p.motoristasParaAtualizarPlaca.length} placa(s) preenchida(s).`;
       _previewImportacaoCadastros = null;
-      await carregarDados();
+      await carregarDados(true);
       desenharCadastros();
       global.showToast?.(resumo, 'success');
     } catch (e) {
@@ -752,14 +853,14 @@
         if (v._id) await fs().collection(COL_VENDEDORES_MERCADO).doc(v._id).set(payload, { merge: true });
         else await fs().collection(COL_VENDEDORES_MERCADO).add({ ...payload, criadoEm: payload.atualizadoEm });
         document.getElementById('vm-modal')?.remove();
-        await carregarDados(); desenharCadastros();
+        await carregarDados(true); desenharCadastros();
         global.showToast?.('Mercado salvo.', 'success');
       } catch (e) { global.showToast?.('Erro ao salvar mercado: ' + (e.message || e), 'error'); btn.disabled = false; btn.textContent = 'Salvar'; }
     };
   }
   async function excluirVendedorMercado(id) {
     if (!id || !confirm('Excluir este mercado do cadastro?')) return;
-    try { await fs().collection(COL_VENDEDORES_MERCADO).doc(id).delete(); await carregarDados(); desenharCadastros(); global.showToast?.('Mercado excluído.', 'success'); }
+    try { await fs().collection(COL_VENDEDORES_MERCADO).doc(id).delete(); await carregarDados(true); desenharCadastros(); global.showToast?.('Mercado excluído.', 'success'); }
     catch (e) { global.showToast?.('Erro ao excluir: ' + (e.message || e), 'error'); }
   }
 
@@ -851,6 +952,21 @@
   // gráficos. Nunca reconcilia com uma busca vazia (mesmo cuidado já usado
   // nos removedores da Bluesoft antiga: uma falha/leitura parcial nunca
   // pode virar "apagar tudo").
+  // BUG AO VIVO REAL EVITADO (2026-09-10): `_recusas` (o array em memória
+  // usado pela TABELA da tela) passou a ser limitado por período — busca
+  // manual, no máximo 3 meses (pedido ao vivo do usuário, ver
+  // _buscarRecusasPeriodo acima). `_gravarNotasVenda` (protege nota já
+  // recebida contra ser apagada) e `_corrigirVolumeEsperadoRecusas`
+  // (corrige volumeEsperado:0 quando o BI traz os itens de verdade) NÃO
+  // podem depender desse array limitado — rodam em background (sync do BI,
+  // a cada 30min ou no "Buscar" do painel de venda) e precisam enxergar
+  // TODO o histórico, nunca só os últimos 3 meses, senão uma nota recebida
+  // há mais tempo perderia a proteção contra exclusão, ou ficaria pra
+  // sempre com volumeEsperado errado. Busca própria, independente da tela.
+  async function _todasRecusasParaSincronizacaoBi() {
+    const r = await fs().collection(COL_RECUSAS).get();
+    return r.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
+  }
   async function _gravarNotasVenda(notas) {
     const chavesExistentes = new Set(_notas.map(n => n.chave));
     const notasNovas = notas.filter(n => !chavesExistentes.has(n.chave));
@@ -920,7 +1036,8 @@
     let removidas = 0;
     if (notas.length) {
       const chavesAbertasAgora = new Set(notas.map(n => n.chave));
-      const chavesComRecebimento = new Set(_recusas.flatMap(r => r.chaves || []));
+      const recusasParaProtecao = await _todasRecusasParaSincronizacaoBi();
+      const chavesComRecebimento = new Set(recusasParaProtecao.flatMap(r => r.chaves || []));
       const paraRemover = _notas.filter(n => n.origemImportacao === 'BI' && n.naturezaLabel === 'Venda' && !chavesAbertasAgora.has(n.chave) && !chavesComRecebimento.has(n.chave));
       for (let i = 0; i < paraRemover.length; i += 300) {
         const lote = paraRemover.slice(i, i + 300);
@@ -958,7 +1075,8 @@
   async function _corrigirVolumeEsperadoRecusas(notasComItens) {
     const porChave = new Map(notasComItens.map(n => [n.chave, n]));
     let corrigidas = 0;
-    for (const r of _recusas) {
+    const todasRecusas = await _todasRecusasParaSincronizacaoBi();
+    for (const r of todasRecusas) {
       if (!Array.isArray(r.notas) || !r.notas.length) continue;
       let mudou = false;
       const notasAtualizadas = r.notas.map(n => {
@@ -975,7 +1093,11 @@
       const dif = Number(r.volumeInformado || 0) - esperadoNovo;
       const payload = { notas: notasAtualizadas, volumeEsperado: esperadoNovo, diferencaVolumes: dif, conferenciaStatus: dif === 0 ? 'CONFERIDO' : 'DIVERGENTE' };
       await fs().collection(COL_RECUSAS).doc(r._id).update(payload);
-      Object.assign(r, payload);
+      // Se essa recusa também está na lista que a tela mostra agora (usuário
+      // já buscou um período que inclui ela), atualiza ali também — não
+      // precisa esperar uma busca nova pra ver o conserto.
+      const naTelaAgora = _recusas.find(x => x._id === r._id);
+      if (naTelaAgora) Object.assign(naTelaAgora, payload);
       corrigidas++;
     }
     return corrigidas;
@@ -984,9 +1106,15 @@
     if (!Array.isArray(registros)) throw new Error('Formato inesperado — esperava uma lista de registros.');
     const vendas = registros.filter(r => String(r.tipo_movimento || '').toUpperCase() === 'VENDA');
     const notas = _agruparNotasBiPorChave(vendas);
+    // _gravarNotasVenda decide o que já existe (pra pular) e onde continuar
+    // gravando (chunk aberto) olhando pra `_notas` — precisa estar
+    // carregado e ATUALIZADO antes daqui, nunca só o que sobrou de uma
+    // carga antiga da tela (ver comentário de _carregarNotasVendaLedger).
+    await _carregarNotasVendaLedger(true);
     const { novas, removidas } = await _gravarNotasVenda(notas);
     const volumesCorrigidos = await _corrigirVolumeEsperadoRecusas(notas);
-    await carregarDados();
+    await carregarDados(true);
+    await _carregarNotasVendaLedger(true);
     return { totalNotas: novas, totalRemovidas: removidas, totalEncontradas: notas.length, totalLinhas: vendas.length, volumesCorrigidos };
   }
 
@@ -1224,7 +1352,7 @@
         atribuidoPara: operador, atribuidoPor: u.email || u.uid || '', atribuidoEm: agoraIso(), status: 'PENDENTE',
       }, { merge:true });
       global.closeModal?.('modal-recusa-atribuir-conferencia');
-      await carregarDados();
+      await carregarDados(true);
       desenhar();
       global.showToast?.('Conferência solicitada para ' + operador + '.', 'success');
     } catch (e) { global.showToast?.('Erro ao solicitar conferência: ' + (e.message || e), 'error'); }
@@ -1315,7 +1443,7 @@
     }
     try {
       await fs().collection(col).add(payload);
-      await carregarDados(); desenharCadastros(); global.showToast?.('Cadastro salvo.', 'success');
+      await carregarDados(true); desenharCadastros(); global.showToast?.('Cadastro salvo.', 'success');
     } catch(e) { global.showToast?.('Erro ao salvar cadastro: ' + (e.message || e), 'error'); }
   }
   async function editarEmailConferente(id) {
@@ -1324,18 +1452,18 @@
     if (novo == null) return;
     try {
       await fs().collection(COL_CONFERENTES).doc(id).set({ email: String(novo).trim().toLowerCase(), atualizadoEm:agoraIso() }, {merge:true});
-      await carregarDados(); desenharCadastros(); global.showToast?.('E-mail atualizado.', 'success');
+      await carregarDados(true); desenharCadastros(); global.showToast?.('E-mail atualizado.', 'success');
     } catch(e) { global.showToast?.('Erro: ' + (e.message || e), 'error'); }
   }
   async function toggleCadastro(tipo,id) {
     const item = arrCadastro(tipo).find(x => x._id === id); if (!item) return;
     const col = colCadastro(tipo);
-    try { await fs().collection(col).doc(id).set({ ativo:item.ativo === false, atualizadoEm:agoraIso() }, {merge:true}); await carregarDados(); desenharCadastros(); } catch(e){ global.showToast?.('Erro: '+(e.message||e),'error'); }
+    try { await fs().collection(col).doc(id).set({ ativo:item.ativo === false, atualizadoEm:agoraIso() }, {merge:true}); await carregarDados(true); desenharCadastros(); } catch(e){ global.showToast?.('Erro: '+(e.message||e),'error'); }
   }
   async function deletarCadastro(tipo,id) {
     const col = colCadastro(tipo);
     if (!confirm('Excluir este cadastro? Registros antigos de recusa continuarão com o nome salvo no histórico.')) return;
-    try { await fs().collection(col).doc(id).delete(); await carregarDados(); desenharCadastros(); } catch(e){ global.showToast?.('Erro: '+(e.message||e),'error'); }
+    try { await fs().collection(col).doc(id).delete(); await carregarDados(true); desenharCadastros(); } catch(e){ global.showToast?.('Erro: '+(e.message||e),'error'); }
   }
 
   function ligarBotoesTabela() {
@@ -1472,20 +1600,56 @@
     global.XLSX.writeFile(wb, 'notas_retornadas_' + new Date().toISOString().slice(0,10) + '.xlsx');
   }
 
+  async function _executarBuscaPeriodoRecusas() {
+    const btn = document.getElementById('recusas-buscar-periodo');
+    if (!_periodoRecusasValido(_filtroPeriodoInicio, _filtroPeriodoFim)) {
+      global.showToast?.('Escolha um período válido de até 3 meses.', 'error');
+      return;
+    }
+    const original = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Buscando...'; }
+    try {
+      await _buscarRecusasPeriodo(_filtroPeriodoInicio, _filtroPeriodoFim, true);
+      desenhar();
+    } catch (e) {
+      global.showToast?.('Erro ao buscar: ' + (e.message || e), 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+  }
   function ligarEventos() {
-    document.querySelector('[data-recusa-atualizar]')?.addEventListener('click', async()=>{ await carregarDados(); desenhar(); });
+    document.querySelector('[data-recusa-atualizar]')?.addEventListener('click', async()=>{ await carregarDados(true); desenhar(); });
     document.querySelector('[data-recusa-exportar]')?.addEventListener('click', exportarNotasRetornadas);
     document.querySelector('[data-recusa-buscar-bi]')?.addEventListener('click', buscarBiAutomatico);
     ligarBotoesTabela();
+    document.getElementById('recusas-buscar-periodo')?.addEventListener('click', _executarBuscaPeriodoRecusas);
     document.getElementById('recusas-filtro')?.addEventListener('input', e => { _filtro=e.target.value || ''; redesenharTabela(); });
-    document.getElementById('recusas-filtro-periodo-ini')?.addEventListener('change', e => { _filtroPeriodoInicio=e.target.value || ''; redesenharTabela(); });
-    document.getElementById('recusas-filtro-periodo-fim')?.addEventListener('change', e => { _filtroPeriodoFim=e.target.value || ''; redesenharTabela(); });
+    // PEDIDO AO VIVO (2026-09-10): período máximo de 3 meses — corrige na
+    // hora se o usuário escolher um intervalo maior (empurra a outra ponta
+    // pro limite), em vez de deixar escolher e só travar depois no clique
+    // em Buscar.
+    document.getElementById('recusas-filtro-periodo-ini')?.addEventListener('change', e => {
+      _filtroPeriodoInicio = e.target.value || '';
+      if (_filtroPeriodoInicio && _filtroPeriodoFim && !_periodoRecusasValido(_filtroPeriodoInicio, _filtroPeriodoFim)) {
+        _filtroPeriodoFim = new Date(new Date(_filtroPeriodoInicio + 'T00:00:00').getTime() + DIAS_MAX_PERIODO_RECUSAS * 86400000).toISOString().slice(0, 10);
+        global.showToast?.('Período ajustado — máximo de 3 meses.', 'i');
+      }
+      desenhar();
+    });
+    document.getElementById('recusas-filtro-periodo-fim')?.addEventListener('change', e => {
+      _filtroPeriodoFim = e.target.value || '';
+      if (_filtroPeriodoInicio && _filtroPeriodoFim && !_periodoRecusasValido(_filtroPeriodoInicio, _filtroPeriodoFim)) {
+        _filtroPeriodoInicio = new Date(new Date(_filtroPeriodoFim + 'T00:00:00').getTime() - DIAS_MAX_PERIODO_RECUSAS * 86400000).toISOString().slice(0, 10);
+        global.showToast?.('Período ajustado — máximo de 3 meses.', 'i');
+      }
+      desenhar();
+    });
     document.getElementById('recusas-filtro-tratamento')?.addEventListener('change', e => { _filtroTratamento=e.target.value || ''; redesenharTabela(); });
     document.getElementById('recusas-filtro-conferencia')?.addEventListener('change', e => { _filtroConferencia=e.target.value || ''; redesenharTabela(); });
   }
 
   function ligarEventosCadastros() {
-    document.querySelector('[data-recusa-cad-atualizar]')?.addEventListener('click', async()=>{ await carregarDados(); desenharCadastros(); });
+    document.querySelector('[data-recusa-cad-atualizar]')?.addEventListener('click', async()=>{ await carregarDados(true); desenharCadastros(); });
     document.querySelector('[data-recusa-ler-import-cadastros]')?.addEventListener('click', lerImportacaoCadastros);
     document.querySelector('[data-recusa-salvar-import-cadastros]')?.addEventListener('click', salvarImportacaoCadastros);
     document.querySelectorAll('[data-recusa-add]').forEach(b => b.addEventListener('click', () => adicionarCadastro(b.dataset.recusaAdd)));
@@ -1497,22 +1661,49 @@
     document.querySelectorAll('[data-vm-excluir]').forEach(b => b.addEventListener('click', () => excluirVendedorMercado(b.dataset.vmExcluir)));
   }
 
+  // Shell-first (mesmo padrão de 99-recebimento-retornos-status.js):
+  // desenhar()/desenharCadastros() já são seguras com os arrays de estado
+  // vazios, então chamam ANTES do fetch (título/botões/filtros aparecem na
+  // hora) e de novo depois — nunca escondendo a estrutura atrás de um
+  // "Carregando..." de página inteira.
+  // PEDIDO AO VIVO (2026-09-10): não busca mais a lista de recusas sozinha
+  // ao entrar — só os cadastros pequenos (motivo, motorista, etc., pros
+  // dropdowns funcionarem). A tabela em si só carrega quando o usuário
+  // escolhe o período e clica em Buscar (ver _buscarRecusasPeriodo acima).
   async function renderRecebimentoRecusas() {
     const pagina = document.getElementById('page-recebimento-recusas');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-title">Carregando Notas Retornadas...</div></div>';
-    try { await carregarDados(); desenhar(); } catch(e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Notas Retornadas</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; }
+    if (!_filtroPeriodoInicio || !_filtroPeriodoFim) {
+      const p = _periodoPadraoRecusas();
+      _filtroPeriodoInicio = _filtroPeriodoInicio || p.ini;
+      _filtroPeriodoFim = _filtroPeriodoFim || p.fim;
+    }
+    desenhar();
+    try { await _carregarCadastrosRecusas(); } catch(e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Notas Retornadas</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; return; }
+    desenhar();
+    // Ledger de vendas (_notas) roda em segundo plano, NUNCA aguardado
+    // aqui — só enriquece o card "Notas de venda (ledger)" e o detalhe da
+    // nota quando terminar (ver comentário de _carregarNotasVendaLedger).
+    // Se a página já foi trocada quando terminar, `pagina` não existe mais
+    // no DOM e desenhar() vira no-op (já checa `document.getElementById`).
+    // A chamada em si já marca `_notasVendaCarregando=true` de forma
+    // síncrona (roda até o 1º `await` antes de devolver a Promise) —
+    // redesenha logo em seguida pra mostrar esse estado, não só no fim.
+    const notasPromise = _carregarNotasVendaLedger();
+    desenhar();
+    notasPromise.then(() => desenhar()).catch(() => {});
   }
   async function renderRecebimentoRecusasCadastros() {
     const pagina = document.getElementById('page-recebimento-recusas-cadastros');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-title">Carregando Cadastros...</div></div>';
-    try { await carregarDados(); desenharCadastros(); } catch(e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Cadastros</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; }
+    desenharCadastros();
+    try { await _carregarCadastrosRecusas(); } catch(e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Cadastros</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; return; }
+    desenharCadastros();
   }
 
   global.renderRecebimentoRecusas = renderRecebimentoRecusas;
   global.renderRecebimentoRecusasCadastros = renderRecebimentoRecusasCadastros;
-  global.DTRecusasParser = { parseDanfeText, extrairChave, chaveNfeValida, numeroNotaDaChave, dividirTextoPorDanfes, _agruparNotasBiPorChave, _importarNotasVendaBiRegistros, buscarBiAutomatico, _corrigirGtinNotasVenda, _corrigirVolumeEsperadoRecusas, reconstruirTodosOsChunks, diagnosticoChunks, _empacotarEmChunks, _notaResumida, _tamanhoBytesEstimado, _notasDoDocumentoChunk, TAMANHO_CHUNK, LIMITE_BYTES_CHUNK, ARQUIVO_BI_NOTAS };
+  global.DTRecusasParser = { parseDanfeText, extrairChave, chaveNfeValida, numeroNotaDaChave, dividirTextoPorDanfes, _agruparNotasBiPorChave, _importarNotasVendaBiRegistros, buscarBiAutomatico, _corrigirGtinNotasVenda, _corrigirVolumeEsperadoRecusas, reconstruirTodosOsChunks, diagnosticoChunks, _empacotarEmChunks, _notaResumida, _tamanhoBytesEstimado, _notasDoDocumentoChunk, TAMANHO_CHUNK, LIMITE_BYTES_CHUNK, ARQUIVO_BI_NOTAS, _carregarNotasVendaLedger };
   // Reaproveitado por 98-recebimento-retornos-indicadores.js pro gráfico
   // "Notas por Ação (Tratamento)" — mesmo rótulo em toda a tela, sem
   // duplicar o mapa em dois arquivos.

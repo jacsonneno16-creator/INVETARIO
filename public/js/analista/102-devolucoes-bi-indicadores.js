@@ -31,8 +31,15 @@
   const COL_RECUSAS = 'recebimento_recusas';
   const PAGE_SIZE = 50;
   const PALETA_MOTIVO = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#4a3aa7', '#e34948', '#008300'];
+  // PEDIDO AO VIVO (2026-09-10): "todas as telas que trazem dados na parte
+  // de Recebimento, colocar para buscar manualmente" — mesmo motivo do 98
+  // (não do 97/99/103, que usam 92 dias): "Devoluções por mês" e a matriz
+  // Motivo×Mês mostram até 24 meses de histórico, então o período máximo
+  // fica em ~2 anos em vez de 3 meses.
+  const DIAS_MAX_PERIODO = 731; // ~2 anos
 
   let _recusas = [];
+  let _periodoBuscado = ''; // chave "ini|fim" do último período buscado com sucesso — vazio = ainda não buscou
   let _periodoInicio = '';
   let _periodoFim = '';
   let _filtroMes = '';
@@ -80,12 +87,27 @@
   // segundo recebimento_recusas (origem:'COLETOR') quando isso acontece —
   // aqui só precisa achar, pra cada chave AUTOMATICO, se já existe algum
   // outro registro (qualquer origem != 'AUTOMATICO') com a mesma chave.
-  function _chavesComRetornoFisico(todos) {
+  //
+  // Busca DIRECIONADA (não a coleção inteira): o registro COLETOR que prova
+  // o retorno físico pode ter sido bipado em QUALQUER data — não carrega
+  // `dataEmissao` nenhuma (é um evento de recebimento, não uma nota fiscal)
+  // — então não dá pra descobrir esse cruzamento só dentro do período
+  // buscado por dataEmissao. Em vez de reintroduzir uma varredura sem limite
+  // da coleção inteira (o problema de lentidão que esta rodada resolve),
+  // consulta só pelas chaves que realmente precisam ser checadas, em lotes
+  // de 10 (limite do `array-contains-any` do Firestore).
+  async function _buscarChavesComRetornoFisico(chaves) {
+    const chavesUnicas = [...new Set(chaves.filter(Boolean))];
     const set = new Set();
-    todos.forEach(r => {
-      if (r.origem === 'AUTOMATICO') return;
-      (r.chaves || []).forEach(c => { if (c) set.add(c); });
-    });
+    for (let i = 0; i < chavesUnicas.length; i += 10) {
+      const lote = chavesUnicas.slice(i, i + 10);
+      const snap = await fs().collection(COL_RECUSAS).where('chaves', 'array-contains-any', lote).get();
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if (data.origem === 'AUTOMATICO') return;
+        (data.chaves || []).forEach(c => { if (c) set.add(c); });
+      });
+    }
     return set;
   }
   function _retornouFisicamente(r, chavesComRetorno) {
@@ -110,16 +132,43 @@
       await batch.commit();
     }
     global.showToast?.(`${alvos.length} registro(s) apagado(s).`, 'success');
-    await carregarDevolucoesIndicadores(true);
+    if (_periodoBuscado) { const [ini, fim] = _periodoBuscado.split('|'); await carregarDevolucoesIndicadores(ini, fim, true); }
     desenhar();
   }
 
-  async function carregarDevolucoesIndicadores(forcar) {
-    if (_recusas.length && !forcar) return;
-    const snap = await fs().collection(COL_RECUSAS).get();
+  function _periodoPadrao() {
+    const fim = new Date();
+    const inicio = new Date(fim.getTime() - (DIAS_MAX_PERIODO - 1) * 86400000);
+    const d = x => x.toISOString().slice(0, 10);
+    return { ini: d(inicio), fim: d(fim) };
+  }
+  function _periodoValido(ini, fim) {
+    if (!ini || !fim) return false;
+    const dIni = new Date(ini + 'T00:00:00'), dFim = new Date(fim + 'T00:00:00');
+    if (isNaN(dIni) || isNaN(dFim) || dIni > dFim) return false;
+    return (dFim - dIni) / 86400000 <= DIAS_MAX_PERIODO;
+  }
+
+  // Busca no servidor filtrada por `dataEmissao` (data real da nota, não
+  // `criadoEm`) — combina com o pedido ao vivo original de que o período
+  // "continua filtrando pela dataEmissao real da nota". Registros muito
+  // antigos sem dataEmissao no nível raiz (ver comentário acima de
+  // `_destinatarioDe`) ficam fora da busca, igual ao comportamento antigo
+  // quando o filtro de período já estava ativo (nunca inventava data). O
+  // cruzamento de retorno físico é feito à parte (_buscarChavesComRetornoFisico),
+  // sem depender desse mesmo período.
+  async function carregarDevolucoesIndicadores(ini, fim, forcar) {
+    const chave = ini + '|' + fim;
+    if (_periodoBuscado === chave && !forcar) return;
+    const snap = await fs().collection(COL_RECUSAS)
+      .where('dataEmissao', '>=', ini)
+      .where('dataEmissao', '<=', fim)
+      .get();
     const todos = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-    const chavesComRetorno = _chavesComRetornoFisico(todos);
-    _recusas = todos.filter(_ehDevolucaoAutomatica).map(r => ({ ...r, retornouFisicamente: _retornouFisicamente(r, chavesComRetorno) }));
+    const automaticos = todos.filter(_ehDevolucaoAutomatica);
+    const chavesComRetorno = await _buscarChavesComRetornoFisico(automaticos.flatMap(r => r.chaves || []));
+    _recusas = automaticos.map(r => ({ ...r, retornouFisicamente: _retornouFisicamente(r, chavesComRetorno) }));
+    _periodoBuscado = chave;
   }
 
   // Data real da nota (dataEmissao) — não `criadoEm` (quando este app
@@ -349,6 +398,16 @@
     </style>`;
   }
 
+  let _devindCarregando = false;
+  let _devindErro = '';
+  function _devindCarregandoHtml() {
+    return _devindCarregando ? '<div style="font-size:.76rem;color:var(--muted);padding:6px 0">⏳ Atualizando...</div>' : '';
+  }
+  function _devindErroHtml() {
+    if (_devindErro) return '<div style="font-size:.76rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;gap:10px"><span>⚠️ Não foi possível atualizar: ' + esc(_devindErro) + '</span><button type="button" class="btn btn-ghost btn-sm" data-devind-tentar-de-novo="1">Tentar de novo</button></div>';
+    return '';
+  }
+
   function desenhar() {
     const pagina = document.getElementById('page-recebimento-devolucoes-indicadores');
     if (!pagina) return;
@@ -369,7 +428,8 @@
         <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">EMISSÃO — DE</div><input type="date" class="field" id="devind-periodo-ini" value="${esc(_periodoInicio)}" style="padding:7px"></div>
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input type="date" class="field" id="devind-periodo-fim" value="${esc(_periodoFim)}" style="padding:7px"></div>
-          ${(_periodoInicio || _periodoFim) ? '<button class="btn btn-ghost btn-sm" data-devind-limpar-periodo="1">✕ período</button>' : ''}
+          <button class="btn btn-primary btn-sm" data-devind-buscar-periodo="1" style="padding:7px 14px">🔍 Buscar</button>
+          <div style="font-size:.64rem;color:var(--muted);align-self:center">Máx. 2 anos</div>
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">RETORNO FÍSICO</div><select class="field" id="devind-filtro-retorno" style="padding:7px">
             <option value="" ${_filtroRetorno === '' ? 'selected' : ''}>Todas</option>
             <option value="nao" ${_filtroRetorno === 'nao' ? 'selected' : ''}>Aguardando retorno</option>
@@ -379,6 +439,9 @@
           <button class="btn btn-ghost" data-devind-atualizar="1">↻ Atualizar</button>
         </div>
       </div>
+      ${_devindCarregandoHtml()}
+      ${_devindErroHtml()}
+      ${!_periodoBuscado ? '<div class="empty" style="margin-top:14px"><div class="empty-icon">🔍</div><div class="empty-title">Escolha o período e clique em Buscar</div><div class="empty-sub">Os indicadores não carregam sozinhos — evita buscar a coleção inteira à toa toda vez que você entra nesta tela.</div></div>' : `
       ${resumoHtml(k)}
       <div class="tc" style="padding:16px;margin-top:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -396,23 +459,47 @@
         <div class="tc" style="padding:16px"><div class="tc-title">🏬 Top redes/bandeiras</div>${barChart(porRede, { limit: 10, filterKey: 'rede', filtroAtivo: _filtroRede })}</div>
         <div class="tc" style="padding:16px"><div class="tc-title">🏪 Top mercados/lojas</div>${barChart(porMercado, { limit: 10 })}</div>
       </div>
-      ${_tabelaHtml()}`;
+      ${_tabelaHtml()}`}`;
     global.aplicarPermissoesAnalista?.();
   }
 
+  // Shell-first (mesmo padrão de 99-recebimento-retornos-status.js): desenhar()
+  // já é seguro com _recusas vazio, então chama ela ANTES do fetch (título/
+  // filtros/botão aparecem na hora) e de novo depois, nunca escondendo a
+  // estrutura atrás de um "Carregando..." de página inteira.
+  async function _atualizarDadosDevInd(forcar) {
+    if (!_periodoValido(_periodoInicio, _periodoFim)) { global.showToast?.('Escolha um período válido de até 2 anos.', 'error'); return; }
+    _devindCarregando = true;
+    _devindErro = '';
+    desenhar();
+    try { await carregarDevolucoesIndicadores(_periodoInicio, _periodoFim, forcar); } catch (e) { _devindErro = e.message || String(e); }
+    _devindCarregando = false;
+    desenhar();
+  }
+
+  // PEDIDO AO VIVO (2026-09-10): "todas as telas que trazem dados na parte
+  // de Recebimento, colocar para buscar manualmente" — não busca mais
+  // sozinha ao entrar na tela; só define o período padrão e desenha o
+  // esqueleto (filtros/botão), esperando o clique em Buscar.
   async function renderDevolucoesBiIndicadores() {
     const pagina = document.getElementById('page-recebimento-devolucoes-indicadores');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try { await carregarDevolucoesIndicadores(); }
-    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
+    if (!_periodoInicio || !_periodoFim) {
+      const p = _periodoPadrao();
+      _periodoInicio = _periodoInicio || p.ini;
+      _periodoFim = _periodoFim || p.fim;
+    }
     desenhar();
   }
 
   document.addEventListener('click', e => {
-    if (e.target.closest('[data-devind-atualizar]')) { carregarDevolucoesIndicadores(true).then(desenhar); return; }
+    if (e.target.closest('[data-devind-buscar-periodo]')) { _atualizarDadosDevInd(true); return; }
+    if (e.target.closest('[data-devind-atualizar]') || e.target.closest('[data-devind-tentar-de-novo]')) {
+      if (!_periodoBuscado) return;
+      _atualizarDadosDevInd(true);
+      return;
+    }
     if (e.target.closest('[data-devind-limpar-improprios]')) { _limparImproprios(); return; }
-    if (e.target.closest('[data-devind-limpar-periodo]')) { _periodoInicio = ''; _periodoFim = ''; _pagina = 0; desenhar(); return; }
     if (e.target.closest('[data-devind-limpar-filtros]')) { _filtroMes = ''; _filtroMotivo = ''; _filtroRede = ''; _filtroRetorno = ''; _busca = ''; _pagina = 0; desenhar(); return; }
 
     const mesTotal = e.target.closest('[data-devind-mes-total]');
@@ -445,8 +532,17 @@
     if (alvo) { e.preventDefault(); alvo.click(); }
   });
   document.addEventListener('change', e => {
-    if (e.target && e.target.id === 'devind-periodo-ini') { _periodoInicio = e.target.value || ''; _pagina = 0; desenhar(); }
-    if (e.target && e.target.id === 'devind-periodo-fim') { _periodoFim = e.target.value || ''; _pagina = 0; desenhar(); }
+    if (e.target && (e.target.id === 'devind-periodo-ini' || e.target.id === 'devind-periodo-fim')) {
+      _periodoInicio = document.getElementById('devind-periodo-ini')?.value || '';
+      _periodoFim = document.getElementById('devind-periodo-fim')?.value || '';
+      if (_periodoInicio && _periodoFim && !_periodoValido(_periodoInicio, _periodoFim)) {
+        if (e.target.id === 'devind-periodo-ini') _periodoFim = new Date(new Date(_periodoInicio + 'T00:00:00').getTime() + DIAS_MAX_PERIODO * 86400000).toISOString().slice(0, 10);
+        else _periodoInicio = new Date(new Date(_periodoFim + 'T00:00:00').getTime() - DIAS_MAX_PERIODO * 86400000).toISOString().slice(0, 10);
+        global.showToast?.('Período ajustado — máximo de 2 anos.', 'i');
+      }
+      _pagina = 0; desenhar();
+      return;
+    }
     if (e.target && e.target.id === 'devind-filtro-retorno') { _filtroRetorno = e.target.value || ''; _pagina = 0; desenhar(); }
   });
   document.addEventListener('input', e => {
@@ -454,6 +550,6 @@
   });
 
   global.renderDevolucoesBiIndicadores = renderDevolucoesBiIndicadores;
-  global._DevolucoesBiIndicadoresInternals = { kpis, _agrupar, mesAnoDe, _dataEmissaoDe, carregarDevolucoesIndicadores, getRecusas: () => _recusas, _corMotivo, _limparImproprios, MOTIVO_IMPROPRIO, _chavesComRetornoFisico, _retornouFisicamente };
+  global._DevolucoesBiIndicadoresInternals = { kpis, _agrupar, mesAnoDe, _dataEmissaoDe, carregarDevolucoesIndicadores, getRecusas: () => _recusas, _corMotivo, _limparImproprios, MOTIVO_IMPROPRIO, _buscarChavesComRetornoFisico, _retornouFisicamente };
   global.DTProducao?.registrarInvalidacao?.(() => { _recusas = []; });
 })(window);

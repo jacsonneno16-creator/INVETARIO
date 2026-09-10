@@ -55,6 +55,10 @@
 
   async function carregarLogisticaRecebimento(forcar) {
     if (_carregado && !forcar) return;
+    // Sem timeout artificial: bases grandes devem terminar de carregar,
+    // mesmo quando levam mais de 20/30 segundos (Promise.race com timeout
+    // não cancela a busca real, só desiste de esperar — pior UX numa
+    // consulta só lenta, não travada de verdade).
     const [notasSnap, cargasSnap] = await Promise.all([
       fs().collection('recebimento_notas').get(),
       fs().collection('recebimento_cargas').get(),
@@ -81,6 +85,14 @@
   // compras, misturar as duas fontes ali bagunçaria os números.
   let _comprasBi = [];
   let _comprasBiCarregado = false;
+  // PEDIDO AO VIVO (2026-09-09): "a tela precisa ficar o tempo todo em
+  // carregamento sem mostrar nem a estrutura do site?" — a estrutura
+  // (título, filtros, botão de sync) não depende de nenhum dado do
+  // Firestore pra existir; só os números/gráficos dependem. `_desenhar()`
+  // já é seguro de chamar com os arrays ainda vazios (mostra zerado) — só
+  // faltava chamá-la ANTES do fetch terminar, não só depois.
+  let _dashCarregando = false;
+  let _dashErro = '';
   async function _carregarComprasBi(forcar) {
     if (_comprasBiCarregado && !forcar) return;
     _comprasBi = [];
@@ -155,14 +167,22 @@
     return [...porFornecedor.entries()].map(([nome, acc]) => ({ nome, entregas: acc.entregas, valor: acc.valor })).sort((a, b) => b.entregas - a.entregas);
   }
 
+  // Sempre resolve (nunca rejeita — erro vira _dashErro, tratado dentro do
+  // próprio _desenhar), então não precisa de __dtBackground nem de deixar
+  // de ser async: o .catch() genérico de _callPage nunca chega a disparar
+  // aqui de qualquer jeito.
   async function renderRecebimentoDashboard() {
     const pagina = document.getElementById('page-recebimento-dashboard');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
+    _dashCarregando = true;
+    _dashErro = '';
+    _desenhar(); // estrutura + o que já estiver em memória (zerado na 1ª vez, ou da última visita) — nunca espera a rede pra aparecer
     try {
       await Promise.all([carregarLogisticaRecebimento(), global._recebimentoOperacaoInternals?.carregar?.(), _carregarComprasBi()]);
+    } catch (e) {
+      _dashErro = e.message || String(e);
     }
-    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
+    _dashCarregando = false;
     _desenhar();
   }
 
@@ -211,6 +231,15 @@
       _cardOperacional('blue', transbordosAndamento, 'Transbordos em andamento') +
       _cardOperacional('green', transbordosFinalizados, 'Transbordos finalizados') +
       '</div>';
+  }
+
+  // Banner pequeno, só sobre a área de dados — nunca cobre a tela inteira
+  // (pedido ao vivo do usuário: a estrutura tem que aparecer na hora, só o
+  // que depende do Firestore fica esperando).
+  function _statusCarregamentoDashHtml() {
+    if (_dashCarregando) return '<div style="font-size:.76rem;color:var(--muted);margin-bottom:10px">🔄 Atualizando dados...</div>';
+    if (_dashErro) return '<div style="font-size:.76rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px"><span>⚠️ Não foi possível atualizar: ' + esc(_dashErro) + '</span><button type="button" class="btn btn-ghost btn-sm" data-reb-tentar-de-novo="1">Tentar de novo</button></div>';
+    return '';
   }
 
   function _desenhar() {
@@ -289,6 +318,7 @@
         <div class="page-title" style="font-size:1.15rem">🚚 Recebimento</div>
         <div style="font-size:.74rem;color:var(--muted)">Visão operacional de hoje — clique num card pra ver a lista filtrada</div>
       </div>
+      ${_statusCarregamentoDashHtml()}
       ${_kpisOperacionaisHtml()}
       <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:22px 0 14px;align-items:center">
         <div><b>📊 Histórico</b><div style="font-size:.74rem;color:var(--muted)">${totalNotas.toLocaleString('pt-BR')} nota(s) ${rotuloCategoria} neste período — números de nota individuais ficam na aba "Notas Fiscais"${notaRodape ? ' · ' + notaRodape : ''}</div></div>
@@ -720,6 +750,7 @@
 
   document.addEventListener('click', function (event) {
     if (event.target.closest('[data-reb-sync]')) _sincronizar();
+    if (event.target.closest('[data-reb-tentar-de-novo]')) renderRecebimentoDashboard();
     const perfAtualizar = event.target.closest('[data-rebperf-atualizar]');
     if (perfAtualizar) { global._recebimentoOperacaoInternals?.carregar?.(true).then(() => _desenharRecebimentoTempos()).catch(e => global.showToast?.('Erro ao atualizar performance: ' + (e.message || e), 'error')); }
     const kpi = event.target.closest('[data-reb-kpi-status]');
