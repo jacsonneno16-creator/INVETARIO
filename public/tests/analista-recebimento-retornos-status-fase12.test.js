@@ -23,6 +23,22 @@ function mockColecao(docsIniciais){
   const registro=new Map((docsIniciais||[]).map(d=>[d.id,d.data]));
   return {
     get: async()=>({ docs:[...registro.entries()].map(([id,data])=>({id,data:()=>data})) }),
+    where(campo, op, valor) {
+      const construir = (condicoesAtuais) => ({
+        where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        get: async () => {
+          const bate = (data) => condicoesAtuais.every(c => {
+            const v = data ? data[c.campo] : undefined;
+            if (c.op === '>=') return v >= c.valor;
+            if (c.op === '<=') return v <= c.valor;
+            if (c.op === '==') return v === c.valor;
+            return true;
+          });
+          return { docs: [...registro.entries()].filter(([, data]) => bate(data)).map(([id, data]) => ({ id, data: () => data })) };
+        },
+      });
+      return construir([{ campo, op, valor }]);
+    },
     doc:(id)=>({
       id,
       update: async(payload)=>{ const a=registro.get(id)||{}; registro.set(id,{...a,...payload}); },
@@ -48,6 +64,8 @@ test('PEDIDO AO VIVO ("nem toda vez para em CTE, às vezes fica parado com fisca
   const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A',numeroNota:'1'}],criadoEm:'2026-08-01T08:00:00.000Z'}}]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   const select=document.querySelector('[data-status-mudar]');
   assert.ok(select,'o status precisa ser um <select> de escolha livre, não um botão de próximo passo');
@@ -67,6 +85,8 @@ test('as 4 datas nomeadas (liberadoParaRecusarEm/dataSolicitacaoFiscalEm/dataDaR
   const recusas=mockColecao([{id:'r1',data:{notas:[],criadoEm:'2026-08-01T08:00:00.000Z'}}]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   const mudar=async(valor)=>{
     const select=document.querySelector('[data-status-mudar]');
@@ -106,6 +126,8 @@ test('status OK (e Em tratativa) nunca carimbam nenhuma das 4 datas nomeadas —
   const recusas=mockColecao([{id:'r1',data:{notas:[],criadoEm:'2026-08-01T08:00:00.000Z'}}]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const mudar=async(valor)=>{
     const select=document.querySelector('[data-status-mudar]');
     select.value=valor; select.dispatchEvent(new win.Event('change',{bubbles:true}));
@@ -141,6 +163,8 @@ test('PEDIDO AO VIVO (planilha real: "Reentrega é diferente"): nota de Reentreg
   const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A',numeroNota:'1'}],tratamento:'REENTREGA',criadoEm:'2026-08-01T08:00:00.000Z'}}]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   assert.equal(document.querySelector('[data-status-mudar]'),null,'reentrega não usa o status de fiscal/CTE');
   const inputProgramada=document.querySelector('[data-reentrega-data$=":dataProgramadaEm"]');
@@ -170,6 +194,8 @@ test('KPIs contam por status e calculam a média das 2 métricas reais (dias par
   ]);
   const { win }=carregarPagina({ recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosStatus();
+  win.document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const k=win._recebimentoRetornosStatusInternals.kpis();
   assert.equal(k.total,3);
   assert.equal(k.emAberto,1,'r1 e r2 já finalizados; r4 (reentrega) ainda em aberto');
@@ -184,6 +210,8 @@ test('PEDIDO AO VIVO: sem permissão de editar, o status vira só um badge (não
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas },{ temPermissao:(modulo,acao)=> !(modulo==='recebimento-recusas' && acao==='editar') });
   await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   assert.equal(document.querySelector('[data-status-mudar]'),null,'sem permissão, não aparece select — só o badge');
   assert.match(document.getElementById('page-recebimento-retornos-status').innerHTML,/Aguard\. Monitoramento/);
   const inputs=document.querySelectorAll('[data-reentrega-data]');
@@ -199,6 +227,8 @@ test('filtro de status "Em aberto" esconde finalizados, filtro de Tratamento iso
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   document.getElementById('status-filtro-status').value='ABERTOS';
   document.getElementById('status-filtro-status').dispatchEvent(new win.Event('change',{bubbles:true}));
@@ -225,6 +255,8 @@ test('filtro de status "Em aberto" esconde finalizados, filtro de Tratamento iso
 test('sem nenhum retorno registrado, mostra "Nenhum retorno" em vez de tabela quebrada',async()=>{
   const { win, document }=carregarPagina({});
   await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   assert.match(document.getElementById('page-recebimento-retornos-status').innerHTML,/Nenhum retorno com esses filtros/);
 });
 
@@ -244,6 +276,8 @@ test('TRAVA DE REGRESSÃO: catálogo de status e mapeamento status→data batem 
 test('PEDIDO AO VIVO: filtro de Tratamento inclui "Pendente" (planilha real: 120 casos — carga com pendência tipo canhoto faltando, mesmo fluxo/telas)',async()=>{
   const { win, document }=carregarPagina({});
   await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const select=document.getElementById('status-filtro-tratamento');
   const valores=[...select.options].map(o=>o.value);
   assert.ok(valores.includes('PENDENTE'),'Pendente precisa aparecer como opção de tratamento');
@@ -259,6 +293,8 @@ test('2 notas do mesmo evento progridem de status de forma INDEPENDENTE — muda
   ]}}]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   const selectCH1=document.querySelector('[data-status-mudar="r1|CH1"]');
   const selectCH2=document.querySelector('[data-status-mudar="r1|CH2"]');
@@ -282,6 +318,8 @@ test('registro antigo (1 nota só) com statusRetorno/datas gravados no DOCUMENTO
   }}]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const select=document.querySelector('[data-status-mudar="r1|CH1"]');
   assert.equal(select.value,'AGUARD_FISCAL','herda o status do documento antigo enquanto a nota não tiver o próprio');
 

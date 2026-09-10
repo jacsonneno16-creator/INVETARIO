@@ -50,7 +50,16 @@
   // antes. Sem cache compartilhado entre os arquivos (dado diferente:
   // aqui já vem filtrado/achatado do jeito que os indicadores precisam) —
   // pelo menos evita refazer a MESMA busca de novo ao voltar nesta tela.
-  let _carregadoIndicadores = false;
+  // PEDIDO AO VIVO (2026-09-10): "busca manual" pra todas as telas pesadas
+  // de Recebimento — mas ESTA tela é diferente das outras 3 (97/99/103):
+  // o objetivo dela é análise de TENDÊNCIA de longo prazo ("Média de dias
+  // p/ finalizar por mês" já pede até 24 meses de histórico de propósito),
+  // não uma fila operacional do que precisa de atenção agora. Um teto de
+  // 3 meses quebraria a razão de existir do gráfico mensal. 2 anos ainda
+  // limita a busca (não é mais "sem fim, cresce pra sempre"), mas deixa
+  // margem confortável pro gráfico de 24 meses funcionar de verdade.
+  const DIAS_MAX_PERIODO = 731; // ~2 anos
+  let _periodoBuscado = ''; // chave "ini|fim" do último período buscado com sucesso — vazio = ainda não buscou
   // Filtro cruzado ÚNICO (clicar numa barra filtra tudo, clicar de novo na
   // mesma barra limpa) — é o padrão mínimo que atende "clico em alguma
   // informação, as outras atualizam" sem a complexidade de múltiplos
@@ -88,25 +97,56 @@
     });
   }
 
-  async function carregarDadosIndicadores(forcar) {
-    if (_carregadoIndicadores && !forcar) return;
-    const [n, r] = await Promise.all([fs().collection(COL_NOTAS).get(), fs().collection(COL_RECUSAS).get()]);
+  function _periodoPadrao() {
+    const fim = new Date();
+    const inicio = new Date(fim.getTime() - (DIAS_MAX_PERIODO - 1) * 86400000);
+    return { ini: inicio.toISOString().slice(0, 10), fim: fim.toISOString().slice(0, 10) };
+  }
+  function _periodoValido(ini, fim) {
+    if (!ini || !fim) return false;
+    const dIni = new Date(ini + 'T00:00:00'), dFim = new Date(fim + 'T23:59:59');
+    if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime()) || dIni > dFim) return false;
+    return (dFim - dIni) / 86400000 <= DIAS_MAX_PERIODO;
+  }
+  // COL_NOTAS (ledger de venda inteiro, usado só pra enriquecer cada nota
+  // com dado que o resumo embutido em recebimento_recusas não carrega —
+  // ex.: valorTotal, vendedorNome) não depende do período escolhido — busca
+  // só 1 vez por sessão, independente de quantas vezes o período mudar.
+  let _notasCarregadas = false;
+  async function _carregarNotasVenda(forcar) {
+    if (_notasCarregadas && !forcar) return;
+    const n = await fs().collection(COL_NOTAS).get();
     _notas = n.docs.map(d => ({ _id: d.id, ...d.data() }));
-    // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
-    // 'AUTOMATICO') tem indicador próprio e separado — ver
-    // 102-devolucoes-bi-indicadores.js. Excluída daqui pra não misturar
-    // motorista/transportadora/box (que ela não tem) com os retornos
-    // físicos de verdade processados pelo Coletor.
-    // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a ser
-    // gravado numa rodada posterior — registros auto-salvos antes disso não
-    // têm esse campo, mas sempre tiveram `motivoAutomaticoTexto` (exclusivo
-    // desse fluxo), que serve de marcador retroativo.
-    _recusas = r.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
     _notasPorChave = new Map(_notas.map(x => [x.chave, x]));
+    _notasCarregadas = true;
+  }
+  // PEDIDO AO VIVO (2026-09-10): busca manual por período (máx. 3 meses),
+  // filtrada no servidor por criadoEm — recebimento_recusas não traz mais a
+  // coleção inteira toda vez que a tela abre.
+  async function carregarDadosIndicadores(ini, fim, forcar) {
+    if (!_periodoValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
+    const chave = ini + '|' + fim;
+    await _carregarNotasVenda(forcar);
+    if (_periodoBuscado !== chave || forcar) {
+      const r = await fs().collection(COL_RECUSAS)
+        .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
+        .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
+        .get();
+      // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
+      // 'AUTOMATICO') tem indicador próprio e separado — ver
+      // 102-devolucoes-bi-indicadores.js. Excluída daqui pra não misturar
+      // motorista/transportadora/box (que ela não tem) com os retornos
+      // físicos de verdade processados pelo Coletor.
+      // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a ser
+      // gravado numa rodada posterior — registros auto-salvos antes disso
+      // não têm esse campo, mas sempre tiveram `motivoAutomaticoTexto`
+      // (exclusivo desse fluxo), que serve de marcador retroativo.
+      _recusas = r.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
+      _periodoBuscado = chave;
+    }
     _filtro = null; // dado novo — um filtro antigo poderia apontar pra um valor que não existe mais
     _filtroAcaoSet = new Set();
     _filtroStatusSet = new Set();
-    _carregadoIndicadores = true;
   }
 
   function notaCompletaDe(n) { return _notasPorChave.get(n.chave) || n; }
@@ -430,10 +470,12 @@
         <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">PERÍODO — DE</div><input type="date" class="field" id="indic-periodo-ini" value="${esc(_periodoInicio)}" style="padding:7px"></div>
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input type="date" class="field" id="indic-periodo-fim" value="${esc(_periodoFim)}" style="padding:7px"></div>
-          ${(_periodoInicio || _periodoFim) ? '<button class="btn btn-ghost btn-sm" data-indic-limpar-periodo="1">✕ período</button>' : ''}
+          <button class="btn btn-primary btn-sm" id="indic-buscar-periodo" style="padding:7px 14px">🔍 Buscar</button>
+          <div style="font-size:.64rem;color:var(--muted);align-self:center">Máx. 2 anos</div>
           <button class="btn btn-ghost" data-indic-atualizar="1">↻ Atualizar</button>
         </div>
       </div>
+      ${!_periodoBuscado ? '<div class="empty" style="margin-top:14px"><div class="empty-icon">🔍</div><div class="empty-title">Escolha o período e clique em Buscar</div><div class="empty-sub">Os indicadores não carregam sozinhos — evita buscar a coleção inteira à toa toda vez que você entra nesta tela.</div></div>' : `
       <div style="display:flex;gap:40px;flex-wrap:wrap;align-items:flex-start;margin:14px 0">
         ${painelFiltroHtml('tratamento', _filtroAcaoSet)}
         ${painelFiltroHtml('status', _filtroStatusSet)}
@@ -448,7 +490,7 @@
         ${cardChart('supervisor')}
         ${cardChart('mes', { cronologico: true, limit: 24 })}
       </div>
-      <div class="tc" style="padding:16px;margin-top:14px"><div class="tc-title">📈 Média de dias p/ finalizar por mês</div>${dashRankedBarChart(agregarMediaDiasPorMes(), { cronologico: true, limit: 24 })}</div>`;
+      <div class="tc" style="padding:16px;margin-top:14px"><div class="tc-title">📈 Média de dias p/ finalizar por mês</div>${dashRankedBarChart(agregarMediaDiasPorMes(), { cronologico: true, limit: 24 })}</div>`}`;
 
     // Listener delegado, ligado UMA vez no container (que sobrevive à
     // troca de innerHTML entre re-renders) — clicar numa barra com
@@ -458,8 +500,6 @@
       pagina.addEventListener('click', ev => {
         const limparFiltro = ev.target.closest('[data-indic-limpar-filtro]');
         if (limparFiltro) { _filtro = null; desenhar(); return; }
-        const limparPeriodo = ev.target.closest('[data-indic-limpar-periodo]');
-        if (limparPeriodo) { _periodoInicio = ''; _periodoFim = ''; desenhar(); return; }
         const limparPainel = ev.target.closest('[data-indic-painel-limpar]');
         if (limparPainel) {
           const dim = limparPainel.getAttribute('data-indic-painel-limpar');
@@ -477,8 +517,17 @@
       // dos painéis de Ação/Status — delegado, ligado uma vez só, igual ao
       // listener de clique acima.
       pagina.addEventListener('change', ev => {
-        if (ev.target.id === 'indic-periodo-ini') { _periodoInicio = ev.target.value || ''; desenhar(); return; }
-        if (ev.target.id === 'indic-periodo-fim') { _periodoFim = ev.target.value || ''; desenhar(); return; }
+        if (ev.target.id === 'indic-periodo-ini' || ev.target.id === 'indic-periodo-fim') {
+          _periodoInicio = document.getElementById('indic-periodo-ini')?.value || '';
+          _periodoFim = document.getElementById('indic-periodo-fim')?.value || '';
+          if (_periodoInicio && _periodoFim && !_periodoValido(_periodoInicio, _periodoFim)) {
+            if (ev.target.id === 'indic-periodo-ini') _periodoFim = new Date(new Date(_periodoInicio + 'T00:00:00').getTime() + DIAS_MAX_PERIODO * 86400000).toISOString().slice(0, 10);
+            else _periodoInicio = new Date(new Date(_periodoFim + 'T00:00:00').getTime() - DIAS_MAX_PERIODO * 86400000).toISOString().slice(0, 10);
+            global.showToast?.('Período ajustado — máximo de 3 meses.', 'i');
+          }
+          desenhar();
+          return;
+        }
         const chk = ev.target.closest('[data-indic-painel]');
         if (chk) {
           const dim = chk.getAttribute('data-indic-painel'), valor = chk.getAttribute('data-indic-painel-valor');
@@ -489,14 +538,31 @@
       });
       pagina._indicListenerBound = true;
     }
-    document.querySelector('[data-indic-atualizar]')?.addEventListener('click', async () => { await carregarDadosIndicadores(true); desenhar(); });
+    const btnBuscar = document.getElementById('indic-buscar-periodo');
+    if (btnBuscar) btnBuscar.addEventListener('click', async () => {
+      if (!_periodoValido(_periodoInicio, _periodoFim)) { global.showToast?.('Escolha um período válido de até 3 meses.', 'error'); return; }
+      const original = btnBuscar.innerHTML;
+      btnBuscar.disabled = true; btnBuscar.innerHTML = '⏳ Buscando...';
+      try { await carregarDadosIndicadores(_periodoInicio, _periodoFim, true); desenhar(); }
+      catch (e) { global.showToast?.('Erro ao buscar: ' + (e.message || e), 'error'); }
+      finally { btnBuscar.disabled = false; btnBuscar.innerHTML = original; }
+    });
+    document.querySelector('[data-indic-atualizar]')?.addEventListener('click', async () => {
+      if (!_periodoBuscado) return;
+      const [ini, fim] = _periodoBuscado.split('|');
+      await carregarDadosIndicadores(ini, fim, true); desenhar();
+    });
   }
 
   async function renderRecebimentoRetornosIndicadores() {
     const pagina = document.getElementById('page-recebimento-retornos-indicadores');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-title">Carregando Indicadores...</div></div>';
-    try { await carregarDadosIndicadores(); desenhar(); } catch (e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Indicadores</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; }
+    if (!_periodoInicio || !_periodoFim) {
+      const p = _periodoPadrao();
+      _periodoInicio = _periodoInicio || p.ini;
+      _periodoFim = _periodoFim || p.fim;
+    }
+    desenhar();
   }
 
   global.renderRecebimentoRetornosIndicadores = renderRecebimentoRetornosIndicadores;

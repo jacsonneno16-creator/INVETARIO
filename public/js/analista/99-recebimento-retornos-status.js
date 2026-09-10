@@ -116,7 +116,8 @@
   // reentrando na tela segundos depois. Só busca de novo quando ainda não
   // carregou nada, ou quando pedido explicitamente (Atualizar/Tentar de
   // novo).
-  let _carregadoStatus = false;
+  const DIAS_MAX_PERIODO = 92; // ~3 meses — PEDIDO AO VIVO (2026-09-10)
+  let _periodoBuscado = ''; // chave "ini|fim" do último período buscado com sucesso — vazio = ainda não buscou
 
   function fs() {
     if (typeof global.getDTFirestore === 'function') return global.getDTFirestore();
@@ -142,9 +143,27 @@
   // renderRecebimentoRetornosStatus/_atualizarDados), então uma consulta
   // lenta não deixa mais a tela em branco, só demora um pouco pra
   // atualizar os dados.
-  async function carregarDados(forcar) {
-    if (_carregadoStatus && !forcar) return;
-    const snap = await fs().collection(COL_RECUSAS).get();
+  function _periodoPadrao() {
+    const fim = new Date();
+    const inicio = new Date(fim.getTime() - (DIAS_MAX_PERIODO - 1) * 86400000);
+    return { ini: inicio.toISOString().slice(0, 10), fim: fim.toISOString().slice(0, 10) };
+  }
+  function _periodoValido(ini, fim) {
+    if (!ini || !fim) return false;
+    const dIni = new Date(ini + 'T00:00:00'), dFim = new Date(fim + 'T23:59:59');
+    if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime()) || dIni > dFim) return false;
+    return (dFim - dIni) / 86400000 <= DIAS_MAX_PERIODO;
+  }
+  // PEDIDO AO VIVO (2026-09-10): busca manual por período (máx. 3 meses),
+  // filtrada no servidor por criadoEm — não traz mais a coleção inteira.
+  async function carregarDados(ini, fim, forcar) {
+    if (!_periodoValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
+    const chave = ini + '|' + fim;
+    if (_periodoBuscado === chave && !forcar) return;
+    const snap = await fs().collection(COL_RECUSAS)
+      .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
+      .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
+      .get();
     // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
     // 'AUTOMATICO') já nasce CONFERIDA — não tem sentido nenhum ela ficar
     // "Aguard. Monitoramento"/fiscal/CTE, esse fluxo é só pra recebimento
@@ -155,7 +174,7 @@
     // têm esse campo, mas sempre tiveram `motivoAutomaticoTexto` (exclusivo
     // desse fluxo), que serve de marcador retroativo.
     _recusas = snap.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
-    _carregadoStatus = true;
+    _periodoBuscado = chave;
   }
 
   // PEDIDO AO VIVO (2026-09-08): roda sobre `linhasPorNota(_recusas)` (1
@@ -325,6 +344,8 @@
       </select></div>
       <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">PERÍODO — DE</div><input type="date" class="field" id="status-periodo-ini" value="${esc(_periodoInicio)}" style="padding:8px"></div>
       <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input type="date" class="field" id="status-periodo-fim" value="${esc(_periodoFim)}" style="padding:8px"></div>
+      <button class="btn btn-primary btn-sm" id="status-buscar-periodo" style="padding:8px 14px">🔍 Buscar</button>
+      <div style="font-size:.64rem;color:var(--muted);align-self:center">Máx. 3 meses</div>
     </div>`;
   }
 
@@ -361,6 +382,7 @@
   }
 
   function tabelaHtml() {
+    if (!_periodoBuscado) return '<div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">Escolha o período e clique em Buscar</div></div>';
     const lista = recusasFiltradas();
     if (!lista.length) return '<div class="empty"><div class="empty-icon">🧾</div><div class="empty-title">Nenhum retorno com esses filtros</div></div>';
     const podeEditarFlag = podeEditar();
@@ -404,13 +426,27 @@
 
     if (!pagina._statusListenerBound) {
       pagina.addEventListener('click', ev => {
-        if (ev.target.closest('[data-status-atualizar]') || ev.target.closest('[data-status-tentar-de-novo]')) _atualizarDados(true);
+        if (ev.target.closest('[data-status-tentar-de-novo]')) { _atualizarDadosNoPeriodo(true); return; }
+        if (ev.target.closest('[data-status-atualizar]')) { _atualizarDadosNoPeriodo(true); return; }
+        if (ev.target.id === 'status-buscar-periodo') {
+          if (!_periodoValido(_periodoInicio, _periodoFim)) { global.showToast?.('Escolha um período válido de até 3 meses.', 'error'); return; }
+          _atualizarDadosNoPeriodo(true);
+        }
       });
       pagina.addEventListener('change', ev => {
         if (ev.target.id === 'status-filtro-status') { _filtroStatus = ev.target.value || ''; desenhar(); return; }
         if (ev.target.id === 'status-filtro-tratamento') { _filtroTratamento = ev.target.value || ''; desenhar(); return; }
-        if (ev.target.id === 'status-periodo-ini') { _periodoInicio = ev.target.value || ''; desenhar(); return; }
-        if (ev.target.id === 'status-periodo-fim') { _periodoFim = ev.target.value || ''; desenhar(); return; }
+        if (ev.target.id === 'status-periodo-ini' || ev.target.id === 'status-periodo-fim') {
+          _periodoInicio = document.getElementById('status-periodo-ini')?.value || '';
+          _periodoFim = document.getElementById('status-periodo-fim')?.value || '';
+          if (_periodoInicio && _periodoFim && !_periodoValido(_periodoInicio, _periodoFim)) {
+            if (ev.target.id === 'status-periodo-ini') _periodoFim = new Date(new Date(_periodoInicio + 'T00:00:00').getTime() + DIAS_MAX_PERIODO * 86400000).toISOString().slice(0, 10);
+            else _periodoInicio = new Date(new Date(_periodoFim + 'T00:00:00').getTime() - DIAS_MAX_PERIODO * 86400000).toISOString().slice(0, 10);
+            global.showToast?.('Período ajustado — máximo de 3 meses.', 'i');
+          }
+          desenhar();
+          return;
+        }
         const selectStatus = ev.target.closest('[data-status-mudar]');
         if (selectStatus) {
           const [recusaId, notaChave] = String(selectStatus.dataset.statusMudar).split('|');
@@ -434,23 +470,27 @@
   // botão aparecem na hora) e de novo depois (com o dado real ou o aviso de
   // erro, sem nunca esconder a estrutura). Usada tanto no 1º carregamento
   // quanto nos botões "Atualizar"/"Tentar de novo".
-  async function _atualizarDados(forcar) {
+  // PEDIDO AO VIVO (2026-09-10): busca manual — só chama carregarDados()
+  // quando pedida de verdade (Buscar/Atualizar/Tentar de novo), nunca
+  // sozinha ao entrar na tela.
+  async function _atualizarDadosNoPeriodo(forcar) {
     _statusCarregando = true;
     _statusErro = '';
     desenhar();
-    try { await carregarDados(forcar); } catch (e) { _statusErro = e.message || String(e); }
+    try { await carregarDados(_periodoInicio, _periodoFim, forcar); } catch (e) { _statusErro = e.message || String(e); }
     _statusCarregando = false;
     desenhar();
   }
 
-  // _atualizarDados() sempre resolve (nunca rejeita — erro vira
-  // _statusErro, tratado dentro do próprio desenhar()), então não precisa
-  // de __dtBackground: o .catch() genérico de _callPage nunca chega a
-  // disparar aqui de qualquer jeito.
   async function renderRecebimentoRetornosStatus() {
     const pagina = document.getElementById('page-recebimento-retornos-status');
     if (!pagina) return;
-    await _atualizarDados();
+    if (!_periodoInicio || !_periodoFim) {
+      const p = _periodoPadrao();
+      _periodoInicio = _periodoInicio || p.ini;
+      _periodoFim = _periodoFim || p.fim;
+    }
+    desenhar();
   }
 
   global.renderRecebimentoRetornosStatus = renderRecebimentoRetornosStatus;

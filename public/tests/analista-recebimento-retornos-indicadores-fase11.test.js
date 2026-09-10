@@ -25,7 +25,25 @@ const statusCode=fs.readFileSync(path.join(base,'99-recebimento-retornos-status.
 
 function mockColecao(docsIniciais){
   const registro=new Map((docsIniciais||[]).map(d=>[d.id,d.data]));
-  return { get: async()=>({ docs:[...registro.entries()].map(([id,data])=>({id,data:()=>data})) }) };
+  return {
+    get: async()=>({ docs:[...registro.entries()].map(([id,data])=>({id,data:()=>data})) }),
+    where(campo, op, valor) {
+      const construir = (condicoesAtuais) => ({
+        where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        get: async () => {
+          const bate = (data) => condicoesAtuais.every(c => {
+            const v = data ? data[c.campo] : undefined;
+            if (c.op === '>=') return v >= c.valor;
+            if (c.op === '<=') return v <= c.valor;
+            if (c.op === '==') return v === c.valor;
+            return true;
+          });
+          return { docs: [...registro.entries()].filter(([, data]) => bate(data)).map(([id, data]) => ({ id, data: () => data })) };
+        },
+      });
+      return construir([{ campo, op, valor }]);
+    },
+  };
 }
 
 // `comLabels` carrega junto o mapa de status (99) — só usado nos testes que
@@ -70,6 +88,8 @@ test('cardChart usa barra horizontal pros rankings (transportadora/motivo/mercad
   const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A'}],motoristaNome:'Transp X',motivoNome:'Sem Pedido',criadoEm:'2026-04-10T10:00:00.000Z'}}]);
   const { win, document }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const html=document.getElementById('page-recebimento-retornos-indicadores').innerHTML;
   // "Ocorrências por Transportadora" (ranking) tem que estar dentro de um
   // bloco dash-hbar-chart; "Retornos por Mês" tem que estar num
@@ -87,11 +107,13 @@ test('agregarPorCampoDaNota conta um nome só 1x por RECUSA, mesmo repetido em d
     {id:'C',data:{chave:'C',destinatario:'Mercado Central'}},
   ]);
   const recusas=mockColecao([
-    {id:'r1',data:{notas:[{chave:'A'},{chave:'B'}]}}, // 1 carga com 2 notas do MESMO mercado — conta 1
-    {id:'r2',data:{notas:[{chave:'C'}]}},
+    {id:'r1',data:{notas:[{chave:'A'},{chave:'B'}],criadoEm:'2026-06-01T00:00:00.000Z'}}, // 1 carga com 2 notas do MESMO mercado — conta 1
+    {id:'r2',data:{notas:[{chave:'C'}],criadoEm:'2026-06-01T00:00:00.000Z'}},
   ]);
   const { win }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const ranking=win._recebimentoRetornosIndicadoresInternals.agregarPorCampoDaNota('destinatario');
   assert.equal(ranking.find(x=>x.label==='Mercado Atacadão').value,1);
   assert.equal(ranking.find(x=>x.label==='Mercado Central').value,1);
@@ -110,6 +132,8 @@ test('página mostra os blocos do PRINT de referência: transportadora (via moto
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const html=document.getElementById('page-recebimento-retornos-indicadores').innerHTML;
   assert.match(html,/Ocorrências por Transportadora/);
   assert.match(html,/Motivos da Volta/);
@@ -130,6 +154,8 @@ test('página mostra os blocos do PRINT de referência: transportadora (via moto
 test('sem nenhum retorno registrado, mostra "Sem dados" em vez de gráfico quebrado',async()=>{
   const { win, document }=carregarPagina({});
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   assert.match(document.getElementById('page-recebimento-retornos-indicadores').innerHTML,/Sem dados para exibir/);
 });
 
@@ -139,11 +165,13 @@ test('KPIs somam pallets, volume informado e valor (deduplicado por chave da not
     {id:'B',data:{chave:'B',valorTotal:500}},
   ]);
   const recusas=mockColecao([
-    {id:'r1',data:{notas:[{chave:'A'}],pallets:3,volumeInformado:10}},
-    {id:'r2',data:{notas:[{chave:'B'}],pallets:2,volumeInformado:5}},
+    {id:'r1',data:{notas:[{chave:'A'}],pallets:3,volumeInformado:10,criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r2',data:{notas:[{chave:'B'}],pallets:2,volumeInformado:5,criadoEm:'2026-06-01T00:00:00.000Z'}},
   ]);
   const { win }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const k=win._recebimentoRetornosIndicadoresInternals.kpis();
   assert.equal(k.totalRetornos,2);
   assert.equal(k.somaPallets,5);
@@ -159,6 +187,8 @@ test('PEDIDO AO VIVO ("nos gráficos tem que ter a opção de período, para fil
   ]);
   const { win }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   let k=win._recebimentoRetornosIndicadoresInternals.kpis();
   assert.equal(k.totalRetornos,2,'sem período ativo, os dois entram');
@@ -170,13 +200,20 @@ test('PEDIDO AO VIVO ("nos gráficos tem que ter a opção de período, para fil
   assert.equal(k.somaValor,200);
 });
 
-test('período de datas é aplicado direto pelos campos <input type="date"> da tela, sem precisar da API interna',async()=>{
+// PEDIDO AO VIVO (2026-09-10): "todas as telas que trazem dados na parte de
+// Recebimento, colocar para buscar manualmente" — a busca ao SERVIDOR só
+// acontece ao clicar em Buscar, mas dentro do que já foi trazido (período
+// de até 2 anos), mudar os campos de data ainda refiltra a tela na hora,
+// sem precisar reconsultar a API pra um período mais estreito.
+test('período de datas é aplicado direto pelos campos <input type="date"> da tela, dentro do que já foi buscado',async()=>{
   const recusas=mockColecao([
     {id:'r1',data:{notas:[],motoristaNome:'Fora do período',criadoEm:'2026-01-10T10:00:00.000Z'}},
     {id:'r2',data:{notas:[],motoristaNome:'Dentro do período',criadoEm:'2026-03-05T10:00:00.000Z'}},
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas_notas:mockColecao([]), recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   const ini=document.getElementById('indic-periodo-ini'), fim=document.getElementById('indic-periodo-fim');
   assert.ok(ini && fim,'os dois campos de data precisam existir na tela');
@@ -186,11 +223,6 @@ test('período de datas é aplicado direto pelos campos <input type="date"> da t
   const html=document.getElementById('page-recebimento-retornos-indicadores').innerHTML;
   assert.match(html,/Dentro do período/);
   assert.doesNotMatch(html,/Fora do período/);
-  assert.match(html,/✕ período/,'chip/botão de limpar período aparece quando o filtro está ativo');
-
-  document.querySelector('[data-indic-limpar-periodo]').click();
-  const html2=document.getElementById('page-recebimento-retornos-indicadores').innerHTML;
-  assert.match(html2,/Fora do período/,'limpar o período volta a mostrar tudo');
 });
 
 test('PEDIDO AO VIVO ("interativos, caso clique em alguma informação as outras atualizem"): clicar numa barra filtra TODOS os outros gráficos e os KPIs',async()=>{
@@ -199,11 +231,13 @@ test('PEDIDO AO VIVO ("interativos, caso clique em alguma informação as outras
     {id:'B',data:{chave:'B',destinatario:'Mercado 2',vendedorNome:'Pedro',valorTotal:200}},
   ]);
   const recusas=mockColecao([
-    {id:'r1',data:{notas:[{chave:'A'}],motoristaNome:'Transp X',motivoNome:'Sem Pedido',pallets:1}},
-    {id:'r2',data:{notas:[{chave:'B'}],motoristaNome:'Transp Y',motivoNome:'Duplicidade',pallets:4}},
+    {id:'r1',data:{notas:[{chave:'A'}],motoristaNome:'Transp X',motivoNome:'Sem Pedido',pallets:1,criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r2',data:{notas:[{chave:'B'}],motoristaNome:'Transp Y',motivoNome:'Duplicidade',pallets:4,criadoEm:'2026-06-01T00:00:00.000Z'}},
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   // Antes do clique: os dois vendedores aparecem.
   let html=document.getElementById('page-recebimento-retornos-indicadores').innerHTML;
@@ -236,9 +270,11 @@ test('PEDIDO AO VIVO ("interativos, caso clique em alguma informação as outras
 
 test('botão "✕ limpar" do chip de filtro também remove o filtro cruzado',async()=>{
   const notas=mockColecao([{id:'A',data:{chave:'A',destinatario:'Mercado 1'}}]);
-  const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A'}],motoristaNome:'Transp X'}}]);
+  const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A'}],motoristaNome:'Transp X',criadoEm:'2026-06-01T00:00:00.000Z'}}]);
   const { win, document }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   document.querySelector('[data-indic-dim="transportadora"]').click();
   assert.match(document.getElementById('page-recebimento-retornos-indicadores').innerHTML,/Filtrando por/);
   document.querySelector('[data-indic-limpar-filtro]').click();
@@ -257,6 +293,8 @@ test('"Retornos por Mês" e "Média de dias p/ finalizar por mês" ficam em orde
   ]);
   const { win }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const porMes=win._recebimentoRetornosIndicadoresInternals.agregarPorDimensao('mes');
   // Sem ordenação cronológica isso viria com 01/2026 (valor 2) primeiro; a
   // função de agregação em si não ordena por data — quem faz isso é o
@@ -276,13 +314,15 @@ test('"Retornos por Mês" e "Média de dias p/ finalizar por mês" ficam em orde
 // planilha real: "só aparecem caso tenha alguma [nota] com ela".
 test('PEDIDO AO VIVO: painel de Ação (Tratamento) mostra só os valores REAIS presentes nos dados, com o rótulo humano (TRATAMENTO_LABELS)',async()=>{
   const recusas=mockColecao([
-    {id:'r1',data:{notas:[],tratamento:'RECUSA'}},
-    {id:'r2',data:{notas:[],tratamento:'RECUSA'}},
-    {id:'r3',data:{notas:[],tratamento:'PENDENTE'}},
-    {id:'r4',data:{notas:[]}}, // sem tratamento — cai em "Não classificado"
+    {id:'r1',data:{notas:[],tratamento:'RECUSA',criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r2',data:{notas:[],tratamento:'RECUSA',criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r3',data:{notas:[],tratamento:'PENDENTE',criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r4',data:{notas:[],criadoEm:'2026-06-01T00:00:00.000Z'}}, // sem tratamento — cai em "Não classificado"
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas },{ tratamentoLabels:{ '':'— Não classificado —', RECUSA:'Recusa', PENDENTE:'Pendente', DEVOLUCAO:'Devolução', REENTREGA:'Reentrega', SUBSTITUICAO:'Substituição' } });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const html=document.getElementById('page-recebimento-retornos-indicadores').innerHTML;
   const caixas=[...document.querySelectorAll('[data-indic-painel="tratamento"]')].map(el=>el.dataset.indicPainelValor);
   assert.deepEqual(caixas.sort(),['— Não classificado —','Pendente','Recusa'].sort(),'só os valores que realmente ocorrem nos dados aparecem no painel — Devolução/Reentrega/Substituição ficam de fora por não terem nenhuma nota');
@@ -291,28 +331,34 @@ test('PEDIDO AO VIVO: painel de Ação (Tratamento) mostra só os valores REAIS 
 
 test('PEDIDO AO VIVO: painel de Status usa o rótulo humano (STATUS_RETORNO_LABELS) e EXCLUI reentrega (que não usa esse status)',async()=>{
   const recusas=mockColecao([
-    {id:'r1',data:{notas:[],statusRetorno:'AGUARD_FISCAL'}},
-    {id:'r2',data:{notas:[],statusRetorno:'FINALIZADO'}},
-    {id:'r3',data:{notas:[],tratamento:'REENTREGA',statusRetorno:''}}, // reentrega — fica de fora deste painel
+    {id:'r1',data:{notas:[],statusRetorno:'AGUARD_FISCAL',criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r2',data:{notas:[],statusRetorno:'FINALIZADO',criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r3',data:{notas:[],tratamento:'REENTREGA',statusRetorno:'',criadoEm:'2026-06-01T00:00:00.000Z'}}, // reentrega — fica de fora deste painel
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas },{ comStatusLabels:true });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const caixas=[...document.querySelectorAll('[data-indic-painel="status"]')].map(el=>el.dataset.indicPainelValor);
   assert.deepEqual(caixas.sort(),['Aguard. Fiscal','Finalizado'].sort());
 });
 
 test('sem o rótulo humano carregado ainda, o painel de Status cai pro valor cru (nunca quebra)',async()=>{
-  const recusas=mockColecao([{id:'r1',data:{notas:[],statusRetorno:'CTE'}}]);
+  const recusas=mockColecao([{id:'r1',data:{notas:[],statusRetorno:'CTE',criadoEm:'2026-06-01T00:00:00.000Z'}}]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas }); // sem comStatusLabels — 99 não foi carregado
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const caixas=[...document.querySelectorAll('[data-indic-painel="status"]')].map(el=>el.dataset.indicPainelValor);
   assert.deepEqual(caixas,['CTE']);
 });
 
 test('sem nenhuma nota com Ação/Status preenchido, o painel correspondente nem aparece na tela (nunca mostra painel vazio)',async()=>{
-  const recusas=mockColecao([{id:'r1',data:{notas:[]}}]); // sem tratamento nem statusRetorno definidos
+  const recusas=mockColecao([{id:'r1',data:{notas:[],criadoEm:'2026-06-01T00:00:00.000Z'}}]); // sem tratamento nem statusRetorno definidos
   const { win, document }=carregarPagina({ recebimento_recusas:recusas },{ tratamentoLabels:{} });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   // "Não classificado"/"Aguard. Monitoramento" ainda são valores REAIS
   // (o registro existe, só não foi classificado ainda) — o painel some
   // só quando não há NENHUM registro, não quando o valor está vazio.
@@ -325,11 +371,13 @@ test('PEDIDO AO VIVO: marcar uma caixa no painel de Ação filtra os KPIs e os O
     {id:'B',data:{chave:'B',destinatario:'Mercado 2',valorTotal:200}},
   ]);
   const recusas=mockColecao([
-    {id:'r1',data:{notas:[{chave:'A'}],tratamento:'RECUSA',pallets:1}},
-    {id:'r2',data:{notas:[{chave:'B'}],tratamento:'DEVOLUCAO',pallets:4}},
+    {id:'r1',data:{notas:[{chave:'A'}],tratamento:'RECUSA',pallets:1,criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r2',data:{notas:[{chave:'B'}],tratamento:'DEVOLUCAO',pallets:4,criadoEm:'2026-06-01T00:00:00.000Z'}},
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas },{ tratamentoLabels:{ RECUSA:'Recusa', DEVOLUCAO:'Devolução' } });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   let html=document.getElementById('page-recebimento-retornos-indicadores').innerHTML;
   assert.match(html,/Mercado 1/); assert.match(html,/Mercado 2/);
 
@@ -363,12 +411,14 @@ test('PEDIDO AO VIVO: marcar DUAS caixas no mesmo painel usa OU entre elas (mesm
     {id:'C',data:{chave:'C',destinatario:'Mercado 3'}},
   ]);
   const recusas=mockColecao([
-    {id:'r1',data:{notas:[{chave:'A'}],tratamento:'RECUSA'}},
-    {id:'r2',data:{notas:[{chave:'B'}],tratamento:'DEVOLUCAO'}},
-    {id:'r3',data:{notas:[{chave:'C'}],tratamento:'PENDENTE'}},
+    {id:'r1',data:{notas:[{chave:'A'}],tratamento:'RECUSA',criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r2',data:{notas:[{chave:'B'}],tratamento:'DEVOLUCAO',criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r3',data:{notas:[{chave:'C'}],tratamento:'PENDENTE',criadoEm:'2026-06-01T00:00:00.000Z'}},
   ]);
   const { win }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas },{ tratamentoLabels:{ RECUSA:'Recusa', DEVOLUCAO:'Devolução', PENDENTE:'Pendente' } });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   win._recebimentoRetornosIndicadoresInternals.setFiltroAcao(['Recusa','Pendente']);
   const k=win._recebimentoRetornosIndicadoresInternals.kpis();
   assert.equal(k.totalRetornos,2,'Recusa OU Pendente — Devolução fica de fora');
@@ -380,11 +430,13 @@ test('botão "limpar" do painel remove só o filtro DAQUELE painel — o outro c
     {id:'B',data:{chave:'B',destinatario:'Mercado Devolução Finalizada'}},
   ]);
   const recusas=mockColecao([
-    {id:'r1',data:{notas:[{chave:'A'}],tratamento:'RECUSA',statusRetorno:'FINALIZADO'}},
-    {id:'r2',data:{notas:[{chave:'B'}],tratamento:'DEVOLUCAO',statusRetorno:'FINALIZADO'}},
+    {id:'r1',data:{notas:[{chave:'A'}],tratamento:'RECUSA',statusRetorno:'FINALIZADO',criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r2',data:{notas:[{chave:'B'}],tratamento:'DEVOLUCAO',statusRetorno:'FINALIZADO',criadoEm:'2026-06-01T00:00:00.000Z'}},
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas },{ tratamentoLabels:{ RECUSA:'Recusa', DEVOLUCAO:'Devolução' }, comStatusLabels:true });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   const marcar=(dim,valor)=>{
     const el=[...document.querySelectorAll(`[data-indic-painel="${dim}"]`)].find(x=>x.dataset.indicPainelValor===valor);
@@ -412,10 +464,12 @@ test('PEDIDO AO VIVO: evento com 2 notas de Tratamento diferente conta nas DUAS 
     {id:'r1',data:{notas:[
       {chave:'CH1',tratamento:'RECUSA'},
       {chave:'CH2',tratamento:'REENTREGA'},
-    ]}},
+    ],criadoEm:'2026-06-01T00:00:00.000Z'}},
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas },{ tratamentoLabels:{ RECUSA:'Recusa', REENTREGA:'Reentrega' } });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const caixas=[...document.querySelectorAll('[data-indic-painel="tratamento"]')].map(el=>el.dataset.indicPainelValor);
   assert.deepEqual(caixas.sort(),['Recusa','Reentrega'].sort(),'as 2 classificações do mesmo evento aparecem, cada uma vinda de uma nota diferente');
 });
@@ -425,11 +479,13 @@ test('PEDIDO AO VIVO: filtrar pelo painel de Ação por "Recusa" mantém o event
     {id:'r1',data:{notas:[
       {chave:'CH1',tratamento:'RECUSA'},
       {chave:'CH2',tratamento:'REENTREGA'},
-    ],motoristaNome:'Motorista Misto'}},
-    {id:'r2',data:{notas:[{chave:'CH3',tratamento:'DEVOLUCAO'}],motoristaNome:'Motorista Só Devolução'}},
+    ],motoristaNome:'Motorista Misto',criadoEm:'2026-06-01T00:00:00.000Z'}},
+    {id:'r2',data:{notas:[{chave:'CH3',tratamento:'DEVOLUCAO'}],motoristaNome:'Motorista Só Devolução',criadoEm:'2026-06-01T00:00:00.000Z'}},
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas },{ tratamentoLabels:{ RECUSA:'Recusa', REENTREGA:'Reentrega', DEVOLUCAO:'Devolução' } });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const chk=[...document.querySelectorAll('[data-indic-painel="tratamento"]')].find(el=>el.dataset.indicPainelValor==='Recusa');
   chk.checked=true; chk.dispatchEvent(new win.Event('change',{bubbles:true}));
   const html=document.getElementById('page-recebimento-retornos-indicadores').innerHTML;
@@ -438,9 +494,11 @@ test('PEDIDO AO VIVO: filtrar pelo painel de Ação por "Recusa" mantém o event
 });
 
 test('registro antigo (1 nota só) com tratamento gravado no DOCUMENTO — o painel de Ação continua enxergando através do valor herdado pela nota',async()=>{
-  const recusas=mockColecao([{id:'r1',data:{tratamento:'RECUSA',notas:[{chave:'CH1'}]}}]);
+  const recusas=mockColecao([{id:'r1',data:{tratamento:'RECUSA',notas:[{chave:'CH1'}],criadoEm:'2026-06-01T00:00:00.000Z'}}]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas },{ tratamentoLabels:{ RECUSA:'Recusa' } });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const caixas=[...document.querySelectorAll('[data-indic-painel="tratamento"]')].map(el=>el.dataset.indicPainelValor);
   assert.deepEqual(caixas,['Recusa']);
 });
@@ -483,10 +541,12 @@ test('registro antigo (1 nota só) com dataDoEnderecamentoEm/statusRetornoHistor
 
 test('KPI "MÉDIA DE DIAS P/ FINALIZAR" na tela usa a nova métrica (Endereçando → Finalizado)',async()=>{
   const recusas=mockColecao([
-    {id:'r1',data:{notas:[{chave:'A',dataDoEnderecamentoEm:'2026-08-01T00:00:00.000Z',statusRetornoHistorico:[{status:'FINALIZADO',em:'2026-08-05T00:00:00.000Z'}]}]}},
+    {id:'r1',data:{notas:[{chave:'A',dataDoEnderecamentoEm:'2026-08-01T00:00:00.000Z',statusRetornoHistorico:[{status:'FINALIZADO',em:'2026-08-05T00:00:00.000Z'}]}],criadoEm:'2026-08-01T00:00:00.000Z'}},
   ]);
   const { win }=carregarPagina({ recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const k=win._recebimentoRetornosIndicadoresInternals.kpis();
   assert.equal(Math.round(k.mediaDias), 4);
 });

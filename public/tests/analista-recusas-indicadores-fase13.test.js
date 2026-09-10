@@ -16,7 +16,27 @@ const code = fs.readFileSync(path.join(base, '103-recusas-indicadores.js'), 'utf
 
 function mockColecao(docsIniciais) {
   const registro = new Map((docsIniciais || []).map(d => [d.id, d.data]));
-  return { get: async () => ({ docs: [...registro.entries()].map(([id, data]) => ({ id, data: () => data })) }), _registro: registro };
+  return {
+    get: async () => ({ docs: [...registro.entries()].map(([id, data]) => ({ id, data: () => data })) }),
+    where(campo, op, valor) {
+      const construir = (condicoesAtuais) => ({
+        where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        get: async () => {
+          const bate = (data) => condicoesAtuais.every(c => {
+            const v = data ? data[c.campo] : undefined;
+            if (c.op === '>=') return v >= c.valor;
+            if (c.op === '<=') return v <= c.valor;
+            if (c.op === '==') return v === c.valor;
+            return true;
+          });
+          const filtrados = [...registro.entries()].filter(([, data]) => bate(data));
+          return { docs: filtrados.map(([id, data]) => ({ id, data: () => data })) };
+        },
+      });
+      return construir([{ campo, op, valor }]);
+    },
+    _registro: registro,
+  };
 }
 
 function carregarPagina(recusasIniciais) {
@@ -44,6 +64,8 @@ test('carregarDados: só entra tratamento RECUSA, exclui devolução automática
     { id: 'r4', data: { tratamento: '', criadoEm: diasAtras(5) } },
   ]);
   await win.renderRecusasIndicadores();
+  win.document.getElementById('recind-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const recusas = win._recusasIndicadoresInternals.getRecusas();
   assert.equal(recusas.length, 1);
   assert.equal(recusas[0]._id, 'r1');
@@ -83,6 +105,8 @@ test('cenário do pedido ao vivo: emitida dia 1, retornou dia 2, liberada pra re
     { id: 'r1', data: { tratamento: 'RECUSA', criadoEm: retornoFisico, liberadoParaRecusarEm: liberacao, notas: [{ dataEmissao: emissao }], statusRetornoHistorico: [] } },
   ]);
   await win.renderRecusasIndicadores();
+  win.document.getElementById('recind-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const r = win._recusasIndicadoresInternals.getRecusas()[0];
   const dias = win._recusasIndicadoresInternals.diasParadoDaRecusa(r);
   // liberacao foi há 19 dias, ainda não finalizada — conta até agora (~19d),
@@ -97,6 +121,8 @@ test('kpis: recusa sem liberadoParaRecusarEm entra no total mas fica de fora da 
     { id: 'r2', data: { tratamento: 'RECUSA', criadoEm: diasAtras(5) } }, // sem liberadoParaRecusarEm — legado
   ]);
   await win.renderRecusasIndicadores();
+  win.document.getElementById('recind-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const k = win._recusasIndicadoresInternals.kpis();
   assert.equal(k.total, 2);
   assert.equal(k.semLiberacao, 1);
@@ -109,6 +135,8 @@ test('kpis: finalizadas x em aberto contam pelo statusRetorno atual', async () =
     { id: 'r2', data: { tratamento: 'RECUSA', criadoEm: diasAtras(5), statusRetorno: 'CTE' } },
   ]);
   await win.renderRecusasIndicadores();
+  win.document.getElementById('recind-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const k = win._recusasIndicadoresInternals.kpis();
   assert.equal(k.finalizadas, 1);
   assert.equal(k.emAberto, 1);
@@ -119,6 +147,8 @@ test('tela: mostra só recusas, título/descrição deixam claro que é separado
     { id: 'r1', data: { tratamento: 'RECUSA', criadoEm: diasAtras(5), liberadoParaRecusarEm: diasAtras(3), notas: [{ numeroNota: '999', destinatario: 'Mercado X' }] } },
   ]);
   await win.renderRecusasIndicadores();
+  win.document.getElementById('recind-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const html = document.getElementById('page-recebimento-recusas-indicadores').innerHTML;
   assert.match(html, /<h2[^>]*>📊 Recusas<\/h2>/);
   assert.match(html, /Tratamento = Recusa/);
@@ -133,6 +163,8 @@ test('tela: recusa sem liberadoParaRecusarEm mostra aviso "sem data" na tabela e
     { id: 'r1', data: { tratamento: 'RECUSA', criadoEm: diasAtras(5), notas: [{ numeroNota: '111' }] } },
   ]);
   await win.renderRecusasIndicadores();
+  win.document.getElementById('recind-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const html = document.getElementById('page-recebimento-recusas-indicadores').innerHTML;
   assert.match(html, /sem data/);
   assert.match(html, /SEM DATA DE LIBERAÇÃO/);
@@ -144,6 +176,8 @@ test('filtro de período usa criadoEm (data do registro), igual às outras telas
     { id: 'r2', data: { tratamento: 'RECUSA', criadoEm: '2026-09-01T10:00:00.000Z', liberadoParaRecusarEm: '2026-09-01T10:00:00.000Z', notas: [{ numeroNota: 'NOVA' }] } },
   ]);
   await win.renderRecusasIndicadores();
+  win.document.getElementById('recind-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   document.getElementById('recind-periodo-ini').value = '2026-08-01';
   document.getElementById('recind-periodo-ini').dispatchEvent(new win.Event('change', { bubbles: true }));
   const html = document.getElementById('page-recebimento-recusas-indicadores').innerHTML;
@@ -157,6 +191,8 @@ test('painel de Status filtra a tabela e os KPIs', async () => {
     { id: 'r2', data: { tratamento: 'RECUSA', criadoEm: diasAtras(5), liberadoParaRecusarEm: diasAtras(5), statusRetorno: 'FINALIZADO', notas: [{ numeroNota: 'B' }] } },
   ]);
   await win.renderRecusasIndicadores();
+  win.document.getElementById('recind-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const chk = [...document.querySelectorAll('[data-recind-painel-valor]')].find(el => el.getAttribute('data-recind-painel-valor') === 'Finalizado');
   assert.ok(chk, 'checkbox de status Finalizado precisa existir (só aparece porque tem dado real com esse status)');
   chk.checked = true;
@@ -179,6 +215,8 @@ test('evento com 2 notas — só a nota classificada RECUSA entra em Indicadores
     ] } },
   ]);
   await win.renderRecusasIndicadores();
+  win.document.getElementById('recind-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const recusas = win._recusasIndicadoresInternals.getRecusas();
   assert.equal(recusas.length, 1, 'só 1 das 2 notas do evento é Recusa');
   assert.equal(recusas[0].notas[0].numeroNota, '601');
@@ -189,6 +227,8 @@ test('registro antigo (1 nota só) com tratamento RECUSA gravado no DOCUMENTO �
     { id: 'r1', data: { tratamento: 'RECUSA', liberadoParaRecusarEm: diasAtras(3), criadoEm: diasAtras(5), notas: [{ chave: 'CH1', numeroNota: '1' }] } },
   ]);
   await win.renderRecusasIndicadores();
+  win.document.getElementById('recind-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const recusas = win._recusasIndicadoresInternals.getRecusas();
   assert.equal(recusas.length, 1);
   assert.equal(recusas[0].liberadoParaRecusarEm, diasAtras(3));

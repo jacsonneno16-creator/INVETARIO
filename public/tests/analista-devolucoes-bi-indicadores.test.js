@@ -16,7 +16,29 @@ const code = fs.readFileSync(path.join(base, '102-devolucoes-bi-indicadores.js')
 
 function mockColecao(docsIniciais) {
   const registro = new Map((docsIniciais || []).map(d => [d.id, d.data]));
-  return { get: async () => ({ docs: [...registro.entries()].map(([id, data]) => ({ id, data: () => data })) }), doc: (id) => ({ id }), _registro: registro };
+  const base = {
+    get: async () => ({ docs: [...registro.entries()].map(([id, data]) => ({ id, data: () => data })) }),
+    doc: (id) => ({ id }),
+    _registro: registro,
+  };
+  base.where = (campo, op, valor) => {
+    const construir = (condicoesAtuais) => ({
+      where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+      get: async () => {
+        const bate = (data) => condicoesAtuais.every(c => {
+          const v = data ? data[c.campo] : undefined;
+          if (c.op === '>=') return v >= c.valor;
+          if (c.op === '<=') return v <= c.valor;
+          if (c.op === '==') return v === c.valor;
+          if (c.op === 'array-contains-any') return Array.isArray(v) && v.some(x => c.valor.includes(x));
+          return true;
+        });
+        return { docs: [...registro.entries()].filter(([, data]) => bate(data)).map(([id, data]) => ({ id, data: () => data })) };
+      },
+    });
+    return construir([{ campo, op, valor }]);
+  };
+  return base;
 }
 
 function mockRawFs(colecoes) {
@@ -53,7 +75,7 @@ test('carregarDevolucoesIndicadores: só carrega registros com origem AUTOMATICO
     { id: 'a', data: { ...AUTO_BASE, motivoNome: 'Falta na carga/entrega', dataEmissao: '2026-07-01', rede: 'ASSAI', destinatario: 'ASSAI - 278' } },
     { id: 'b', data: { origem: undefined, motivoNome: 'x', valorTotal: 999 } },
   ]);
-  await win._DevolucoesBiIndicadoresInternals.carregarDevolucoesIndicadores();
+  await win._DevolucoesBiIndicadoresInternals.carregarDevolucoesIndicadores('2000-01-01','2100-01-01',true);
   const recusas = win._DevolucoesBiIndicadoresInternals.getRecusas();
   assert.equal(recusas.length, 1);
   assert.equal(recusas[0].motivoNome, 'Falta na carga/entrega');
@@ -72,7 +94,7 @@ test('retornouFisicamente: true quando existe outro registro (qualquer origem !=
     { id: 'b', data: { ...AUTO_BASE, chaves: ['X2'], motivoNome: 'Falta na carga/entrega', dataEmissao: '2026-07-01' } },
     { id: 'fisico', data: { origem: 'COLETOR', chaves: ['X1'], motoristaNome: 'João' } },
   ]);
-  await win._DevolucoesBiIndicadoresInternals.carregarDevolucoesIndicadores();
+  await win._DevolucoesBiIndicadoresInternals.carregarDevolucoesIndicadores('2000-01-01','2100-01-01',true);
   const recusas = win._DevolucoesBiIndicadoresInternals.getRecusas();
   const auto1 = recusas.find(r => r._id === 'a'), auto2 = recusas.find(r => r._id === 'b');
   assert.equal(auto1.retornouFisicamente, true, 'X1 tem um registro COLETOR com a mesma chave — já retornou fisicamente');
@@ -86,6 +108,8 @@ test('tela: mostra a coluna "Retorno físico" na tabela e o KPI "Aguardando reto
     { id: 'b', data: { ...AUTO_BASE, chaves: ['X2'], motivoNome: 'Falta na carga/entrega', dataEmissao: '2026-07-01', destinatario: 'MERCADAO - 12' } },
   ]);
   await win.renderDevolucoesBiIndicadores();
+  document.querySelector('[data-devind-buscar-periodo]').click();
+  await new Promise(r => setTimeout(r, 0));
   let html = document.getElementById('page-recebimento-devolucoes-indicadores').innerHTML;
   assert.match(html, /Retorno físico/);
   assert.match(html, /AGUARDANDO RETORNO FÍSICO/);
@@ -133,6 +157,8 @@ test('tela: mostra KPIs e os 4 gráficos (Motivo/Mês/Redes/Mercados), separado 
     { id: 'a', data: { ...AUTO_BASE, motivoNome: 'Falta na carga/entrega', dataEmissao: '2026-07-22', rede: 'ASSAI', destinatario: 'ASSAI - 278' } },
   ]);
   await win.renderDevolucoesBiIndicadores();
+  document.querySelector('[data-devind-buscar-periodo]').click();
+  await new Promise(r => setTimeout(r, 0));
   const html = document.getElementById('page-recebimento-devolucoes-indicadores').innerHTML;
   assert.match(html, /Indicadores de Devoluções/);
   assert.match(html, /DEVOLUÇÕES/);
@@ -150,6 +176,8 @@ test('tela: filtro de período (EMISSÃO) usa a dataEmissao real, exclui devolu�
     { id: 'b', data: { ...AUTO_BASE, motivoNome: 'Impróprio para consumo/venda', dataEmissao: '2026-01-05', rede: 'MERCADAO', destinatario: 'MERCADAO - 12' } },
   ]);
   await win.renderDevolucoesBiIndicadores();
+  document.querySelector('[data-devind-buscar-periodo]').click();
+  await new Promise(r => setTimeout(r, 0));
   document.getElementById('devind-periodo-ini').value = '2026-07-01';
   document.getElementById('devind-periodo-ini').dispatchEvent(new win.Event('change', { bubbles: true }));
   const html = document.getElementById('page-recebimento-devolucoes-indicadores').innerHTML;
@@ -166,12 +194,16 @@ test('botão "Limpar Impróprios" só aparece quando existe pelo menos um regist
     { id: 'a', data: { ...AUTO_BASE, motivoNome: 'Falta na carga/entrega', dataEmissao: '2026-07-22' } },
   ]);
   await semImproprio.renderDevolucoesBiIndicadores();
+  docSem.querySelector('[data-devind-buscar-periodo]').click();
+  await new Promise(r => setTimeout(r, 0));
   assert.doesNotMatch(docSem.getElementById('page-recebimento-devolucoes-indicadores').innerHTML, /Limpar Impróprios/);
 
   const { win: comImproprio, document: docCom } = carregarPagina([
     { id: 'a', data: { ...AUTO_BASE, motivoNome: 'Impróprio para consumo/venda', dataEmissao: '2026-07-22' } },
   ]);
   await comImproprio.renderDevolucoesBiIndicadores();
+  docCom.querySelector('[data-devind-buscar-periodo]').click();
+  await new Promise(r => setTimeout(r, 0));
   assert.match(docCom.getElementById('page-recebimento-devolucoes-indicadores').innerHTML, /Limpar Impróprios/);
 });
 
@@ -184,6 +216,8 @@ test('_limparImproprios: apaga só os registros de Impróprio, pede confirmaçã
   let mensagemConfirm = '';
   win.confirm = (msg) => { mensagemConfirm = msg; return true; };
   await win.renderDevolucoesBiIndicadores();
+  document.querySelector('[data-devind-buscar-periodo]').click();
+  await new Promise(r => setTimeout(r, 0));
   await win._DevolucoesBiIndicadoresInternals._limparImproprios();
   assert.match(mensagemConfirm, /2 registro/, 'confirmação precisa mostrar a contagem exata antes de apagar');
   assert.equal(col._registro.size, 1, 'só sobra o registro que não é Impróprio');
@@ -196,6 +230,8 @@ test('_limparImproprios: cancelando a confirmação não apaga nada', async () =
   ]);
   win.confirm = () => false;
   await win.renderDevolucoesBiIndicadores();
+  win.document.querySelector('[data-devind-buscar-periodo]').click();
+  await new Promise(r => setTimeout(r, 0));
   await win._DevolucoesBiIndicadoresInternals._limparImproprios();
   assert.equal(col._registro.size, 1, 'cancelou a confirmação — nada deve ser apagado');
 });
@@ -212,6 +248,8 @@ test('Motivo por mês: uma coluna por motivo (cabeçalho da tabela), e cada cél
     { id: 'c', data: { ...AUTO_BASE, valorTotal: 30, motivoNome: 'Produto errado/divergente', dataEmissao: '2026-06-20' } },
   ]);
   await win.renderDevolucoesBiIndicadores();
+  document.querySelector('[data-devind-buscar-periodo]').click();
+  await new Promise(r => setTimeout(r, 0));
   const html = document.getElementById('page-recebimento-devolucoes-indicadores').innerHTML;
   assert.match(html, /<th[^>]*>[\s\S]*Falta na carga\/entrega[\s\S]*<\/th>/, 'motivo vira cabeçalho de coluna');
   assert.match(html, /<th[^>]*>[\s\S]*Produto errado\/divergente[\s\S]*<\/th>/, 'segundo motivo também vira coluna própria');
@@ -227,6 +265,8 @@ test('Motivo por mês: clicar no cabeçalho de um motivo filtra por ele (mesmo c
     { id: 'b', data: { ...AUTO_BASE, motivoNome: 'Produto errado/divergente', dataEmissao: '2026-06-20' } },
   ]);
   await win.renderDevolucoesBiIndicadores();
+  document.querySelector('[data-devind-buscar-periodo]').click();
+  await new Promise(r => setTimeout(r, 0));
   const th = [...document.querySelectorAll('[data-devind-filtro="motivo"]')].find(el => el.textContent.includes('Falta na carga/entrega'));
   th.dispatchEvent(new win.Event('click', { bubbles: true }));
   const tabelaMatriz = document.querySelector('table'); // matriz é a primeira tabela renderizada na página
