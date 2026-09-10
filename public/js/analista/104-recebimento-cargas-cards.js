@@ -21,6 +21,8 @@
   let _filtroBusca = '';
   let _cargaExpandidaId = null; // _id da carga com o detalhe aberto
   const _itensPorCarga = {}; // cache: cargaId -> [{_id,capa,codigoProduto,nomeProduto,quantidade}]
+  let _cargasCarregando = false;
+  let _cargasErro = '';
 
   function raw() { return global.getDTRawFirestore(); }
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s])); }
@@ -242,13 +244,28 @@
     return '<div style="padding:12px;text-align:center;color:var(--muted)">Carregando itens...</div>';
   }
 
+  // Shell-first (mesmo padrão de 99-recebimento-retornos-status.js):
+  // _desenharCargas() já é seguro com _cargas vazio, então chama ela ANTES
+  // do fetch (título/filtros/botão aparecem na hora) e de novo depois,
+  // nunca escondendo a estrutura atrás de um "Carregando..." de página
+  // inteira.
   async function renderRecebimentoCargas() {
     const pagina = document.getElementById('page-recebimento-cargas');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try { await carregarCargasAnalista(); }
-    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
+    _cargasCarregando = true;
+    _cargasErro = '';
     _desenharCargas();
+    try { await carregarCargasAnalista(); } catch (e) { _cargasErro = e.message || String(e); }
+    _cargasCarregando = false;
+    _desenharCargas();
+  }
+
+  function _cargasCarregandoHtml() {
+    return _cargasCarregando ? '<div style="font-size:.76rem;color:var(--muted);padding:6px 0">⏳ Carregando...</div>' : '';
+  }
+  function _cargasErroHtml() {
+    if (_cargasErro) return '<div style="font-size:.76rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;gap:10px"><span>⚠️ Falha ao carregar: ' + esc(_cargasErro) + '</span><button type="button" class="btn btn-ghost btn-sm" data-cargas-atualizar="1">Tentar de novo</button></div>';
+    return '';
   }
 
   function _desenharCargas() {
@@ -260,6 +277,8 @@
         <div><div class="page-title" style="font-size:1.15rem">📦 Cargas (Montagem/Expedição)</div><div style="font-size:.74rem;color:var(--muted)">Todas as lojas consolidadas</div></div>
         <button type="button" class="btn btn-ghost btn-sm" data-cargas-atualizar="1">↻ Atualizar</button>
       </div>
+      ${_cargasCarregandoHtml()}
+      ${_cargasErroHtml()}
       <div class="tc" style="padding:12px;margin-bottom:14px">
         <div class="fg" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
           <select class="field" id="cargas-f-loja">

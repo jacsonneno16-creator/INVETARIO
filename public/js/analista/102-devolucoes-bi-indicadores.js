@@ -349,6 +349,16 @@
     </style>`;
   }
 
+  let _devindCarregando = false;
+  let _devindErro = '';
+  function _devindCarregandoHtml() {
+    return _devindCarregando ? '<div style="font-size:.76rem;color:var(--muted);padding:6px 0">⏳ Atualizando...</div>' : '';
+  }
+  function _devindErroHtml() {
+    if (_devindErro) return '<div style="font-size:.76rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;gap:10px"><span>⚠️ Não foi possível atualizar: ' + esc(_devindErro) + '</span><button type="button" class="btn btn-ghost btn-sm" data-devind-tentar-de-novo="1">Tentar de novo</button></div>';
+    return '';
+  }
+
   function desenhar() {
     const pagina = document.getElementById('page-recebimento-devolucoes-indicadores');
     if (!pagina) return;
@@ -379,6 +389,8 @@
           <button class="btn btn-ghost" data-devind-atualizar="1">↻ Atualizar</button>
         </div>
       </div>
+      ${_devindCarregandoHtml()}
+      ${_devindErroHtml()}
       ${resumoHtml(k)}
       <div class="tc" style="padding:16px;margin-top:10px">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -400,17 +412,27 @@
     global.aplicarPermissoesAnalista?.();
   }
 
-  async function renderDevolucoesBiIndicadores() {
-    const pagina = document.getElementById('page-recebimento-devolucoes-indicadores');
-    if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try { await carregarDevolucoesIndicadores(); }
-    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
+  // Shell-first (mesmo padrão de 99-recebimento-retornos-status.js): desenhar()
+  // já é seguro com _recusas vazio, então chama ela ANTES do fetch (título/
+  // filtros/botão aparecem na hora) e de novo depois, nunca escondendo a
+  // estrutura atrás de um "Carregando..." de página inteira.
+  async function _atualizarDadosDevInd(forcar) {
+    _devindCarregando = true;
+    _devindErro = '';
+    desenhar();
+    try { await carregarDevolucoesIndicadores(forcar); } catch (e) { _devindErro = e.message || String(e); }
+    _devindCarregando = false;
     desenhar();
   }
 
+  async function renderDevolucoesBiIndicadores() {
+    const pagina = document.getElementById('page-recebimento-devolucoes-indicadores');
+    if (!pagina) return;
+    await _atualizarDadosDevInd();
+  }
+
   document.addEventListener('click', e => {
-    if (e.target.closest('[data-devind-atualizar]')) { carregarDevolucoesIndicadores(true).then(desenhar); return; }
+    if (e.target.closest('[data-devind-atualizar]') || e.target.closest('[data-devind-tentar-de-novo]')) { _atualizarDadosDevInd(true); return; }
     if (e.target.closest('[data-devind-limpar-improprios]')) { _limparImproprios(); return; }
     if (e.target.closest('[data-devind-limpar-periodo]')) { _periodoInicio = ''; _periodoFim = ''; _pagina = 0; desenhar(); return; }
     if (e.target.closest('[data-devind-limpar-filtros]')) { _filtroMes = ''; _filtroMotivo = ''; _filtroRede = ''; _filtroRetorno = ''; _busca = ''; _pagina = 0; desenhar(); return; }

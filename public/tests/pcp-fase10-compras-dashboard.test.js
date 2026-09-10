@@ -2,7 +2,7 @@ const test=require('node:test');const assert=require('node:assert/strict');const
 const base=path.join(__dirname,'../js/analista');
 const dashboard=fs.readFileSync(path.join(base,'89-compras-dashboard.js'),'utf8');
 const compras=fs.readFileSync(path.join(base,'79-compras-central.js'),'utf8');
-const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8');
+const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8')+fs.readFileSync(path.join(__dirname,'../js/analista/00-lazy-areas.js'),'utf8');
 
 test('Dashboard de Compras reaproveita _comprasInternals (carregar/historicoCompras) sem consulta nova',()=>{
   assert.match(dashboard,/global\._comprasInternals\.carregar\(\)/);

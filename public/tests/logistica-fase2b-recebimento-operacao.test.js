@@ -1,7 +1,7 @@
 const test=require('node:test');const assert=require('node:assert/strict');const fs=require('fs');const path=require('path');const vm=require('vm');
 const base=path.join(__dirname,'../js/analista');
 const opCode=fs.readFileSync(path.join(base,'93-recebimento-operacao.js'),'utf8');
-const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8');
+const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8')+fs.readFileSync(path.join(__dirname,'../js/analista/00-lazy-areas.js'),'utf8');
 const rules=fs.readFileSync(path.join(__dirname,'../../firestore.rules'),'utf8');
 
 function mockColecao(docsIniciais){

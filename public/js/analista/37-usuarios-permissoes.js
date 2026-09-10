@@ -724,7 +724,31 @@
   // "Logística". `_logisticaView` guarda qual dos dois está ativo; entra
   // sempre em 'inventario' por padrão, exatamente como hoje.
   var _logisticaView='inventario';
-  function irParaSetor(id,view){
+  // Carregamento por setor (front 3): mapeia setor(+view, no caso de
+  // Logística/Recebimento) pro nome do "balde" de scripts em
+  // 00-lazy-areas.js. Inventário/Logística clássico não tem balde (sempre
+  // fez parte do Base) — só Produção/PCP/Compras/Recebimento carregam sob
+  // demanda.
+  function _areaLazyDoSetor(id,view){
+    if(id==='producao')return'producao';
+    if(id==='pcp')return'pcp';
+    if(id==='compras')return'compras';
+    if(id==='logistica'&&view==='recebimento')return'recebimento';
+    return null;
+  }
+  // Elemento onde mostrar "Carregando módulo..." enquanto os scripts da
+  // área ainda não terminaram de baixar/executar — mesmo elemento que o
+  // fallback "sem módulos liberados" já usa mais abaixo pra cada setor,
+  // pra não introduzir um 2º ponto de verdade sobre "qual é a página
+  // default visível" de cada shell.
+  function _paginaCarregandoDoSetor(area){
+    if(area==='producao')return document.getElementById('page-producao-dashboard');
+    if(area==='pcp')return document.getElementById('page-pcp-central');
+    if(area==='compras')return document.getElementById('page-compras-central');
+    if(area==='recebimento')return document.getElementById('page-recebimento-dashboard');
+    return null;
+  }
+  async function irParaSetor(id,view){
     if(!SETORES_INFO[id])return;
     if(id==='logistica'&&view)_logisticaView=view;
     _setorAtual=id;
@@ -739,6 +763,18 @@
     if(producaoShell)producaoShell.style.display=id==='producao'?'flex':'none';
     if(pcpShell)pcpShell.style.display=id==='pcp'?'flex':'none';
     if(comprasShell)comprasShell.style.display=id==='compras'?'flex':'none';
+    var _areaLazy=_areaLazyDoSetor(id,_logisticaView);
+    if(_areaLazy&&typeof global.carregarScriptsDeArea==='function'){
+      var _semPaginaAindaAberta=!document.querySelector('#setor-'+(id==='logistica'?'logistica-recebimento':id)+'-shell .page.on');
+      var _pgCarregando=_semPaginaAindaAberta?_paginaCarregandoDoSetor(_areaLazy):null;
+      if(_pgCarregando){_pgCarregando.innerHTML='<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando módulo...</div></div>';_pgCarregando.classList.add('on');}
+      try{await global.carregarScriptsDeArea(_areaLazy);global.AnalistaRouter?.rewrapNavegacao?.();}
+      catch(e){
+        if(_pgCarregando)_pgCarregando.innerHTML='<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar este módulo</div><div class="empty-sub">Verifique a conexão e tente de novo.</div><button type="button" class="btn btn-primary btn-sm" data-recarregar-area="'+_areaLazy+'" style="margin-top:12px">Recarregar página</button></div>';
+        return;
+      }
+      if(_pgCarregando)_pgCarregando.classList.remove('on');
+    }
     if(id==='logistica'||id==='producao'||id==='pcp'||id==='compras'){
       if(placeholder)placeholder.style.display='none';
       if(id==='logistica'&&_logisticaView==='recebimento'&&!document.querySelector('#setor-logistica-recebimento-shell .page.on')){
@@ -959,6 +995,15 @@
     const botao=event.target.closest('[data-setor]');
     if(!botao)return;
     irParaSetor(botao.dataset.setor);
+  });
+  // "Recarregar página" do aviso de falha ao carregar módulo por setor (ver
+  // irParaSetor/carregarScriptsDeArea) — recarga completa em vez de tentar
+  // reinjetar os scripts de novo: alguns arquivos da área registram
+  // listeners globais no próprio carregamento (document.addEventListener no
+  // topo do arquivo), então reexecutar só os que já rodaram duplicaria
+  // esses listeners; um F5 garante estado limpo.
+  document.addEventListener('click',function(event){
+    if(event.target.closest('[data-recarregar-area]'))global.location.reload();
   });
   // Flyout de "Logística" (fase 15) — item do menu navega direto pra
   // Inventário ou Recebimento; clique no botão/gatilho alterna .open (fallback

@@ -65,7 +65,15 @@ function montarHtml() {
   </body></html>`;
 }
 
-function montarAmbiente() {
+// Carregamento por setor (front 3): irParaSetor/AnalistaRouter agora podem
+// esperar carregarScriptsDeArea (aqui, um stub que resolve no próximo
+// microtask) antes de terminar de aplicar uma rota — um setTimeout(0) real
+// garante que toda a cadeia de awaits internos já drenou.
+function flush(win) {
+  return new Promise(r => win.setTimeout(r, 0));
+}
+
+async function montarAmbiente() {
   const dom = new JSDOM(montarHtml(), { runScripts: 'outside-only', url: 'http://localhost/analista.html#/producao/dashboard' });
   const win = dom.window;
   win.temPermissao = () => true;
@@ -79,6 +87,11 @@ function montarAmbiente() {
   win._currentAnalistaUser = { email: 'teste@dt.com', uid: 'u1' };
   win.firebase = { auth: () => ({ currentUser: { uid: 'u1' } }) };
   win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true, permissoes: {} };
+  // Carregamento por setor (front 3): os arquivos de Produção/PCP/Compras
+  // já são carregados direto via vm.runInContext logo abaixo, então não
+  // precisa do carregamento real por <script> — só um stub que resolve na
+  // hora.
+  win.carregarScriptsDeArea = async () => {};
   const ctx = dom.getInternalVMContext();
   ['03-core-navigation.js', 'router-historico.js', '37-usuarios-permissoes.js', '78-pcp-central.js', '79-compras-central.js', '121-compras-profissional.js']
     .forEach(nome => vm.runInContext(ler(nome), ctx, { filename: nome }));
@@ -86,14 +99,15 @@ function montarAmbiente() {
   win.pcpRegistrarPagina('dashboard', { elId: 'page-pcp-dashboard', render: '_stubPcpDash', titulo: 'Dashboard' });
   win._stubPcpDash = () => {};
   win.AnalistaRouter.init();
+  await flush(win);
   return { win };
 }
 
 // ---------------------------------------------------------------------
 // 20. Abrir Configurações gerais e voltar
 // ---------------------------------------------------------------------
-test('20) Abrir Configurações pela engrenagem gera rota "configuracoes"; Voltar (popstate/hashchange) fecha o modal e restaura a página de origem — reaproveitando _paginaAntesConfig, não reimplementado', () => {
-  const { win } = montarAmbiente();
+test('20) Abrir Configurações pela engrenagem gera rota "configuracoes"; Voltar (popstate/hashchange) fecha o modal e restaura a página de origem — reaproveitando _paginaAntesConfig, não reimplementado', async () => {
+  const { win } = await montarAmbiente();
   win.goPage('producao-dashboard', win.document.getElementById('nav-producao-dashboard'));
   assert.ok(win.document.getElementById('page-producao-dashboard').classList.contains('on'));
 
@@ -105,13 +119,14 @@ test('20) Abrir Configurações pela engrenagem gera rota "configuracoes"; Volta
   // antes de disparar popstate/hashchange — simulamos os dois.
   win.location.hash = '#/producao/dashboard';
   win.dispatchEvent(new win.Event('hashchange'));
+  await flush(win);
 
   assert.ok(!win.document.getElementById('modal-configuracoes').classList.contains('open'), 'Voltar deveria fechar o modal');
   assert.ok(win.document.getElementById('page-producao-dashboard').classList.contains('on'), 'Voltar deveria restaurar a página de origem (Produção), não abrir Dashboard padrão');
 });
 
-test('Fechar Configurações pelo botão (não pelo navegador) também sincroniza a URL de volta pra página de origem', () => {
-  const { win } = montarAmbiente();
+test('Fechar Configurações pelo botão (não pelo navegador) também sincroniza a URL de volta pra página de origem', async () => {
+  const { win } = await montarAmbiente();
   win.goPage('producao-dashboard', win.document.getElementById('nav-producao-dashboard'));
   win.abrirModalConfiguracoes('lojas', null);
   assert.equal(win.AnalistaRouter.rotaAtual().path, 'configuracoes');
@@ -120,8 +135,8 @@ test('Fechar Configurações pelo botão (não pelo navegador) também sincroniz
   assert.ok(!win.document.getElementById('modal-configuracoes').classList.contains('open'));
 });
 
-test('Trocar de aba dentro do modal já aberto (operadores → integracao) atualiza a query ?tab= sem empurrar uma 2ª entrada de histórico', () => {
-  const { win } = montarAmbiente();
+test('Trocar de aba dentro do modal já aberto (operadores → integracao) atualiza a query ?tab= sem empurrar uma 2ª entrada de histórico', async () => {
+  const { win } = await montarAmbiente();
   const original = win.history.pushState.bind(win.history);
   let pushes = 0; win.history.pushState = (...a) => { pushes++; original(...a); };
   win.abrirModalConfiguracoes('operadores', null);
@@ -132,16 +147,16 @@ test('Trocar de aba dentro do modal já aberto (operadores → integracao) atual
 // ---------------------------------------------------------------------
 // 24. Sem reabrir modal de cadastro após recarregar
 // ---------------------------------------------------------------------
-test('24) "Recarregar" com um hash de página normal (não "configuracoes") nunca reabre o modal de Configurações sozinho', () => {
-  const { win } = montarAmbiente(); // hash inicial é #/producao/dashboard, não #/configuracoes
+test('24) "Recarregar" com um hash de página normal (não "configuracoes") nunca reabre o modal de Configurações sozinho', async () => {
+  const { win } = await montarAmbiente(); // hash inicial é #/producao/dashboard, não #/configuracoes
   assert.ok(!win.document.getElementById('modal-configuracoes').classList.contains('open'));
 });
 
 // ---------------------------------------------------------------------
 // 23. Não repetir consultas/renderizações desnecessárias
 // ---------------------------------------------------------------------
-test('23) Reaplicar a MESMA rota (2 navegações idênticas seguidas) não escreve a URL de novo nem chama irParaSetor uma 2ª vez à toa', () => {
-  const { win } = montarAmbiente();
+test('23) Reaplicar a MESMA rota (2 navegações idênticas seguidas) não escreve a URL de novo nem chama irParaSetor uma 2ª vez à toa', async () => {
+  const { win } = await montarAmbiente();
   let chamadasSetor = 0;
   const origIrParaSetor = win.irParaSetor;
   // irParaSetor já está embrulhado pelo roteador — contamos as chamadas na
@@ -157,8 +172,8 @@ test('23) Reaplicar a MESMA rota (2 navegações idênticas seguidas) não escre
 // ---------------------------------------------------------------------
 // 25. Não repetir salvamento ao usar Voltar/Avançar
 // ---------------------------------------------------------------------
-test('25) Voltar/Avançar entre duas rotas nunca chama funções de salvar/gravar — o roteador só troca .page/.on, nunca invoca ações de escrita', () => {
-  const { win } = montarAmbiente();
+test('25) Voltar/Avançar entre duas rotas nunca chama funções de salvar/gravar — o roteador só troca .page/.on, nunca invoca ações de escrita', async () => {
+  const { win } = await montarAmbiente();
   let salvouAlgumaCoisa = false;
   // Nenhuma função exposta pelo roteador (apply/currentRoute) referencia
   // qualquer ...Salvar/salvar.../gravar... — prova estrutural: navegar não
@@ -174,18 +189,18 @@ test('25) Voltar/Avançar entre duas rotas nunca chama funções de salvar/grava
       doc: () => ({ set: (...a) => { chamadasEscrita.push('set'); return Promise.resolve(); }, get: async () => ({ exists: false }) }),
     }),
   });
-  win.location.hash = '#/pcp/dashboard'; win.dispatchEvent(new win.Event('hashchange'));
-  win.location.hash = '#/pcp/pedidos'; win.dispatchEvent(new win.Event('hashchange'));
-  win.location.hash = '#/pcp/dashboard'; win.dispatchEvent(new win.Event('hashchange'));
-  win.location.hash = '#/pcp/pedidos'; win.dispatchEvent(new win.Event('hashchange'));
+  win.location.hash = '#/pcp/dashboard'; win.dispatchEvent(new win.Event('hashchange')); await flush(win);
+  win.location.hash = '#/pcp/pedidos'; win.dispatchEvent(new win.Event('hashchange')); await flush(win);
+  win.location.hash = '#/pcp/dashboard'; win.dispatchEvent(new win.Event('hashchange')); await flush(win);
+  win.location.hash = '#/pcp/pedidos'; win.dispatchEvent(new win.Event('hashchange')); await flush(win);
   assert.deepEqual(chamadasEscrita, [], 'navegar por Voltar/Avançar não pode chamar nenhuma escrita no Firestore');
 });
 
 // ---------------------------------------------------------------------
 // Compras — correção do bug real do selectedProduct (Produtos 360°)
 // ---------------------------------------------------------------------
-test('Compras: clicar "Ver 360°" seleciona o produto; navegar pra outra aba e voltar pra Produtos SEM ?produto= volta pra lista, não fica preso no 360° (bug corrigido)', () => {
-  const { win } = montarAmbiente();
+test('Compras: clicar "Ver 360°" seleciona o produto; navegar pra outra aba e voltar pra Produtos SEM ?produto= volta pra lista, não fica preso no 360° (bug corrigido)', async () => {
+  const { win } = await montarAmbiente();
   win.comprasSetProduto('produto-123');
   assert.equal(win.comprasGetSelectedProduct(), 'produto-123');
   assert.ok(win.document.getElementById('page-compras-produtos').classList.contains('on'));
@@ -195,20 +210,22 @@ test('Compras: clicar "Ver 360°" seleciona o produto; navegar pra outra aba e v
   assert.equal(win.comprasGetSelectedProduct(), '', 'reabrir Produtos sem pedir um produto específico tem que limpar a seleção anterior');
 });
 
-test('Compras: deep-link direto pra "compras/produtos?produto=abc" abre já no 360° daquele produto', () => {
-  const { win } = montarAmbiente();
+test('Compras: deep-link direto pra "compras/produtos?produto=abc" abre já no 360° daquele produto', async () => {
+  const { win } = await montarAmbiente();
   win.location.hash = '#/compras/produtos?produto=abc';
   win.dispatchEvent(new win.Event('hashchange'));
+  await flush(win);
   assert.equal(win.comprasGetSelectedProduct(), 'abc');
   assert.equal(win.AnalistaRouter.rotaAtual().params.get('produto'), 'abc');
 });
 
-test('Compras: rota "compras/central" restaura a sub-aba (?aba=historico) e não perde ao trocar de setor e voltar', () => {
-  const { win } = montarAmbiente();
+test('Compras: rota "compras/central" restaura a sub-aba (?aba=historico) e não perde ao trocar de setor e voltar', async () => {
+  const { win } = await montarAmbiente();
   win.location.hash = '#/compras/central?aba=historico';
   win.dispatchEvent(new win.Event('hashchange'));
+  await flush(win);
   assert.equal(win.comprasGetAbaCentral(), 'historico');
-  win.location.hash = '#/producao/dashboard'; win.dispatchEvent(new win.Event('hashchange'));
-  win.location.hash = '#/compras/central?aba=historico'; win.dispatchEvent(new win.Event('hashchange'));
+  win.location.hash = '#/producao/dashboard'; win.dispatchEvent(new win.Event('hashchange')); await flush(win);
+  win.location.hash = '#/compras/central?aba=historico'; win.dispatchEvent(new win.Event('hashchange')); await flush(win);
   assert.equal(win.comprasGetAbaCentral(), 'historico');
 });

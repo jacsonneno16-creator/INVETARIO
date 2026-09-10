@@ -6,12 +6,19 @@ const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8');
 function mockColecao(docsIniciais){
   const registro=new Map(docsIniciais.map(d=>[d.id,d.data]));
   let seq=0;
-  return {
+  const colecao={
     get: async()=>({size:registro.size, docs:[...registro.entries()].map(([id,data])=>({id,data:()=>data}))}),
     doc:(id)=>{ const docId=id||('novo'+(seq++)); return { id:docId, set: async(p)=>{ const a=registro.get(docId)||{}; registro.set(docId,{...a,...p}); }, delete: async()=>{ registro.delete(docId); } }; },
     add: async(payload)=>{ const docId='novo'+(seq++); registro.set(docId,payload); return {id:docId}; },
+    where:(campo,op,valor)=>({
+      get: async()=>{
+        const filtrados=[...registro.entries()].filter(([,data])=>op==='=='?data[campo]===valor:true);
+        return {size:filtrados.length, docs:filtrados.map(([id,data])=>({id,data:()=>data}))};
+      },
+    }),
     _registro: registro,
   };
+  return colecao;
 }
 
 function loadRelatorios(recebimentosFake, notasBluesoftFake, colecoes, sincronizarAgendaBluesoftFake){

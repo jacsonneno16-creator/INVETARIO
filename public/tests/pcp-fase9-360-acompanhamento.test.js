@@ -4,7 +4,7 @@ const pcp360Code=fs.readFileSync(path.join(base,'86-pcp-produto-360.js'),'utf8')
 const pcp360=pcp360Code;
 const acompanhamento=fs.readFileSync(path.join(base,'84-pcp-compras-acompanhamento.js'),'utf8');
 const pcpCentral=fs.readFileSync(path.join(base,'78-pcp-central.js'),'utf8');
-const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8');
+const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8')+fs.readFileSync(path.join(__dirname,'../js/analista/00-lazy-areas.js'),'utf8');
 
 test('Produto 360° reaproveita construirVisao/memoriaDeCalculo/timeline (só busca ficha técnica direto, pra seção de Insumos)',()=>{
   assert.match(pcp360,/global\._pcpInternals\.carregar/);

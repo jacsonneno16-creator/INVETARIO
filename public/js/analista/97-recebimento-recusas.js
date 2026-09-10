@@ -1508,17 +1508,24 @@
     document.querySelectorAll('[data-vm-excluir]').forEach(b => b.addEventListener('click', () => excluirVendedorMercado(b.dataset.vmExcluir)));
   }
 
+  // Shell-first (mesmo padrão de 99-recebimento-retornos-status.js):
+  // desenhar()/desenharCadastros() já são seguras com os arrays de estado
+  // vazios, então chamam ANTES do fetch (título/botões/filtros aparecem na
+  // hora) e de novo depois — nunca escondendo a estrutura atrás de um
+  // "Carregando..." de página inteira.
   async function renderRecebimentoRecusas() {
     const pagina = document.getElementById('page-recebimento-recusas');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-title">Carregando Notas Retornadas...</div></div>';
-    try { await carregarDados(); desenhar(); } catch(e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Notas Retornadas</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; }
+    desenhar();
+    try { await carregarDados(); } catch(e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Notas Retornadas</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; return; }
+    desenhar();
   }
   async function renderRecebimentoRecusasCadastros() {
     const pagina = document.getElementById('page-recebimento-recusas-cadastros');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-title">Carregando Cadastros...</div></div>';
-    try { await carregarDados(); desenharCadastros(); } catch(e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Cadastros</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; }
+    desenharCadastros();
+    try { await carregarDados(); } catch(e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Cadastros</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; return; }
+    desenharCadastros();
   }
 
   global.renderRecebimentoRecusas = renderRecebimentoRecusas;

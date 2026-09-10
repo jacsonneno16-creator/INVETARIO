@@ -37,7 +37,7 @@ test('marcarColetorOffline(): logout normal (sem encerrar turno) limpa operador_
     console,
   };
   vm.createContext(context);
-  const codigo = fs.readFileSync(path.join(jsColetor, '02-sync-dispositivo.js'), 'utf8');
+  const codigo = fs.readFileSync(path.join(jsColetor, '02-sync-dispositivo.js'), 'utf8').replace(/\r\n/g, '\n');
   // Só a função que este teste exercita — o arquivo inteiro depende de
   // muita coisa de tela (goScreen, toast, AUTH...) que não importa aqui.
   const trecho = codigo.slice(codigo.indexOf('async function marcarColetorOffline'), codigo.indexOf('/**\n * Encerra o turno'));

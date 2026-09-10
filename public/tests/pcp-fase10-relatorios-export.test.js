@@ -1,7 +1,7 @@
 const test=require('node:test');const assert=require('node:assert/strict');const fs=require('fs');const path=require('path');
 const base=path.join(__dirname,'../js/analista');
 const code=fs.readFileSync(path.join(base,'88-pcp-relatorios.js'),'utf8');
-const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8');
+const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8')+fs.readFileSync(path.join(__dirname,'../js/analista/00-lazy-areas.js'),'utf8');
 
 test('Relatórios do PCP cobrem somente indicadores operacionais',()=>{
   for(const id of ['necessidade','demandas','ruptura','cobertura','estoque-projetado']){

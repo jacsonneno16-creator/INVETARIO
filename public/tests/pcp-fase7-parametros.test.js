@@ -5,7 +5,7 @@ const parametrosCode=fs.readFileSync(path.join(base,'81-pcp-parametros.js'),'utf
 const pcpCode=fs.readFileSync(path.join(base,'78-pcp-central.js'),'utf8');
 const rules=fs.readFileSync(path.join(__dirname,'../../firestore.rules'),'utf8');
 const permCode=fs.readFileSync(path.join(base,'37-usuarios-permissoes.js'),'utf8');
-const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8');
+const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8')+fs.readFileSync(path.join(__dirname,'../js/analista/00-lazy-areas.js'),'utf8');
 
 function loadAuditoria(){
   const escritas=[];
