@@ -19,6 +19,24 @@ function mockColecao(docsIniciais){
     }),
     add: async(payload)=>{ const id='novo'+(seq++); registro.set(id,payload); return {id}; },
     _registro: registro,
+    // Usado por _buscarRecusasPeriodo (97-recebimento-recusas.js).
+    where(campo, op, valor) {
+      const construir = condicoesAtuais => ({
+        where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        get: async () => {
+          const bate = data => condicoesAtuais.every(c => {
+            const v = data ? data[c.campo] : undefined;
+            if (c.op === '>=') return v >= c.valor;
+            if (c.op === '<=') return v <= c.valor;
+            if (c.op === '==') return v === c.valor;
+            return true;
+          });
+          const filtrados = [...registro.entries()].filter(([, data]) => bate(data));
+          return { docs: filtrados.map(([id, data]) => ({ id, data: () => data })) };
+        },
+      });
+      return construir([{ campo, op, valor }]);
+    },
   };
 }
 

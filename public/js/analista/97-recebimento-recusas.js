@@ -591,50 +591,40 @@
     return _notas;
   }
   // PEDIDO AO VIVO (2026-09-10, 2ª rodada): "não ia funcionar parecido com
-  // a base de produtos?" — troca a busca "uma vez só" por uma conexão AO
-  // VIVO (onSnapshot), mas sempre com o MESMO filtro de período (no máximo
-  // 3 meses) que já existia — o que evitava travar (buscar a coleção
-  // inteira) continua evitado; só o "buscar de novo toda vez" que virou
-  // "fica atualizado sozinho, sem precisar clicar". Qualquer nota nova
-  // dentro do período já buscado aparece na hora, sem ação nenhuma.
-  let _unsubRecusasPeriodo = null;
-  function _pararSnapshotRecusas() {
-    if (_unsubRecusasPeriodo) { try { _unsubRecusasPeriodo(); } catch (_e) {} _unsubRecusasPeriodo = null; }
-  }
-  function _buscarRecusasPeriodo(ini, fim, forcar) {
-    if (!_periodoRecusasValido(ini, fim)) return Promise.reject(new Error('Escolha um período válido de até 2 meses.'));
+  // a base de produtos?" — a ideia era trocar a busca única por uma
+  // conexão ao vivo (onSnapshot). REVERTIDO NO MESMO DIA: em produção essa
+  // troca travou a tela (botão "Buscando..." preso, sem erro nenhum no
+  // fluxo — o mesmo tipo de instabilidade que já tinha um aviso escrito no
+  // código de 93/95 sobre onSnapshot). Volta pra busca única (.get()), mas
+  // mantém as duas melhorias que continuam boas: carrega sozinha ao entrar
+  // (não espera clique) e período de 2 meses. "Ao vivo de verdade" fica
+  // pra outra rodada, com mais investigação antes de subir pra produção.
+  async function _buscarRecusasPeriodo(ini, fim, forcar) {
+    if (!_periodoRecusasValido(ini, fim)) throw new Error('Escolha um período válido de até 2 meses.');
     const chave = ini + '|' + fim;
-    if (_recusasPeriodoBuscado === chave && _unsubRecusasPeriodo && !forcar) return Promise.resolve();
-    _pararSnapshotRecusas();
-    _recusasPeriodoBuscado = chave;
+    if (_recusasPeriodoBuscado === chave && !forcar) return;
     _recusasCarregandoPeriodo = true;
-    return new Promise((resolve, reject) => {
-      let resolvido = false;
-      _unsubRecusasPeriodo = fs().collection(COL_RECUSAS)
-        .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
-        .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
-        .onSnapshot(snap => {
-          // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada por
-          // 100-consulta-notas-fiscais.js (origem:'AUTOMATICO') não é um
-          // recebimento físico processado pelo Coletor — não deve aparecer
-          // na fila de Notas Retornadas (motorista/box/conferência não
-          // existem pra ela). Ela tem indicador próprio, separado (ver
-          // 102-devolucoes-bi-indicadores.js).
-          // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a
-          // ser gravado numa rodada posterior — registros auto-salvos
-          // antes disso não têm esse campo, mas sempre tiveram
-          // `motivoAutomaticoTexto` (exclusivo desse fluxo), que serve de
-          // marcador retroativo.
-          _recusas = snap.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
-          _recusasCarregandoPeriodo = false;
-          if (!resolvido) { resolvido = true; resolve(); }
-          else if (document.getElementById('recusas-tabela')) { redesenharTabela(); _redesenharResumoRecusas(); }
-        }, err => {
-          console.warn('[Notas Retornadas] Tempo real indisponível em recusas:', err?.message || err);
-          _recusasCarregandoPeriodo = false;
-          if (!resolvido) { resolvido = true; reject(err); }
-        });
-    });
+    return fs().collection(COL_RECUSAS)
+      .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
+      .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
+      .get()
+      .then(r => {
+        // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada por
+        // 100-consulta-notas-fiscais.js (origem:'AUTOMATICO') não é um
+        // recebimento físico processado pelo Coletor — não deve aparecer
+        // na fila de Notas Retornadas (motorista/box/conferência não
+        // existem pra ela). Ela tem indicador próprio, separado (ver
+        // 102-devolucoes-bi-indicadores.js).
+        // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a
+        // ser gravado numa rodada posterior — registros auto-salvos
+        // antes disso não têm esse campo, mas sempre tiveram
+        // `motivoAutomaticoTexto` (exclusivo desse fluxo), que serve de
+        // marcador retroativo.
+        _recusas = r.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
+        _recusasPeriodoBuscado = chave;
+        _recusasCarregandoPeriodo = false;
+      })
+      .catch(e => { _recusasCarregandoPeriodo = false; throw e; });
   }
   // Mantida pra compatibilidade com os call sites já existentes (depois de
   // criar/editar/excluir cadastro, atribuir conferência, etc.) — sempre
