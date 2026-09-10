@@ -626,23 +626,40 @@
     const chave = ini + '|' + fim;
     if (_recusasPeriodoBuscado === chave && !forcar) return;
     _recusasCarregandoPeriodo = true;
-    return fs().collection(COL_RECUSAS)
+    const ref = fs().collection(COL_RECUSAS)
       .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
-      .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
-      .get()
+      .where('criadoEm', '<=', fim + 'T23:59:59.999Z');
+    // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada por
+    // 100-consulta-notas-fiscais.js (origem:'AUTOMATICO') não é um
+    // recebimento físico processado pelo Coletor — não deve aparecer
+    // na fila de Notas Retornadas (motorista/box/conferência não
+    // existem pra ela). Ela tem indicador próprio, separado (ver
+    // 102-devolucoes-bi-indicadores.js).
+    // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a
+    // ser gravado numa rodada posterior — registros auto-salvos
+    // antes disso não têm esse campo, mas sempre tiveram
+    // `motivoAutomaticoTexto` (exclusivo desse fluxo), que serve de
+    // marcador retroativo.
+    const processar = r => { _recusas = r.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || ''))); };
+    // PEDIDO AO VIVO (2026-09-10, "não tem como atualizar mais rápido
+    // não"): mesma ideia da Base de Produtos — mostra o que já tiver em
+    // cache do Firestore NA HORA (pode estar um pouco desatualizado),
+    // enquanto a busca de verdade roda por trás e substitui. Só quando
+    // este período ainda não tinha nada em memória nesta sessão.
+    if (!forcar && _recusasPeriodoBuscado !== chave) {
+      try {
+        const cache = await ref.get({ source: 'cache' });
+        // Marca o período como "já buscado" mesmo na prévia do cache —
+        // renderRecusasTabela() só troca o "Conectando..." pela tabela
+        // quando isso está preenchido (ver ajuste no gate logo abaixo,
+        // linha ~719); sem isso a tela ficaria presa no spinner mesmo já
+        // tendo dado pra mostrar.
+        if (!cache.empty) { processar(cache); _recusasPeriodoBuscado = chave; desenhar(); }
+      } catch (_e) { /* nada em cache ainda — segue normal */ }
+    }
+    return ref.get()
       .then(r => {
-        // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada por
-        // 100-consulta-notas-fiscais.js (origem:'AUTOMATICO') não é um
-        // recebimento físico processado pelo Coletor — não deve aparecer
-        // na fila de Notas Retornadas (motorista/box/conferência não
-        // existem pra ela). Ela tem indicador próprio, separado (ver
-        // 102-devolucoes-bi-indicadores.js).
-        // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a
-        // ser gravado numa rodada posterior — registros auto-salvos
-        // antes disso não têm esse campo, mas sempre tiveram
-        // `motivoAutomaticoTexto` (exclusivo desse fluxo), que serve de
-        // marcador retroativo.
-        _recusas = r.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
+        processar(r);
         _recusasPeriodoBuscado = chave;
         _recusasCarregandoPeriodo = false;
       })
@@ -704,7 +721,11 @@
     </div>`;
   }
   function renderRecusasTabela() {
-    if (_recusasCarregandoPeriodo) {
+    // "Conectando..." só quando AINDA não tem nada pra mostrar — se a
+    // prévia do cache local já preencheu _recusasPeriodoBuscado enquanto a
+    // busca de verdade roda por trás, mostra a tabela (com o que já tem)
+    // em vez de travar num spinner à toa.
+    if (_recusasCarregandoPeriodo && !_recusasPeriodoBuscado) {
       return '<div class="empty"><div class="empty-icon">🔄</div><div class="empty-title">Conectando ao período...</div></div>';
     }
     if (!_recusasPeriodoBuscado) {

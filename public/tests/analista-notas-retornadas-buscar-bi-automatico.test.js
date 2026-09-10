@@ -99,7 +99,17 @@ function criarRawFirestore(colecoesPorNome) {
 // refresh a cada render — timer real em jsdom, que precisa ser derrubado
 // com window.close() ou o node --test nunca sai sozinho.
 let _janelasAbertas = [];
-test.afterEach(() => { _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} }); _janelasAbertas = []; });
+// _buscarRecusasPeriodo() agora também tenta o cache local do Firestore
+// antes da busca de verdade (cache-first, ver 97-recebimento-recusas.js) —
+// mais um "await" na cadeia de fundo que renderRecebimentoRecusas() nunca
+// aguarda de propósito (roda em segundo plano). Sem essa folga de 1 tick,
+// window.close() podia rodar ANTES desse fundo terminar, e o desenhar()
+// tardio explodia tentando usar um document já fechado.
+test.afterEach(async () => {
+  await new Promise(r => setTimeout(r, 0));
+  _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} });
+  _janelasAbertas = [];
+});
 
 function carregarPagina(dtBiPastaLocalMock, recusasIniciais) {
   const dom = new JSDOM('<!doctype html><html><body><div id="page-recebimento-recusas"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
