@@ -185,6 +185,10 @@ test('_importarNotasVendaBiRegistros: PEDIDO AO VIVO "se sumiu, é pra excluir" 
   colNotas._registro.set('1'.repeat(44), { chave: '1'.repeat(44), naturezaLabel: 'Venda', origemImportacao: 'BI', destinatario: 'Sumiu' });
   colNotas._registro.set('2'.repeat(44), { chave: '2'.repeat(44), naturezaLabel: 'Venda', origemImportacao: 'BI', destinatario: 'Continua' });
   await win.renderRecebimentoRecusas(); // dispara a migração automática (docs individuais sem chunkIndex) pros chunks
+  // A migração roda em segundo plano (nunca bloqueia o render, ver BUG AO
+  // VIVO REAL 2026-09-10 no comentário de _carregarCadastrosRecusas) —
+  // aguarda ela terminar de verdade antes de checar o resultado.
+  await win.DTRecusasParser._carregarNotasVendaLedger();
   assert.equal(colChunks._registro.get('chunk_0').notas['1'.repeat(44)].destinatario, 'Sumiu', 'migração já deve ter empacotado as 2 notas existentes');
   const registros = [{ tipo_movimento: 'VENDA', chave: '2'.repeat(44), nf_numero: 2, cliente: 'Continua', valor_nota: 20, data_emissao: '2026-01-01', quantidade_faturada: 1, produto: 'B' }];
   const resultado = await win.DTRecusasParser._importarNotasVendaBiRegistros(registros);
@@ -235,6 +239,7 @@ test('PEDIDO AO VIVO "chunks de 1000 ou até de mais": migração automática em
   colNotas._registro.set('2'.repeat(44), { chave: '2'.repeat(44), naturezaLabel: 'Venda', destinatario: 'Antiga 2' });
   assert.equal(colChunks._registro.size, 0, 'ainda não migrou nada');
   await win.renderRecebimentoRecusas();
+  await win.DTRecusasParser._carregarNotasVendaLedger(); // migração roda em segundo plano — espera terminar
   assert.equal(colChunks._registro.size, 1, 'as 2 notas antigas couberam num chunk só');
   const chunk0 = colChunks._registro.get('chunk_0');
   assert.equal(Object.keys(chunk0.notas).length, 2);

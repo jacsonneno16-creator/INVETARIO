@@ -57,7 +57,7 @@
       "js/analista/94-recebimento-relatorios.js?v=20260827-so-buscar-auto-refresh",
       "js/analista/95-recebimento-transbordo.js?v=20260910-respeita-cache-na-reentrada",
       "js/analista/96-recebimento-performance.js?v=20260821-filtro-periodo-livre",
-      "js/analista/97-recebimento-recusas.js?v=20260910-busca-manual-periodo-3-meses",
+      "js/analista/97-recebimento-recusas.js?v=20260910b-ledger-vendas-nao-bloqueia-tela",
       "js/analista/100-consulta-notas-fiscais.js?v=20260902b-gtin-ean-dun-separados",
       "js/analista/98-recebimento-retornos-indicadores.js?v=20260910-busca-manual-periodo-2-anos",
       "js/analista/102-devolucoes-bi-indicadores.js?v=20260910-busca-manual-periodo-2-anos",

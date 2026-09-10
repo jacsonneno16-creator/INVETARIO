@@ -81,6 +81,12 @@ test('BUG AO VIVO REAL: entrar em Notas Retornadas e depois em Cadastros NÃO re
   const { win, contador } = carregarPagina();
 
   await win.renderRecebimentoRecusas();
+  // O ledger de vendas (_notas) carrega em segundo plano, sem o render
+  // esperar por ele (ver BUG AO VIVO REAL 2026-09-10 no comentário de
+  // _carregarCadastrosRecusas) — espera terminar antes de fixar a
+  // contagem "de referência", senão ele pode terminar DEPOIS do checkpoint
+  // e ser contado como se fosse uma busca nova da 2ª entrada.
+  await win.DTRecusasParser._carregarNotasVendaLedger();
   const chamadasAposPrimeiraEntrada = contador.n;
   assert.ok(chamadasAposPrimeiraEntrada > 0, 'a primeira entrada precisa buscar de verdade');
 

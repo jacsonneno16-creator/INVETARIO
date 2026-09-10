@@ -445,17 +445,24 @@
     const docs = individualSnap.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     const rawFs = raw();
     const { porChunk, comChunkIndex } = _empacotarEmChunks(docs);
-    for (const [chunkIndex, mapaChunk] of porChunk) {
+    // Cada chunk é um documento independente dos outros — grava todos em
+    // paralelo (Promise.all) em vez de um de cada vez. Numa base grande
+    // (dezenas de chunks), sequencial significava dezenas de idas e voltas
+    // à rede, uma atrás da outra, segurando essa migração (e qualquer outra
+    // consulta que tivesse que esperar na mesma fila de requisições) por
+    // minutos — ver BUG AO VIVO REAL no comentário de _carregarCadastrosRecusas.
+    await Promise.all([...porChunk].map(([chunkIndex, mapaChunk]) => {
       const batchChunk = rawFs.batch();
       batchChunk.set(fs().collection(COL_NOTAS_CHUNKS).doc('chunk_' + chunkIndex), { notas: mapaChunk }, { merge: true });
-      await batchChunk.commit();
-    }
-    for (let j = 0; j < comChunkIndex.length; j += 300) {
-      const sublote = comChunkIndex.slice(j, j + 300);
+      return batchChunk.commit();
+    }));
+    const sublotes = [];
+    for (let j = 0; j < comChunkIndex.length; j += 300) sublotes.push(comChunkIndex.slice(j, j + 300));
+    await Promise.all(sublotes.map(sublote => {
       const batchIndex = rawFs.batch();
       sublote.forEach(d => batchIndex.set(fs().collection(COL_NOTAS).doc(d.chave), { chunkIndex: d.chunkIndex }, { merge: true }));
-      await batchIndex.commit();
-    }
+      return batchIndex.commit();
+    }));
     return comChunkIndex;
   }
 
@@ -526,18 +533,30 @@
   // Coleção pequena/cadastro (motoristas, motivos, conferentes, tarefas,
   // vendedores de mercado) — sempre segura de carregar sozinha na entrada,
   // nunca é o gargalo. Separada da busca pesada (ledger de recusas) abaixo.
+  //
+  // BUG AO VIVO REAL (2026-09-10): `_migrarParaChunksSeNecessario()` morava
+  // aqui dentro, rodando toda vez que a tela abria — na 1ª vez que roda de
+  // verdade em produção (chunks ainda não existem, `recebimento_recusas_
+  // notas` pode ter dezenas de milhares de notas do BI), ela lê a coleção
+  // inteira de uma vez e grava dezenas de chunks em sequência. Isso sozinho
+  // já demora, e enquanto essa leitura/gravação gigante está em voo, até o
+  // clique em "🔍 Buscar" (que só mexe em `recebimento_recusas`, sem
+  // nenhuma relação) ficava preso atrás dela na fila de requisições —
+  // parecia a tela inteira travada. Virou uma função separada
+  // (`_carregarNotasVendaLedger`), chamada em segundo plano (nunca
+  // aguardada pelo render da tela) e só de verdade aguardada onde a
+  // correção precisa ser garantida (`_importarNotasVendaBiRegistros`, antes
+  // de `_gravarNotasVenda` usar `_notas` pra saber o que já existe).
   let _cadastrosRecusasCarregados = false;
   async function _carregarCadastrosRecusas(forcar) {
     if (_cadastrosRecusasCarregados && !forcar) return;
-    const [notasChunks, m, mot, conf, tar, vm] = await Promise.all([
-      _migrarParaChunksSeNecessario(),
+    const [m, mot, conf, tar, vm] = await Promise.all([
       fs().collection(COL_MOTORISTAS).get(),
       fs().collection(COL_MOTIVOS).get(),
       fs().collection(COL_CONFERENTES).get(),
       fs().collection(COL_TAREFAS).get(),
       fs().collection(COL_VENDEDORES_MERCADO).get(),
     ]);
-    _notas = notasChunks;
     _motoristas = m.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
     _motivos = mot.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
     _conferentes = conf.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
@@ -547,6 +566,24 @@
     // uma conferência delegada em andamento pra cada linha da tabela.
     _tarefas = new Map(tar.docs.map(d => [d.id, { _id:d.id, ...d.data() }]));
     _cadastrosRecusasCarregados = true;
+  }
+
+  // Ledger de vendas (_notas) — separado dos cadastros leves acima de
+  // propósito (ver comentário acima). `forcar` sempre revalida contra
+  // COL_NOTAS_CHUNKS (barato quando já existe); só reprocessa do zero
+  // quando os chunks ainda não existem de verdade.
+  let _notasVendaCarregando = false;
+  let _notasCarregadas = false;
+  async function _carregarNotasVendaLedger(forcar) {
+    if (_notasCarregadas && !forcar) return _notas;
+    _notasVendaCarregando = true;
+    try {
+      _notas = await _migrarParaChunksSeNecessario();
+      _notasCarregadas = true;
+    } finally {
+      _notasVendaCarregando = false;
+    }
+    return _notas;
   }
   // PEDIDO AO VIVO (2026-09-10): "quero que tenha período... busca manual,
   // não automática" — busca direcionada por `.where('criadoEm', ...)` no
@@ -592,7 +629,7 @@
     const vols = _recusas.reduce((s,r) => s + Number(r.volumeInformado || 0), 0);
     return `
       <div style="display:grid;grid-template-columns:repeat(4,minmax(140px,1fr));gap:10px;margin:12px 0 16px">
-        <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">NOTAS DE VENDA (LEDGER)</div><div style="font-size:1.45rem;font-weight:850">${_notas.length}</div></div>
+        <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">NOTAS DE VENDA (LEDGER)</div><div style="font-size:1.45rem;font-weight:850">${_notasVendaCarregando ? '⏳' : _notas.length.toLocaleString('pt-BR')}</div>${_notasVendaCarregando ? '<div style="font-size:.64rem;color:var(--muted);margin-top:2px">Organizando em segundo plano — o resto da tela já funciona normalmente</div>' : ''}</div>
         <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">RETORNOS HOJE</div><div style="font-size:1.45rem;font-weight:850">${hojeQtd}</div></div>
         <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">VOLUMES RETORNADOS</div><div style="font-size:1.45rem;font-weight:850">${vols}</div></div>
         <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">COM DIVERGÊNCIA</div><div style="font-size:1.45rem;font-weight:850;color:${diverg ? '#dc2626':'inherit'}">${diverg}</div></div>
@@ -1069,9 +1106,15 @@
     if (!Array.isArray(registros)) throw new Error('Formato inesperado — esperava uma lista de registros.');
     const vendas = registros.filter(r => String(r.tipo_movimento || '').toUpperCase() === 'VENDA');
     const notas = _agruparNotasBiPorChave(vendas);
+    // _gravarNotasVenda decide o que já existe (pra pular) e onde continuar
+    // gravando (chunk aberto) olhando pra `_notas` — precisa estar
+    // carregado e ATUALIZADO antes daqui, nunca só o que sobrou de uma
+    // carga antiga da tela (ver comentário de _carregarNotasVendaLedger).
+    await _carregarNotasVendaLedger(true);
     const { novas, removidas } = await _gravarNotasVenda(notas);
     const volumesCorrigidos = await _corrigirVolumeEsperadoRecusas(notas);
     await carregarDados(true);
+    await _carregarNotasVendaLedger(true);
     return { totalNotas: novas, totalRemovidas: removidas, totalEncontradas: notas.length, totalLinhas: vendas.length, volumesCorrigidos };
   }
 
@@ -1638,6 +1681,17 @@
     desenhar();
     try { await _carregarCadastrosRecusas(); } catch(e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Notas Retornadas</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; return; }
     desenhar();
+    // Ledger de vendas (_notas) roda em segundo plano, NUNCA aguardado
+    // aqui — só enriquece o card "Notas de venda (ledger)" e o detalhe da
+    // nota quando terminar (ver comentário de _carregarNotasVendaLedger).
+    // Se a página já foi trocada quando terminar, `pagina` não existe mais
+    // no DOM e desenhar() vira no-op (já checa `document.getElementById`).
+    // A chamada em si já marca `_notasVendaCarregando=true` de forma
+    // síncrona (roda até o 1º `await` antes de devolver a Promise) —
+    // redesenha logo em seguida pra mostrar esse estado, não só no fim.
+    const notasPromise = _carregarNotasVendaLedger();
+    desenhar();
+    notasPromise.then(() => desenhar()).catch(() => {});
   }
   async function renderRecebimentoRecusasCadastros() {
     const pagina = document.getElementById('page-recebimento-recusas-cadastros');
@@ -1649,7 +1703,7 @@
 
   global.renderRecebimentoRecusas = renderRecebimentoRecusas;
   global.renderRecebimentoRecusasCadastros = renderRecebimentoRecusasCadastros;
-  global.DTRecusasParser = { parseDanfeText, extrairChave, chaveNfeValida, numeroNotaDaChave, dividirTextoPorDanfes, _agruparNotasBiPorChave, _importarNotasVendaBiRegistros, buscarBiAutomatico, _corrigirGtinNotasVenda, _corrigirVolumeEsperadoRecusas, reconstruirTodosOsChunks, diagnosticoChunks, _empacotarEmChunks, _notaResumida, _tamanhoBytesEstimado, _notasDoDocumentoChunk, TAMANHO_CHUNK, LIMITE_BYTES_CHUNK, ARQUIVO_BI_NOTAS };
+  global.DTRecusasParser = { parseDanfeText, extrairChave, chaveNfeValida, numeroNotaDaChave, dividirTextoPorDanfes, _agruparNotasBiPorChave, _importarNotasVendaBiRegistros, buscarBiAutomatico, _corrigirGtinNotasVenda, _corrigirVolumeEsperadoRecusas, reconstruirTodosOsChunks, diagnosticoChunks, _empacotarEmChunks, _notaResumida, _tamanhoBytesEstimado, _notasDoDocumentoChunk, TAMANHO_CHUNK, LIMITE_BYTES_CHUNK, ARQUIVO_BI_NOTAS, _carregarNotasVendaLedger };
   // Reaproveitado por 98-recebimento-retornos-indicadores.js pro gráfico
   // "Notas por Ação (Tratamento)" — mesmo rótulo em toda a tela, sem
   // duplicar o mapa em dois arquivos.
