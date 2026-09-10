@@ -51,24 +51,6 @@ const PAGE_NAMES = {
 };
 
 let _currentPage = 'dashboard';
-let _renderPageSeq = 0;
-
-// BUG AO VIVO REAL (2026-09-09): "nenhuma tela do sistema todo não mostra
-// nada" — várias telas ficavam presas em "Carregando..." pra sempre quando
-// a busca no Firestore rejeitava sem nenhum tratamento. Aviso genérico
-// aqui, no ponto único por onde toda tela passa (_callPage), pega qualquer
-// tela sem proteção própria. NÃO usa timeout artificial (ver histórico:
-// chegou a usar um por um tempo) — Promise.race com timeout não cancela a
-// busca real, só desiste de esperar; numa consulta grande que só demora
-// (não trava de verdade), isso transformava "só lento" em "sempre falha".
-// Só reage a REJEIÇÃO real do Firestore agora.
-function _mostrarFalhaCarregamento(id, erro) {
-  if (_currentPage !== id) return;
-  const pageEl = document.getElementById('page-' + id);
-  if (!pageEl || !pageEl.classList.contains('on')) return;
-  const msg = String(erro && (erro.message || erro) || 'Falha desconhecida').replace(/[<>&]/g, '');
-  pageEl.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar esta tela</div><div class="empty-sub">' + msg + '</div><button type="button" class="btn btn-primary btn-sm" data-recarregar-pagina="' + id + '" style="margin-top:12px">Tentar novamente</button></div>';
-}
 
 function goPage(id, el) {
   if (typeof window.temPermissao === 'function' && !window.temPermissao(id, 'visualizar')) {
@@ -115,32 +97,9 @@ function renderCurrentPage() { renderPage(_currentPage); }
 
 function _callPage(fnName, fallback) {
   const fn = window[fnName];
-  const paginaDaChamada = _currentPage;
-  const seq = ++_renderPageSeq;
-  let resultado;
-  if (typeof fn === 'function') resultado = fn();
-  else {
-    console.warn('[Navegação] Função ausente:', fnName);
-    if (typeof fallback === 'function') resultado = fallback();
-  }
-  // O try/catch de renderPage só captura falhas SÍNCRONAS. A maioria das
-  // telas retorna uma Promise; sem isto, uma REJEIÇÃO real do Firestore
-  // (permission-denied, etc.) numa tela sem proteção própria não aparecia
-  // pra ninguém — ficava só no console. Sem timeout artificial: consultas
-  // grandes podem legitimamente levar mais tempo e ainda terminar bem;
-  // Promise.race com timeout não cancela a busca real, só desiste de
-  // esperar, então só reage a rejeição de verdade. Uma tela que já cuida
-  // do próprio carregamento/erro (ex.: Recebimentos/93) marca a Promise
-  // que devolve com `.__dtBackground = true` pra este aviso genérico não
-  // cobrir por cima o aviso específico dela.
-  if (resultado && typeof resultado.then === 'function' && resultado.__dtBackground !== true) {
-    resultado.catch(erro => {
-      if (seq !== _renderPageSeq || paginaDaChamada !== _currentPage) return;
-      console.error('[Navegação] Falha assíncrona ao carregar "' + paginaDaChamada + '":', erro);
-      _mostrarFalhaCarregamento(paginaDaChamada, erro);
-    });
-  }
-  return resultado;
+  if (typeof fn === 'function') return fn();
+  console.warn('[Navegação] Função ausente:', fnName);
+  if (typeof fallback === 'function') return fallback();
 }
 function renderPage(id) {
   try {
@@ -216,13 +175,6 @@ function renderPage(id) {
     }
   }
 }
-
-document.addEventListener('click', function (evento) {
-  const botao = evento.target.closest && evento.target.closest('[data-recarregar-pagina]');
-  if (!botao) return;
-  const id = botao.getAttribute('data-recarregar-pagina');
-  if (id && id === _currentPage) renderPage(id);
-});
 
 // ───────────────────────────────────────────────────────────────────
 window.AnalistaNavigation = { goPage, renderCurrentPage, renderPage, PAGE_NAMES };

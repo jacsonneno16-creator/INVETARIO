@@ -63,21 +63,7 @@ window.escAttr = window.escAttr || escAttr;
     return semEspacos.indexOf('expression(') !== -1 || /url\(\s*['"]?\s*(javascript:|vbscript:|data:text\/html)/i.test(semEspacos);
   }
   function limpar(html) {
-    var brutoHtml = String(html == null ? '' : html);
-    // BUG AO VIVO REAL (2026-09-09): "o site tá muito lento" — quase todo
-    // HTML do sistema é montado pelos próprios módulos com os valores já
-    // escapados (esc()/escHTML já rodou antes). Fazer o DOMParser
-    // reinterpretar tabelas inteiras (algumas com milhares de linhas) em
-    // TODO `.innerHTML =` do sistema — e essa função intercepta TODOS,
-    // sempre — duplicava o trabalho da thread principal a cada redesenho de
-    // tela. O atalho abaixo só pula o parser quando não existe NENHUM dos
-    // vetores que esta proteção precisa inspecionar (via busca ampla na
-    // string crua, não escopada por atributo — mais conservador, nunca
-    // deixa passar algo perigoso). Qualquer markup suspeito continua indo
-    // pela sanitização completa abaixo, sem exceção.
-    var precisaInspecionar = /<(?:script|iframe|object|embed|base|meta|link|foreignObject)\b|\son[a-z0-9_-]*\s*=|\bsrcdoc\s*=|(?:javascript:|vbscript:|data\s*:\s*text\/html)|\bexpression\s*\(|url\s*\(\s*['"]?\s*(?:javascript:|vbscript:|data\s*:\s*text\/html)/i.test(brutoHtml);
-    if (!precisaInspecionar) return brutoHtml;
-    var parsed = new global.DOMParser().parseFromString('<!doctype html><html><body>' + brutoHtml + '</body></html>', 'text/html');
+    var parsed = new global.DOMParser().parseFromString('<!doctype html><html><body>' + String(html == null ? '' : html) + '</body></html>', 'text/html');
     parsed.querySelectorAll(tagsBloqueadas).forEach(function (node) {
       node.remove();
     });

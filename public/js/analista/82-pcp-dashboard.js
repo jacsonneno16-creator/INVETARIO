@@ -18,7 +18,7 @@
     try {
       const ref = fs().collection(COL_SNAP).doc(hoje());
       const snap = await ref.get();
-      if (snap.exists) return false;
+      if (snap.exists) return;
       const estoqueTotalCx = visao.reduce((s, x) => s + x.estoqueAtual, 0);
       const comCobertura = visao.filter(x => x.coberturaDias != null);
       const coberturaMediaDias = comCobertura.length ? comCobertura.reduce((s, x) => s + x.coberturaDias, 0) / comCobertura.length : 0;
@@ -28,40 +28,22 @@
       const comprasAbertasQtd = abertas.length;
       const agora = new Date().toISOString();
       await ref.set({ data: hoje(), estoqueTotalCx, coberturaMediaDias, produtosCriticos, produtosAbaixoMinimo, comprasAbertasQtd, criadoEm: agora, atualizadoEm: agora }, { merge: true });
-      return true;
-    } catch (e) { console.warn('[pcp-dashboard] snapshot diário:', e); return false; }
+    } catch (e) { console.warn('[pcp-dashboard] snapshot diário:', e); }
   }
 
-  // Só recarrega a coleção inteira se ainda não tem nada em memória nesta
-  // sessão da tela, ou se um snapshot novo acabou de ser gravado agora.
-  let _snapshotsCache = null;
-  let _snapshotsCacheDias = null;
-  async function _carregarSnapshots(dias, forcar) {
-    const diasAlvo = dias || 30;
-    if (!_snapshotsCache || forcar || diasAlvo > _snapshotsCacheDias) {
-      const snap = await fs().collection(COL_SNAP).orderBy('data', 'desc').limit(diasAlvo).get().catch(() => ({ docs: [] }));
-      _snapshotsCache = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-      _snapshotsCacheDias = diasAlvo;
-    }
-    return _snapshotsCache
-      .slice()
+  async function _carregarSnapshots(dias) {
+    const snap = await fs().collection(COL_SNAP).get().catch(() => ({ docs: [] }));
+    return snap.docs.map(d => ({ _id: d.id, ...d.data() }))
       .sort((a, b) => String(a.data).localeCompare(String(b.data)))
-      .slice(-diasAlvo);
+      .slice(-(dias || 30));
   }
 
   function _destruirGraficos() { while (charts.length) charts.pop().destroy(); }
 
-  // Shell-first (mesmo padrão de 99-recebimento-retornos-status.js):
-  // _desenhar() já é segura com listas vazias (construirVisao() trata
-  // produtos/reqs/agend ausentes como []), então desenha a estrutura ANTES
-  // do fetch (título/botão aparecem na hora, com os KPIs a zero + aviso de
-  // carregando) e de novo depois, com o dado real.
-  let _pcpDashCarregando = false;
   async function renderPCPDashboard() {
     const pagina = document.getElementById('page-pcp-dashboard');
     if (!pagina) return;
-    _pcpDashCarregando = true;
-    _desenhar([], [], [], []);
+    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando dashboard...</div></div>';
     try {
       await global._pcpInternals.carregar();
       // PEDIDO AO VIVO (2026-09-02): "maior consumo diário tá calculando
@@ -82,12 +64,10 @@
       const visao = global._pcpInternals.construirVisao({ estoqueBi: global._pcpInternals.getEstoqueBi?.() });
       const reqs = global._pcpInternals.getReqs();
       const agend = global._pcpInternals.getAgend();
-      const snapshotNovo = await _garantirSnapshotHoje(visao, reqs);
-      const snapshots = await _carregarSnapshots(30, snapshotNovo);
-      _pcpDashCarregando = false;
+      await _garantirSnapshotHoje(visao, reqs);
+      const snapshots = await _carregarSnapshots(30);
       _desenhar(visao, reqs, agend, snapshots);
     } catch (e) {
-      _pcpDashCarregando = false;
       pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>';
     }
   }
@@ -124,7 +104,6 @@
         <div><div class="page-title" style="font-size:1.15rem">📊 Dashboard do PCP</div><div style="font-size:.74rem;color:var(--muted)">Visão consolidada de estoque, cobertura, necessidades e compras</div></div>
         <button type="button" class="btn btn-ghost btn-sm" data-pcp-dash-refresh>↻ Atualizar</button>
       </div>
-      ${_pcpDashCarregando ? '<div style="font-size:.76rem;color:var(--muted);padding:6px 0">⏳ Carregando...</div>' : ''}
       <div class="kpi-grid" style="margin-bottom:10px">
         ${_kpi('blue', estoqueTotal.toLocaleString('pt-BR', { maximumFractionDigits: 0 }), 'Estoque atual (cx)', 'estoque')}
         ${_kpi('teal', coberturaMedia.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'd', 'Cobertura média', 'estoque')}

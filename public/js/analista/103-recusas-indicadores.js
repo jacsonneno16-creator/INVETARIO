@@ -61,8 +61,6 @@
   let _periodoInicio = '';
   let _periodoFim = '';
   let _filtroStatusSet = new Set();
-  const DIAS_MAX_PERIODO = 92; // ~3 meses — PEDIDO AO VIVO (2026-09-10)
-  let _periodoBuscado = ''; // chave "ini|fim" do último período buscado com sucesso — vazio = ainda não buscou
 
   function fs() {
     if (typeof global.getDTFirestore === 'function') return global.getDTFirestore();
@@ -76,28 +74,8 @@
     if (Number.isNaN(d.getTime())) return esc(v);
     return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
-  function _periodoPadrao() {
-    const fim = new Date();
-    const inicio = new Date(fim.getTime() - (DIAS_MAX_PERIODO - 1) * 86400000);
-    return { ini: inicio.toISOString().slice(0, 10), fim: fim.toISOString().slice(0, 10) };
-  }
-  function _periodoValido(ini, fim) {
-    if (!ini || !fim) return false;
-    const dIni = new Date(ini + 'T00:00:00'), dFim = new Date(fim + 'T23:59:59');
-    if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime()) || dIni > dFim) return false;
-    return (dFim - dIni) / 86400000 <= DIAS_MAX_PERIODO;
-  }
-  // PEDIDO AO VIVO (2026-09-10): "os indicadores que tá demorando" — busca
-  // manual por período (máx. 3 meses), filtrada no servidor por criadoEm
-  // (não traz mais a coleção inteira toda vez que a tela abre).
-  async function carregarDados(ini, fim, forcar) {
-    if (!_periodoValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
-    const chave = ini + '|' + fim;
-    if (_periodoBuscado === chave && !forcar) return;
-    const snap = await fs().collection(COL_RECUSAS)
-      .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
-      .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
-      .get();
+  async function carregarDados() {
+    const snap = await fs().collection(COL_RECUSAS).get();
     // Mesma exclusão de devolução automática que as outras telas de
     // indicadores (origem:'AUTOMATICO' nunca é uma recusa de verdade —
     // ver 98/99/102) — e aqui SÓ o tratamento explicitamente marcado como
@@ -110,7 +88,6 @@
     // traz a nota Recusa pra cá.
     _recusas = linhasPorNota(docsBrutos).filter(x => (x.tratamento || '') === 'RECUSA');
     _filtroStatusSet = new Set();
-    _periodoBuscado = chave;
   }
 
   function statusLabels() {
@@ -209,7 +186,6 @@
   }
 
   function tabelaHtml() {
-    if (!_periodoBuscado) return '<div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">Escolha o período e clique em Buscar</div></div>';
     // Mais parado primeiro (nunca finalizado) — é o que precisa de atenção.
     const lista = [...recusasFiltradas()].sort((a, b) => {
       const da = diasParadoDaRecusa(a), db = diasParadoDaRecusa(b);
@@ -241,8 +217,7 @@
         <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">PERÍODO (REGISTRO) — DE</div><input type="date" class="field" id="recind-periodo-ini" value="${esc(_periodoInicio)}" style="padding:7px"></div>
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input type="date" class="field" id="recind-periodo-fim" value="${esc(_periodoFim)}" style="padding:7px"></div>
-          <button class="btn btn-primary btn-sm" id="recind-buscar-periodo" style="padding:7px 14px">🔍 Buscar</button>
-          <div style="font-size:.64rem;color:var(--muted);align-self:center">Máx. 3 meses</div>
+          ${(_periodoInicio || _periodoFim) ? '<button class="btn btn-ghost btn-sm" data-recind-limpar-periodo="1">✕ período</button>' : ''}
           <button class="btn btn-ghost" data-recind-atualizar="1">↻ Atualizar</button>
         </div>
       </div>
@@ -252,20 +227,12 @@
 
     if (!pagina._recindListenerBound) {
       pagina.addEventListener('click', ev => {
+        if (ev.target.closest('[data-recind-limpar-periodo]')) { _periodoInicio = ''; _periodoFim = ''; desenhar(); return; }
         if (ev.target.closest('[data-recind-painel-limpar]')) { _filtroStatusSet.clear(); desenhar(); return; }
       });
       pagina.addEventListener('change', ev => {
-        if (ev.target.id === 'recind-periodo-ini' || ev.target.id === 'recind-periodo-fim') {
-          _periodoInicio = document.getElementById('recind-periodo-ini')?.value || '';
-          _periodoFim = document.getElementById('recind-periodo-fim')?.value || '';
-          if (_periodoInicio && _periodoFim && !_periodoValido(_periodoInicio, _periodoFim)) {
-            if (ev.target.id === 'recind-periodo-ini') _periodoFim = new Date(new Date(_periodoInicio + 'T00:00:00').getTime() + DIAS_MAX_PERIODO * 86400000).toISOString().slice(0, 10);
-            else _periodoInicio = new Date(new Date(_periodoFim + 'T00:00:00').getTime() - DIAS_MAX_PERIODO * 86400000).toISOString().slice(0, 10);
-            global.showToast?.('Período ajustado — máximo de 3 meses.', 'i');
-          }
-          desenhar();
-          return;
-        }
+        if (ev.target.id === 'recind-periodo-ini') { _periodoInicio = ev.target.value || ''; desenhar(); return; }
+        if (ev.target.id === 'recind-periodo-fim') { _periodoFim = ev.target.value || ''; desenhar(); return; }
         const chk = ev.target.closest('[data-recind-painel-valor]');
         if (chk) {
           const valor = chk.getAttribute('data-recind-painel-valor');
@@ -275,32 +242,15 @@
       });
       pagina._recindListenerBound = true;
     }
-    const btnBuscar = document.getElementById('recind-buscar-periodo');
-    if (btnBuscar) btnBuscar.addEventListener('click', async () => {
-      const original = btnBuscar.innerHTML;
-      if (!_periodoValido(_periodoInicio, _periodoFim)) { global.showToast?.('Escolha um período válido de até 3 meses.', 'error'); return; }
-      btnBuscar.disabled = true; btnBuscar.innerHTML = '⏳ Buscando...';
-      try { await carregarDados(_periodoInicio, _periodoFim, true); desenhar(); }
-      catch (e) { global.showToast?.('Erro ao buscar: ' + (e.message || e), 'error'); }
-      finally { btnBuscar.disabled = false; btnBuscar.innerHTML = original; }
-    });
     const btnAtualizar = document.querySelector('[data-recind-atualizar]');
-    if (btnAtualizar) btnAtualizar.addEventListener('click', async () => {
-      if (!_periodoBuscado) return;
-      const [ini, fim] = _periodoBuscado.split('|');
-      await carregarDados(ini, fim, true); desenhar();
-    });
+    if (btnAtualizar) btnAtualizar.addEventListener('click', async () => { await carregarDados(); desenhar(); });
   }
 
   async function renderRecusasIndicadores() {
     const pagina = document.getElementById('page-recebimento-recusas-indicadores');
     if (!pagina) return;
-    if (!_periodoInicio || !_periodoFim) {
-      const p = _periodoPadrao();
-      _periodoInicio = _periodoInicio || p.ini;
-      _periodoFim = _periodoFim || p.fim;
-    }
-    desenhar();
+    pagina.innerHTML = '<div class="empty"><div class="empty-title">Carregando Indicadores de Recusas...</div></div>';
+    try { await carregarDados(); desenhar(); } catch (e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Indicadores de Recusas</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; }
   }
 
   global.renderRecusasIndicadores = renderRecusasIndicadores;

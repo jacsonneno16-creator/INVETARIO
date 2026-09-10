@@ -176,11 +176,11 @@
           if (!cache.carregado || cache.loja !== loja) await carregarLocal();
           return cache.lista;
         }
-        // Sem timeout artificial: a base de produtos pode ser grande e
-        // legitimamente demorar; Promise.race com timeout não cancela a
-        // busca real, só desiste de esperar e cai pro cache local mais
-        // cedo do que precisava, mesmo quando a busca ia terminar bem.
-        const chunks = await fs.collection('dt_produtos_chunks').where('versao', '==', versaoServidor).get();
+        const chunks = await Promise.race([fs.collection('dt_produtos_chunks').where('versao', '==', versaoServidor).get(), new Promise(function (_, reject) {
+          setTimeout(function () {
+            reject(new Error('Tempo excedido ao carregar chunks de produtos'));
+          }, 30000);
+        })]);
         const docs = (chunks.docs || []).slice().sort(function (a, b) {
           return Number((a.data() || {}).parte || 0) - Number((b.data() || {}).parte || 0);
         });

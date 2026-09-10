@@ -189,7 +189,12 @@ test('4) Rota sem permissão: nunca mostra a página protegida, cai no fallback 
 // ---------------------------------------------------------------------
 // 5/6. Trocar entre setores
 // ---------------------------------------------------------------------
-test('5) Trocar Logística → Produção → PCP → Compras: cada troca mostra o shell certo e esconde os outros 3', async () => {
+// PEDIDO AO VIVO (2026-09-10): "tirar PCP, Compras e Produção... como se
+// não fizesse mais parte do projeto" — SETORES_INFO (37-usuarios-
+// permissoes.js) só tem mais 'logistica'; irParaSetor recusa qualquer id
+// desconhecido (`if(!SETORES_INFO[id])return;`), então navegar pra essas
+// rotas não troca mais nada — fica sempre em Logística.
+test('5) Produção/PCP/Compras não existem mais: navegar pra essas rotas não troca de shell, continua em Logística', async () => {
   const { win } = montarAmbiente('#/logistica/inventario/dashboard');
   win.AnalistaRouter.init();
   await flush(win);
@@ -197,11 +202,11 @@ test('5) Trocar Logística → Produção → PCP → Compras: cada troca mostra
   function ativo() { return shells.filter(s => win.document.getElementById(s).style.display !== 'none'); }
   assert.deepEqual(ativo(), ['app-main-logistica']);
   win.AnalistaRouter.navigate('producao/dashboard'); win.dispatchEvent(new win.Event('hashchange')); await flush(win);
-  assert.deepEqual(ativo(), ['setor-producao-shell']);
+  assert.deepEqual(ativo(), ['app-main-logistica'], 'setor Produção não existe mais — não troca de shell');
   win.AnalistaRouter.navigate('pcp/dashboard'); win.dispatchEvent(new win.Event('hashchange')); await flush(win);
-  assert.deepEqual(ativo(), ['setor-pcp-shell']);
+  assert.deepEqual(ativo(), ['app-main-logistica'], 'setor PCP não existe mais — não troca de shell');
   win.AnalistaRouter.navigate('compras/dashboard'); win.dispatchEvent(new win.Event('hashchange')); await flush(win);
-  assert.deepEqual(ativo(), ['setor-compras-shell']);
+  assert.deepEqual(ativo(), ['app-main-logistica'], 'setor Compras não existe mais — não troca de shell');
 });
 
 test('6) Trocar Inventário → Recebimento: dentro do MESMO setor "logistica", troca de view sem mexer nos outros 3 shells', async () => {

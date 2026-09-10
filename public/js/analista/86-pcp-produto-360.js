@@ -62,22 +62,11 @@
   // a ficha técnica não tem código de insumo, só nome). Sem correspondência
   // ou sem a aba Insumos carregada ainda, mostra só qty da ficha, sem
   // estoque/cobertura — nunca quebra por falta desse cruzamento.
-  // Evita rebuscar a coleção inteira de ficha técnica toda vez que o
-  // usuário abre outro produto na mesma sessão da tela — só recarrega se
-  // pedirem forçar (pouco provável de mudar entre 2 cliques na mesma tela).
-  let _fichaTecnicaCache = null;
-  async function _obterFichaTecnica(forcar) {
-    if (_fichaTecnicaCache && !forcar) return _fichaTecnicaCache;
-    const snap = await global.getDTFirestore().collection('producao_ficha_tecnica').get();
-    _fichaTecnicaCache = snap.docs.map(d => d.data());
-    return _fichaTecnicaCache;
-  }
-
-  async function _buscarInsumosDoProduto(cod, forcar) {
+  async function _buscarInsumosDoProduto(cod) {
     if (!cod) return [];
     try {
-      const fichas = await _obterFichaTecnica(forcar);
-      const ficha = fichas.find(f => String(f.cod) === String(cod));
+      const snap = await global.getDTFirestore().collection('producao_ficha_tecnica').get();
+      const ficha = snap.docs.map(d => d.data()).find(f => String(f.cod) === String(cod));
       const insumosFicha = (ficha && ficha.insumos) || [];
       const insumosBi = global._pcpInternals.getInsumosBi?.() || [];
       const norm = global._pcpInternals.norm || (v => String(v || '').trim().toLowerCase());

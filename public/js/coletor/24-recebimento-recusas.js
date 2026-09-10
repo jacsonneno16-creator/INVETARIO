@@ -112,16 +112,9 @@
     if (c.length !== 44) return '';
     return String(Number(c.slice(25, 34)) || '').trim();
   }
-  // BUG AO VIVO REAL (2026-09-09): "No Firebase App '[DEFAULT]' has been
-  // created" de novo, agora nesta função — `global.firebase.auth()` (SDK
-  // cru, sem nome de app) sempre tenta o app '[DEFAULT]', que o Coletor
-  // nunca cria (usa um app nomeado, ver window.DT_FIREBASE_APP_NOME em
-  // firebase-shared.js). Mesma causa raiz já corrigida em fs() logo acima;
-  // essa aqui tinha passado batido porque é uma função separada. Correção
-  // igual: usar o helper com escopo de app certo (getDTAuth(), o mesmo que
-  // 01-core-firebase-cache.js e o resto do Coletor já usam).
   function usuario() {
-    const u = global.getDTAuth?.()?.currentUser;
+    var _global$firebase, _global$firebase$auth;
+    const u = (_global$firebase = global.firebase) === null || _global$firebase === void 0 || (_global$firebase$auth = _global$firebase.auth) === null || _global$firebase$auth === void 0 ? void 0 : _global$firebase$auth.call(_global$firebase).currentUser;
     return u ? {
       uid: u.uid || '',
       email: u.email || ''
@@ -130,20 +123,8 @@
       email: ''
     };
   }
-  // BUG AO VIVO REAL (2026-09-09): checava `global.showToast` (nome usado
-  // do lado do Analista) em vez de `global.toast` (o nome real do toast do
-  // Coletor, definido em 14-toast.js) — `global.showToast` nunca existe
-  // aqui, então TODO toast desta tela caía sempre no alert() nativo feio,
-  // mesmo em erros comuns. `global.toast` (não o `toast` local desta
-  // função, que seria recursivo) é o global de verdade, intacto — a
-  // declaração local não sobrescreve window.toast, só sombra o nome dentro
-  // deste arquivo. `typeof ... === 'function'` (em vez de só truthy) evita
-  // um 2º gotcha: elemento HTML com id="toast" vira global automaticamente
-  // (quirk de named-property do próprio navegador/jsdom) quando o
-  // 14-toast.js real ainda não carregou — nesse caso global.toast é o
-  // <div>, não a função, e chamar direto quebraria com "not a function".
   function toast(m, t) {
-    if (typeof global.toast === 'function') global.toast(m, t);else alert(m);
+    if (global.showToast) global.showToast(m, t);else alert(m);
   }
   function reset() {
     S = {
@@ -223,30 +204,6 @@
   }
   function comboItens(prefixo) {
     return S[COMBO_CAMPOS[prefixo].itens];
-  }
-  // PEDIDO AO VIVO (2026-09-09): "caso não tenha cadastrado, cadastre e
-  // deixe seguir em frente a que o operador colocar" — antes disso, digitar
-  // um motorista/motivo que não batia com nenhum item da lista travava o
-  // operador com "Selecione o motorista/motivo", mesmo já tendo digitado o
-  // nome certo. Texto digitado sem correspondência agora cadastra na hora
-  // (mesma coleção que o Analista usa em Notas Retornadas › Cadastros) e
-  // segue em frente — nunca bloqueia o recebimento físico por falta de
-  // cadastro prévio.
-  async function garantirItemComboSelecionado(prefixo) {
-    const campo = COMBO_CAMPOS[prefixo];
-    if (S[campo.id]) return true;
-    const nome = String(S[campo.busca] || '').trim();
-    if (!nome) return false;
-    const colecao = prefixo === 'recusa-motorista' ? COL_MOTORISTAS : COL_MOTIVOS;
-    const agora = new Date().toISOString();
-    const ref = await fs().collection(colecao).add({ nome, ativo: true, criadoEm: agora, atualizadoEm: agora });
-    const novo = { _id: ref.id, nome, ativo: true };
-    const lista = comboItens(prefixo);
-    lista.push(novo);
-    lista.sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
-    S[campo.id] = novo._id;
-    S[campo.busca] = nome;
-    return true;
   }
   async function carregarCadastros() {
     const [m, mo, c, p] = await Promise.all([fs().collection(COL_MOTORISTAS).get(), fs().collection(COL_MOTIVOS).get(), fs().collection(COL_CONFERENTES).get(), fs().collection(COL_PRODUTOS).get().catch(() => ({
@@ -877,36 +834,14 @@
     });
     ligarCombosBusca();
     (_document$getElementB5 = document.getElementById('recusa-continuar-2')) === null || _document$getElementB5 === void 0 || _document$getElementB5.addEventListener('click', () => {
-      const prosseguir = () => {
-        if (!S.motoristaId) return toast('Digite o motorista.', 'error');
-        if (!S.motivoId) return toast('Digite o motivo da volta.', 'error');
-        S.etapa = 'volume';
-        render();
-        setTimeout(() => {
-          var _document$getElementB6;
-          return (_document$getElementB6 = document.getElementById('recusa-volume')) === null || _document$getElementB6 === void 0 ? void 0 : _document$getElementB6.focus();
-        }, 80);
-      };
-      // Caminho comum (motorista/motivo já escolhidos de um item existente
-      // da lista) continua 100% síncrono, igual sempre foi — só entra no
-      // caminho assíncrono (cadastra na hora) quando falta mesmo cadastrar
-      // algo novo, digitado sem corresponder a nenhum item já existente.
-      if (S.motoristaId && S.motivoId) return prosseguir();
-      const botao = document.getElementById('recusa-continuar-2');
-      const textoOriginal = botao ? botao.textContent : '';
-      (async () => {
-        try {
-          if (botao) { botao.disabled = true; botao.textContent = 'Verificando...'; }
-          await garantirItemComboSelecionado('recusa-motorista');
-          await garantirItemComboSelecionado('recusa-motivo');
-        } catch (e) {
-          toast('Erro ao cadastrar: ' + (e.message || e), 'error');
-          return;
-        } finally {
-          if (botao) { botao.disabled = false; botao.textContent = textoOriginal; }
-        }
-        prosseguir();
-      })();
+      if (!S.motoristaId) return toast('Selecione o motorista.', 'error');
+      if (!S.motivoId) return toast('Selecione o motivo da volta.', 'error');
+      S.etapa = 'volume';
+      render();
+      setTimeout(() => {
+        var _document$getElementB6;
+        return (_document$getElementB6 = document.getElementById('recusa-volume')) === null || _document$getElementB6 === void 0 ? void 0 : _document$getElementB6.focus();
+      }, 80);
     });
     // Pedido ao vivo do usuário: "aperto em voltar para ajustar o anterior
     // ele volta tudo e tem que refazer tudo" — nenhum passo tinha botão de

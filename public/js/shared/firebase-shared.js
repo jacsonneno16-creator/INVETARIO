@@ -81,29 +81,11 @@ window.isDTAdminMestre = function (user, acesso) {
 // Coleções operacionais são automaticamente direcionadas para
 // lojas/{lojaAtiva}/{colecao}. A coleção raiz "lojas" permanece global.
 window.DT_LOJA_KEY = 'dt_loja_ativa_v1';
-// BUG AO VIVO REAL (2026-09-09): a escrita já era protegida (linha abaixo),
-// mas a LEITURA não — localStorage.getItem() também pode lançar
-// SecurityError em navegador privado/políticas restritivas de
-// armazenamento do celular. Sem try/catch aqui, isso interrompia
-// _onAnalistaLogado no meio (getDTLojaAtiva é chamado logo depois de
-// confirmar o acesso), parecendo mais um caso de "login falhou" sem
-// relação nenhuma com senha ou permissão. Guarda em memória como
-// fallback pra dentro da mesma sessão da aba, mesmo sem conseguir
-// persistir.
-var _dtLojaAtivaMemoria = '';
 window.getDTLojaAtiva = function () {
-  try {
-    const salva = localStorage.getItem(window.DT_LOJA_KEY) || '';
-    if (salva) _dtLojaAtivaMemoria = salva;
-    return salva || _dtLojaAtivaMemoria;
-  } catch (e) {
-    console.warn('[DTLoja] Armazenamento local indisponível; usando a loja da sessão:', e.message);
-    return _dtLojaAtivaMemoria;
-  }
+  return localStorage.getItem(window.DT_LOJA_KEY) || '';
 };
 window.setDTLojaAtiva = function (id) {
   const lojaId = String(id || '').trim();
-  _dtLojaAtivaMemoria = lojaId;
   // Sem o try/catch, um localStorage cheio (QuotaExceededError) quebrava
   // esta função no meio — o evento abaixo nunca disparava, e o clique de
   // login/seleção de loja morria em silêncio sem terminar. Selecionar a

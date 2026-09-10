@@ -460,23 +460,22 @@
   // ── Histórico das etapas (item 5 do pedido: "Histórico das etapas" como
   // campo do relatório) — lê direto de recebimento_auditoria, que já é
   // gravado a cada transição pelo próprio fluxo (nunca Bluesoft). ─────────
-  const _auditoriaPorRecebimento = new Map();
-  async function _carregarAuditoriaTodas(recebimentoId, forcar) {
-    if (_auditoriaPorRecebimento.has(recebimentoId) && !forcar) return _auditoriaPorRecebimento.get(recebimentoId);
-    const snap = await fs().collection(COL_AUDITORIA).where('recebimentoId', '==', recebimentoId).get();
-    const etapas = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-    _auditoriaPorRecebimento.set(recebimentoId, etapas);
-    return etapas;
+  let _auditoriaCache = null;
+  async function _carregarAuditoriaTodas(forcar) {
+    if (_auditoriaCache && !forcar) return _auditoriaCache;
+    const snap = await fs().collection(COL_AUDITORIA).get();
+    _auditoriaCache = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    return _auditoriaCache;
   }
   function _etapasDoRecebimento(recebimentoId) {
-    return (_auditoriaPorRecebimento.get(recebimentoId) || []).slice().sort((a, b) => String(a.dataHora || '').localeCompare(String(b.dataHora || '')));
+    return (_auditoriaCache || []).filter(a => a.recebimentoId === recebimentoId).sort((a, b) => String(a.dataHora || '').localeCompare(String(b.dataHora || '')));
   }
   async function _verEtapasHistorico(recebimentoId) {
     const r = recebimentosOperacionais().find(x => x._id === recebimentoId);
     const corpo = document.getElementById('recist-etapas-corpo');
     if (corpo) corpo.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     global.openModal?.('modal-recist-etapas');
-    try { await _carregarAuditoriaTodas(recebimentoId); } catch (e) { if (corpo) corpo.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div></div>'; return; }
+    try { await _carregarAuditoriaTodas(); } catch (e) { if (corpo) corpo.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div></div>'; return; }
     const etapas = _etapasDoRecebimento(recebimentoId);
     if (!corpo) return;
     corpo.innerHTML = `

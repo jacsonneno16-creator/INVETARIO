@@ -33,6 +33,19 @@
     return colecaoAuditorias().doc(String(id));
   }
 
+  function comTimeout(promise, ms, rotulo){
+    let timer;
+    return Promise.race([
+      Promise.resolve(promise),
+      new Promise(function(_,reject){
+        timer=setTimeout(function(){
+          const erro=new Error('Tempo excedido ao carregar '+(rotulo||'os dados')+'.');
+          erro.code='auditoria/timeout';
+          reject(erro);
+        },ms);
+      })
+    ]).finally(function(){ clearTimeout(timer); });
+  }
 
   function callable(nome){
     return firebase.app().functions('southamerica-east1').httpsCallable(nome);
@@ -96,16 +109,14 @@
     carregando.querySelector('#aud39-cancelar-loading').onclick=cancelar;
     criacaoPromise=(async function(){
     try{
-      // Bases grandes podem demorar; aguarda a conclusão real (sem timeout
-      // artificial de 8s — Promise.race com timeout não cancela a busca,
-      // só desiste de esperar e derrubava a criação de auditoria mesmo
-      // quando a base ia terminar de carregar bem, só um pouco depois).
+      // Nunca deixa a criação presa esperando Firebase. Primeiro tenta usar o cache
+      // já carregado e limita cada consulta a poucos segundos.
       if(window.DTProdutos && typeof window.DTProdutos.carregar==='function'){
-        await window.DTProdutos.carregar(false);
+        await comTimeout(window.DTProdutos.carregar(false), 8000, 'a base de produtos');
       }
       if(meuToken!==criacaoToken) return;
       const familias=(window.DTProdutos?.familias?.()||[]).filter(function(f){ return f && f.produtos && f.produtos.length; });
-      const ends=await enderecosGerais();
+      const ends=await comTimeout(enderecosGerais(), 8000, 'a base de endereços');
       if(meuToken!==criacaoToken) return;
       const ruas=[...new Set(ends.map(e=>ruaDoEndereco(e.endereco||e.codigo||e.id)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
       carregando.remove();

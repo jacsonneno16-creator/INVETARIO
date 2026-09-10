@@ -63,7 +63,7 @@
   async function renderProducaoDashboard() {
     const pagina = document.getElementById('page-producao-dashboard');
     if (!pagina) return;
-    _desenharProducaoDashboard();
+    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     try { await carregarProducaoDashboard(); }
     catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
     _desenharProducaoDashboard();

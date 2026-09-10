@@ -92,7 +92,7 @@
       Promise.all(_lojas.map(loja => raw().collection('lojas').doc(loja.id).collection(COL_PALETES).get().catch(() => vazio))),
       Promise.all(_lojas.map(loja => raw().collection('lojas').doc(loja.id).collection(COL_PALETES_ESTOQUE).get().catch(() => vazio))),
       Promise.all(_lojas.map(loja => raw().collection('lojas').doc(loja.id).collection(COL_PALETES_LEDGER).doc('atual').get().catch(() => vazioDoc))),
-      Promise.all(_lojas.map(loja => raw().collection('lojas').doc(loja.id).collection(COL_PALETES_MOVIMENTOS).where('tipo', 'in', [...TIPOS_TRANSBORDO]).get().catch(() => vazio))),
+      Promise.all(_lojas.map(loja => raw().collection('lojas').doc(loja.id).collection(COL_PALETES_MOVIMENTOS).get().catch(() => vazio))),
     ]);
     // Soma só os movimentos de TRANSBORDO (ver TIPOS_TRANSBORDO acima) —
     // o resto (entrega externa/transferência/ajuste) fica implícito como

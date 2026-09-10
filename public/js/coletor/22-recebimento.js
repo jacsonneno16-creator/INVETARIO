@@ -663,27 +663,11 @@ async function _resolverBipPorMotorista(motorista) {
   // já não tinha mais nada a ver com esta loja, pedindo a NF dela de novo
   // em vez de criar a nova) — sem isso, uma carga que já virou turno da
   // outra loja continuava sendo achada como "ativa" aqui.
-  //
-  // BUG AO VIVO REAL (2026-09-10): "se eu esquecer de finalizar uma carga
-  // anterior, não consigo receber as outras" — motorista com MAIS DE UMA
-  // viagem aberta ao mesmo tempo (comum: ida e volta várias vezes no dia)
-  // sempre caía na mais antiga não finalizada (`.find()` pega só a
-  // primeira), travando o operador nela pra sempre, mesmo quando o bip era
-  // claramente sobre uma viagem mais nova. Agora lista TODAS as ativas: 1 =
-  // segue direto como sempre; 2+ = operador escolhe qual continuar (ou
-  // começa uma viagem nova, ver _abrirEscolhaCargaAtiva).
-  const ativas = RECEBIMENTOS_CACHE.filter(r => r.tipo === 'TRANSBORDO' && r.motoristaId === motorista._id && !['FINALIZADO', 'CANCELADO'].includes(r.status) && _minhaVezDeAgir(r));
-  if (ativas.length === 1) {
-    await abrirConfirmacaoParaRecebimento(ativas[0]._id);
+  const ativo = RECEBIMENTOS_CACHE.find(r => r.tipo === 'TRANSBORDO' && r.motoristaId === motorista._id && !['FINALIZADO', 'CANCELADO'].includes(r.status) && _minhaVezDeAgir(r));
+  if (ativo) {
+    await abrirConfirmacaoParaRecebimento(ativo._id);
     return;
   }
-  if (ativas.length > 1) {
-    _abrirEscolhaCargaAtiva(motorista, ativas);
-    return;
-  }
-  await _iniciarNovaViagemPorMotorista(motorista);
-}
-async function _iniciarNovaViagemPorMotorista(motorista) {
   if (!navigator.onLine) {
     // Criar peça nova offline exigiria gerar um id sem conflito e
     // reconciliar na volta da internet — a fila offline de hoje só sabe
@@ -736,37 +720,6 @@ function _abrirEscolhaDestino(motorista, parceiras) {
     });
   }
   goScreen('recebimento-destino');
-}
-// Tela de escolha de carga ativa (motorista com mais de uma viagem aberta
-// ao mesmo tempo) — mesmo padrão de _abrirEscolhaDestino, com um botão a
-// mais pra começar uma viagem nova em vez de continuar alguma das listadas.
-let _motoristaPendenteEscolhaCarga = null;
-function _abrirEscolhaCargaAtiva(motorista, cargasAtivas) {
-  _motoristaPendenteEscolhaCarga = motorista;
-  const lista = document.getElementById('rec-carga-ativa-lista');
-  if (lista) {
-    lista.innerHTML = cargasAtivas.map(r => `
-    <div class="inv-card" data-carga-ativa-id="${_escRec(r._id)}">
-      <div class="inv-card-code">${_escRec(r.origem || '')} → ${_escRec(r.destino || '')}</div>
-      <div class="inv-card-meta"><span class="badge badge-info">${_escRec(REC_STATUS_LABEL[r.status] || r.status)}</span></div>
-      ${r.notaFiscalTransferencia ? `<div style="color:#5a7a9a;font-size:.72rem;margin-top:2px">🧾 NF: ${_escRec(r.notaFiscalTransferencia)}</div>` : ''}
-      <div style="color:#5a7a9a;font-size:.72rem;margin-top:2px">Saída ${_escRec(_horaLocalDoTransbordo(r))}</div>
-    </div>`).join('');
-    Array.prototype.forEach.call(lista.querySelectorAll('[data-carga-ativa-id]'), function (card) {
-      card.addEventListener('click', function () {
-        const id = card.getAttribute('data-carga-ativa-id');
-        _motoristaPendenteEscolhaCarga = null;
-        abrirConfirmacaoParaRecebimento(id);
-      });
-    });
-  }
-  goScreen('recebimento-carga-ativa');
-}
-async function _confirmarNovaViagemAoInvesDeEscolherCarga() {
-  const motorista = _motoristaPendenteEscolhaCarga;
-  _motoristaPendenteEscolhaCarga = null;
-  if (!motorista) return;
-  await _iniciarNovaViagemPorMotorista(motorista);
 }
 async function _confirmarEscolhaDestino(destino) {
   const motorista = _motoristaPendenteDestino;
@@ -1825,9 +1778,6 @@ document.addEventListener('click', function (event) {
     return;
   }
   if (event.target && event.target.id === 'rec-obs-modal') fecharSeletorObservacaoTransbordo();
-  if (event.target && event.target.id === 'rec-carga-ativa-nova') {
-    _confirmarNovaViagemAoInvesDeEscolherCarga();
-  }
 });
 document.addEventListener('input', function (event) {
   if (event.target && event.target.id === 'rec-obs-busca') _renderizarOpcoesObservacaoTransbordo(event.target.value || '');

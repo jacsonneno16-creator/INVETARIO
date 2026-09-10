@@ -192,11 +192,11 @@
     _modoCadastroMaq = !!containerId;
     const pagina = document.getElementById(_containerMaq);
     if (!pagina) return;
-    const desenhar = () => { if (_modoCadastroMaq) _desenharCadastroMaquinasTabela(); else _desenharProducaoMaquinas(); };
-    desenhar();
+    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     try { await carregarProducaoMaquinas(); }
     catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
-    desenhar();
+    if (_modoCadastroMaq) _desenharCadastroMaquinasTabela();
+    else _desenharProducaoMaquinas();
   }
 
   // ── Cadastro de Máquinas (Configurações) — tabela própria, sem nada

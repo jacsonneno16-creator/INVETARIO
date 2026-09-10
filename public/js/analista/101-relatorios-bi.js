@@ -280,14 +280,18 @@
   // falhar por conta própria. Agora reaproveita o MESMO cache desta tela
   // (se já foi aberta a aba Histórico de Compras, nem busca de novo) — uma
   // busca só, compartilhada por quem precisar deste histórico.
-  // Coleção grande (31 mil+ registros) — sem timeout artificial de
-  // propósito: Promise.race com timeout não cancela a busca real, só
-  // desiste de esperar, transformando "só demorou" em "sempre falha" pra
-  // uma consulta desse tamanho. Ponto único usado por 3 chamadores (esta
-  // aba, 89-compras-dashboard.js e o Dashboard de Recebimento).
+  // BUG AO VIVO REAL (2026-09-09): "aquilo lá ainda não estava gravado nem
+  // tinha puxado nenhuma vez" — coleção grande (31 mil+ registros) sem
+  // NENHUM limite de tempo; numa rede degradada, esse .get() ficava
+  // pendurado pra sempre, sem erro nenhum. Ponto único usado por 3
+  // chamadores (esta aba, 89-compras-dashboard.js e o Dashboard de
+  // Recebimento) — protegendo aqui protege todos de uma vez. Mesmo padrão
+  // de 30s já usado em produtos-service.js/99-recebimento-retornos-status.js.
   async function obterHistoricoComprasRealBi(forcar) {
     if (!forcar && _linhasPorRelatorio.has('compras-historico')) return _linhasPorRelatorio.get('compras-historico');
-    const snap = await global.getDTRawFirestore().collection('relatorios_bi_compras_historico_chunks').get();
+    const snap = await Promise.race([global.getDTRawFirestore().collection('relatorios_bi_compras_historico_chunks').get(), new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Tempo excedido ao carregar histórico de compras (BI) — conexão lenta ou instável.')), 30000);
+    })]);
     const linhas = _achatarChunks(snap);
     _linhasPorRelatorio.set('compras-historico', linhas);
     return linhas;

@@ -333,19 +333,14 @@
   // ---------------------------------------------------------------------
   // Aplicação de rota
   // ---------------------------------------------------------------------
-  // async por causa do carregamento por setor (front 3): irParaSetor agora
-  // pode esperar os scripts da área (Produção/PCP/Compras/Recebimento)
-  // carregarem antes de devolver — sem o await aqui, entry.apply(params)
-  // (que chama goPage/pcpIrParaAba/comprasIrParaPagina direto) rodaria
-  // ANTES desses arquivos terminarem de carregar, numa 1ª visita à área.
-  async function _aplicarEntrada(entry, params) {
-    if (!entry.isModal && entry.setor) await global.irParaSetor(entry.setor, entry.view);
-    await entry.apply(params);
+  function _aplicarEntrada(entry, params) {
+    if (!entry.isModal && entry.setor) global.irParaSetor(entry.setor, entry.view);
+    entry.apply(params);
   }
-  async function _rotaValidaEAtiva(path, params) {
+  function _rotaValidaEAtiva(path, params) {
     var entry = encontrarRota(path);
     if (!entry) return false;
-    await _aplicarEntrada(entry, params || new URLSearchParams());
+    _aplicarEntrada(entry, params || new URLSearchParams());
     var atual = rotaAtualDoDom();
     return !!(atual && atual.path === path);
   }
@@ -368,18 +363,18 @@
   // (fluxo de login inalterado, sem nada removido) — só sobrescreve se a
   // URL pedir uma rota diferente e permitida. Nunca chama o fallback de
   // novo aqui, pra não duplicar leitura/renderização logo no boot.
-  async function applyCurrentRoute() {
+  function applyCurrentRoute() {
     _isApplyingRoute = true;
     try {
       var estado = stateFromLocation();
-      if (estado.path) await _rotaValidaEAtiva(estado.path, estado.params);
+      if (estado.path) _rotaValidaEAtiva(estado.path, estado.params);
       var rotaFinal = rotaAtualDoDom();
       _normalizarUrl(rotaFinal, 'replace');
       _rotaAnteriorPath = rotaFinal ? rotaFinal.path : null;
     } finally { _isApplyingRoute = false; }
   }
 
-  async function _aoTrocarHash() {
+  function _aoTrocarHash() {
     var estado = stateFromLocation();
     var chaveNova = _serializarRota(estado.path, estado.params);
     if (chaveNova === _ultimaChaveConhecida) return; // eco do nosso próprio push, já aplicado
@@ -389,7 +384,7 @@
         var modalEntry = encontrarRota('configuracoes');
         if (modalEntry && modalEntry.dismiss) modalEntry.dismiss();
       }
-      var ok = estado.path ? await _rotaValidaEAtiva(estado.path, estado.params) : false;
+      var ok = estado.path ? _rotaValidaEAtiva(estado.path, estado.params) : false;
       if (!ok) {
         if (typeof global.irParaPrimeiraPaginaPermitida === 'function') global.irParaPrimeiraPaginaPermitida();
         if (typeof global.aplicarSetoresPermitidos === 'function') global.aplicarSetoresPermitidos();
@@ -414,18 +409,6 @@
     if (typeof original !== 'function' || original.__dtRouterWrapped) return;
     var wrapped = function () {
       var resultado = original.apply(this, arguments);
-      // irParaSetor pode devolver uma Promise agora (carregamento por
-      // setor, front 3) — sincronizar a URL antes dela resolver leria o
-      // DOM num estado ainda intermediário (setor visível, página default
-      // ainda não navegada). Espera resolver pra sincronizar com o estado
-      // final; funções que continuam síncronas (goPage, abrirModal...) não
-      // passam por aqui, `resultado` nunca é thenable pra elas.
-      if (resultado && typeof resultado.then === 'function') {
-        return resultado.then(function (r) {
-          if (!_isApplyingRoute) _sincronizarAposChamadaReal();
-          return r;
-        });
-      }
       if (!_isApplyingRoute) _sincronizarAposChamadaReal();
       return resultado;
     };
@@ -445,33 +428,18 @@
     _normalizarUrl({ path: path, params: params }, 'replace');
   }
 
-  var _NOMES_NAVEGACAO = ['goPage', 'irParaSetor', 'pcpIrParaAba', 'comprasIrParaPagina', 'abrirModalConfiguracoes', 'fecharModalConfiguracoes'];
-
   function init() {
     if (_iniciado) return;
     _iniciado = true;
-    _NOMES_NAVEGACAO.forEach(_instalarWrapper);
+    ['goPage', 'irParaSetor', 'pcpIrParaAba', 'comprasIrParaPagina', 'abrirModalConfiguracoes', 'fecharModalConfiguracoes'].forEach(_instalarWrapper);
     global.addEventListener('hashchange', _aoTrocarHash);
     applyCurrentRoute();
   }
-
-  // Carregamento por setor (front 3): pcpIrParaAba/comprasIrParaPagina só
-  // passam a existir de verdade quando o balde PCP/Compras termina de
-  // carregar pela 1ª vez — no boot, _instalarWrapper via init() não acha
-  // nada pra embrulhar (global[nome] ainda é undefined) e só retorna sem
-  // fazer nada. Chamado de novo (idempotente, o guard __dtRouterWrapped
-  // evita embrulhar 2x) depois de cada carregarScriptsDeArea bem-sucedido,
-  // em 37-usuarios-permissoes.js, pra pegar essas funções assim que elas
-  // passam a existir — sem isso, cliques nas abas internas do PCP/Compras
-  // (que chamam pcpIrParaAba/comprasIrParaPagina direto, sem passar pelo
-  // roteador) parariam de sincronizar a URL depois da 1ª visita à área.
-  function rewrapNavegacao() { _NOMES_NAVEGACAO.forEach(_instalarWrapper); }
 
   global.AnalistaRouter = {
     routes: ROTAS,
     navigate: navigate,
     applyCurrentRoute: applyCurrentRoute,
-    rewrapNavegacao: rewrapNavegacao,
     routeFromLocation: stateFromLocation,
     stateFromLocation: stateFromLocation,
     replace: replace,

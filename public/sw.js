@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260909-c095d2e397d6';
+var CACHE='dt-inventario-20260909b-revert-emergencial';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -104,16 +104,17 @@ self.addEventListener('fetch',function(e){
   var u=new URL(e.request.url);
   var local=u.origin===self.location.origin;
   if(local){
-    // REVERT 2026-09-09 (2ª vez): a tentativa de cache-first pra .js/.css
-    // com skipWaiting()/clients.claim() removidos (pra não trocar de SW no
-    // meio da sessão) AINDA ASSIM coincidiu com telas de dado "ao vivo"
-    // (ex. Transbordo) parando de mostrar nada em produção. Ainda não sei
-    // se a causa é o cache-first em si, a remoção do skipWaiting, ou algo
-    // não relacionado ao SW — voltando pro comportamento que pelo menos
-    // funciona (sempre busca .js/.css/.html na rede, sem cache-first, COM
-    // skipWaiting/clients.claim como sempre foi) até investigar com calma,
-    // fora do horário de uso ao vivo. NÃO tentar essa otimização nesta
-    // tela de novo sem antes reproduzir e confirmar num ambiente de teste.
+    // REVERT EMERGENCIAL (2026-09-09): a tentativa de cache-first pra
+    // .js/.css (correção de performance) coincidiu com o app inteiro
+    // travando em "carregando" — tela pisca mostrando dado real e volta a
+    // travar, em todo o sistema, não só numa tela. Bate com o padrão de o
+    // ciclo de instalação/ativação do Service Worker (skipWaiting +
+    // clients.claim, que já existiam antes) atropelando conexões de tempo
+    // real do Firestore já abertas (WebChannel 'Listen' errando e
+    // reconectando sem parar, visto ao vivo no console). Voltando pro
+    // comportamento de antes (sempre busca .js/.css na rede, sem
+    // cache-first) até isso ser investigado com mais cuidado, longe do
+    // horário de uso ao vivo.
     var arquivoCritico=e.request.mode==='navigate' ||
       u.pathname.slice(-5)==='.html' ||
       u.pathname.slice(-3)==='.js' ||
