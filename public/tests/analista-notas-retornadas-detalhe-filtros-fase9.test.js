@@ -12,6 +12,25 @@ function mockColecao(docsIniciais){
   const registro=new Map((docsIniciais||[]).map(d=>[d.id,d.data]));
   return {
     get: async()=>({ empty: registro.size===0, size: registro.size, docs:[...registro.entries()].map(([id,data])=>({id,data:()=>data})) }),
+    where(campo, op, valor) {
+      const construir = (condicoesAtuais) => ({
+        where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        get: async () => {
+          const bate = (data) => condicoesAtuais.every(c => {
+            const v = data ? data[c.campo] : undefined;
+            if (c.op === '>=') return v >= c.valor;
+            if (c.op === '<=') return v <= c.valor;
+            if (c.op === '==') return v === c.valor;
+            if (c.op === 'array-contains') return Array.isArray(v) && v.includes(c.valor);
+            if (c.op === 'in') return Array.isArray(c.valor) && c.valor.includes(v);
+            return true;
+          });
+          const filtrados = [...registro.entries()].filter(([, data]) => bate(data));
+          return { empty: filtrados.length === 0, size: filtrados.length, docs: filtrados.map(([id, data]) => ({ id, data: () => data })) };
+        },
+      });
+      return construir([{ campo, op, valor }]);
+    },
     doc:(id)=>({
       id,
       set: async(payload)=>{ const a=registro.get(id)||{}; registro.set(id,{...a,...payload}); },
@@ -88,6 +107,8 @@ test('filtro de Tratamento esconde recusas com tratamento diferente do seleciona
   ]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   document.getElementById('recusas-filtro-tratamento').value='RECUSA';
   document.getElementById('recusas-filtro-tratamento').dispatchEvent(new win.Event('change'));
   assert.match(document.getElementById('recusas-tabela').innerHTML,/BOX 1/);
@@ -101,6 +122,8 @@ test('filtro de período (DE/ATÉ) usa a data de criadoEm',async()=>{
   ]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   document.getElementById('recusas-filtro-periodo-ini').value='2026-08-15';
   document.getElementById('recusas-filtro-periodo-ini').dispatchEvent(new win.Event('change'));
   assert.match(document.getElementById('recusas-tabela').innerHTML,/BOX NOVA/);
@@ -114,6 +137,8 @@ test('filtro de status de Conferência isola CONFERIDA_COM_DIVERGENCIA',async()=
   ]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   document.getElementById('recusas-filtro-conferencia').value='CONFERIDA_COM_DIVERGENCIA';
   document.getElementById('recusas-filtro-conferencia').dispatchEvent(new win.Event('change'));
   assert.match(document.getElementById('recusas-tabela').innerHTML,/BOX DIV/);
@@ -129,6 +154,8 @@ test('trocar o select de Tratamento grava tratamento+tratamentoDefinidoPor/Em na
   const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[],criadoEm:'2026-08-19T10:00:00.000Z',statusConferenciaOperacional:'NAO_REALIZADA'}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const sel=document.querySelector('[data-recusa-tratamento="r1|"]');
   sel.value='REENTREGA';
   sel.dispatchEvent(new win.Event('change'));
@@ -154,6 +181,8 @@ test('detalhe da recusa junta nota (natureza/CFOP/vendedor) + retorno + conferê
   }}]);
   const { win, document }=carregarPagina(baseColecoes(recusas,notas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   document.querySelector('[data-recusa-detalhe="r1"]').click();
   const corpo=document.getElementById('recusa-detalhe-corpo').innerHTML;
   assert.match(corpo,/NF 321/);

@@ -12,6 +12,25 @@ function mockColecao(docsIniciais){
   const registro=new Map((docsIniciais||[]).map(d=>[d.id,d.data]));
   return {
     get: async()=>({ empty: registro.size===0, size: registro.size, docs:[...registro.entries()].map(([id,data])=>({id,data:()=>data})) }),
+    where(campo, op, valor) {
+      const construir = (condicoesAtuais) => ({
+        where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        get: async () => {
+          const bate = (data) => condicoesAtuais.every(c => {
+            const v = data ? data[c.campo] : undefined;
+            if (c.op === '>=') return v >= c.valor;
+            if (c.op === '<=') return v <= c.valor;
+            if (c.op === '==') return v === c.valor;
+            if (c.op === 'array-contains') return Array.isArray(v) && v.includes(c.valor);
+            if (c.op === 'in') return Array.isArray(c.valor) && c.valor.includes(v);
+            return true;
+          });
+          const filtrados = [...registro.entries()].filter(([, data]) => bate(data));
+          return { empty: filtrados.length === 0, size: filtrados.length, docs: filtrados.map(([id, data]) => ({ id, data: () => data })) };
+        },
+      });
+      return construir([{ campo, op, valor }]);
+    },
     doc:(id)=>({ id, set: async()=>{}, update: async()=>{} }),
     _registro: registro,
   };
@@ -88,6 +107,8 @@ test('exportação gera UMA LINHA POR ITEM, repetindo os dados da nota/retorno e
   }}]);
   const { win, planilhas, arquivoGravado }=carregarPagina({ recebimento_recusas:recusas, recebimento_recusas_notas:notas, recebimento_recusas_motoristas:mockColecao([]), recebimento_recusas_motivos:mockColecao([]) });
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   win.document.querySelector('[data-recusa-exportar]').click();
 
   const linhas=planilhas()[0];
@@ -110,6 +131,8 @@ test('recusa SEM conferência de itens ainda gera 1 linha (colunas de produto em
   const recusas=mockColecao([{id:'r1',data:{box:'BOX 2',notas:[{chave:'Y',numeroNota:'55'}],statusConferenciaOperacional:'NAO_REALIZADA',criadoEm:'2026-08-19T10:00:00.000Z'}}]);
   const { win, planilhas }=carregarPagina({ recebimento_recusas:recusas, recebimento_recusas_notas:mockColecao([]), recebimento_recusas_motoristas:mockColecao([]), recebimento_recusas_motivos:mockColecao([]) });
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   win.document.querySelector('[data-recusa-exportar]').click();
   const linhas=planilhas()[0];
   assert.equal(linhas.length,1);
@@ -125,6 +148,8 @@ test('exportação respeita o filtro de Tratamento já aplicado na tela',async()
   ]);
   const { win, document, planilhas }=carregarPagina({ recebimento_recusas:recusas, recebimento_recusas_notas:mockColecao([]), recebimento_recusas_motoristas:mockColecao([]), recebimento_recusas_motivos:mockColecao([]) });
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   document.getElementById('recusas-filtro-tratamento').value='RECUSA';
   document.getElementById('recusas-filtro-tratamento').dispatchEvent(new win.Event('change'));
   document.querySelector('[data-recusa-exportar]').click();
@@ -138,6 +163,8 @@ test('sem nenhuma nota (lista filtrada vazia), avisa e não chama XLSX.writeFile
   const toasts=[];
   win.showToast=(m,t)=>toasts.push({m,t});
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   win.document.querySelector('[data-recusa-exportar]').click();
   assert.equal(arquivoGravado(),'');
   assert.ok(toasts.some(t=>/Nenhuma nota retornada/.test(t.m)));

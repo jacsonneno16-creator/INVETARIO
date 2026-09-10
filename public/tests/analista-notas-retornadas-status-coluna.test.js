@@ -18,6 +18,25 @@ function mockColecao(docsIniciais){
   const registro=new Map((docsIniciais||[]).map(d=>[d.id,d.data]));
   return {
     get: async()=>({ empty: registro.size===0, size: registro.size, docs:[...registro.entries()].map(([id,data])=>({id,data:()=>data})) }),
+    where(campo, op, valor) {
+      const construir = (condicoesAtuais) => ({
+        where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        get: async () => {
+          const bate = (data) => condicoesAtuais.every(c => {
+            const v = data ? data[c.campo] : undefined;
+            if (c.op === '>=') return v >= c.valor;
+            if (c.op === '<=') return v <= c.valor;
+            if (c.op === '==') return v === c.valor;
+            if (c.op === 'array-contains') return Array.isArray(v) && v.includes(c.valor);
+            if (c.op === 'in') return Array.isArray(c.valor) && c.valor.includes(v);
+            return true;
+          });
+          const filtrados = [...registro.entries()].filter(([, data]) => bate(data));
+          return { empty: filtrados.length === 0, size: filtrados.length, docs: filtrados.map(([id, data]) => ({ id, data: () => data })) };
+        },
+      });
+      return construir([{ campo, op, valor }]);
+    },
     doc:(id)=>({
       id,
       set: async(payload)=>{ const a=registro.get(id)||{}; registro.set(id,{...a,...payload}); },
@@ -75,35 +94,43 @@ function baseColecoes(recusas,notas){
 }
 
 test('dropdown de Tratamento só oferece Recusa e Reentrega (mais o vazio) — não Devolução/Substituição/Pendente/Outro', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[{chave:'CH1'}]}}]);
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1'}]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const select=document.querySelector('[data-recusa-tratamento="r1|CH1"]');
   const valores=[...select.options].map(o=>o.value);
   assert.deepEqual(valores,['','RECUSA','REENTREGA']);
 });
 
 test('registro antigo classificado como Devolução continua mostrando "Devolução" no select (não fica em branco), mesmo sem poder escolher de novo', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[{chave:'CH1',tratamento:'DEVOLUCAO'}]}}]);
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1',tratamento:'DEVOLUCAO'}]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const select=document.querySelector('[data-recusa-tratamento="r1|CH1"]');
   assert.equal(select.value,'DEVOLUCAO');
   assert.match(select.outerHTML,/Devolução/);
 });
 
 test('nota ainda não classificada não mostra select nem input de status — só um traço', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[{chave:'CH1'}]}}]);
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1'}]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   assert.equal(document.querySelector('[data-recusa-status]'),null);
   assert.equal(document.querySelector('[data-recusa-reentrega-data]'),null);
 });
 
 test('classificar como Recusa faz aparecer o select de Status (Aguard. Fiscal/CTE/Endereçando/Finalizado) na mesma linha, e mudar o status grava na nota', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[{chave:'CH1'}]}}]);
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1'}]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   document.querySelector('[data-recusa-tratamento="r1|CH1"]').value='RECUSA';
   document.querySelector('[data-recusa-tratamento="r1|CH1"]').dispatchEvent(new win.Event('change'));
@@ -124,9 +151,11 @@ test('classificar como Recusa faz aparecer o select de Status (Aguard. Fiscal/CT
 });
 
 test('classificar como Reentrega mostra Data Programada/Saída em vez do select de status', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[{chave:'CH1'}]}}]);
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1'}]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   document.querySelector('[data-recusa-tratamento="r1|CH1"]').value='REENTREGA';
   document.querySelector('[data-recusa-tratamento="r1|CH1"]').dispatchEvent(new win.Event('change'));
@@ -145,12 +174,14 @@ test('classificar como Reentrega mostra Data Programada/Saída em vez do select 
 });
 
 test('2 notas do mesmo evento: uma Recusa (mostra select de status) e outra Reentrega (mostra datas) — cada linha com o controle certo', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[
     {chave:'CH1',numeroNota:'601',tratamento:'RECUSA'},
     {chave:'CH2',numeroNota:'602',tratamento:'REENTREGA'},
   ]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   assert.ok(document.querySelector('[data-recusa-status="r1|CH1"]'),'nota Recusa mostra select de status');
   assert.ok(document.querySelector('[data-recusa-reentrega-data="r1|CH2:dataSaidaEm"]'),'nota Reentrega mostra as datas');

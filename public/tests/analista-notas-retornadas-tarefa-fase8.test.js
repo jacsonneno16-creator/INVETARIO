@@ -11,6 +11,25 @@ function mockColecao(docsIniciais){
   const registro=new Map((docsIniciais||[]).map(d=>[d.id,d.data]));
   return {
     get: async()=>({ empty: registro.size===0, size: registro.size, docs:[...registro.entries()].map(([id,data])=>({id,data:()=>data})) }),
+    where(campo, op, valor) {
+      const construir = (condicoesAtuais) => ({
+        where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        get: async () => {
+          const bate = (data) => condicoesAtuais.every(c => {
+            const v = data ? data[c.campo] : undefined;
+            if (c.op === '>=') return v >= c.valor;
+            if (c.op === '<=') return v <= c.valor;
+            if (c.op === '==') return v === c.valor;
+            if (c.op === 'array-contains') return Array.isArray(v) && v.includes(c.valor);
+            if (c.op === 'in') return Array.isArray(c.valor) && c.valor.includes(v);
+            return true;
+          });
+          const filtrados = [...registro.entries()].filter(([, data]) => bate(data));
+          return { empty: filtrados.length === 0, size: filtrados.length, docs: filtrados.map(([id, data]) => ({ id, data: () => data })) };
+        },
+      });
+      return construir([{ campo, op, valor }]);
+    },
     doc:(id)=>({ id, set: async(payload)=>{ const a=registro.get(id)||{}; registro.set(id,{...a,...payload}); } }),
     _registro: registro,
   };
@@ -47,6 +66,8 @@ test('"Solicitar conferência" abre o modal, popula o select de operadores e ao 
   const { win, document, modaisAbertos }=carregarPagina({ recebimento_recusas:recusas, recebimento_recusas_tarefas_conferencia:tarefas, recebimento_recusas_notas:mockColecao([]), recebimento_recusas_motoristas:mockColecao([]), recebimento_recusas_motivos:mockColecao([]) });
 
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   assert.match(document.getElementById('recusas-tabela').innerHTML,/Solicitar conferência/);
 
   document.querySelector('[data-recusa-solicitar-conf]').click();
@@ -75,6 +96,8 @@ test('recusa já CONFERIDA não mostra botão de solicitar nem "aguardando" — 
   const recusas=mockColecao([{id:'r1',data:{box:'BOX 9',statusConferenciaOperacional:'CONFERIDA',notas:[],criadoEm:'2026-08-19T10:00:00.000Z'}}]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas, recebimento_recusas_notas:mockColecao([]), recebimento_recusas_motoristas:mockColecao([]), recebimento_recusas_motivos:mockColecao([]) });
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   assert.match(document.getElementById('recusas-tabela').innerHTML,/✓ Conferida/);
   assert.doesNotMatch(document.getElementById('recusas-tabela').innerHTML,/Solicitar conferência/);
 });
@@ -84,6 +107,8 @@ test('filtro de texto redesenha a tabela e os botões de "Solicitar conferência
   const tarefas=mockColecao([]);
   const { win, document, modaisAbertos }=carregarPagina({ recebimento_recusas:recusas, recebimento_recusas_tarefas_conferencia:tarefas, recebimento_recusas_notas:mockColecao([]), recebimento_recusas_motoristas:mockColecao([]), recebimento_recusas_motivos:mockColecao([]) });
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   document.getElementById('recusas-filtro').value='joão';
   document.getElementById('recusas-filtro').dispatchEvent(new win.Event('input'));
   document.querySelector('[data-recusa-solicitar-conf]').click();

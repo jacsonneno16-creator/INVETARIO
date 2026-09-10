@@ -21,6 +21,25 @@ function mockColecao(docsIniciais){
   const registro=new Map((docsIniciais||[]).map(d=>[d.id,d.data]));
   return {
     get: async()=>({ empty: registro.size===0, size: registro.size, docs:[...registro.entries()].map(([id,data])=>({id,data:()=>data})) }),
+    where(campo, op, valor) {
+      const construir = (condicoesAtuais) => ({
+        where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        get: async () => {
+          const bate = (data) => condicoesAtuais.every(c => {
+            const v = data ? data[c.campo] : undefined;
+            if (c.op === '>=') return v >= c.valor;
+            if (c.op === '<=') return v <= c.valor;
+            if (c.op === '==') return v === c.valor;
+            if (c.op === 'array-contains') return Array.isArray(v) && v.includes(c.valor);
+            if (c.op === 'in') return Array.isArray(c.valor) && c.valor.includes(v);
+            return true;
+          });
+          const filtrados = [...registro.entries()].filter(([, data]) => bate(data));
+          return { empty: filtrados.length === 0, size: filtrados.length, docs: filtrados.map(([id, data]) => ({ id, data: () => data })) };
+        },
+      });
+      return construir([{ campo, op, valor }]);
+    },
     doc:(id)=>({
       id,
       set: async(payload)=>{ const a=registro.get(id)||{}; registro.set(id,{...a,...payload}); },
@@ -83,9 +102,11 @@ function mudarTratamento(document, win, recusaId, notaChave, valor){
 }
 
 test('marcar Tratamento = Recusa carimba liberadoParaRecusarEm na 1ª vez', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[{chave:'CH1',numeroNota:'1'}],criadoEm:'2026-09-01T10:00:00.000Z'}}]);
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1',numeroNota:'1'}],criadoEm:'2026-09-01T10:00:00.000Z'}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   await mudarTratamento(document, win, 'r1', 'CH1', 'RECUSA');
   const salvo=recusas._registro.get('r1');
   assert.equal(salvo.notas[0].tratamento,'RECUSA');
@@ -93,9 +114,11 @@ test('marcar Tratamento = Recusa carimba liberadoParaRecusarEm na 1ª vez', asyn
 });
 
 test('trocar o tratamento de novo (Recusa -> outro -> Recusa) NÃO sobrescreve liberadoParaRecusarEm já existente', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[{chave:'CH1',tratamento:'RECUSA',liberadoParaRecusarEm:'2026-09-01T08:00:00.000Z'}]}}]);
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1',tratamento:'RECUSA',liberadoParaRecusarEm:'2026-09-01T08:00:00.000Z'}]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   await mudarTratamento(document, win, 'r1', 'CH1', 'REENTREGA');
   await mudarTratamento(document, win, 'r1', 'CH1', 'RECUSA');
   const salvo=recusas._registro.get('r1');
@@ -104,9 +127,11 @@ test('trocar o tratamento de novo (Recusa -> outro -> Recusa) NÃO sobrescreve l
 });
 
 test('classificar como qualquer outro tratamento (não Recusa) nunca grava liberadoParaRecusarEm', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[{chave:'CH1'}]}}]);
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1'}]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   await mudarTratamento(document, win, 'r1', 'CH1', 'REENTREGA');
   const salvo=recusas._registro.get('r1');
   assert.equal(salvo.notas[0].tratamento,'REENTREGA');
@@ -114,9 +139,11 @@ test('classificar como qualquer outro tratamento (não Recusa) nunca grava liber
 });
 
 test('registro antigo sem `notas` real (array vazio) ainda consegue classificar — cria o item na 1ª edição', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[]}}]);
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   await mudarTratamento(document, win, 'r1', '', 'RECUSA');
   const salvo=recusas._registro.get('r1');
   assert.equal(salvo.notas.length,1);
@@ -127,12 +154,14 @@ test('registro antigo sem `notas` real (array vazio) ainda consegue classificar 
 // MESMO evento (mesmo motorista/box/data), cada uma com um Tratamento
 // diferente, sem uma pisar na outra.
 test('2 notas do mesmo evento: uma vira Recusa e a outra Reentrega, cada linha grava só na sua própria nota', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',motoristaNome:'João',notas:[
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',motoristaNome:'João',notas:[
     {chave:'CH1',numeroNota:'601'},
     {chave:'CH2',numeroNota:'602'},
   ]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
 
   assert.ok(document.querySelector('[data-recusa-tratamento="r1|CH1"]'),'nota 601 precisa da sua própria linha/select');
   assert.ok(document.querySelector('[data-recusa-tratamento="r1|CH2"]'),'nota 602 precisa da sua própria linha/select');
@@ -151,9 +180,11 @@ test('2 notas do mesmo evento: uma vira Recusa e a outra Reentrega, cada linha g
 });
 
 test('registro antigo (1 nota só) com tratamento/liberadoParaRecusarEm gravados no DOCUMENTO — a tela mostra e edita através da nota, herdando o valor antigo', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',tratamento:'RECUSA',liberadoParaRecusarEm:'2026-08-01T00:00:00.000Z',notas:[{chave:'CH1',numeroNota:'1'}]}}]);
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',tratamento:'RECUSA',liberadoParaRecusarEm:'2026-08-01T00:00:00.000Z',notas:[{chave:'CH1',numeroNota:'1'}]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
   const select=document.querySelector('[data-recusa-tratamento="r1|CH1"]');
   assert.equal(select.value,'RECUSA','herda o tratamento do documento antigo enquanto a nota não tiver o próprio');
 
