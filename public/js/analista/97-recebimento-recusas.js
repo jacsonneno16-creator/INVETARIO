@@ -85,7 +85,11 @@
   let _filtroConferencia = ''; // FASE 9
   let _filtroPeriodoInicio = ''; // FASE 9 — data (yyyy-mm-dd), sobre criadoEm
   let _filtroPeriodoFim = ''; // FASE 9
-  const DIAS_MAX_PERIODO_RECUSAS = 92; // ~3 meses — PEDIDO AO VIVO (2026-09-10)
+  // PEDIDO AO VIVO (2026-09-10, 3ª rodada): telas que mostram dado em
+  // LISTA/TABELA (esta) ficam com 2 meses; telas só de gráfico (números
+  // agregados, sem listar nota por nota) podem ir até 6 meses — ver mesmo
+  // ajuste em 98/99/102/103.
+  const DIAS_MAX_PERIODO_RECUSAS = 60; // ~2 meses
   // PEDIDO AO VIVO (2026-09-10): "quero que tenha período... busca manual,
   // não automática" — recebimento_recusas é o log permanente de retornos
   // já processados, só cresce, nunca é limpo. Buscar a coleção inteira sem
@@ -93,6 +97,7 @@
   // último período buscado com sucesso — vazia = "ainda não buscou nesta
   // sessão", te mostra o convite pra escolher o período em vez da tabela.
   let _recusasPeriodoBuscado = '';
+  let _recusasCarregandoPeriodo = false;
   let _recusaAtribuindoId = '';
   let _recusaDetalheId = '';
   // Diagnóstico persistente do último "Buscar do BI" — mesma ideia dos
@@ -585,30 +590,51 @@
     }
     return _notas;
   }
-  // PEDIDO AO VIVO (2026-09-10): "quero que tenha período... busca manual,
-  // não automática" — busca direcionada por `.where('criadoEm', ...)` no
-  // servidor (não traz mais a coleção inteira pra filtrar depois no
-  // cliente) e só roda quando pedida (botão Buscar), nunca sozinha ao
-  // entrar na tela. Período máximo de 3 meses, validado antes de buscar.
-  async function _buscarRecusasPeriodo(ini, fim, forcar) {
-    if (!_periodoRecusasValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
+  // PEDIDO AO VIVO (2026-09-10, 2ª rodada): "não ia funcionar parecido com
+  // a base de produtos?" — troca a busca "uma vez só" por uma conexão AO
+  // VIVO (onSnapshot), mas sempre com o MESMO filtro de período (no máximo
+  // 3 meses) que já existia — o que evitava travar (buscar a coleção
+  // inteira) continua evitado; só o "buscar de novo toda vez" que virou
+  // "fica atualizado sozinho, sem precisar clicar". Qualquer nota nova
+  // dentro do período já buscado aparece na hora, sem ação nenhuma.
+  let _unsubRecusasPeriodo = null;
+  function _pararSnapshotRecusas() {
+    if (_unsubRecusasPeriodo) { try { _unsubRecusasPeriodo(); } catch (_e) {} _unsubRecusasPeriodo = null; }
+  }
+  function _buscarRecusasPeriodo(ini, fim, forcar) {
+    if (!_periodoRecusasValido(ini, fim)) return Promise.reject(new Error('Escolha um período válido de até 2 meses.'));
     const chave = ini + '|' + fim;
-    if (_recusasPeriodoBuscado === chave && !forcar) return;
-    const r = await fs().collection(COL_RECUSAS)
-      .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
-      .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
-      .get();
-    // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada por
-    // 100-consulta-notas-fiscais.js (origem:'AUTOMATICO') não é um
-    // recebimento físico processado pelo Coletor — não deve aparecer na
-    // fila de Notas Retornadas (motorista/box/conferência não existem pra
-    // ela). Ela tem indicador próprio, separado (ver 102-devolucoes-bi-indicadores.js).
-    // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a ser
-    // gravado numa rodada posterior — registros auto-salvos antes disso não
-    // têm esse campo, mas sempre tiveram `motivoAutomaticoTexto` (exclusivo
-    // desse fluxo), que serve de marcador retroativo (ver 102-devolucoes-bi-indicadores.js).
-    _recusas = r.docs.map(d => ({ _id:d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a,b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
+    if (_recusasPeriodoBuscado === chave && _unsubRecusasPeriodo && !forcar) return Promise.resolve();
+    _pararSnapshotRecusas();
     _recusasPeriodoBuscado = chave;
+    _recusasCarregandoPeriodo = true;
+    return new Promise((resolve, reject) => {
+      let resolvido = false;
+      _unsubRecusasPeriodo = fs().collection(COL_RECUSAS)
+        .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
+        .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
+        .onSnapshot(snap => {
+          // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada por
+          // 100-consulta-notas-fiscais.js (origem:'AUTOMATICO') não é um
+          // recebimento físico processado pelo Coletor — não deve aparecer
+          // na fila de Notas Retornadas (motorista/box/conferência não
+          // existem pra ela). Ela tem indicador próprio, separado (ver
+          // 102-devolucoes-bi-indicadores.js).
+          // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a
+          // ser gravado numa rodada posterior — registros auto-salvos
+          // antes disso não têm esse campo, mas sempre tiveram
+          // `motivoAutomaticoTexto` (exclusivo desse fluxo), que serve de
+          // marcador retroativo.
+          _recusas = snap.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
+          _recusasCarregandoPeriodo = false;
+          if (!resolvido) { resolvido = true; resolve(); }
+          else if (document.getElementById('recusas-tabela')) { redesenharTabela(); _redesenharResumoRecusas(); }
+        }, err => {
+          console.warn('[Notas Retornadas] Tempo real indisponível em recusas:', err?.message || err);
+          _recusasCarregandoPeriodo = false;
+          if (!resolvido) { resolvido = true; reject(err); }
+        });
+    });
   }
   // Mantida pra compatibilidade com os call sites já existentes (depois de
   // criar/editar/excluir cadastro, atribuir conferência, etc.) — sempre
@@ -659,15 +685,18 @@
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">DE</div><input class="field" id="recusas-filtro-periodo-ini" type="date" value="${esc(_filtroPeriodoInicio)}" style="padding:8px"></div>
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input class="field" id="recusas-filtro-periodo-fim" type="date" value="${esc(_filtroPeriodoFim)}" style="padding:8px"></div>
       <button class="btn btn-primary btn-sm" id="recusas-buscar-periodo" style="padding:8px 14px">🔍 Buscar</button>
-      <div style="font-size:.68rem;color:var(--muted);align-self:center">Período máximo de 3 meses</div>
+      <div style="font-size:.68rem;color:var(--muted);align-self:center">Período máximo de 2 meses — atualiza ao vivo</div>
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">TRATAMENTO</div><select class="field" id="recusas-filtro-tratamento" style="padding:8px">${Object.keys(TRATAMENTO_LABELS).map(k=>`<option value="${k}" ${k===_filtroTratamento?'selected':''}>${esc(TRATAMENTO_LABELS[k])}</option>`).join('')}</select></div>
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">CONFERÊNCIA</div><select class="field" id="recusas-filtro-conferencia" style="padding:8px"><option value="" ${!_filtroConferencia?'selected':''}>Todas</option><option value="NAO_REALIZADA" ${_filtroConferencia==='NAO_REALIZADA'?'selected':''}>Não realizada</option><option value="CONFERIDA" ${_filtroConferencia==='CONFERIDA'?'selected':''}>Conferida</option><option value="CONFERIDA_COM_DIVERGENCIA" ${_filtroConferencia==='CONFERIDA_COM_DIVERGENCIA'?'selected':''}>Conferida c/ divergência</option></select></div>
       <input class="field" id="recusas-filtro" value="${esc(_filtro)}" placeholder="Pesquisar NF, motorista, motivo, box..." style="max-width:280px;padding:8px">
     </div>`;
   }
   function renderRecusasTabela() {
+    if (_recusasCarregandoPeriodo) {
+      return '<div class="empty"><div class="empty-icon">🔄</div><div class="empty-title">Conectando ao período...</div></div>';
+    }
     if (!_recusasPeriodoBuscado) {
-      return '<div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">Escolha o período e clique em Buscar</div><div class="empty-sub">A lista não carrega sozinha — evita buscar a coleção inteira à toa toda vez que você entra nesta tela.</div></div>';
+      return '<div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">Escolha o período e clique em Buscar</div></div>';
     }
     const lista = filtrarRecusas();
     return `<div style="overflow:auto"><table class="dt-table"><thead><tr><th>Data/Hora</th><th>Notas</th><th>Origem</th><th>Motorista</th><th>Conferente</th><th>Motivo</th><th>Box</th><th>Esperado</th><th>Contado</th><th>Dif.</th><th>Status</th><th>Conferência de produtos</th><th>Tratamento</th><th>Status do retorno</th><th></th></tr></thead><tbody>${lista.length ? lista.map(r => {
@@ -872,7 +901,7 @@
         <div><h2 style="margin:0">↩️ Notas Retornadas</h2><div style="color:var(--muted);font-size:.78rem;margin-top:4px">Ledger de notas de VENDA (importado do BI) — o Coletor usa isso pra achar a nota quando algo voltar fisicamente. Motorista/Motivo/Conferente ficam na aba <b>Cadastros</b>. Devoluções com motivo ficam em <b>Devoluções (BI)</b>.</div></div>
         <button class="btn btn-ghost" data-recusa-atualizar="1">↻ Atualizar</button>
       </div>
-      ${resumoCards()}
+      <div id="recusas-resumo">${resumoCards()}</div>
       <div class="tc" style="padding:16px;margin-bottom:14px">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px"><div><b>📊 Buscar notas de venda (BI)</b><div style="font-size:.72rem;color:var(--muted);margin-top:3px">${global.DTBiPastaLocal?.suportado?.() ? 'Atualiza sozinho a cada 30 min direto no servidor (não depende de ninguém deixar essa tela aberta) — clique em Buscar só se quiser forçar uma atualização imediata.' : 'Serviço de busca do BI indisponível no momento (recarregue a página).'}</div></div><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${global.DTBiPastaLocal?.suportado?.() ? '<button class="btn btn-primary" data-recusa-buscar-bi="1">📊 Buscar</button>' : ''}</div></div>
         ${_ultimaBuscaBiTexto ? `<div style="font-size:.72rem;color:var(--muted);margin:-4px 0 0;padding:8px 10px;border-radius:8px;background:#f3f4f6">${_ultimaBuscaBiTexto}</div>` : ''}
@@ -1490,6 +1519,13 @@
     if (host) host.innerHTML = renderRecusasTabela();
     ligarBotoesTabela();
   }
+  // Atualiza só os cards de resumo (RETORNOS HOJE etc.) sem redesenhar a
+  // tela inteira — usado nas atualizações ao vivo do onSnapshot, pra nunca
+  // atrapalhar quem estiver digitando num filtro no meio da tela.
+  function _redesenharResumoRecusas() {
+    const host = document.getElementById('recusas-resumo');
+    if (host) host.innerHTML = resumoCards();
+  }
 
   async function excluirRecusa(recusaId) {
     const r = _recusas.find(x => x._id === recusaId);
@@ -1603,7 +1639,7 @@
   async function _executarBuscaPeriodoRecusas() {
     const btn = document.getElementById('recusas-buscar-periodo');
     if (!_periodoRecusasValido(_filtroPeriodoInicio, _filtroPeriodoFim)) {
-      global.showToast?.('Escolha um período válido de até 3 meses.', 'error');
+      global.showToast?.('Escolha um período válido de até 2 meses.', 'error');
       return;
     }
     const original = btn ? btn.innerHTML : '';
@@ -1632,7 +1668,7 @@
       _filtroPeriodoInicio = e.target.value || '';
       if (_filtroPeriodoInicio && _filtroPeriodoFim && !_periodoRecusasValido(_filtroPeriodoInicio, _filtroPeriodoFim)) {
         _filtroPeriodoFim = new Date(new Date(_filtroPeriodoInicio + 'T00:00:00').getTime() + DIAS_MAX_PERIODO_RECUSAS * 86400000).toISOString().slice(0, 10);
-        global.showToast?.('Período ajustado — máximo de 3 meses.', 'i');
+        global.showToast?.('Período ajustado — máximo de 2 meses.', 'i');
       }
       desenhar();
     });
@@ -1640,7 +1676,7 @@
       _filtroPeriodoFim = e.target.value || '';
       if (_filtroPeriodoInicio && _filtroPeriodoFim && !_periodoRecusasValido(_filtroPeriodoInicio, _filtroPeriodoFim)) {
         _filtroPeriodoInicio = new Date(new Date(_filtroPeriodoFim + 'T00:00:00').getTime() - DIAS_MAX_PERIODO_RECUSAS * 86400000).toISOString().slice(0, 10);
-        global.showToast?.('Período ajustado — máximo de 3 meses.', 'i');
+        global.showToast?.('Período ajustado — máximo de 2 meses.', 'i');
       }
       desenhar();
     });
@@ -1666,10 +1702,11 @@
   // vazios, então chamam ANTES do fetch (título/botões/filtros aparecem na
   // hora) e de novo depois — nunca escondendo a estrutura atrás de um
   // "Carregando..." de página inteira.
-  // PEDIDO AO VIVO (2026-09-10): não busca mais a lista de recusas sozinha
-  // ao entrar — só os cadastros pequenos (motivo, motorista, etc., pros
-  // dropdowns funcionarem). A tabela em si só carrega quando o usuário
-  // escolhe o período e clica em Buscar (ver _buscarRecusasPeriodo acima).
+  // PEDIDO AO VIVO (2026-09-10, 3ª rodada): "não ia funcionar parecido com
+  // a base de produtos?" — a tabela volta a carregar sozinha ao entrar,
+  // já com o período padrão (2 meses) — só que agora via onSnapshot
+  // (_buscarRecusasPeriodo), então fica ao vivo sem precisar clicar em
+  // nada, sem voltar a buscar a coleção inteira sem limite.
   async function renderRecebimentoRecusas() {
     const pagina = document.getElementById('page-recebimento-recusas');
     if (!pagina) return;
@@ -1681,6 +1718,7 @@
     desenhar();
     try { await _carregarCadastrosRecusas(); } catch(e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Notas Retornadas</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; return; }
     desenhar();
+    _buscarRecusasPeriodo(_filtroPeriodoInicio, _filtroPeriodoFim).then(() => desenhar()).catch(e => { global.showToast?.('Erro ao buscar notas retornadas: ' + (e.message || e), 'error'); desenhar(); });
     // Ledger de vendas (_notas) roda em segundo plano, NUNCA aguardado
     // aqui — só enriquece o card "Notas de venda (ledger)" e o detalhe da
     // nota quando terminar (ver comentário de _carregarNotasVendaLedger).

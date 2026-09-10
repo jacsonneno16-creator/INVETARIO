@@ -33,6 +33,31 @@ function criarColecao(nomeColecao, docsIniciais) {
       get: async () => ({ exists: registro.has(id), data: () => registro.get(id) }),
       update: async (payload) => { const atual = registro.get(id); if (atual) Object.assign(atual, payload); },
     }),
+    // Usado por _buscarRecusasPeriodo (97-recebimento-recusas.js), que
+    // agora fica ao vivo (onSnapshot) num período — o mock só precisa
+    // devolver o resultado atual uma vez, já que aqui não existe rede de
+    // verdade mudando os dados por baixo entre chamadas.
+    where(campo, op, valor) {
+      const construir = condicoesAtuais => ({
+        where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        get: async () => {
+          const bate = data => condicoesAtuais.every(c => {
+            const v = data ? data[c.campo] : undefined;
+            if (c.op === '>=') return v >= c.valor;
+            if (c.op === '<=') return v <= c.valor;
+            if (c.op === '==') return v === c.valor;
+            return true;
+          });
+          const filtrados = [...registro.entries()].filter(([, data]) => bate(data));
+          return { empty: filtrados.length === 0, size: filtrados.length, docs: filtrados.map(([id, data]) => ({ id, data: () => data })) };
+        },
+        onSnapshot: (cb, errCb) => {
+          construir(condicoesAtuais).get().then(cb).catch(e => errCb && errCb(e));
+          return () => {};
+        },
+      });
+      return construir([{ campo, op, valor }]);
+    },
   };
 }
 function _aplicarMergeAninhado(destino, payload) {

@@ -15,6 +15,10 @@ function mockColecao(docsIniciais){
     where(campo, op, valor) {
       const construir = (condicoesAtuais) => ({
         where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        onSnapshot: (cb, errCb) => {
+          construir(condicoesAtuais).get().then(cb).catch(e => errCb && errCb(e));
+          return () => {};
+        },
         get: async () => {
           const bate = (data) => condicoesAtuais.every(c => {
             const v = data ? data[c.campo] : undefined;

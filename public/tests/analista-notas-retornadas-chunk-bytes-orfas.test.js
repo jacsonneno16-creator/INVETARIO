@@ -37,6 +37,30 @@ function criarColecao(nomeColecao, docsIniciais) {
     _registro: registro,
     get: async () => ({ empty: registro.size === 0, size: registro.size, docs: [...registro.entries()].map(([id, data]) => ({ id, data: () => data })) }),
     doc: (id) => ({ id, _colecao: nomeColecao, get: async () => ({ exists: registro.has(id), data: () => registro.get(id) }) }),
+    // Usado por _buscarRecusasPeriodo (97-recebimento-recusas.js, agora ao
+    // vivo via onSnapshot num período) — mock só precisa devolver o
+    // resultado atual uma vez.
+    where(campo, op, valor) {
+      const construir = condicoesAtuais => ({
+        where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+        get: async () => {
+          const bate = data => condicoesAtuais.every(c => {
+            const v = data ? data[c.campo] : undefined;
+            if (c.op === '>=') return v >= c.valor;
+            if (c.op === '<=') return v <= c.valor;
+            if (c.op === '==') return v === c.valor;
+            return true;
+          });
+          const filtrados = [...registro.entries()].filter(([, data]) => bate(data));
+          return { empty: filtrados.length === 0, size: filtrados.length, docs: filtrados.map(([id, data]) => ({ id, data: () => data })) };
+        },
+        onSnapshot: (cb, errCb) => {
+          construir(condicoesAtuais).get().then(cb).catch(e => errCb && errCb(e));
+          return () => {};
+        },
+      });
+      return construir([{ campo, op, valor }]);
+    },
   };
 }
 function _aplicarMergeAninhado(destino, payload) {
