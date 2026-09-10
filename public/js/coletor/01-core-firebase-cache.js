@@ -3,15 +3,24 @@
 // ═══════════════════════════════════════════════════
 const FIREBASE_CFG = window.DT_FIREBASE_CFG;
 getDTFirebaseApp();
-const FS   = getDTFirestore();
+const FS = getDTFirestore();
 const AUTH = getDTAuth();
 // Expor a instância para módulos carregados em outros escopos.
 window.AUTH = AUTH;
 const FCOL = window.DT_FCOL;
 
 // Mantém a sessão de autenticação no aparelho. Nunca executa logout automático na abertura.
-window.DT_AUTH_READY = AUTH.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
-  .catch(e => { console.warn('[Auth] Persistência LOCAL indisponível:', e.message); });
+window.DT_AUTH_READY = AUTH.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(e => {
+  console.warn('[Auth] Persistência LOCAL indisponível:', e.message);
+  // BUG AO VIVO REAL (2026-09-06): "sai do login toda hora" sem NENHUM erro
+  // aparecendo no Diagnóstico do fluxo de login em si — candidato real:
+  // se a persistência LOCAL (IndexedDB) falhar aqui (ex.: storage bloqueado/
+  // particionado pelo navegador), a sessão do Firebase Auth pode cair
+  // sozinha logo depois de autenticar, disparando onAuthStateChanged com
+  // user=null e voltando pro login SEM passar por nenhum catch de doLogin()
+  // — por isso nada aparecia no Diagnóstico até agora.
+  if (typeof window.dtAddDiag === 'function') window.dtAddDiag('Persistência LOCAL do login falhou (sessão pode não sobreviver): ' + (e.code || 'sem código') + ' — ' + (e.message || e));
+});
 
 // DT_AUTH_USER_READY: diferente de DT_AUTH_READY (que só espera a persistência
 // ser configurada), esta promise resolve quando o Firebase efetivamente
@@ -24,17 +33,19 @@ window.DT_AUTH_READY = AUTH.setPersistence(firebase.auth.Auth.Persistence.LOCAL)
 // de tratar uma sessão válida como expirada só porque checou cedo demais.
 // Timeout de segurança: se o Firebase não confirmar em 6s (ex.: offline
 // sem sessão em cache), resolve mesmo assim para não travar a tela.
-window.DT_AUTH_USER_READY = new Promise((resolve) => {
+window.DT_AUTH_USER_READY = new Promise(resolve => {
   var resolvido = false;
-  var _resolver = function(user) {
+  var _resolver = function (user) {
     if (resolvido) return;
     resolvido = true;
     resolve(user || null);
   };
-  var timeoutId = setTimeout(function(){ _resolver(AUTH.currentUser); }, 6000);
+  var timeoutId = setTimeout(function () {
+    _resolver(AUTH.currentUser);
+  }, 6000);
   var unsubscribe;
   try {
-    unsubscribe = AUTH.onAuthStateChanged(function(user){
+    unsubscribe = AUTH.onAuthStateChanged(function (user) {
       clearTimeout(timeoutId);
       _resolver(user);
       if (typeof unsubscribe === 'function') unsubscribe();
@@ -47,17 +58,17 @@ window.DT_AUTH_USER_READY = new Promise((resolve) => {
 });
 
 // ── Persistência offline das contagens ──
-const _LOJA_CACHE = () => (window.getDTLojaAtiva&&window.getDTLojaAtiva()) || 'sem_loja';
-const LS_FILA    = 'col_fila_envio_' + _LOJA_CACHE();
-const LS_INV     = 'col_inventarios_' + _LOJA_CACHE();
-const LS_BASE    = 'col_base_' + _LOJA_CACHE() + '_';
-const LS_ENDCAP  = 'col_endcap_' + _LOJA_CACHE() + '_';
-const LS_BVER    = 'col_bver_' + _LOJA_CACHE() + '_';
-const LS_LOCAIS      = 'col_locais_' + _LOJA_CACHE();        // cache de dt_locais (capacidade + set)
-const LS_LOCAIS_VER  = 'col_locais_ver_' + _LOJA_CACHE();    // versão do cache (compara com config/locais_meta)
-const LS_LOCAIS_SET  = 'col_locais_set_' + _LOJA_CACHE();    // set de endereços válidos
-const LS_REC         = 'col_rec_cache_' + _LOJA_CACHE();       // espelho de recebimentos (fase 4 do Recebimento)
-const LS_REC_IDENT   = 'col_rec_ident_cache_' + _LOJA_CACHE(); // espelho de recebimento_identificadores
+const _LOJA_CACHE = () => window.getDTLojaAtiva && window.getDTLojaAtiva() || 'sem_loja';
+const LS_FILA = 'col_fila_envio_' + _LOJA_CACHE();
+const LS_INV = 'col_inventarios_' + _LOJA_CACHE();
+const LS_BASE = 'col_base_' + _LOJA_CACHE() + '_';
+const LS_ENDCAP = 'col_endcap_' + _LOJA_CACHE() + '_';
+const LS_BVER = 'col_bver_' + _LOJA_CACHE() + '_';
+const LS_LOCAIS = 'col_locais_' + _LOJA_CACHE(); // cache de dt_locais (capacidade + set)
+const LS_LOCAIS_VER = 'col_locais_ver_' + _LOJA_CACHE(); // versão do cache (compara com config/locais_meta)
+const LS_LOCAIS_SET = 'col_locais_set_' + _LOJA_CACHE(); // set de endereços válidos
+const LS_REC = 'col_rec_cache_' + _LOJA_CACHE(); // espelho de recebimentos (fase 4 do Recebimento)
+const LS_REC_IDENT = 'col_rec_ident_cache_' + _LOJA_CACHE(); // espelho de recebimento_identificadores
 
 // ─── Sentinel único para "vazio" ────────────────────────────────────────────
 // Todo produto/gtin ausente é salvo como __VAZIO__, nunca null/undefined/"".
@@ -69,15 +80,13 @@ const PROD_VAZIO = '__VAZIO__';
 // Garante que "abc123", "ABC123 " e "ABC123" sejam sempre idênticos.
 function normProd(v) {
   if (v === null || v === undefined) return PROD_VAZIO;
-  const s = String(v)
-    .replace(/[\x00-\x1F\x7F]/g, '') // remove chars de controle do scanner
-    .replace(/\s+/g, ' ')              // colapsa espaços múltiplos
-    .trim()
-    .toUpperCase();
+  const s = String(v).replace(/[\x00-\x1F\x7F]/g, '') // remove chars de controle do scanner
+  .replace(/\s+/g, ' ') // colapsa espaços múltiplos
+  .trim().toUpperCase();
   if (!s || s === 'NULL' || s === 'UNDEFINED' || s === 'NAN') return PROD_VAZIO;
   return s;
 }
-const APP_VERSION = '3.2.1';            // versão do aplicativo
+const APP_VERSION = '3.2.1'; // versão do aplicativo
 
 // ══════════════════════════════════════════════════
 //  NORMALIZAÇÃO DA BASE  (melhoria 1 e 2)
@@ -85,122 +94,136 @@ const APP_VERSION = '3.2.1';            // versão do aplicativo
 
 // Remove acentos, espaços extras e converte para uppercase
 function _normStr(v) {
-  return String(v || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')   // remove diacríticos
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toUpperCase();
+  return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove diacríticos
+  .replace(/\s+/g, ' ').trim().toUpperCase();
 }
 
 // Mapeamento de variantes de campo → nome canônico
 const _FIELD_MAP = {
   // endereço
-  'endereco': 'endereco', 'endereço': 'endereco',
-  'ENDERECO': 'endereco', 'ENDEREÇO': 'endereco',
-  'Endereco': 'endereco', 'Endereço': 'endereco',
-  'end'     : 'endereco', 'END'      : 'endereco',
-  'address' : 'endereco', 'ADDRESS'  : 'endereco',
-  'local'   : 'endereco', 'LOCAL'    : 'endereco',
-  'codigo_endereco':'endereco', 'CODIGO_ENDERECO':'endereco',
-  'endereco_logistico_descritivo':'endereco', 'ENDERECO_LOGISTICO_DESCRITIVO':'endereco',
-  'endereco_logistico_key':'endereco', 'ENDERECO_LOGISTICO_KEY':'endereco',
+  'endereco': 'endereco',
+  'endereço': 'endereco',
+  'ENDERECO': 'endereco',
+  'ENDEREÇO': 'endereco',
+  'Endereco': 'endereco',
+  'Endereço': 'endereco',
+  'end': 'endereco',
+  'END': 'endereco',
+  'address': 'endereco',
+  'ADDRESS': 'endereco',
+  'local': 'endereco',
+  'LOCAL': 'endereco',
+  'codigo_endereco': 'endereco',
+  'CODIGO_ENDERECO': 'endereco',
+  'endereco_logistico_descritivo': 'endereco',
+  'ENDERECO_LOGISTICO_DESCRITIVO': 'endereco',
+  'endereco_logistico_key': 'endereco',
+  'ENDERECO_LOGISTICO_KEY': 'endereco',
   // gtin
-  'gtin'    : 'gtin',     'GTIN'     : 'gtin',
-  'ean'     : 'gtin',     'EAN'      : 'gtin',
-  'ean13'   : 'gtin',     'EAN13'    : 'gtin',
-  'barcode' : 'gtin',     'BARCODE'  : 'gtin',
-  'cod_barras':'gtin',    'COD_BARRAS':'gtin',
+  'gtin': 'gtin',
+  'GTIN': 'gtin',
+  'ean': 'gtin',
+  'EAN': 'gtin',
+  'ean13': 'gtin',
+  'EAN13': 'gtin',
+  'barcode': 'gtin',
+  'BARCODE': 'gtin',
+  'cod_barras': 'gtin',
+  'COD_BARRAS': 'gtin',
   // dun
-  'dun'     : 'dun',      'DUN'      : 'dun',
-  'dun14'   : 'dun',      'DUN14'    : 'dun',
-  'ean14'   : 'dun',      'EAN14'    : 'dun',
-  'caixa'   : 'dun',      'CAIXA'    : 'dun',
+  'dun': 'dun',
+  'DUN': 'dun',
+  'dun14': 'dun',
+  'DUN14': 'dun',
+  'ean14': 'dun',
+  'EAN14': 'dun',
+  'caixa': 'dun',
+  'CAIXA': 'dun',
   // código produto
-  'codigo_produto'  : 'codigo_produto',
-  'CODIGO_PRODUTO'  : 'codigo_produto',
-  'cod_produto'     : 'codigo_produto',
-  'COD_PRODUTO'     : 'codigo_produto',
-  'produto_codigo'  : 'codigo_produto',
-  'PRODUTO_CODIGO'  : 'codigo_produto',
-  'codigo'          : 'codigo_produto',
-  'CODIGO'          : 'codigo_produto',
-  'sku'             : 'codigo_produto',
-  'SKU'             : 'codigo_produto',
+  'codigo_produto': 'codigo_produto',
+  'CODIGO_PRODUTO': 'codigo_produto',
+  'cod_produto': 'codigo_produto',
+  'COD_PRODUTO': 'codigo_produto',
+  'produto_codigo': 'codigo_produto',
+  'PRODUTO_CODIGO': 'codigo_produto',
+  'codigo': 'codigo_produto',
+  'CODIGO': 'codigo_produto',
+  'sku': 'codigo_produto',
+  'SKU': 'codigo_produto',
   // descrição
-  'descricao_produto' : 'descricao_produto',
-  'DESCRICAO_PRODUTO' : 'descricao_produto',
-  'descricao'         : 'descricao_produto',
-  'DESCRICAO'         : 'descricao_produto',
-  'descrição'         : 'descricao_produto',
-  'DESCRIÇÃO'         : 'descricao_produto',
-  'description'       : 'descricao_produto',
-  'DESCRIPTION'       : 'descricao_produto',
-  'produto'           : 'descricao_produto',
-  'PRODUTO'           : 'descricao_produto',
-  'nome_produto'      : 'descricao_produto',
-  'NOME_PRODUTO'      : 'descricao_produto',
+  'descricao_produto': 'descricao_produto',
+  'DESCRICAO_PRODUTO': 'descricao_produto',
+  'descricao': 'descricao_produto',
+  'DESCRICAO': 'descricao_produto',
+  'descrição': 'descricao_produto',
+  'DESCRIÇÃO': 'descricao_produto',
+  'description': 'descricao_produto',
+  'DESCRIPTION': 'descricao_produto',
+  'produto': 'descricao_produto',
+  'PRODUTO': 'descricao_produto',
+  'nome_produto': 'descricao_produto',
+  'NOME_PRODUTO': 'descricao_produto',
   // rua
-  'rua'               : 'rua',
-  'RUA'               : 'rua',
-  'street'            : 'rua',
-  'STREET'            : 'rua',
-  'corredor'          : 'rua',
-  'CORREDOR'          : 'rua',
+  'rua': 'rua',
+  'RUA': 'rua',
+  'street': 'rua',
+  'STREET': 'rua',
+  'corredor': 'rua',
+  'CORREDOR': 'rua',
   // data
-  'data'              : 'data',
-  'DATA'              : 'data',
-  'validade'          : 'data',
-  'VALIDADE'          : 'data',
-  'data_validade'     : 'data',
-  'DATA_VALIDADE'     : 'data',
-  'data_de_validade'  : 'data',
-  'DATA_DE_VALIDADE'  : 'data',
+  'data': 'data',
+  'DATA': 'data',
+  'validade': 'data',
+  'VALIDADE': 'data',
+  'data_validade': 'data',
+  'DATA_VALIDADE': 'data',
+  'data_de_validade': 'data',
+  'DATA_DE_VALIDADE': 'data',
   // capa/palete
-  'capa_palete'       : 'capa_palete',
-  'CAPA_PALETE'       : 'capa_palete',
-  'capa'              : 'capa_palete',
-  'CAPA'              : 'capa_palete',
-  'palete_key'        : 'capa_palete',
-  'PALETE_KEY'        : 'capa_palete',
+  'capa_palete': 'capa_palete',
+  'CAPA_PALETE': 'capa_palete',
+  'capa': 'capa_palete',
+  'CAPA': 'capa_palete',
+  'palete_key': 'capa_palete',
+  'PALETE_KEY': 'capa_palete',
   // quantidade esperada
-  'quantidade_esperada' : 'quantidade_esperada',
-  'QUANTIDADE_ESPERADA' : 'quantidade_esperada',
-  'qtd_esperada'        : 'quantidade_esperada',
-  'QTD_ESPERADA'        : 'quantidade_esperada',
-  'estoque'             : 'quantidade_esperada',
-  'ESTOQUE'             : 'quantidade_esperada',
-  'saldo'               : 'quantidade_esperada',
-  'SALDO'               : 'quantidade_esperada',
+  'quantidade_esperada': 'quantidade_esperada',
+  'QUANTIDADE_ESPERADA': 'quantidade_esperada',
+  'qtd_esperada': 'quantidade_esperada',
+  'QTD_ESPERADA': 'quantidade_esperada',
+  'estoque': 'quantidade_esperada',
+  'ESTOQUE': 'quantidade_esperada',
+  'saldo': 'quantidade_esperada',
+  'SALDO': 'quantidade_esperada',
   'quantidade_enderecada': 'quantidade_esperada',
   'QUANTIDADE_ENDERECADA': 'quantidade_esperada',
   'estoque_total_unidades': 'quantidade_esperada',
   'ESTOQUE_TOTAL_UNIDADES': 'quantidade_esperada',
   // capacidade pallets — sinônimos PT-BR e EN
-  'capacidade_pallets'  : 'capacidade_pallets',
-  'CAPACIDADE_PALLETS'  : 'capacidade_pallets',
-  'capacidade_paletes'  : 'capacidade_pallets',
-  'CAPACIDADE_PALETES'  : 'capacidade_pallets',
-  'capacidade_palete'   : 'capacidade_pallets',
-  'CAPACIDADE_PALETE'   : 'capacidade_pallets',
-  'capacidade_pallet'   : 'capacidade_pallets',
-  'CAPACIDADE_PALLET'   : 'capacidade_pallets',
-  'capacidade'          : 'capacidade_pallets',
-  'CAPACIDADE'          : 'capacidade_pallets',
-  'cap_paletes'         : 'capacidade_pallets',
-  'CAP_PALETES'         : 'capacidade_pallets',
-  'max_pallets'         : 'capacidade_pallets',
-  'MAX_PALLETS'         : 'capacidade_pallets',
-  'max_paletes'         : 'capacidade_pallets',
-  'MAX_PALETES'         : 'capacidade_pallets',
-  'limite_capa'         : 'capacidade_pallets',
-  'LIMITE_CAPA'         : 'capacidade_pallets',
-  'cap_pallets'         : 'capacidade_pallets',
-  'CAP_PALLETS'         : 'capacidade_pallets',
-  'limite_pallets'      : 'capacidade_pallets',
-  'LIMITE_PALLETS'      : 'capacidade_pallets',
-  'limite_paletes'      : 'capacidade_pallets',
-  'LIMITE_PALETES'      : 'capacidade_pallets',
+  'capacidade_pallets': 'capacidade_pallets',
+  'CAPACIDADE_PALLETS': 'capacidade_pallets',
+  'capacidade_paletes': 'capacidade_pallets',
+  'CAPACIDADE_PALETES': 'capacidade_pallets',
+  'capacidade_palete': 'capacidade_pallets',
+  'CAPACIDADE_PALETE': 'capacidade_pallets',
+  'capacidade_pallet': 'capacidade_pallets',
+  'CAPACIDADE_PALLET': 'capacidade_pallets',
+  'capacidade': 'capacidade_pallets',
+  'CAPACIDADE': 'capacidade_pallets',
+  'cap_paletes': 'capacidade_pallets',
+  'CAP_PALETES': 'capacidade_pallets',
+  'max_pallets': 'capacidade_pallets',
+  'MAX_PALLETS': 'capacidade_pallets',
+  'max_paletes': 'capacidade_pallets',
+  'MAX_PALETES': 'capacidade_pallets',
+  'limite_capa': 'capacidade_pallets',
+  'LIMITE_CAPA': 'capacidade_pallets',
+  'cap_pallets': 'capacidade_pallets',
+  'CAP_PALLETS': 'capacidade_pallets',
+  'limite_pallets': 'capacidade_pallets',
+  'LIMITE_PALLETS': 'capacidade_pallets',
+  'limite_paletes': 'capacidade_pallets',
+  'LIMITE_PALETES': 'capacidade_pallets'
 };
 
 /**
@@ -247,23 +270,27 @@ function baseSave(invId, base) {
       if (k && k.indexOf(LS_BASE) === 0 && k.indexOf(prefixoAtual) !== 0) chavesRemover.push(k);
     }
     chavesRemover.forEach(k => localStorage.removeItem(k));
-
     const CHK = 1000;
     const nChunks = Math.ceil(base.length / CHK);
-    localStorage.setItem(LS_BASE + invId + '_meta',
-      JSON.stringify({ total: base.length, chunks: nChunks, ts: Date.now() }));
+    localStorage.setItem(LS_BASE + invId + '_meta', JSON.stringify({
+      total: base.length,
+      chunks: nChunks,
+      ts: Date.now()
+    }));
     for (let i = 0; i < nChunks; i++) {
-      localStorage.setItem(LS_BASE + invId + '_' + i,
-        JSON.stringify(base.slice(i * CHK, (i + 1) * CHK)));
+      localStorage.setItem(LS_BASE + invId + '_' + i, JSON.stringify(base.slice(i * CHK, (i + 1) * CHK)));
     }
-  } catch(e) { console.warn('[base] localStorage:', e.message); }
+  } catch (e) {
+    console.warn('[base] localStorage:', e.message);
+  }
 }
-
 function baseLoad(invId) {
   try {
     const meta = localStorage.getItem(LS_BASE + invId + '_meta');
     if (!meta) return null;
-    const { chunks } = JSON.parse(meta);
+    const {
+      chunks
+    } = JSON.parse(meta);
     const result = [];
     for (let i = 0; i < chunks; i++) {
       const r = localStorage.getItem(LS_BASE + invId + '_' + i);
@@ -271,24 +298,30 @@ function baseLoad(invId) {
       result.push(...JSON.parse(r));
     }
     return result;
-  } catch(e) { return null; }
+  } catch (e) {
+    return null;
+  }
 }
-
 function baseMetaLoad(invId) {
   try {
     const m = localStorage.getItem(LS_BASE + invId + '_meta');
     return m ? JSON.parse(m) : null;
-  } catch(e) { return null; }
+  } catch (e) {
+    return null;
+  }
 }
 
 // ── Versão da base salva localmente ──
 function bVerSave(invId, ver) {
-  try { localStorage.setItem(LS_BVER + invId, String(ver || '')); } catch(e){ console.warn("[Erro tratado]", e); }
+  try {
+    localStorage.setItem(LS_BVER + invId, String(ver || ''));
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
 }
 function bVerLoad(invId) {
   return localStorage.getItem(LS_BVER + invId) || '';
 }
-
 
 // ── Capacidade de pallets por endereço ──
 
@@ -299,12 +332,7 @@ function bVerLoad(invId) {
  * Pode ser chamado tanto no download quanto ao carregar do cache.
  */
 function _recalcularEndCap(base) {
-  const CAP_FIELDS = [
-    'capacidade_pallets','capacidade_paletes','capacidade_palete','capacidade_pallet',
-    'capacidade','cap_pallets','cap_paletes','max_pallets','max_paletes',
-    'limite_capa','limite_pallets','limite_paletes',
-    'CAPACIDADE_PALLETS','CAPACIDADE_PALETES','CAPACIDADE','CAP_PALLETS','CAP_PALETES',
-  ];
+  const CAP_FIELDS = ['capacidade_pallets', 'capacidade_paletes', 'capacidade_palete', 'capacidade_pallet', 'capacidade', 'cap_pallets', 'cap_paletes', 'max_pallets', 'max_paletes', 'limite_capa', 'limite_pallets', 'limite_paletes', 'CAPACIDADE_PALLETS', 'CAPACIDADE_PALETES', 'CAPACIDADE', 'CAP_PALLETS', 'CAP_PALETES'];
   const _lerCap = r => {
     for (const f of CAP_FIELDS) {
       const v = parseInt(r[f]);
@@ -317,32 +345,36 @@ function _recalcularEndCap(base) {
     const end = r._end;
     if (!end) return;
     const cap = _lerCap(r);
-    if (cap > 0 && (!mapa[end] || cap > mapa[end])) mapa[end] = cap;
-    else if (!(end in mapa)) mapa[end] = 0;
+    if (cap > 0 && (!mapa[end] || cap > mapa[end])) mapa[end] = cap;else if (!(end in mapa)) mapa[end] = 0;
   });
   return mapa;
 }
-
 function endCapSave(invId, mapa) {
-  try { localStorage.setItem(LS_ENDCAP + invId, JSON.stringify(mapa)); } catch(e){ console.warn("[Erro tratado]", e); }
+  try {
+    localStorage.setItem(LS_ENDCAP + invId, JSON.stringify(mapa));
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
 }
 function endCapLoad(invId) {
   try {
     const r = localStorage.getItem(LS_ENDCAP + invId);
     return r ? JSON.parse(r) : {};
-  } catch(e) { return {}; }
+  } catch (e) {
+    return {};
+  }
 }
 
 // ════════════════════════════════════════════════════════════════
 //  IDB — IndexedDB como camada primária de persistência da fila
 //  localStorage permanece como espelho de emergência
 // ════════════════════════════════════════════════════════════════
-const IDB_NAME    = 'dt_coletor_db';
-const IDB_VERSION = 4;   // v3: recria o banco se a store estiver ausente (corrige corrupção) · v4: + fila de bips de Recebimento
-const IDB_STORE   = 'contagens_pendentes';
+const IDB_NAME = 'dt_coletor_db';
+const IDB_VERSION = 4; // v3: recria o banco se a store estiver ausente (corrige corrupção) · v4: + fila de bips de Recebimento
+const IDB_STORE = 'contagens_pendentes';
 const REC_IDB_STORE = 'recebimento_bips_pendentes'; // fase 4c — fila offline dos bips de Transbordo
 
-let _idb = null;   // instância aberta do IDB
+let _idb = null; // instância aberta do IDB
 
 /** Apaga e recria o banco IDB do zero. Usado como recovery de corrupção. */
 function _idbRecriar() {
@@ -354,14 +386,27 @@ function _idbRecriar() {
       const req2 = indexedDB.open(IDB_NAME, IDB_VERSION);
       req2.onupgradeneeded = e => {
         const db = e.target.result;
-        const store = db.createObjectStore(IDB_STORE, { keyPath: 'uuid' });
-        store.createIndex('status_sync',   'status_sync',   { unique: false });
-        store.createIndex('inventario_id', 'inventario_id', { unique: false });
-        const recStore = db.createObjectStore(REC_IDB_STORE, { keyPath: 'uuid' });
-        recStore.createIndex('status_sync', 'status_sync', { unique: false });
+        const store = db.createObjectStore(IDB_STORE, {
+          keyPath: 'uuid'
+        });
+        store.createIndex('status_sync', 'status_sync', {
+          unique: false
+        });
+        store.createIndex('inventario_id', 'inventario_id', {
+          unique: false
+        });
+        const recStore = db.createObjectStore(REC_IDB_STORE, {
+          keyPath: 'uuid'
+        });
+        recStore.createIndex('status_sync', 'status_sync', {
+          unique: false
+        });
       };
-      req2.onsuccess = e => { _idb = e.target.result; resolve(_idb); };
-      req2.onerror   = e => reject(e.target.error);
+      req2.onsuccess = e => {
+        _idb = e.target.result;
+        resolve(_idb);
+      };
+      req2.onerror = e => reject(e.target.error);
     };
     del.onerror = e => reject(e.target.error);
   });
@@ -376,29 +421,45 @@ function idbOpen() {
       const db = e.target.result;
       // Criar a store se não existir (primeira vez ou migração de versão)
       if (!db.objectStoreNames.contains(IDB_STORE)) {
-        const store = db.createObjectStore(IDB_STORE, { keyPath: 'uuid' });
-        store.createIndex('status_sync',   'status_sync',   { unique: false });
-        store.createIndex('inventario_id', 'inventario_id', { unique: false });
+        const store = db.createObjectStore(IDB_STORE, {
+          keyPath: 'uuid'
+        });
+        store.createIndex('status_sync', 'status_sync', {
+          unique: false
+        });
+        store.createIndex('inventario_id', 'inventario_id', {
+          unique: false
+        });
       } else {
         // Garantir índices em migração
-        const tx    = e.target.transaction;
+        const tx = e.target.transaction;
         const store = tx.objectStore(IDB_STORE);
         if (!store.indexNames.contains('status_sync')) {
-          store.createIndex('status_sync',   'status_sync',   { unique: false });
+          store.createIndex('status_sync', 'status_sync', {
+            unique: false
+          });
         }
         if (!store.indexNames.contains('inventario_id')) {
-          store.createIndex('inventario_id', 'inventario_id', { unique: false });
+          store.createIndex('inventario_id', 'inventario_id', {
+            unique: false
+          });
         }
       }
       // v4 — fila offline dos bips de Recebimento (fase 4c), store irmã na mesma base
       if (!db.objectStoreNames.contains(REC_IDB_STORE)) {
-        const recStore = db.createObjectStore(REC_IDB_STORE, { keyPath: 'uuid' });
-        recStore.createIndex('status_sync', 'status_sync', { unique: false });
+        const recStore = db.createObjectStore(REC_IDB_STORE, {
+          keyPath: 'uuid'
+        });
+        recStore.createIndex('status_sync', 'status_sync', {
+          unique: false
+        });
       } else {
         const tx = e.target.transaction;
         const recStore = tx.objectStore(REC_IDB_STORE);
         if (!recStore.indexNames.contains('status_sync')) {
-          recStore.createIndex('status_sync', 'status_sync', { unique: false });
+          recStore.createIndex('status_sync', 'status_sync', {
+            unique: false
+          });
         }
       }
     };
@@ -415,7 +476,7 @@ function idbOpen() {
       _idb = db;
       resolve(_idb);
     };
-    req.onerror   = e => {
+    req.onerror = e => {
       console.warn('[IDB] Falha ao abrir:', e.target.error);
       reject(e.target.error);
     };
@@ -440,13 +501,13 @@ async function idbPut(contagem) {
   try {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
-      const tx    = db.transaction(IDB_STORE, 'readwrite');
+      const tx = db.transaction(IDB_STORE, 'readwrite');
       const store = tx.objectStore(IDB_STORE);
-      const req   = store.put(contagem);
+      const req = store.put(contagem);
       req.onsuccess = () => resolve();
-      req.onerror   = e => reject(e.target.error);
+      req.onerror = e => reject(e.target.error);
     });
-  } catch(e) {
+  } catch (e) {
     console.warn('[IDB] idbPut falhou:', e);
   }
 }
@@ -456,13 +517,13 @@ async function idbDelete(uuid) {
   try {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
-      const tx    = db.transaction(IDB_STORE, 'readwrite');
+      const tx = db.transaction(IDB_STORE, 'readwrite');
       const store = tx.objectStore(IDB_STORE);
-      const req   = store.delete(uuid);
+      const req = store.delete(uuid);
       req.onsuccess = () => resolve();
-      req.onerror   = e => reject(e.target.error);
+      req.onerror = e => reject(e.target.error);
     });
-  } catch(e) {
+  } catch (e) {
     console.warn('[IDB] idbDelete falhou:', e);
   }
 }
@@ -472,14 +533,14 @@ async function idbGetPendentes() {
   try {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
-      const tx    = db.transaction(IDB_STORE, 'readonly');
+      const tx = db.transaction(IDB_STORE, 'readonly');
       const store = tx.objectStore(IDB_STORE);
-      const idx   = store.index('status_sync');
-      const req   = idx.getAll('pendente');
+      const idx = store.index('status_sync');
+      const req = idx.getAll('pendente');
       req.onsuccess = e => resolve(e.target.result || []);
-      req.onerror   = e => reject(e.target.error);
+      req.onerror = e => reject(e.target.error);
     });
-  } catch(e) {
+  } catch (e) {
     console.warn('[IDB] idbGetPendentes falhou:', e);
     return [];
   }
@@ -490,13 +551,13 @@ async function idbGetAll() {
   try {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
-      const tx    = db.transaction(IDB_STORE, 'readonly');
+      const tx = db.transaction(IDB_STORE, 'readonly');
       const store = tx.objectStore(IDB_STORE);
-      const req   = store.getAll();
+      const req = store.getAll();
       req.onsuccess = e => resolve(e.target.result || []);
-      req.onerror   = e => reject(e.target.error);
+      req.onerror = e => reject(e.target.error);
     });
-  } catch(e) {
+  } catch (e) {
     console.warn('[IDB] idbGetAll falhou:', e);
     return [];
   }
@@ -506,14 +567,16 @@ async function idbGetAll() {
 async function idbExists(uuid) {
   try {
     const db = await idbOpen();
-    return new Promise((resolve) => {
-      const tx    = db.transaction(IDB_STORE, 'readonly');
+    return new Promise(resolve => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
       const store = tx.objectStore(IDB_STORE);
-      const req   = store.get(uuid);
+      const req = store.get(uuid);
       req.onsuccess = e => resolve(!!e.target.result);
-      req.onerror   = () => resolve(false);
+      req.onerror = () => resolve(false);
     });
-  } catch(e) { return false; }
+  } catch (e) {
+    return false;
+  }
 }
 
 // ── Fila offline dos bips de Recebimento (fase 4c) — store irmã na mesma
@@ -524,70 +587,87 @@ async function recIdbPut(bip) {
   try {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
-      const tx    = db.transaction(REC_IDB_STORE, 'readwrite');
+      const tx = db.transaction(REC_IDB_STORE, 'readwrite');
       const store = tx.objectStore(REC_IDB_STORE);
-      const req   = store.put(bip);
+      const req = store.put(bip);
       req.onsuccess = () => resolve();
-      req.onerror   = e => reject(e.target.error);
+      req.onerror = e => reject(e.target.error);
     });
-  } catch(e) { console.warn('[IDB] recIdbPut falhou:', e); }
+  } catch (e) {
+    console.warn('[IDB] recIdbPut falhou:', e);
+  }
 }
 async function recIdbDelete(uuid) {
   try {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
-      const tx    = db.transaction(REC_IDB_STORE, 'readwrite');
+      const tx = db.transaction(REC_IDB_STORE, 'readwrite');
       const store = tx.objectStore(REC_IDB_STORE);
-      const req   = store.delete(uuid);
+      const req = store.delete(uuid);
       req.onsuccess = () => resolve();
-      req.onerror   = e => reject(e.target.error);
+      req.onerror = e => reject(e.target.error);
     });
-  } catch(e) { console.warn('[IDB] recIdbDelete falhou:', e); }
+  } catch (e) {
+    console.warn('[IDB] recIdbDelete falhou:', e);
+  }
 }
 async function recIdbGetPendentes() {
   try {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
-      const tx    = db.transaction(REC_IDB_STORE, 'readonly');
+      const tx = db.transaction(REC_IDB_STORE, 'readonly');
       const store = tx.objectStore(REC_IDB_STORE);
-      const idx   = store.index('status_sync');
-      const req   = idx.getAll('pendente');
+      const idx = store.index('status_sync');
+      const req = idx.getAll('pendente');
       req.onsuccess = e => resolve(e.target.result || []);
-      req.onerror   = e => reject(e.target.error);
+      req.onerror = e => reject(e.target.error);
     });
-  } catch(e) { console.warn('[IDB] recIdbGetPendentes falhou:', e); return []; }
+  } catch (e) {
+    console.warn('[IDB] recIdbGetPendentes falhou:', e);
+    return [];
+  }
 }
 async function recIdbGetAll() {
   try {
     const db = await idbOpen();
     return new Promise((resolve, reject) => {
-      const tx    = db.transaction(REC_IDB_STORE, 'readonly');
+      const tx = db.transaction(REC_IDB_STORE, 'readonly');
       const store = tx.objectStore(REC_IDB_STORE);
-      const req   = store.getAll();
+      const req = store.getAll();
       req.onsuccess = e => resolve(e.target.result || []);
-      req.onerror   = e => reject(e.target.error);
+      req.onerror = e => reject(e.target.error);
     });
-  } catch(e) { console.warn('[IDB] recIdbGetAll falhou:', e); return []; }
+  } catch (e) {
+    console.warn('[IDB] recIdbGetAll falhou:', e);
+    return [];
+  }
 }
 
 // ── localStorage: espelho de emergência + compatibilidade ──
 function filaSave(fila) {
-  try { localStorage.setItem(LS_FILA, JSON.stringify(fila)); } catch(e){ console.warn("[Erro tratado]", e); }
+  try {
+    localStorage.setItem(LS_FILA, JSON.stringify(fila));
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
 }
 function filaLoad() {
   try {
     const r = localStorage.getItem(LS_FILA);
     return r ? JSON.parse(r) : [];
-  } catch(e) { return []; }
+  } catch (e) {
+    return [];
+  }
 }
 
 /** Gera UUID único para cada contagem (anti-duplicata). */
 function gerarUUID() {
+  var _crypto;
   // crypto.randomUUID se disponível, senão fallback manual
-  if (crypto?.randomUUID) return crypto.randomUUID();
+  if ((_crypto = crypto) !== null && _crypto !== void 0 && _crypto.randomUUID) return crypto.randomUUID();
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
     const r = Math.random() * 16 | 0;
-    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    return (c === 'x' ? r : r & 0x3 | 0x8).toString(16);
   });
 }
 
@@ -609,22 +689,26 @@ async function idbInit() {
           ...c,
           uuid,
           status_sync: c.status_sync || 'pendente',
-          tentativas:  c.tentativas  || 0,
-          criado_em:   c.criado_em   || c.dataHora || new Date().toISOString(),
+          tentativas: c.tentativas || 0,
+          criado_em: c.criado_em || c.dataHora || new Date().toISOString()
         };
         await idbPut(record);
       }
       // Limpa espelho após migração bem-sucedida
-      try { localStorage.removeItem(LS_FILA); } catch(e){ console.warn("[Erro tratado]", e); }
+      try {
+        localStorage.removeItem(LS_FILA);
+      } catch (e) {
+        console.warn("[Erro tratado]", e);
+      }
     }
 
     // Rebuild FILA_ENVIO a partir do IDB
     const pendentes = await idbGetPendentes();
     FILA_ENVIO = pendentes;
-    filaSave(FILA_ENVIO);   // atualiza espelho LS
+    filaSave(FILA_ENVIO); // atualiza espelho LS
     dbg(`[IDB] Pronto. ${FILA_ENVIO.length} contagens pendentes recuperadas.`);
     atualizarBarraStatus();
-  } catch(e) {
+  } catch (e) {
     console.warn('[IDB] init falhou, continuando com localStorage:', e);
     FILA_ENVIO = filaLoad();
   }
@@ -633,25 +717,49 @@ function invCacheLoad() {
   try {
     const r = localStorage.getItem(LS_INV);
     return r ? JSON.parse(r) : [];
-  } catch(e) { return []; }
+  } catch (e) {
+    return [];
+  }
 }
 function invCacheSave(list) {
-  try { localStorage.setItem(LS_INV, JSON.stringify(list)); } catch(e){ console.warn("[Erro tratado]", e); }
+  try {
+    localStorage.setItem(LS_INV, JSON.stringify(list));
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
 }
 
 // Espelho local (fase 4 do Recebimento) — permite que o hub de Recebimento
 // mostre as cargas em andamento mesmo se o app for recarregado offline.
 function recCacheLoad() {
-  try { const r = localStorage.getItem(LS_REC); return r ? JSON.parse(r) : []; } catch(e) { return []; }
+  try {
+    const r = localStorage.getItem(LS_REC);
+    return r ? JSON.parse(r) : [];
+  } catch (e) {
+    return [];
+  }
 }
 function recCacheSave(list) {
-  try { localStorage.setItem(LS_REC, JSON.stringify(list)); } catch(e){ console.warn("[Erro tratado]", e); }
+  try {
+    localStorage.setItem(LS_REC, JSON.stringify(list));
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
 }
 function recIdentCacheLoad() {
-  try { const r = localStorage.getItem(LS_REC_IDENT); return r ? JSON.parse(r) : []; } catch(e) { return []; }
+  try {
+    const r = localStorage.getItem(LS_REC_IDENT);
+    return r ? JSON.parse(r) : [];
+  } catch (e) {
+    return [];
+  }
 }
 function recIdentCacheSave(list) {
-  try { localStorage.setItem(LS_REC_IDENT, JSON.stringify(list)); } catch(e){ console.warn("[Erro tratado]", e); }
+  try {
+    localStorage.setItem(LS_REC_IDENT, JSON.stringify(list));
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
 }
 
 /**
@@ -671,7 +779,7 @@ function limparInventariosObsoletos(idsAtivos) {
     console.warn('[cache] Inventário atual foi excluído do Firestore:', APP.inventario.id);
     toast('⚠️ O inventário atual foi encerrado pelo analista. Retornando à seleção...', 'w');
     APP.inventario = null;
-    APP.base       = [];
+    APP.base = [];
     setTimeout(() => voltarInventarios(), 2200);
   }
 
@@ -696,10 +804,13 @@ function limparInventariosObsoletos(idsAtivos) {
       }
     }
   }
-
   if (keysToDelete.length > 0) {
     keysToDelete.forEach(k => {
-      try { localStorage.removeItem(k); } catch(e){ console.warn("[Erro tratado]", e); }
+      try {
+        localStorage.removeItem(k);
+      } catch (e) {
+        console.warn("[Erro tratado]", e);
+      }
     });
     dbg('[cache] Limpos', keysToDelete.length, 'chaves de inventários obsoletos');
   }
@@ -710,54 +821,53 @@ let FILA_ENVIO = filaLoad();
 
 // ── Indicador de conectividade / fila ──
 function atualizarBarraStatus() {
-  const bar     = document.getElementById('sync-bar');
+  const bar = document.getElementById('sync-bar');
   const barText = document.getElementById('sync-bar-text');
   const barSpin = document.getElementById('sync-bar-spinner');
-  const pill    = document.getElementById('conn-pill');
-  const dot     = document.getElementById('conn-dot');
-  const label   = document.getElementById('conn-label');
-
-  const online  = navigator.onLine;
+  const pill = document.getElementById('conn-pill');
+  const dot = document.getElementById('conn-dot');
+  const label = document.getElementById('conn-label');
+  const online = navigator.onLine;
   const pending = FILA_ENVIO.length;
 
   // ── Atualiza o PILL do header ──────────────────────────────
   if (pill && dot && label) {
     if (!online) {
-      pill.style.background    = 'rgba(255,71,87,.12)';
-      pill.style.borderColor   = 'rgba(255,71,87,.3)';
-      pill.style.color         = 'var(--danger)';
-      dot.style.background     = 'var(--danger)';
-      dot.style.boxShadow      = '0 0 6px var(--danger)';
-      label.textContent        = pending > 0 ? `📵 ${pending} na fila` : '📵 Offline';
+      pill.style.background = 'rgba(255,71,87,.12)';
+      pill.style.borderColor = 'rgba(255,71,87,.3)';
+      pill.style.color = 'var(--danger)';
+      dot.style.background = 'var(--danger)';
+      dot.style.boxShadow = '0 0 6px var(--danger)';
+      label.textContent = pending > 0 ? `📵 ${pending} na fila` : '📵 Offline';
     } else if (pending > 0) {
-      pill.style.background    = 'rgba(255,179,0,.12)';
-      pill.style.borderColor   = 'rgba(255,179,0,.3)';
-      pill.style.color         = 'var(--warn)';
-      dot.style.background     = 'var(--warn)';
-      dot.style.boxShadow      = '0 0 6px var(--warn)';
-      label.textContent        = `⬆ ${pending} pend.`;
+      pill.style.background = 'rgba(255,179,0,.12)';
+      pill.style.borderColor = 'rgba(255,179,0,.3)';
+      pill.style.color = 'var(--warn)';
+      dot.style.background = 'var(--warn)';
+      dot.style.boxShadow = '0 0 6px var(--warn)';
+      label.textContent = `⬆ ${pending} pend.`;
       // animação de pulso no dot
-      dot.style.animation      = 'pulse-dot 1s ease-in-out infinite';
+      dot.style.animation = 'pulse-dot 1s ease-in-out infinite';
     } else {
-      pill.style.background    = 'rgba(0,214,143,.12)';
-      pill.style.borderColor   = 'rgba(0,214,143,.3)';
-      pill.style.color         = 'var(--success)';
-      dot.style.background     = 'var(--success)';
-      dot.style.boxShadow      = '0 0 6px var(--success)';
-      dot.style.animation      = '';
-      label.textContent        = '✓ Online';
+      pill.style.background = 'rgba(0,214,143,.12)';
+      pill.style.borderColor = 'rgba(0,214,143,.3)';
+      pill.style.color = 'var(--success)';
+      dot.style.background = 'var(--success)';
+      dot.style.boxShadow = '0 0 6px var(--success)';
+      dot.style.animation = '';
+      label.textContent = '✓ Online';
     }
   }
 
   // ── Atualiza a BARRA de sincronização ──────────────────────
   if (!bar) return;
   if (!online) {
-    bar.style.display    = 'flex';
+    bar.style.display = 'flex';
     bar.style.background = 'linear-gradient(90deg,#7c2d12,#92400e)';
     if (barText) barText.textContent = `📵 Sem internet — ${pending} contagem(ns) salva(s) localmente`;
     if (barSpin) barSpin.textContent = '💾';
   } else if (pending > 0) {
-    bar.style.display    = 'flex';
+    bar.style.display = 'flex';
     bar.style.background = 'linear-gradient(90deg,#1e3a8a,#1d4ed8)';
     if (barText) barText.textContent = `⬆️ Sincronizando ${pending} contagem(ns) com Firebase…`;
     if (barSpin) barSpin.textContent = '🔄';
@@ -766,7 +876,8 @@ function atualizarBarraStatus() {
     bar.style.background = 'linear-gradient(90deg,#14532d,#166534)';
     if (barText) barText.textContent = `✅ Firebase sincronizado — todas as contagens enviadas`;
     if (barSpin) barSpin.textContent = '';
-    setTimeout(() => { if (bar && FILA_ENVIO.length === 0) bar.style.display = 'none'; }, 3000);
+    setTimeout(() => {
+      if (bar && FILA_ENVIO.length === 0) bar.style.display = 'none';
+    }, 3000);
   }
 }
-

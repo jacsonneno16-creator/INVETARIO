@@ -44,6 +44,13 @@
   let _recusas = [];
   let _notas = [];
   let _notasPorChave = new Map();
+  // PEDIDO AO VIVO (2026-09-09): "os indicadores que tá demorando" —
+  // buscava recebimento_recusas do zero toda vez, mesmo que 97 (Notas
+  // Retornadas) já tivesse acabado de carregar a mesma coleção segundos
+  // antes. Sem cache compartilhado entre os arquivos (dado diferente:
+  // aqui já vem filtrado/achatado do jeito que os indicadores precisam) —
+  // pelo menos evita refazer a MESMA busca de novo ao voltar nesta tela.
+  let _carregadoIndicadores = false;
   // Filtro cruzado ÚNICO (clicar numa barra filtra tudo, clicar de novo na
   // mesma barra limpa) — é o padrão mínimo que atende "clico em alguma
   // informação, as outras atualizam" sem a complexidade de múltiplos
@@ -81,14 +88,25 @@
     });
   }
 
-  async function carregarDadosIndicadores() {
+  async function carregarDadosIndicadores(forcar) {
+    if (_carregadoIndicadores && !forcar) return;
     const [n, r] = await Promise.all([fs().collection(COL_NOTAS).get(), fs().collection(COL_RECUSAS).get()]);
     _notas = n.docs.map(d => ({ _id: d.id, ...d.data() }));
-    _recusas = r.docs.map(d => ({ _id: d.id, ...d.data() }));
+    // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
+    // 'AUTOMATICO') tem indicador próprio e separado — ver
+    // 102-devolucoes-bi-indicadores.js. Excluída daqui pra não misturar
+    // motorista/transportadora/box (que ela não tem) com os retornos
+    // físicos de verdade processados pelo Coletor.
+    // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a ser
+    // gravado numa rodada posterior — registros auto-salvos antes disso não
+    // têm esse campo, mas sempre tiveram `motivoAutomaticoTexto` (exclusivo
+    // desse fluxo), que serve de marcador retroativo.
+    _recusas = r.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
     _notasPorChave = new Map(_notas.map(x => [x.chave, x]));
     _filtro = null; // dado novo — um filtro antigo poderia apontar pra um valor que não existe mais
     _filtroAcaoSet = new Set();
     _filtroStatusSet = new Set();
+    _carregadoIndicadores = true;
   }
 
   function notaCompletaDe(n) { return _notasPorChave.get(n.chave) || n; }
@@ -121,12 +139,26 @@
     // 97-recebimento-recusas.js) / STATUS_RETORNO_LABELS (global,
     // exportado por 99-recebimento-retornos-status.js) — mesma fonte de
     // verdade usada nas outras telas, sem duplicar o mapa aqui.
+    // PEDIDO AO VIVO (2026-09-08): "cada nota tem que gerar uma linha...
+    // se ela tiver junta e uma for reentrega e a outra for recusa" —
+    // Tratamento/Status passaram de campo do documento pra campo de cada
+    // item de `notas[i]` (ver 97/99/103). Aqui NÃO se explode o evento em
+    // várias linhas (os KPIs de quantidade física — total de retornos,
+    // pallets, volume — continuam por evento, de propósito, senão um
+    // evento de 3 notas contaria 3x); só os 2 extratores abaixo passam a
+    // olhar por nota, podendo devolver MAIS DE 1 rótulo por evento quando
+    // as notas divergem — mesmo formato de array que `valoresUnicosDeNotas`
+    // já usa pra mercado/vendedor/supervisor (um evento com 2 notas de
+    // clientes diferentes já conta nos dois lugares certos hoje).
     tratamento: {
       titulo: 'Ação', icone: '🗂️',
       valoresDaRecusa: r => {
-        const v = r.tratamento || '';
-        const label = (global.TRATAMENTO_LABELS && global.TRATAMENTO_LABELS[v]) || (v ? v : 'Não classificado');
-        return [label];
+        const vistos = new Set();
+        (r.notas && r.notas.length ? r.notas : [{}]).forEach(n => {
+          const v = n.tratamento != null ? n.tratamento : (r.tratamento || '');
+          vistos.add((global.TRATAMENTO_LABELS && global.TRATAMENTO_LABELS[v]) || (v ? v : 'Não classificado'));
+        });
+        return [...vistos];
       },
     },
     // Reentrega não usa statusRetorno (fluxo próprio — Data Programada/
@@ -134,10 +166,15 @@
     status: {
       titulo: 'Status', icone: '🚦',
       valoresDaRecusa: r => {
-        if ((r.tratamento || '') === 'REENTREGA') return [];
-        const v = r.statusRetorno || '';
-        const labels = global._recebimentoRetornosStatusInternals && global._recebimentoRetornosStatusInternals.STATUS_RETORNO_LABELS;
-        return [(labels && labels[v]) || (v || 'Aguard. Monitoramento')];
+        const vistos = new Set();
+        (r.notas && r.notas.length ? r.notas : [{}]).forEach(n => {
+          const trat = n.tratamento != null ? n.tratamento : (r.tratamento || '');
+          if (trat === 'REENTREGA') return;
+          const v = n.statusRetorno != null ? n.statusRetorno : (r.statusRetorno || '');
+          const labels = global._recebimentoRetornosStatusInternals && global._recebimentoRetornosStatusInternals.STATUS_RETORNO_LABELS;
+          vistos.add((labels && labels[v]) || (v || 'Aguard. Monitoramento'));
+        });
+        return [...vistos];
       },
     },
   };
@@ -155,13 +192,17 @@
   // painéis, OU dentro do mesmo painel — mesmo comportamento de um slicer
   // "Basic" do Power BI).
   function recusaPassaPaineis(r) {
+    // PEDIDO AO VIVO (2026-09-08): cada dimensão agora pode devolver mais
+    // de 1 valor por evento (notas com Tratamento/Status diferentes no
+    // mesmo evento) — passa se QUALQUER um dos valores bater com o filtro,
+    // não só o primeiro.
     if (_filtroAcaoSet.size) {
-      const v = DIMENSOES.tratamento.valoresDaRecusa(r)[0];
-      if (!_filtroAcaoSet.has(v)) return false;
+      const vals = DIMENSOES.tratamento.valoresDaRecusa(r);
+      if (!vals.some(v => _filtroAcaoSet.has(v))) return false;
     }
     if (_filtroStatusSet.size) {
       const vals = DIMENSOES.status.valoresDaRecusa(r);
-      if (!vals.length || !_filtroStatusSet.has(vals[0])) return false;
+      if (!vals.length || !vals.some(v => _filtroStatusSet.has(v))) return false;
     }
     return true;
   }
@@ -189,21 +230,37 @@
     return [...contagem.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
   }
 
-  // "Dias de operação" — não existe ainda um fluxo de status com
-  // abertura/fechamento (isso é a Fase 12, deliberadamente adiada). Proxy
-  // real disponível: tempo entre a emissão da NF (Bluesoft) e o registro da
-  // volta no Coletor (criadoEm) — "quanto tempo depois de emitida essa nota
-  // voltou processada pra gente".
-  function diasOperacaoDaRecusa(r) {
-    const criado = r.criadoEm ? new Date(r.criadoEm) : null;
-    if (!criado || isNaN(criado)) return null;
+  function diasEntre(inicioIso, fimIso) {
+    if (!inicioIso) return null;
+    const ini = new Date(inicioIso);
+    const fim = fimIso ? new Date(fimIso) : new Date();
+    if (isNaN(ini) || isNaN(fim)) return null;
+    const dias = (fim - ini) / 86400000;
+    return dias >= 0 ? dias : null;
+  }
+  // Data em que a NOTA entrou em FINALIZADO pela 1ª vez — mesma ideia de
+  // dataFinalizacaoDe em 99-recebimento-retornos-status.js/103-recusas-
+  // indicadores.js, duplicada aqui (histórico é por nota, com fallback pro
+  // histórico antigo do documento pra registro anterior a esta migração).
+  function dataFinalizacaoDeNota(n, r) {
+    const hist = Array.isArray(n.statusRetornoHistorico) ? n.statusRetornoHistorico
+      : (Array.isArray(r.statusRetornoHistorico) ? r.statusRetornoHistorico : []);
+    const evento = hist.find(e => e && e.status === 'FINALIZADO');
+    return evento ? evento.em : null;
+  }
+  // PEDIDO AO VIVO (2026-09-08): "a soma MÉDIA DE DIAS P/ FINALIZAR vai
+  // ser a partir de quando colocar o STATUS em ENDEREÇANDO" — substitui o
+  // proxy antigo (emissão da NF → registro da volta, usado enquanto não
+  // existia fluxo de status real) pela métrica de verdade: Endereçando →
+  // Finalizado (ou até agora, se a nota ainda não finalizou). Só entra na
+  // média quem já passou por Endereçando — nunca inventa data.
+  function diasParaFinalizarDaRecusa(r) {
     const dias = [];
     (r.notas || []).forEach(n => {
-      const emissao = notaCompletaDe(n).dataEmissao ? new Date(notaCompletaDe(n).dataEmissao) : null;
-      if (emissao && !isNaN(emissao)) {
-        const d = (criado - emissao) / 86400000;
-        if (d >= 0) dias.push(d);
-      }
+      const inicio = n.dataDoEnderecamentoEm != null ? n.dataDoEnderecamentoEm : r.dataDoEnderecamentoEm;
+      if (!inicio) return;
+      const d = diasEntre(inicio, dataFinalizacaoDeNota(n, r));
+      if (d != null) dias.push(d);
     });
     if (!dias.length) return null;
     return dias.reduce((s, x) => s + x, 0) / dias.length;
@@ -211,7 +268,7 @@
   function agregarMediaDiasPorMes() {
     const porMes = new Map();
     recusasFiltradas().forEach(r => {
-      const dias = diasOperacaoDaRecusa(r);
+      const dias = diasParaFinalizarDaRecusa(r);
       const mes = mesAnoDe(r.criadoEm);
       if (dias == null || !mes) return;
       const atual = porMes.get(mes) || { soma: 0, n: 0 };
@@ -221,7 +278,7 @@
     return ordenarCronologico([...porMes.entries()].map(([label, { soma, n }]) => ({ label, value: Math.round((soma / n) * 10) / 10 })));
   }
   function mediaDiasGeral() {
-    const validos = recusasFiltradas().map(diasOperacaoDaRecusa).filter(d => d != null);
+    const validos = recusasFiltradas().map(diasParaFinalizarDaRecusa).filter(d => d != null);
     if (!validos.length) return null;
     return Math.round((validos.reduce((s, x) => s + x, 0) / validos.length) * 10) / 10;
   }
@@ -432,7 +489,7 @@
       });
       pagina._indicListenerBound = true;
     }
-    document.querySelector('[data-indic-atualizar]')?.addEventListener('click', async () => { await carregarDadosIndicadores(); desenhar(); });
+    document.querySelector('[data-indic-atualizar]')?.addEventListener('click', async () => { await carregarDadosIndicadores(true); desenhar(); });
   }
 
   async function renderRecebimentoRetornosIndicadores() {
@@ -446,7 +503,7 @@
   global.dashRankedBarChart = dashRankedBarChart;
   global.dashHorizontalBarChart = dashHorizontalBarChart;
   global._recebimentoRetornosIndicadoresInternals = {
-    agregarPorCampoDaNota, agregarPorDimensao, dashRankedBarChart, dashHorizontalBarChart, kpis, diasOperacaoDaRecusa,
+    agregarPorCampoDaNota, agregarPorDimensao, dashRankedBarChart, dashHorizontalBarChart, kpis, diasParaFinalizarDaRecusa,
     agregarMediaDiasPorMes, mesAnoDe, DIMENSOES, opcoesDoPainel,
     setFiltro(f) { _filtro = f; }, getFiltro() { return _filtro; },
     setPeriodo(ini, fim) { _periodoInicio = ini || ''; _periodoFim = fim || ''; }, getPeriodo() { return { ini: _periodoInicio, fim: _periodoFim }; },

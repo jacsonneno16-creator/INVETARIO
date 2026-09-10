@@ -107,15 +107,15 @@
         </div>
       </div>
 
-      <div class="kpi-grid" style="margin-bottom:16px">
-        <div class="kpi blue"><span class="kpi-icon">📋</span><div class="kpi-val" id="pdash-kpi-total">${total.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Total de OPs</div><div class="kpi-sub" id="pdash-kpi-total-sub">caixas programadas</div><canvas id="pdash-spark-total" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
-        <div class="kpi orange"><span class="kpi-icon">⏳</span><div class="kpi-val" id="pdash-kpi-pend">${pend.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Pendentes</div><div class="kpi-sub" id="pdash-kpi-pend-sub">aguardando início</div><canvas id="pdash-spark-pend" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
-        <div class="kpi yellow"><span class="kpi-icon">⚙️</span><div class="kpi-val" id="pdash-kpi-and">${and.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Em Andamento</div><div class="kpi-sub" id="pdash-kpi-and-sub">em produção agora</div><canvas id="pdash-spark-and" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
-        <div class="kpi green"><span class="kpi-icon">✅</span><div class="kpi-val" id="pdash-kpi-ok">${ok.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Concluídos</div><div class="kpi-sub" id="pdash-kpi-ok-sub">finalizados</div><canvas id="pdash-spark-ok" height="28" style="margin-top:8px;opacity:.65;width:100%"></canvas></div>
+      <div class="dash-row" style="grid-template-columns:repeat(4,1fr);margin-bottom:16px">
+        <div class="dc dc-cyan"><div class="dc-lbl">📋 Total de OPs</div><div class="dc-num" id="pdash-kpi-total">${total.toLocaleString('pt-BR')}</div><div class="dash-kpi-sub" id="pdash-kpi-total-sub">caixas programadas</div><canvas id="pdash-spark-total" height="32" style="margin-top:8px;opacity:.6"></canvas></div>
+        <div class="dc dc-orange"><div class="dc-lbl">⏳ Pendentes</div><div class="dc-num" id="pdash-kpi-pend">${pend.toLocaleString('pt-BR')}</div><div class="dash-kpi-sub" id="pdash-kpi-pend-sub">aguardando início</div><canvas id="pdash-spark-pend" height="32" style="margin-top:8px;opacity:.6"></canvas></div>
+        <div class="dc dc-purple"><div class="dc-lbl">⚙️ Em Andamento</div><div class="dc-num" id="pdash-kpi-and">${and.toLocaleString('pt-BR')}</div><div class="dash-kpi-sub" id="pdash-kpi-and-sub">em produção agora</div><canvas id="pdash-spark-and" height="32" style="margin-top:8px;opacity:.6"></canvas></div>
+        <div class="dc dc-green"><div class="dc-lbl">✅ Concluídos</div><div class="dc-num" id="pdash-kpi-ok">${ok.toLocaleString('pt-BR')}</div><div class="dash-kpi-sub" id="pdash-kpi-ok-sub">finalizados</div><canvas id="pdash-spark-ok" height="32" style="margin-top:8px;opacity:.6"></canvas></div>
       </div>
 
       <div style="display:grid;grid-template-columns:2fr 1fr;gap:16px;margin-bottom:16px" class="pdash-grid">
-        <div class="tc" style="padding:14px">
+        <div class="dc" style="padding:20px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
             <div style="font-weight:700;font-size:.85rem">Programação por Máquina</div>
             <div style="display:flex;gap:4px">
@@ -125,9 +125,9 @@
           </div>
           <div style="height:220px;position:relative"><canvas id="pdash-chart-fluxo"></canvas></div>
         </div>
-        <div class="tc" style="padding:14px">
+        <div class="dc" style="padding:20px">
           <div style="font-weight:700;font-size:.85rem;margin-bottom:12px">Status das OPs</div>
-          <div style="height:150px;position:relative;display:flex;align-items:center;justify-content:center">
+          <div style="height:160px;position:relative;display:flex;align-items:center;justify-content:center">
             <canvas id="pdash-chart-status"></canvas>
             <div style="position:absolute;text-align:center;pointer-events:none">
               <div style="font-size:1.3rem;font-weight:700;color:var(--text)" id="pdash-donut-pct">${total > 0 ? Math.round(ok / total * 100) : 0}%</div>
@@ -139,20 +139,20 @@
       </div>
 
       <div style="display:grid;grid-template-columns:3fr 2fr;gap:16px;margin-bottom:16px" class="pdash-grid">
-        <div class="tc" style="padding:14px">
+        <div class="dc" style="padding:20px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
             <div style="font-weight:700;font-size:.85rem">Top Produtos Programados</div>
             <div style="font-size:.65rem;color:var(--muted)">por caixas</div>
           </div>
           <div style="height:180px;position:relative"><canvas id="pdash-chart-top-prod"></canvas></div>
         </div>
-        <div class="tc" style="padding:14px">
+        <div class="dc" style="padding:20px">
           <div style="font-weight:700;font-size:.85rem;margin-bottom:10px">Métricas Rápidas</div>
           <div id="pdash-metricas-wrap" style="display:flex;flex-direction:column;gap:9px"></div>
         </div>
       </div>
 
-      <div class="tc" style="padding:14px;margin-bottom:16px">
+      <div class="dc" style="padding:20px;margin-bottom:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:8px">
           <div style="font-weight:700;font-size:.85rem">Status por Máquina</div>
           <div style="display:flex;gap:10px;font-size:.65rem">
@@ -165,12 +165,12 @@
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px" class="pdash-grid">
-        <div class="tc" style="padding:14px">
+        <div class="dc" style="padding:20px">
           <div style="font-weight:700;font-size:.85rem;margin-bottom:4px">Caixas por Máquina</div>
           <div style="font-size:.65rem;color:var(--muted);margin-bottom:12px">programado vs. concluído</div>
           <div id="pdash-maq-bars-wrap" style="display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto"></div>
         </div>
-        <div class="tc" style="padding:14px">
+        <div class="dc" style="padding:20px">
           <div style="font-weight:700;font-size:.85rem;margin-bottom:12px">Últimas Solicitações</div>
           <div id="pdash-recent" style="overflow-x:auto">
             ${recentes.length ? '' : '<div style="text-align:center;padding:22px;color:var(--muted);font-size:.72rem">📋 Nenhuma solicitação ainda</div>'}

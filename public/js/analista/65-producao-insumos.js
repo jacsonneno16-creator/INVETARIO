@@ -6,15 +6,42 @@
   'use strict';
   const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const COL_MAQUINAS='producao_maquinas', COL_REGISTROS='producao_registros', COL_FICHAS='producao_ficha_tecnica', COL_ESTOQUE='producao_insumos_estoque', COL_ESTOQUE_LEGACY='insumos';
-  let _maquinas=[],_registros=[],_fichas=[],_estoque=[],_carregado=false,_modo='maquina',_weekStart=domingo(new Date());
+  let _maquinas=[],_registros=[],_fichas=[],_estoque=[],_carregado=false,_modo='maquina',_weekStart=segunda(new Date());
   function fs(){return global.getDTFirestore();}
-  function domingo(d){const r=new Date(d);r.setHours(12,0,0,0);r.setDate(r.getDate()-r.getDay());return r;}
+  // BUG AO VIVO REAL (comparação com o original, pasta de referência
+  // Sistema-Produ-o/Meu-Sistema-Producao): esta tela chamava
+  // buildProducaoSchedule() com semana Domingo→Sábado, enquanto o Gantt
+  // (63/64-producao-*.js, MESMO motor de agenda) e o original usam
+  // Segunda→Domingo (insMaqMonday/getWeekMonday) — Insumos ficava com uma
+  // janela de 7 dias diferente da que o Gantt realmente agenda.
+  function segunda(d){const r=new Date(d);r.setHours(12,0,0,0);const dia=r.getDay();r.setDate(r.getDate()-(dia===0?6:dia-1));return r;}
+  // Ordem fixa de categoria igual ao original (CAT_ORDER) — categoria fora
+  // dessa lista (rara) cai no fim, em ordem alfabética.
+  const CAT_ORDER=['MATERIA PRIMA','EMBALAGEM PRIMARIA','EMBALAGEM TERCIARIA','EMBALAGEM QUARTERNARIA','OUTROS'];
+  function ordenarCategorias(cats){
+    return [...cats].sort((a,b)=>{
+      const ia=CAT_ORDER.indexOf(norm(a)),ib=CAT_ORDER.indexOf(norm(b));
+      if(ia===-1&&ib===-1)return a.localeCompare(b,'pt-BR');
+      if(ia===-1)return 1; if(ib===-1)return -1;
+      return ia-ib;
+    });
+  }
   function fmt(d){return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'});}
   function norm(v){return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();}
+  // PEDIDO AO VIVO (2026-09-04): "vai no arquivo e vê se estão com as
+  // quantidades corretas" — os separadores aqui só reconheciam um traço
+  // "normal"/en-dash/em-dash/./:/,  explícitos. Um insumo com um caractere
+  // corrompido/diferente no meio (achado ao vivo: "MP ?? SUSPENSÃO OLEOSA
+  // URUCUM KG", onde ?? é um caractere de encoding quebrado) não batia o
+  // prefixo "MP" e sobrava dentro do texto canônico, quebrando o match
+  // contra o BI (que usa "MP – ..." com en-dash de verdade). Trocado pra
+  // "qualquer sequência de não-letra/não-número" — tolera qualquer
+  // separador, corrompido ou não.
+  function canonInsumo(v){return norm(v).replace(/^\s*\d+[^A-Z0-9]*/,'').replace(/^\s*(MP|MAT(?:ERIA)?\s*PRIMA|MATERIA\s*PRIMA|LOGISTICA)[^A-Z0-9]+/,'').replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim();}
   function n(v){const x=Number(v);return Number.isFinite(x)?x:0;}
   function fichaCod(f){return String(f?.cod??f?.codigo??f?.produtoCod??f?.produto_key??'');}
   function fichaDesc(f){return f?.desc||f?.descricao||f?.produto||f?.nome||'';}
-  function insNorm(i){i=i||{};return {insumo:i.insumo||i.nome||i.desc_insumo||i.descricao||'',categoria:i.categoria||i.cat||'Outros',qty:n(i.qty??i.qtd??i.quantidade??i.consumoPorCaixa),unidade:i.unidade||i.un||''};}
+  function insNorm(i){i=i||{};return {insumo:i.insumo||i.nome||i.desc_insumo||i.descricao||'',cod:String(i.bluesoftProdutoKey??i.produtoKey??i.cod??i.codigo??'').trim(),categoria:i.categoria||i.cat||'Outros',qty:n(i.qty??i.qtd??i.quantidade??i.consumoPorCaixa),unidade:i.unidade||i.un||''};}
   function fichaInsumos(f){return (Array.isArray(f?.insumos)?f.insumos:[]).map(insNorm).filter(i=>i.insumo&&i.qty>0);}
 
   async function carregarProducaoInsumos(forcar){
@@ -60,17 +87,28 @@
         const necessidade=caixasRestantes*n(ins.qty);
         if(necessidade>0){
           const chave=ins.insumo;
-          porInsumoMap[chave]=porInsumoMap[chave]||{insumo:chave,categoria:ins.categoria||'Outros',necessidade:0};
+          // PEDIDO AO VIVO (2026-09-04): "os insumos não tá atualizando
+          // certo" — insNorm() já normaliza o código do insumo (ins.cod,
+          // vindo de bluesoftProdutoKey/produtoKey/cod/codigo da ficha
+          // técnica), mas se perdia aqui — os consumidores deste retorno
+          // (ver 85-pcp-producao-insumos.js) tinham só o NOME pra casar com
+          // o estoque, um match frágil (acento/espaço/abreviação diferente
+          // já quebra). Carrega o cod adiante pra permitir casar por sku
+          // (confiável) com fallback pro nome só quando o insumo não tem
+          // código cadastrado.
+          porInsumoMap[chave]=porInsumoMap[chave]||{insumo:chave,cod:ins.cod||'',categoria:ins.categoria||'Outros',necessidade:0};
           porInsumoMap[chave].necessidade+=necessidade;
         }
-        return {insumo:ins.insumo,categoria:ins.categoria||'Outros',necessidade};
+        return {insumo:ins.insumo,cod:ins.cod||'',categoria:ins.categoria||'Outros',necessidade};
       }).filter(x=>x.necessidade>0);
       if(insumosOP.length)porOP.push({registroId:r._firestoreId,produto:r.produto,maquina:r.maquina,data:r.data,qntCaixas:caixasRestantes,insumos:insumosOP});
     });
     return {porInsumo:Object.values(porInsumoMap),porOP};
   }
-  function estoqueMap(){const m=new Map();_estoque.forEach(e=>m.set(norm(e.insumo||e.nome),e));return m;}
-  function linhasGerais(geral){const em=estoqueMap(),out=[];Object.keys(geral).forEach(cat=>Object.keys(geral[cat]).forEach(ins=>{const est=em.get(norm(ins));const item=geral[cat][ins];const consumo=item.total,saldo=n(est?.quantidade)-consumo;out.push({categoria:cat,insumo:ins,consumo,porDia:item.porDia,estoque:n(est?.quantidade),unidade:est?.unidade||'',saldo});}));return out;}
+  function aliasesFichaPorNome(){const m=new Map();_fichas.forEach(f=>fichaInsumos(f).forEach(i=>{if(i.cod)m.set(canonInsumo(i.insumo),i.cod);}));return m;}
+  function estoqueMap(){const m=new Map();_estoque.forEach(e=>{const nome=e.insumo||e.nome||'';if(nome){m.set('nome:'+norm(nome),e);m.set('canon:'+canonInsumo(nome),e);}const cod=String(e.bluesoftProdutoKey??e.produtoKey??e.cod??e.codigo??'').trim();if(cod)m.set('cod:'+cod,e);});return m;}
+  function acharEstoque(nome,em,aliases){const exato=em.get('nome:'+norm(nome));if(exato)return exato;const canon=canonInsumo(nome),cod=aliases.get(canon);return (cod&&em.get('cod:'+cod))||em.get('canon:'+canon);}
+  function linhasGerais(geral){const em=estoqueMap(),aliases=aliasesFichaPorNome(),out=[];Object.keys(geral).forEach(cat=>Object.keys(geral[cat]).forEach(ins=>{const est=acharEstoque(ins,em,aliases);const item=geral[cat][ins];const consumo=item.total,saldo=n(est?.quantidade)-consumo;out.push({categoria:cat,insumo:ins,consumo,porDia:item.porDia,estoque:n(est?.quantidade),unidade:est?.unidade||'',saldo});}));return out;}
 
   async function renderProducaoInsumos(){const p=document.getElementById('page-producao-insumos');if(!p)return;p.innerHTML='<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';try{await carregarProducaoInsumos();}catch(e){p.innerHTML='<div class="empty">⚠️ '+esc(e.message||e)+'</div>';return;}_desenhar();}
   function _desenhar(){
@@ -89,30 +127,48 @@
       // insumo — e arredonda pra cima ("Math.ceil") só na categoria
       // MATERIA PRIMA. Faltava tudo isso, virava uma linha corrida só.
       const porCat = {}; lg.forEach(x => { (porCat[x.categoria] = porCat[x.categoria] || []).push(x); });
-      rows = Object.keys(porCat).sort((a, b) => a.localeCompare(b, 'pt-BR')).map(cat => {
-        const itens = porCat[cat];
+      // PEDIDO AO VIVO (2026-09-03): "a primeira coluna é categoria" — o
+      // original, além da linha separadora por categoria, também repete a
+      // categoria (abreviada: "Mat. Prima"/"Emb. Primaria"/etc) numa
+      // COLUNA em cada linha de insumo — faltava só essa coluna, a
+      // separadora e o subtotal já estavam certos.
+      const catAbrev = c => esc(c).replace('EMBALAGEM ', 'Emb. ').replace('MATERIA PRIMA', 'Mat. Prima');
+      rows = ordenarCategorias(Object.keys(porCat)).map(cat => {
+        // Igual ao original: dentro da categoria, maior consumo primeiro.
+        const itens = [...porCat[cat]].sort((a, b) => b.consumo - a.consumo);
         const ehMateriaPrima = norm(cat) === 'MATERIA PRIMA';
-        const linhasCat = itens.map(x => `<tr><td><b>${esc(x.insumo)}</b></td>${tdDias(x.porDia)}<td style="text-align:right;font-weight:600">${(ehMateriaPrima ? Math.ceil(x.consumo) : x.consumo).toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td style="text-align:right">${x.estoque.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td>${esc(x.unidade || '')}</td><td style="text-align:right;font-weight:700;color:${x.saldo < 0 ? 'var(--danger)' : 'var(--green-mid)'}">${x.saldo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td></tr>`).join('');
+        const linhasCat = itens.map(x => `<tr><td style="font-size:10px;color:var(--muted)">${catAbrev(cat)}</td><td><b>${esc(x.insumo)}</b></td>${tdDias(x.porDia)}<td style="text-align:right;font-weight:600">${(ehMateriaPrima ? Math.ceil(x.consumo) : x.consumo).toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td style="text-align:right">${x.estoque.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td>${esc(x.unidade || '')}</td><td style="text-align:right;font-weight:700;color:${x.saldo < 0 ? 'var(--danger)' : 'var(--green-mid)'}">${x.saldo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td></tr>`).join('');
         let subtotal = '';
         if (itens.length > 1) {
           const somaDias = [0, 0, 0, 0, 0, 0, 0]; itens.forEach(x => x.porDia.forEach((v, i) => somaDias[i] += v));
           const somaCons = itens.reduce((s, x) => s + x.consumo, 0), somaEst = itens.reduce((s, x) => s + x.estoque, 0), somaSaldo = itens.reduce((s, x) => s + x.saldo, 0);
-          subtotal = `<tr style="background:var(--surface-2);font-weight:700"><td>Subtotal ${esc(cat)}</td>${tdDias(somaDias)}<td style="text-align:right">${somaCons.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td style="text-align:right">${somaEst.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td></td><td style="text-align:right;color:${somaSaldo < 0 ? 'var(--danger)' : 'inherit'}">${somaSaldo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td></tr>`;
+          subtotal = `<tr style="background:var(--surface-2);font-weight:700"><td></td><td>Subtotal ${esc(cat)}</td>${tdDias(somaDias)}<td style="text-align:right">${somaCons.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td style="text-align:right">${somaEst.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td></td><td style="text-align:right;color:${somaSaldo < 0 ? 'var(--danger)' : 'inherit'}">${somaSaldo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td></tr>`;
         }
-        return `<tr><td colspan="12" style="background:var(--surface-2);font-weight:700;color:var(--muted);text-transform:uppercase;font-size:.68rem">${esc(cat)}</td></tr>${linhasCat}${subtotal}`;
+        return `<tr><td colspan="13" style="background:var(--surface-2);font-weight:700;color:var(--muted);text-transform:uppercase;font-size:.68rem">${esc(cat)}</td></tr>${linhasCat}${subtotal}`;
       }).join('');
     } else {
+      // PEDIDO AO VIVO (comparação com o original): categoria na ordem fixa
+      // (não alfabética), insumo por maior consumo primeiro dentro da
+      // categoria, e a coluna Máquina aparece só 1x por máquina (rowspan)
+      // com uma linha separadora antes da próxima — igual ao original
+      // (renderInsumosMaq), em vez de repetir o nome da máquina em toda
+      // linha sem separação visual nenhuma.
       Object.keys(porMaquina).sort().forEach(maq => {
-        Object.keys(porMaquina[maq]).sort().forEach(cat => {
-          Object.keys(porMaquina[maq][cat]).sort().forEach(ins => {
+        const linhasMaq = [];
+        ordenarCategorias(Object.keys(porMaquina[maq])).forEach(cat => {
+          if (catSel && cat !== catSel) return;
+          Object.entries(porMaquina[maq][cat]).sort((a, b) => b[1].total - a[1].total).forEach(([ins, item]) => {
             if (busca && !ins.toLowerCase().includes(busca) && !cat.toLowerCase().includes(busca) && !maq.toLowerCase().includes(busca)) return;
-            if (catSel && cat !== catSel) return;
-            const item = porMaquina[maq][cat][ins];
-            const est = estoqueMap().get(norm(ins));
-            const consumo = item.total, saldo = n(est?.quantidade) - consumo;
-            rows += `<tr><td>${esc(maq)}</td><td>${esc(cat)}</td><td><b>${esc(ins)}</b></td>${tdDias(item.porDia)}<td style="text-align:right;font-weight:700">${consumo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td>${esc(est?.unidade || '')}</td><td style="text-align:right">${n(est?.quantidade).toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td style="text-align:right;color:${saldo < 0 ? 'var(--danger)' : 'inherit'}">${saldo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td></tr>`;
+            linhasMaq.push({ cat, ins, item });
           });
         });
+        if (!linhasMaq.length) return;
+        linhasMaq.forEach((l, i) => {
+          const est = acharEstoque(l.ins, estoqueMap(), aliasesFichaPorNome());
+          const consumo = l.item.total, saldo = n(est?.quantidade) - consumo;
+          rows += `<tr>${i === 0 ? `<td rowspan="${linhasMaq.length}" style="vertical-align:top;border-right:2px solid var(--border)"><b>${esc(maq)}</b></td>` : ''}<td>${esc(l.cat)}</td><td><b>${esc(l.ins)}</b></td>${tdDias(l.item.porDia)}<td style="text-align:right;font-weight:700">${consumo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td>${esc(est?.unidade || '')}</td><td style="text-align:right">${n(est?.quantidade).toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td style="text-align:right;color:${saldo < 0 ? 'var(--danger)' : 'inherit'}">${saldo.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td></tr>`;
+        });
+        rows += `<tr><td colspan="${3 + diasSemana.length + 4}" style="padding:0;height:6px;background:var(--surface-2)"></td></tr>`;
       });
     }
     // PEDIDO AO VIVO (auditoria RELATORIO-COMPARACAO-PRODUCAO.md, item 8):
@@ -121,36 +177,38 @@
     // data-goto + categoria + Excel/PDF à direita, igual ao padrão do
     // Realizado/Gantt. Removidos os 4 cards que eu tinha adicionado sem
     // corresponder a nada no original.
-    p.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-ghost btn-sm" data-pins-semana="-1">‹ Ant.</button>
-        <div class="field" style="padding:8px 16px;color:var(--orange);font-weight:600">${fmt(_weekStart)} a ${fmt(fim)}</div>
-        <button class="btn btn-ghost btn-sm" data-pins-semana="1">Próx. ›</button>
-        <button class="btn btn-ghost btn-sm" data-pins-hoje="1">Hoje</button>
+    p.innerHTML=`<div class="pins-week-toolbar">
+      <div class="pins-week-nav">
+        <button class="btn btn-ghost" data-pins-semana="-1">‹ Ant.</button>
+        <div class="pins-week-label">${fmt(_weekStart)} a ${fmt(fim)}</div>
+        <button class="btn btn-ghost" data-pins-semana="1">Próx. ›</button>
+        <button class="btn btn-ghost" data-pins-hoje="1">Hoje</button>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <input type="date" class="field" data-pins-data value="${_weekStart.toISOString().slice(0,10)}" title="Ir para data" style="width:145px;padding:5px 8px">
-        <select id="pins-cat" class="field"><option value="">Todas as categorias</option>${cats.map(c=>`<option value="${esc(c)}" ${catSel===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
-        <button class="btn btn-ghost btn-sm" data-pins-export="1">📊 Excel</button>
-        <button class="btn btn-ghost btn-sm" data-pins-pdf="1">📄 PDF</button>
+      <div class="pins-week-actions">
+        <input type="date" class="field" data-pins-data value="${_weekStart.toISOString().slice(0,10)}" title="Ir para data">
+        <select id="pins-cat" class="field"><option value="">Todas categorias</option>${cats.map(c=>`<option value="${esc(c)}" ${catSel===c?'selected':''}>${esc(c)}</option>`).join('')}</select>
+        <button class="btn btn-ghost" data-pins-export="1">📊 Excel</button>
+        <button class="btn btn-ghost" data-pins-pdf="1">📄 PDF</button>
       </div>
     </div>
     <div class="tc" style="padding:8px 10px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
       <input id="pins-busca" class="field" placeholder="Buscar insumo, categoria ou máquina..." value="${esc(busca)}" style="min-width:220px;flex:1">
       <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0;color:var(--muted)" title="Recurso extra desta integração — colunas: Insumo | Quantidade | Unidade | Categoria">📥 Estoque Excel<input id="pins-est-input" type="file" accept=".xlsx,.xls,.csv" style="display:none"></label>
     </div>
-    ${rows?`<div class="tc"><div style="overflow:auto"><table class="dt-table" style="font-size:.74rem"><thead><tr>${_modo==='maquina'?'<th>Máquina</th><th>Categoria</th><th>Insumo</th>':'<th>Insumo</th>'}${theadDias}<th style="text-align:right">Total Sem.</th>${_modo==='maquina'?'<th>Un.</th>':''}<th style="text-align:right">Estoque</th>${_modo==='geral'?'<th>Un.</th>':''}<th style="text-align:right">Saldo</th></tr></thead><tbody>${rows}</tbody></table></div></div>`:`<div class="empty"><div class="empty-icon">🧪</div><div class="empty-title">Nenhum consumo encontrado para o período/filtro.</div></div>`}`;
+    ${rows?`<div class="tc"><div style="overflow:auto"><table class="dt-table" style="font-size:.74rem"><thead><tr>${_modo==='maquina'?'<th>Máquina</th><th>Categoria</th><th>Insumo</th>':'<th>Categoria</th><th>Insumo</th>'}${theadDias}<th style="text-align:right">Total Sem.</th>${_modo==='maquina'?'<th>Un.</th>':''}<th style="text-align:right">Estoque</th>${_modo==='geral'?'<th>Un.</th>':''}<th style="text-align:right">Saldo</th></tr></thead><tbody>${rows}</tbody></table></div></div>`:`<div class="empty"><div class="empty-icon">🧪</div><div class="empty-title">Nenhum consumo encontrado para o período/filtro.</div></div>`}`;
   }
 
   async function importarEstoque(file){if(!file)return;if(!global.XLSX){global.showToast?.('Biblioteca Excel não carregada.','error');return;}try{const b=await file.arrayBuffer(),wb=global.XLSX.read(b,{type:'array'}),rows=global.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{defval:''});let c=0,u=0;const agora=new Date().toISOString();for(const r of rows){const ins=String(r.Insumo??r.insumo??r.Nome??r.nome??'').trim();if(!ins)continue;const payload={insumo:ins,quantidade:n(r.Quantidade??r.quantidade??r.Estoque??r.estoque),unidade:String(r.Unidade??r.unidade??''),categoria:String(r.Categoria??r.categoria??'Outros'),atualizadoEm:agora};const ex=_estoque.find(x=>norm(x.insumo)===norm(ins));if(ex){await fs().collection(COL_ESTOQUE).doc(ex._firestoreId).set(payload,{merge:true});u++;}else{await fs().collection(COL_ESTOQUE).add({...payload,criadoEm:agora});c++;}}await carregarProducaoInsumos(true);_desenhar();global.showToast?.(`${c} criado(s), ${u} atualizado(s) no estoque de insumos.`,'success');}catch(e){global.showToast?.('Erro ao importar estoque de insumos: '+(e.message||e),'error');}}
   function exportar(){if(!global.XLSX){global.showToast?.('Biblioteca Excel não carregada.','error');return;}const {porMaquina,geral}=calcularConsumoInsumosSemana(_weekStart),linhas=linhasGerais(geral).map(x=>({Categoria:x.categoria,Insumo:x.insumo,Consumo:x.consumo,Estoque:x.estoque,Unidade:x.unidade,Saldo:x.saldo})),maq=[];Object.keys(porMaquina).forEach(m=>Object.keys(porMaquina[m]).forEach(c=>Object.keys(porMaquina[m][c]).forEach(i=>maq.push({Maquina:m,Categoria:c,Insumo:i,Consumo:porMaquina[m][c][i].total}))));const wb=global.XLSX.utils.book_new();global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(linhas),'Saldo_Geral');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(maq),'Por_Maquina');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(_estoque.map(e=>({Insumo:e.insumo,Quantidade:e.quantidade,Unidade:e.unidade||'',Categoria:e.categoria||''}))),'Estoque');global.XLSX.writeFile(wb,'insumos_mrp_'+_weekStart.toISOString().slice(0,10)+'.xlsx');}
-  function pinsModo(m){_modo=m;_desenhar();}function pinsSemana(d){_weekStart.setDate(_weekStart.getDate()+d*7);_desenhar();}function pinsHoje(){_weekStart=domingo(new Date());_desenhar();}function pinsGoDate(v){if(!v)return;const d=new Date(v+'T12:00:00');if(Number.isNaN(d.getTime()))return;_weekStart=domingo(d);_desenhar();}
-  global.renderProducaoInsumos=renderProducaoInsumos;global.carregarProducaoInsumos=carregarProducaoInsumos;global.calcularConsumoInsumosSemana=calcularConsumoInsumosSemana;global.calcularNecessidadeInsumosPorOPs=calcularNecessidadeInsumosPorOPs;global.importarEstoqueInsumosProducao=importarEstoque;global.exportarSaldoInsumosProducao=exportar;global._producaoInsumosInternals={getEstoque:()=>_estoque,getRegistros:()=>_registros,getFichas:()=>_fichas};
+  function pinsModo(m){_modo=m;_desenhar();}function pinsSemana(d){_weekStart.setDate(_weekStart.getDate()+d*7);_desenhar();}function pinsHoje(){_weekStart=segunda(new Date());_desenhar();}function pinsGoDate(v){if(!v)return;const d=new Date(v+'T12:00:00');if(Number.isNaN(d.getTime()))return;_weekStart=segunda(d);_desenhar();}
+  global.renderProducaoInsumos=renderProducaoInsumos;global.carregarProducaoInsumos=carregarProducaoInsumos;global.calcularConsumoInsumosSemana=calcularConsumoInsumosSemana;global.calcularNecessidadeInsumosPorOPs=calcularNecessidadeInsumosPorOPs;global.importarEstoqueInsumosProducao=importarEstoque;global.exportarSaldoInsumosProducao=exportar;global._producaoInsumosInternals={getEstoque:()=>_estoque,getRegistros:()=>_registros,getFichas:()=>_fichas,canonInsumo};
 // PEDIDO AO VIVO (usuário: a original tem "Insumos / Máq." e "Insumos Geral"
 // como DUAS abas separadas na barra principal — aqui é uma página só com
 // modo interno). Expor pinsModo pra um segundo item de menu poder pré-
 // selecionar o modo 'geral' antes de abrir a mesma página.
 global.pinsModo=pinsModo;
+function pinsGetModo(){return _modo;}
+global.pinsGetModo=pinsGetModo;
   document.addEventListener('click',e=>{const m=e.target.closest('[data-pins-modo]');if(m)return pinsModo(m.dataset.pinsModo);const s=e.target.closest('[data-pins-semana]');if(s)return pinsSemana(Number(s.dataset.pinsSemana));if(e.target.closest('[data-pins-hoje]'))return pinsHoje();if(e.target.closest('[data-pins-export]'))return exportar();if(e.target.closest('[data-pins-pdf]'))return global.exportarElementoProducaoPDF?.('page-producao-insumos','insumos_mrp.pdf');});
   document.addEventListener('change',e=>{if(e.target.matches('[data-pins-data]'))pinsGoDate(e.target.value);});
   document.addEventListener('input',e=>{if(e.target?.id==='pins-busca')_desenhar();});document.addEventListener('change',e=>{if(e.target?.id==='pins-cat')_desenhar();if(e.target?.id==='pins-est-input'){importarEstoque(e.target.files?.[0]);e.target.value='';}});

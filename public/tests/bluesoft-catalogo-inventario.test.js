@@ -122,3 +122,70 @@ test('_bluesoftClassificarTipoProduto(): classifica pelas flags de tipoProduto q
   assert.equal(internals._bluesoftClassificarTipoProduto({ tipoproduto: { mercadoriaParaUsoConsumo: true } }), 'INSUMO/CONSUMO');
   assert.equal(internals._bluesoftClassificarTipoProduto({}), 'NAO CLASSIFICADO');
 });
+
+// PEDIDO AO VIVO (usuário reportou ao vivo: "matéria-prima às vezes fica
+// mapeado em outro... embalagem em umas mapeia certo, outras errado —
+// quando abre só embalagens não traz todas, quando abre matéria-prima não
+// abre todas"): a versão antiga usava `principaldestinoproduto` (texto
+// livre) ANTES das flags estruturadas de `tipoproduto`. Um produto com a
+// flag `materiaPrima:true` mas `principaldestinoproduto` preenchido com
+// outra coisa (ex.: um texto que não bate com nenhum bucket esperado)
+// caía classificado errado mesmo sendo, pela própria Bluesoft, uma
+// matéria-prima. Trava a ordem corrigida: flags sempre decidem primeiro.
+test('_bluesoftClassificarTipoProduto(): flags estruturadas de tipoProduto vencem principalDestinoProduto quando os dois estão preenchidos e discordam (bug ao vivo real)', () => {
+  const win = novoAmbiente();
+  const internals = win._importarExportarApiInternals;
+  assert.equal(internals._bluesoftClassificarTipoProduto({
+    tipoproduto: { materiaPrima: true },
+    principaldestinoproduto: 'ALGO INCONSISTENTE',
+  }), 'MATERIA PRIMA', 'flag estruturada tem que vencer o texto livre inconsistente');
+  assert.equal(internals._bluesoftClassificarTipoProduto({
+    tipoproduto: { embalagem: true },
+    principaldestinoproduto: 'OUTRO TEXTO QUALQUER',
+  }), 'EMBALAGEM', 'mesmo caso pra embalagem — era o que causava "embalagem em umas mapeia certo, outras errado"');
+});
+
+test('_bluesoftClassificarTipoProduto(): sem NENHUMA flag de tipoProduto marcada, cai pro texto livre de principalDestinoProduto como último recurso (não perde a classificação)', () => {
+  const win = novoAmbiente();
+  const internals = win._importarExportarApiInternals;
+  assert.equal(internals._bluesoftClassificarTipoProduto({
+    tipoproduto: {},
+    principaldestinoproduto: 'revenda',
+  }), 'REVENDA');
+});
+
+// PEDIDO AO VIVO: endereço vazio (sem produto na Bluesoft no momento) caía
+// sempre em "SEM PRODUTO NA BLUESOFT", misturando endereços de QUALQUER
+// área — ao abrir só "produto acabado" incluindo vazios, endereços vazios
+// de matéria-prima/embalagem apareciam junto (falsa impressão de
+// endereçamento). Usa o campo "Local de estoque" que já existe no
+// cadastro de endereço (ex.: "PRODUTO ACABADO") pra deduzir o tipo certo.
+test('_bluesoftTipoProdutoPorLocalEstoque(): reconhece o "Local de estoque" do cadastro de endereço e devolve o mesmo bucket usado pelos produtos', () => {
+  const win = novoAmbiente();
+  const internals = win._importarExportarApiInternals;
+  assert.equal(internals._bluesoftTipoProdutoPorLocalEstoque('PRODUTO ACABADO'), 'PRODUTO ACABADO');
+  assert.equal(internals._bluesoftTipoProdutoPorLocalEstoque('Matéria-Prima'), 'MATERIA PRIMA');
+  assert.equal(internals._bluesoftTipoProdutoPorLocalEstoque('embalagens'), 'EMBALAGEM');
+  assert.equal(internals._bluesoftTipoProdutoPorLocalEstoque('Uso e Consumo'), 'INSUMO/CONSUMO');
+  assert.equal(internals._bluesoftTipoProdutoPorLocalEstoque('Produtos para Venda'), 'PRODUTO DE VENDA');
+});
+
+test('_bluesoftTipoProdutoPorLocalEstoque(): local vazio ou sem correspondência conhecida devolve null (fica "SEM PRODUTO NA BLUESOFT" na visão geral, não some nem inventa tipo)', () => {
+  const win = novoAmbiente();
+  const internals = win._importarExportarApiInternals;
+  assert.equal(internals._bluesoftTipoProdutoPorLocalEstoque(''), null);
+  assert.equal(internals._bluesoftTipoProdutoPorLocalEstoque('SISTEMA'), null);
+  assert.equal(internals._bluesoftTipoProdutoPorLocalEstoque(undefined), null);
+});
+
+// PEDIDO AO VIVO: usuário quer conseguir "detalhar bem" um produto — o
+// motivo precisa nomear especificamente QUAL flag (ou o fallback de texto
+// livre) decidiu o tipo, na mesma ordem de prioridade da classificação.
+test('_bluesoftMotivoTipoProduto(): nomeia a flag estruturada específica que decidiu, na mesma ordem de prioridade de _bluesoftClassificarTipoProduto', () => {
+  const win = novoAmbiente();
+  const internals = win._importarExportarApiInternals;
+  assert.match(internals._bluesoftMotivoTipoProduto({ tipoproduto: { materiaPrima: true }, principaldestinoproduto: 'ALGO INCONSISTENTE' }), /materiaPrima/);
+  assert.match(internals._bluesoftMotivoTipoProduto({ tipoproduto: { embalagem: true } }), /embalagem/);
+  assert.match(internals._bluesoftMotivoTipoProduto({ tipoproduto: {}, principaldestinoproduto: 'revenda' }), /texto livre.*revenda/);
+  assert.match(internals._bluesoftMotivoTipoProduto({}), /Nenhuma flag/);
+});

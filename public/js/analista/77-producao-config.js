@@ -22,11 +22,10 @@ async function render(){const p=document.getElementById('page-producao-config');
 // Importação/Importar ZIP) + seção Administração — não a fileira de
 // botões horizontais que existia aqui antes (rejeitada pelo usuário com
 // print lado a lado). Reescrito para bater com essa hierarquia exata
-// (index.html:996-1076). Importar ZIP não tem tela própria neste projeto
-// ainda — aparece no menu do jeito certo, mas mostra um aviso honesto de
-// "ainda não implementado" em vez de fingir uma tela que não existe.
-// Turnos por Máquina ganhou
-// tela própria (matriz com todas as máquinas) em 61-producao-maquinas.js.
+// (index.html:996-1076). Turnos por Máquina ganhou tela própria (matriz
+// com todas as máquinas) em 61-producao-maquinas.js; Importar ZIP ganhou
+// tela própria (leitor de ZIP nativo, sem dependência externa) em
+// 95-producao-importzip.js.
 const NAV_CFG=[
   {tipo:'grupo',id:'maquinas',icone:'🏭',titulo:'Máquinas',itens:[
     {id:'cadastro-maquinas',titulo:'Cadastro de Máquinas'},
@@ -63,9 +62,18 @@ const NAV_CFG_ADMIN=[
 const NAV_CFG_EXTRAS=[
   {id:'producao-mapa-fabrica',icone:'🗺️',titulo:'Mapa da Fábrica'},
   {id:'producao-estoque',icone:'📦',titulo:'Estoque (Bluesoft)'},
+  // PEDIDO AO VIVO (2026-08-28): "procurei lá não achei" — Relatórios BI
+  // (101-relatorios-bi.js) tinha entrada própria em nav-producao-relatorios-bi,
+  // mas a auditoria de paridade visual (59-producao-ui-completa.js) só move
+  // pra pílula/Configurações as rotas que já estavam mapeadas em
+  // ROTAS_PRINCIPAIS/ROTAS_OCULTAR_DA_NAV — como essa rota é exclusiva desta
+  // integração (não existe no original) e foi esquecida nas duas listas,
+  // ficou sem nenhum caminho clicável. Mesmo tratamento de Estoque/Mapa da
+  // Fábrica: escondida da barra principal, alcançável aqui.
+  {id:'producao-relatorios-bi',icone:'📊',titulo:'Relatórios BI'},
 ];
 // Seções que ainda não têm implementação própria neste projeto.
-const SEM_TELA=new Set(['importzip']);
+const SEM_TELA=new Set([]);
 const RENDER_EMBED={
   'cadastro-maquinas':()=>global.renderProducaoMaquinas?.('pcfg-embed-host'),
   'turnos':()=>global.renderProducaoTurnosMaquinas?.('pcfg-embed-host'),
@@ -74,8 +82,10 @@ const RENDER_EMBED={
   'funcionarios':()=>global.renderProducaoFuncionarios?.('pcfg-embed-host'),
   'setup-maquinas':()=>global.renderProducaoSetup?.('pcfg-embed-host'),
   'importacao':()=>global.renderProducaoImportacao?.('pcfg-embed-host'),
+  'importzip':()=>global.renderProducaoImportarZip?.('pcfg-embed-host'),
   'producao-estoque':()=>global.renderProducaoEstoque?.('pcfg-embed-host'),
   'producao-mapa-fabrica':()=>global.renderProducaoMapaFabrica?.('pcfg-embed-host'),
+  'producao-relatorios-bi':()=>global.renderRelatoriosBi?.('pcfg-embed-host'),
 };
 let secaoAtiva='jornada';
 let gruposAbertos={maquinas:false,produtos:false};
@@ -143,6 +153,9 @@ async function catEditar(id){const c=cats.find(x=>x._id===id)||{},nome=prompt('N
 async function catDel(id){const c=cats.find(x=>x._id===id);if(!c||!confirm('Excluir categoria "'+c.nome+'"?'))return;await fs().collection(CCAT).doc(id).delete();await carregar(true);desenhar();}
 async function procEditar(id){const p=procsTipos.find(x=>x._id===id)||{},nome=prompt('Nome do processo:',p.nome||'');if(nome==null||!nome.trim())return;const tipo=prompt('Tipo ('+PROC_TIPOS_CFG.join(', ')+'):',p.tipo||PROC_TIPOS_CFG[0]);if(tipo==null)return;const ativo=confirm('OK = processo ativo. Cancelar = inativo.');const payload={nome:nome.trim(),tipo:PROC_TIPOS_CFG.includes(tipo)?tipo:PROC_TIPOS_CFG[0],ativo,atualizadoEm:new Date().toISOString()};if(id)await fs().collection(CPROCTIPOS).doc(id).set(payload,{merge:true});else await fs().collection(CPROCTIPOS).add({...payload,criadoEm:new Date().toISOString()});await carregar(true);desenhar();}
 async function procDel(id){const p=procsTipos.find(x=>x._id===id);if(!p||!confirm('Excluir processo "'+p.nome+'"?'))return;await fs().collection(CPROCTIPOS).doc(id).delete();await carregar(true);desenhar();}
-global.renderProducaoConfig=render;document.addEventListener('input',e=>{if(e.target.matches('[data-pcfg-dia]'))jornada[Number(e.target.dataset.pcfgDia)]=Math.max(0,Number(e.target.value)||0);if(e.target.matches('[data-pcfg-cat-busca]')){catBusca=e.target.value||'';desenhar();const i=document.querySelector('[data-pcfg-cat-busca]');if(i){i.focus();i.setSelectionRange?.(i.value.length,i.value.length);}}});document.addEventListener('click',e=>{if(e.target.closest('[data-pcfg-jornada-save]'))salvarJornada();if(e.target.closest('[data-pcfg-jornada-reset]')&&confirm('Restaurar a jornada padrão da fábrica?')){jornada=padrao();persistirLocal();desenhar();}if(e.target.closest('[data-pcfg-cat-new]'))catEditar('');const ed=e.target.closest('[data-pcfg-cat-edit]');if(ed)catEditar(ed.dataset.pcfgCatEdit);const dl=e.target.closest('[data-pcfg-cat-del]');if(dl)catDel(dl.dataset.pcfgCatDel);if(e.target.closest('[data-pcfg-proc-new]'))procEditar('');const ped=e.target.closest('[data-pcfg-proc-edit]');if(ped)procEditar(ped.dataset.pcfgProcEdit);const pdl=e.target.closest('[data-pcfg-proc-del]');if(pdl)procDel(pdl.dataset.pcfgProcDel);const sec=e.target.closest('[data-pcfg-secao]');if(sec){const id=sec.getAttribute('data-pcfg-secao');const admin=NAV_CFG_ADMIN.find(n=>n.id===id);if(admin){global.abrirModalConfiguracoes?.(admin.abreModal);return;}secaoAtiva=id;const g=_grupoDaSecao(secaoAtiva);if(g)gruposAbertos[g]=true;desenhar();return;}const grp=e.target.closest('[data-pcfg-grupo]');if(grp){const id=grp.getAttribute('data-pcfg-grupo');gruposAbertos[id]=!gruposAbertos[id];desenhar();return;}if(e.target.closest('[data-pcfg-voltar]')){const pid=global._prodPaginaAntesConfig||'producao-dashboard';global.goPage?.(pid,document.getElementById('nav-'+pid));}});
+function pcfgSetSecao(id){secaoAtiva=id;const g=_grupoDaSecao(secaoAtiva);if(g)gruposAbertos[g]=true;desenhar();}
+function pcfgGetSecao(){return secaoAtiva;}
+global.pcfgSetSecao=pcfgSetSecao;global.pcfgGetSecao=pcfgGetSecao;
+global.renderProducaoConfig=render;document.addEventListener('input',e=>{if(e.target.matches('[data-pcfg-dia]'))jornada[Number(e.target.dataset.pcfgDia)]=Math.max(0,Number(e.target.value)||0);if(e.target.matches('[data-pcfg-cat-busca]')){catBusca=e.target.value||'';desenhar();const i=document.querySelector('[data-pcfg-cat-busca]');if(i){i.focus();i.setSelectionRange?.(i.value.length,i.value.length);}}});document.addEventListener('click',e=>{if(e.target.closest('[data-pcfg-jornada-save]'))salvarJornada();if(e.target.closest('[data-pcfg-jornada-reset]')&&confirm('Restaurar a jornada padrão da fábrica?')){jornada=padrao();persistirLocal();desenhar();}if(e.target.closest('[data-pcfg-cat-new]'))catEditar('');const ed=e.target.closest('[data-pcfg-cat-edit]');if(ed)catEditar(ed.dataset.pcfgCatEdit);const dl=e.target.closest('[data-pcfg-cat-del]');if(dl)catDel(dl.dataset.pcfgCatDel);if(e.target.closest('[data-pcfg-proc-new]'))procEditar('');const ped=e.target.closest('[data-pcfg-proc-edit]');if(ped)procEditar(ped.dataset.pcfgProcEdit);const pdl=e.target.closest('[data-pcfg-proc-del]');if(pdl)procDel(pdl.dataset.pcfgProcDel);const sec=e.target.closest('[data-pcfg-secao]');if(sec){const id=sec.getAttribute('data-pcfg-secao');const admin=NAV_CFG_ADMIN.find(n=>n.id===id);if(admin){global.abrirModalConfiguracoes?.(admin.abreModal);return;}pcfgSetSecao(id);return;}const grp=e.target.closest('[data-pcfg-grupo]');if(grp){const id=grp.getAttribute('data-pcfg-grupo');gruposAbertos[id]=!gruposAbertos[id];desenhar();return;}if(e.target.closest('[data-pcfg-voltar]')){const pid=global._prodPaginaAntesConfig||'producao-dashboard';global.goPage?.(pid,document.getElementById('nav-'+pid));}});
 global.DTProducao?.registrarInvalidacao?.(()=>{carregado=false;cats=[];catBusca='';procsTipos=[];jornada=lerJornada();global.PRODUCAO_JORNADA=[...jornada];});
 })(window);

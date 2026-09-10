@@ -199,6 +199,21 @@ async function _removerColetorConfirmado(coletorId) {
       }
     } catch(_){ console.warn("[Erro tratado]", _); }
 
+    // BUG AO VIVO REAL: "fala que foi excluído mas não some" — a escrita no
+    // Firestore acontecia normal, mas a tela só se atualizava esperando o
+    // onSnapshot em tempo real voltar (mesma classe de bug já corrigida em
+    // logoutOperadorColetor() acima, que já atualiza o estado local +
+    // renderColetores() na hora, sem depender do round-trip). Remove do
+    // estado local IMEDIATAMENTE, com o mesmo filtro que
+    // _normalizarColetores() já aplica pro snapshot real (excluido/revogado
+    // somem da lista) — quando o snapshot chegar, é uma no-op.
+    window.AnalistaState.replaceSlice(
+      'coletores',
+      state().coletores.filter(c => c.id !== coletorId),
+      { source: 'excluir-coletor' }
+    );
+    salvarDB_coletores();
+    renderColetores();
     showToast('🗑️ Coletor removido. O aparelho precisará de nova aprovação.', 'i');
     logAuditoria('SISTEMA', 'Coletor removido e aprovação revogada', coletorId);
     return true;
@@ -222,6 +237,15 @@ async function aprovarColetor(id) {
       reprovado_em: firebase.firestore.FieldValue.delete(),
       bloqueado_em: firebase.firestore.FieldValue.delete()
     }, { merge: true });
+    // BUG AO VIVO REAL (mesma classe do "excluir" acima): atualiza o estado
+    // local na hora, sem esperar o onSnapshot voltar — mesmo padrão de
+    // logoutOperadorColetor().
+    if (col) {
+      col.aprovado = 'aprovado'; col.bloqueado = false; col.ativo = true; col.status = 'offline';
+      delete col.reprovado_em; delete col.bloqueado_em;
+      salvarDB_coletores();
+      renderColetores();
+    }
     showToast('✅ ' + nome + ' aprovado!', 's');
     logAuditoria('SISTEMA', 'Coletor aprovado: ' + nome, id);
     return true;
@@ -245,6 +269,11 @@ async function reprovarColetor(id) {
       sessao: null,
       reprovado_em: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
+    if (col) {
+      col.aprovado = 'reprovado'; col.bloqueado = false; col.ativo = false; col.status = 'offline'; col.sessao = null;
+      salvarDB_coletores();
+      renderColetores();
+    }
     showToast('❌ ' + nome + ' reprovado.', 'w');
     logAuditoria('SISTEMA', 'Coletor reprovado: ' + nome, id);
     return true;
@@ -272,6 +301,12 @@ async function _bloquearColetorConfirmado(coletorId, nome) {
       sessao: null,
       bloqueado_em: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
+    const col = state().coletores.find(c => c.id === coletorId);
+    if (col) {
+      col.aprovado = 'bloqueado'; col.bloqueado = true; col.ativo = false; col.status = 'offline'; col.sessao = null;
+      salvarDB_coletores();
+      renderColetores();
+    }
     showToast('🚫 ' + nome + ' bloqueado.', 'w');
     logAuditoria('SISTEMA', 'Coletor bloqueado: ' + nome, coletorId);
     return true;
@@ -294,6 +329,12 @@ async function desbloquearColetor(id) {
       desbloqueado_em: firebase.firestore.FieldValue.serverTimestamp(),
       bloqueado_em: firebase.firestore.FieldValue.delete()
     }, { merge: true });
+    if (col) {
+      col.aprovado = 'aprovado'; col.bloqueado = false; col.ativo = true; col.status = 'offline';
+      delete col.bloqueado_em;
+      salvarDB_coletores();
+      renderColetores();
+    }
     showToast('🔓 ' + nome + ' desbloqueado.', 's');
     logAuditoria('SISTEMA', 'Coletor desbloqueado: ' + nome, id);
     return true;
@@ -316,6 +357,11 @@ async function reabrirTurnoColetor(id) {
       turno_encerrado: false,
       turno_reaberto_em: firebase.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
+    if (col) {
+      col.turno_encerrado = false;
+      salvarDB_coletores();
+      renderColetores();
+    }
     showToast('🔓 Turno de ' + nome + ' reaberto.', 's');
     logAuditoria('SISTEMA', 'Turno reaberto manualmente: ' + nome, id);
     return true;
@@ -323,6 +369,74 @@ async function reabrirTurnoColetor(id) {
     console.error('[Coletores] Erro ao reabrir turno:', e);
     showToast('Erro ao reabrir turno: ' + e.message, 'e');
     throw e;
+  }
+}
+
+// ── CÓDIGO DE APROVAÇÃO (pré-cadastro de um coletor novo) ────────────
+// PEDIDO AO VIVO (2026-09-04): "no lugar de ficar entrando no coletor e
+// ficar indo no analista aprovar... quero que no analista cadastre o ID do
+// coletor e na hora que abrir o aplicativo ele já peça o id pra aprovar, e
+// depois fique aprovado" — o Analista gera um código aqui (dt_codigos_coletor,
+// doc id = o próprio código) com o nome/apelido já escolhido pro aparelho;
+// o operador digita esse código na tela "aguardando aprovação" do Coletor
+// e o aparelho entra aprovado na hora (via a Cloud Function
+// resgatarCodigoAprovacaoColetor — as regras do Firestore não deixam o
+// próprio Coletor se auto-aprovar, então o código é validado no servidor).
+const FS_COL_CODIGOS = 'dt_codigos_coletor';
+const _ALFABETO_CODIGO = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sem O/0/I/1 — evita confusão ao digitar
+function _gerarCodigoAprovacaoAleatorio(tamanho) {
+  let s = '';
+  for (let i = 0; i < tamanho; i++) s += _ALFABETO_CODIGO[Math.floor(Math.random() * _ALFABETO_CODIGO.length)];
+  return s;
+}
+async function gerarCodigoAprovacaoColetor(nomeColetor) {
+  const nome = (nomeColetor || '').trim();
+  if (!nome) { showToast('Dê um nome pro coletor antes de gerar o código.', 'w'); return null; }
+  const raw = window.getDTRawFirestore ? window.getDTRawFirestore() : FS_AN;
+  let codigo, ref, snap, tentativas = 0;
+  do {
+    codigo = _gerarCodigoAprovacaoAleatorio(6);
+    ref = raw.collection(FS_COL_CODIGOS).doc(codigo);
+    snap = await ref.get();
+    tentativas++;
+  } while (snap.exists && tentativas < 5);
+  try {
+    await ref.set({
+      codigo, nome_coletor: nome,
+      criado_em: firebase.firestore.FieldValue.serverTimestamp(),
+      criado_por: (firebase.auth().currentUser && firebase.auth().currentUser.email) || 'analista',
+      usado: false, usado_em: null, usado_por_device_id: null, usado_por_uid: null,
+    });
+    logAuditoria('SISTEMA', 'Código de aprovação gerado para novo coletor: ' + nome, codigo);
+    return codigo;
+  } catch (e) {
+    console.error('[Coletores] Erro ao gerar código de aprovação:', e);
+    showToast('Erro ao gerar código: ' + e.message, 'e');
+    return null;
+  }
+}
+async function carregarCodigosAprovacaoColetorPendentes() {
+  try {
+    const raw = window.getDTRawFirestore ? window.getDTRawFirestore() : FS_AN;
+    const snap = await raw.collection(FS_COL_CODIGOS).where('usado', '==', false).get();
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => String(b.criado_em || '').localeCompare(String(a.criado_em || '')));
+  } catch (e) {
+    console.warn('[Coletores] Falha ao carregar códigos pendentes:', e.message);
+    return [];
+  }
+}
+async function cancelarCodigoAprovacaoColetor(codigo) {
+  if (!window.confirm('Cancelar este código? Ele não poderá mais ser usado.')) return false;
+  try {
+    const raw = window.getDTRawFirestore ? window.getDTRawFirestore() : FS_AN;
+    await raw.collection(FS_COL_CODIGOS).doc(codigo).delete();
+    showToast('Código cancelado.', 'i');
+    return true;
+  } catch (e) {
+    console.error('[Coletores] Erro ao cancelar código:', e);
+    showToast('Erro ao cancelar código: ' + e.message, 'e');
+    return false;
   }
 }
 

@@ -1,12 +1,20 @@
 'use strict';
 /**
  * Engrenagem de Configurações (pedido ao vivo do usuário): Usuários/
- * Coletores/Lojas/API são cross-loja e não fazem sentido só dentro do setor
- * Inventário — ficam num ícone ⚙️ na mesma linha dos setores (Logística/
- * Compras/PCP/Produção), acessível de qualquer setor. Usuários/Coletores/
- * Lojas abrem como modal "por cima" de onde o usuário estava (não navegam
- * pra outro setor); a Configuração da API (dentro de Importar/Exportar,
- * multi-aba demais pra mover) só navega, como clicar num setor normal.
+ * Coletores/Lojas/Integração API são cross-loja e não fazem sentido só
+ * dentro de um setor — ficam num ícone ⚙️ na mesma linha dos setores
+ * (Logística/Compras/PCP/Produção), acessível de qualquer setor. As 4 abrem
+ * como modal "por cima" de onde o usuário estava (não navegam pra outro
+ * setor).
+ *
+ * PEDIDO AO VIVO (2ª rodada): a Configuração da API (URL/token da BlueSoft,
+ * dt_config/integracao_api) ficava só dentro de Inventário → Importar/
+ * Exportar, mas já serve Produção/PCP/Compras via 90-bluesoft-service.js —
+ * o usuário não queria que parecesse restrita a Inventário. Só o card
+ * "🔌 Configuração da API" foi extraído (id="page-integracao-api") e movido
+ * pro modal global, igual operadores/coletores/lojas; os cards de
+ * Exportar/Importar via API genérica (específicos de Inventário) continuam
+ * dentro de #ie-panel-api, sem mudança.
  *
  * Usa jsdom (não mocks manuais) porque o comportamento central depende de
  * DOM real: goPage() troca .on em TODAS as .page do documento, e o modal
@@ -35,21 +43,25 @@ function montarAmbiente(acesso) {
     <div id="page-operadores" class="page"></div>
     <div id="page-coletores" class="page"></div>
     <div id="page-lojas" class="page"></div>
+    <div id="page-integracao-api" class="page"><input id="api-url-hml"></div>
     <div id="modal-configuracoes" class="modal-bg">
       <button id="cfgm-tab-operadores" class="cfgm-tab" data-config-abrir="operadores"></button>
       <button id="cfgm-tab-coletores" class="cfgm-tab" data-config-abrir="coletores"></button>
       <button id="cfgm-tab-lojas" class="cfgm-tab" data-config-abrir="lojas"></button>
+      <button id="cfgm-tab-integracao" class="cfgm-tab" data-config-abrir="integracao"></button>
       <div id="modal-config-conteudo"></div>
     </div>
   </body></html>`, { runScripts: 'outside-only' });
   const win = dom.window;
   const goPageChamadas = [];
+  const ieSetTabChamadas = [];
   win.goPage = (id) => { goPageChamadas.push(id); win.document.querySelectorAll('.page').forEach(p => p.classList.remove('on')); const el = win.document.getElementById('page-' + id); if (el) el.classList.add('on'); };
   win.openModal = id => { win.document.getElementById(id)?.classList.add('open'); };
   win.closeModal = id => { win.document.getElementById(id)?.classList.remove('open'); };
+  win.ieSetTab = tab => { ieSetTabChamadas.push(tab); };
   win.DT_USUARIO_ACESSO_ATUAL = acesso;
   win.eval(permCode);
-  return { win, goPageChamadas };
+  return { win, goPageChamadas, ieSetTabChamadas };
 }
 
 const ACESSO_ADMIN = { admin_mestre: true, permissoes: { operadores: { visualizar: true }, coletores: { visualizar: true }, lojas: { visualizar: true }, 'importar-exportar': { visualizar: true } } };
@@ -145,4 +157,53 @@ test('trocar de aba dentro do modal já aberto não perde a página de origem �
 
   assert.deepEqual(goPageChamadas, ['operadores', 'coletores', 'pcp-central']);
   assert.ok(win.document.getElementById('page-pcp-central').classList.contains('on'));
+});
+
+test('REGRESSÃO: aplicarSetoresPermitidos() já move page-integracao-api pro modal no boot, antes de qualquer clique na engrenagem — sem isso, quem fosse direto em Inventário → Importar/Exportar → API veria o card sumido (class="page" escondida por padrão até ganhar .on)', () => {
+  const { win } = montarAmbiente(ACESSO_ADMIN);
+  assert.notEqual(win.document.getElementById('page-integracao-api').parentNode.id, 'modal-config-conteudo'); // sanity: ainda não moveu antes do boot
+  win.aplicarSetoresPermitidos();
+  assert.equal(win.document.getElementById('page-integracao-api').parentNode.id, 'modal-config-conteudo');
+});
+
+test('Integração API: sem nenhuma das outras 3 permissões, a engrenagem cai direto na aba de Integração (não navega mais pra Inventário)', () => {
+  const acesso = { admin_mestre: false, setores_permitidos: { pcp: true }, permissoes: { operadores: {}, coletores: {}, lojas: {}, 'importar-exportar': { visualizar: true } } };
+  const { win } = montarAmbiente(acesso);
+  win.aplicarSetoresPermitidos();
+  const html = win.document.getElementById('setor-bar').innerHTML;
+  assert.match(html, /id="setor-btn-config"[^>]*data-config-abrir="integracao"/);
+});
+
+test('Integração API: abrirModalConfiguracoes("integracao") mostra page-integracao-api, marca a aba certa e chama ieSetTab(\'api\') pra carregar a config salva — sem passar pelo goPage genérico', () => {
+  const { win, goPageChamadas, ieSetTabChamadas } = montarAmbiente(ACESSO_ADMIN);
+
+  win.abrirModalConfiguracoes('integracao');
+
+  assert.ok(win.document.getElementById('modal-configuracoes').classList.contains('open'));
+  assert.ok(win.document.getElementById('page-integracao-api').classList.contains('on'));
+  assert.ok(win.document.getElementById('cfgm-tab-integracao').classList.contains('on'));
+  assert.deepEqual(ieSetTabChamadas, ['api']);
+  // "integracao" não é um módulo de permissão real — não pode passar pelo
+  // goPage() genérico (que checaria temPermissao('integracao','visualizar')
+  // e bloquearia todo mundo).
+  assert.deepEqual(goPageChamadas, []);
+});
+
+test('Integração API: sem a permissão importar-exportar, abrirModalConfiguracoes("integracao") não mostra a página nem chama ieSetTab', () => {
+  const acesso = { admin_mestre: false, setores_permitidos: { pcp: true }, permissoes: { operadores: { visualizar: true }, coletores: {}, lojas: {}, 'importar-exportar': {} } };
+  const { win, ieSetTabChamadas } = montarAmbiente(acesso);
+
+  win.abrirModalConfiguracoes('integracao');
+
+  assert.ok(!win.document.getElementById('page-integracao-api').classList.contains('on'));
+  assert.deepEqual(ieSetTabChamadas, []);
+});
+
+test('REGRESSÃO: fechar o modal depois de abrir em "integracao" ainda restaura a página de origem (PCP)', () => {
+  const { win, goPageChamadas } = montarAmbiente(ACESSO_ADMIN);
+  win.abrirModalConfiguracoes('integracao');
+  win.fecharModalConfiguracoes();
+  assert.ok(!win.document.getElementById('modal-configuracoes').classList.contains('open'));
+  assert.ok(win.document.getElementById('page-pcp-central').classList.contains('on'));
+  assert.deepEqual(goPageChamadas, ['pcp-central']);
 });

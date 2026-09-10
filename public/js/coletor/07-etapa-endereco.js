@@ -3,13 +3,12 @@
 // ═══════════════════════════════════════════════════
 // Timer para auto-avançar quando endereço não encontrado
 let _enderecoNaoEncontradoTimer = null;
-
 function onEnderecoInput() {
+  var _APP$locaisAtivos;
   const raw = document.getElementById('f-endereco').value;
   const valNorm = _normStr(raw);
   document.getElementById('f-endereco').value = raw.toUpperCase();
   const fb = document.getElementById('fb-endereco');
-
   if (_enderecoNaoEncontradoTimer) {
     clearTimeout(_enderecoNaoEncontradoTimer);
     _enderecoNaoEncontradoTimer = null;
@@ -24,7 +23,6 @@ function onEnderecoInput() {
     APP.atual.enderecoValido = true;
     return;
   }
-
   if (!valNorm) {
     fb.innerHTML = '';
     APP.atual.enderecoValido = false;
@@ -41,7 +39,6 @@ function onEnderecoInput() {
     APP.atual.enderecoValido = false;
     return;
   }
-
   if (!APP.base.length) {
     fb.innerHTML = `<div class="fb warn" style="flex-direction:column;align-items:flex-start;gap:6px">
       <b>⚠ Base não carregada</b>
@@ -52,12 +49,10 @@ function onEnderecoInput() {
     _verificarEnderecoFirebase(valNorm);
     return;
   }
-
   const matches = APP.base.filter(r => r._end === valNorm);
   // Endereço válido se existir na base de produtos OU em dt_locais (locaisAtivos)
-  const naLocais = APP.locaisAtivos?.has(valNorm);
+  const naLocais = (_APP$locaisAtivos = APP.locaisAtivos) === null || _APP$locaisAtivos === void 0 ? void 0 : _APP$locaisAtivos.has(valNorm);
   const endValido = matches.length > 0 || naLocais;
-
   if (endValido) {
     APP.atual._endNorm = valNorm;
     APP.atual.enderecoValido = true;
@@ -79,20 +74,22 @@ function onEnderecoInput() {
       fb.innerHTML = `<div class="fb info">🔍 Verificando endereço na base…</div>`;
       const _chkLoc = async () => {
         try {
+          var _snap$data, _document$getElementB;
           // Tentar pelo doc.id (formato mais comum em dt_locais)
           let snap = await FS.collection(FCOL.locais).doc(valNorm).get();
-          let naFirebase = snap.exists && snap.data()?.ativo !== false;
+          let naFirebase = snap.exists && ((_snap$data = snap.data()) === null || _snap$data === void 0 ? void 0 : _snap$data.ativo) !== false;
           if (!naFirebase) {
+            var _byField$docs$0$data;
             // Tentar pelo campo 'endereco'
-            const byField = await FS.collection(FCOL.locais)
-              .where('endereco', '==', valNorm).limit(1).get();
-            naFirebase = !byField.empty && byField.docs[0].data()?.ativo !== false;
+            const byField = await FS.collection(FCOL.locais).where('endereco', '==', valNorm).limit(1).get();
+            naFirebase = !byField.empty && ((_byField$docs$0$data = byField.docs[0].data()) === null || _byField$docs$0$data === void 0 ? void 0 : _byField$docs$0$data.ativo) !== false;
           }
           // Garantir que o campo ainda mostra o mesmo endereço
-          const curVal = _normStr(document.getElementById('f-endereco')?.value || '');
+          const curVal = _normStr(((_document$getElementB = document.getElementById('f-endereco')) === null || _document$getElementB === void 0 ? void 0 : _document$getElementB.value) || '');
           if (curVal !== valNorm) return; // usuário já digitou outro valor
           if (naFirebase) {
-            APP.locaisAtivos?.add(valNorm); // atualizar cache local
+            var _APP$locaisAtivos2;
+            (_APP$locaisAtivos2 = APP.locaisAtivos) === null || _APP$locaisAtivos2 === void 0 || _APP$locaisAtivos2.add(valNorm); // atualizar cache local
             APP.atual.enderecoValido = true;
             document.getElementById('f-endereco').className = 'field field-ok';
             fb.innerHTML = `<div class="fb ok">✓ Endereço confirmado</div>`;
@@ -106,9 +103,10 @@ function onEnderecoInput() {
             document.getElementById('f-endereco').className = 'field field-err';
             // beep só ao confirmar, não ao digitar
           }
-        } catch(e) {
+        } catch (e) {
+          var _document$getElementB2;
           // Falha na consulta Firebase — não bloquear (benefício da dúvida)
-          const curVal = _normStr(document.getElementById('f-endereco')?.value || '');
+          const curVal = _normStr(((_document$getElementB2 = document.getElementById('f-endereco')) === null || _document$getElementB2 === void 0 ? void 0 : _document$getElementB2.value) || '');
           if (curVal !== valNorm) return;
           APP.atual.enderecoValido = true;
           fb.innerHTML = `<div class="fb warn">⚠ Não foi possível verificar o endereço. Continue com cautela.</div>`;
@@ -142,16 +140,15 @@ function onEnderecoInput() {
  * permanentemente — só pode ser tratado pelo fluxo de recontagem.
  */
 function _enderecoEmRecontagem(endNorm) {
-  if (!APP.inventario?.id) return false;
-  const nd  = s => String(s || '').trim().toUpperCase();
+  var _APP$inventario;
+  if (!((_APP$inventario = APP.inventario) !== null && _APP$inventario !== void 0 && _APP$inventario.id)) return false;
+  const nd = s => String(s || '').trim().toUpperCase();
   const endN = nd(endNorm);
   const invId = APP.inventario.id;
 
   // Bloquear se existir QUALQUER divergência para este endereço (independente do status)
   // Uma divergência gerada = endereço bloqueado permanentemente para contagem normal
-  const temDiv = (APP.divergenciasAtribuidas || []).some(d =>
-    nd(d.endereco) === endN && d.inventario_id === invId
-  );
+  const temDiv = (APP.divergenciasAtribuidas || []).some(d => nd(d.endereco) === endN && d.inventario_id === invId);
   if (temDiv) return true;
 
   // Bloquear se existir recontagem ativa (pendente/em andamento) para este endereço.
@@ -159,7 +156,7 @@ function _enderecoEmRecontagem(endNorm) {
   const temRec = (APP.recontagens || []).some(r => {
     if (nd(r.endereco) !== endN || r.inventario_id !== invId) return false;
     const stRec = (r.status_recontagem || '').toLowerCase();
-    if (stRec === 'cancelada')       return false;
+    if (stRec === 'cancelada') return false;
     if (stRec === 'sem_divergencia') return false;
     const st = (r.status || '').toUpperCase();
     if (st === 'RESOLVIDA' || st === 'PERSISTENTE') return false;
@@ -168,9 +165,9 @@ function _enderecoEmRecontagem(endNorm) {
   });
   return temRec;
 }
-
 async function _verificarEnderecoFirebase(endNorm) {
-  if (!APP.inventario?.id) return;
+  var _APP$inventario2, _endVerif2;
+  if (!((_APP$inventario2 = APP.inventario) !== null && _APP$inventario2 !== void 0 && _APP$inventario2.id)) return;
   // Evita consulta duplicada para o mesmo endereço
   // Cache de 5 minutos por endereço — elimina consultas repetidas do mesmo end. na sessão.
   // Seguro porque: a gravação da contagem vai SEMPRE direto ao Firebase (nunca usa cache).
@@ -182,17 +179,14 @@ async function _verificarEnderecoFirebase(endNorm) {
   // ANTERIOR (ex.: "próprio" de uma auditoria já encerrada aparecendo como
   // status atual em um inventário novo), mesmo a consulta ao Firestore abaixo
   // já sendo corretamente filtrada por inventario_id.
-  if (_endVerif?.endereco === endNorm && _endVerif.inventario === APP.inventario.id && Date.now() - (_endVerif.checkedAt||0) < _CACHE_END_TTL) return;
-
+  if (((_endVerif2 = _endVerif) === null || _endVerif2 === void 0 ? void 0 : _endVerif2.endereco) === endNorm && _endVerif.inventario === APP.inventario.id && Date.now() - (_endVerif.checkedAt || 0) < _CACHE_END_TTL) return;
   try {
-    const snap = await FS.collection(FCOL.contagens)
-      .where('inventario_id', '==', APP.inventario.id)
-      .where('endereco', '==', endNorm)
-      .get();
-
-    const docsAtivos = snap.docs
-      .map(d => ({ _docId: d.id, ...d.data() }))
-      .filter(c => !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA');
+    var _APP$operador, _document$getElementB3;
+    const snap = await FS.collection(FCOL.contagens).where('inventario_id', '==', APP.inventario.id).where('endereco', '==', endNorm).get();
+    const docsAtivos = snap.docs.map(d => ({
+      _docId: d.id,
+      ...d.data()
+    })).filter(c => !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA');
 
     // ── Verificar se o endereço está em recontagem ativa (divergência ou recontagem pendente) ──
     const emRecontagemLocal = _enderecoEmRecontagem(endNorm);
@@ -201,46 +195,59 @@ async function _verificarEnderecoFirebase(endNorm) {
     let emRecontagemFS = false;
     if (!emRecontagemLocal) {
       try {
+        var _snapBloqueio$data;
         const chaveBloqueio = `${APP.inventario.id}__${encodeURIComponent(String(endNorm).trim().toUpperCase())}`;
         const snapBloqueio = await FS.collection('dt_bloqueios_recontagem').doc(chaveBloqueio).get();
-        emRecontagemFS = snapBloqueio.exists && snapBloqueio.data()?.ativo === true;
-      } catch(e) { /* se falhar, usar info local */ }
+        emRecontagemFS = snapBloqueio.exists && ((_snapBloqueio$data = snapBloqueio.data()) === null || _snapBloqueio$data === void 0 ? void 0 : _snapBloqueio$data.ativo) === true;
+      } catch (e) {/* se falhar, usar info local */}
     }
-
     const bloqueadoRecontagem = emRecontagemLocal || emRecontagemFS;
-
-    const meuNome = APP.operador?.name || '';
+    const meuNome = ((_APP$operador = APP.operador) === null || _APP$operador === void 0 ? void 0 : _APP$operador.name) || '';
     const temVazio = docsAtivos.some(c => c.tipo_contagem === 'VAZIO');
     const docsNaoVazio = docsAtivos.filter(c => c.tipo_contagem !== 'VAZIO');
-    const docsMeus   = docsNaoVazio.filter(c => c.operador === meuNome);
+    const docsMeus = docsNaoVazio.filter(c => c.operador === meuNome);
     const docsOutros = docsNaoVazio.filter(c => c.operador !== meuNome);
-
     let status;
-    if (bloqueadoRecontagem) status = 'em_recontagem';  // novo status de bloqueio
-    else if (temVazio)       status = 'encerrado';
-    else if (docsOutros.length > 0) status = 'outro';
-    else if (docsMeus.length > 0)  status = 'proprio';
-    else                           status = 'livre';
-
-    _endVerif = { endereco: endNorm, inventario: APP.inventario.id, status, docs: docsAtivos, docsMeus, docsOutros, checkedAt: Date.now() };
+    if (bloqueadoRecontagem) status = 'em_recontagem'; // novo status de bloqueio
+    else if (temVazio) status = 'encerrado';else if (docsOutros.length > 0) status = 'outro';else if (docsMeus.length > 0) status = 'proprio';else status = 'livre';
+    _endVerif = {
+      endereco: endNorm,
+      inventario: APP.inventario.id,
+      status,
+      docs: docsAtivos,
+      docsMeus,
+      docsOutros,
+      checkedAt: Date.now()
+    };
 
     // Atualizar feedback inline se o campo ainda tem esse endereço
     const fbEl = document.getElementById('fb-endereco');
-    const campoVal = _normStr(document.getElementById('f-endereco')?.value || '');
+    const campoVal = _normStr(((_document$getElementB3 = document.getElementById('f-endereco')) === null || _document$getElementB3 === void 0 ? void 0 : _document$getElementB3.value) || '');
     if (fbEl && campoVal === endNorm) {
       _mostrarFeedbackVerificacao(fbEl, endNorm);
     }
-  } catch(err) {
+  } catch (err) {
+    var _APP$inventario3;
     console.warn('[VerifEnd] Erro na consulta Firebase:', err.message);
     // Em caso de erro, não bloquear — deixa o confirmarEndereco decidir
-    _endVerif = { endereco: endNorm, inventario: APP.inventario?.id, status: 'livre', docs: [], docsMeus: [], docsOutros: [], checkedAt: Date.now() };
+    _endVerif = {
+      endereco: endNorm,
+      inventario: (_APP$inventario3 = APP.inventario) === null || _APP$inventario3 === void 0 ? void 0 : _APP$inventario3.id,
+      status: 'livre',
+      docs: [],
+      docsMeus: [],
+      docsOutros: [],
+      checkedAt: Date.now()
+    };
   }
 }
-
 function _mostrarFeedbackVerificacao(fbEl, endNorm) {
   if (!_endVerif || _endVerif.endereco !== endNorm) return;
-  const { status, docsOutros, docsMeus } = _endVerif;
-
+  const {
+    status,
+    docsOutros,
+    docsMeus
+  } = _endVerif;
   if (status === 'em_recontagem') {
     fbEl.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px">
       <b>🔒 Endereço bloqueado para contagem normal</b>
@@ -256,7 +263,8 @@ function _mostrarFeedbackVerificacao(fbEl, endNorm) {
     document.getElementById('f-endereco').className = 'field field-err';
     APP.atual.enderecoValido = false;
   } else if (status === 'outro') {
-    const quem = docsOutros[0]?.operador || 'outro operador';
+    var _docsOutros$;
+    const quem = ((_docsOutros$ = docsOutros[0]) === null || _docsOutros$ === void 0 ? void 0 : _docsOutros$.operador) || 'outro operador';
     fbEl.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px">
       <b>🚫 Endereço já coletado por <span style="color:var(--warn)">${quem}</span></b>
       <span style="font-size:.7rem;opacity:.85">Somente ${quem} pode estornar esta contagem.</span>
@@ -272,37 +280,35 @@ function _mostrarFeedbackVerificacao(fbEl, endNorm) {
   }
   // 'livre' — não sobrescreve o feedback padrão
 }
-
-
-
 function _cadastroEnderecoAtual(endNorm) {
+  var _APP, _APP2, _APP3;
   const alvo = String(endNorm || '').trim().toUpperCase();
-  const listas = [APP?.inventario?.base || [], APP?.base || [], APP?.enderecos || []];
+  const listas = [((_APP = APP) === null || _APP === void 0 || (_APP = _APP.inventario) === null || _APP === void 0 ? void 0 : _APP.base) || [], ((_APP2 = APP) === null || _APP2 === void 0 ? void 0 : _APP2.base) || [], ((_APP3 = APP) === null || _APP3 === void 0 ? void 0 : _APP3.enderecos) || []];
   for (const lista of listas) {
     const r = (lista || []).find(x => String(x.endereco || x.codigo || x._end || '').trim().toUpperCase() === alvo);
     if (r) return r;
   }
   return null;
 }
-
 function _aplicarClassificacaoEndereco(endNorm) {
+  var _r$contabiliza_invent;
   const r = _cadastroEnderecoAtual(endNorm) || {};
   const tipo = String(r.tipo_endereco || r.tipoEndereco || (r.virtual ? 'VIRTUAL' : 'FISICO')).trim().toUpperCase() || 'FISICO';
   APP.atual.tipoEndereco = tipo;
   APP.atual.enderecoVirtual = tipo === 'VIRTUAL';
-  APP.atual.contabilizaInventario = r.contabiliza_inventario !== false && !/^(NAO|NÃO|FALSE|0)$/i.test(String(r.contabiliza_inventario ?? 'SIM'));
+  APP.atual.contabilizaInventario = r.contabiliza_inventario !== false && !/^(NAO|NÃO|FALSE|0)$/i.test(String((_r$contabiliza_invent = r.contabiliza_inventario) !== null && _r$contabiliza_invent !== void 0 ? _r$contabiliza_invent : 'SIM'));
   APP.atual.permiteMultiplosOperadores = APP.atual.enderecoVirtual || r.permite_multiplos_operadores === true || /^(SIM|TRUE|1)$/i.test(String(r.permite_multiplos_operadores || ''));
   return r;
 }
-
 function _enderecoPermiteMultiplosOperadores(endNorm) {
-  const alvo=String(endNorm||'').trim().toUpperCase();
-  const listas=[APP?.inventario?.base||[], APP?.base||[], APP?.enderecos||[]];
-  for(const lista of listas){
-    const r=(lista||[]).find(x=>String(x.endereco||x.codigo||'').trim().toUpperCase()===alvo);
-    if(r){
-      const tipo=String(r.tipo_endereco||'').toUpperCase();
-      return r.permite_multiplos_operadores===true || /^(SIM|TRUE|1)$/i.test(String(r.permite_multiplos_operadores||'')) || tipo==='VIRTUAL';
+  var _APP4, _APP5, _APP6;
+  const alvo = String(endNorm || '').trim().toUpperCase();
+  const listas = [((_APP4 = APP) === null || _APP4 === void 0 || (_APP4 = _APP4.inventario) === null || _APP4 === void 0 ? void 0 : _APP4.base) || [], ((_APP5 = APP) === null || _APP5 === void 0 ? void 0 : _APP5.base) || [], ((_APP6 = APP) === null || _APP6 === void 0 ? void 0 : _APP6.enderecos) || []];
+  for (const lista of listas) {
+    const r = (lista || []).find(x => String(x.endereco || x.codigo || '').trim().toUpperCase() === alvo);
+    if (r) {
+      const tipo = String(r.tipo_endereco || '').toUpperCase();
+      return r.permite_multiplos_operadores === true || /^(SIM|TRUE|1)$/i.test(String(r.permite_multiplos_operadores || '')) || tipo === 'VIRTUAL';
     }
   }
   return false;
@@ -310,6 +316,7 @@ function _enderecoPermiteMultiplosOperadores(endNorm) {
 
 /** Confirma endereço sem botão — usado no fluxo auto-avanço (endereço não encontrado na base). */
 function confirmarEnderecoSilencioso() {
+  var _endVerif3, _APP$endCapacidade;
   const raw = document.getElementById('f-endereco').value;
   if (!raw.trim()) return;
   const valNorm = _normStr(raw);
@@ -320,10 +327,8 @@ function confirmarEnderecoSilencioso() {
     _prosseguirComEndereco(valNorm);
     return;
   }
-
-  const verifAtual = (_endVerif?.endereco === valNorm) ? _endVerif : null;
-  const status = verifAtual?.status;
-
+  const verifAtual = ((_endVerif3 = _endVerif) === null || _endVerif3 === void 0 ? void 0 : _endVerif3.endereco) === valNorm ? _endVerif : null;
+  const status = verifAtual === null || verifAtual === void 0 ? void 0 : verifAtual.status;
   if (status === 'em_recontagem') {
     fb.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px">
       <b>🔒 Endereço bloqueado para contagem normal</b>
@@ -331,7 +336,8 @@ function confirmarEnderecoSilencioso() {
     </div>`;
     document.getElementById('f-endereco').className = 'field field-err';
     APP.atual.enderecoValido = false;
-    beepErr(); return;
+    beepErr();
+    return;
   }
   if (status === 'encerrado') {
     fb.innerHTML = `<div class="fb err">🚫 Endereço encerrado — estorne na aba ↩️ ESTORNO para liberar</div>`;
@@ -354,36 +360,33 @@ function confirmarEnderecoSilencioso() {
   }
 
   // livre ou sem cache — prosseguir
-  const cap = APP.endCapacidade?.[valNorm] || 0;
+  const cap = ((_APP$endCapacidade = APP.endCapacidade) === null || _APP$endCapacidade === void 0 ? void 0 : _APP$endCapacidade[valNorm]) || 0;
   APP.atual.capacidadeEnd = cap;
-  APP.atual.endereco    = valNorm;
-  APP.atual._endNorm    = valNorm;
+  APP.atual.endereco = valNorm;
+  APP.atual._endNorm = valNorm;
   APP.atual.somentesDun = valNorm.includes('14.1520');
   _aplicarClassificacaoEndereco(valNorm);
-  APP.atual.step        = APP.atual.enderecoVirtual ? 3 : 2;
+  APP.atual.step = APP.atual.enderecoVirtual ? 3 : 2;
   beepSuave();
-
   const range = APP.capaRange;
   const hintEl = document.getElementById('cp-proximo-hint');
-  if (hintEl) hintEl.textContent = (range?.min && range?.max)
-    ? `Range: ${range.min}–${range.max} · Próximo: ${APP.proximoCapa}`
-    : 'Próximo disponível: ' + APP.proximoCapa;
+  if (hintEl) hintEl.textContent = range !== null && range !== void 0 && range.min && range !== null && range !== void 0 && range.max ? `Range: ${range.min}–${range.max} · Próximo: ${APP.proximoCapa}` : 'Próximo disponível: ' + APP.proximoCapa;
   document.getElementById('f-capa').value = '';
   document.getElementById('fb-capa').innerHTML = '';
-
   updateSteps();
   setTimeout(() => document.getElementById('f-capa').focus(), 100);
 }
-
 function confirmarEndereco() {
+  var _APP$atribuicoesConta, _APP$inventario4, _APP$inventario5, _APP$inventario6, _APP$locaisAtivos3, _endVerif4;
   const raw = document.getElementById('f-endereco').value;
-  if (!raw.trim()) { toast('Informe o endereço', 'e'); return; }
-
+  if (!raw.trim()) {
+    toast('Informe o endereço', 'e');
+    return;
+  }
   if (_enderecoNaoEncontradoTimer) {
     clearTimeout(_enderecoNaoEncontradoTimer);
     _enderecoNaoEncontradoTimer = null;
   }
-
   const valNorm = _normStr(raw);
   const fb = document.getElementById('fb-endereco');
 
@@ -393,52 +396,58 @@ function confirmarEndereco() {
     if (valNorm !== esperado) {
       fb.innerHTML = `<div class="fb err">🚫 Endereço incorreto — esperado: <b>${escHTML(APP.modoRecontagem.endereco)}</b></div>`;
       document.getElementById('f-endereco').className = 'field field-err';
-      beepErr(); return;
+      beepErr();
+      return;
     }
     _prosseguirComEndereco(valNorm);
     return;
   }
 
-
   // ── Respeitar vínculo de endereço definido pelo Analista ──
-  const atribuicaoEndereco = APP.atribuicoesContagem?.get(valNorm) || null;
+  const atribuicaoEndereco = ((_APP$atribuicoesConta = APP.atribuicoesContagem) === null || _APP$atribuicoesConta === void 0 ? void 0 : _APP$atribuicoesConta.get(valNorm)) || null;
   if (atribuicaoEndereco) {
+    var _APP$operador2, _APP$operador3, _APP$operador4;
     const atribuido = String(atribuicaoEndereco.operador || atribuicaoEndereco.operador_responsavel || '').trim().toUpperCase();
-    const atualOp = String(APP.operador?.name || APP.operador?.nome || APP.operador?.email || '').trim().toUpperCase();
+    const atualOp = String(((_APP$operador2 = APP.operador) === null || _APP$operador2 === void 0 ? void 0 : _APP$operador2.name) || ((_APP$operador3 = APP.operador) === null || _APP$operador3 === void 0 ? void 0 : _APP$operador3.nome) || ((_APP$operador4 = APP.operador) === null || _APP$operador4 === void 0 ? void 0 : _APP$operador4.email) || '').trim().toUpperCase();
     if (atribuido && atualOp && atribuido !== atualOp) {
       fb.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px"><b>🔒 Endereço atribuído a outro operador</b><span style="font-size:.7rem;opacity:.9">Responsável: ${escHTML(atribuicaoEndereco.operador || atribuicaoEndereco.operador_responsavel)}</span></div>`;
       document.getElementById('f-endereco').className = 'field field-err';
-      beepErr(); return;
+      beepErr();
+      return;
     }
   }
 
   // ── Bloqueio por status do inventário ──
-  const ehAuditoria = APP.modoAcesso === 'auditoria' || APP.inventario?.tipo === 'auditoria' || !!APP.inventario?.auditoria_id;
-  const statusInv = (APP.inventario?.status || '').toUpperCase();
+  const ehAuditoria = APP.modoAcesso === 'auditoria' || ((_APP$inventario4 = APP.inventario) === null || _APP$inventario4 === void 0 ? void 0 : _APP$inventario4.tipo) === 'auditoria' || !!((_APP$inventario5 = APP.inventario) !== null && _APP$inventario5 !== void 0 && _APP$inventario5.auditoria_id);
+  const statusInv = (((_APP$inventario6 = APP.inventario) === null || _APP$inventario6 === void 0 ? void 0 : _APP$inventario6.status) || '').toUpperCase();
   if (!ehAuditoria && statusInv === 'PAUSADO') {
     toast('⏸ Inventário pausado pelo analista. Contagens bloqueadas.', 'w');
-    beepErr(); return;
+    beepErr();
+    return;
   }
   if (!ehAuditoria && (statusInv === 'FECHADO' || statusInv === 'CANCELADO')) {
     const fbStatus = document.getElementById('fb-endereco');
     if (fbStatus) fbStatus.innerHTML = '<div class="fb warn">🔒 Este inventário está encerrado neste coletor.</div>';
-    beepErr(); return;
+    beepErr();
+    return;
   }
 
   // ── Bloqueio por turno encerrado ──
   if (!ehAuditoria && APP.turnoEncerrado) {
     toast('🔒 Turno encerrado. Não é possível realizar novas contagens.', 'w');
-    beepErr(); return;
+    beepErr();
+    return;
   }
 
   // ── Validar endereço contra base do inventário E catálogo geral (dt_locais) ──
   // APP._locaisDoFirebase = true somente quando locaisAtivos veio do dt_locais completo
   // Se veio só do CSV do inventário, não bloquear endereços que podem existir no armazém
-  if (APP.base.length > 0 || APP.locaisAtivos?.size > 0) {
-    const naBase   = APP.base.some(r => r._end === valNorm);
+  if (APP.base.length > 0 || ((_APP$locaisAtivos3 = APP.locaisAtivos) === null || _APP$locaisAtivos3 === void 0 ? void 0 : _APP$locaisAtivos3.size) > 0) {
+    var _APP$locaisAtivos4;
+    const naBase = APP.base.some(r => r._end === valNorm);
     // Só usar locaisAtivos como critério de bloqueio se veio do Firebase (catálogo completo)
     const catalogoCompleto = !!APP._locaisDoFirebase;
-    const naLocais = catalogoCompleto && APP.locaisAtivos?.has(valNorm);
+    const naLocais = catalogoCompleto && ((_APP$locaisAtivos4 = APP.locaisAtivos) === null || _APP$locaisAtivos4 === void 0 ? void 0 : _APP$locaisAtivos4.has(valNorm));
     // APP.atual.enderecoValido pode ter sido atualizado pela verificação async do Firebase
     // no onEnderecoInput() — se sim, confiar nessa verificação e pular o cache local.
     if (!naBase && catalogoCompleto && !naLocais && !APP.atual.enderecoValido) {
@@ -449,24 +458,26 @@ function confirmarEndereco() {
           <span style="font-size:.7rem;opacity:.85">Verifique o endereço e tente novamente.</span>
         </div>`;
         document.getElementById('f-endereco').className = 'field field-err';
-        beepErr(); return;
+        beepErr();
+        return;
       }
       // Formato diferente: pode ser área especial — deixar prosseguir
     }
   }
 
   // ── Usar cache da verificação Firebase ──
-  const verifAtual = (_endVerif?.endereco === valNorm) ? _endVerif : null;
-
+  const verifAtual = ((_endVerif4 = _endVerif) === null || _endVerif4 === void 0 ? void 0 : _endVerif4.endereco) === valNorm ? _endVerif : null;
   if (!verifAtual) {
     // Ainda não temos resultado — consultar e aguardar
     fb.innerHTML = `<div class="fb info">🔍 Verificando endereço…</div>`;
     _verificarEnderecoFirebase(valNorm).then(() => confirmarEndereco());
     return;
   }
-
-  const { status, docsMeus, docsOutros } = verifAtual;
-
+  const {
+    status,
+    docsMeus,
+    docsOutros
+  } = verifAtual;
   if (status === 'em_recontagem') {
     fb.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px">
       <b>🔒 Endereço bloqueado para contagem normal</b>
@@ -474,15 +485,15 @@ function confirmarEndereco() {
     </div>`;
     document.getElementById('f-endereco').className = 'field field-err';
     APP.atual.enderecoValido = false;
-    beepErr(); return;
+    beepErr();
+    return;
   }
-
   if (status === 'encerrado') {
     fb.innerHTML = `<div class="fb err">🚫 Endereço encerrado — estorne na aba ↩️ ESTORNO para liberar</div>`;
     document.getElementById('f-endereco').className = 'field field-err';
-    beepErr(); return;
+    beepErr();
+    return;
   }
-
   if (status === 'outro' && !_enderecoPermiteMultiplosOperadores(valNorm)) {
     // Bloquear — marcar campo como erro E mostrar modal (mesmo nível que em_recontagem)
     fb.innerHTML = `<div class="fb err" style="flex-direction:column;align-items:flex-start;gap:3px">
@@ -492,9 +503,9 @@ function confirmarEndereco() {
     document.getElementById('f-endereco').className = 'field field-err';
     APP.atual.enderecoValido = false;
     _modalBloqueioOutroOperador(valNorm, docsOutros);
-    beepErr(); return;
+    beepErr();
+    return;
   }
-
   if (status === 'proprio') {
     // Mesmo operador também não pode iniciar uma segunda primeira contagem.
     // Correções exigem estorno; novas rodadas exigem atribuição do Analista.
@@ -514,20 +525,21 @@ function confirmarEndereco() {
 
 /** Prossegue para a etapa 2 após validar o endereço */
 function _prosseguirComEndereco(valNorm) {
+  var _APP$endCapacidade2;
   const fb = document.getElementById('fb-endereco');
-  const cap = APP.endCapacidade?.[valNorm] || 0;
+  const cap = ((_APP$endCapacidade2 = APP.endCapacidade) === null || _APP$endCapacidade2 === void 0 ? void 0 : _APP$endCapacidade2[valNorm]) || 0;
   APP.atual.capacidadeEnd = cap;
 
   // ── DEBUG: mostrar capacidade detectada no feedback visual ──
   // (remover após confirmar que está funcionando)
-  dbg('[LOTE DEBUG] endereço:', valNorm, '| cap:', cap, '| perguntaFeita:', APP.lotePerguntaFeita, '| endCapKeys:', Object.keys(APP.endCapacidade||{}).length);
-  const capAmostra = Object.entries(APP.endCapacidade||{}).filter(([,v])=>v>0).slice(0,3).map(([k,v])=>k+'='+v).join(', ');
+  dbg('[LOTE DEBUG] endereço:', valNorm, '| cap:', cap, '| perguntaFeita:', APP.lotePerguntaFeita, '| endCapKeys:', Object.keys(APP.endCapacidade || {}).length);
+  const capAmostra = Object.entries(APP.endCapacidade || {}).filter(([, v]) => v > 0).slice(0, 3).map(([k, v]) => k + '=' + v).join(', ');
   dbg('[LOTE DEBUG] amostra endCapacidade c/ cap>0:', capAmostra || '(nenhum)');
 
   // Em modo recontagem: nova sessão limpa — sem info de contagens anteriores
   if (APP.modoRecontagem) {
-    APP.atual.endereco    = valNorm;
-    APP.atual._endNorm    = valNorm;
+    APP.atual.endereco = valNorm;
+    APP.atual._endNorm = valNorm;
     APP.atual.somentesDun = valNorm.includes('14.1520');
     _aplicarClassificacaoEndereco(valNorm);
 
@@ -535,18 +547,13 @@ function _prosseguirComEndereco(valNorm) {
     // lançamento rápido em lote que a contagem normal já tinha — antes
     // disto a recontagem era sempre manual, palete por palete.
     if (!APP.atual.enderecoVirtual) {
-      const capRec = Number(
-        APP.endCapacidade?.[valNorm] ??
-        APP.modoRecontagem.capacidade_pallets ??
-        APP.modoRecontagem.capacidade_paletes ??
-        APP.modoRecontagem.capacidade ?? 0
-      ) || 0;
+      var _ref, _ref2, _ref3, _APP$endCapacidade$va, _APP$endCapacidade3;
+      const capRec = Number((_ref = (_ref2 = (_ref3 = (_APP$endCapacidade$va = (_APP$endCapacidade3 = APP.endCapacidade) === null || _APP$endCapacidade3 === void 0 ? void 0 : _APP$endCapacidade3[valNorm]) !== null && _APP$endCapacidade$va !== void 0 ? _APP$endCapacidade$va : APP.modoRecontagem.capacidade_pallets) !== null && _ref3 !== void 0 ? _ref3 : APP.modoRecontagem.capacidade_paletes) !== null && _ref2 !== void 0 ? _ref2 : APP.modoRecontagem.capacidade) !== null && _ref !== void 0 ? _ref : 0) || 0;
       APP.atual.capacidadeEnd = capRec;
       if (_loteVerificarOferta(valNorm, valNorm, capRec)) return; // painel lote assumiu o controle
     }
-
     fb.innerHTML = `<div class="fb ok">✓ Endereço confirmado — iniciando nova rodada</div>`;
-    APP.atual.step        = APP.atual.enderecoVirtual ? 3 : 2;
+    APP.atual.step = APP.atual.enderecoVirtual ? 3 : 2;
     beepSuave();
     const el2 = document.getElementById('cp-proximo-hint');
     const el3 = document.getElementById('f-capa');
@@ -554,18 +561,17 @@ function _prosseguirComEndereco(valNorm) {
     if (el3) el3.value = '';
     if (el4) el4.innerHTML = '';
     updateSteps();
-    setTimeout(() => el3?.focus(), 120);
+    setTimeout(() => el3 === null || el3 === void 0 ? void 0 : el3.focus(), 120);
     return;
   }
 
   // ── Verificar oferta de lançamento rápido (endereços grandes) ──
   // Só oferece se: cap >= 10, primeira vez neste endereço, não é recontagem
-  APP.atual.endereco    = valNorm;
-  APP.atual._endNorm    = valNorm;
+  APP.atual.endereco = valNorm;
+  APP.atual._endNorm = valNorm;
   APP.atual.capacidadeEnd = cap;
   APP.atual.somentesDun = valNorm.includes('14.1520');
   _aplicarClassificacaoEndereco(valNorm);
-
   if (APP.atual.enderecoVirtual) {
     APP.atual.capa = '';
     APP.atual.loteProduto = '';
@@ -577,21 +583,19 @@ function _prosseguirComEndereco(valNorm) {
     const fbg = document.getElementById('fb-gtin');
     if (fbg) fbg.innerHTML = '';
     updateSteps();
-    setTimeout(() => fg?.focus(), 100);
+    setTimeout(() => fg === null || fg === void 0 ? void 0 : fg.focus(), 100);
     return;
   }
 
   // DEBUG visual — exibe cap detectada no feedback para confirmar no celular
   if (fb) fb.innerHTML = `<div class="fb info" style="font-size:.68rem;line-height:1.5">
     🔍 <b>cap:</b> ${cap} | min: ${LOTE_CAP_MINIMA} | pergunta: ${APP.lotePerguntaFeita}<br>
-    ends c/cap: ${Object.values(APP.endCapacidade||{}).filter(v=>v>0).length} / ${Object.keys(APP.endCapacidade||{}).length}<br>
-    <span style="opacity:.7">${capAmostra||'(sem cap>0)'}</span>
+    ends c/cap: ${Object.values(APP.endCapacidade || {}).filter(v => v > 0).length} / ${Object.keys(APP.endCapacidade || {}).length}<br>
+    <span style="opacity:.7">${capAmostra || '(sem cap>0)'}</span>
   </div>`;
-
   if (_loteVerificarOferta(valNorm, valNorm, cap)) return; // painel lote assumiu o controle
 
   const palletsJaContados = _palletsNoEnderecoAtual(valNorm);
-
   let infoCapacidade = '';
   if (cap > 0) {
     const restantes = Math.max(0, cap - palletsJaContados);
@@ -605,40 +609,39 @@ function _prosseguirComEndereco(valNorm) {
       📦 Pallets contados neste endereço: <b>${palletsJaContados}</b>
     </div>`;
   }
-
-  fb.innerHTML = (palletsJaContados > 0
-    ? `<div class="fb ok">✓ Continuando endereço — pallet ${palletsJaContados + 1}</div>`
-    : `<div class="fb ok">✓ Endereço confirmado</div>`) + infoCapacidade;
-
-  APP.atual.endereco    = valNorm;
-  APP.atual._endNorm    = valNorm;
+  fb.innerHTML = (palletsJaContados > 0 ? `<div class="fb ok">✓ Continuando endereço — pallet ${palletsJaContados + 1}</div>` : `<div class="fb ok">✓ Endereço confirmado</div>`) + infoCapacidade;
+  APP.atual.endereco = valNorm;
+  APP.atual._endNorm = valNorm;
   APP.atual.somentesDun = valNorm.includes('14.1520');
-  APP.atual.step        = 2;
+  APP.atual.step = 2;
   beepSuave();
-
   const el2 = document.getElementById('cp-proximo-hint');
   const el3 = document.getElementById('f-capa');
   const el4 = document.getElementById('fb-capa');
   if (el2) {
     const range = APP.capaRange;
-    el2.textContent = (range?.min && range?.max)
-      ? `Range: ${range.min}–${range.max} · Próximo: ${APP.proximoCapa}`
-      : 'Próximo disponível: ' + APP.proximoCapa;
+    el2.textContent = range !== null && range !== void 0 && range.min && range !== null && range !== void 0 && range.max ? `Range: ${range.min}–${range.max} · Próximo: ${APP.proximoCapa}` : 'Próximo disponível: ' + APP.proximoCapa;
   }
   if (el3) el3.value = '';
   if (el4) el4.innerHTML = '';
-
   updateSteps();
   // Garantir explicitamente que o botão VAZIO está visível após confirmar endereço
   const _vaziow = document.getElementById('btn-vazio-wrap');
   if (_vaziow && !APP.lote) _vaziow.style.display = '';
-  setTimeout(() => { try { document.getElementById('f-capa').focus(); } catch(e){ console.warn("[Erro tratado]", e); } }, 100);
+  setTimeout(() => {
+    try {
+      document.getElementById('f-capa').focus();
+    } catch (e) {
+      console.warn("[Erro tratado]", e);
+    }
+  }, 100);
 }
 
 /** Modal de bloqueio quando outro operador já coletou */
 function _modalBloqueioOutroOperador(endNorm, docsOutros) {
-  const quem = docsOutros[0]?.operador || 'outro operador';
-  const qtd  = docsOutros.length;
+  var _docsOutros$2;
+  const quem = ((_docsOutros$2 = docsOutros[0]) === null || _docsOutros$2 === void 0 ? void 0 : _docsOutros$2.operador) || 'outro operador';
+  const qtd = docsOutros.length;
   _criarModal({
     icone: '🚫',
     titulo: 'Endereço já coletado',
@@ -652,9 +655,11 @@ function _modalBloqueioOutroOperador(endNorm, docsOutros) {
       <div style="margin-top:10px;padding:10px 12px;background:rgba(255,71,87,.08);border:1px solid rgba(255,71,87,.2);border-radius:8px;font-size:.75rem;color:var(--muted);text-align:center">
         Somente <b>${escHTML(quem)}</b> pode estornar esta contagem.
       </div>`,
-    botoes: [
-      { label: '← Voltar', estilo: 'ghost', acao: null }
-    ]
+    botoes: [{
+      label: '← Voltar',
+      estilo: 'ghost',
+      acao: null
+    }]
   });
 }
 
@@ -668,14 +673,11 @@ function _modalOpcoesProprio(endNorm, docsMeus) {
   const maisRecente = docsMeus.reduce((latest, c) => {
     // criado_em pode ser string ISO, Timestamp Firebase ou Date — normalizar todos
     const raw = c.criado_em || c.dataHora || 0;
-    const t = raw?.toDate ? raw.toDate().getTime()
-            : raw?.seconds ? raw.seconds * 1000
-            : new Date(raw).getTime();
-    return (!isNaN(t) && t > latest) ? t : latest;
+    const t = raw !== null && raw !== void 0 && raw.toDate ? raw.toDate().getTime() : raw !== null && raw !== void 0 && raw.seconds ? raw.seconds * 1000 : new Date(raw).getTime();
+    return !isNaN(t) && t > latest ? t : latest;
   }, 0);
   const segundosAtras = maisRecente ? Math.floor((agora - maisRecente) / 1000) : Infinity;
   const dentroDoTempo = segundosAtras <= 60;
-
   if (!dentroDoTempo) {
     // Fora do prazo — bloquear completamente
     _criarModal({
@@ -692,9 +694,11 @@ function _modalOpcoesProprio(endNorm, docsMeus) {
           Este endereço está bloqueado.<br>
           <b>Solicite nova rodada ao analista.</b>
         </div>`,
-      botoes: [
-        { label: '← Voltar', estilo: 'ghost', acao: null },
-      ]
+      botoes: [{
+        label: '← Voltar',
+        estilo: 'ghost',
+        acao: null
+      }]
     });
     document.getElementById('f-endereco').className = 'field field-err';
     APP.atual.enderecoValido = false;
@@ -719,30 +723,39 @@ function _modalOpcoesProprio(endNorm, docsMeus) {
       <div style="margin-top:8px;font-size:.72rem;color:var(--muted);text-align:center">
         O que deseja fazer?
       </div>`,
-    botoes: [
-      { label: '← Voltar',          estilo: 'ghost',   acao: null },
-      { label: '+ Adicionar pallet', estilo: 'primary', acao: () => _prosseguirComEndereco(endNorm) },
-      { label: '↩ Estornar e recontar', estilo: 'warn', acao: () => _estornarERecomecar(endNorm, docIds) }
-    ]
+    botoes: [{
+      label: '← Voltar',
+      estilo: 'ghost',
+      acao: null
+    }, {
+      label: '+ Adicionar pallet',
+      estilo: 'primary',
+      acao: () => _prosseguirComEndereco(endNorm)
+    }, {
+      label: '↩ Estornar e recontar',
+      estilo: 'warn',
+      acao: () => _estornarERecomecar(endNorm, docIds)
+    }]
   });
 }
 
 /** Estorna todos os pallets do endereço e inicia nova contagem */
 async function _estornarERecomecar(endNorm, docIds) {
-  const op = APP.operador?.name || '';
+  var _APP$operador5;
+  const op = ((_APP$operador5 = APP.operador) === null || _APP$operador5 === void 0 ? void 0 : _APP$operador5.name) || '';
   toast('↩ Estornando contagens…', 'w');
   try {
     for (const id of docIds) {
       await FS.collection(FCOL.contagens).doc(id).update({
-        _excluida:     true,
-        status:        'ESTORNADA',
-        _excluida_em:  new Date().toISOString(),
-        estornada_por: op,
+        _excluida: true,
+        status: 'ESTORNADA',
+        _excluida_em: new Date().toISOString(),
+        estornada_por: op
       });
-      const idx = APP.contagens.findIndex(c => (c.uuid === id || c._docId === id));
+      const idx = APP.contagens.findIndex(c => c.uuid === id || c._docId === id);
       if (idx >= 0) {
-        APP.contagens[idx]._excluida    = true;
-        APP.contagens[idx].status       = 'ESTORNADA';
+        APP.contagens[idx]._excluida = true;
+        APP.contagens[idx].status = 'ESTORNADA';
         APP.contagens[idx]._excluida_em = new Date().toISOString();
         APP.contagens[idx].estornada_por = op;
       }
@@ -754,26 +767,28 @@ async function _estornarERecomecar(endNorm, docIds) {
     toast('✓ Estornado. Pode recontar.', 's');
     beepOk();
     _prosseguirComEndereco(endNorm);
-  } catch(err) {
+  } catch (err) {
     toast('✗ Erro ao estornar: ' + err.message, 'e');
   }
 }
 
 /** Factory de modais reutilizável */
-function _criarModal({ icone, titulo, corBorda, corpo, botoes }) {
+function _criarModal({
+  icone,
+  titulo,
+  corBorda,
+  corpo,
+  botoes
+}) {
   const old = document.getElementById('_modal_end_bloq');
   if (old) old.remove();
   const modal = document.createElement('div');
   modal.id = '_modal_end_bloq';
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
-
   const botoesHtml = botoes.map((b, i) => {
-    const bg = b.estilo === 'primary' ? 'background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-weight:800'
-             : b.estilo === 'warn'    ? 'background:rgba(255,71,87,.15);border:1px solid rgba(255,71,87,.4);color:#ff4757;font-weight:700'
-             :                         'background:transparent;border:1px solid var(--border);color:var(--muted)';
+    const bg = b.estilo === 'primary' ? 'background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-weight:800' : b.estilo === 'warn' ? 'background:rgba(255,71,87,.15);border:1px solid rgba(255,71,87,.4);color:#ff4757;font-weight:700' : 'background:transparent;border:1px solid var(--border);color:var(--muted)';
     return `<button id="_mbtn_${i}" style="flex:1;padding:11px 8px;border-radius:10px;font-size:.82rem;font-family:var(--sans);cursor:pointer;border:none;${bg}">${b.label}</button>`;
   }).join('');
-
   modal.innerHTML = `
     <div style="background:var(--surface);border:1.5px solid ${corBorda};border-radius:18px;padding:24px 20px;max-width:340px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
       <div style="font-size:1.8rem;text-align:center;margin-bottom:8px">${icone}</div>
@@ -781,16 +796,16 @@ function _criarModal({ icone, titulo, corBorda, corpo, botoes }) {
       ${corpo}
       <div style="display:flex;gap:8px;margin-top:16px">${botoesHtml}</div>
     </div>`;
-
   document.body.appendChild(modal);
-
   botoes.forEach((b, i) => {
     document.getElementById(`_mbtn_${i}`).onclick = () => {
       modal.remove();
       if (b.acao) b.acao();
     };
   });
-  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  modal.addEventListener('click', e => {
+    if (e.target === modal) modal.remove();
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -809,105 +824,80 @@ const LOTE_CAP_MINIMA = 10; // capacidade mínima para oferecer o modo lote
  */
 function _palletsNoEnderecoAtual(endNorm) {
   const endereco = endNorm || '';
-  const locais = (APP.contagens || []).filter(c =>
-    c.endereco === endereco &&
-    c.tipo_contagem !== 'VAZIO' &&
-    !c._excluida &&
-    c.status !== 'ESTORNADA' &&
-    c.status !== 'EXCLUIDA' &&
-    // Em recontagem: considerar somente os paletes da rodada/tarefa atual.
-    // Isso evita que paletes de recontagens anteriores consumam a capacidade
-    // da nova rodada no mesmo endereco.
-    (!APP.modoRecontagem || (
-      c.tipo_contagem === 'RECONTAGEM' &&
-      (
-        String(c.recontagem_id || '') === String(APP.modoRecontagem.id || '') ||
-        (!c.recontagem_id &&
-          String(c.divergencia_id || '') === String(APP.modoRecontagem.divergencia_id || '') &&
-          Number(c.numero_recontagem || 1) === Number(APP.modoRecontagem.numero_recontagem || 1))
-      )
-    ))
-  );
+  const locais = (APP.contagens || []).filter(c => c.endereco === endereco && c.tipo_contagem !== 'VAZIO' && !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA' && (
+  // Em recontagem: considerar somente os paletes da rodada/tarefa atual.
+  // Isso evita que paletes de recontagens anteriores consumam a capacidade
+  // da nova rodada no mesmo endereco.
+  !APP.modoRecontagem || c.tipo_contagem === 'RECONTAGEM' && (String(c.recontagem_id || '') === String(APP.modoRecontagem.id || '') || !c.recontagem_id && String(c.divergencia_id || '') === String(APP.modoRecontagem.divergencia_id || '') && Number(c.numero_recontagem || 1) === Number(APP.modoRecontagem.numero_recontagem || 1))));
 
   // _verificarEnderecoFirebase() consulta as contagens existentes no Firestore antes
   // de confirmar o endereço. Reaproveitar esses documentos evita que um reload do app
   // zere artificialmente a capacidade já ocupada no endereço.
-  const remotos = (_endVerif && _endVerif.endereco === endereco ? (_endVerif.docs || []) : []).filter(c =>
-    c.tipo_contagem !== 'VAZIO' &&
-    !c._excluida &&
-    c.status !== 'ESTORNADA' &&
-    c.status !== 'EXCLUIDA' &&
-    (!APP.modoRecontagem || (
-      c.tipo_contagem === 'RECONTAGEM' &&
-      (
-        String(c.recontagem_id || '') === String(APP.modoRecontagem.id || '') ||
-        (!c.recontagem_id &&
-          String(c.divergencia_id || '') === String(APP.modoRecontagem.divergencia_id || '') &&
-          Number(c.numero_recontagem || 1) === Number(APP.modoRecontagem.numero_recontagem || 1))
-      )
-    ))
-  );
+  const remotos = (_endVerif && _endVerif.endereco === endereco ? _endVerif.docs || [] : []).filter(c => c.tipo_contagem !== 'VAZIO' && !c._excluida && c.status !== 'ESTORNADA' && c.status !== 'EXCLUIDA' && (!APP.modoRecontagem || c.tipo_contagem === 'RECONTAGEM' && (String(c.recontagem_id || '') === String(APP.modoRecontagem.id || '') || !c.recontagem_id && String(c.divergencia_id || '') === String(APP.modoRecontagem.divergencia_id || '') && Number(c.numero_recontagem || 1) === Number(APP.modoRecontagem.numero_recontagem || 1))));
 
   // União idempotente: a mesma contagem pode existir no array local e no snapshot.
   const unicos = new Map();
-  const chave = (c, i, origem) => String(
-    c.uuid || c._docId || c.id ||
-    [origem, c.inventario_id || '', c.endereco || '', c.capa_palete || c.capa || '', c.criada_em || c.data_hora || '', i].join('|')
-  );
+  const chave = (c, i, origem) => String(c.uuid || c._docId || c.id || [origem, c.inventario_id || '', c.endereco || '', c.capa_palete || c.capa || '', c.criada_em || c.data_hora || '', i].join('|'));
   remotos.forEach((c, i) => unicos.set(chave(c, i, 'fs'), c));
   locais.forEach((c, i) => {
     const id = String(c.uuid || c._docId || c.id || '');
-    if (id) unicos.set(id, c);
-    else unicos.set(chave(c, i, 'local'), c);
+    if (id) unicos.set(id, c);else unicos.set(chave(c, i, 'local'), c);
   });
   return unicos.size;
 }
 
 /** Alias para uso interno do módulo lote */
 function _lotePalletsJaUsados(endNorm) {
-  return _palletsNoEnderecoAtual(endNorm || APP.lote?.endNorm || '');
+  var _APP$lote;
+  return _palletsNoEnderecoAtual(endNorm || ((_APP$lote = APP.lote) === null || _APP$lote === void 0 ? void 0 : _APP$lote.endNorm) || '');
 }
 function _loteSetPainel(ativo) {
   const painel = document.getElementById('painel-lote');
-  const steps  = document.getElementById('steps');
+  const steps = document.getElementById('steps');
   // step-fields que devem sumir quando lote estiver ativo
-  const stepIds = ['step-capa','step-gtin','step-validade','step-quantidade','bloco-endereco-travado'];
+  const stepIds = ['step-capa', 'step-gtin', 'step-validade', 'step-quantidade', 'bloco-endereco-travado'];
   const btVazio = document.getElementById('btn-vazio-wrap');
   if (ativo) {
     if (painel) painel.style.display = '';
-    stepIds.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+    stepIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
     // manter step-endereco visível mas congelado (sem interação)
     if (btVazio) btVazio.style.display = 'none';
   } else {
     if (painel) painel.style.display = 'none';
-    stepIds.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+    stepIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = '';
+    });
   }
 }
 
 /** Mostra apenas a tela indicada dentro do painel, esconde as demais */
 function _loteShowTela(telaId) {
-  ['oferta','gtin','qtd','total','capas','validade','continuar'].forEach(id => {
+  ['oferta', 'gtin', 'qtd', 'total', 'capas', 'validade', 'continuar'].forEach(id => {
     const el = document.getElementById('lote-tela-' + id);
-    if (el) el.style.display = (('lote-tela-' + id) === telaId || id === telaId) ? '' : 'none';
+    if (el) el.style.display = 'lote-tela-' + id === telaId || id === telaId ? '' : 'none';
   });
   // alias curto: pode passar 'oferta' ou 'lote-tela-oferta'
   const el = document.getElementById('lote-tela-' + telaId) || document.getElementById(telaId);
   if (el) el.style.display = '';
   _loteAtualizarHeader();
 }
-
 function _loteAtualizarHeader() {
   const l = APP.lote;
   if (!l) return;
-  const hEnd  = document.getElementById('lote-header-end');
+  const hEnd = document.getElementById('lote-header-end');
   const hProg = document.getElementById('lote-header-prog');
-  if (hEnd)  hEnd.textContent  = l.endExib || '';
+  if (hEnd) hEnd.textContent = l.endExib || '';
   if (hProg) {
     if (l.totalPallets) {
-      const lidos = l.capasLidas?.length || 0;
-      hProg.textContent = `Pallets: ${lidos} / ${l.totalPallets} · Qtd padrão: ${l.qtdPadrao ?? '—'}`;
+      var _l$capasLidas, _l$qtdPadrao;
+      const lidos = ((_l$capasLidas = l.capasLidas) === null || _l$capasLidas === void 0 ? void 0 : _l$capasLidas.length) || 0;
+      hProg.textContent = `Pallets: ${lidos} / ${l.totalPallets} · Qtd padrão: ${(_l$qtdPadrao = l.qtdPadrao) !== null && _l$qtdPadrao !== void 0 ? _l$qtdPadrao : '—'}`;
     } else {
-      const ja  = _lotePalletsJaUsados(l.endNorm);
+      const ja = _lotePalletsJaUsados(l.endNorm);
       const cap = l.cap || 0;
       hProg.textContent = cap > 0 ? `Capacidade: ${cap} · Usados: ${ja} · Restantes: ${cap - ja}` : '';
     }
@@ -918,20 +908,29 @@ function _loteAtualizarHeader() {
 //  ENTRADA: chamado em _prosseguirComEndereco quando cap >= 10
 // ──────────────────────────────────────────────────────────────────
 function loteOferecer(endNorm, endExib, cap) {
-  APP.lote = { endNorm, endExib, cap, gtin: null, codigoProduto: null,
-                descricaoProduto: null, qtdPadrao: null, totalPallets: null,
-                capasLidas: [], grupos: [], totalSalvos: 0 };
+  APP.lote = {
+    endNorm,
+    endExib,
+    cap,
+    gtin: null,
+    codigoProduto: null,
+    descricaoProduto: null,
+    qtdPadrao: null,
+    totalPallets: null,
+    capasLidas: [],
+    grupos: [],
+    totalSalvos: 0
+  };
   APP.lotePerguntaFeita = true;
   _loteSetPainel(true);
   _loteShowTela('oferta');
-  const jaUsados   = _lotePalletsJaUsados(endNorm);
-  const restantes  = Math.max(0, cap - jaUsados);
+  const jaUsados = _lotePalletsJaUsados(endNorm);
+  const restantes = Math.max(0, cap - jaUsados);
   const txt = document.getElementById('lote-oferta-cap-txt');
   if (txt) txt.innerHTML = `Capacidade: <b>${cap} pallets</b>${jaUsados > 0 ? ` &nbsp;·&nbsp; Já contados: <b>${jaUsados}</b> &nbsp;·&nbsp; Restantes: <b>${restantes}</b>` : ''}`;
   const hdr = document.getElementById('lote-header');
   if (hdr) hdr.style.display = 'none'; // esconder cabeçalho na tela de oferta
 }
-
 function loteRecusar() {
   // Operador prefere modo manual — fechar painel e continuar fluxo normal
   APP.lote = null;
@@ -940,23 +939,29 @@ function loteRecusar() {
   APP.atual.step = 2;
   updateSteps();
   const el = document.getElementById('f-capa');
-  if (el) { el.value = ''; el.disabled = false; setTimeout(() => el.focus(), 80); }
+  if (el) {
+    el.value = '';
+    el.disabled = false;
+    setTimeout(() => el.focus(), 80);
+  }
   // Mostrar botão vazio
   const vw = document.getElementById('btn-vazio-wrap');
   if (vw) vw.style.display = '';
 }
-
 function loteAceitar() {
   const hdr = document.getElementById('lote-header');
   if (hdr) hdr.style.display = '';
   _loteShowTela('gtin');
-  setTimeout(() => document.getElementById('lote-f-gtin')?.focus(), 120);
+  setTimeout(() => {
+    var _document$getElementB4;
+    return (_document$getElementB4 = document.getElementById('lote-f-gtin')) === null || _document$getElementB4 === void 0 ? void 0 : _document$getElementB4.focus();
+  }, 120);
 }
-
 function loteAbortar() {
-  const endNorm = APP.lote?.endNorm;
-  const cap     = APP.lote?.cap;
-  const sonen   = APP.lote?.somentesDun || false;
+  var _APP$lote2, _APP$lote3, _APP$lote4;
+  const endNorm = (_APP$lote2 = APP.lote) === null || _APP$lote2 === void 0 ? void 0 : _APP$lote2.endNorm;
+  const cap = (_APP$lote3 = APP.lote) === null || _APP$lote3 === void 0 ? void 0 : _APP$lote3.cap;
+  const sonen = ((_APP$lote4 = APP.lote) === null || _APP$lote4 === void 0 ? void 0 : _APP$lote4.somentesDun) || false;
   APP.lote = null;
   _loteSetPainel(false);
   if (endNorm) {
@@ -976,10 +981,14 @@ function loteAbortar() {
 //  TELA GTIN
 // ──────────────────────────────────────────────────────────────────
 function loteOnGtinInput() {
-  const val = (document.getElementById('lote-f-gtin')?.value || '').trim();
-  const fb  = document.getElementById('lote-fb-gtin');
+  var _document$getElementB5;
+  const val = (((_document$getElementB5 = document.getElementById('lote-f-gtin')) === null || _document$getElementB5 === void 0 ? void 0 : _document$getElementB5.value) || '').trim();
+  const fb = document.getElementById('lote-fb-gtin');
   if (!fb) return;
-  if (!val) { fb.innerHTML = ''; return; }
+  if (!val) {
+    fb.innerHTML = '';
+    return;
+  }
   const match = _buscarProduto(val); // reutiliza a lógica existente de busca de produto
   if (match) {
     fb.innerHTML = `<div class="fb ok" style="display:block">
@@ -990,30 +999,34 @@ function loteOnGtinInput() {
     fb.innerHTML = `<div class="fb warn" style="font-size:.75rem">⚠ Código não encontrado na base — será registrado assim mesmo</div>`;
   }
 }
-
 function loteConfirmarGtin() {
-  const val = (document.getElementById('lote-f-gtin')?.value || '').trim();
-  const fb  = document.getElementById('lote-fb-gtin');
-  if (!val) { if (fb) fb.innerHTML = `<div class="fb err">Bipe ou digite o código</div>`; return; }
+  var _document$getElementB6;
+  const val = (((_document$getElementB6 = document.getElementById('lote-f-gtin')) === null || _document$getElementB6 === void 0 ? void 0 : _document$getElementB6.value) || '').trim();
+  const fb = document.getElementById('lote-fb-gtin');
+  if (!val) {
+    if (fb) fb.innerHTML = `<div class="fb err">Bipe ou digite o código</div>`;
+    return;
+  }
   if (!APP.lote) return;
   const match = _buscarProduto(val);
-  APP.lote.gtin             = normProd(val);
-  APP.lote.codigoProduto    = normProd(match?.codigo_produto || val);
-  APP.lote.descricaoProduto = match?.descricao_produto || 'Código sem cadastro';
+  APP.lote.gtin = normProd(val);
+  APP.lote.codigoProduto = normProd((match === null || match === void 0 ? void 0 : match.codigo_produto) || val);
+  APP.lote.descricaoProduto = (match === null || match === void 0 ? void 0 : match.descricao_produto) || 'Código sem cadastro';
   _loteShowTela('qtd');
   const resumoEl = document.getElementById('lote-prod-resumo');
   if (resumoEl) resumoEl.innerHTML = `<b>${escHTML(APP.lote.descricaoProduto)}</b><br><span style="opacity:.7">${escHTML(APP.lote.gtin)}</span>`;
-  setTimeout(() => document.getElementById('lote-f-qtd-padrao')?.focus(), 120);
+  setTimeout(() => {
+    var _document$getElementB7;
+    return (_document$getElementB7 = document.getElementById('lote-f-qtd-padrao')) === null || _document$getElementB7 === void 0 ? void 0 : _document$getElementB7.focus();
+  }, 120);
 }
 
 /** Reutiliza a lógica de busca de produto do fluxo normal */
 function _buscarProduto(gtin) {
+  var _APP$lote5, _window$DTProdutos;
   const codigo = normProd(gtin);
-  const endNorm = APP.lote?.endNorm || APP.atual._endNorm || '';
-  const corresponde = r =>
-    normProd(r.gtin) === codigo ||
-    normProd(r.dun) === codigo ||
-    normProd(r.codigo_produto) === codigo;
+  const endNorm = ((_APP$lote5 = APP.lote) === null || _APP$lote5 === void 0 ? void 0 : _APP$lote5.endNorm) || APP.atual._endNorm || '';
+  const corresponde = r => normProd(r.gtin) === codigo || normProd(r.dun) === codigo || normProd(r.codigo_produto) === codigo;
   // Primeiro tenta pelo endereço + gtin
   const matchEnd = (APP.base || []).find(r => r._end === endNorm && corresponde(r));
   if (matchEnd) return matchEnd;
@@ -1022,7 +1035,9 @@ function _buscarProduto(gtin) {
   if (matchInventario) return matchInventario;
   // Mesma Base Geral usada pela Auditoria: identifica o produto mesmo quando
   // ele não consta na base operacional/endereço deste inventário.
-  const geral = window.DTProdutos?.buscarSync(gtin) || { encontrado:false };
+  const geral = ((_window$DTProdutos = window.DTProdutos) === null || _window$DTProdutos === void 0 ? void 0 : _window$DTProdutos.buscarSync(gtin)) || {
+    encontrado: false
+  };
   if (!geral.encontrado) return null;
   return {
     codigo_produto: geral.codigoInterno || geral.produtoId || codigo,
@@ -1038,74 +1053,88 @@ function _buscarProduto(gtin) {
 //  TELA QTD PADRÃO
 // ──────────────────────────────────────────────────────────────────
 function loteConfirmarQtdPadrao() {
-  const val = parseInt(document.getElementById('lote-f-qtd-padrao')?.value);
-  const fb  = document.getElementById('lote-fb-qtd');
-  if (isNaN(val) || val <= 0) { if (fb) fb.innerHTML = `<div class="fb err">Informe uma quantidade válida</div>`; return; }
+  var _document$getElementB8;
+  const val = parseInt((_document$getElementB8 = document.getElementById('lote-f-qtd-padrao')) === null || _document$getElementB8 === void 0 ? void 0 : _document$getElementB8.value);
+  const fb = document.getElementById('lote-fb-qtd');
+  if (isNaN(val) || val <= 0) {
+    if (fb) fb.innerHTML = `<div class="fb err">Informe uma quantidade válida</div>`;
+    return;
+  }
   APP.lote.qtdPadrao = val;
   _loteShowTela('total');
   // Mostrar resumo + aviso de capacidade
-  const jaUsados  = _lotePalletsJaUsados(APP.lote.endNorm);
-  const maxPoss   = APP.lote.cap > 0 ? Math.max(0, APP.lote.cap - jaUsados) : 999;
-  const resumoEl  = document.getElementById('lote-total-resumo');
+  const jaUsados = _lotePalletsJaUsados(APP.lote.endNorm);
+  const maxPoss = APP.lote.cap > 0 ? Math.max(0, APP.lote.cap - jaUsados) : 999;
+  const resumoEl = document.getElementById('lote-total-resumo');
   if (resumoEl) resumoEl.innerHTML = `Produto: <b>${escHTML(APP.lote.descricaoProduto)}</b><br>Qtd/pallet: <b>${escHTML(String(val))}</b>`;
-  const avisoEl   = document.getElementById('lote-total-aviso-cap');
+  const avisoEl = document.getElementById('lote-total-aviso-cap');
   if (avisoEl && APP.lote.cap > 0) {
     avisoEl.style.display = '';
     avisoEl.innerHTML = `⚠ Capacidade do endereço: <b>${escHTML(String(APP.lote.cap))}</b> &nbsp;·&nbsp; Já usados: <b>${escHTML(String(jaUsados))}</b> &nbsp;·&nbsp; Máximo neste lote: <b>${escHTML(String(maxPoss))}</b>`;
   }
   const fTotal = document.getElementById('lote-f-total');
-  if (fTotal) { fTotal.max = String(maxPoss); fTotal.value = ''; }
-  setTimeout(() => fTotal?.focus(), 120);
+  if (fTotal) {
+    fTotal.max = String(maxPoss);
+    fTotal.value = '';
+  }
+  setTimeout(() => fTotal === null || fTotal === void 0 ? void 0 : fTotal.focus(), 120);
 }
 
 // ──────────────────────────────────────────────────────────────────
 //  TELA TOTAL DE PALLETS
 // ──────────────────────────────────────────────────────────────────
 function loteConfirmarTotal() {
-  const val       = parseInt(document.getElementById('lote-f-total')?.value);
-  const fb        = document.getElementById('lote-fb-total');
-  const jaUsados  = _lotePalletsJaUsados(APP.lote.endNorm);
-  const maxPoss   = APP.lote.cap > 0 ? Math.max(0, APP.lote.cap - jaUsados) : 9999;
-  if (isNaN(val) || val <= 0) { if (fb) fb.innerHTML = `<div class="fb err">Informe uma quantidade válida</div>`; return; }
+  var _document$getElementB9;
+  const val = parseInt((_document$getElementB9 = document.getElementById('lote-f-total')) === null || _document$getElementB9 === void 0 ? void 0 : _document$getElementB9.value);
+  const fb = document.getElementById('lote-fb-total');
+  const jaUsados = _lotePalletsJaUsados(APP.lote.endNorm);
+  const maxPoss = APP.lote.cap > 0 ? Math.max(0, APP.lote.cap - jaUsados) : 9999;
+  if (isNaN(val) || val <= 0) {
+    if (fb) fb.innerHTML = `<div class="fb err">Informe uma quantidade válida</div>`;
+    return;
+  }
   if (APP.lote.cap > 0 && val > maxPoss) {
-    if (fb) fb.innerHTML = `<div class="fb err">Máximo permitido: ${maxPoss} pallet(s)</div>`; return;
+    if (fb) fb.innerHTML = `<div class="fb err">Máximo permitido: ${maxPoss} pallet(s)</div>`;
+    return;
   }
   APP.lote.totalPallets = val;
-  APP.lote.capasLidas   = [];
+  APP.lote.capasLidas = [];
   _loteShowTela('capas');
   _loteAtualizarTelaCapa();
-  setTimeout(() => document.getElementById('lote-f-capa')?.focus(), 120);
+  setTimeout(() => {
+    var _document$getElementB0;
+    return (_document$getElementB0 = document.getElementById('lote-f-capa')) === null || _document$getElementB0 === void 0 ? void 0 : _document$getElementB0.focus();
+  }, 120);
 }
 
 // ──────────────────────────────────────────────────────────────────
 //  TELA LEITURA DE CAPAS
 // ──────────────────────────────────────────────────────────────────
 function _loteAtualizarTelaCapa() {
-  const l        = APP.lote;
-  const lidas    = l.capasLidas.length;
-  const total    = l.totalPallets;
+  const l = APP.lote;
+  const lidas = l.capasLidas.length;
+  const total = l.totalPallets;
   const restante = total - lidas;
-  const pct      = total > 0 ? Math.round((lidas / total) * 100) : 0;
-  const progEl   = document.getElementById('lote-capas-prog');
-  const barEl    = document.getElementById('lote-capas-bar');
-  const listaWrap= document.getElementById('lote-capas-lidas-wrap');
-  const listaEl  = document.getElementById('lote-capas-lidas-list');
-  if (progEl)   progEl.innerHTML = `Pallet <b>${lidas + 1}</b> de <b>${total}</b> &nbsp;·&nbsp; Restam: <b>${restante}</b>`;
-  if (barEl)    barEl.style.width = pct + '%';
+  const pct = total > 0 ? Math.round(lidas / total * 100) : 0;
+  const progEl = document.getElementById('lote-capas-prog');
+  const barEl = document.getElementById('lote-capas-bar');
+  const listaWrap = document.getElementById('lote-capas-lidas-wrap');
+  const listaEl = document.getElementById('lote-capas-lidas-list');
+  if (progEl) progEl.innerHTML = `Pallet <b>${lidas + 1}</b> de <b>${total}</b> &nbsp;·&nbsp; Restam: <b>${restante}</b>`;
+  if (barEl) barEl.style.width = pct + '%';
   if (listaWrap) listaWrap.style.display = lidas > 0 ? '' : 'none';
-  if (listaEl)  listaEl.innerHTML = l.capasLidas.map((c, i) =>
-    `<span style="background:rgba(232,117,26,.12);border:1px solid rgba(232,117,26,.25);border-radius:6px;padding:2px 7px;font-family:var(--mono);font-size:.68rem;color:var(--accent)">${c}</span>`
-  ).join('');
+  if (listaEl) listaEl.innerHTML = l.capasLidas.map((c, i) => `<span style="background:rgba(232,117,26,.12);border:1px solid rgba(232,117,26,.25);border-radius:6px;padding:2px 7px;font-family:var(--mono);font-size:.68rem;color:var(--accent)">${c}</span>`).join('');
   _loteAtualizarHeader();
 }
-
 function loteOnCapaInput() {
-  const val = document.getElementById('lote-f-capa')?.value || '';
-  const fb  = document.getElementById('lote-fb-capa');
+  var _document$getElementB1;
+  const val = ((_document$getElementB1 = document.getElementById('lote-f-capa')) === null || _document$getElementB1 === void 0 ? void 0 : _document$getElementB1.value) || '';
+  const fb = document.getElementById('lote-fb-capa');
   if (!fb) return;
   if (val.length >= 7) {
+    var _APP$lote6;
     // Verificar duplicata
-    if (APP.lote?.capasLidas.includes(val)) {
+    if ((_APP$lote6 = APP.lote) !== null && _APP$lote6 !== void 0 && _APP$lote6.capasLidas.includes(val)) {
       fb.innerHTML = `<div class="fb err">⚠ Capa já lida neste lote</div>`;
     } else {
       fb.innerHTML = `<div class="fb ok" style="font-size:.75rem">✓ ${val}</div>`;
@@ -1114,13 +1143,18 @@ function loteOnCapaInput() {
     fb.innerHTML = '';
   }
 }
-
 function loteConfirmarCapa() {
   const fCapa = document.getElementById('lote-f-capa');
-  const fb    = document.getElementById('lote-fb-capa');
-  const val   = (fCapa?.value || '').trim();
-  if (!val || val.length < 7) { if (fb) fb.innerHTML = `<div class="fb err">Mínimo 7 dígitos</div>`; return; }
-  if (APP.lote.capasLidas.includes(val)) { if (fb) fb.innerHTML = `<div class="fb err">Capa já lida — bipe a próxima</div>`; return; }
+  const fb = document.getElementById('lote-fb-capa');
+  const val = ((fCapa === null || fCapa === void 0 ? void 0 : fCapa.value) || '').trim();
+  if (!val || val.length < 7) {
+    if (fb) fb.innerHTML = `<div class="fb err">Mínimo 7 dígitos</div>`;
+    return;
+  }
+  if (APP.lote.capasLidas.includes(val)) {
+    if (fb) fb.innerHTML = `<div class="fb err">Capa já lida — bipe a próxima</div>`;
+    return;
+  }
   APP.lote.capasLidas.push(val);
   beepOk();
   const lidas = APP.lote.capasLidas.length;
@@ -1131,9 +1165,11 @@ function loteConfirmarCapa() {
   } else {
     // Próxima capa
     if (fCapa) fCapa.value = '';
-    if (fb)    fb.innerHTML = `<div class="fb ok">✓ Capa ${lidas} registrada — leia a próxima</div>`;
+    if (fb) fb.innerHTML = `<div class="fb ok">✓ Capa ${lidas} registrada — leia a próxima</div>`;
     _loteAtualizarTelaCapa();
-    setTimeout(() => { fCapa?.value === '' && fCapa?.focus(); }, 80);
+    setTimeout(() => {
+      (fCapa === null || fCapa === void 0 ? void 0 : fCapa.value) === '' && (fCapa === null || fCapa === void 0 ? void 0 : fCapa.focus());
+    }, 80);
   }
 }
 
@@ -1144,22 +1180,31 @@ function _loteIniciarValidade() {
   APP.lote.pendenciasValidade = [...APP.lote.capasLidas]; // todas as capas ainda sem validade
   _loteShowTela('validade');
   _loteAtualizarTelaValidade();
-  setTimeout(() => document.getElementById('lote-f-validade')?.focus(), 120);
+  setTimeout(() => {
+    var _document$getElementB10;
+    return (_document$getElementB10 = document.getElementById('lote-f-validade')) === null || _document$getElementB10 === void 0 ? void 0 : _document$getElementB10.focus();
+  }, 120);
 }
-
 function _loteAtualizarTelaValidade() {
-  const l       = APP.lote;
-  const pend    = l.pendenciasValidade?.length || 0;
-  const txtEl   = document.getElementById('lote-val-pendente-txt');
+  var _l$pendenciasValidade;
+  const l = APP.lote;
+  const pend = ((_l$pendenciasValidade = l.pendenciasValidade) === null || _l$pendenciasValidade === void 0 ? void 0 : _l$pendenciasValidade.length) || 0;
+  const txtEl = document.getElementById('lote-val-pendente-txt');
   const fValQtd = document.getElementById('lote-f-val-qtd');
   if (txtEl) txtEl.innerHTML = `Faltam definir validade de <b>${pend}</b> pallet(s)`;
-  if (fValQtd) { fValQtd.max = String(pend); fValQtd.value = pend === 1 ? '1' : ''; }
+  if (fValQtd) {
+    fValQtd.max = String(pend);
+    fValQtd.value = pend === 1 ? '1' : '';
+  }
 }
-
 function loteOnValidadeInput() {
-  const val = document.getElementById('lote-f-validade')?.value || '';
-  const fb  = document.getElementById('lote-fb-validade');
-  if (!fb || !val) { if (fb) fb.innerHTML = ''; return; }
+  var _document$getElementB11;
+  const val = ((_document$getElementB11 = document.getElementById('lote-f-validade')) === null || _document$getElementB11 === void 0 ? void 0 : _document$getElementB11.value) || '';
+  const fb = document.getElementById('lote-fb-validade');
+  if (!fb || !val) {
+    if (fb) fb.innerHTML = '';
+    return;
+  }
   // Formato simples: aceitar MM/AAAA ou DD/MM/AAAA
   if (/^\d{2}\/\d{4}$/.test(val) || /^\d{2}\/\d{2}\/\d{4}$/.test(val)) {
     fb.innerHTML = `<div class="fb ok" style="font-size:.75rem">✓ ${val}</div>`;
@@ -1167,29 +1212,47 @@ function loteOnValidadeInput() {
     fb.innerHTML = '';
   }
 }
-
 function loteConfirmarValidade() {
-  const validade     = (document.getElementById('lote-f-validade')?.value || '').trim();
-  const loteProduto  = (document.getElementById('lote-f-lote-produto')?.value || '').trim();
-  const qtdPal   = parseInt(document.getElementById('lote-f-val-qtd')?.value);
-  const fb       = document.getElementById('lote-fb-validade');
-  const pend     = APP.lote.pendenciasValidade?.length || 0;
-  if (!validade) { if (fb) fb.innerHTML = `<div class="fb err">Informe a validade</div>`; return; }
-  if (!loteProduto) { if (fb) fb.innerHTML = `<div class="fb err">Informe o número do lote do produto</div>`; return; }
-  if (isNaN(qtdPal) || qtdPal <= 0) { if (fb) fb.innerHTML = `<div class="fb err">Informe quantos pallets</div>`; return; }
-  if (qtdPal > pend) { if (fb) fb.innerHTML = `<div class="fb err">Máximo: ${pend}</div>`; return; }
+  var _document$getElementB12, _document$getElementB13, _document$getElementB14, _APP$lote$pendenciasV;
+  const validade = (((_document$getElementB12 = document.getElementById('lote-f-validade')) === null || _document$getElementB12 === void 0 ? void 0 : _document$getElementB12.value) || '').trim();
+  const loteProduto = (((_document$getElementB13 = document.getElementById('lote-f-lote-produto')) === null || _document$getElementB13 === void 0 ? void 0 : _document$getElementB13.value) || '').trim();
+  const qtdPal = parseInt((_document$getElementB14 = document.getElementById('lote-f-val-qtd')) === null || _document$getElementB14 === void 0 ? void 0 : _document$getElementB14.value);
+  const fb = document.getElementById('lote-fb-validade');
+  const pend = ((_APP$lote$pendenciasV = APP.lote.pendenciasValidade) === null || _APP$lote$pendenciasV === void 0 ? void 0 : _APP$lote$pendenciasV.length) || 0;
+  if (!validade) {
+    if (fb) fb.innerHTML = `<div class="fb err">Informe a validade</div>`;
+    return;
+  }
+  if (!loteProduto) {
+    if (fb) fb.innerHTML = `<div class="fb err">Informe o número do lote do produto</div>`;
+    return;
+  }
+  if (isNaN(qtdPal) || qtdPal <= 0) {
+    if (fb) fb.innerHTML = `<div class="fb err">Informe quantos pallets</div>`;
+    return;
+  }
+  if (qtdPal > pend) {
+    if (fb) fb.innerHTML = `<div class="fb err">Máximo: ${pend}</div>`;
+    return;
+  }
 
   // Pegar as primeiras qtdPal capas das pendências
   const capasGrupo = APP.lote.pendenciasValidade.splice(0, qtdPal);
-  APP.lote.grupos.push({ validade, loteProduto, capas: capasGrupo });
-
+  APP.lote.grupos.push({
+    validade,
+    loteProduto,
+    capas: capasGrupo
+  });
   if (APP.lote.pendenciasValidade.length > 0) {
     // Ainda há pendências
     document.getElementById('lote-f-validade').value = '';
     document.getElementById('lote-f-lote-produto').value = '';
     _loteAtualizarTelaValidade();
     if (fb) fb.innerHTML = `<div class="fb ok">✓ ${qtdPal} pallet(s) com validade ${validade} / lote ${loteProduto} — defina o próximo</div>`;
-    setTimeout(() => document.getElementById('lote-f-validade')?.focus(), 80);
+    setTimeout(() => {
+      var _document$getElementB15;
+      return (_document$getElementB15 = document.getElementById('lote-f-validade')) === null || _document$getElementB15 === void 0 ? void 0 : _document$getElementB15.focus();
+    }, 80);
   } else {
     // Tudo definido — salvar e ir para continuação
     _loteSalvarTudo();
@@ -1200,6 +1263,7 @@ function loteConfirmarValidade() {
 //  SALVAR TODOS OS PALLETS DO LOTE INDIVIDUALMENTE
 // ──────────────────────────────────────────────────────────────────
 async function _loteSalvarTudo() {
+  var _window$DTProdutos2;
   // ── Verificar status do inventário antes de salvar o lote ──
   if (!APP.inventario) {
     toast('⚠ Nenhum inventário ativo — selecione um inventário antes de contar.', 'e');
@@ -1212,10 +1276,9 @@ async function _loteSalvarTudo() {
     voltarInventarios();
     return;
   }
-
-  const l    = APP.lote;
+  const l = APP.lote;
   const agora = new Date();
-  let saved  = 0;
+  let saved = 0;
   const novasContagens = [];
   // Contado uma única vez ANTES do loop — refazer este filter() sobre o
   // array inteiro a cada pallet (como era antes) é O(n) por item, e some com
@@ -1231,16 +1294,16 @@ async function _loteSalvarTudo() {
   // usa codigo_produto como último recurso) mostrava o código interno do
   // produto na coluna DUN/GTIN em vez do código de barras real que foi
   // bipado uma única vez pra todo o lote.
-  const _gtinBipadoLote  = normProd(l.gtin);
+  const _gtinBipadoLote = normProd(l.gtin);
   const _isDunBipadoLote = _gtinBipadoLote.length === 14;
-  const _produtoGlobalLote = window.DTProdutos?.buscarSync(_gtinBipadoLote) || { encontrado:false };
-  const _codigoLidoLote  = _gtinBipadoLote;
-  const _dunLidoLote     = _isDunBipadoLote ? _gtinBipadoLote : '';
-  const _gtinLidoLote     = !_isDunBipadoLote ? _gtinBipadoLote : (_produtoGlobalLote.gtin || '');
+  const _produtoGlobalLote = ((_window$DTProdutos2 = window.DTProdutos) === null || _window$DTProdutos2 === void 0 ? void 0 : _window$DTProdutos2.buscarSync(_gtinBipadoLote)) || {
+    encontrado: false
+  };
+  const _codigoLidoLote = _gtinBipadoLote;
+  const _dunLidoLote = _isDunBipadoLote ? _gtinBipadoLote : '';
+  const _gtinLidoLote = !_isDunBipadoLote ? _gtinBipadoLote : _produtoGlobalLote.gtin || '';
   const _produtoLidoIdLote = _produtoGlobalLote.encontrado ? _produtoGlobalLote.produtoId : '';
-  const _nomeProdutoLidoLote = _produtoGlobalLote.encontrado
-    ? _produtoGlobalLote.nomeProduto
-    : (l.descricaoProduto || 'Produto não identificado');
+  const _nomeProdutoLidoLote = _produtoGlobalLote.encontrado ? _produtoGlobalLote.nomeProduto : l.descricaoProduto || 'Produto não identificado';
 
   // Para cada grupo de validade, salvar cada capa individualmente.
   // Enfileira uma de cada vez (silencioso:true) em vez de disparar tudo em
@@ -1251,53 +1314,61 @@ async function _loteSalvarTudo() {
   let ultimoUuid = null;
   for (const grupo of l.grupos) {
     for (const capa of grupo.capas) {
+      var _APP$inventario7, _APP$inventario8, _APP$inventario9, _APP$operador6, _APP$operador7, _APP$operador8, _APP$operador9, _APP$operador0, _APP$operador1, _APP$operador10;
       const contagem = {
-        id:                Date.now() + Math.random(), // garante uniqueness em loop síncrono
-        uuid:              gerarUUID(),
-        inventario_id:     APP.inventario?.id     || 'local',
-        inventario_nome:   APP.inventario?.nome   || '',
-        inventario_codigo: APP.inventario?.codigo || '',
-        endereco:          l.endNorm,
-        capa:              capa,
-        gtin:           normProd(l.gtin),
+        id: Date.now() + Math.random(),
+        // garante uniqueness em loop síncrono
+        uuid: gerarUUID(),
+        inventario_id: ((_APP$inventario7 = APP.inventario) === null || _APP$inventario7 === void 0 ? void 0 : _APP$inventario7.id) || 'local',
+        inventario_nome: ((_APP$inventario8 = APP.inventario) === null || _APP$inventario8 === void 0 ? void 0 : _APP$inventario8.nome) || '',
+        inventario_codigo: ((_APP$inventario9 = APP.inventario) === null || _APP$inventario9 === void 0 ? void 0 : _APP$inventario9.codigo) || '',
+        endereco: l.endNorm,
+        capa: capa,
+        gtin: normProd(l.gtin),
         codigo_produto: normProd(l.codigoProduto),
-        produto_codigo:    l.codigoProduto,
-        codigoLido:        _codigoLidoLote,
-        dunLido:           _dunLidoLote,
-        gtinLido:          _gtinLidoLote,
-        produtoLidoId:     _produtoLidoIdLote,
-        produtoLidoNome:   _nomeProdutoLidoLote,
-        descricao:         l.descricaoProduto,
+        produto_codigo: l.codigoProduto,
+        codigoLido: _codigoLidoLote,
+        dunLido: _dunLidoLote,
+        gtinLido: _gtinLidoLote,
+        produtoLidoId: _produtoLidoIdLote,
+        produtoLidoNome: _nomeProdutoLidoLote,
+        descricao: l.descricaoProduto,
         descricao_produto: l.descricaoProduto,
-        validade:          grupo.validade,
-        lote_produto:      grupo.loteProduto || '',
-        loteProduto:       grupo.loteProduto || '',
-        quantidade:        l.qtdPadrao,
+        validade: grupo.validade,
+        lote_produto: grupo.loteProduto || '',
+        loteProduto: grupo.loteProduto || '',
+        quantidade: l.qtdPadrao,
         quantidade_esperada: '',
-        divergente:        false,
-        operador:          APP.operador?.name  || '',
-        operador_id:       APP.operador?.email || APP.operador?.usuario || APP.operador?.login || '',
-        operador_nome:     APP.operador?.name  || APP.operador?.nome || '',
-        operador_email:    APP.operador?.email || '',
-        coletor_id:        localStorage.getItem('dt_device_id') || '',
-        origem:            'COLETOR',
+        divergente: false,
+        operador: ((_APP$operador6 = APP.operador) === null || _APP$operador6 === void 0 ? void 0 : _APP$operador6.name) || '',
+        operador_id: ((_APP$operador7 = APP.operador) === null || _APP$operador7 === void 0 ? void 0 : _APP$operador7.email) || ((_APP$operador8 = APP.operador) === null || _APP$operador8 === void 0 ? void 0 : _APP$operador8.usuario) || ((_APP$operador9 = APP.operador) === null || _APP$operador9 === void 0 ? void 0 : _APP$operador9.login) || '',
+        operador_nome: ((_APP$operador0 = APP.operador) === null || _APP$operador0 === void 0 ? void 0 : _APP$operador0.name) || ((_APP$operador1 = APP.operador) === null || _APP$operador1 === void 0 ? void 0 : _APP$operador1.nome) || '',
+        operador_email: ((_APP$operador10 = APP.operador) === null || _APP$operador10 === void 0 ? void 0 : _APP$operador10.email) || '',
+        coletor_id: localStorage.getItem('dt_device_id') || '',
+        origem: 'COLETOR',
         // Mesmos campos de recontagem usados no salvamento palete-a-palete
         // (ver _executarSalvar em 08-etapas-produto-quantidade-salvamento.js)
         // — sem isto, um lote lançado durante recontagem seria gravado como
         // contagem PRIMEIRA e nunca fecharia a divergência que originou a
         // recontagem.
-        tipo_contagem:     APP.modoRecontagem ? 'RECONTAGEM' : 'PRIMEIRA',
-        recontagem_id:     APP.modoRecontagem ? (APP.modoRecontagem.id || null) : null,
-        divergencia_id:    APP.modoRecontagem ? (APP.modoRecontagem.divergencia_id || (APP.modoRecontagem._col === 'divergencia' ? APP.modoRecontagem.id : null)) : null,
+        tipo_contagem: APP.modoRecontagem ? 'RECONTAGEM' : 'PRIMEIRA',
+        recontagem_id: APP.modoRecontagem ? APP.modoRecontagem.id || null : null,
+        divergencia_id: APP.modoRecontagem ? APP.modoRecontagem.divergencia_id || (APP.modoRecontagem._col === 'divergencia' ? APP.modoRecontagem.id : null) : null,
         numero_recontagem: APP.modoRecontagem ? Number(APP.modoRecontagem.numero_recontagem || 1) : null,
-        lancamento_rapido: true,   // flag para rastreabilidade
-        dataHora:          agora,
-        criado_em:         agora.toISOString(),
-        numero:            numeroBase + saved + 1,
+        lancamento_rapido: true,
+        // flag para rastreabilidade
+        dataHora: agora,
+        criado_em: agora.toISOString(),
+        numero: numeroBase + saved + 1
       };
       novasContagens.push(contagem);
-      const registro = { ...contagem, dataHora: agora.toISOString() };
-      await enfileirarContagem(registro, { silencioso: true });
+      const registro = {
+        ...contagem,
+        dataHora: agora.toISOString()
+      };
+      await enfileirarContagem(registro, {
+        silencioso: true
+      });
       ultimoUuid = registro.uuid;
       saved++;
     }
@@ -1307,39 +1378,36 @@ async function _loteSalvarTudo() {
   // item a item produzia, mas em O(n) no total em vez de O(n²).
   APP.contagens = novasContagens.reverse().concat(APP.contagens);
   if (ultimoUuid) await finalizarEnfileiramento(ultimoUuid);
-
   l.totalSalvos = (l.totalSalvos || 0) + saved;
   if (!isNaN(l.qtdPadrao)) {
     const n = parseInt(l.capasLidas[l.capasLidas.length - 1]);
     if (!isNaN(n) && n >= APP.proximoCapa) APP.proximoCapa = n + 1;
   }
-
   renderHistorico();
   updateStats();
   beepOk();
   toast(`✅ ${saved} pallets salvos em lote!`, 's');
 
   // ── Verificar capacidade após salvar batch ────────────────────────
-  const _capLote   = l.cap || 0;
+  const _capLote = l.cap || 0;
   const _usadosLote = _lotePalletsJaUsados(l.endNorm);
   if (_capLote > 0 && _usadosLote >= _capLote) {
     // Capacidade atingida — encerrar imediatamente sem mostrar tela continuar
     toast(`✅ Capacidade do endereço atingida (${_usadosLote}/${_capLote}) — próximo endereço`, 's');
     APP.lote = null;
     _loteSetPainel(false);
-    if (APP.modoRecontagem) _concluirRecontagem(); else finalizarEnderecoAtual();
+    if (APP.modoRecontagem) _concluirRecontagem();else finalizarEnderecoAtual();
     return;
   }
 
   // Ainda há vaga → ir para tela de continuação
   _loteShowTela('continuar');
-  const jaUsados  = _lotePalletsJaUsados(l.endNorm);
+  const jaUsados = _lotePalletsJaUsados(l.endNorm);
   const restantes = l.cap > 0 ? Math.max(0, l.cap - jaUsados) : null;
-  const resumoEl  = document.getElementById('lote-cont-resumo');
-  const capTxtEl  = document.getElementById('lote-cont-cap-txt');
+  const resumoEl = document.getElementById('lote-cont-resumo');
+  const capTxtEl = document.getElementById('lote-cont-cap-txt');
   if (resumoEl) resumoEl.innerHTML = `${saved} pallets salvos com sucesso!<br><span style="font-size:.78rem;color:var(--muted);font-weight:400">${l.descricaoProduto} · ${l.qtdPadrao} un/pallet</span>`;
-  if (capTxtEl && l.cap > 0) capTxtEl.innerHTML = `Capacidade: <b>${l.cap}</b> &nbsp;·&nbsp; Já contados: <b>${jaUsados}</b> &nbsp;·&nbsp; Restantes: <b>${restantes}</b>`;
-  else if (capTxtEl) capTxtEl.innerHTML = `Total contado neste endereço: <b>${jaUsados}</b>`;
+  if (capTxtEl && l.cap > 0) capTxtEl.innerHTML = `Capacidade: <b>${l.cap}</b> &nbsp;·&nbsp; Já contados: <b>${jaUsados}</b> &nbsp;·&nbsp; Restantes: <b>${restantes}</b>`;else if (capTxtEl) capTxtEl.innerHTML = `Total contado neste endereço: <b>${jaUsados}</b>`;
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -1347,23 +1415,26 @@ async function _loteSalvarTudo() {
 // ──────────────────────────────────────────────────────────────────
 function loteNovoBatch() {
   // Novo lote no mesmo endereço com o mesmo produto — reseta capas/grupos
-  APP.lote.capasLidas        = [];
-  APP.lote.grupos            = [];
+  APP.lote.capasLidas = [];
+  APP.lote.grupos = [];
   APP.lote.pendenciasValidade = [];
-  APP.lote.qtdPadrao         = null;
-  APP.lote.totalPallets      = null;
+  APP.lote.qtdPadrao = null;
+  APP.lote.totalPallets = null;
   // Volta para tela de qty padrão
   _loteShowTela('qtd');
   const resumoEl = document.getElementById('lote-prod-resumo');
   if (resumoEl) resumoEl.innerHTML = `<b>${escHTML(APP.lote.descricaoProduto)}</b><br><span style="opacity:.7">${escHTML(APP.lote.gtin)}</span>`;
   document.getElementById('lote-f-qtd-padrao').value = '';
-  setTimeout(() => document.getElementById('lote-f-qtd-padrao')?.focus(), 120);
+  setTimeout(() => {
+    var _document$getElementB16;
+    return (_document$getElementB16 = document.getElementById('lote-f-qtd-padrao')) === null || _document$getElementB16 === void 0 ? void 0 : _document$getElementB16.focus();
+  }, 120);
 }
-
 function loteContinuarManual() {
-  const endNorm = APP.lote?.endNorm;
-  const cap     = APP.lote?.cap || 0;
-  const sonen   = APP.lote?.somentesDun || false;
+  var _APP$lote7, _APP$lote8, _APP$lote9;
+  const endNorm = (_APP$lote7 = APP.lote) === null || _APP$lote7 === void 0 ? void 0 : _APP$lote7.endNorm;
+  const cap = ((_APP$lote8 = APP.lote) === null || _APP$lote8 === void 0 ? void 0 : _APP$lote8.cap) || 0;
+  const sonen = ((_APP$lote9 = APP.lote) === null || _APP$lote9 === void 0 ? void 0 : _APP$lote9.somentesDun) || false;
   APP.lote = null;
   _loteSetPainel(false);
   // Entrar no modo travado (rebipar) — lógica existente
@@ -1371,20 +1442,20 @@ function loteContinuarManual() {
   if (stepEnd) stepEnd.style.display = 'none';
   _manterEnderecoAtivo(endNorm, endNorm, cap, sonen);
 }
-
 function loteEncerrar() {
-  const endNorm = APP.lote?.endNorm || '';
+  var _APP$lote0;
+  const endNorm = ((_APP$lote0 = APP.lote) === null || _APP$lote0 === void 0 ? void 0 : _APP$lote0.endNorm) || '';
   APP.lote = null;
   _loteSetPainel(false);
   // Usar confirmarVazio somente se nenhum pallet foi contado,
   // caso contrário apenas encerrar (a divergência será detectada pelo analista)
   const j = _lotePalletsJaUsados(endNorm);
   if (j === 0 && endNorm) {
-    _executarVazio(endNorm);      // endereço realmente vazio — salvar vazio
+    _executarVazio(endNorm); // endereço realmente vazio — salvar vazio
   } else if (APP.modoRecontagem) {
-    _concluirRecontagem();        // fecha a rodada de recontagem corretamente
+    _concluirRecontagem(); // fecha a rodada de recontagem corretamente
   } else {
-    finalizarEnderecoAtual();     // pallets já contados — apenas encerrar
+    finalizarEnderecoAtual(); // pallets já contados — apenas encerrar
     toast('✅ Endereço encerrado', 's');
   }
 }
@@ -1402,26 +1473,24 @@ function _loteVerificarOferta(endNorm, endExib, capExplicita) {
 
 /** Deve ser chamado em resetContagem para limpar o estado lote */
 function _loteReset() {
-  APP.lote              = null;
+  APP.lote = null;
   APP.lotePerguntaFeita = false; // novo endereço → pode perguntar de novo
   _loteSetPainel(false);
 }
 
 /** Encerra o endereço como vazio — popup de confirmação obrigatório */
 function confirmarVazio() {
+  var _document$getElementB17, _APP$modoRecontagem, _APP$lote1, _APP$endCapacidade4, _APP$atual;
   // Resolver o endereço por ordem de prioridade:
   // 1) modo recontagem  2) lote ativo  3) estado atual  4) campo de tela
-  const raw = document.getElementById('f-endereco')?.value || '';
-  const endereco = APP.modoRecontagem?.endereco
-    || APP.lote?.endNorm
-    || APP.atual._endNorm
-    || APP.atual._pendingEndereco
-    || raw;
-
-  if (!endereco.trim()) { toast('Informe o endereço primeiro', 'e'); return; }
+  const raw = ((_document$getElementB17 = document.getElementById('f-endereco')) === null || _document$getElementB17 === void 0 ? void 0 : _document$getElementB17.value) || '';
+  const endereco = ((_APP$modoRecontagem = APP.modoRecontagem) === null || _APP$modoRecontagem === void 0 ? void 0 : _APP$modoRecontagem.endereco) || ((_APP$lote1 = APP.lote) === null || _APP$lote1 === void 0 ? void 0 : _APP$lote1.endNorm) || APP.atual._endNorm || APP.atual._pendingEndereco || raw;
+  if (!endereco.trim()) {
+    toast('Informe o endereço primeiro', 'e');
+    return;
+  }
   const valNorm = _normStr(endereco);
-
-  const cap = APP.endCapacidade?.[valNorm] || APP.atual?.capacidadeEnd || 0;
+  const cap = ((_APP$endCapacidade4 = APP.endCapacidade) === null || _APP$endCapacidade4 === void 0 ? void 0 : _APP$endCapacidade4[valNorm]) || ((_APP$atual = APP.atual) === null || _APP$atual === void 0 ? void 0 : _APP$atual.capacidadeEnd) || 0;
   const palletsJaContados = _palletsNoEnderecoAtual(valNorm);
 
   // ── Modal de confirmação ──
@@ -1433,9 +1502,7 @@ function confirmarVazio() {
       <div style="font-weight:800;font-size:.95rem;text-align:center;margin-bottom:6px;color:var(--text)">Confirmar endereço vazio?</div>
       <div style="font-size:.78rem;color:var(--muted);text-align:center;margin-bottom:16px;line-height:1.5">
         Endereço <b style="color:var(--warn);font-family:var(--mono)">${valNorm}</b><br>
-        ${palletsJaContados > 0
-          ? `<span style="color:var(--text)">${palletsJaContados} pallet(s) já contado(s)</span><br>`
-          : ''}
+        ${palletsJaContados > 0 ? `<span style="color:var(--text)">${palletsJaContados} pallet(s) já contado(s)</span><br>` : ''}
         ${cap > 0 ? `Capacidade: <b>${cap}</b> pallets<br>` : ''}
         <span style="color:var(--warn)">Isso encerrará este endereço.</span>
       </div>
@@ -1444,23 +1511,22 @@ function confirmarVazio() {
         <button id="btn-vazio-ok" style="flex:1;padding:12px;border-radius:10px;border:none;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-size:.88rem;font-weight:800;cursor:pointer">📭 Confirmar</button>
       </div>
     </div>`;
-
   document.body.appendChild(modal);
-
   document.getElementById('btn-vazio-ok').onclick = () => {
     modal.remove();
     _executarVazio(valNorm);
   };
   document.getElementById('btn-vazio-cancelar').onclick = () => modal.remove();
-  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  modal.addEventListener('click', e => {
+    if (e.target === modal) modal.remove();
+  });
 }
-
 function _executarVazio(valNorm) {
+  var _APP$inventario0, _APP$inventario1, _APP$inventario10, _APP$operador11, _APP$operador12, _APP$modoRecontagem2, _APP$modoRecontagem3;
   // Em recontagem: verificar apenas pallets da sessão atual (RECONTAGEM),
   // não os da 1ª contagem — o operador está confirmando o estado atual.
   // Fora de recontagem: verificar todos os pallets não-VAZIO do endereço.
   const palletsJaContados = _palletsNoEnderecoAtual(valNorm);
-
   if (palletsJaContados > 0) {
     // Já há pallets contados → NÃO enviar vazio, apenas encerrar o endereço.
     // "Endereço vazio" aqui significa: "não há mais pallets neste endereço".
@@ -1479,45 +1545,51 @@ function _executarVazio(valNorm) {
 
   // ── Nenhum pallet contado → salvar registro VAZIO normalmente ──
   // Se o painel lote estava ativo, fechar antes de gravar/resetar
-  if (APP.lote) { APP.lote = null; _loteSetPainel(false); }
+  if (APP.lote) {
+    APP.lote = null;
+    _loteSetPainel(false);
+  }
 
   // Em modo recontagem: marcar como RECONTAGEM (não VAZIO) para o analista processar
   // o resultado via sincronizarRecontagensComContagens. O produto 'VAZIO' sinaliza
   // que o operador confirmou o endereço vazio nesta rodada.
   const _emRec = !!APP.modoRecontagem;
   const contagem = {
-    id:   Date.now(),
+    id: Date.now(),
     uuid: gerarUUID(),
-    inventario_id:     APP.inventario?.id     || 'local',
-    inventario_nome:   APP.inventario?.nome   || '',
-    inventario_codigo: APP.inventario?.codigo || '',
-    endereco:          valNorm,
-    capa:              '',
-    gtin:              PROD_VAZIO,   // '__VAZIO__'
-    codigo_produto:    PROD_VAZIO,
-    produto_codigo:    PROD_VAZIO,
-    descricao:         'ENDEREÇO VAZIO',
+    inventario_id: ((_APP$inventario0 = APP.inventario) === null || _APP$inventario0 === void 0 ? void 0 : _APP$inventario0.id) || 'local',
+    inventario_nome: ((_APP$inventario1 = APP.inventario) === null || _APP$inventario1 === void 0 ? void 0 : _APP$inventario1.nome) || '',
+    inventario_codigo: ((_APP$inventario10 = APP.inventario) === null || _APP$inventario10 === void 0 ? void 0 : _APP$inventario10.codigo) || '',
+    endereco: valNorm,
+    capa: '',
+    gtin: PROD_VAZIO,
+    // '__VAZIO__'
+    codigo_produto: PROD_VAZIO,
+    produto_codigo: PROD_VAZIO,
+    descricao: 'ENDEREÇO VAZIO',
     descricao_produto: 'ENDEREÇO VAZIO',
-    validade:          '',
-    quantidade:        0,
+    validade: '',
+    quantidade: 0,
     quantidade_esperada: '',
-    divergente:        false,
-    operador:          APP.operador?.name  || '',
-    operador_email:    APP.operador?.email || '',
-    coletor_id:        localStorage.getItem('dt_device_id') || '',
-    origem:            'COLETOR',
+    divergente: false,
+    operador: ((_APP$operador11 = APP.operador) === null || _APP$operador11 === void 0 ? void 0 : _APP$operador11.name) || '',
+    operador_email: ((_APP$operador12 = APP.operador) === null || _APP$operador12 === void 0 ? void 0 : _APP$operador12.email) || '',
+    coletor_id: localStorage.getItem('dt_device_id') || '',
+    origem: 'COLETOR',
     // Em recontagem: tipo_contagem='RECONTAGEM' para o analista processar o resultado
-    tipo_contagem:     _emRec ? 'RECONTAGEM' : 'VAZIO',
-    _destino:          _emRec ? 'dt_contagens' : 'dt_vazios',
-    recontagem_id:     APP.modoRecontagem?.id          || null,
-    divergencia_id:    APP.modoRecontagem?.divergencia_id || null,
-    dataHora:          new Date(),
-    criado_em:         new Date().toISOString(),
-    numero:            1,
+    tipo_contagem: _emRec ? 'RECONTAGEM' : 'VAZIO',
+    _destino: _emRec ? 'dt_contagens' : 'dt_vazios',
+    recontagem_id: ((_APP$modoRecontagem2 = APP.modoRecontagem) === null || _APP$modoRecontagem2 === void 0 ? void 0 : _APP$modoRecontagem2.id) || null,
+    divergencia_id: ((_APP$modoRecontagem3 = APP.modoRecontagem) === null || _APP$modoRecontagem3 === void 0 ? void 0 : _APP$modoRecontagem3.divergencia_id) || null,
+    dataHora: new Date(),
+    criado_em: new Date().toISOString(),
+    numero: 1
   };
-
   APP.contagens.unshift(contagem);
-  enfileirarContagem({ ...contagem, dataHora: contagem.dataHora.toISOString() });
+  enfileirarContagem({
+    ...contagem,
+    dataHora: contagem.dataHora.toISOString()
+  });
   renderHistorico();
   updateStats();
   toast('📭 Endereço vazio encerrado: ' + valNorm, 's');
@@ -1533,7 +1605,10 @@ function _executarVazio(valNorm) {
 /** Trocar endereço (botão 🔄 que aparece após confirmar) */
 function resetEndereco() {
   // Em recontagem: sempre permitir reset (nova sessão limpa)
-  if (APP.modoRecontagem) { resetContagem(); return; }
+  if (APP.modoRecontagem) {
+    resetContagem();
+    return;
+  }
 
   // Bloquear se já há pallets contados neste endereço — operador deve encerrar com VAZIO
   const endNorm = APP.atual._endNorm || APP.atual._pendingEndereco;
@@ -1551,32 +1626,42 @@ function resetEndereco() {
   if (blocoTravado) blocoTravado.style.display = 'none';
   const stepEnd = document.getElementById('step-endereco');
   if (stepEnd) stepEnd.style.display = '';
-
-  APP.atual.step         = 1;
-  APP.atual.endereco     = '';
-  APP.atual._endNorm     = '';
+  APP.atual.step = 1;
+  APP.atual.endereco = '';
+  APP.atual._endNorm = '';
   APP.atual._pendingEndereco = null;
-  APP.atual._pendingPallets  = null;
+  APP.atual._pendingPallets = null;
   APP.atual.enderecoValido = false;
-  APP.atual.capa         = '';
-  APP.atual.gtin         = '';
+  APP.atual.capa = '';
+  APP.atual.gtin = '';
   APP.atual.produtoAtual = null;
-  APP.atual.validade     = '';
-  APP.atual.quantidade   = 0;
+  APP.atual.validade = '';
+  APP.atual.quantidade = 0;
   _endVerif = null;
-  ['f-endereco','f-capa','f-gtin','f-validade'].forEach(id => {
+  ['f-endereco', 'f-capa', 'f-gtin', 'f-validade'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) { el.value = ''; el.disabled = false; el.className = el.className.replace(/\bfield-(ok|err|warn)\b/g,'').trim(); }
+    if (el) {
+      el.value = '';
+      el.disabled = false;
+      el.className = el.className.replace(/\bfield-(ok|err|warn)\b/g, '').trim();
+    }
   });
-  ['fb-endereco','fb-capa','fb-gtin','fb-validade'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.innerHTML = '';
-  });
-  ['sf-val-endereco','sf-val-capa','sf-val-gtin','sf-val-validade'].forEach(id => {
+  ['fb-endereco', 'fb-capa', 'fb-gtin', 'fb-validade'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) { el.textContent = ''; el.style.display = 'none'; }
+    if (el) el.innerHTML = '';
+  });
+  ['sf-val-endereco', 'sf-val-capa', 'sf-val-gtin', 'sf-val-validade'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.textContent = '';
+      el.style.display = 'none';
+    }
   });
   const vaziow = document.getElementById('btn-vazio-wrap');
   if (vaziow) vaziow.style.display = 'none';
   updateSteps();
-  setTimeout(() => { const el = document.getElementById('f-endereco'); if (el) el.focus(); }, 80);
+  setTimeout(() => {
+    const el = document.getElementById('f-endereco');
+    if (el) el.focus();
+  }, 80);
 }

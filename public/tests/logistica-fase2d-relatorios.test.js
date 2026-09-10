@@ -125,7 +125,7 @@ test('REGRESSÃO: mensagem de status da sincronização da Agenda sobrevive ao r
   // "⏳ Buscando..." de antes do redesenho)
   const html=elFake('page-recebimento-agendamentos').innerHTML;
   assert.match(html,/0 de 0 pedido\(s\) pendente\(s\)/);
-  assert.match(html,/não tem nenhum Pedido de Compra cadastrado na Bluesoft/);
+  assert.match(html,/não tem nenhum Pedido de Compra cadastrado/);
 });
 
 test('navegação: as 4 telas de relatório estão registradas e o modal de agendamento existe',()=>{

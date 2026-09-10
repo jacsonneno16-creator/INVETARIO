@@ -36,13 +36,11 @@ const FV_DELETE = firebase.firestore.FieldValue.delete;
 
 const _LS_KEY = 'dt_device_id';
 const _SS_KEY = 'dt_device_id_ss';
-
 function _djb2(str) {
   let h = 5381;
   for (let i = 0; i < str.length; i++) h = Math.imul(h, 33) ^ str.charCodeAt(i);
   return (h >>> 0).toString(36);
 }
-
 function _gerarFingerprint() {
   const parts = [];
   // 1. User-Agent (estável no mesmo browser/versão)
@@ -50,7 +48,11 @@ function _gerarFingerprint() {
   // 2. Resolução + color depth
   parts.push(screen.width + 'x' + screen.height + ':' + screen.colorDepth);
   // 3. Fuso horário
-  try { parts.push(Intl.DateTimeFormat().resolvedOptions().timeZone); } catch(e){ console.warn("[Erro tratado]", e); }
+  try {
+    parts.push(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
   // 4. Idioma
   parts.push(navigator.language || '');
   // 5. Número de núcleos lógicos (hardware)
@@ -66,10 +68,16 @@ function _gerarFingerprint() {
     cx.fillStyle = 'rgba(0,255,0,0.5)';
     cx.fillRect(2, 0, 30, 5);
     parts.push(cv.toDataURL().slice(-32));
-  } catch(e) { parts.push('nocanvas'); }
+  } catch (e) {
+    parts.push('nocanvas');
+  }
   // 7. Plugins (browsers desktop)
-  try { parts.push(String(navigator.plugins?.length || 0)); } catch(e){ console.warn("[Erro tratado]", e); }
-
+  try {
+    var _navigator$plugins;
+    parts.push(String(((_navigator$plugins = navigator.plugins) === null || _navigator$plugins === void 0 ? void 0 : _navigator$plugins.length) || 0));
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
   return 'dt_' + _djb2(parts.join('|'));
 }
 
@@ -83,24 +91,44 @@ function obterDeviceId() {
     let did = localStorage.getItem(_LS_KEY);
     if (did && did.startsWith('dt_')) {
       // Espelhar no sessionStorage como backup
-      try { sessionStorage.setItem(_SS_KEY, did); } catch(e){ console.warn("[Erro tratado]", e); }
+      try {
+        sessionStorage.setItem(_SS_KEY, did);
+      } catch (e) {
+        console.warn("[Erro tratado]", e);
+      }
       return did;
     }
-  } catch(e){ console.warn("[Erro tratado]", e); }
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
 
   // 2. Tentar sessionStorage (caso LS bloqueado)
   try {
     let did = sessionStorage.getItem(_SS_KEY);
     if (did && did.startsWith('dt_')) {
-      try { localStorage.setItem(_LS_KEY, did); } catch(e){ console.warn("[Erro tratado]", e); }
+      try {
+        localStorage.setItem(_LS_KEY, did);
+      } catch (e) {
+        console.warn("[Erro tratado]", e);
+      }
       return did;
     }
-  } catch(e){ console.warn("[Erro tratado]", e); }
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
 
   // 3. Gerar fingerprint e persistir
   const did = _gerarFingerprint();
-  try { localStorage.setItem(_LS_KEY, did); } catch(e){ console.warn("[Erro tratado]", e); }
-  try { sessionStorage.setItem(_SS_KEY, did); } catch(e){ console.warn("[Erro tratado]", e); }
+  try {
+    localStorage.setItem(_LS_KEY, did);
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
+  try {
+    sessionStorage.setItem(_SS_KEY, did);
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
   dbg('[DeviceID] Novo ID gerado e salvo:', did);
   return did;
 }
@@ -111,9 +139,10 @@ async function obterIPPublico() {
     const r = await fetch('https://api.ipify.org?format=json');
     const j = await r.json();
     return j.ip || null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
-
 let _heartbeatInterval = null;
 
 /**
@@ -130,51 +159,55 @@ let _heartbeatInterval = null;
  */
 async function registrarColetorNoFirestore(operadorInfo) {
   const deviceId = obterDeviceId();
-  const ref      = FS.collection(FCOL.coletores).doc(deviceId);
+  const ref = FS.collection(FCOL.coletores).doc(deviceId);
 
   // O registro não pode depender de serviço externo de IP.
   const ip = null;
-
   try {
+    var _APP$inventario, _APP$inventario2;
     let snap = await ref.get();
 
     // O cadastro oficial do aparelho fica na coleção global dt_coletores.
     // Registros antigos/incompletos são normalizados pelas regras sem permitir
     // que o próprio coletor se aprove ou remova um bloqueio administrativo.
-    const dadosAtuais = snap.exists ? (snap.data() || {}) : {};
-    const foiRevogado = snap.exists &&
-      (dadosAtuais.aprovado === 'revogado' || dadosAtuais.excluido === true);
+    const dadosAtuais = snap.exists ? snap.data() || {} : {};
+    const foiRevogado = snap.exists && (dadosAtuais.aprovado === 'revogado' || dadosAtuais.excluido === true);
 
     // ── APARELHO NOVO ────────────────────────────────────────────────────
     if (!snap.exists || foiRevogado) {
       // Número provisório estável, sem consultar toda a coleção.
       const numero = deviceId.slice(-4).toUpperCase();
-
       await ref.set({
-        uid:                 operadorInfo.uid || null,
-        device_id:           deviceId,
-        nome_coletor:        'Coletor ' + numero,
-        numero:              numero,
-        operador_atual:      operadorInfo.name,
-        operador_email:      operadorInfo.email || null,
-        operador_uid:        operadorInfo.uid || null,
-        status:              'pendente',
-        aprovado:            'pendente',
-        data_registro:       ST(),
-        ultimo_ping:         ST(),
-        sessao:              null,
-        contagens_enviadas:  0,
+        uid: operadorInfo.uid || null,
+        device_id: deviceId,
+        nome_coletor: 'Coletor ' + numero,
+        numero: numero,
+        operador_atual: operadorInfo.name,
+        operador_email: operadorInfo.email || null,
+        operador_uid: operadorInfo.uid || null,
+        status: 'pendente',
+        aprovado: 'pendente',
+        data_registro: ST(),
+        ultimo_ping: ST(),
+        sessao: null,
+        contagens_enviadas: 0,
         contagens_pendentes: 0,
-        versao_app:          (typeof APP_VERSION !== 'undefined' ? APP_VERSION : '2.0.0'),
-        excluido:            false,
-        revogado_em:         null
-      }, { merge: true });
+        versao_app: typeof APP_VERSION !== 'undefined' ? APP_VERSION : '2.0.0',
+        excluido: false,
+        revogado_em: null
+      }, {
+        merge: true
+      });
 
       // A revogação cumpriu seu papel: bloqueou a restauração automática da
       // aprovação antiga. O aparelho reaparece agora como pendente e precisa
       // ser aprovado novamente pelo analista.
       // IP é enriquecimento opcional e assíncrono; nunca bloqueia o login.
-      obterIPPublico().then(v => v && ref.set({ip:v},{merge:true})).catch((erro) => {
+      obterIPPublico().then(v => v && ref.set({
+        ip: v
+      }, {
+        merge: true
+      })).catch(erro => {
         console.warn('[Coletor] Não foi possível registrar o IP do aparelho pendente', erro);
       });
       dbg('[Coletor] Novo aparelho registrado como Coletor', numero, '— pendente — ID:', deviceId);
@@ -183,15 +216,21 @@ async function registrarColetorNoFirestore(operadorInfo) {
 
     // ── APARELHO JÁ EXISTE ───────────────────────────────────────────────
     const dados = snap.data();
-
     if (dados.aprovado === 'bloqueado') {
       console.warn('[Coletor] Aparelho bloqueado — acesso negado.');
       return 'bloqueado';
     }
-
     if (dados.aprovado !== 'aprovado') {
       // Atualiza operador_atual e ping mesmo estando pendente (analista vê quem tentou)
-      await ref.set({ uid: operadorInfo.uid || null, operador_atual: operadorInfo.name, operador_email: operadorInfo.email || null, operador_uid: operadorInfo.uid || null, ultimo_ping: ST() }, {merge:true});
+      await ref.set({
+        uid: operadorInfo.uid || null,
+        operador_atual: operadorInfo.name,
+        operador_email: operadorInfo.email || null,
+        operador_uid: operadorInfo.uid || null,
+        ultimo_ping: ST()
+      }, {
+        merge: true
+      });
       dbg('[Coletor] Aparelho pendente — acesso aguardando aprovacao.');
       return 'pendente';
     }
@@ -202,27 +241,37 @@ async function registrarColetorNoFirestore(operadorInfo) {
     // operador conseguiria voltar a contar só saindo e entrando de novo.
     APP.turnoEncerrado = dados.turno_encerrado === true;
     await ref.set({
-      uid:              operadorInfo.uid || null,
-      operador_uid:     operadorInfo.uid || null,
-      operador_atual:   operadorInfo.name,
-      ultimo_ping:      ST(),
-      status:           'online',
+      uid: operadorInfo.uid || null,
+      operador_uid: operadorInfo.uid || null,
+      operador_atual: operadorInfo.name,
+      ultimo_ping: ST(),
+      status: 'online',
       sessao: {
-        operador:        operadorInfo.name,
-        email:           operadorInfo.email,
-        inventario_id:   APP.inventario?.id    || null,
-        inventario_nome: APP.inventario?.nome  || null,
-        login_em:        ST(),
-      },
-    }, { merge: true });
-    obterIPPublico().then(v => v && ref.set({ip:v},{merge:true})).catch((erro) => {
+        operador: operadorInfo.name,
+        email: operadorInfo.email,
+        inventario_id: ((_APP$inventario = APP.inventario) === null || _APP$inventario === void 0 ? void 0 : _APP$inventario.id) || null,
+        inventario_nome: ((_APP$inventario2 = APP.inventario) === null || _APP$inventario2 === void 0 ? void 0 : _APP$inventario2.nome) || null,
+        login_em: ST()
+      }
+    }, {
+      merge: true
+    });
+    obterIPPublico().then(v => v && ref.set({
+      ip: v
+    }, {
+      merge: true
+    })).catch(erro => {
       console.warn('[Coletor] Não foi possível atualizar o IP do aparelho aprovado', erro);
     });
     dbg('[Coletor] Sessao atualizada —', operadorInfo.name, '— aprovado — ID:', deviceId);
     return 'aprovado';
-
   } catch (e) {
-    console.warn('[Coletor] registrarColetorNoFirestore falhou:', { code: e.code || null, message: e.message, deviceId: deviceId, uid: operadorInfo && operadorInfo.uid });
+    console.warn('[Coletor] registrarColetorNoFirestore falhou:', {
+      code: e.code || null,
+      message: e.message,
+      deviceId: deviceId,
+      uid: operadorInfo && operadorInfo.uid
+    });
     // Sem isto, esse erro nunca aparecia na tela de Diagnóstico (bug ao vivo
     // relatado: "diagnóstico tá tudo correto" mesmo com o registro
     // falhando) — o try/catch aqui trata o erro internamente e nunca vira
@@ -234,11 +283,15 @@ async function registrarColetorNoFirestore(operadorInfo) {
     return 'erro';
   }
 }
-
-
 let _aprovacaoListener = null;
 function iniciarListenerAprovacaoColetor(operadorInfo) {
-  if (_aprovacaoListener) { try { _aprovacaoListener(); } catch(_){ console.warn("[Erro tratado]", _); } }
+  if (_aprovacaoListener) {
+    try {
+      _aprovacaoListener();
+    } catch (_) {
+      console.warn("[Erro tratado]", _);
+    }
+  }
   const ref = FS.collection(FCOL.coletores).doc(obterDeviceId());
   _aprovacaoListener = ref.onSnapshot(async snap => {
     if (!snap.exists) return;
@@ -249,8 +302,20 @@ function iniciarListenerAprovacaoColetor(operadorInfo) {
     }
     if (d.aprovado !== 'aprovado') return;
     try {
-      await ref.set({uid:operadorInfo.uid, status:'online', operador_atual:operadorInfo.name, operador_email:operadorInfo.email, operador_uid:operadorInfo.uid, ultimo_ping:ST()}, {merge:true});
-      if (_aprovacaoListener) { _aprovacaoListener(); _aprovacaoListener=null; }
+      await ref.set({
+        uid: operadorInfo.uid,
+        status: 'online',
+        operador_atual: operadorInfo.name,
+        operador_email: operadorInfo.email,
+        operador_uid: operadorInfo.uid,
+        ultimo_ping: ST()
+      }, {
+        merge: true
+      });
+      if (_aprovacaoListener) {
+        _aprovacaoListener();
+        _aprovacaoListener = null;
+      }
 
       // Ao recuperar a conexão durante uma operação já iniciada, não recarrega a
       // página. O reload apagava o contexto da auditoria e passava a impressão de
@@ -259,16 +324,76 @@ function iniciarListenerAprovacaoColetor(operadorInfo) {
       // A aprovação ou a volta da conexão nunca deve recarregar a página.
       // Mantém inventário, endereço, produto e auditoria atuais e sincroniza tudo em segundo plano.
       if (typeof window.sincronizarTudoEmSegundoPlano === 'function') {
-        window.sincronizarTudoEmSegundoPlano('aprovacao').catch(function(error){ console.warn("[Falha assíncrona]", error); });
+        window.sincronizarTudoEmSegundoPlano('aprovacao').catch(function (error) {
+          console.warn("[Falha assíncrona]", error);
+        });
       } else {
-        if (typeof window.sincronizarFilaAuditoria === 'function') window.sincronizarFilaAuditoria().catch(function(error){ console.warn("[Falha assíncrona]", error); });
-        if (typeof enviarFilaPendente === 'function') enviarFilaPendente().catch(function(error){ console.warn("[Falha assíncrona]", error); });
+        if (typeof window.sincronizarFilaAuditoria === 'function') window.sincronizarFilaAuditoria().catch(function (error) {
+          console.warn("[Falha assíncrona]", error);
+        });
+        if (typeof enviarFilaPendente === 'function') enviarFilaPendente().catch(function (error) {
+          console.warn("[Falha assíncrona]", error);
+        });
       }
       atualizarBarraStatus();
-    } catch(e) { console.error('[Aprovação] Falha ao liberar coletor:', e); }
+    } catch (e) {
+      console.error('[Aprovação] Falha ao liberar coletor:', e);
+    }
   }, err => console.error('[Aprovação] Listener:', err));
 }
 window.iniciarListenerAprovacaoColetor = iniciarListenerAprovacaoColetor;
+
+// PEDIDO AO VIVO (2026-09-04): "no lugar de ficar entrando no coletor e
+// ficar indo no analista aprovar... quero que no analista cadastre o ID do
+// coletor e na hora que abrir o aplicativo ele já peça o id pra aprovar, e
+// depois fique aprovado" — em vez de esperar o Analista abrir o painel e
+// clicar em Aprovar, o operador digita aqui o código que o Analista já
+// gerou pra este aparelho (ver 34-coletores-modelo-dispositivo.js) e libera
+// o acesso na hora. As regras do Firestore não deixam o próprio Coletor se
+// auto-aprovar (ver firestore.rules), então quem valida o código e grava a
+// aprovação é a Cloud Function resgatarCodigoAprovacaoColetor — este
+// aparelho já está autenticado (login/criação de conta acabou de acontecer)
+// então context.auth chega preenchido do lado do servidor.
+async function resgatarCodigoAprovacaoColetor() {
+  const input = document.getElementById('aprov-codigo-input');
+  const fb = document.getElementById('aprov-codigo-fb');
+  const btn = document.getElementById('aprov-codigo-btn');
+  const codigo = String((input && input.value) || '').trim().toUpperCase();
+  const setFb = (msg, cor) => { if (fb) { fb.textContent = msg; fb.style.color = cor; } };
+  setFb('', '');
+  if (!codigo) {
+    setFb('Digite o código informado pelo Analista.', '#ff4757');
+    return;
+  }
+  if (!AUTH.currentUser) {
+    setFb('Sessão expirada — feche e abra o aplicativo de novo.', '#ff4757');
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Verificando…'; }
+  try {
+    if (!window.firebase || typeof getDTFirebaseApp !== 'function' || typeof getDTFirebaseApp().functions !== 'function') {
+      throw new Error('Módulo Firebase Functions não carregado. Feche e abra o aplicativo pra atualizar.');
+    }
+    const functionsApi = getDTFirebaseApp().functions('southamerica-east1');
+    const callable = functionsApi.httpsCallable('resgatarCodigoAprovacaoColetor');
+    const resposta = await callable({ codigo, deviceId: obterDeviceId() });
+    const dados = (resposta && resposta.data) || {};
+    if (dados.ok !== true) throw new Error('Não foi possível confirmar a aprovação.');
+    setFb('✅ Aparelho aprovado! Entrando…', '#2ed573');
+    toast('✅ Aparelho aprovado! Entrando…', 's');
+    if (input) input.value = '';
+    setTimeout(() => {
+      if (typeof doLogin === 'function') doLogin();
+    }, 600);
+  } catch (e) {
+    const msg = (e && e.message) || 'Não foi possível validar o código.';
+    setFb(msg, '#ff4757');
+    toast(msg, 'e');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Liberar'; }
+  }
+}
+window.resgatarCodigoAprovacaoColetor = resgatarCodigoAprovacaoColetor;
 
 /**
  * Atualiza apenas o inventário dentro da sessão.
@@ -278,13 +403,13 @@ async function atualizarInventarioColetor() {
   if (!APP.operador) return;
   const deviceId = obterDeviceId();
   try {
+    var _APP$inventario3, _APP$inventario4, _APP$inventario5;
     await FS.collection(FCOL.coletores).doc(deviceId).update({
-      'sessao.inventario_id':   APP.inventario?.id    || null,
-      'sessao.inventario_nome': APP.inventario?.nome  || null,
-      ultimo_ping:              ST(),
+      'sessao.inventario_id': ((_APP$inventario3 = APP.inventario) === null || _APP$inventario3 === void 0 ? void 0 : _APP$inventario3.id) || null,
+      'sessao.inventario_nome': ((_APP$inventario4 = APP.inventario) === null || _APP$inventario4 === void 0 ? void 0 : _APP$inventario4.nome) || null,
+      ultimo_ping: ST()
     });
-    dbg('[Coletor] Inventário atualizado:',
-                APP.inventario?.nome || '—');
+    dbg('[Coletor] Inventário atualizado:', ((_APP$inventario5 = APP.inventario) === null || _APP$inventario5 === void 0 ? void 0 : _APP$inventario5.nome) || '—');
   } catch (e) {
     console.warn('[Coletor] atualizarInventario falhou:', e.message);
   }
@@ -299,15 +424,14 @@ async function enviarHeartbeat() {
   const deviceId = obterDeviceId();
   try {
     await FS.collection(FCOL.coletores).doc(deviceId).update({
-      ultimo_ping:         ST(),
-      status:              'online',
-      contagens_pendentes: FILA_ENVIO.length,
+      ultimo_ping: ST(),
+      status: 'online',
+      contagens_pendentes: FILA_ENVIO.length
     });
   } catch (e) {
     // silencioso — não interrompe operação
   }
 }
-
 let _coletorListener = null;
 
 /**
@@ -315,48 +439,69 @@ let _coletorListener = null;
  * Detecta bloqueio/remoção feitos pelo analista e desconecta imediatamente.
  */
 function iniciarListenerColetor() {
-  if (_coletorListener) { _coletorListener(); _coletorListener = null; }
+  if (_coletorListener) {
+    _coletorListener();
+    _coletorListener = null;
+  }
   const deviceId = obterDeviceId();
   try {
-    _coletorListener = FS.collection(FCOL.coletores).doc(deviceId)
-      .onSnapshot(snap => {
-        if (!APP.operador) return; // já deslogado, ignorar
-        if (!snap.exists) return;  // doc ainda não existe (primeiro cadastro)
-        const dados = snap.data();
-        if (!dados) return;
-
-        if (dados.aprovado === 'bloqueado') {
-          // Analista bloqueou — forçar logout e mostrar tela de bloqueio
-          console.warn('[Coletor] Bloqueado pelo analista em tempo real.');
-          AUTH.signOut().catch((erro) => console.error('[Coletor] Falha ao encerrar sessão de aparelho bloqueado', erro));
-          APP.operador = null;
-          if (_heartbeatInterval) { clearInterval(_heartbeatInterval); _heartbeatInterval = null; }
-  if (typeof _coletorListener === 'function') { _coletorListener(); _coletorListener = null; }
-          if (_coletorListener)   { _coletorListener(); _coletorListener = null; }
-          goScreen('login');
-          // Mostrar tela vermelha com hora do bloqueio
-          const agora = new Date().toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-          const box = document.getElementById('login-bloqueado-box');
-          if (box) {
-            // Atualizar mensagem com a hora
-            const msg = box.querySelector('div[style*="font-size:.78rem"]');
-            if (msg) msg.innerHTML = `Este aparelho foi bloqueado pelo analista.<br>Sessão encerrada às <b>${agora}</b>.<br>Entre em contato com o responsável.`;
-            box.style.display = 'flex';
-          }
-        } else if (dados.aprovado === 'pendente') {
-          // Analista removeu aprovação (edge case) — forçar logout e tela amarela
-          console.warn('[Coletor] Aprovação revogada — retornando para tela de espera.');
-          AUTH.signOut().catch((erro) => console.error('[Coletor] Falha ao encerrar sessão após revogação', erro));
-          APP.operador = null;
-          if (_heartbeatInterval) { clearInterval(_heartbeatInterval); _heartbeatInterval = null; }
-          if (_coletorListener)   { _coletorListener(); _coletorListener = null; }
-          goScreen('login');
-          _mostrarTelaAguardandoAprovacao('');
+    _coletorListener = FS.collection(FCOL.coletores).doc(deviceId).onSnapshot(snap => {
+      if (!APP.operador) return; // já deslogado, ignorar
+      if (!snap.exists) return; // doc ainda não existe (primeiro cadastro)
+      const dados = snap.data();
+      if (!dados) return;
+      if (dados.aprovado === 'bloqueado') {
+        // Analista bloqueou — forçar logout e mostrar tela de bloqueio
+        console.warn('[Coletor] Bloqueado pelo analista em tempo real.');
+        AUTH.signOut().catch(erro => console.error('[Coletor] Falha ao encerrar sessão de aparelho bloqueado', erro));
+        APP.operador = null;
+        if (_heartbeatInterval) {
+          clearInterval(_heartbeatInterval);
+          _heartbeatInterval = null;
         }
-      }, err => {
-        console.warn('[ListenerColetor] erro:', err.message);
-      });
-  } catch(e) {
+        if (typeof _coletorListener === 'function') {
+          _coletorListener();
+          _coletorListener = null;
+        }
+        if (_coletorListener) {
+          _coletorListener();
+          _coletorListener = null;
+        }
+        goScreen('login');
+        // Mostrar tela vermelha com hora do bloqueio
+        const agora = new Date().toLocaleString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        const box = document.getElementById('login-bloqueado-box');
+        if (box) {
+          // Atualizar mensagem com a hora
+          const msg = box.querySelector('div[style*="font-size:.78rem"]');
+          if (msg) msg.innerHTML = `Este aparelho foi bloqueado pelo analista.<br>Sessão encerrada às <b>${agora}</b>.<br>Entre em contato com o responsável.`;
+          box.style.display = 'flex';
+        }
+      } else if (dados.aprovado === 'pendente') {
+        // Analista removeu aprovação (edge case) — forçar logout e tela amarela
+        console.warn('[Coletor] Aprovação revogada — retornando para tela de espera.');
+        AUTH.signOut().catch(erro => console.error('[Coletor] Falha ao encerrar sessão após revogação', erro));
+        APP.operador = null;
+        if (_heartbeatInterval) {
+          clearInterval(_heartbeatInterval);
+          _heartbeatInterval = null;
+        }
+        if (_coletorListener) {
+          _coletorListener();
+          _coletorListener = null;
+        }
+        goScreen('login');
+        _mostrarTelaAguardandoAprovacao('');
+      }
+    }, err => {
+      console.warn('[ListenerColetor] erro:', err.message);
+    });
+  } catch (e) {
     console.warn('[ListenerColetor] não iniciado:', e.message);
   }
 }
@@ -377,12 +522,12 @@ async function marcarColetorOffline() {
   const deviceId = obterDeviceId();
   try {
     const updateData = {
-      status:         'offline',
-      ultimo_ping:    ST(),
-      sessao:         null,
+      status: 'offline',
+      ultimo_ping: ST(),
+      sessao: null,
       operador_atual: null,
       operador_email: null,
-      operador_uid:   null,
+      operador_uid: null
     };
     await FS.collection(FCOL.coletores).doc(deviceId).update(updateData);
     dbg('[Coletor] Marcado offline.');
@@ -415,9 +560,8 @@ async function encerrarTurnoColetor() {
   }
 
   // ── 2. Verificar recontagens pendentes ───────────────────────────────────
-  const _statusEncerradosRec = ['concluida','sem_divergencia','resolvida','aguardando_analista','cancelada'];
-  const recsPendentes = (APP.recontagens || [])
-    .filter(r => !_statusEncerradosRec.includes((r.status_recontagem || 'pendente').toLowerCase()));
+  const _statusEncerradosRec = ['concluida', 'sem_divergencia', 'resolvida', 'aguardando_analista', 'cancelada'];
+  const recsPendentes = (APP.recontagens || []).filter(r => !_statusEncerradosRec.includes((r.status_recontagem || 'pendente').toLowerCase()));
   if (recsPendentes.length > 0) {
     toast('🚫 Você possui ' + recsPendentes.length + ' recontagem(ns) pendente(s). Finalize todas antes de encerrar o turno.', 'e');
     showView('recontagens', document.getElementById('tab-recontagens'));
@@ -429,7 +573,7 @@ async function encerrarTurnoColetor() {
     try {
       APP.turnoEncerrado = true;
       const deviceId = obterDeviceId();
-      
+
       // Marcar no Firebase que este coletor encerrou o turno com sucesso
       await FS.collection(FCOL.coletores).doc(deviceId).update({
         status: 'offline',
@@ -438,7 +582,6 @@ async function encerrarTurnoColetor() {
         contagens_pendentes: 0,
         sessao: null
       });
-
       toast('✅ Turno encerrado com sucesso!', 's');
       setTimeout(() => {
         AUTH.signOut();
@@ -450,25 +593,27 @@ async function encerrarTurnoColetor() {
       APP.turnoEncerrado = false;
       toast('Erro ao encerrar turno: ' + e.message, 'e');
     }
-  }, { title: 'Encerrar Turno', icon: '🔒', okLabel: 'Encerrar Agora', okColor: 'var(--danger)' });
+  }, {
+    title: 'Encerrar Turno',
+    icon: '🔒',
+    okLabel: 'Encerrar Agora',
+    okColor: 'var(--danger)'
+  });
 }
-
 var _onColetorOnline = null;
 var _onColetorOffline = null;
-
 function removerListenersConectividade() {
   if (_onColetorOnline) window.removeEventListener('online', _onColetorOnline);
   if (_onColetorOffline) window.removeEventListener('offline', _onColetorOffline);
   _onColetorOnline = null;
   _onColetorOffline = null;
 }
-
 function iniciarSyncBackground() {
   // ── Inicializar IDB e migrar dados legados ──────────────────
   idbInit().then(() => {
     // Após IDB pronto, tentar enviar imediatamente se online
     if (navigator.onLine && FILA_ENVIO.length > 0) {
-      enviarFilaPendente().catch((err) => console.warn('[Sync] Envio inicial pendente:', err));
+      enviarFilaPendente().catch(err => console.warn('[Sync] Envio inicial pendente:', err));
     }
     atualizarBarraStatus();
   });
@@ -490,13 +635,8 @@ function iniciarSyncBackground() {
     // Auditoria é independente de turno e de inventário encerrado. Ao voltar a
     // internet, envia a fila em segundo plano sem trocar tela nem pedir retorno.
     if (APP.modoAcesso !== 'auditoria') await verificarInventarioAtivo();
-    const sincronizar = typeof window.sincronizarTudoEmSegundoPlano === 'function'
-      ? window.sincronizarTudoEmSegundoPlano('online')
-      : Promise.all([
-          typeof enviarFilaPendente === 'function' ? enviarFilaPendente() : Promise.resolve(),
-          typeof window.sincronizarFilaAuditoria === 'function' ? window.sincronizarFilaAuditoria() : Promise.resolve()
-        ]);
-    Promise.resolve(sincronizar).catch((err) => console.warn('[Sync] Falha ao enviar filas após reconexão:', err));
+    const sincronizar = typeof window.sincronizarTudoEmSegundoPlano === 'function' ? window.sincronizarTudoEmSegundoPlano('online') : Promise.all([typeof enviarFilaPendente === 'function' ? enviarFilaPendente() : Promise.resolve(), typeof window.sincronizarFilaAuditoria === 'function' ? window.sincronizarFilaAuditoria() : Promise.resolve()]);
+    Promise.resolve(sincronizar).catch(err => console.warn('[Sync] Falha ao enviar filas após reconexão:', err));
   };
   _onColetorOffline = function () {
     atualizarBarraStatus();
@@ -515,17 +655,17 @@ function iniciarSyncBackground() {
       const pendentes = await idbGetPendentes();
       if (pendentes.length > 0) {
         FILA_ENVIO = pendentes;
-        enviarFilaPendente().catch((err) => console.warn('[Sync] Falha no envio periódico:', err));
+        enviarFilaPendente().catch(err => console.warn('[Sync] Falha no envio periódico:', err));
       }
       // Verifica inventário ativo só a cada ~10 min (20 ciclos × 30s)
       _syncCiclo++;
       if (_syncCiclo >= 20) {
         _syncCiclo = 0;
-        verificarInventarioAtivo().catch((err) => console.warn('[Sync] Falha ao validar inventário:', err));
+        verificarInventarioAtivo().catch(err => console.warn('[Sync] Falha ao validar inventário:', err));
       }
     }
     atualizarBarraStatus(); // mantém UI atualizada
-  }, 30 * 1000);  // 30s — era 10s
+  }, 30 * 1000); // 30s — era 10s
 
   // 🔍 Polling a cada 60s para detectar inventários excluídos/encerrados pelo analista
   iniciarListenerInventarios();
@@ -538,14 +678,22 @@ function iniciarSyncBackground() {
 // Com polling de 60s: máximo 1 leitura/min/aparelho, mesmo com muitas atualizações.
 // Impacto operacional: operador leva até 60s para ver encerramento — aceitável
 // porque o analista sempre avisa antes de encerrar (rádio/WhatsApp).
-let _invListener    = null;  // mantida para compatibilidade com logout (linha _invListener())
+let _invListener = null; // mantida para compatibilidade com logout (linha _invListener())
 let _invPollInterval = null; // intervalo do polling
 
 function iniciarListenerInventarios() {
   // Cancela polling anterior se existir
-  if (_invPollInterval) { clearInterval(_invPollInterval); _invPollInterval = null; }
+  if (_invPollInterval) {
+    clearInterval(_invPollInterval);
+    _invPollInterval = null;
+  }
   // _invListener vira no-op (logout continua chamando _invListener() sem erro)
-  _invListener = () => { if (_invPollInterval) { clearInterval(_invPollInterval); _invPollInterval = null; } };
+  _invListener = () => {
+    if (_invPollInterval) {
+      clearInterval(_invPollInterval);
+      _invPollInterval = null;
+    }
+  };
 
   // Função de poll — executa imediatamente e depois a cada 3 min
   async function _pollInventarios() {
@@ -561,11 +709,12 @@ function iniciarListenerInventarios() {
     const dentroInventario = APP.inventario && screenColeta && screenColeta.classList.contains('ativo');
     if (dentroInventario) return; // economiza leitura — syncInterval cobre esse caso
     try {
-      const snap = await FS.collection(FCOL.inventarios)
-        .where('status', '==', 'ATIVO')
-        .get();
+      const snap = await FS.collection(FCOL.inventarios).where('status', '==', 'ATIVO').get();
       const idsAtivos = snap.docs.map(d => d.id);
-      const lista = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const lista = snap.docs.map(d => ({
+        id: d.id,
+        ...d.data()
+      }));
       APP.inventariosDisponiveis = lista;
       invCacheSave(lista);
       limparInventariosObsoletos(idsAtivos);
@@ -581,11 +730,10 @@ function iniciarListenerInventarios() {
         renderListaInventarios(lista);
       }
       dbg('[Poll] inventários:', lista.length, 'ativos');
-    } catch(e) {
+    } catch (e) {
       console.warn('[Poll] Erro ao verificar inventários:', e.message);
     }
   }
-
   _pollInventarios(); // executa imediatamente ao entrar
   _invPollInterval = setInterval(_pollInventarios, 180 * 1000); // era 60s → 3 min
 }
@@ -595,14 +743,15 @@ async function verificarInventarioAtivo() {
   if (!APP.inventario || !navigator.onLine) return;
   if (APP.modoAcesso === 'auditoria') return;
   try {
+    var _doc$data;
     const doc = await FS.collection(FCOL.inventarios).doc(APP.inventario.id).get();
-    const status = doc.data()?.status;
+    const status = (_doc$data = doc.data()) === null || _doc$data === void 0 ? void 0 : _doc$data.status;
     if (!doc.exists || status === 'FECHADO' || status === 'Fechado' || status === 'CANCELADO') {
       APP.inventario.status = 'FECHADO';
       APP.inventario._encerradoNoServidor = true;
       atualizarBarraStatus();
     }
-  } catch(e) {
+  } catch (e) {
     console.warn('[verif] Não foi possível verificar inventário:', e.message);
   }
 }
@@ -620,6 +769,7 @@ let _enviandoFilaEmAndamento = false;
 
 /** Envia todas as contagens pendentes em background (não bloqueia UI) */
 async function enviarFilaPendente() {
+  var _APP$inventario6;
   if (_enviandoFilaEmAndamento) return;
   if (!navigator.onLine) return;
 
@@ -629,7 +779,7 @@ async function enviarFilaPendente() {
 
   // ⚠️ Guarda de segurança: não enviar se inventário foi fechado/cancelado
   // (pode ter sido fechado enquanto o operador estava offline)
-  const statusInv = (APP.inventario?.status || '').toUpperCase();
+  const statusInv = (((_APP$inventario6 = APP.inventario) === null || _APP$inventario6 === void 0 ? void 0 : _APP$inventario6.status) || '').toUpperCase();
   if (APP.inventario && (statusInv === 'FECHADO' || statusInv === 'CANCELADO')) {
     console.warn('[fila] Inventário não está ATIVO (' + statusInv + ') — envio bloqueado.');
     toast('⚠️ Inventário encerrado. Contagens pendentes não enviadas.', 'e');
@@ -642,116 +792,113 @@ async function enviarFilaPendente() {
     toast('⏸ Inventário pausado. O envio será retomado quando for reativado.', 'w');
     return;
   }
-
   _enviandoFilaEmAndamento = true;
   try {
+    atualizarBarraStatus();
+    const enviados = [];
+    const falhas = [];
+    let erroConexao = false;
+    let processados = 0;
+    for (const c of pendentes) {
+      if (erroConexao) break; // abandona lote se conexão caiu no meio
 
-  atualizarBarraStatus();
+      // Devolve o controle pro navegador periodicamente — numa fila de
+      // milhares de itens, isso mantém a tela respondendo a toques mesmo
+      // durante um envio longo, em vez de tudo ficar em fila de microtasks.
+      if (++processados % 20 === 0) await new Promise(r => setTimeout(r, 0));
+      try {
+        // Chave única no Firestore = uuid da contagem (garante idempotência)
+        const docId = c.uuid || String(c.id);
+        // Rota para a coleção correta: dt_contagens (padrão) ou dt_vazios (VAZIO normal)
+        const colecaoDestino = c._destino || FCOL.contagens;
+        await FS.collection(colecaoDestino).doc(docId).set({
+          ...c,
+          dataHora: c.dataHora ? typeof c.dataHora === 'string' ? new Date(c.dataHora) : c.dataHora : new Date(),
+          enviado_em: new Date(),
+          status_sync: 'sincronizado'
+        });
 
-  const enviados = [];
-  const falhas   = [];
-  let erroConexao = false;
-  let processados = 0;
+        // Uma recontagem concluída offline chega aqui junto com a contagem.
+        // Atualizar a tarefa vinculada no mesmo ciclo de sincronização evita que
+        // ela reapareça como PENDENTE no coletor. A divergência continua sendo
+        // propriedade do Analista e não é alterada pelo coletor.
+        if (String(c.tipo_contagem || '').toUpperCase() === 'RECONTAGEM' && c.recontagem_id) {
+          try {
+            await FS.collection('dt_recontagens').doc(String(c.recontagem_id)).set({
+              status_recontagem: 'concluida',
+              status: 'CONCLUIDA',
+              numero_recontagem: Number(c.numero_recontagem || 1),
+              recontagem_concluida_em: c.criado_em || new Date().toISOString(),
+              operador_recontagem: c.operador_nome || c.operador || '',
+              contagem_uuid: c.uuid || docId,
+              atualizado_em: new Date().toISOString()
+            }, {
+              merge: true
+            });
+          } catch (statusErr) {
+            // A contagem já foi preservada. O Analista ainda consegue consolidar
+            // pelo recontagem_id/chave de fluxo; portanto não duplicamos o envio.
+            console.warn('[fila] Contagem enviada, mas status da recontagem não foi atualizado:', statusErr.message);
+          }
+        }
 
-  for (const c of pendentes) {
-    if (erroConexao) break;   // abandona lote se conexão caiu no meio
-
-    // Devolve o controle pro navegador periodicamente — numa fila de
-    // milhares de itens, isso mantém a tela respondendo a toques mesmo
-    // durante um envio longo, em vez de tudo ficar em fila de microtasks.
-    if (++processados % 20 === 0) await new Promise(r => setTimeout(r, 0));
-
-    try {
-      // Chave única no Firestore = uuid da contagem (garante idempotência)
-      const docId = c.uuid || String(c.id);
-      // Rota para a coleção correta: dt_contagens (padrão) ou dt_vazios (VAZIO normal)
-      const colecaoDestino = c._destino || FCOL.contagens;
-      await FS.collection(colecaoDestino).doc(docId).set({
-        ...c,
-        dataHora: c.dataHora
-          ? (typeof c.dataHora === 'string' ? new Date(c.dataHora) : c.dataHora)
-          : new Date(),
-        enviado_em:  new Date(),
-        status_sync: 'sincronizado',
-      });
-
-      // Uma recontagem concluída offline chega aqui junto com a contagem.
-      // Atualizar a tarefa vinculada no mesmo ciclo de sincronização evita que
-      // ela reapareça como PENDENTE no coletor. A divergência continua sendo
-      // propriedade do Analista e não é alterada pelo coletor.
-      if (String(c.tipo_contagem || '').toUpperCase() === 'RECONTAGEM' && c.recontagem_id) {
+        // Remove do IDB e marca localmente
+        await idbDelete(c.uuid);
         try {
-          await FS.collection('dt_recontagens').doc(String(c.recontagem_id)).set({
-            status_recontagem: 'concluida',
-            status: 'CONCLUIDA',
-            numero_recontagem: Number(c.numero_recontagem || 1),
-            recontagem_concluida_em: c.criado_em || new Date().toISOString(),
-            operador_recontagem: c.operador_nome || c.operador || '',
-            contagem_uuid: c.uuid || docId,
-            atualizado_em: new Date().toISOString()
-          }, { merge: true });
-        } catch (statusErr) {
-          // A contagem já foi preservada. O Analista ainda consegue consolidar
-          // pelo recontagem_id/chave de fluxo; portanto não duplicamos o envio.
-          console.warn('[fila] Contagem enviada, mas status da recontagem não foi atualizado:', statusErr.message);
+          var _APP$inventario7;
+          if (window.DTStatusLedger) DTStatusLedger.mark('inventario', c.inventario_id || c.inventarioId || ((_APP$inventario7 = APP.inventario) === null || _APP$inventario7 === void 0 ? void 0 : _APP$inventario7.id), c, 'ENVIADO');
+        } catch (_e) {}
+        enviados.push(c.uuid || c.id);
+      } catch (err) {
+        var _err$message;
+        console.warn('[Firebase] Erro ao enviar', c.uuid, err.message);
+        falhas.push(c.uuid || c.id);
+
+        // Incrementa tentativas no IDB
+        await idbPut({
+          ...c,
+          tentativas: (c.tentativas || 0) + 1,
+          ultimo_erro: err.message,
+          status_sync: 'pendente'
+        });
+        if (err.code === 'unavailable' || err.code === 'failed-precondition' || !navigator.onLine || (_err$message = err.message) !== null && _err$message !== void 0 && _err$message.includes('network')) {
+          erroConexao = true;
         }
       }
+    }
+    if (enviados.length > 0) {
+      // Rebuild FILA_ENVIO do IDB (fonte de verdade)
+      FILA_ENVIO = await idbGetPendentes();
+      filaSave(FILA_ENVIO); // espelho LS
+      atualizarBarraStatus();
+      updateStats();
 
-      // Remove do IDB e marca localmente
-      await idbDelete(c.uuid);
-      try{ if(window.DTStatusLedger) DTStatusLedger.mark('inventario',c.inventario_id||c.inventarioId||APP.inventario?.id,c,'ENVIADO'); }catch(_e){}
-      enviados.push(c.uuid || c.id);
-
-    } catch(err) {
-      console.warn('[Firebase] Erro ao enviar', c.uuid, err.message);
-      falhas.push(c.uuid || c.id);
-
-      // Incrementa tentativas no IDB
-      await idbPut({
-        ...c,
-        tentativas:   (c.tentativas || 0) + 1,
-        ultimo_erro:  err.message,
-        status_sync:  'pendente',
-      });
-
-      if (err.code === 'unavailable' || err.code === 'failed-precondition' ||
-          !navigator.onLine || err.message?.includes('network')) {
-        erroConexao = true;
+      // Atualiza doc do coletor no Firestore
+      try {
+        const deviceId = obterDeviceId();
+        FS.collection(FCOL.coletores).doc(deviceId).update({
+          contagens_enviadas: firebase.firestore.FieldValue.increment(enviados.length),
+          contagens_pendentes: FILA_ENVIO.length,
+          ultimo_ping: firebase.firestore.FieldValue.serverTimestamp()
+        }).catch(erro => {
+          console.warn('[Sincronização] Contagens foram enviadas, mas o resumo do coletor não foi atualizado', erro);
+        });
+      } catch (e) {
+        console.warn("[Erro tratado]", e);
+      }
+      if (FILA_ENVIO.length === 0) {
+        const bar = document.getElementById('sync-bar');
+        if (bar) {
+          bar.style.display = 'flex';
+          bar.style.background = 'linear-gradient(90deg,#14532d,#166534)';
+          const barText = document.getElementById('sync-bar-text');
+          if (barText) barText.textContent = `✅ ${enviados.length} contagem(ns) enviadas ao Firebase!`;
+          setTimeout(() => {
+            if (bar && FILA_ENVIO.length === 0) bar.style.display = 'none';
+          }, 3000);
+        }
       }
     }
-  }
-
-  if (enviados.length > 0) {
-    // Rebuild FILA_ENVIO do IDB (fonte de verdade)
-    FILA_ENVIO = await idbGetPendentes();
-    filaSave(FILA_ENVIO);    // espelho LS
-    atualizarBarraStatus();
-    updateStats();
-
-    // Atualiza doc do coletor no Firestore
-    try {
-      const deviceId = obterDeviceId();
-      FS.collection(FCOL.coletores).doc(deviceId).update({
-        contagens_enviadas:  firebase.firestore.FieldValue.increment(enviados.length),
-        contagens_pendentes: FILA_ENVIO.length,
-        ultimo_ping:         firebase.firestore.FieldValue.serverTimestamp(),
-      }).catch((erro) => {
-        console.warn('[Sincronização] Contagens foram enviadas, mas o resumo do coletor não foi atualizado', erro);
-      });
-    } catch(e){ console.warn("[Erro tratado]", e); }
-
-    if (FILA_ENVIO.length === 0) {
-      const bar = document.getElementById('sync-bar');
-      if (bar) {
-        bar.style.display    = 'flex';
-        bar.style.background = 'linear-gradient(90deg,#14532d,#166534)';
-        const barText = document.getElementById('sync-bar-text');
-        if (barText) barText.textContent = `✅ ${enviados.length} contagem(ns) enviadas ao Firebase!`;
-        setTimeout(() => { if (bar && FILA_ENVIO.length === 0) bar.style.display = 'none'; }, 3000);
-      }
-    }
-  }
-
   } finally {
     _enviandoFilaEmAndamento = false;
   }
@@ -772,13 +919,13 @@ async function enviarFilaPendente() {
 async function enfileirarContagem(contagem, opts) {
   const silencioso = !!(opts && opts.silencioso);
   // Garantir UUID único para deduplicação
-  const uuid   = contagem.uuid || gerarUUID();
+  const uuid = contagem.uuid || gerarUUID();
   const record = {
     ...contagem,
     uuid,
     status_sync: 'pendente',
-    tentativas:  0,
-    criado_em:   contagem.criado_em || contagem.dataHora || new Date().toISOString(),
+    tentativas: 0,
+    criado_em: contagem.criado_em || contagem.dataHora || new Date().toISOString()
   };
 
   // Verificar duplicata antes de salvar
@@ -790,9 +937,7 @@ async function enfileirarContagem(contagem, opts) {
 
   // 1️⃣ Salvar no IDB (fonte de verdade — sobrevive a reload e fechamento)
   await idbPut(record);
-
   if (silencioso) return;
-
   await finalizarEnfileiramento(uuid);
 }
 
@@ -807,8 +952,11 @@ async function finalizarEnfileiramento(uuid) {
 
   // 4️⃣ Tentar enviar em background (sem bloquear o fluxo do operador)
   if (navigator.onLine) {
-    enviarFilaPendente().catch((erro) => {
-      console.error('[Sincronização] Falha no envio em segundo plano; item mantido na fila', { uuid, erro });
+    enviarFilaPendente().catch(erro => {
+      console.error('[Sincronização] Falha no envio em segundo plano; item mantido na fila', {
+        uuid,
+        erro
+      });
       atualizarBarraStatus();
     });
   }

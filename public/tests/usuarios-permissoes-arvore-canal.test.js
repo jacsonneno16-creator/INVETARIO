@@ -50,11 +50,38 @@ function marcarCanal(win, prefix, canal, valor) {
   chk.checked = valor;
   chk.dispatchEvent(new win.Event('change', { bubbles: true }));
 }
+// PEDIDO AO VIVO (2026-08-27): "seleciono a loja... aí seleciona os
+// setores... só vai aparecer as permissões do que eu selecionar" — Setor
+// (Logística/Compras/PCP/Produção) agora TAMBÉM filtra a árvore, além do
+// Canal que já filtrava. Por padrão só Logística vem marcada
+// (renderSetores('criar',{}) — ver 37-usuarios-permissoes.js), por isso
+// os testes que esperam módulo de outro setor visível precisam marcar
+// esse setor primeiro.
+function marcarSetor(win, prefix, setorId, valor) {
+  const chk = win.document.querySelector(`#op-setores-${prefix} [data-op-setor="${setorId}"]`);
+  chk.checked = valor;
+  chk.dispatchEvent(new win.Event('change', { bubbles: true }));
+}
 function modulosVisiveis(win, prefix) {
   return [...win.document.querySelectorAll(`#op-permissoes-${prefix} [data-modulo-all]`)]
     .filter(chk => chk.closest('.perm-modulo').style.display !== 'none')
     .map(chk => chk.getAttribute('data-modulo-all'));
 }
+
+// BUG AO VIVO REAL (2026-08-27): "quando eu seleciono compras, ou PCP ou
+// produção, a tela fica toda branca" — o checkbox de Setores usava
+// `data-setor`, o MESMO nome que a barra de navegação de Setores do topo
+// do app (document.addEventListener('click',...) casando QUALQUER
+// [data-setor] e chamando irParaSetor()). Clicar no checkbox também
+// disparava a troca de setor do app inteiro, escondendo a shell onde o
+// modal estava. Nunca mais pode usar `data-setor` sozinho aqui.
+test('checkbox de Setores usa data-op-setor, NUNCA data-setor sozinho (colide com a navegação global de setores e derruba a tela)', async () => {
+  const win = novoAmbiente(htmlFormularioCriar());
+  await abrirCriar(win);
+  const box = win.document.getElementById('op-setores-criar');
+  assert.match(box.innerHTML, /data-op-setor="compras"/);
+  assert.doesNotMatch(box.innerHTML, /\sdata-setor=/, 'data-setor sozinho colide com a navegação global de setores do topo do app');
+});
 
 test('árvore de permissões: só canal Coletor marcado — mostra SOMENTE recebimento-operacao/recebimento-transbordo, nada exclusivo do Analista', async () => {
   const win = novoAmbiente(htmlFormularioCriar());
@@ -84,11 +111,12 @@ test('árvore de permissões: só canal Coletor marcado — mostra SOMENTE receb
   });
 });
 
-test('árvore de permissões: Coletor + Analista marcados — mostra a união (tudo)', async () => {
+test('árvore de permissões: Coletor + Analista marcados, e os 4 setores marcados — mostra a união (tudo)', async () => {
   const win = novoAmbiente(htmlFormularioCriar());
   await abrirCriar(win);
   marcarCanal(win, 'criar', 'coletor', true);
   marcarCanal(win, 'criar', 'analista', true);
+  ['compras', 'pcp', 'producao'].forEach(s => marcarSetor(win, 'criar', s, true));
 
   const visiveis = modulosVisiveis(win, 'criar');
   assert.ok(visiveis.includes('recebimento-transbordo'));
@@ -97,16 +125,38 @@ test('árvore de permissões: Coletor + Analista marcados — mostra a união (t
   assert.ok(visiveis.includes('pcp-central'));
 });
 
-test('árvore de permissões: só canal Analista marcado — mostra tudo (todo módulo tem pelo menos canal analista)', async () => {
+test('árvore de permissões: só canal Analista marcado, e Produção marcada nos setores — mostra os módulos de Produção', async () => {
   const win = novoAmbiente(htmlFormularioCriar());
   await abrirCriar(win);
   marcarCanal(win, 'criar', 'coletor', false);
   marcarCanal(win, 'criar', 'analista', true);
+  marcarSetor(win, 'criar', 'producao', true);
 
   const visiveis = modulosVisiveis(win, 'criar');
-  assert.ok(visiveis.includes('recebimento-transbordo')); // analista também usa este módulo
+  assert.ok(visiveis.includes('recebimento-transbordo')); // analista também usa este módulo (setor logística, marcado por padrão)
   assert.ok(visiveis.includes('dashboard'));
   assert.ok(visiveis.includes('producao-dashboard'));
+});
+
+// PEDIDO AO VIVO (2026-08-27): mesmo com o canal certo marcado, um setor
+// que o admin NÃO selecionou (ex.: PCP) não pode vazar nenhum módulo —
+// é exatamente o comportamento pedido: "só vai aparecer as permissões do
+// que eu selecionar".
+test('árvore de permissões: setor não marcado fica escondido mesmo com o canal certo', async () => {
+  const win = novoAmbiente(htmlFormularioCriar());
+  await abrirCriar(win);
+  marcarCanal(win, 'criar', 'analista', true);
+  // Produção/PCP/Compras ficam de fora de propósito — só Logística (padrão).
+
+  const visiveis = modulosVisiveis(win, 'criar');
+  assert.ok(!visiveis.includes('producao-dashboard'), 'Produção não foi marcada em Setores — não pode aparecer');
+  assert.ok(!visiveis.includes('pcp-central'), 'PCP não foi marcado em Setores — não pode aparecer');
+  assert.ok(!visiveis.includes('compras-central'), 'Compras não foi marcado em Setores — não pode aparecer');
+  assert.ok(visiveis.includes('dashboard'), 'Logística é o setor padrão, continua visível');
+
+  marcarSetor(win, 'criar', 'pcp', true);
+  const visiveisDepois = modulosVisiveis(win, 'criar');
+  assert.ok(visiveisDepois.includes('pcp-central'), 'marcar PCP em Setores libera o módulo na hora, sem reabrir o modal');
 });
 
 test('árvore de permissões: sem NENHUM canal marcado, nenhum módulo aparece — painel continua visível (não é mais o hack antigo de esconder tudo)', async () => {
@@ -159,7 +209,7 @@ function permissaoAtual(win, prefix, moduloId, acao) {
   return !!chk?.checked;
 }
 
-test('preset "Operador de Coletor · Recebimento": marca só editar/criar/corrigir-horario/gerar-qrcode nos 2 módulos de recebimento — nunca cancelar/finalizar (ações administrativas)', async () => {
+test('preset "Operador de Coletor · Recebimento": marca só editar/criar/corrigir-horario/gerar-qrcode nos módulos de recebimento (operação/transbordo/paletes) — nunca cancelar/finalizar (ações administrativas)', async () => {
   const win = novoAmbiente(htmlFormularioCriar());
   await abrirCriar(win);
 
@@ -169,11 +219,17 @@ test('preset "Operador de Coletor · Recebimento": marca só editar/criar/corrig
   assert.equal(permissaoAtual(win, 'criar', 'recebimento-transbordo', 'criar'), true);
   assert.equal(permissaoAtual(win, 'criar', 'recebimento-transbordo', 'corrigir-horario'), true);
   assert.equal(permissaoAtual(win, 'criar', 'recebimento-operacao', 'editar'), true);
+  // Paletes (saída/entrada) entra no mesmo preset — é bipado pelo Coletor
+  // igual transbordo, sem tela administrativa nenhuma.
+  assert.equal(permissaoAtual(win, 'criar', 'recebimento-paletes', 'visualizar'), true);
+  assert.equal(permissaoAtual(win, 'criar', 'recebimento-paletes', 'criar'), true);
+  assert.equal(permissaoAtual(win, 'criar', 'recebimento-paletes', 'editar'), true);
+  assert.equal(permissaoAtual(win, 'criar', 'recebimento-paletes', 'excluir'), false);
   // Ações administrativas continuam de fora — pedido explícito: "não
   // liberar telas administrativas".
   assert.equal(permissaoAtual(win, 'criar', 'recebimento-transbordo', 'cancelar'), false);
   assert.equal(permissaoAtual(win, 'criar', 'recebimento-transbordo', 'finalizar'), false);
-  // Nada fora de recebimento-operacao/recebimento-transbordo é marcado.
+  // Nada fora de recebimento-operacao/recebimento-transbordo/recebimento-paletes é marcado.
   assert.equal(permissaoAtual(win, 'criar', 'dashboard', 'visualizar'), false);
 });
 
@@ -211,4 +267,40 @@ test('preset "Administrador" marca literalmente tudo', async () => {
   const total = win.DT_MODULOS_PERMISSOES.reduce((a, m) => a + m.acoes.length, 0);
   const marcados = [...win.document.querySelectorAll('#op-permissoes-criar [data-modulo]')].filter(c => c.checked).length;
   assert.equal(marcados, total);
+});
+
+// PEDIDO AO VIVO (2026-08-27): "se eu cancelar... e colocar de novo criar
+// novo usuário, não é pra vim com as informações, é pra vim do zero".
+test('opAbrirModalCriar limpa nome, senha e a prévia de login toda vez que abre — cancelar e abrir de novo não traz o que foi digitado antes', async () => {
+  const win = novoAmbiente(htmlFormularioCriar());
+  await abrirCriar(win);
+  win.document.getElementById('op-nome').value = 'Fulano de Tal';
+  win.document.getElementById('op-senha').value = 'senha-antiga';
+  win.opGerarUsername();
+  assert.notEqual(win.document.getElementById('op-logins-preview').innerHTML, 'Informe o nome completo.');
+
+  // Fecha (equivalente a "Cancelar") e abre de novo.
+  win.opFecharModalCriar();
+  await abrirCriar(win);
+
+  assert.equal(win.document.getElementById('op-nome').value, '');
+  assert.equal(win.document.getElementById('op-senha').value, '');
+  assert.equal(win.document.getElementById('op-logins-preview').innerHTML, 'Informe o nome completo.');
+});
+
+// PEDIDO AO VIVO (2026-08-27): "se eu tiver criando um e eu fechar, quando
+// eu clicar de novo lá nas configurações não é pra abrir já onde eu
+// estava, é pra abrir as configurações normal do começo".
+test('fecharModalConfiguracoes também fecha Criar/Editar Usuário se ficaram abertos por cima — Configurações nunca reabre em cima de um modal de usuário esquecido', async () => {
+  const win = novoAmbiente(htmlFormularioCriar() + '<div id="op-modal-bg" style="display:none"></div><div id="modal-configuracoes"></div>');
+  win.closeModal = () => {};
+  win.goPage = () => {};
+  await abrirCriar(win); // deixa "Criar Usuário" aberto (display:flex)
+  assert.equal(win.document.getElementById('op-modal-criar-bg').style.display, 'flex');
+  win.document.getElementById('op-modal-bg').style.display = 'flex'; // simula "Editar Usuário" também aberto
+
+  win.fecharModalConfiguracoes();
+
+  assert.equal(win.document.getElementById('op-modal-criar-bg').style.display, 'none');
+  assert.equal(win.document.getElementById('op-modal-bg').style.display, 'none');
 });

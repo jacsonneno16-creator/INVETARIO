@@ -21,16 +21,56 @@ function mockColecao(docsIniciais){
   };
 }
 
-function carregarPagina(colecoes){
+// buscarBiAutomatico() (97-recebimento-recusas.js) agenda um setInterval
+// de auto-refresh a cada render — em jsdom isso é um timer REAL que
+// mantém o processo do node --test vivo pra sempre se a janela não for
+// fechada. window.close() derruba os timers internos do jsdom.
+let _janelasAbertas = [];
+test.afterEach(() => { _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} }); _janelasAbertas = []; });
+
+// PEDIDO AO VIVO (2026-08-27): recebimento_recusas_notas agora migra pra
+// recebimento_recusas_notas_chunks na primeira leitura (ver
+// _migrarParaChunksSeNecessario em 97-recebimento-recusas.js) — isso usa
+// getDTRawFirestore().batch(), que esta suíte não tinha antes. Cada
+// coleção do mock ganha um `.doc(id)` que já carrega o nome da coleção
+// (`_colecao`), pra o batch saber onde aplicar cada operação.
+function _comColecaoNoDoc(colecao, nome){
+  const docOriginal = colecao.doc;
+  colecao.doc = (id) => ({ ...docOriginal(id), _colecao: nome });
+  return colecao;
+}
+function mockRawFirestore(colecoes){
+  return { batch:()=>{
+    const ops=[];
+    return {
+      set:(ref,payload,opts)=>ops.push({ref,payload,merge:!!opts?.merge}),
+      delete:(ref)=>ops.push({ref,excluir:true}),
+      commit: async()=>{ ops.forEach(op=>{
+        const col=colecoes[op.ref._colecao];
+        if(!col)return;
+        if(op.excluir){ col._registro.delete(op.ref.id); return; }
+        const atual=col._registro.get(op.ref.id)||{};
+        col._registro.set(op.ref.id, op.merge?{...atual,...op.payload}:op.payload);
+      }); },
+    };
+  } };
+}
+
+function carregarPagina(colecoesEntrada){
   const dom=new JSDOM('<!doctype html><html><body><div id="page-recebimento-recusas"></div></body></html>',{ url:'http://localhost/', runScripts:'outside-only' });
   const win=dom.window; const document=win.document;
-  win.getDTFirestore=()=>({ collection:(nome)=>colecoes?.[nome]||mockColecao([]) });
+  const colecoes={...(colecoesEntrada||{})};
+  if(!colecoes.recebimento_recusas_notas_chunks) colecoes.recebimento_recusas_notas_chunks=mockColecao([]);
+  Object.keys(colecoes).forEach(nome=>_comColecaoNoDoc(colecoes[nome],nome));
+  win.getDTFirestore=()=>({ collection:(nome)=>{ if(!colecoes[nome]) colecoes[nome]=_comColecaoNoDoc(mockColecao([]),nome); return colecoes[nome]; } });
+  win.getDTRawFirestore=()=>mockRawFirestore(colecoes);
   win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }) };
   win.showToast=()=>{};
   win.aplicarPermissoesAnalista=()=>{};
   win.openModal=()=>{};
   win.closeModal=()=>{};
   win.eval(recusasCode);
+  _janelasAbertas.push(win);
   return { win, document };
 }
 
@@ -80,18 +120,23 @@ test('filtro de status de Conferência isola CONFERIDA_COM_DIVERGENCIA',async()=
   assert.doesNotMatch(document.getElementById('recusas-tabela').innerHTML,/BOX OK/);
 });
 
-test('trocar o select de Tratamento grava tratamento+tratamentoDefinidoPor/Em na recusa, sem mexer em nenhum outro campo',async()=>{
+// PEDIDO AO VIVO (2026-09-08): Tratamento passou de campo do documento pra
+// campo de cada item de `notas[]` — grava dentro de `notas[i]`, não mais
+// solto no documento (data-recusa-tratamento virou chave composta
+// `${recusaId}|${chaveDaNota}`; sem `notas` real, a tela usa um
+// placeholder de chave vazia, mesmo criado de verdade na 1ª edição).
+test('trocar o select de Tratamento grava tratamento+tratamentoDefinidoPor/Em na NOTA, sem mexer em nenhum outro campo',async()=>{
   const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',notas:[],criadoEm:'2026-08-19T10:00:00.000Z',statusConferenciaOperacional:'NAO_REALIZADA'}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
-  const sel=document.querySelector('[data-recusa-tratamento="r1"]');
-  sel.value='DEVOLUCAO';
+  const sel=document.querySelector('[data-recusa-tratamento="r1|"]');
+  sel.value='REENTREGA';
   sel.dispatchEvent(new win.Event('change'));
   await new Promise(r=>setTimeout(r,0));
   const doc=recusas._registro.get('r1');
-  assert.equal(doc.tratamento,'DEVOLUCAO');
-  assert.equal(doc.tratamentoDefinidoPor,'analista@daterrinha.com');
-  assert.ok(doc.tratamentoDefinidoEm);
+  assert.equal(doc.notas[0].tratamento,'REENTREGA');
+  assert.equal(doc.notas[0].tratamentoDefinidoPor,'analista@daterrinha.com');
+  assert.ok(doc.notas[0].tratamentoDefinidoEm);
   assert.equal(doc.box,'BOX 1'); // nada além do tratamento foi tocado
   assert.equal(doc.statusConferenciaOperacional,'NAO_REALIZADA'); // conferência não é sobrescrita pelo tratamento
 });

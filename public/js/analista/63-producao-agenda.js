@@ -1,4 +1,4 @@
-// Produção — motor de agenda V341. Distribui OPs por capacidade/turnos,
+﻿// Produção — motor de agenda V341. Distribui OPs por capacidade/turnos,
 // fila (sortOrder), hora de início, setup específico/padrão e realizado.
 // Mantém a regra operacional do sistema original que absorve o setup quando
 // existe um intervalo de dia inteiro entre duas OPs. Overflow continua
@@ -10,6 +10,28 @@
   'use strict';
 
   const HORAS_PADRAO_SEM_TURNO = 9; // Seg-Sex, quando a máquina não tem `turnos` configurado ainda
+
+  // PEDIDO AO VIVO (2026-09-07): "o setup dos produtos nao esta calculando
+  // nem aparecendo o tempo... um tinha a descricao toda do produto e o
+  // outro nao" - causa real achada em 70-producao-setup.js: o dropdown de
+  // cadastro de setup usa maquina.produtosCompativeis[].produto (o rotulo
+  // CURTO cadastrado na maquina, so uma chave de casamento - ver
+  // maquinasCompativeis() em 67-producao-prog-automatica.js), enquanto as
+  // OPs de verdade (producao_registros.produto) carregam o nome/descricao
+  // CHEIO do produto. getSetupMin comparava os dois com igualdade EXATA,
+  // entao o setup cadastrado nunca era achado. _mesmoProdutoNome tolera
+  // essa relacao de prefixo (rotulo curto x nome cheio) SO na busca do
+  // cadastro de setup - a identidade "e o mesmo produto, sem troca" (usada
+  // pra decidir se HA setup entre 2 OPs consecutivas, logo abaixo) continua
+  // exigindo igualdade normalizada EXATA, senao produtos genuinamente
+  // diferentes que por acaso compartilham prefixo (ex: "Tapioca" e "Tapioca
+  // Recheada") ficariam com 0min de setup entre si por engano.
+  function _normNome(v) { return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim(); }
+  function _mesmoProdutoNome(a, b) {
+    const na = _normNome(a), nb = _normNome(b);
+    if (!na || !nb) return false;
+    return na === nb || na.startsWith(nb) || nb.startsWith(na);
+  }
 
   function _parseFaixaMin(faixa) {
     const [hi, mi] = String(faixa.ini || '0:0').split(':').map(Number);
@@ -72,9 +94,9 @@
   // `setupPadraoMin` cadastrado na própria máquina; se nada existir, 0min
   // (mesmo comportamento de antes de a fase 3e existir).
   function getSetupMin(maquina, produtoOrigem, produtoDestino, setups) {
-    if (!produtoOrigem || produtoOrigem === produtoDestino) return 0;
+    if (!produtoOrigem || _normNome(produtoOrigem) === _normNome(produtoDestino)) return 0;
     const nomeMaquina = maquina && maquina.nome;
-    const achado = (setups || []).find(s => s.maquina === nomeMaquina && (s.produtoOrigem ?? s.produto_origem) === produtoOrigem && (s.produtoDestino ?? s.produto_destino) === produtoDestino);
+    const achado = (setups || []).find(s => s.maquina === nomeMaquina && _mesmoProdutoNome(s.produtoOrigem ?? s.produto_origem, produtoOrigem) && _mesmoProdutoNome(s.produtoDestino ?? s.produto_destino, produtoDestino));
     if (achado) return Math.max(0, Number(achado.minutos ?? achado.tempo_setup) || 0);
     return Math.max(0, Number(maquina && (maquina.setupPadraoMin ?? maquina.tempoSetupPadrao)) || 0);
   }
@@ -114,12 +136,18 @@
     }));
 
     const porMaquina = {};
-    Object.keys(porMaquinaFila).forEach(nomeMaquina => {
+    // Igual ao original: máquinas sem OP também entram no mapa, pois sua
+    // capacidade semanal compõe o denominador da ocupação total.
+    const nomesMaquinas = new Set([
+      ...Object.keys(maquinasPorNome || {}),
+      ...Object.keys(porMaquinaFila)
+    ]);
+    nomesMaquinas.forEach(nomeMaquina => {
       const maquina = (maquinasPorNome || {})[nomeMaquina] || null;
       const porDia = [[], [], [], [], [], [], []];
       let cursorDay = 0, cursorUsedMin = 0, totalMinutosUsados = 0, produtoAnterior = null;
 
-      porMaquinaFila[nomeMaquina].forEach(rec => {
+      (porMaquinaFila[nomeMaquina] || []).forEach(rec => {
         const pcMin = Number(rec.pcMin) || 0;
         const unidPorCx = Number(rec.unidPorCx) || 1;
         if (pcMin <= 0) { produtoAnterior = rec.produto; return; } // sem velocidade definida — não é possível agendar

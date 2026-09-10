@@ -141,6 +141,22 @@
   }
 
   function _normIns(v) { return String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/\s+/g, ' ').trim(); }
+  // Cruza os insumos da ficha técnica do produto com o estoque de insumos
+  // carregado, pra `caixas` unidades — usado tanto pelo status da tabela de
+  // OPs (_statusInsumosOP) quanto pelo preview ao vivo no modal de Nova
+  // Solicitação (PEDIDO AO VIVO 2026-09-02: "quando for gerar uma nova
+  // programação... não traz as informações de quanto vai usar de cada
+  // insumo... e qual é o estoque, se vai dar ou não").
+  function _insumosDetalheOP(prodCod, caixas) {
+    const insumos = _insumosDoProduto(prodCod);
+    return insumos.map(i => {
+      const necessario = (Number(i.qty) || 0) * caixas;
+      const item = _estoqueIns.find(e => _normIns(e.insumo || e.nome) === _normIns(i.insumo));
+      const temDados = !!item;
+      const estoqueAtual = temDados ? (Number(item.quantidade ?? item.estoque) || 0) : null;
+      return { insumo: i.insumo, qtyPorCaixa: Number(i.qty) || 0, necessario, temDados, estoqueAtual, cobre: temDados ? estoqueAtual >= necessario : null };
+    });
+  }
   // PEDIDO AO VIVO (comparação com o original achou isso faltando): a coluna
   // Insumos hoje só contava quantos insumos a ficha tem, sem checar se tem
   // matéria-prima suficiente. O original cruza necessário × estoque atual e
@@ -148,13 +164,8 @@
   function _statusInsumosOP(r) {
     const insumos = _insumosDoProduto(r.prodCod);
     if (!insumos.length) return { tipo: 'nenhum', insumos };
-    const caixas = Number(r.qntCaixas) || 0;
-    let temDadosEstoque = false, falta = false;
-    insumos.forEach(i => {
-      const necessario = (Number(i.qty) || 0) * caixas;
-      const item = _estoqueIns.find(e => _normIns(e.insumo || e.nome) === _normIns(i.insumo));
-      if (item) { temDadosEstoque = true; if ((Number(item.quantidade ?? item.estoque) || 0) < necessario) falta = true; }
-    });
+    const detalhe = _insumosDetalheOP(r.prodCod, Number(r.qntCaixas) || 0);
+    const temDadosEstoque = detalhe.some(d => d.temDados), falta = detalhe.some(d => d.temDados && !d.cobre);
     if (!temDadosEstoque) return { tipo: 'semdados', insumos };
     return { tipo: falta ? 'falta' : 'ok', insumos };
   }
@@ -258,7 +269,7 @@
 
     pagina.innerHTML = `
       <div class="toolbar">
-          <input id="pprog-busca" placeholder="Buscar produto..." value="${esc(busca)}" class="field" style="min-width:180px">
+          <div class="search-wrap pprog-search-wrap"><span class="search-icon">🔍</span><input id="pprog-busca" placeholder="Buscar produto..." value="${esc(busca)}" class="field"></div>
           <select id="pprog-filtro-maquina" class="field"><option value="">Todas as máquinas</option>${opcoesMaquinas}</select>
           <select id="pprog-filtro-status" class="field">
             <option value="">Todos os status</option>
@@ -268,13 +279,13 @@
           </select>
           <div style="display:flex;align-items:center;gap:4px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:4px 8px">
             <button type="button" data-pprog-semana="-1" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 4px;line-height:1" title="Semana anterior">‹</button>
-            <span data-pprog-semana-reset style="font-size:.72rem;color:var(--orange);white-space:nowrap;min-width:120px;text-align:center;cursor:pointer" title="Clique para ver todas">${_semanaFiltro ? `${_fmtDataCurta(_semanaFiltro)} – ${_fmtDataCurta(new Date(new Date(_semanaFiltro).setDate(_semanaFiltro.getDate() + 6)))}` : 'Todas as semanas'}</span>
+            <span data-pprog-semana-reset style="font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--orange);white-space:nowrap;min-width:140px;text-align:center;cursor:pointer" title="Clique para ver todas">${_semanaFiltro ? `${_fmtDataCurta(_semanaFiltro)} – ${_fmtDataCurta(new Date(new Date(_semanaFiltro).setDate(_semanaFiltro.getDate() + 6)))}` : 'Todas as semanas'}</span>
             <button type="button" data-pprog-semana="1" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:1rem;padding:0 4px;line-height:1" title="Próxima semana">›</button>
           </div>
           <button type="button" class="btn btn-ghost" data-pprog-limpar-filtros>✕ Filtros</button>
           <button type="button" class="btn btn-danger" data-pprog-limpar-tudo>🗑 Limpar Tudo</button>
-          <label class="btn btn-ghost" style="cursor:pointer;margin:0" title="Importar programação via Excel — colunas: Produto, Quantidade, Data">📥 Importar Excel<input type="file" id="pprog-excel-input" accept=".xlsx,.xls" style="display:none"></label>
-          <button type="button" class="btn btn-ghost" style="color:var(--muted)" data-pprog-template title="Baixar planilha modelo">⬇ Template</button>
+          <div style="display:inline-flex;align-items:center;gap:4px"><label class="btn btn-ghost" style="cursor:pointer;margin:0;padding:7px 12px" title="Importar programação via Excel — colunas: Produto, Quantidade, Data">📥 Importar Excel<input type="file" id="pprog-excel-input" accept=".xlsx,.xls" style="display:none"></label>
+          <button type="button" class="btn btn-ghost" style="color:var(--muted);padding:7px 10px;font-size:11px" data-pprog-template title="Baixar planilha modelo">⬇ Template</button></div>
           <button type="button" class="btn btn-primary" data-pprog-novo="1">+ Nova</button>
       </div>
       <div class="tc">
@@ -332,12 +343,67 @@
     `;
   }
 
+  function _produtosCompativeisModal(maquinaNome) {
+    const maq = _maquinas.find(m => m.nome === maquinaNome);
+    const vinculados = new Set((maq?.produtosCompativeis || []).map(x => String(x.produto || '').trim()).filter(Boolean));
+    const filtrados = _produtos.filter(p => !maquinaNome || String(p.maquina || p.maquinaPadrao || '') === maquinaNome || vinculados.has(String(p.nome || '')));
+    return filtrados.length ? filtrados : _produtos;
+  }
+
+  function _desenharProdutosModal(busca) {
+    const maquinaNome = document.getElementById('pprog-maquina')?.value || '';
+    const etapa = document.getElementById('pprog-produto-etapa'), grid = document.getElementById('pprog-produto-grid');
+    if (!etapa || !grid) return;
+    etapa.style.display = maquinaNome ? 'block' : 'none';
+    if (!maquinaNome) return;
+    const q = String(busca || '').toLocaleLowerCase('pt-BR');
+    const lista = _produtosCompativeisModal(maquinaNome).filter(p => !q || String(p.nome || '').toLocaleLowerCase('pt-BR').includes(q) || String(p.cod || '').toLocaleLowerCase('pt-BR').includes(q));
+    grid.innerHTML = lista.length ? lista.map(p => `<button type="button" class="pprog-produto-card" data-pprog-pick-produto="${esc(p.cod)}"><b>${esc(p.nome)}</b><small>Cód:${esc(p.cod)} · ${Number(p.pc_min)||0} und/min · ${Number(p.unid)||1} un/cx</small></button>`).join('') : '<div class="empty" style="grid-column:1/-1;padding:16px">Nenhum produto encontrado</div>';
+  }
+
+  function _selecionarProdutoModal(cod) {
+    const produto = _produtos.find(p => String(p.cod) === String(cod));
+    if (!produto) return;
+    const sel = document.getElementById('pprog-produto'), box = document.getElementById('pprog-produto-selecionado'), grid = document.getElementById('pprog-produto-grid'), busca = document.getElementById('pprog-produto-busca');
+    sel.value = String(produto.cod); grid.style.display = 'none'; busca.style.display = 'none'; box.hidden = false;
+    const maq = _maquinas.find(m => m.nome === document.getElementById('pprog-maquina').value), vel = _resolvePcMin(produto, maq);
+    box.innerHTML = `<b>${esc(produto.nome)}</b><small>Cód:${esc(produto.cod)} · ${esc(maq?.nome||'')} · ${vel||0} und/min · ${Number(produto.unid)||1} un/cx</small><button type="button" class="btn btn-ghost btn-sm" data-pprog-trocar-produto style="margin-top:8px">✕ Trocar</button>`;
+    _atualizarCalculoModal();
+  }
+
+  function _limparProdutoModal() {
+    const sel=document.getElementById('pprog-produto'),box=document.getElementById('pprog-produto-selecionado'),grid=document.getElementById('pprog-produto-grid'),busca=document.getElementById('pprog-produto-busca');
+    sel.value='';box.hidden=true;box.innerHTML='';grid.style.display='grid';busca.style.display='block';busca.value='';_desenharProdutosModal('');_atualizarCalculoModal();
+  }
+
+  function _atualizarCalculoModal() {
+    const cod=document.getElementById('pprog-produto')?.value,produto=_produtos.find(p=>String(p.cod)===String(cod)),maq=_maquinas.find(m=>m.nome===document.getElementById('pprog-maquina')?.value),cx=Math.max(0,Number(document.getElementById('pprog-caixas')?.value)||0),unid=Math.max(1,Number(produto?.unid)||1),vel=_resolvePcMin(produto,maq),total=cx*unid,min=vel>0?total/vel:0,el=document.getElementById('pprog-calculo');
+    _atualizarInsumosModal(cod,cx);
+    if(!el)return;if(!produto||!cx){el.style.display='none';return;}el.style.display='grid';el.innerHTML=`<div><small>Unidades</small><b>${total.toLocaleString('pt-BR')}</b></div><div><small>Tempo (min)</small><b>${vel>0?Math.ceil(min).toLocaleString('pt-BR'):'—'}</b></div><div><small>Horas</small><b>${vel>0?(min/60).toLocaleString('pt-BR',{maximumFractionDigits:1}):'—'}</b></div><div><small>Dias úteis</small><b>${vel>0?(min/540).toLocaleString('pt-BR',{maximumFractionDigits:1}):'—'}</b></div>`;
+  }
+  // PEDIDO AO VIVO (2026-09-02): "quando for gerar uma nova programação de
+  // um produto pra produzir, ele não traz as informações de quanto vai
+  // usar de cada insumo... e qual é o estoque, se vai dar ou não" —
+  // preview ao vivo conforme digita produto/caixas, reaproveitando
+  // _insumosDetalheOP (mesma conta que já colore a tabela de OPs).
+  function _atualizarInsumosModal(cod, cx) {
+    const el = document.getElementById('pprog-insumos');
+    if (!el) return;
+    if (!cod || !cx) { el.innerHTML = ''; return; }
+    const detalhe = _insumosDetalheOP(cod, cx);
+    if (!detalhe.length) { el.innerHTML = '<div style="font-size:.72rem;color:var(--muted)">Sem ficha técnica cadastrada pra este produto.</div>'; return; }
+    el.innerHTML = `<div style="font-size:.7rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:5px">📦 Insumos necessários</div>
+      <table class="dt-table" style="font-size:.76rem"><thead><tr><th>Insumo</th><th>Necessário</th><th>Estoque</th><th>Cobre?</th></tr></thead><tbody>
+      ${detalhe.map(d => `<tr><td>${esc(d.insumo)}</td><td>${d.necessario.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td><td>${d.temDados ? d.estoqueAtual.toLocaleString('pt-BR', { maximumFractionDigits: 2 }) : '—'}</td><td>${d.temDados ? `<span class="badge ${d.cobre ? 'b-green' : 'b-red'}">${d.cobre ? 'Sim' : 'Falta'}</span>` : '<span class="badge b-gray">Sem dados</span>'}</td></tr>`).join('')}
+      </tbody></table>`;
+  }
+
   function _abrirModalPprog(item) {
-    document.getElementById('pprog-title').textContent = item._novo ? 'Nova ordem de produção' : 'Editar ordem de produção';
+    document.getElementById('pprog-title').textContent = item._novo ? 'Nova Solicitação' : 'Editar Solicitação';
     document.getElementById('pprog-doc-id').value = item._firestoreId || '';
     const selProduto = document.getElementById('pprog-produto');
     selProduto.innerHTML = _produtos.map(p => `<option value="${esc(p.cod)}">${esc(p.nome)}</option>`).join('') || '<option value="">Nenhum produto cadastrado</option>';
-    selProduto.value = item.prodCod ?? '';
+    selProduto.value = '';
     const selMaquina = document.getElementById('pprog-maquina');
     selMaquina.innerHTML = _maquinas.map(m => `<option value="${esc(m.nome)}">${esc(m.nome)}</option>`).join('') || '<option value="">Nenhuma máquina cadastrada</option>';
     selMaquina.value = item.maquina || '';
@@ -346,6 +412,13 @@
     document.getElementById('pprog-hora').value = item.horaInicio || '';
     document.getElementById('pprog-status').value = item.status || 'pendente';
     document.getElementById('pprog-obs').value = item.obs || '';
+    document.getElementById('pprog-produto-busca').value = '';
+    document.getElementById('pprog-produto-grid').style.display = 'grid';
+    document.getElementById('pprog-produto-busca').style.display = 'block';
+    document.getElementById('pprog-produto-selecionado').hidden = true;
+    _desenharProdutosModal('');
+    if (item.prodCod != null && item.prodCod !== '') _selecionarProdutoModal(item.prodCod);
+    else _atualizarCalculoModal();
     global.openModal?.('modal-pprog');
   }
 
@@ -415,6 +488,10 @@
         payload.criadoEm = agora;
         await fs().collection(COL_REGISTROS).add(payload);
       }
+      // A Programação Visual, Máquinas, Realizado, Insumos, Dashboard e
+      // Relatórios mantêm caches próprios. Sem invalidá-los aqui, uma OP
+      // recém-gravada só aparecia depois de atualizar a página inteira.
+      global.DTProducao?.invalidarTudo?.();
       global.closeModal?.('modal-pprog');
       global.showToast?.('Ordem de produção salva.', 'success');
       await carregarProducaoProgramacao(true);
@@ -529,6 +606,7 @@
   global.carregarPCPSolicitacoes = carregarPCPSolicitacoes;
   global.pprogReceberPCP = pprogReceberPCP;
   global.pprogFinalizarPCP = pprogFinalizarPCP;
+  global._pprogInternals = { _insumosDetalheOP, _atualizarInsumosModal };
 
   // Tudo abaixo é gerado via innerHTML (tabela, filtros) — usa data-* +
   // escutador delegado em vez de onclick/oninput/onchange inline, mesma
@@ -556,13 +634,19 @@
       if (b) b.value = ''; if (m) m.value = ''; if (s) s.value = ''; _semanaFiltro = null; _pagina = 1; _desenharProducaoProgramacao(); return;
     }
     if (event.target.closest('[data-pprog-limpar-tudo]')) { pprogLimparTudo(); return; }
+    const pickProd = event.target.closest('[data-pprog-pick-produto]');
+    if (pickProd) { _selecionarProdutoModal(pickProd.getAttribute('data-pprog-pick-produto')); return; }
+    if (event.target.closest('[data-pprog-trocar-produto]')) { _limparProdutoModal(); return; }
     if (event.target.closest('[data-pprog-template]')) { pprogTemplate(); return; }
   });
   document.addEventListener('input', function (event) {
     if (event.target && event.target.id === 'pprog-busca') { _pagina = 1; _desenharProducaoProgramacao(); }
+    if (event.target && event.target.id === 'pprog-produto-busca') { _desenharProdutosModal(event.target.value); return; }
+    if (event.target && event.target.id === 'pprog-caixas') { _atualizarCalculoModal(); return; }
   });
   document.addEventListener('change', function (event) {
     if (event.target && ['pprog-filtro-maquina', 'pprog-filtro-status'].includes(event.target.id)) { _pagina = 1; _desenharProducaoProgramacao(); return; }
+    if (event.target && event.target.id === 'pprog-maquina') { _limparProdutoModal(); return; }
     if (event.target && event.target.id === 'pprog-excel-input') {
       const file = event.target.files && event.target.files[0];
       importarProgramacaoExcel(file);

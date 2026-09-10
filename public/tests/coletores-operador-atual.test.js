@@ -69,7 +69,7 @@ function loadColetoresAnalista(colecoes) {
       }),
     }),
   };
-  win.firebase = { auth: () => ({ currentUser: null }) };
+  win.firebase = { auth: () => ({ currentUser: null }), firestore: { FieldValue: { serverTimestamp: () => 'SERVER_TS', delete: () => 'FV_DELETE' } } };
   win.openModal = () => {}; win.closeModal = () => {};
   win.showToast = () => {};
   win.logAuditoria = () => {};
@@ -145,6 +145,46 @@ function loadModalConfigColetor(col) {
   win.eval(codigo35);
   return { window: win, document: win.document, registroFS, estado };
 }
+
+// ── (4) Analista: excluirColetor() atualiza a tela na hora, sem esperar o onSnapshot ──
+// BUG AO VIVO REAL: "fala que foi excluído mas não some" — a escrita no
+// Firestore acontecia normal (por isso o toast de sucesso aparecia), mas a
+// linha continuava na tabela porque nada atualizava o estado local nem
+// chamava renderColetores() — a tela dependia inteiramente do listener em
+// tempo real voltar. Mesma classe de bug já corrigida em
+// logoutOperadorColetor() (teste acima).
+test('REGRESSÃO ("fala que foi excluído mas não some"): excluirColetor() remove o item do estado local e chama renderColetores() na hora, sem esperar o Firestore avisar de volta', async () => {
+  const { window, registroFS, estado } = loadColetoresAnalista({
+    col1: { aprovado: 'aprovado', status: 'online', numero: '01' },
+  });
+  estado.coletores = [{ id: 'col1', numero: '01', aprovado: 'aprovado', status: 'online' }];
+  window.confirm = () => true;
+  let renderChamado = 0;
+  window.renderColetores = () => { renderChamado++; };
+
+  const resultado = await window.excluirColetor('col1');
+
+  assert.equal(resultado, true);
+  assert.equal(estado.coletores.length, 0, 'o coletor excluído precisa sumir do estado local imediatamente');
+  assert.equal(renderChamado, 1, 'a tela precisa ser redesenhada na hora, não só quando o onSnapshot voltar');
+  const gravado = registroFS.get('col1');
+  assert.equal(gravado.excluido, true);
+  assert.equal(gravado.aprovado, 'revogado');
+});
+
+test('REGRESSÃO: aprovarColetor() também atualiza o estado local e redesenha a tela na hora', async () => {
+  const { window, estado } = loadColetoresAnalista({
+    col2: { aprovado: 'pendente', status: 'pendente', numero: '02' },
+  });
+  estado.coletores = [{ id: 'col2', numero: '02', aprovado: 'pendente', status: 'pendente' }];
+  let renderChamado = 0;
+  window.renderColetores = () => { renderChamado++; };
+
+  await window.aprovarColetor('col2');
+
+  assert.equal(estado.coletores[0].aprovado, 'aprovado', 'o status precisa mudar no estado local na hora, não só depois de um refresh');
+  assert.equal(renderChamado, 1);
+});
 
 test('REGRESSÃO (bug ao vivo real: "eu já coloco um nome novo, ele nunca salva... só salva quando coloco depois"): digitar um nome novo e clicar em "Aprovar acesso" salva o nome E aprova na MESMA ação', async () => {
   const { window, document, registroFS } = loadModalConfigColetor({

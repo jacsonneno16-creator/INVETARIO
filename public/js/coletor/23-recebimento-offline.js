@@ -18,7 +18,7 @@ let _recSeqCounter = 0; // desempate de ordenação quando dois bips caem no mes
 // não o da sincronização — extraído do próprio `proximo.mudancas`, que já
 // foi calculado com `new Date()` no instante do toque, antes de cair aqui.
 async function enfileirarBipRecebimento(r, proximo) {
-  const uuid = (typeof gerarUUID === 'function' ? gerarUUID() : ('rec_' + Date.now() + '_' + Math.random().toString(36).slice(2)));
+  const uuid = typeof gerarUUID === 'function' ? gerarUUID() : 'rec_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   const campoHora = Object.keys(proximo.mudancas).find(k => k.startsWith('hora'));
   const bip = {
     uuid,
@@ -30,7 +30,7 @@ async function enfileirarBipRecebimento(r, proximo) {
     status_sync: 'pendente',
     tentativas: 0,
     criado_em: new Date().toISOString(),
-    seq: _recSeqCounter++,
+    seq: _recSeqCounter++
   };
   await recIdbPut(bip);
 
@@ -38,9 +38,11 @@ async function enfileirarBipRecebimento(r, proximo) {
   // e a tela de confirmação já mostram o novo estado sem esperar a
   // sincronização (o operador não fica sem feedback só porque está offline).
   const idx = RECEBIMENTOS_CACHE.findIndex(x => x._id === r._id);
-  const mesclado = { ...r, ...proximo.mudancas };
-  if (idx >= 0) RECEBIMENTOS_CACHE[idx] = mesclado; else RECEBIMENTOS_CACHE.push(mesclado);
-
+  const mesclado = {
+    ...r,
+    ...proximo.mudancas
+  };
+  if (idx >= 0) RECEBIMENTOS_CACHE[idx] = mesclado;else RECEBIMENTOS_CACHE.push(mesclado);
   await atualizarIndicadorPendenciasRecebimento();
   return bip;
 }
@@ -52,7 +54,11 @@ async function atualizarIndicadorPendenciasRecebimento() {
   const todos = await recIdbGetAll();
   const mapa = {};
   todos.forEach(b => {
-    mapa[b.recebimentoId] = { status_sync: b.status_sync, operacao: b.operacao, motivoConflito: b.motivoConflito };
+    mapa[b.recebimentoId] = {
+      status_sync: b.status_sync,
+      operacao: b.operacao,
+      motivoConflito: b.motivoConflito
+    };
   });
   PENDENTES_REC_MAP = mapa;
   if (typeof _desenharListaRecebimento === 'function') _desenharListaRecebimento();
@@ -74,7 +80,6 @@ async function sincronizarFilaRecebimento() {
     const c = String(a.criado_em || '').localeCompare(String(b.criado_em || ''));
     return c !== 0 ? c : (a.seq || 0) - (b.seq || 0);
   });
-
   _enviandoFilaRecebimentoEmAndamento = true;
   try {
     for (const bip of pendentes) {
@@ -90,9 +95,15 @@ async function sincronizarFilaRecebimento() {
           continue;
         }
         const doc = await _refRecCrossLoja(bip.lojaId, bip.recebimentoId).get();
-        if (!doc.exists) { await recIdbDelete(bip.uuid); continue; }
-        const atual = { _id: bip.recebimentoId, _lojaId: bip.lojaId, ...doc.data() };
-
+        if (!doc.exists) {
+          await recIdbDelete(bip.uuid);
+          continue;
+        }
+        const atual = {
+          _id: bip.recebimentoId,
+          _lojaId: bip.lojaId,
+          ...doc.data()
+        };
         const alvoStatus = bip.mudancas && bip.mudancas.status;
         if (atual.status === alvoStatus) {
           // Já foi aplicado numa sincronização anterior que gravou no
@@ -113,25 +124,36 @@ async function sincronizarFilaRecebimento() {
           // Conflito real: a carga avançou pra um estado diferente do que
           // este bip espera enquanto o aparelho estava offline.
           await recIdbPut({
-            ...bip, status_sync: 'conflito',
-            motivoConflito: 'A carga já estava em "' + (REC_STATUS_LABEL[atual.status] || atual.status) + '" quando sincronizou.',
+            ...bip,
+            status_sync: 'conflito',
+            motivoConflito: 'A carga já estava em "' + (REC_STATUS_LABEL[atual.status] || atual.status) + '" quando sincronizou.'
           });
           continue;
         }
-
-        await _aplicarBipRecebimento(atual, bip.operacao, bip.mudancas, null, { silencioso: true });
+        await _aplicarBipRecebimento(atual, bip.operacao, bip.mudancas, null, {
+          silencioso: true
+        });
         await recIdbDelete(bip.uuid);
       } catch (e) {
         // `posse-invalida` (checagem de posse dentro de _aplicarBipRecebimento,
         // revalidada contra o estado mais atual do servidor) é um conflito
         // real, igual ao de status acima — nunca vale a pena tentar de novo
         // sozinho, precisa ficar visível pro operador.
-        if (e?.code === 'posse-invalida') {
-          await recIdbPut({ ...bip, status_sync: 'conflito', motivoConflito: 'Esta carga não pertence mais a esta loja.' });
+        if ((e === null || e === void 0 ? void 0 : e.code) === 'posse-invalida') {
+          await recIdbPut({
+            ...bip,
+            status_sync: 'conflito',
+            motivoConflito: 'Esta carga não pertence mais a esta loja.'
+          });
           continue;
         }
-        await recIdbPut({ ...bip, tentativas: (bip.tentativas || 0) + 1, ultimo_erro: e?.message || String(e), status_sync: 'pendente' });
-        if (!navigator.onLine || e?.code === 'unavailable') break; // sem conexão real: para o lote, tenta de novo depois
+        await recIdbPut({
+          ...bip,
+          tentativas: (bip.tentativas || 0) + 1,
+          ultimo_erro: (e === null || e === void 0 ? void 0 : e.message) || String(e),
+          status_sync: 'pendente'
+        });
+        if (!navigator.onLine || (e === null || e === void 0 ? void 0 : e.code) === 'unavailable') break; // sem conexão real: para o lote, tenta de novo depois
       }
     }
   } finally {

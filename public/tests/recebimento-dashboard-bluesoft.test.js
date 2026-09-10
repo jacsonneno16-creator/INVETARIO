@@ -40,7 +40,7 @@ function loadAmbiente(colecoes) {
     getDTFirestore: () => ({ collection: nome => colecoes?.[nome] || mockColecao([]) }),
     getDTRawFirestore: () => ({
       collection: nome => {
-        if (nome === 'lojas') return { doc: () => ({ get: async () => ({ exists: true, data: () => ({ nome: 'Loja 1', bluesoft_loja_key: 'LK1' }) }) }) };
+        if (nome === 'lojas') return { doc: () => ({ get: async () => ({ exists: true, data: () => ({ nome: 'Loja 1', bluesoft_loja_key: 'LK1' }) }), collection: () => ({ doc: () => ({ get: async () => ({ exists: false }) }) }) }) };
         if (nome === 'dt_config') return { doc: () => ({ get: async () => ({ exists: true, data: () => ({ token: 'tok', url_hml: 'https://hml.exemplo', ambiente: 'homologacao', timeout: 30 }) }) }) };
         return { doc: () => ({ get: async () => ({ exists: false }) }) };
       },

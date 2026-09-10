@@ -13,14 +13,16 @@ const _elErr = new Audio('data:audio/mpeg;base64,' + _SOM_ERRO_B64);
 _elErr.preload = 'auto';
 
 // Para beepOk usamos síntese (mais leve) + fallback CDN
-let _audioCtx   = null;
-let _bufOk      = null;
+let _audioCtx = null;
+let _bufOk = null;
 let _audioReady = false;
-
 function _getAudioCtx() {
   if (!_audioCtx || _audioCtx.state === 'closed') {
-    try { _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
-    catch(e) { return null; }
+    try {
+      _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      return null;
+    }
   }
   return _audioCtx;
 }
@@ -43,29 +45,30 @@ function _desbloqueioGesto() {
   // Criar e resumir AudioContext dentro do gesto (para beepOk síntese)
   const ctx = _getAudioCtx();
   if (ctx && ctx.state === 'suspended') {
-    ctx.resume().then(() => window.dbg('[som] AudioContext resumed'))
-               .catch(e => console.warn('[som] resume:', e.message));
+    ctx.resume().then(() => window.dbg('[som] AudioContext resumed')).catch(e => console.warn('[som] resume:', e.message));
   }
 
   // Pré-carregar buffer CDN em background (assíncrono — ok aqui)
   _carregarBufOk();
 }
-
-['touchstart','pointerdown','click','keydown'].forEach(ev =>
-  document.addEventListener(ev, _desbloqueioGesto, { once: true, passive: true })
-);
+['touchstart', 'pointerdown', 'click', 'keydown'].forEach(ev => document.addEventListener(ev, _desbloqueioGesto, {
+  once: true,
+  passive: true
+}));
 
 // ── Pré-carregar buffer de acerto do CDN ─────────────────────────
 async function _carregarBufOk() {
   if (_bufOk) return;
   try {
-    const ctx = _getAudioCtx(); if (!ctx) return;
-    const res = await fetch('https://cdn.pixabay.com/audio/2025/01/31/audio_295058.mp3',
-                            { cache: 'force-cache' });
+    const ctx = _getAudioCtx();
+    if (!ctx) return;
+    const res = await fetch('https://cdn.pixabay.com/audio/2025/01/31/audio_295058.mp3', {
+      cache: 'force-cache'
+    });
     if (!res.ok) throw new Error(res.status);
     _bufOk = await ctx.decodeAudioData(await res.arrayBuffer());
     window.dbg('[som] bufOk pronto (CDN)');
-  } catch(e) {
+  } catch (e) {
     console.warn('[som] CDN falhou — síntese será usada:', e.message);
   }
 }
@@ -73,50 +76,67 @@ async function _carregarBufOk() {
 // ── beepErr — toca o MP3 de erro via HTMLAudioElement ────────────
 function beepErr() {
   window.dbg('[som] beepErr — ready:', _audioReady);
-  if (!_audioReady) { _desbloqueioGesto(); return; }
+  if (!_audioReady) {
+    _desbloqueioGesto();
+    return;
+  }
   try {
     _elErr.currentTime = 0;
     _elErr.play().catch(e => {
       console.warn('[som] elErr.play():', e.message);
       _beepErrSintese(); // fallback síntese
     });
-  } catch(e) { _beepErrSintese(); }
+  } catch (e) {
+    _beepErrSintese();
+  }
 }
-
 function _beepErrSintese() {
-  const ctx = _getAudioCtx(); if (!ctx || ctx.state !== 'running') return;
+  const ctx = _getAudioCtx();
+  if (!ctx || ctx.state !== 'running') return;
   try {
     const t = ctx.currentTime;
     [660, 440].forEach((f, i) => {
-      const o = ctx.createOscillator(), g = ctx.createGain();
-      o.connect(g); g.connect(ctx.destination);
+      const o = ctx.createOscillator(),
+        g = ctx.createGain();
+      o.connect(g);
+      g.connect(ctx.destination);
       o.type = 'square';
-      o.frequency.setValueAtTime(f, t + i*0.12);
-      g.gain.setValueAtTime(0.001,  t + i*0.12);
-      g.gain.linearRampToValueAtTime(0.18,  t + i*0.12 + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.001, t + i*0.12 + 0.11);
-      o.start(t + i*0.12); o.stop(t + i*0.12 + 0.13);
+      o.frequency.setValueAtTime(f, t + i * 0.12);
+      g.gain.setValueAtTime(0.001, t + i * 0.12);
+      g.gain.linearRampToValueAtTime(0.18, t + i * 0.12 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.11);
+      o.start(t + i * 0.12);
+      o.stop(t + i * 0.12 + 0.13);
     });
-  } catch(e){ console.warn("[Erro tratado]", e); }
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
 }
 
 // ── beepOk — síntese Web Audio (sem CDN, mais rápido) ────────────
 function beepOk() {
   window.dbg('[som] beepOk — ready:', _audioReady);
-  if (!_audioReady) { _desbloqueioGesto(); return; }
+  if (!_audioReady) {
+    _desbloqueioGesto();
+    return;
+  }
 
   // Buffer CDN pronto? usar ele
   if (_bufOk) {
     const ctx = _getAudioCtx();
     if (ctx && ctx.state === 'running') {
       try {
-        const src = ctx.createBufferSource(), g = ctx.createGain();
+        const src = ctx.createBufferSource(),
+          g = ctx.createGain();
         g.gain.setValueAtTime(0.85, ctx.currentTime);
         src.buffer = _bufOk;
-        src.connect(g); g.connect(ctx.destination);
+        src.connect(g);
+        g.connect(ctx.destination);
         src.start(ctx.currentTime);
         return;
-      } catch(e){ console.warn("[Erro tratado]", e); }
+      } catch (e) {
+        console.warn("[Erro tratado]", e);
+      }
     }
   }
 
@@ -125,22 +145,28 @@ function beepOk() {
   if (!ctx || ctx.state !== 'running') return;
   try {
     const t = ctx.currentTime;
-    const o = ctx.createOscillator(), g = ctx.createGain();
-    o.connect(g); g.connect(ctx.destination);
+    const o = ctx.createOscillator(),
+      g = ctx.createGain();
+    o.connect(g);
+    g.connect(ctx.destination);
     o.type = 'sine';
     o.frequency.setValueAtTime(880, t);
     o.frequency.linearRampToValueAtTime(1047, t + 0.08);
     g.gain.setValueAtTime(0.001, t);
     g.gain.linearRampToValueAtTime(0.22, t + 0.02);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.20);
-    o.start(t); o.stop(t + 0.22);
-  } catch(e){ console.warn("[Erro tratado]", e); }
+    o.start(t);
+    o.stop(t + 0.22);
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
 }
-
-function beepSuave()     { beepOk(); }
-function beepErroForte() { beepErr(); }
+function beepSuave() {
+  beepOk();
+}
+function beepErroForte() {
+  beepErr();
+}
 
 // Pré-carregar CDN em background
 setTimeout(_carregarBufOk, 1200);
-
-

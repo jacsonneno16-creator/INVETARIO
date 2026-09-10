@@ -112,7 +112,7 @@ test('REGRESSÃO (causa raiz real, confirmada com erro ao vivo "Missing or insuf
   // a permissão "recebimento-transbordo" pro usuário não resolvia nada,
   // porque o bloqueio nunca foi de permissão — sempre foi de loja.
   const trecho=rules.slice(rules.indexOf('match /recebimentos/{docId}'),rules.indexOf('match /recebimento_identificadores'));
-  assert.match(trecho,/allow read: if canAccessStore\(lojaId\) \|\| \(\s*\n\s*active\(\) && resource\.data\.tipo == 'TRANSBORDO' &&\s*\n\s*hasPermissionColetorRecebimento\('editar'\)/);
+  assert.match(trecho,/allow read: if canAccessStore\(lojaId\) \|\| \(\s*\n\s*active\(\) && resource\.data\.tipo == 'TRANSBORDO' &&\s*\n\s*\(hasPermissionColetorRecebimento\('editar'\) \|\| hasPermissionRecebimento\('visualizar'\)\)/);
   assert.match(trecho,/allow create: if \(\s*\n\s*\(canAccessStore\(lojaId\) && hasPermissionRecebimento\('criar'\)\)/);
   // Update foi reestruturado (correção estrutural de posse operacional,
   // sessão seguinte): dois ramos separados — dono da loja (só enquanto

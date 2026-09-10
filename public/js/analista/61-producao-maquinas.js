@@ -119,12 +119,16 @@
   // "Ocupação total da semana"/"Máquinas selecionadas" da tela original.
   function _calcOcupacaoAgregada(nomes) {
     const resultado = _agendaSemanaAtual();
-    const alvo = nomes && nomes.length ? nomes : Object.keys(resultado.porMaquina);
-    let usados = 0, capacidade = 0, caixas = 0, qtdMaquinas = 0;
+    const todos = _maquinas.map(m => m.nome);
+    const alvo = nomes && nomes.length ? nomes : todos;
+    // O original usa a capacidade do parque inteiro também no percentual da
+    // seleção; só o numerador muda para as máquinas selecionadas.
+    const capacidade = todos.reduce((soma, nome) => soma + (Number(resultado.porMaquina[nome]?.capacidadeMinutosSemana) || 0), 0);
+    let usados = 0, caixas = 0, qtdMaquinas = 0;
     alvo.forEach(nome => {
       const d = resultado.porMaquina[nome];
       if (d) {
-        usados += d.totalMinutosUsados; capacidade += d.capacidadeMinutosSemana; qtdMaquinas++;
+        usados += d.totalMinutosUsados; qtdMaquinas++;
         (d.porDia || []).forEach(dia => (dia || []).forEach(seg => { if (seg.tipo === 'producao') caixas += Number(seg.caixasNoDia) || 0; }));
       }
     });
@@ -166,6 +170,22 @@
   // do CRUD original nesta rodada), mas os controles administrativos só
   // aparecem quando a tela é aberta a partir de Configurações — nunca na
   // aba principal.
+  // PEDIDO AO VIVO (pendência #4, rodada de correção): o comentário
+  // antigo aqui mesmo admitia "não dá pra recriar a tabela exata do CRUD
+  // original nesta rodada" — os cards de monitoramento eram reaproveitados
+  // visualmente pro Cadastro também (com busca/editar/excluir plugados
+  // nos MESMOS cards). Agora são duas telas de verdade: a principal
+  // continua só monitoramento (sem NENHUM controle de cadastro, como
+  // sempre foi), e Configurações → Cadastro de Máquinas ganhou sua
+  // própria tabela — _desenharCadastroMaquinasTabela() — reproduzindo
+  // literalmente app.js:7866-7957/index.html:1082-1120 do original:
+  // cabeçalho com Template/Excel/+Adicionar, aviso "Use Configurações →
+  // Produtos → Excel...", tabela Nome/Tipo-Setor/Und-min/Cap-hora/
+  // Cap-dia/Status/Ações, linha de detalhe expansível (▾) com Cap/hora,
+  // Cap/turno, Cap/dia, Eficiência, Turnos, Hrs/turno, Setup padrão e
+  // produtos compatíveis — sem filtro de categoria/semana, sem toggle
+  // Miniaturas/Lista, sem busca (nenhum desses existe na tela real do
+  // original; confirmado lendo o HTML/JS, não suposto).
   let _modoCadastroMaq = false;
   async function renderProducaoMaquinas(containerId) {
     _containerMaq = containerId || 'page-producao-maquinas';
@@ -175,16 +195,98 @@
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     try { await carregarProducaoMaquinas(); }
     catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
-    _desenharProducaoMaquinas();
+    if (_modoCadastroMaq) _desenharCadastroMaquinasTabela();
+    else _desenharProducaoMaquinas();
+  }
+
+  // ── Cadastro de Máquinas (Configurações) — tabela própria, sem nada
+  // reaproveitado visualmente do monitoramento ──────────────────────────
+  function _capacidadeMaquina(m) {
+    const efic = Number(m.eficiencia) || 100;
+    const hTurno = Number(m.hTurno) || 8;
+    const nTurnos = Number(m.nTurnos) || 1;
+    const pcMin = Number(m.pcMin) || 0;
+    const fator = efic / 100;
+    const porHora = Math.round(pcMin * 60 * fator);
+    const porTurno = Math.round(porHora * hTurno);
+    const porDia = porTurno * nTurnos;
+    return { porHora, porTurno, porDia };
+  }
+  const _detalhesCadastroAbertos = new Set();
+  function _detalheCadastroMaquinaHtml(m, cap) {
+    const nProds = Array.isArray(m.produtosCompativeis) ? m.produtosCompativeis.length : 0;
+    const capSummary = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:8px 14px;background:var(--surface-2);font-size:.68rem;font-family:monospace">
+      <div style="text-align:center"><div style="color:var(--muted);font-size:.58rem;text-transform:uppercase;letter-spacing:.05em">Cap/hora</div><div style="color:var(--orange);font-weight:700">${cap ? cap.porHora.toLocaleString('pt-BR') : '—'}</div></div>
+      <div style="text-align:center"><div style="color:var(--muted);font-size:.58rem;text-transform:uppercase;letter-spacing:.05em">Cap/turno</div><div style="color:var(--orange);font-weight:700">${cap ? cap.porTurno.toLocaleString('pt-BR') : '—'}</div></div>
+      <div style="text-align:center"><div style="color:var(--muted);font-size:.58rem;text-transform:uppercase;letter-spacing:.05em">Cap/dia</div><div style="color:var(--orange);font-weight:700">${cap ? cap.porDia.toLocaleString('pt-BR') : '—'}</div></div>
+    </div>
+    <div style="padding:4px 14px 8px;display:flex;gap:14px;flex-wrap:wrap;font-size:.66rem;font-family:monospace">
+      <span><span style="color:var(--muted)">Efic:</span> ${m.eficiencia != null ? esc(m.eficiencia) + '%' : '—'}</span>
+      <span><span style="color:var(--muted)">Turnos:</span> ${m.nTurnos || '—'}</span>
+      <span><span style="color:var(--muted)">Hrs/turno:</span> ${m.hTurno || '—'}</span>
+      <span><span style="color:var(--muted)">Setup padrão:</span> ${(m.setupPadraoMin || m.tempoSetupPadrao) ? esc(m.setupPadraoMin || m.tempoSetupPadrao) + ' min' : '—'}</span>
+    </div>`;
+    if (nProds > 0) {
+      return capSummary + `<div style="padding:8px 14px;background:rgba(124,106,247,.06)">
+        <div style="font-size:.6rem;text-transform:uppercase;letter-spacing:.05em;color:var(--purple);font-weight:700;margin-bottom:6px">Produtos Compatíveis (${nProds})</div>
+        ${m.produtosCompativeis.map(p => `<div style="display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px solid var(--border);font-size:.68rem"><span>${esc(p.produto)}</span><span style="color:var(--orange)">${p.velocidade ? esc(p.velocidade) + ' und/min' : 'padrão' + (m.pcMin ? ' (' + esc(m.pcMin) + ')' : '')}</span></div>`).join('')}
+      </div>`;
+    }
+    return capSummary + `<div style="padding:10px 14px;background:rgba(184,144,48,.08);font-size:.7rem;color:var(--warn)">⚠️ Essa máquina ainda não possui produtos vinculados. Clique em <b>Editar</b> → aba de produtos compatíveis para configurar.</div>`;
+  }
+  function _desenharCadastroMaquinasTabela() {
+    const pagina = document.getElementById(_containerMaq);
+    if (!pagina) return;
+    const lista = [..._maquinas].sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
+    pagina.innerHTML = `
+      <div class="tc" style="padding:0;overflow:hidden">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px"><span>🏭</span><span style="font-weight:700">Cadastro de Máquinas</span></div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            <button type="button" class="btn btn-ghost btn-sm" data-pexcel-template-baixar="1">📄 Template</button>
+            <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">📥 Excel<input type="file" id="pexcel-template-input" accept=".xlsx,.xls" style="display:none"></label>
+            <button type="button" class="btn btn-primary btn-sm" data-pmaq-novo="1">+ Adicionar Máquina</button>
+          </div>
+        </div>
+        <div style="padding:8px 16px;background:rgba(224,112,32,.08);border-bottom:1px solid var(--border);font-size:.7rem;color:var(--orange)">
+          💡 <b>Dica:</b> Use <b>Configurações → Produtos → Excel</b> para importar produtos E máquinas juntos com velocidades específicas por produto.
+        </div>
+        ${lista.length ? `<div style="overflow-x:auto"><table class="dt-table">
+          <thead><tr><th>Nome</th><th>Tipo / Setor</th><th style="text-align:right">Und/min</th><th style="text-align:right">Cap/hora</th><th style="text-align:right">Cap/dia</th><th style="text-align:center">Status</th><th style="text-align:right">Ações</th></tr></thead>
+          <tbody>
+          ${lista.map(m => {
+            const cap = m.pcMin ? _capacidadeMaquina(m) : null;
+            const tipoSetor = [m.tipo, m.setor].filter(Boolean).join(' / ') || '—';
+            const catClass = [m.categoria, m.classificacao].filter(Boolean).join(' / ');
+            const nProds = Array.isArray(m.produtosCompativeis) ? m.produtosCompativeis.length : 0;
+            const aberto = _detalhesCadastroAbertos.has(m._firestoreId);
+            const statusInfo = STATUS_INFO[m.status] || STATUS_INFO.ativa;
+            return `<tr>
+              <td class="mono">${esc(m.nome)}${m.codigo ? `<span style="font-size:.62rem;color:var(--muted);margin-left:6px">${esc(m.codigo)}</span>` : ''}</td>
+              <td>${esc(tipoSetor)}${catClass ? `<div style="font-size:.62rem;color:var(--muted);margin-top:2px">${esc(catClass)}</div>` : ''}</td>
+              <td style="text-align:right" class="mono">${m.pcMin ? esc(m.pcMin) + ' und/min' : '—'}</td>
+              <td style="text-align:right" class="mono">${cap ? cap.porHora.toLocaleString('pt-BR') : '—'}</td>
+              <td style="text-align:right" class="mono">${cap ? cap.porDia.toLocaleString('pt-BR') : '—'}</td>
+              <td style="text-align:center"><span class="badge ${statusInfo.cor}">${statusInfo.label.toUpperCase()}</span></td>
+              <td style="text-align:right;white-space:nowrap">
+                <span class="badge ${nProds > 0 ? 'b-purple' : 'b-orange'}" style="font-size:.6rem">${nProds > 0 ? nProds + ' prod.' : 'Sem produtos'}</span>
+                <button type="button" class="acao-lapis" data-pmaq-detalhe-cad="${esc(m._firestoreId)}" title="Ver produtos">${aberto ? '▴' : '▾'}</button>
+                <button type="button" class="acao-lapis" data-pmaq-editar="${esc(m._firestoreId)}" title="Editar">✏️</button>
+                <button type="button" class="acao-lapis" data-pmaq-excluir="${esc(m._firestoreId)}" title="Excluir">🗑️</button>
+              </td>
+            </tr>
+            ${aberto ? `<tr><td colspan="7" style="padding:0">${_detalheCadastroMaquinaHtml(m, cap)}</td></tr>` : ''}`;
+          }).join('')}
+          </tbody>
+        </table></div>` : `<div style="color:var(--muted);font-size:.8rem;padding:20px;text-align:center">Nenhuma máquina cadastrada.</div>`}
+      </div>`;
   }
 
   function _desenharProducaoMaquinas() {
     const pagina = document.getElementById(_containerMaq);
     if (!pagina) return;
-    const busca = String(document.getElementById('pmaq-busca')?.value || '').trim().toLowerCase();
     const catFiltro = String(document.getElementById('pmaq-filtro-categoria')?.value || '');
     const cards = _maquinas
-      .filter(m => !busca || String(m.nome || '').toLowerCase().includes(busca) || String(m.categoria || '').toLowerCase().includes(busca))
       .filter(m => !catFiltro || m.categoria === catFiltro)
       .sort((a, b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
     const ocupacaoTotal = _calcOcupacaoAgregada([]);
@@ -195,26 +297,18 @@
     pagina.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
         <div>
-          ${_modoCadastroMaq
-            ? `<div class="page-title" style="font-size:1.1rem">⚙️ Cadastro de Máquinas</div><div style="font-size:.72rem;color:var(--muted)">${cards.length.toLocaleString('pt-BR')} máquina(s)</div>`
-            : `<div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Carga por Máquina · Solicitações Ativas (Pendente + Em Andamento)</div>`}
+          <div style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">Carga por Máquina · Solicitações Ativas (Pendente + Em Andamento)</div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          ${_modoCadastroMaq ? `<input id="pmaq-busca" placeholder="Buscar nome ou categoria..." value="${esc(busca)}" class="field" style="min-width:220px">` : ''}
+        <div class="pmaq-toolbar-actions" style="display:flex;gap:8px;align-items:center">
           <select id="pmaq-filtro-categoria" class="field"><option value="">Todas as categorias</option>${categoriasFiltro.map(c => `<option value="${esc(c)}" ${catFiltro === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>
           <select id="pmaq-filtro-semana" class="field"><option value="">Todas as semanas</option>${_semanasComOP().map(s => { const d = new Date(s + 'T12:00:00'), sun = new Date(d); sun.setDate(d.getDate() + 6); return `<option value="${s}" ${_semanaMaqFiltro === s ? 'selected' : ''}>${_fmtDataCurta(d)} – ${_fmtDataCurta(sun)}</option>`; }).join('')}</select>
           <div style="display:flex;background:var(--surface);border:1px solid var(--border);border-radius:8px;overflow:hidden">
             <button type="button" class="btn ${_viewMaq === 'grid' ? 'btn-primary' : 'btn-ghost'} btn-sm" style="border-radius:0;border:none" data-pmaq-view="grid">⊞ Miniaturas</button>
             <button type="button" class="btn ${_viewMaq === 'list' ? 'btn-primary' : 'btn-ghost'} btn-sm" style="border-radius:0;border:none" data-pmaq-view="list">☰ Lista</button>
           </div>
-          ${_modoCadastroMaq ? `
-          <button type="button" class="btn btn-ghost btn-sm" data-pmaq-resetar-turnos="1">↺ Resetar turnos de todas</button>
-          <button type="button" class="btn btn-ghost btn-sm" data-pexcel-template-baixar="1">📄 Template</button>
-          <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">📥 Excel<input type="file" id="pexcel-template-input" accept=".xlsx,.xls" style="display:none"></label>
-          <button type="button" class="btn btn-primary btn-sm" data-pmaq-novo="1">+ Nova Máquina</button>` : ''}
         </div>
       </div>
-      ${!_modoCadastroMaq ? `<div style="font-size:.66rem;color:var(--muted);margin:-8px 0 12px">Cadastro, edição e exclusão de máquinas ficam em <b>Configurações → Máquinas → Cadastro de Máquinas</b>.</div>` : ''}
+      <div style="font-size:.66rem;color:var(--muted);margin:-8px 0 12px">Cadastro, edição e exclusão de máquinas ficam em <b>Configurações → Máquinas → Cadastro de Máquinas</b>.</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:16px">
         <div class="tc" style="padding:12px 16px">
           <div style="font-size:.68rem;color:var(--muted)">Ocupação total da semana</div>
@@ -234,30 +328,21 @@
       ${cards.length ? (_viewMaq === 'list' ? _listaMaquinasHtml(cards) : `
       <div class="maq-grid">
         ${cards.map(m => {
-          const status = STATUS_INFO[m.status] || STATUS_INFO.ativa;
           const ocupacao = calcOcupacaoMaquina(m);
           const horasProg = _horasProgMaquina(m);
           const horasDisp = _horasDispMaquina(m);
-          const produtos = m.produtosCompativeis || [];
           const selecionada = _selecionadas.has(m.nome);
           const pedidosAtivos = _pedidosAtivosMaquina(m.nome);
           const caixasAtivas = pedidosAtivos.reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
           const turnosResumo = _resumoTurnosSegunda(m);
           const expandidoDet = _detalhesAbertos.has(m.nome);
           return `
-          <div class="tc" style="padding:18px;display:flex;flex-direction:column;gap:8px;${selecionada ? 'border:2px solid var(--orange)' : ''}">
-            <div style="display:flex;align-items:start;justify-content:space-between;gap:8px">
-              <div>
-                <div style="font-family:'JetBrains Mono',monospace;font-weight:500;font-size:13px;color:var(--orange)">${esc(m.nome)}</div>
-                <div style="font-size:.72rem;color:var(--muted)">${esc(m.categoria || '—')} · ${pedidosAtivos.length} solicit. · ${Math.round(caixasAtivas).toLocaleString('pt-BR')} cx</div>
-                ${turnosResumo ? `<div style="font-size:.66rem;color:var(--muted);margin-top:2px">${esc(turnosResumo)}</div>` : ''}
-              </div>
-              <span class="badge ${status.cor}" style="font-size:.62rem">${status.label}</span>
-            </div>
+          <div class="tc pmaq-monitor-card" style="${selecionada ? 'border-color:var(--warn);box-shadow:0 0 0 1px rgba(255,184,0,.35),0 8px 24px rgba(0,0,0,.22)' : ''}">
+            <button type="button" class="pmaq-select-card" data-pmaq-selecionar="${esc(m.nome)}" style="${selecionada?'border-color:rgba(255,184,0,.45);background:rgba(255,184,0,.18);color:var(--warn)':''}">${selecionada ? 'Selecionado' : 'Selecionar'}</button>
+            <div style="font-family:'JetBrains Mono',monospace;font-weight:500;font-size:13px;color:var(--orange);padding-right:98px">${esc(m.nome)}</div>
+            ${turnosResumo ? `<div style="font-size:9px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:2px">${esc(turnosResumo)}</div>` : ''}
+            <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-family:'JetBrains Mono',monospace;margin-top:4px"><span>${pedidosAtivos.length} solicit.</span><span><b style="color:${ocupacao>100?'var(--danger)':'var(--orange)'}">${Math.round(caixasAtivas).toLocaleString('pt-BR')}</b> caixas</span></div>
             ${pedidosAtivos.length ? `<div style="font-size:.68rem;color:var(--muted);display:flex;flex-direction:column;gap:2px">${pedidosAtivos.slice(0, 4).map(r => `<div>• ${esc(r.produto)} — ${Math.round(Number(r.qntCaixas) || 0).toLocaleString('pt-BR')} cx</div>`).join('')}${pedidosAtivos.length > 4 ? `<div>+ ${pedidosAtivos.length - 4} outra(s)</div>` : ''}</div>` : ''}
-            <div style="font-size:.72rem;color:var(--muted)">
-              ${produtos.length ? produtos.map(p => esc(p.produto) + ' (' + esc(p.velocidade) + '/min)').join(', ') : 'Nenhum produto compatível cadastrado'}
-            </div>
             ${ocupacao > 100 ? `<div style="font-size:.66rem;color:var(--danger);font-weight:700">⚠ Excede em ${ocupacao - 100}%</div>` : ''}
             <div>
               <div style="height:6px;border-radius:4px;background:var(--border);overflow:hidden">
@@ -269,13 +354,6 @@
                 <span style="color:var(--muted)">/ ${horasDisp.toFixed(1)}h disp.</span>
                 <span style="color:${ocupacao > 100 ? 'var(--danger)' : 'var(--orange)'};font-weight:700;font-size:.76rem">${ocupacao}%</span>
               </div>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:4px;margin-top:4px">
-              <button type="button" class="btn ${selecionada ? 'btn-primary' : 'btn-ghost'} btn-sm" data-pmaq-selecionar="${esc(m.nome)}" style="padding:3px 10px;font-size:.68rem">${selecionada ? 'Selecionado' : 'Selecionar'}</button>
-              ${_modoCadastroMaq ? `<div>
-                <button type="button" class="acao-lapis" title="Editar" data-pmaq-editar="${esc(m._firestoreId)}">✏️</button>
-                <button type="button" class="acao-lapis" title="Excluir" data-pmaq-excluir="${esc(m._firestoreId)}">🗑️</button>
-              </div>` : ''}
             </div>
             <button type="button" data-pmaq-detalhes="${esc(m.nome)}" style="background:none;border:none;color:var(--muted);font-size:.66rem;cursor:pointer;text-align:center;padding:2px 0">${expandidoDet ? '▴' : '▾'} detalhes</button>
             ${expandidoDet ? _detalheMaquinaHtml(m) : ''}
@@ -348,7 +426,8 @@
     const pcMin = Number(document.getElementById('pmaq-pcmin')?.value) || 0;
     const hTurno = Number(document.getElementById('pmaq-hturno')?.value) || 0;
     const nTurnos = Number(document.getElementById('pmaq-nturnos')?.value) || 0;
-    const porHora = pcMin * 60, porTurno = porHora * hTurno, porDia = porTurno * nTurnos;
+    const eficiencia = Math.max(0, Math.min(100, Number(document.getElementById('pmaq-eficiencia')?.value) || 100)) / 100;
+    const porHora = pcMin * 60 * eficiencia, porTurno = porHora * hTurno, porDia = porTurno * nTurnos;
     const elHora = document.getElementById('pmaq-calc-hora'), elTurno = document.getElementById('pmaq-calc-turno'), elDia = document.getElementById('pmaq-calc-dia');
     if (elHora) elHora.textContent = porHora > 0 ? Math.round(porHora).toLocaleString('pt-BR') : '—';
     if (elTurno) elTurno.textContent = porTurno > 0 ? Math.round(porTurno).toLocaleString('pt-BR') : '—';
@@ -383,7 +462,17 @@
     await _carregarAtalhos();
     _redesenharTurnosEditando();
     _calcCapacidade();
+    pmaqMudarAba('dados');
     global.openModal?.('modal-pmaq');
+  }
+
+  function pmaqMudarAba(aba) {
+    const modal = document.getElementById('modal-pmaq');
+    if (!modal) return;
+    modal.querySelectorAll('[data-pmaq-tab]').forEach(b => b.classList.toggle('on', b.getAttribute('data-pmaq-tab') === aba));
+    modal.querySelectorAll('[data-pmaq-pane]').forEach(p => p.classList.toggle('on', p.getAttribute('data-pmaq-pane') === aba));
+    const corpo = modal.querySelector('.modal-body');
+    if (corpo) corpo.scrollTop = 0;
   }
 
   function _redesenharProdutosEditando() {
@@ -452,6 +541,14 @@
     _redesenharTurnosEditando();
   }
 
+  // Ações de CRUD (salvar/excluir/reset em massa) só disparam a partir da
+  // tabela de Cadastro (Configurações) desde a separação das duas telas —
+  // mas usa o modo atual em vez de assumir, pra continuar correto se
+  // algum fluxo futuro reabrir o modal a partir de outro lugar.
+  function _redesenharMaquinasAtual() {
+    if (_modoCadastroMaq) _desenharCadastroMaquinasTabela();
+    else _desenharProducaoMaquinas();
+  }
   function pmaqEditar(docId) {
     const item = _maquinas.find(m => m._firestoreId === docId);
     if (!item) return;
@@ -505,7 +602,7 @@
       global.closeModal?.('modal-pmaq');
       global.showToast?.('Máquina salva.', 'success');
       await carregarProducaoMaquinas(true);
-      _desenharProducaoMaquinas();
+      _redesenharMaquinasAtual();
     } catch (e) {
       global.showToast?.('Erro ao salvar: ' + (e.message || e), 'error');
     }
@@ -519,7 +616,7 @@
         await fs().collection(COL_MAQUINAS).doc(docId).delete();
         global.showToast?.('Máquina excluída.', 'success');
         await carregarProducaoMaquinas(true);
-        _desenharProducaoMaquinas();
+        _redesenharMaquinasAtual();
       } catch (e) {
         global.showToast?.('Erro ao excluir: ' + (e.message || e), 'error');
       }
@@ -558,7 +655,7 @@
         await Promise.all(_maquinas.map(m => fs().collection(COL_MAQUINAS).doc(m._firestoreId).set({ turnos: turnosPadrao, atualizadoEm: new Date().toISOString() }, { merge: true })));
         global.showToast?.('Turnos resetados pro padrão em todas as máquinas.', 'success');
         await carregarProducaoMaquinas(true);
-        _desenharProducaoMaquinas();
+        _redesenharMaquinasAtual();
       } catch (e) {
         global.showToast?.('Erro ao resetar: ' + (e.message || e), 'error');
       }
@@ -774,6 +871,7 @@
   global.pmaqExcluir = pmaqExcluir;
   global.pmaqAtalhosAbrir = pmaqAtalhosAbrir;
   global.pmaqAtalhosSalvar = pmaqAtalhosSalvar;
+  global.pmaqMudarAba = pmaqMudarAba;
 
   // Tudo abaixo é gerado via innerHTML (grid de cards, linhas de produto
   // compatível, linhas de turno) — usa data-* + escutador delegado em vez de
@@ -781,6 +879,8 @@
   // quando injetado dinamicamente (mesma correção aplicada na Ficha
   // Técnica, fase 2).
   document.addEventListener('click', function (event) {
+    const tab = event.target.closest('[data-pmaq-tab]');
+    if (tab) { pmaqMudarAba(tab.getAttribute('data-pmaq-tab')); return; }
     const novo = event.target.closest('[data-pmaq-novo]');
     if (novo) { pmaqNovaMaquina(); return; }
     const editar = event.target.closest('[data-pmaq-editar]');
@@ -807,6 +907,8 @@
     if (viewBtn) { _viewMaq = viewBtn.getAttribute('data-pmaq-view'); _desenharProducaoMaquinas(); return; }
     const detBtn = event.target.closest('[data-pmaq-detalhes]');
     if (detBtn) { const nome = detBtn.getAttribute('data-pmaq-detalhes'); if (_detalhesAbertos.has(nome)) _detalhesAbertos.delete(nome); else _detalhesAbertos.add(nome); _desenharProducaoMaquinas(); return; }
+    const detCadBtn = event.target.closest('[data-pmaq-detalhe-cad]');
+    if (detCadBtn) { const id = detCadBtn.getAttribute('data-pmaq-detalhe-cad'); if (_detalhesCadastroAbertos.has(id)) _detalhesCadastroAbertos.delete(id); else _detalhesCadastroAbertos.add(id); _desenharCadastroMaquinasTabela(); return; }
     // Turnos por Máquina (tela dedicada, matriz com todas as máquinas)
     const ptmAtalhosBtn = event.target.closest('[data-ptm-atalhos-abrir]');
     if (ptmAtalhosBtn) { pmaqAtalhosAbrir(); return; }
@@ -823,7 +925,7 @@
   });
   document.addEventListener('input', function (event) {
     if (event.target && event.target.id === 'pmaq-busca') _desenharProducaoMaquinas();
-    if (event.target && ['pmaq-pcmin', 'pmaq-hturno', 'pmaq-nturnos'].includes(event.target.id)) _calcCapacidade();
+    if (event.target && ['pmaq-pcmin', 'pmaq-hturno', 'pmaq-nturnos', 'pmaq-eficiencia'].includes(event.target.id)) _calcCapacidade();
   });
   document.addEventListener('change', function (event) {
     if (event.target && event.target.id === 'pmaq-filtro-categoria') { _desenharProducaoMaquinas(); return; }
@@ -839,5 +941,5 @@
     const ptmFim = event.target.closest('[data-ptm-fim]');
     if (ptmFim) { ptmFaixaAlterada(ptmFim.getAttribute('data-ptm-maq'), Number(ptmFim.getAttribute('data-ptm-dia')), Number(ptmFim.getAttribute('data-ptm-idx')), 'fim', ptmFim.value); return; }
   });
-  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _maquinas=[]; _registros=[]; _setups=[]; _produtosEditando=[]; _turnosEditando={}; _atalhos=null; _selecionadas.clear(); _semanaMaqFiltro=''; _detalhesAbertos.clear(); });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _maquinas=[]; _registros=[]; _setups=[]; _produtosEditando=[]; _turnosEditando={}; _atalhos=null; _selecionadas.clear(); _semanaMaqFiltro=''; _detalhesAbertos.clear(); _detalhesCadastroAbertos.clear(); });
 })(window);

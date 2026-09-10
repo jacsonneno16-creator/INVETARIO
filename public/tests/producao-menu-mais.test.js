@@ -19,7 +19,7 @@ const ROTAS_PRINCIPAIS = [
 ];
 const ROTAS_OCULTAS = [
   'ficha-tecnica', 'projecao', 'funcionarios', 'setup',
-  'mapa-fabrica', 'config', 'importacao', 'estoque',
+  'mapa-fabrica', 'config', 'importacao', 'estoque', 'relatorios-bi',
 ];
 
 function carregarShell() {

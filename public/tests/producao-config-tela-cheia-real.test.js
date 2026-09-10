@@ -62,3 +62,21 @@ test('Configurações: "Gestão de Lojas" e "Usuários do Sistema" abrem o modal
   document.querySelector('[data-pcfg-secao="usuarios"]').click();
   assert.equal(win.__modalAberto, 'operadores');
 });
+
+// PEDIDO AO VIVO (2026-08-28): "procurei lá não achei" — Relatórios BI
+// (101-relatorios-bi.js) ficou sem nenhuma entrada clicável depois da
+// auditoria de paridade visual (59-producao-ui-completa.js só escondia as
+// 8 rotas que já conhecia, essa nunca tinha entrado na lista). Agora mora
+// em Configurações → Extras desta integração, junto com Mapa da Fábrica e
+// Estoque (Bluesoft), mesmo tratamento.
+test('Configurações → Extras: "Relatórios BI" aparece na lista e, ao clicar, renderiza dentro do embed-host', async () => {
+  const { win, document } = carregarPagina();
+  win.renderRelatoriosBi = (containerId) => { win.__containerRelatoriosBi = containerId; document.getElementById(containerId).innerHTML = '<div id="marca-relatorios-bi">ok</div>'; };
+  await win.renderProducaoConfig();
+  const html = document.getElementById('page-producao-config').innerHTML;
+  assert.match(html, /data-pcfg-secao="producao-relatorios-bi"/);
+  assert.match(html, /Relatórios BI/);
+  document.querySelector('[data-pcfg-secao="producao-relatorios-bi"]').click();
+  assert.equal(win.__containerRelatoriosBi, 'pcfg-embed-host');
+  assert.ok(document.getElementById('marca-relatorios-bi'), 'renderRelatoriosBi precisa ser chamado com o embed-host certo');
+});

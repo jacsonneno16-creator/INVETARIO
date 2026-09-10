@@ -8,7 +8,7 @@ const rules=fs.readFileSync(path.join(__dirname,'../../firestore.rules'),'utf8')
 function mockRawFirestore(loja){
   return {
     collection:(nome)=>{
-      if(nome==='lojas') return {doc:()=>({get:async()=>({exists:true,data:()=>loja})})};
+      if(nome==='lojas') return {doc:()=>({get:async()=>({exists:true,data:()=>loja}),collection:()=>({doc:()=>({get:async()=>({exists:false})})})})};
       if(nome==='dt_config') return {doc:()=>({get:async()=>({exists:true,data:()=>({token:'tok',url_hml:'https://hml.exemplo',ambiente:'homologacao',timeout:30})})})};
       return {doc:()=>({get:async()=>({exists:false})})};
     },
@@ -91,9 +91,15 @@ test('sincronizarFichaTecnicaBluesoft busca ficha só de produto com estoque rea
   assert.equal(preservada.insumos[0].insumo,'Açúcar'); // não foi sobrescrita
 });
 
-test('76 tem o botão de sincronizar ficha técnica (Bluesoft), ligado ao serviço novo',()=>{
-  assert.match(importacaoCode,/data-pimp-bluesoft-ficha/);
-  assert.match(importacaoCode,/global\.sincronizarFichaTecnicaBluesoft/);
+// PEDIDO AO VIVO (2026-08-27): "tira tudo da bluesoft" — Ficha Técnica já
+// vem sozinha do SharePoint (sincronizarBiAgendado em functions/index.js),
+// então o botão de buscar ficha técnica via Bluesoft foi removido de 76.
+// sincronizarFichaTecnicaBluesoft (90-bluesoft-service.js) continua
+// existindo e testado (ver teste acima) — só não tem mais botão que a
+// chame nesta tela.
+test('76 NÃO tem mais o botão de sincronizar ficha técnica (Bluesoft) — Ficha Técnica já vem do SharePoint',()=>{
+  assert.doesNotMatch(importacaoCode,/data-pimp-bluesoft-ficha/);
+  assert.doesNotMatch(importacaoCode,/global\.sincronizarFichaTecnicaBluesoft/);
 });
 
 test('60 (Produtos & Ficha Técnica) tem botão de apagar tudo, com confirmação digitada',()=>{

@@ -35,11 +35,17 @@ test('sincronizarEstoqueBluesoft usa a loja ativa, faz upsert por cod e nunca es
   assert.doesNotMatch(trecho,/venda_m1/);
 });
 
-test('76 ganhou o botão de sincronizar estoque, mantendo os fallbacks manuais existentes (Excel/API genérica)',()=>{
-  assert.match(importacaoCode,/data-pimp-bluesoft-estoque/);
-  assert.match(importacaoCode,/global\.sincronizarEstoqueBluesoft/);
+// PEDIDO AO VIVO (2026-08-27): "tira tudo da bluesoft" — estoque de
+// produto acabado já vem do SharePoint (sincronizarBiAgendado em
+// functions/index.js), botão de buscar estoque via Bluesoft removido de
+// 76. sincronizarEstoqueBluesoft (90-bluesoft-service.js) continua
+// existindo e testada — só não tem mais botão nesta tela que a chame. O
+// fallback manual (Excel) e a limpeza continuam existindo.
+test('76 NÃO tem mais o botão de buscar estoque (Bluesoft) — estoque já vem do SharePoint —, mantendo o fallback manual existente (Excel) e sem o painel de API genérica próprio da Produção',()=>{
+  assert.doesNotMatch(importacaoCode,/data-pimp-bluesoft-estoque/);
+  assert.doesNotMatch(importacaoCode,/global\.sincronizarEstoqueBluesoft/);
   assert.match(importacaoCode,/data-pimp-file="estoque-pa"/);
-  assert.match(importacaoCode,/data-pimp-api-sync/);
+  assert.doesNotMatch(importacaoCode,/data-pimp-api-sync|data-pimp-api-salvar|data-pimp-api-testar|producao_config['"]\)\.doc\('api'\)/);
 });
 
 test('Firestore rules dão via de escrita em producao_projecao pra sincronização de estoque, restrita aos campos reais',()=>{

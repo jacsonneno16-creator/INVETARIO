@@ -4,8 +4,23 @@ const servicoCode=fs.readFileSync(path.join(base,'90-bluesoft-service.js'),'utf8
 const importacaoCode=fs.readFileSync(path.join(base,'76-producao-importacao.js'),'utf8');
 const rules=fs.readFileSync(path.join(__dirname,'../../firestore.rules'),'utf8');
 
+// PEDIDO AO VIVO (etapa BlueSoft, diagnóstico de causa-raiz): _config() em
+// 90-bluesoft-service.js busca PRIMEIRO em lojas/{id}/dt_config/
+// integracao_api (config por loja) e só cai pro dt_config/integracao_api
+// global se a de loja não existir. Este mock só simulava 2 níveis
+// (collection→doc→get); a busca por loja fazia
+// collection('lojas').doc(id).collection('dt_config')... e essa segunda
+// .collection() não existia no objeto devolvido — TypeError, engolido
+// pelo try/catch de _config(), resultando em config vazia e o erro "URL
+// da BlueSoft não encontrada" em produção nenhuma real, só nos testes.
+// Corrigido pra simular os 4 níveis de verdade (loja sem override →
+// cai pro dt_config global, que é o que esses testes sempre quiseram
+// testar).
 function mockConfigFs(){
-  return { collection:()=>({ doc:()=>({ get: async()=>({ exists:true, data:()=>({token:'tok',url_hml:'https://hml.exemplo',ambiente:'homologacao',timeout:30}) }) }) }) };
+  return { collection:(nome)=>{
+    if(nome==='lojas') return { doc:()=>({ get: async()=>({exists:false}), collection:()=>({ doc:()=>({ get: async()=>({exists:false}) }) }) }) };
+    return { doc:()=>({ get: async()=>({ exists:true, data:()=>({token:'tok',url_hml:'https://hml.exemplo',ambiente:'homologacao',timeout:30}) }) }) };
+  } };
 }
 function mockFetchProdutosPorTipo(porTipo){
   return async (_url, opts) => {
@@ -101,7 +116,7 @@ test('sincronizarInsumosBluesoft só mantém insumo INSUMO ativo, usado em algum
   const originalRaw=w.getDTRawFirestore;
   w.getDTRawFirestore=()=>({
     collection:(nome)=>{
-      if(nome==='lojas') return { doc:()=>({ get: async()=>lojaDoc }) };
+      if(nome==='lojas') return { doc:()=>({ get: async()=>lojaDoc, collection:()=>({ doc:()=>({ get: async()=>({exists:false}) }) }) }) };
       if(nome==='dt_config') return { doc:()=>({ get: async()=>({exists:true,data:()=>({token:'tok',url_hml:'https://hml.exemplo',ambiente:'homologacao',timeout:30})}) }) };
       return { doc:()=>({ get: async()=>({exists:false}) }) };
     },
@@ -113,12 +128,17 @@ test('sincronizarInsumosBluesoft só mantém insumo INSUMO ativo, usado em algum
   assert.equal(r.comEstoque,1); // só Farinha tem saldoFisico>0
 });
 
-test('76 tem seleção de tipos de produto, botão de insumos e barra/contador de progresso ao vivo',()=>{
-  assert.match(importacaoCode,/pimp-bluesoft-tipo/);
-  assert.match(importacaoCode,/TIPOS_PRODUTO_BLUESOFT/);
-  assert.match(importacaoCode,/data-pimp-bluesoft-insumos/);
-  assert.match(importacaoCode,/global\.sincronizarInsumosBluesoft/);
-  assert.match(importacaoCode,/onProgresso:n=>/);
+// PEDIDO AO VIVO (2026-08-27): "tira tudo da bluesoft" — produto/insumo já
+// vêm sozinhos do SharePoint (sincronizarBiAgendado em functions/index.js),
+// então os botões de buscar produto/insumo via Bluesoft foram removidos de
+// 76. sincronizarProdutosBluesoft/sincronizarInsumosBluesoft
+// (90-bluesoft-service.js) continuam existindo e testadas — só não tem
+// mais botão nesta tela que as chame.
+test('76 NÃO tem mais seleção de tipos de produto nem botão de insumos (Bluesoft) — produto/insumo já vêm do SharePoint',()=>{
+  assert.doesNotMatch(importacaoCode,/pimp-bluesoft-tipo/);
+  assert.doesNotMatch(importacaoCode,/TIPOS_PRODUTO_BLUESOFT/);
+  assert.doesNotMatch(importacaoCode,/data-pimp-bluesoft-insumos/);
+  assert.doesNotMatch(importacaoCode,/global\.sincronizarInsumosBluesoft/);
 });
 
 test('Firestore permite gravar producao_insumos_estoque também via producao-importacao:importar',()=>{

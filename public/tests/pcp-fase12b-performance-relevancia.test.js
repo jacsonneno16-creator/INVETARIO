@@ -61,3 +61,23 @@ test('PCP soma a reserva de venda real da Bluesoft ao comprometido/necessidade, 
   assert.equal(v.estoqueComprometido,150);
   assert.equal(v.estoqueDisponivel,350);
 });
+
+// PEDIDO AO VIVO (2026-08-28): "a aba de pedido versus estoque... era pra
+// trazer os pedidos de vendas, está tudo zerado" — comprometido/disponível
+// já caíam pra reservaVendaBluesoft sem pedido manual, mas a coluna exibida
+// "Pedidos pend." (campo pendente) e o saldo/necessidade projetados
+// continuavam somando só o pedido LEGADO (pcp_pedidos, vazio pra quem
+// migrou pro BI) — mostrava zero mesmo com reserva de venda real.
+test('PCP: "Pedidos pend." (pendente exibido) e saldo/necessidade também usam a reserva de venda do BI quando não há pedido manual cadastrado',()=>{
+  const document={addEventListener:()=>{}};
+  const window={temPermissao:()=>true,calcularProjecaoComRisco:()=>[]};
+  vm.runInNewContext(pcpCode,{window,document,console,Date,Math,Number,String,Array,Object,Set,Map,confirm:()=>true,prompt:()=>null},{filename:'78-pcp-central.js'});
+  const h=window._pcpInternals;
+  const v=h.construirVisao({
+    produtos:[{cod:'X',nome:'Produto X',metaCoberturaDias:0}],
+    projecao:[{cod:'X',produto:'Produto X',estoqueAtual:500,estoqueReservadoVenda:150}],
+    pedidos:[],ops:[],agendamentos:[],requisicoes:[],
+  })[0];
+  assert.equal(v.pendente,150,'"Pedidos pend." não pode mostrar zero quando existe reserva de venda real do BI');
+  assert.equal(v.saldo,350,'saldo projetado precisa descontar a reserva de venda real, não só pedido manual');
+});

@@ -30,6 +30,12 @@ const ROTULOS_CORRIGIDOS={'producao-maquinas':'Máquinas','producao-gantt':'Prog
 const ROTAS_OCULTAR_DA_NAV=[
  'producao-ficha-tecnica','producao-projecao','producao-funcionarios','producao-setup',
  'producao-mapa-fabrica','producao-config','producao-importacao','producao-estoque',
+ // PEDIDO AO VIVO (2026-08-28): "procurei lá não achei" — nav-producao-
+ // relatorios-bi (101-relatorios-bi.js) nunca tinha entrado nesta lista nem
+ // em ROTAS_PRINCIPAIS, então sobrava sozinho no <aside> antigo sem
+ // aparecer em lugar nenhum (nem pílula, nem Configurações). Escondido
+ // aqui e reaberto como item de Configurações → Extras (77-producao-config.js).
+ 'producao-relatorios-bi',
 ];
 
 const _invalidadores=global.DTProducaoInvalidadores=global.DTProducaoInvalidadores||[];
@@ -209,17 +215,18 @@ function abrirMeuPerfilProducao(){
 
 function aplicarTemaSalvo(){
   const shell=document.getElementById('setor-producao-shell');if(!shell)return;
-  const light=localStorage.getItem('dt-producao-tema')==='light';
-  shell.classList.toggle('prod-light',light);atualizarBotaoTema();
+  shell.classList.add('prod-light');
+  localStorage.setItem('dt-producao-tema','light');
+  atualizarBotaoTema();
 }
 function atualizarBotaoTema(){
   const shell=document.getElementById('setor-producao-shell');const b=document.getElementById('prod-theme-toggle');if(!shell||!b)return;
-  b.textContent=shell.classList.contains('prod-light')?'🌙':'☀️';
-  b.title=shell.classList.contains('prod-light')?'Usar tema escuro':'Usar tema claro';
+  b.textContent='☀️';
+  b.title='Tema claro';
 }
 function toggleTheme(){
   const shell=document.getElementById('setor-producao-shell');if(!shell)return;
-  const light=shell.classList.toggle('prod-light');localStorage.setItem('dt-producao-tema',light?'light':'dark');atualizarBotaoTema();
+  shell.classList.add('prod-light');localStorage.setItem('dt-producao-tema','light');atualizarBotaoTema();
 }
 
 function decorarPagina(page){
@@ -276,16 +283,26 @@ function _shellProducaoVisivel(){
   const shell=document.getElementById('setor-producao-shell');
   return !!shell&&global.getComputedStyle(shell).display!=='none';
 }
+function _sincronizarContextoModal(){
+  document.body.classList.toggle('prod-modal-context',_shellProducaoVisivel());
+}
 function _patchModaisParaTemaProducao(){
   const origOpen=global.openModal, origClose=global.closeModal;
+  const shell=document.getElementById('setor-producao-shell');
+  if(shell&&!shell.dataset.prodModalObserver){
+    shell.dataset.prodModalObserver='1';
+    new MutationObserver(_sincronizarContextoModal).observe(shell,{attributes:true,attributeFilter:['style','class']});
+    document.addEventListener('click',()=>setTimeout(_sincronizarContextoModal,0),true);
+  }
+  _sincronizarContextoModal();
   if(typeof origOpen!=='function'||origOpen._prodPatched)return;
   function open(id){
-    if(_shellProducaoVisivel())document.body.classList.add('prod-modal-context');
+    _sincronizarContextoModal();
     return origOpen.apply(this,arguments);
   }
   function close(id){
     const r=origClose.apply(this,arguments);
-    if(!document.querySelector('.modal-bg.open'))document.body.classList.remove('prod-modal-context');
+    setTimeout(_sincronizarContextoModal,0);
     return r;
   }
   open._prodPatched=true;

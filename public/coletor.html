@@ -16,14 +16,20 @@
 <link href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' rx='36' fill='%231E6F4E'/%3E%3Ctext x='96' y='80' font-family='monospace' font-weight='700' font-size='52' fill='white' text-anchor='middle' dominant-baseline='middle'%3EDT%3C/text%3E%3Crect x='62' y='105' width='68' height='9' rx='4' fill='%23F59E0B'/%3E%3C/svg%3E" rel="apple-touch-icon"/>
 <link href="https://fonts.googleapis.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&amp;family=Barlow:wght@300;400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
-<script src="js/legacy-polyfills.js?v=20260804-1309"></script>
+<script src="js/legacy-polyfills.js?v=20260901-webview66-compat"></script>
 <script src="vendor/xlsx-0.18.5/xlsx.full.min.js"></script>
 <!-- Firebase SDK v10 compat -->
 <script src="vendor/firebase-10.12.2/firebase-app-compat.js"></script>
 <script src="vendor/firebase-10.12.2/firebase-firestore-compat.js"></script>
 <script src="vendor/firebase-10.12.2/firebase-auth-compat.js"></script>
 <script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script>
-<link rel="stylesheet" href="/css/coletor.css?v=20260821-fix-texto-login-invisivel">
+<!-- BUG AO VIVO REAL (2026-09-06): "sai do login toda hora" — coletor.html e
+     analista.html usam o mesmo Firebase (mesma origem, mesmo app "[DEFAULT]"),
+     então compartilhavam a MESMA sessão salva do navegador: logar numa aba
+     derrubava/trocava a sessão da outra na hora (Firebase Auth sincroniza
+     entre abas por storage). Precisa vir ANTES de firebase-shared.js. -->
+<script>window.DT_FIREBASE_APP_NOME = 'coletor';</script>
+<link rel="stylesheet" href="/css/coletor.css?v=20260908b-scroll-telas-carga">
 <link rel="manifest" href="/manifest.webmanifest?v=20260804-1309"><meta name="theme-color" content="#0f5b3a"><script>(function(){window.DT_ERRORS=[];window.addEventListener('error',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:e.message,f:e.filename,l:e.lineno});});window.addEventListener('unhandledrejection',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:String(e.reason&&e.reason.message||e.reason)});});})();</script><link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
@@ -67,6 +73,14 @@
 <div style="font-weight:700;font-size:.95rem;color:#f59e0b">Aparelho aguardando aprovação</div>
 <div style="font-size:.78rem;color:#94a3b8;line-height:1.5"><span id="login-aprovacao-msg"></span>Este aparelho ainda não foi aprovado pelo analista.<br/>Aguarde a liberação para continuar.</div>
 <div id="login-aprovacao-device" style="font-size:.7rem;color:#64748b;background:rgba(0,0,0,.15);border-radius:8px;padding:6px 12px;font-family:monospace">—</div>
+<div style="width:100%;display:flex;flex-direction:column;gap:8px;margin-top:4px;padding-top:14px;border-top:1px solid rgba(251,191,36,.25)">
+<div style="font-size:.72rem;color:#94a3b8">Já tem um código do Analista? Digite abaixo pra liberar na hora:</div>
+<div style="display:flex;gap:8px">
+<input id="aprov-codigo-input" maxlength="8" placeholder="CÓDIGO" style="flex:1;text-transform:uppercase;text-align:center;letter-spacing:3px;font-weight:800;padding:10px;border-radius:8px;border:1px solid rgba(251,191,36,.4);background:rgba(0,0,0,.15);color:#f1f5f9" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();resgatarCodigoAprovacaoColetor();}"/>
+<button id="aprov-codigo-btn" onclick="resgatarCodigoAprovacaoColetor()" style="background:#f59e0b;color:#1a1a1a;border:none;border-radius:8px;padding:10px 16px;font-size:.8rem;font-weight:800;cursor:pointer;white-space:nowrap">Liberar</button>
+</div>
+<div id="aprov-codigo-fb" style="font-size:.72rem"></div>
+</div>
 <button onclick="_fecharTelaAprovacao()" style="background:none;border:1px solid rgba(251,191,36,.4);color:#f59e0b;border-radius:8px;padding:6px 16px;font-size:.78rem;cursor:pointer">← Voltar ao login</button>
 </div>
 <!-- Painel: bloqueado -->
@@ -121,27 +135,19 @@
 </div>
 </div>
 <div class="screen-content">
-<div>
 <div class="screen-title">O que deseja acessar?</div>
-<div class="screen-sub">Escolha o módulo antes de continuar</div>
-</div>
-<div class="inv-card" onclick="abrirAreaInventario()">
-<div class="inv-card-code">📦 ÁREA</div>
-<div class="inv-card-name">Inventário</div>
-<div class="inv-card-meta"><span class="badge badge-ok">Contagem e Auditoria</span></div>
-</div>
-<div class="inv-card" onclick="abrirAreaRecebimento()">
-<div class="inv-card-code">🚚 ÁREA</div>
-<div class="inv-card-name">Recebimento</div>
-<div class="inv-card-meta"><span class="badge badge-info">Transbordo e Notas Retornadas</span></div>
-</div>
-<button class="btn btn-ghost" onclick="doLogout()" style="margin-top:auto">Sair</button>
-</div>
+<div class="menu-list">
+<button type="button" class="menu-list-item" onclick="abrirAreaInventario()"><span class="mli-arrow">»</span>Inventário</button>
+<button type="button" class="menu-list-item" onclick="abrirAreaRecebimento()"><span class="mli-arrow">»</span>Recebimento</button>
+</div></div>
 </div>
 <!-- ══════════ SCREEN: MODO ══════════ -->
 <div class="screen" id="screen-mode">
 <div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('acesso')">←</button>
 <div class="top-logo">DT Inventário</div>
+</div>
 <div style="display:flex;align-items:center;gap:8px">
 <div class="op-badge"><div class="op-dot"></div><span id="op-name-mode">Operador</span></div>
 <div style="position:relative">
@@ -161,33 +167,21 @@
 </div>
 </div>
 <div class="screen-content">
-<button class="btn-back" onclick="goScreen('acesso')">← Voltar</button>
-<div>
 <div class="screen-title">Selecionar modo</div>
-<div class="screen-sub">Escolha se vai entrar no inventário ou na auditoria</div>
-</div>
 <div id="coletor-loja-card" class="card" style="padding:12px 14px;display:none">
   <div class="card-label">Loja atual</div>
   <div id="coletor-loja-nome" style="font-weight:800;font-size:.95rem">—</div>
 </div>
-<div class="inv-card" onclick="abrirModoInventario()">
-<div class="inv-card-code">📦 MODO</div>
-<div class="inv-card-name">Inventário</div>
-<div class="inv-card-meta"><span class="badge badge-ok">Contagem normal</span></div>
-</div>
-<div class="inv-card" onclick="abrirModoAuditoria()">
-<div class="inv-card-code">📝 MODO</div>
-<div class="inv-card-name">Auditoria</div>
-<div class="inv-card-meta"><span class="badge badge-info">Conferência separada</span></div>
-</div>
-<button class="btn btn-ghost" onclick="doLogout()" style="margin-top:auto">Sair</button>
-</div>
+<div class="menu-list">
+<button type="button" class="menu-list-item" onclick="abrirModoInventario()"><span class="mli-arrow">»</span>Inventário</button>
+<button type="button" class="menu-list-item" onclick="abrirModoAuditoria()"><span class="mli-arrow">»</span>Auditoria</button>
+</div></div>
 </div>
 <!-- ══════════ SCREEN: AUDITORIAS ══════════ -->
 <div class="screen" id="screen-auditorias" style="position:relative">
 <div class="top-bar">
 <div style="display:flex;align-items:center;gap:10px">
-<button class="btn-back" onclick="goScreen('mode')">← Voltar</button>
+<button class="btn-back" onclick="goScreen('mode')">←</button>
 <span class="top-logo" style="font-family:var(--sans);font-weight:800;font-size:.88rem">DT Auditoria</span>
 </div>
 <div class="op-badge">
@@ -228,7 +222,7 @@
 <div style="width:28px;height:28px;border-radius:6px;background:#fff;overflow:hidden;padding:1px;flex-shrink:0;box-shadow:0 1px 4px rgba(0,0,0,.2)">
 <img alt="DT" src="data:image/jpeg;base64,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" style="width:100%;height:100%;object-fit:contain;border-radius:5px"/>
 </div>
-<button class="btn-back" onclick="goScreen('mode')" style="margin-right:2px">← Voltar</button>
+<button class="btn-back" onclick="goScreen('mode')" style="margin-right:2px">←</button>
 <span class="top-logo" style="font-family:var(--sans);font-weight:800;font-size:.88rem">DT Inventário</span>
 </div>
 <div id="net-status" style="font-size:.65rem;padding:3px 9px;border-radius:20px;background:rgba(232,117,26,.12);color:var(--accent);font-weight:700">🔥 Firebase</div>
@@ -823,7 +817,10 @@
 <!-- ══════════ SCREEN: RECEBIMENTO — escolha do módulo (mesmo padrão de screen-mode) ══════════ -->
 <div class="screen" id="screen-recebimento-modo">
 <div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('acesso')">←</button>
 <div class="top-logo">DT Inventário</div>
+</div>
 <div style="display:flex;align-items:center;gap:8px">
 <div class="op-badge"><div class="op-dot"></div><span id="op-name-recebimento-modo">Operador</span></div>
 <div style="position:relative">
@@ -842,28 +839,21 @@
 </div>
 </div>
 <div class="screen-content">
-<button class="btn-back" onclick="goScreen('acesso')">← Voltar</button>
-<div>
 <div class="screen-title">🚚 Recebimento</div>
-<div class="screen-sub">Escolha o módulo antes de continuar</div>
-</div>
-<div class="inv-card" onclick="abrirTransbordoRecebimento()">
-<div class="inv-card-code">🚛 MÓDULO</div>
-<div class="inv-card-name">Transbordo</div>
-<div class="inv-card-meta"><span class="badge badge-info">Bipe o QR do motorista ou toque numa carga</span></div>
-</div>
-<div class="inv-card" onclick="abrirRecusasRecebimento()">
-<div class="inv-card-code">↩️ MÓDULO</div>
-<div class="inv-card-name">Notas Retornadas</div>
-<div class="inv-card-meta"><span class="badge badge-warn">Recusa, devolução, reentrega</span></div>
-</div>
-<button class="btn btn-ghost" onclick="doLogout()" style="margin-top:auto">Sair</button>
-</div>
+<div class="menu-list">
+<button type="button" class="menu-list-item" onclick="abrirTransbordoRecebimento()"><span class="mli-arrow">»</span>Transbordo</button>
+<button type="button" class="menu-list-item" onclick="abrirRecusasRecebimento()"><span class="mli-arrow">»</span>Notas Retornadas</button>
+<button type="button" class="menu-list-item" onclick="abrirControlePaletes()"><span class="mli-arrow">»</span>Controle de Paletes</button>
+<button type="button" class="menu-list-item" onclick="abrirNovaMovimentacaoRecebimento()"><span class="mli-arrow">»</span>Nova Movimentação</button>
+</div></div>
 </div>
 <!-- ══════════ SCREEN: RECEBIMENTO — Transbordo (fase 4) ══════════ -->
 <div class="screen" id="screen-recebimento">
 <div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('recebimento-modo')">←</button>
 <div class="top-logo">DT Inventário</div>
+</div>
 <div style="display:flex;align-items:center;gap:8px">
 <div class="op-badge"><div class="op-dot"></div><span id="op-name-recebimento">Operador</span></div>
 <div style="position:relative">
@@ -882,7 +872,6 @@
 </div>
 </div>
 <div class="screen-content">
-<button class="btn-back" onclick="goScreen('recebimento-modo')">← Voltar</button>
 <div>
 <div class="screen-title">🚛 Transbordo</div>
 <div class="screen-sub">Bipe o QR do motorista pra gerar ou avançar, ou toque numa carga em andamento</div>
@@ -901,9 +890,12 @@
 
 <!-- ══════════ SCREEN: RECEBIMENTO — NOTAS RETORNADAS ══════════ -->
 <div class="screen" id="screen-recebimento-recusas">
-<div class="top-bar"><div class="top-logo">DT Inventário</div></div>
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('recebimento-modo')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
 <div class="screen-content">
-<button class="btn-back" onclick="goScreen('recebimento-modo')">← Voltar</button>
 <div id="recusa-fluxo-host" style="display:flex;flex-direction:column;gap:12px;min-height:0"></div>
 </div>
 </div>
@@ -911,10 +903,12 @@
 <!-- ══════════ SCREEN: RECEBIMENTO — bipar/digitar código (fase 4) ══════════ -->
 <div class="screen" id="screen-recebimento-scan">
 <div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('recebimento')">←</button>
 <div class="top-logo">DT Inventário</div>
 </div>
+</div>
 <div class="screen-content">
-<button class="btn-back" onclick="goScreen('recebimento')">← Voltar</button>
 <div>
 <div class="screen-title">Bipar QR do motorista</div>
 <div class="screen-sub">Use o leitor ou digite o código fixo do motorista — sem viagem em andamento, gera o transbordo; com viagem em andamento, avança pro próximo passo</div>
@@ -929,15 +923,371 @@
      quando a loja tem mais de um destino configurado) ══════════ -->
 <div class="screen" id="screen-recebimento-destino">
 <div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('recebimento-scan')">←</button>
 <div class="top-logo">DT Inventário</div>
 </div>
+</div>
 <div class="screen-content">
-<button class="btn-back" onclick="goScreen('recebimento-scan')">← Voltar</button>
 <div>
 <div class="screen-title">Pra qual loja vai essa carga?</div>
 <div class="screen-sub">Esse motorista pode levar pra mais de um destino — escolha o desta viagem</div>
 </div>
 <div id="rec-destino-lista"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: RECEBIMENTO — Controle de Paletes (menu) ══════════ -->
+<div class="screen" id="screen-paletes-menu">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('recebimento-modo')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div>
+<div style="display:flex;align-items:center;gap:8px">
+<div class="op-badge"><div class="op-dot"></div><span id="op-name-paletes-menu">Operador</span></div>
+<div style="position:relative">
+<button class="btn-menu3pts" id="btn-menu3pts-paletes-menu" title="Opções">⋮</button>
+<div class="menu3pts-dropdown" id="menu3pts-dropdown-paletes-menu" style="display:none">
+<button class="menu3pts-item" data-menu-action="update-app">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-paletes-menu" data-menu-action="install-app">📲 Baixar aplicativo</button>
+<div class="menu3pts-sep"></div>
+<button class="menu3pts-item" onclick="trocarLojaColetor(event)">🏬 Trocar loja</button>
+<button class="menu3pts-item" data-menu-action="diagnostic">🔍 Diagnóstico</button>
+<button class="menu3pts-item" data-menu-action="logout" style="color:#ff6b6b">🚪 Sair</button>
+<div class="menu3pts-sep"></div>
+<div class="menu3pts-ver">v<span id="paletes-menu-ver-label">—</span></div>
+</div>
+</div>
+</div>
+</div>
+<div class="screen-content">
+<div class="screen-title">🎯 Controle de Paletes</div>
+<div class="menu-list">
+<button type="button" class="menu-list-item" onclick="abrirPaletesEstoque()"><span class="mli-arrow">»</span>Paletes em Estoque</button>
+<button type="button" class="menu-list-item" onclick="abrirPaletesRecebimento()"><span class="mli-arrow">»</span>Saída de Paletes</button>
+</div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: PALETES — Estoque (registro diário) ══════════ -->
+<div class="screen" id="screen-paletes-estoque">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('paletes-menu')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">📦 Paletes em Estoque</div>
+<div class="screen-sub">Informe a quantidade de paletes que tem hoje nesta loja</div>
+</div>
+<div id="paletes-estoque-ultimo" style="font-size:.78rem;color:var(--muted,#5a7a9a);text-align:center;min-height:18px"></div>
+<div class="form-group"><label>Quantidade de paletes hoje</label><input class="field" id="paletes-estoque-quantidade" type="number" min="0" inputmode="numeric" placeholder="Ex.: 120"></div>
+<button class="btn btn-primary" onclick="confirmarPaletesEstoque()" style="padding:14px;margin-top:6px">Salvar</button>
+<div id="paletes-estoque-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: Nova Movimentação (menu) ══════════ -->
+<div class="screen" id="screen-nova-movimentacao-menu">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('recebimento-modo')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div>
+<div style="display:flex;align-items:center;gap:8px">
+<div class="op-badge"><div class="op-dot"></div><span id="op-name-nova-movimentacao-menu">Operador</span></div>
+<div style="position:relative">
+<button class="btn-menu3pts" id="btn-menu3pts-nova-movimentacao-menu" title="Opções">⋮</button>
+<div class="menu3pts-dropdown" id="menu3pts-dropdown-nova-movimentacao-menu" style="display:none">
+<button class="menu3pts-item" data-menu-action="update-app">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-nova-movimentacao-menu" data-menu-action="install-app">📲 Baixar aplicativo</button>
+<div class="menu3pts-sep"></div>
+<button class="menu3pts-item" onclick="trocarLojaColetor(event)">🏬 Trocar loja</button>
+<button class="menu3pts-item" data-menu-action="diagnostic">🔍 Diagnóstico</button>
+<button class="menu3pts-item" data-menu-action="logout" style="color:#ff6b6b">🚪 Sair</button>
+<div class="menu3pts-sep"></div>
+<div class="menu3pts-ver">v<span id="nova-movimentacao-menu-ver-label">—</span></div>
+</div>
+</div>
+</div>
+</div>
+<div class="screen-content">
+<div class="screen-title">📋 Nova Movimentação</div>
+<div class="menu-list">
+<button type="button" class="menu-list-item" onclick="abrirCargasRecebimento()"><span class="mli-arrow">»</span>Transbordo de mercadorias</button>
+<button type="button" class="menu-list-item" onclick="abrirTransferenciaMenu()"><span class="mli-arrow">»</span>Transferência de paletes</button>
+</div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: Transferência de Paletes (menu) ══════════ -->
+<div class="screen" id="screen-transferencia-menu">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('nova-movimentacao-menu')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div class="screen-title">🪵 Transferência de Paletes</div>
+<div class="menu-list">
+<button type="button" class="menu-list-item" onclick="abrirTransferenciaPaletes()"><span class="mli-arrow">»</span>Enviar paletes pra outra loja</button>
+<button type="button" class="menu-list-item" onclick="abrirConfirmarRecebimentoTransferencia()"><span class="mli-arrow">»</span>Confirmar recebimento</button>
+</div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: Transferência de Paletes — enviar ══════════ -->
+<div class="screen" id="screen-transferencia-paletes">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('transferencia-menu')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">Enviar paletes</div>
+<div class="screen-sub">Escolha o destino e a quantidade de paletes vazios</div>
+</div>
+<div class="form-group"><label>Destino</label><select class="field" id="transferencia-destino"></select></div>
+<div class="form-group"><label>Quantidade de paletes</label><input class="field" id="transferencia-quantidade" type="number" min="0" inputmode="numeric"></div>
+<div class="form-group"><label>Observação (opcional)</label><input class="field" id="transferencia-observacao"></div>
+<button class="btn btn-primary" onclick="confirmarTransferenciaPaletes()" style="padding:14px;margin-top:6px">Confirmar envio</button>
+<div id="transferencia-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: Transferência de Paletes — pendentes de recebimento ══════════ -->
+<div class="screen" id="screen-transferencia-confirmar-lista">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('transferencia-menu')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">Confirmar recebimento</div>
+<div class="screen-sub">Toque numa transferência pendente pra confirmar</div>
+</div>
+<div id="transferencia-confirmar-lista-itens"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: Transferência de Paletes — confirmar recebimento (detalhe) ══════════ -->
+<div class="screen" id="screen-transferencia-confirmar-detalhe">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('transferencia-confirmar-lista')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">Confirmar recebimento</div>
+<div class="screen-sub" id="transferencia-confirmar-resumo"></div>
+</div>
+<div class="form-group"><label>Quantidade recebida</label><input class="field" id="transferencia-confirmar-quantidade" type="number" min="0" inputmode="numeric"></div>
+<button class="btn btn-primary" onclick="confirmarRecebimentoTransferencia()" style="padding:14px;margin-top:6px">Confirmar</button>
+<div id="transferencia-confirmar-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: Cargas — lista (PENDENTE/EM_TRANSITO) ══════════ -->
+<div class="screen" id="screen-cargas-lista">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('nova-movimentacao-menu')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">📦 Cargas</div>
+<div class="screen-sub">Toque numa carga em montagem pra continuar, ou numa já expedida pra ver a expedição</div>
+</div>
+<button class="btn btn-primary" onclick="abrirNovaCarga()" style="padding:14px">+ Nova carga</button>
+<div id="cargas-lista-itens" style="margin-top:8px"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: Carga — nova (nome + destino) ══════════ -->
+<div class="screen" id="screen-carga-nova">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('cargas-lista')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">Nova carga</div>
+<div class="screen-sub">Dê um nome e escolha pra qual loja essa carga vai</div>
+</div>
+<div class="form-group"><label>Nome da carga</label><input class="field" id="carga-nova-nome" placeholder="Ex.: Carga Filial 04/09"></div>
+<div class="form-group"><label>Destino</label><select class="field" id="carga-nova-destino"></select></div>
+<button class="btn btn-primary" onclick="confirmarNovaCarga()" style="padding:14px;margin-top:6px">Criar e começar a montar</button>
+<div id="carga-nova-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: Carga — montagem de itens (capa → produto → quantidade) ══════════ -->
+<div class="screen" id="screen-carga-montagem">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('cargas-lista')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">Montagem da carga</div>
+<div class="screen-sub" id="carga-montagem-resumo"></div>
+</div>
+<div id="carga-montagem-pendencia"></div>
+<div class="form-group"><label>Capa do palete</label><input class="field" id="carga-montagem-capa" autocomplete="off" placeholder="Bipe ou digite a capa" onkeydown="return _avancarAoEnterMontagem(event,'carga-montagem-produto-codigo')"></div>
+<div class="form-group"><label>Produto (GTIN ou código)</label><input class="field" id="carga-montagem-produto-codigo" autocomplete="off" oninput="buscarProdutoMontagemCarga()" onkeydown="return _avancarAoEnterMontagem(event,'carga-montagem-quantidade')" placeholder="Bipe ou digite"></div>
+<div id="carga-montagem-produto-nome" style="font-size:.8rem;color:var(--muted,#5a7a9a);min-height:18px"></div>
+<div class="form-group"><label>Quantidade</label><input class="field" id="carga-montagem-quantidade" type="number" min="0" inputmode="numeric"></div>
+<button class="btn btn-primary" onclick="adicionarItemMontagemCarga()" style="padding:14px;margin-top:4px">+ Adicionar item</button>
+<div id="carga-montagem-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
+<div id="carga-montagem-lista-itens" style="margin-top:6px"></div>
+<button class="btn btn-ghost" onclick="abrirFinalizarMontagemCarga()" style="margin-top:8px">Finalizar montagem →</button>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: Carga — finalizar montagem (paletes físicos) ══════════ -->
+<div class="screen" id="screen-carga-finalizar">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('carga-montagem')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">Finalizar montagem</div>
+<div class="screen-sub">Confira e informe a quantidade FÍSICA REAL de paletes desta carga</div>
+</div>
+<div class="form-group"><label>Paletes físicos</label><input class="field" id="carga-finalizar-paletes" type="number" min="0" inputmode="numeric"></div>
+<button class="btn btn-primary" onclick="confirmarFinalizarMontagemCarga()" style="padding:14px;margin-top:6px">Confirmar</button>
+<div id="carga-finalizar-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: Carga — expedição (motorista/NF, gera o transbordo) ══════════ -->
+<div class="screen" id="screen-carga-expedicao">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('cargas-lista')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">Expedir carga</div>
+<div class="screen-sub" id="carga-expedicao-resumo"></div>
+</div>
+<div class="form-group"><label>Motorista</label><select class="field" id="carga-expedicao-motorista"></select></div>
+<label style="font-size:.78rem;color:var(--muted,#5a7a9a);font-weight:700;margin-top:4px;display:block">Nota(s) Fiscal(is) + volume <span style="font-weight:400;color:var(--muted,#5a7a9a)">(já preenchido com o que o Analista vinculou — confira/ajuste se precisar)</span></label>
+<div id="carga-expedicao-nf-lista"></div>
+<div id="carga-expedicao-notas-produtos"></div>
+<button type="button" class="btn btn-ghost" onclick="adicionarNotaFiscalCarga()" style="margin-top:6px">+ Adicionar outra Nota Fiscal</button>
+<button class="btn btn-primary" onclick="confirmarExpedicaoCarga()" style="padding:14px;margin-top:10px">🚛 Confirmar Expedição</button>
+<div id="carga-expedicao-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: Carga — detalhe (EM_TRANSITO/RECEBIDA/CANCELADA — só
+     leitura do que o Analista já cadastrou + correção de capa pendente).
+     Antes disso, abrir uma carga não-PENDENTE não tinha NENHUMA tela no
+     Coletor (só um toast "já foi expedida" e voltava pra lista). ══════════ -->
+<div class="screen" id="screen-carga-detalhe">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('cargas-lista')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">Detalhe da carga</div>
+<div class="screen-sub" id="carga-detalhe-resumo"></div>
+</div>
+<div id="carga-detalhe-pendencia"></div>
+<label style="font-size:.78rem;color:var(--muted,#5a7a9a);font-weight:700;margin-top:4px;display:block">📄 Notas Fiscais</label>
+<div id="carga-detalhe-nf"></div>
+<div id="carga-detalhe-notas-produtos" style="margin-top:6px"></div>
+<label style="font-size:.78rem;color:var(--muted,#5a7a9a);font-weight:700;margin-top:10px;display:block">📦 Itens (por capa)</label>
+<div id="carga-detalhe-itens" style="margin-top:4px"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: RECEBIMENTO — Paletes (saída/entrada) ══════════ -->
+<div class="screen" id="screen-paletes">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('paletes-menu')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div>
+<div style="display:flex;align-items:center;gap:8px">
+<div class="op-badge"><div class="op-dot"></div><span id="op-name-paletes">Operador</span></div>
+<div style="position:relative">
+<button class="btn-menu3pts" id="btn-menu3pts-paletes" title="Opções">⋮</button>
+<div class="menu3pts-dropdown" id="menu3pts-dropdown-paletes" style="display:none">
+<button class="menu3pts-item" data-menu-action="update-app">🔄 Atualizar aplicativo</button>
+<button class="menu3pts-item" id="menu-instalar-pwa-paletes" data-menu-action="install-app">📲 Baixar aplicativo</button>
+<div class="menu3pts-sep"></div>
+<button class="menu3pts-item" onclick="trocarLojaColetor(event)">🏬 Trocar loja</button>
+<button class="menu3pts-item" data-menu-action="diagnostic">🔍 Diagnóstico</button>
+<button class="menu3pts-item" data-menu-action="logout" style="color:#ff6b6b">🚪 Sair</button>
+<div class="menu3pts-sep"></div>
+<div class="menu3pts-ver">v<span id="paletes-ver-label">—</span></div>
+</div>
+</div>
+</div>
+</div>
+<div class="screen-content">
+<div>
+<div class="screen-title">🚚 Saída de Paletes</div>
+<div class="screen-sub">Registre a saída de paletes pro mercado, ou toque numa viagem em trânsito pra registrar o retorno</div>
+</div>
+<button class="btn btn-primary" onclick="abrirNovaSaidaPaletes()" style="padding:14px;margin-top:8px">+ Nova saída de paletes</button>
+<div style="font-size:.78rem;color:var(--muted,#5a7a9a);font-weight:700;margin-top:14px">EM TRÂNSITO</div>
+<div id="paletes-lista-transito"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: PALETES — Nova saída ══════════ -->
+<div class="screen" id="screen-paletes-nova-saida">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('paletes')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">🎯 Nova saída de paletes</div>
+<div class="screen-sub">Escolha o motorista e informe a viagem e a quantidade que está saindo</div>
+</div>
+<div class="form-group"><label>Motorista</label><select class="field" id="paletes-saida-motorista"><option value="">— Selecionar —</option></select></div>
+<div class="form-group"><label>Mercado (destino da entrega)</label><input class="field" id="paletes-saida-mercado" placeholder="Ex.: Assai - Loja 278" autocomplete="off"></div>
+<div class="form-group"><label>Número da viagem</label><input class="field" id="paletes-saida-viagem" placeholder="Ex.: 4521" autocomplete="off" inputmode="numeric"></div>
+<div class="form-group"><label>Quantidade de paletes</label><input class="field" id="paletes-saida-quantidade" type="number" min="1" inputmode="numeric" placeholder="Ex.: 20"></div>
+<button class="btn btn-primary" onclick="confirmarSaidaPaletes()" style="padding:14px;margin-top:6px">Confirmar saída</button>
+<div id="paletes-saida-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
+</div>
+</div>
+
+<!-- ══════════ SCREEN: PALETES — Registrar retorno ══════════ -->
+<div class="screen" id="screen-paletes-retorno">
+<div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('paletes')">←</button>
+<div class="top-logo">DT Inventário</div>
+</div></div>
+<div class="screen-content">
+<div>
+<div class="screen-title">🎯 Registrar retorno de paletes</div>
+<div class="screen-sub" id="paletes-retorno-resumo">—</div>
+</div>
+<div class="form-group"><label>Redigite o número da viagem pra confirmar</label><input class="field" id="paletes-retorno-viagem" placeholder="Número da viagem" autocomplete="off" inputmode="numeric"></div>
+<div class="form-group"><label>Quantidade de paletes que retornou</label><input class="field" id="paletes-retorno-quantidade" type="number" min="0" inputmode="numeric" placeholder="Ex.: 20"></div>
+<button class="btn btn-primary" onclick="confirmarRetornoPaletes()" style="padding:14px;margin-top:6px">Confirmar retorno</button>
+<div id="paletes-retorno-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
 </div>
 </div>
 
@@ -948,10 +1298,12 @@
      _abrirTelaNfRecebimento() (22-recebimento.js), pra não duplicar a tela. -->
 <div class="screen" id="screen-recebimento-nf">
 <div class="top-bar">
+<div style="display:flex;align-items:center;gap:8px">
+<button class="btn-back" onclick="goScreen('recebimento')">←</button>
 <div class="top-logo">DT Inventário</div>
 </div>
+</div>
 <div class="screen-content">
-<button class="btn-back" onclick="goScreen('recebimento')">← Voltar</button>
 <div>
 <div class="screen-title" id="rec-nf-titulo">🧾 Nota Fiscal</div>
 <div class="screen-sub" id="rec-nf-subtitulo">—</div>
@@ -1009,8 +1361,8 @@
 </div>
 
 
-<script src="js/shared/address-state-engine.js?v=20260804-1309"></script>
-<script src="js/shared/address-state-selectors.js?v=20260804-1309"></script>
-<script src="js/shared/address-state-view.js?v=20260804-1309"></script>
-<script src="js/shared/common-utils.js?v=20260804-1309"></script><script src="js/shared/firebase-shared.js?v=20260816-traduzir-erro-permissao"></script><script src="js/shared/enderecos-service.js?v=20260804-1309"></script><script src="js/shared/produtos-service.js?v=20260804-1309"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260804-1309"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260812-fase4c-offline"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260818-limpa-operador-no-logout"></script><script src="js/coletor/03-estado-app.js?v=20260804-1309"></script><script src="js/coletor/04-auth-login.js?v=20260814-fase15f4g-trocar-loja-menu"></script><script src="js/coletor/05-inventarios-download.js?v=20260812-fase4b-recebimento"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260804-1309"></script><script src="js/coletor/07-etapa-endereco.js?v=20260804-1309"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260804-1309"></script><script src="js/coletor/09-historico-stats.js?v=20260805-cards-v276"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260804-1309"></script><script src="js/coletor/11-recontagens.js?v=20260805-rodada-v259"></script><script src="js/coletor/12-scanner-hardware.js?v=20260817-nf-vertical"></script><script src="js/coletor/13-audio-feedback.js?v=20260804-1309"></script><script src="js/coletor/14-toast.js?v=20260816-confirmacao-bips"></script><script src="js/coletor/15-utils-init.js?v=20260812-fase4c-offline"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260805-cards-v276"></script><script src="js/coletor/17-auditoria-meta.js?v=20260805-cards-v276"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260805-cards-v276"></script><script src="js/coletor/19-runtime-estavel-v15.js?v=20260816-diag-uid-visivel"></script><script src="js/coletor/20-menu-compat.js?v=20260814-fase15f4g-menus-topo"></script><script src="js/coletor/22-recebimento.js?v=20260821-motivo-etapa-data-recebidas"></script><script src="js/coletor/23-recebimento-offline.js?v=20260818-fila-offline-criacao"></script><script src="js/coletor/24-recebimento-recusas.js?v=20260821-voltar-e-feedback-volume"></script><script src="js/legacy-ui-compat.js?v=20260804-1309"></script><script>(function(){if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js?v=20260821-motivo-etapa-data-recebidas').catch(function(e){console.warn('[PWA]',e);});});}document.addEventListener('DOMContentLoaded',function(){(async function(){try{if(window.DT_AUTH_USER_READY){try{await window.DT_AUTH_USER_READY;}catch(_e){}}if(window.DTProdutos&&DTProdutos.carregar)DTProdutos.carregar().catch(function(e){console.warn('[Produtos] Cache inicial indisponível:',e);});}catch(e){console.warn('[Produtos] Inicialização falhou:',e);}})();});})();</script><div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v314</div></body>
+<script src="js/shared/address-state-engine.js?v=20260901-webview66-compat"></script>
+<script src="js/shared/address-state-selectors.js?v=20260901-webview66-compat"></script>
+<script src="js/shared/address-state-view.js?v=20260901-webview66-compat"></script>
+<script src="js/shared/common-utils.js?v=20260909c-sem-timeout-artificial"></script><script src="js/shared/firebase-shared.js?v=20260909-getlojaativa-try-catch"></script><script src="js/shared/enderecos-service.js?v=20260901-webview66-compat"></script><script src="js/shared/produtos-service.js?v=20260909-sem-timeout-artificial"></script><script src="js/coletor/00-bootstrap-manifest.js?v=20260901-webview66-compat"></script><script src="js/coletor/01-core-firebase-cache.js?v=20260906-diag-persistencia"></script><script src="js/coletor/02-sync-dispositivo.js?v=20260906-app-nomeado"></script><script src="js/coletor/03-estado-app.js?v=20260901-webview66-compat"></script><script src="js/coletor/04-auth-login.js?v=20260908-cor-menu-trocar-loja"></script><script src="js/coletor/05-inventarios-download.js?v=20260901-webview66-compat"></script><script src="js/coletor/06-capa-fluxo-steps.js?v=20260901-webview66-compat"></script><script src="js/coletor/07-etapa-endereco.js?v=20260901-webview66-compat"></script><script src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260901-webview66-compat"></script><script src="js/coletor/09-historico-stats.js?v=20260901-webview66-compat"></script><script src="js/coletor/10-navegacao-estorno.js?v=20260901-webview66-compat"></script><script src="js/coletor/11-recontagens.js?v=20260901-webview66-compat"></script><script src="js/coletor/12-scanner-hardware.js?v=20260901-webview66-compat"></script><script src="js/coletor/13-audio-feedback.js?v=20260901-webview66-compat"></script><script src="js/coletor/14-toast.js?v=20260901-webview66-compat"></script><script src="js/coletor/15-utils-init.js?v=20260901-webview66-compat"></script><script src="js/coletor/16-menu-atualizacao.js?v=20260901-webview66-compat"></script><script src="js/coletor/17-auditoria-meta.js?v=20260901-webview66-compat"></script><script src="js/coletor/18-auditoria-fluxo.js?v=20260906-app-nomeado"></script><script src="js/coletor/19-runtime-estavel-v15.js?v=20260906c-app-nomeado"></script><script src="js/coletor/20-menu-compat.js?v=20260904-descoberta-generica"></script><script src="js/coletor/22-recebimento.js?v=20260908-ledger-transito-no-destino"></script><script src="js/coletor/23-recebimento-offline.js?v=20260901-webview66-compat"></script><script src="js/coletor/24-recebimento-recusas.js?v=20260909b-fix-usuario-getDTAuth-toast"></script><script src="js/coletor/25-recebimento-paletes.js?v=20260904b-alimenta-ledger"></script><script src="js/coletor/26-recebimento-cargas.js?v=20260908i-ledger-transito-no-destino"></script><script src="js/coletor/27-transferencia-paletes.js?v=20260904-transferencia-inicial"></script><script src="js/coletor/28-recebimento-paletes-ledger.js?v=20260904-ledger-inicial"></script><script src="js/legacy-ui-compat.js?v=20260906-remove-menu-double-bind"></script><script>(function(){if('serviceWorker' in navigator){window.addEventListener('load',function(){navigator.serviceWorker.register('/sw.js?v=20260909-perf-cache-versionado').catch(function(e){console.warn('[PWA]',e);});});}document.addEventListener('DOMContentLoaded',function(){(async function(){try{if(window.DT_AUTH_USER_READY){try{await window.DT_AUTH_USER_READY;}catch(_e){}}if(window.DTProdutos&&DTProdutos.carregar)DTProdutos.carregar().catch(function(e){console.warn('[Produtos] Cache inicial indisponível:',e);});}catch(e){console.warn('[Produtos] Inicialização falhou:',e);}})();});})();</script><div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v369</div></body>
 </html>

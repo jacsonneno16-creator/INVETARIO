@@ -1,0 +1,269 @@
+// PEDIDO AO VIVO (2026-09-08): "vai aparecer a opção de saída e entrada,
+// entrada é para receber a nota que tá voltando, a saída é para as que vão
+// sair, tipo vai pedir o número da nota e vai trazer as informações, box
+// com quem voltou e as notas que vieram juntas" — Notas Retornadas ganhou
+// uma tela de escolha (Entrada/Saída). Entrada é o fluxo que já existia
+// (ver coletor-notas-retornadas-schema.test.js e outros). Saída é nova:
+// busca pelo NÚMERO da nota (array `numerosNotas`, irmão de `chaves`),
+// mostra Box/Motorista/notas do mesmo evento, e confirmar a Saída carimba
+// `dataSaidaEm` SÓ NA NOTA bipada — só quando ela já foi classificada como
+// Reentrega pelo Analista (confirmado com o usuário via AskUserQuestion).
+const test=require('node:test');const assert=require('node:assert/strict');const fs=require('fs');const path=require('path');
+const { JSDOM } = require('jsdom');
+const baseColetor=path.join(__dirname,'../js/coletor');
+const htmlCode=fs.readFileSync(path.join(__dirname,'../coletor.html'),'utf8');
+const navCode=fs.readFileSync(path.join(baseColetor,'10-navegacao-estorno.js'),'utf8');
+const recusasCode=fs.readFileSync(path.join(baseColetor,'24-recebimento-recusas.js'),'utf8');
+
+// Mock da coleção recebimento_recusas com `.where('numerosNotas','array-
+// contains',valor)` de verdade (filtra os docs guardados), e `.doc(id)`
+// com `.update()` real — os outros mocks deste módulo (ex.: schema.test.js)
+// usam um `.where()` sempre-vazio, que não serve pra testar a busca de
+// Saída.
+function mockRecusas(docsIniciais){
+  const registro=new Map((docsIniciais||[]).map(d=>[d.id,d.data]));
+  const snapshot=(entradas)=>({ empty: entradas.length===0, size: entradas.length, docs: entradas.map(([id,data])=>({id,data:()=>data,exists:true})) });
+  return {
+    get: async()=>snapshot([...registro.entries()]),
+    doc:(id)=>({
+      id,
+      get: async()=>{ const data=registro.get(id); return { exists: data!==undefined, id, data:()=>data }; },
+      update: async(payload)=>{ const atual=registro.get(id); if(atual===undefined) throw new Error('NOT_FOUND'); registro.set(id,Object.assign({},atual,payload)); },
+    }),
+    add: async(payload)=>{ const docId='novo'+registro.size; registro.set(docId,payload); return {id:docId}; },
+    where:(campo,op,valor)=>({
+      get: async()=>{
+        if(campo!=='numerosNotas'||op!=='array-contains') return snapshot([]);
+        const achados=[...registro.entries()].filter(([,data])=>Array.isArray(data.numerosNotas)&&data.numerosNotas.includes(valor));
+        return snapshot(achados);
+      },
+    }),
+    _registro: registro,
+  };
+}
+function mockVazia(){
+  return { get: async()=>({ empty:true, size:0, docs:[] }), where:()=>({ get: async()=>({ empty:true, size:0, docs:[] }) }) };
+}
+
+function carregarColetorReal(colecoes){
+  const dom=new JSDOM(htmlCode,{ url:'http://localhost/', runScripts:'outside-only' });
+  const win=dom.window; const document=win.document;
+  win.FS={ collection:(nome)=>(colecoes&&colecoes[nome])||mockVazia() };
+  win.getDTFirestore=()=>win.FS;
+  win.toast=()=>{};
+  Object.defineProperty(win.navigator,'onLine',{ get:()=>true, configurable:true });
+  win.eval(navCode);
+  win.eval(recusasCode);
+  return { win, document };
+}
+
+function baseColecoes(recusas){
+  return {
+    recebimento_recusas: recusas,
+    recebimento_recusas_motoristas: mockVazia(),
+    recebimento_recusas_motivos: mockVazia(),
+    recebimento_recusas_tarefas_conferencia: mockVazia(),
+  };
+}
+
+test('tela de escolha mostra Entrada e Saída; Saída leva pra tela de buscar por número', async () => {
+  const { win, document } = carregarColetorReal(baseColecoes(mockRecusas([])));
+  await win.abrirRecusasRecebimento();
+  const html = document.getElementById('recusa-fluxo-host').innerHTML;
+  assert.match(html, /📥 Entrada/);
+  assert.match(html, /📤 Saída/);
+
+  document.querySelector('[data-recusa-modo="saida"]').click();
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /Número da nota/);
+});
+
+test('Saída: busca por número acha o registro, mostra Box/Motorista/notas do mesmo evento', async () => {
+  const recusas = mockRecusas([{ id: 'r1', data: {
+    box: 'BOX 9', motoristaNome: 'Carlos', criadoEm: '2026-09-01T10:00:00.000Z',
+    numerosNotas: ['601', '602'],
+    notas: [
+      { chave: 'CH1', numeroNota: '601', tratamento: 'REENTREGA' },
+      { chave: 'CH2', numeroNota: '602', tratamento: 'RECUSA' },
+    ],
+  } }]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="saida"]').click();
+
+  document.getElementById('saida-numero-input').value = '601';
+  document.getElementById('saida-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const html = document.getElementById('recusa-fluxo-host').innerHTML;
+  assert.match(html, /BOX 9/);
+  assert.match(html, /Carlos/);
+  assert.match(html, /601/);
+  assert.match(html, /602/, 'mostra a outra nota que veio junto no mesmo evento');
+});
+
+test('Saída: nota classificada como Reentrega mostra "Confirmar Saída", e confirmar grava dataSaidaEm SÓ naquela nota', async () => {
+  const recusas = mockRecusas([{ id: 'r1', data: {
+    box: 'BOX 9', motoristaNome: 'Carlos', criadoEm: '2026-09-01T10:00:00.000Z',
+    numerosNotas: ['601', '602'],
+    notas: [
+      { chave: 'CH1', numeroNota: '601', tratamento: 'REENTREGA' },
+      { chave: 'CH2', numeroNota: '602', tratamento: 'RECUSA' },
+    ],
+  } }]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="saida"]').click();
+  document.getElementById('saida-numero-input').value = '601';
+  document.getElementById('saida-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const btn = document.getElementById('saida-confirmar-btn');
+  assert.ok(btn, 'nota é Reentrega — botão de confirmar saída precisa existir');
+  btn.click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const salvo = recusas._registro.get('r1');
+  const n1 = salvo.notas.find(n => n.chave === 'CH1');
+  const n2 = salvo.notas.find(n => n.chave === 'CH2');
+  assert.ok(n1.dataSaidaEm, 'a nota bipada (601, Reentrega) ganhou dataSaidaEm');
+  assert.equal(n2.dataSaidaEm, undefined, 'a outra nota do mesmo evento (602, Recusa) NUNCA deveria ser tocada');
+
+  const html = document.getElementById('recusa-fluxo-host').innerHTML;
+  assert.match(html, /já saiu em/i);
+});
+
+test('Saída: nota NÃO classificada como Reentrega não mostra botão de confirmar — mostra aviso', async () => {
+  const recusas = mockRecusas([{ id: 'r1', data: {
+    box: 'BOX 9', motoristaNome: 'Carlos', criadoEm: '2026-09-01T10:00:00.000Z',
+    numerosNotas: ['601'],
+    notas: [{ chave: 'CH1', numeroNota: '601', tratamento: 'RECUSA' }],
+  } }]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="saida"]').click();
+  document.getElementById('saida-numero-input').value = '601';
+  document.getElementById('saida-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  assert.equal(document.getElementById('saida-confirmar-btn'), null);
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /não foi classificada como Reentrega/);
+});
+
+test('Saída: nota ainda sem Tratamento nenhum (recém chegada) também não mostra botão de confirmar', async () => {
+  const recusas = mockRecusas([{ id: 'r1', data: {
+    box: 'BOX 9', motoristaNome: 'Carlos', criadoEm: '2026-09-01T10:00:00.000Z',
+    numerosNotas: ['601'],
+    notas: [{ chave: 'CH1', numeroNota: '601' }],
+  } }]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="saida"]').click();
+  document.getElementById('saida-numero-input').value = '601';
+  document.getElementById('saida-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  assert.equal(document.getElementById('saida-confirmar-btn'), null);
+});
+
+test('Saída: número que não existe em nenhum registro mostra aviso de não encontrada, sem travar', async () => {
+  const { win, document } = carregarColetorReal(baseColecoes(mockRecusas([])));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="saida"]').click();
+  document.getElementById('saida-numero-input').value = '999999';
+  document.getElementById('saida-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /não encontrada/);
+});
+
+test('Saída: buscar sem digitar nada mostra erro, não chama o Firestore', async () => {
+  const { win, document } = carregarColetorReal(baseColecoes(mockRecusas([])));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="saida"]').click();
+  document.getElementById('saida-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /Informe o número da nota/);
+});
+
+test('Saída: "Buscar outra nota" limpa o resultado e volta pra busca; "Concluir" volta pra tela de escolha', async () => {
+  const recusas = mockRecusas([{ id: 'r1', data: {
+    box: 'BOX 9', motoristaNome: 'Carlos', criadoEm: '2026-09-01T10:00:00.000Z',
+    numerosNotas: ['601'],
+    notas: [{ chave: 'CH1', numeroNota: '601', tratamento: 'REENTREGA' }],
+  } }]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="saida"]').click();
+  document.getElementById('saida-numero-input').value = '601';
+  document.getElementById('saida-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  document.getElementById('saida-buscar-outra-btn').click();
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /Número da nota/);
+  assert.equal(document.getElementById('saida-confirmar-btn'), null);
+
+  // "Concluir" (na tela de resultado) e "Voltar" (na tela de busca) usam o
+  // mesmo data-recusa-modo="voltar" — some da tela de Saída e volta pro
+  // menu Entrada/Saída.
+  document.querySelector('[data-recusa-modo="voltar"]').click();
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /📥 Entrada/);
+});
+
+test('Entrada continua funcionando normalmente depois da tela de escolha (fluxo antigo intocado)', async () => {
+  const { win, document } = carregarColetorReal(baseColecoes(mockRecusas([])));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /Bipe a chave de acesso/);
+});
+
+// PEDIDO AO VIVO (2026-09-08): "não consegue trazer notas recebidas antes
+// da função existir, se tá tudo no banco de dados gravado?" — registro
+// ANTIGO (de antes de numerosNotas existir) não tem esse campo no
+// documento — a via rápida (`where` array-contains) não acha nada nele,
+// mas a nota SEMPRE esteve em `notas[].numeroNota`. Fallback: sem
+// resultado pela via rápida, escaneia a coleção inteira e acha pelo
+// conteúdo real.
+test('Saída: registro ANTIGO (sem o campo numerosNotas) ainda é encontrado — cai pro fallback que escaneia a coleção inteira', async () => {
+  const recusas = mockRecusas([{ id: 'r-antigo', data: {
+    box: 'BOX 3', motoristaNome: 'Zé', criadoEm: '2026-08-01T10:00:00.000Z',
+    // SEM numerosNotas de propósito — simula um registro gravado antes
+    // desta função existir.
+    notas: [{ chave: 'CH1', numeroNota: '777', tratamento: 'REENTREGA' }],
+  } }]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="saida"]').click();
+  document.getElementById('saida-numero-input').value = '777';
+  document.getElementById('saida-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const html = document.getElementById('recusa-fluxo-host').innerHTML;
+  assert.match(html, /BOX 3/, 'achou o registro antigo mesmo sem numerosNotas');
+  assert.match(html, /Zé/);
+  assert.ok(document.getElementById('saida-confirmar-btn'), 'é Reentrega — confirmar continua disponível num registro antigo');
+});
+
+// Quando existem os dois (um registro NOVO com numerosNotas batendo pelo
+// caminho rápido, e um ANTIGO sem o campo que também bateria por
+// conteúdo), a via rápida encontra primeiro e nem chega a escanear tudo —
+// evita o caminho caro sempre que possível.
+test('Saída: quando a via rápida (numerosNotas) já acha o registro, não precisa escanear a coleção inteira', async () => {
+  let chamouGetSemFiltro = false;
+  const recusas = mockRecusas([{ id: 'r-novo', data: {
+    box: 'BOX 7', motoristaNome: 'Ana', criadoEm: '2026-09-05T10:00:00.000Z',
+    numerosNotas: ['888'],
+    notas: [{ chave: 'CHN', numeroNota: '888', tratamento: 'REENTREGA' }],
+  } }]);
+  const getOriginal = recusas.get;
+  recusas.get = async () => { chamouGetSemFiltro = true; return getOriginal(); };
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="saida"]').click();
+  document.getElementById('saida-numero-input').value = '888';
+  document.getElementById('saida-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /BOX 7/);
+  assert.equal(chamouGetSemFiltro, false, 'achou pela via rápida — nunca precisou baixar a coleção inteira');
+});

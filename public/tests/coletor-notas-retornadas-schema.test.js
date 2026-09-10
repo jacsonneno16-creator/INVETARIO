@@ -27,7 +27,7 @@ function mockColecao(docsIniciais){
       get: async()=>{ const data=registro.get(id); return { exists: data!==undefined, id, data:()=>data }; },
     }),
     add: async(payload)=>{ const docId='novo'+(seq++); registro.set(docId,payload); return {id:docId}; },
-    where:()=>({ limit:()=>({ get: async()=>snapshot([]) }) }), // nenhuma recusa anterior pra essa chave
+    where:()=>({ limit:()=>({ get: async()=>snapshot([]) }), get: async()=>snapshot([]) }), // nenhuma recusa anterior pra essa chave
     _registro: registro,
   };
 }
@@ -37,7 +37,7 @@ function carregarColetorReal(colecoes){
   const win=dom.window; const document=win.document;
   win.FS={ collection:(nome)=>colecoes?.[nome]||mockColecao([]) };
   win.getDTFirestore=()=>win.FS;
-  win.showToast=()=>{};
+  win.toast=()=>{};
   Object.defineProperty(win.navigator,'onLine',{ get:()=>true, configurable:true });
   win.eval(navCode);
   win.eval(recusasCode);
@@ -68,6 +68,7 @@ test('REGRESSÃO (FASE 3): payload gravado por finalizar() em recebimento_recusa
   });
 
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0)); // adicionarChave() é assíncrona (consulta a nota)
@@ -78,11 +79,11 @@ test('REGRESSÃO (FASE 3): payload gravado por finalizar() em recebimento_recusa
   document.getElementById('recusa-continuar-2').click();
 
   document.getElementById('recusa-volume').value='8'; // diferente do esperado (10) — força diferencaVolumes != 0
-  document.getElementById('recusa-continuar-3').click();
+  document.getElementById('recusa-continuar-3').click(); // FASE 11: volume agora leva direto pra escolha de conferência
 
-  document.getElementById('recusa-box').value='box 12';
-  document.getElementById('recusa-continuar-4').click(); // FASE 6: box+pallets agora leva pra escolha de conferência, não direto pro finalizar
   document.getElementById('recusa-conf-somente-volume').click(); // sem itens disponíveis nesta nota (não veio da Bluesoft) — só "somente volume" está habilitado
+  document.getElementById('recusa-box').value='box 12'; // FASE 11: box+pallets virou o último passo, depois da conferência
+  document.getElementById('recusa-continuar-4').click();
   await new Promise(r=>setTimeout(r,0)); // finalizar() é assíncrona
 
   assert.equal(recusas._registro.size,1);
@@ -92,11 +93,19 @@ test('REGRESSÃO (FASE 3): payload gravado por finalizar() em recebimento_recusa
   // novo campo opcional, 2026-08-20. Igual aos outros dessa fase, sempre
   // presente no payload (vazio quando ninguém foi selecionado), nunca
   // omitido condicionalmente.
+  // PEDIDO AO VIVO (2026-09-08): `numerosNotas` — array irmão de `chaves`,
+  // mesma ideia (permitir `.where('numerosNotas','array-contains',...)`),
+  // pra tela de "Saída" (Coletor) achar o registro de entrada pelo NÚMERO
+  // impresso da nota, sem baixar a coleção inteira.
   assert.deepEqual(Object.keys(payload).sort(),[
     'box','chaves','conferenciaStatus','conferenteId','conferenteNome','criadoEm','criadoPorEmail','criadoPorUid',
     'diferencaVolumes','itensConferidos','motivoId','motivoNome','motoristaId','motoristaNome',
-    'notas','origem','pallets','statusConferenciaOperacional','volumeEsperado','volumeInformado',
+    'notas','numerosNotas','origem','pallets','statusConferenciaOperacional','volumeEsperado','volumeInformado',
   ].sort());
+  // `payload` vem de win.eval (outro realm) — deepStrictEqual falha por
+  // Array.prototype diferente mesmo com o mesmo conteúdo; compara via JSON
+  // (mesma convenção já usada noutros testes cross-realm desta sessão).
+  assert.equal(JSON.stringify(payload.numerosNotas), JSON.stringify([payload.notas[0].numeroNota]));
   assert.equal(payload.conferenteId,'','conferente é opcional — não selecionado nesse teste, fica vazio');
   assert.deepEqual(Object.keys(payload.notas[0]).sort(),['chave','destinatario','numeroNota','volumeEsperado'].sort());
 

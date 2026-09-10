@@ -5,27 +5,35 @@
 // ledger de estoque (producao_estoque_movimentos).
 (function (global) {
   'use strict';
+  const win = global; // preserva a referência: o parâmetro `global` do destructuring abaixo tem o mesmo nome
   const COL = 'pcp_auditoria';
-  function fs() { return global.getDTFirestore(); }
+  const COL_GLOBAL = 'compras_fornecedores_auditoria';
+  function fs() { return win.getDTFirestore(); }
   function now() { return new Date().toISOString(); }
 
   // Só grava quando há mudança real entre antes/depois nos campos
   // rastreados — evita ruído de "salvou sem alterar nada".
-  async function registrarAuditoria({ colecao, docId, produtoCod, produtoNome, antes = {}, depois = {}, camposRastreados = [], origem = '' } = {}) {
+  //
+  // `global:true` (Fase 1A — fornecedor mestre) grava em
+  // compras_fornecedores_auditoria (raiz do Firestore, via raw()) em vez
+  // de pcp_auditoria (por loja, via fs()) — fornecedor não pertence a uma
+  // loja. Sem esse parâmetro o comportamento fica idêntico ao de sempre.
+  async function registrarAuditoria({ colecao, docId, produtoCod, produtoNome, antes = {}, depois = {}, camposRastreados = [], origem = '', global: escreverGlobal = false } = {}) {
     const alteracoes = camposRastreados
       .map(campo => ({ campo, valorAnterior: antes[campo] ?? null, valorNovo: depois[campo] ?? null }))
       .filter(x => String(x.valorAnterior ?? '') !== String(x.valorNovo ?? ''));
     if (!alteracoes.length) return null;
     const payload = {
       colecao: colecao || '', docId: docId || '', produtoCod: produtoCod || '', produtoNome: produtoNome || '',
-      alteracoes, criadoEm: now(), criadoPor: global._currentAnalistaUser?.email || '', origem: origem || '',
+      alteracoes, criadoEm: now(), criadoPor: win._currentAnalistaUser?.email || '', origem: origem || '',
     };
-    await fs().collection(COL).add(payload);
+    const destino = escreverGlobal ? win.getDTRawFirestore().collection(COL_GLOBAL) : fs().collection(COL);
+    await destino.add(payload);
     return payload;
   }
 
-  async function listarAuditoria({ colecao, docId, produtoCod } = {}) {
-    let q = fs().collection(COL);
+  async function listarAuditoria({ colecao, docId, produtoCod, global: lerGlobal = false } = {}) {
+    let q = lerGlobal ? win.getDTRawFirestore().collection(COL_GLOBAL) : fs().collection(COL);
     if (colecao && docId) q = q.where('colecao', '==', colecao).where('docId', '==', docId);
     else if (produtoCod) q = q.where('produtoCod', '==', produtoCod);
     const snap = await q.get().catch(() => ({ docs: [] }));

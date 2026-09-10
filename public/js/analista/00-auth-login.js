@@ -10,6 +10,7 @@ function state(){ return window.AnalistaStore.getState(); }
 var FS_AN = null;
 var AUTH_AN = null;
 var _authListenerRegistrado = false;
+var _retryPreparacaoAnalistaTimer = null;
 
 function _prepararFirebaseAnalista() {
   try {
@@ -29,6 +30,23 @@ function _prepararFirebaseAnalista() {
 }
 
 _prepararFirebaseAnalista();
+
+// BUG AO VIVO REAL (2026-09-09): "no celular o login continua saindo
+// sozinho" (parte 2, achada depois de já ter corrigido persistência NONE→
+// LOCAL e o signOut() incondicional em erro de rede — nenhum dos dois
+// sozinho resolvia). Persistência LOCAL às vezes não fica disponível
+// (armazenamento restrito em alguns navegadores móveis/modo privado) — cai
+// pra SESSION em vez de falhar silenciosamente sem persistência nenhuma.
+var _authPersistenciaPromise = null;
+function _prepararPersistenciaAuthAnalista() {
+  if (_authPersistenciaPromise) return _authPersistenciaPromise;
+  if (!_prepararFirebaseAnalista()) return Promise.reject(new Error('Firebase não iniciou.'));
+  _authPersistenciaPromise = AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(function (erroLocal) {
+    console.warn('[Login Analista] Persistência LOCAL indisponível; usando SESSION:', erroLocal?.message || erroLocal);
+    return AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.SESSION);
+  });
+  return _authPersistenciaPromise;
+}
 
 window._currentAnalistaUser = null;
 var _loginSolicitadoPeloUsuario = false;
@@ -86,7 +104,7 @@ async function doLoginAnalista(event) {
 
     _salvarOuLimparLogin(email);
     _loginSolicitadoPeloUsuario = true;
-    await AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE);
+    await _prepararPersistenciaAuthAnalista();
     await AUTH_AN.signInWithEmailAndPassword(email, senha);
 
     // O onAuthStateChanged conclui a abertura do painel. Mantém feedback visível
@@ -126,6 +144,8 @@ async function enviarRecuperacaoSenhaAnalista(event) {
 
 function doLogoutAnalista() {
   if (!_prepararFirebaseAnalista()) { _mostrarLogin(); return; }
+  clearTimeout(_retryPreparacaoAnalistaTimer);
+  _retryPreparacaoAnalistaTimer = null;
   _loginSolicitadoPeloUsuario = false;
   AUTH_AN.signOut().then(() => {
     window._currentAnalistaUser = null;
@@ -166,6 +186,26 @@ function _clearLoginErro() {
   }
 }
 
+// BUG AO VIVO REAL (2026-09-09): "conseguia logar, mas ele sai do login" —
+// _onAnalistaLogado fazia várias buscas no Firestore (permissões, loja)
+// SEM limite de tempo depois de um login já bem-sucedido, e QUALQUER falha
+// nelas (mesmo só uma soneca de rede) chamava signOut() incondicional,
+// jogando de volta pro login — mesmo com a senha certa. Só faz sentido
+// deslogar quando é REJEIÇÃO DE ACESSO de verdade (conta inativa/sem canal/
+// sem loja — marcadas com erro.acessoNegado=true); qualquer outro erro
+// (rede, timeout) mantém a sessão E oferece tentar de novo sem digitar
+// senha outra vez (o usuário já está autenticado de verdade).
+function _mostrarErroRedeLogin(msg) {
+  const el = document.getElementById('login-error-msg');
+  if (!el) return;
+  el.innerHTML = escHTML(msg) + '<div style="margin-top:8px"><button type="button" class="login-btn" style="padding:8px 16px;font-size:.85rem" data-login-tentar-de-novo="1">Tentar de novo</button></div>';
+  el.classList.add('show');
+}
+document.addEventListener('click', function (evento) {
+  if (!evento.target.closest || !evento.target.closest('[data-login-tentar-de-novo]')) return;
+  if (window._currentAnalistaUser) _onAnalistaLogado(window._currentAnalistaUser);
+});
+
 // ── LOGIN OK ─────────────────────────────────────────────────────────
 
 async function _onAnalistaLogado(user) {
@@ -189,18 +229,34 @@ async function _onAnalistaLogado(user) {
     let acesso = acc.exists ? { uid:user.uid, ...acc.data() } : null;
 
     if (!acesso || acesso.ativo === false) {
-      throw new Error('Este login não possui acesso ativo. Solicite o provisionamento ao administrador.');
+      const erro = new Error('Este login não possui acesso ativo. Solicite o provisionamento ao administrador.');
+      erro.acessoNegado = true;
+      throw erro;
     }
     window.DT_USUARIO_ACESSO_ATUAL = acesso;
 
     // Quando o administrador definiu os canais, o painel só aceita usuários
     // com acesso explícito ao Analista. Cadastros antigos continuam compatíveis.
     if (acesso?.canais_acesso && acesso.canais_acesso.analista !== true) {
-      throw new Error('Este login possui acesso somente ao Coletor.');
+      const erro = new Error('Este login possui acesso somente ao Coletor.');
+      erro.acessoNegado = true;
+      throw erro;
+    }
+
+    // PEDIDO AO VIVO (2026-09-08): "todo login criado, no primeiro acesso
+    // peça pra alterar a senha... só pra quem tem Analista" — a flag só
+    // existe em contas criadas depois desta mudança (37-usuarios-
+    // permissoes.js/criarOperador), nunca no documento do Coletor.
+    // Desvia ANTES de montar loja/app; a tela de troca de senha chama
+    // _onAnalistaLogado(user) de novo depois de limpar a flag, retomando
+    // o login normalmente a partir daqui.
+    if (acesso.precisaTrocarSenha === true) {
+      _mostrarTrocaSenhaPrimeiroAcesso();
+      return;
     }
 
     const permitidas = await window.DTLoja.garantirLojaInicial();
-    if (!permitidas.length) throw new Error('Este login não possui acesso a nenhuma loja. Solicite a liberação ao administrador.');
+    if (!permitidas.length) { const erro = new Error('Este login não possui acesso a nenhuma loja. Solicite a liberação ao administrador.'); erro.acessoNegado = true; throw erro; }
     const atual = window.getDTLojaAtiva();
     if (atual && !permitidas.some(l=>l.id===atual)) window.setDTLojaAtiva('');
     // forcarEscolha=true: o seletor deve aparecer em toda entrada no sistema,
@@ -219,7 +275,32 @@ async function _onAnalistaLogado(user) {
     // múltiplas filas de escrita. Ela é disparada depois que o painel abre,
     // com trava única, checkpoints e lotes pequenos.
   }
-  catch(e){ _setLoginErro('Não foi possível preparar o ambiente da loja: '+e.message); await AUTH_AN.signOut(); return; }
+  catch(e){
+    if (e && e.acessoNegado) {
+      clearTimeout(_retryPreparacaoAnalistaTimer); _retryPreparacaoAnalistaTimer = null;
+      _setLoginErro('Não foi possível preparar o ambiente da loja: '+e.message); await AUTH_AN.signOut(); return;
+    }
+    // Rede/timeout/erro inesperado — a senha estava certa, o login em si
+    // funcionou; deslogar aqui só forçaria digitar tudo de novo por causa
+    // de uma soneca de rede. Mantém a sessão. PEDIDO AO VIVO (2026-09-09,
+    // achado revisando mais uma tentativa de correção): em vez de exigir um
+    // clique manual em "Tentar de novo", tenta sozinho de novo em 2,5s —
+    // a maioria das oscilações de rede no celular se resolve nesse
+    // intervalo, e ninguém devia precisar caçar um botão numa mensagem de
+    // erro pequena no celular só pra continuar entrando.
+    window._currentAnalistaUser = user;
+    _mostrarErroRedeLogin('A conexão oscilou. Sua sessão continua ativa — tentando de novo automaticamente...');
+    const btn = document.getElementById('btn-login-analista');
+    if (btn) { btn.disabled = true; btn.textContent = 'RECONECTANDO...'; btn.setAttribute('aria-busy', 'true'); }
+    clearTimeout(_retryPreparacaoAnalistaTimer);
+    _retryPreparacaoAnalistaTimer = setTimeout(function () {
+      if (AUTH_AN?.currentUser?.uid === user.uid) _onAnalistaLogado(AUTH_AN.currentUser);
+    }, 2500);
+    console.warn('[Login Analista] Falha temporária ao preparar ambiente; sessão mantida:', e?.message || e);
+    return;
+  }
+  clearTimeout(_retryPreparacaoAnalistaTimer); _retryPreparacaoAnalistaTimer = null;
+  _clearLoginErro();
   _mostrarApp();
   if (typeof window.aplicarPermissoesAnalista === 'function') {
     window.aplicarPermissoesAnalista();
@@ -232,6 +313,15 @@ async function _onAnalistaLogado(user) {
   }
   if (typeof window.aplicarSetoresPermitidos === 'function') {
     window.aplicarSetoresPermitidos();
+  }
+  // Roteador de URL/histórico — chamado por último, depois que permissões,
+  // setores e a página inicial padrão já foram resolvidos acima (nada foi
+  // removido dali). Se a URL pedir uma rota diferente e permitida, o
+  // roteador sobrescreve a escolha padrão; senão, só normaliza a URL pra
+  // refletir o que já ficou ativo. Login/permissões sempre resolvidos antes
+  // de qualquer restauração de rota, nunca depois.
+  if (typeof window.AnalistaRouter?.init === 'function') {
+    window.AnalistaRouter.init();
   }
   atualizarIndicadorLojaAtual();
 
@@ -271,21 +361,98 @@ function _mostrarApp() {
 function _mostrarLogin() {
   document.getElementById('app-main')?.style.setProperty('display','none');
   document.getElementById('screen-login')?.style.setProperty('display','flex');
+  // Garante que o botão nunca fique preso em "RECONECTANDO..."/desabilitado
+  // se _mostrarLogin() for chamado por outro caminho (ex.: signOut() de
+  // acesso negado) enquanto um retry automático ainda estava em andamento.
+  const btn = document.getElementById('btn-login-analista');
+  if (btn) { btn.disabled = false; btn.textContent = 'ENTRAR'; btn.removeAttribute('aria-busy'); }
+}
+
+// ── PRIMEIRO ACESSO (troca de senha obrigatória, só canal Analista) ────
+
+function _mostrarTrocaSenhaPrimeiroAcesso() {
+  document.getElementById('screen-login')?.style.setProperty('display','none');
+  document.getElementById('app-main')?.style.setProperty('display','none');
+  document.getElementById('screen-primeiro-acesso')?.style.setProperty('display','flex');
+  const campo = document.getElementById('pa-senha');
+  if (campo) campo.value = '';
+  const confirmar = document.getElementById('pa-senha-confirmar');
+  if (confirmar) confirmar.value = '';
+  _clearPrimeiroAcessoErro();
+}
+
+function _esconderTrocaSenhaPrimeiroAcesso() {
+  document.getElementById('screen-primeiro-acesso')?.style.setProperty('display','none');
+}
+
+function togglePassPrimeiroAcesso(id) {
+  const f = document.getElementById(id);
+  if (f) f.type = f.type === 'password' ? 'text' : 'password';
+}
+
+function _setPrimeiroAcessoErro(msg) {
+  const el = document.getElementById('primeiro-acesso-erro');
+  if (el) { el.textContent = msg; el.classList.add('show'); }
+}
+
+function _clearPrimeiroAcessoErro() {
+  const el = document.getElementById('primeiro-acesso-erro');
+  if (el) { el.textContent = ''; el.classList.remove('show'); }
+}
+
+// PEDIDO AO VIVO (2026-09-08): "todo login criado, no primeiro acesso
+// peça pra alterar a senha, com confirmação... só pra quem tem Analista".
+// `alterarSenhaUsuario` (Cloud Function) recusa de propósito trocar a
+// PRÓPRIA senha (pede pra usar "Esqueci minha senha") — pra
+// autoatendimento logo após o login, o jeito certo é o método do próprio
+// SDK do Firebase Auth (sessão recém-autenticada, não exige reautenticar).
+// A flag só pode ser apagada pelo dono do documento (firestore.rules,
+// `usuarios_acessos`) — nunca setada por ele, nunca junto de outro campo.
+async function confirmarNovaSenhaPrimeiroAcesso(event) {
+  if (event && typeof event.preventDefault === 'function') event.preventDefault();
+  _clearPrimeiroAcessoErro();
+  const novaSenha = document.getElementById('pa-senha')?.value || '';
+  const confirmarSenha = document.getElementById('pa-senha-confirmar')?.value || '';
+  if (novaSenha.length < 6) return _setPrimeiroAcessoErro('A nova senha deve ter no mínimo 6 caracteres (pode ser só números).');
+  if (novaSenha !== confirmarSenha) return _setPrimeiroAcessoErro('As senhas não coincidem.');
+  if (!_prepararFirebaseAnalista() || !AUTH_AN.currentUser) return _setPrimeiroAcessoErro('Sessão expirada. Recarregue a página e faça login de novo.');
+  const btn = document.getElementById('btn-primeiro-acesso');
+  if (btn) { btn.disabled = true; btn.textContent = 'SALVANDO...'; }
+  const user = AUTH_AN.currentUser;
+  try {
+    await user.updatePassword(novaSenha);
+    await FS_AN.collection('usuarios_acessos').doc(user.uid).update({ precisaTrocarSenha: false });
+    _esconderTrocaSenhaPrimeiroAcesso();
+    await _onAnalistaLogado(user);
+  } catch (err) {
+    const msg = err?.code === 'auth/requires-recent-login'
+      ? 'Sua sessão expirou — saia e faça login de novo pra trocar a senha.'
+      : (err?.message || 'Não foi possível salvar a nova senha.');
+    _setPrimeiroAcessoErro(msg);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'SALVAR NOVA SENHA'; }
+  }
 }
 
 // ── SESSION ──────────────────────────────────────────────────────────
-// Nunca reaproveita sessão anterior. Só abre o painel depois que o usuário
-// clicar em Entrar ou pressionar Enter com e-mail e senha preenchidos.
+// BUG AO VIVO REAL (2026-09-09): "no celular o login continua saindo
+// sozinho" — a causa de verdade, achada por último. Este listener
+// deslogava IMEDIATAMENTE qualquer sessão restaurada automaticamente pelo
+// Firebase (_loginSolicitadoPeloUsuario só fica true dentro de
+// doLoginAnalista, nunca numa sessão restaurada num carregamento novo de
+// página) — ou seja, mesmo com persistência LOCAL gravando a sessão
+// certinho, TODA vez que a aba recarregava (o celular faz isso o tempo
+// todo em segundo plano pra economizar memória) esse código detectava
+// "sessão sem clique" e desfazia na hora, undoing completamente a
+// persistência. Restaura normalmente agora — a autorização de verdade
+// (conta ativa, canal Analista, loja liberada) continua sendo validada
+// em _onAnalistaLogado logo em seguida, então isso não abre brecha nenhuma
+// de segurança, só para de tratar "sessão restaurada" como suspeita.
 function _registrarListenerAuthAnalista() {
   if (_authListenerRegistrado || !_prepararFirebaseAnalista()) return false;
   _authListenerRegistrado = true;
   AUTH_AN.onAuthStateChanged(async user => {
     if (user) {
-      if (!_loginSolicitadoPeloUsuario) {
-        await AUTH_AN.signOut();
-        _mostrarLogin();
-        return;
-      }
       _loginSolicitadoPeloUsuario = false;
       await _onAnalistaLogado(user);
       return;
@@ -299,6 +466,7 @@ async function _iniciarAuthAnalista() {
   _loginSolicitadoPeloUsuario = false;
   _mostrarLogin();
   _carregarLoginLembrado();
+  try { await _prepararPersistenciaAuthAnalista(); } catch (erro) { console.warn('[Login Analista] Não foi possível preparar a persistência:', erro?.message || erro); }
   if (!_registrarListenerAuthAnalista()) {
     let tentativas = 0;
     const timer = setInterval(() => {
@@ -412,6 +580,15 @@ window.doLoginAnalista = doLoginAnalista;
 window.doLogoutAnalista = doLogoutAnalista;
 window.enviarRecuperacaoSenhaAnalista = enviarRecuperacaoSenhaAnalista;
 window.togglePassAnalista = togglePassAnalista;
+window.confirmarNovaSenhaPrimeiroAcesso = confirmarNovaSenhaPrimeiroAcesso;
+window.togglePassPrimeiroAcesso = togglePassPrimeiroAcesso;
+// Arquivo sem nenhuma cobertura de teste até esta mudança — expõe o
+// necessário pra testar o gate de primeiro acesso sem precisar simular
+// uma sessão real de firebase.auth().onAuthStateChanged.
+window._authLoginInternals = {
+  onAnalistaLogado: _onAnalistaLogado,
+  mostrarTrocaSenhaPrimeiroAcesso: _mostrarTrocaSenhaPrimeiroAcesso,
+};
 
 window.updateStaticTexts = updateStaticTexts;
 window.atualizarBadgesNav = atualizarBadgesNav;

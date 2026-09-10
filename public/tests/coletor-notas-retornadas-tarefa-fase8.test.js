@@ -32,8 +32,9 @@ function carregarColetorReal(colecoes,email){
   const win=dom.window; const document=win.document;
   win.FS={ collection:(nome)=>colecoes?.[nome]||mockColecao([]) };
   win.getDTFirestore=()=>win.FS;
-  win.showToast=()=>{};
+  win.toast=()=>{};
   win.firebase={ auth:()=>({ currentUser:{ uid:'op1', email: email||'operador@daterrinha.com' } }) };
+  win.getDTAuth=win.firebase.auth;
   Object.defineProperty(win.navigator,'onLine',{ get:()=>true, configurable:true });
   win.eval(navCode);
   win.eval(recusasCode);
@@ -44,6 +45,7 @@ test('operador com tarefa PENDENTE atribuída vê o card "Conferências pendente
   const tarefas=mockColecao([{id:'r1',data:{recusaId:'r1',box:'BOX 5',notas:[{chave:'X',numeroNota:'999'}],atribuidoPara:'operador@daterrinha.com',status:'PENDENTE'}}]);
   const { win, document }=carregarColetorReal({ recebimento_recusas_tarefas_conferencia:tarefas, recebimento_recusas_motoristas:mockColecao([]), recebimento_recusas_motivos:mockColecao([]) });
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   assert.match(document.getElementById('recusa-fluxo-host').innerHTML,/Conferências pendentes pra você/);
   assert.match(document.getElementById('recusa-fluxo-host').innerHTML,/NF 999/);
   assert.match(document.getElementById('recusa-fluxo-host').innerHTML,/BOX 5/);
@@ -53,6 +55,7 @@ test('operador SEM tarefas atribuídas (ou tarefa de outro e-mail) não vê o ca
   const tarefas=mockColecao([{id:'r1',data:{recusaId:'r1',box:'BOX 5',notas:[],atribuidoPara:'outro@daterrinha.com',status:'PENDENTE'}}]);
   const { win, document }=carregarColetorReal({ recebimento_recusas_tarefas_conferencia:tarefas, recebimento_recusas_motoristas:mockColecao([]), recebimento_recusas_motivos:mockColecao([]) });
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   assert.doesNotMatch(document.getElementById('recusa-fluxo-host').innerHTML,/Conferências pendentes/);
 });
 
@@ -65,6 +68,7 @@ test('"Iniciar" pula direto pra bipagem de itens (sem motorista/motivo/volume/bo
     recebimento_recusas_motoristas:mockColecao([]), recebimento_recusas_motivos:mockColecao([]),
   });
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.querySelector('[data-tarefa-iniciar]').click();
   await new Promise(r=>setTimeout(r,0));
 

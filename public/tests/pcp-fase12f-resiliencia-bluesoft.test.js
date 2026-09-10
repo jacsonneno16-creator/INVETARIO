@@ -5,7 +5,7 @@ const servicoCode=fs.readFileSync(path.join(base,'90-bluesoft-service.js'),'utf8
 function mockRawFirestore(loja){
   return {
     collection:(nome)=>{
-      if(nome==='lojas') return {doc:()=>({get:async()=>({exists:true,data:()=>loja})})};
+      if(nome==='lojas') return {doc:()=>({get:async()=>({exists:true,data:()=>loja}),collection:()=>({doc:()=>({get:async()=>({exists:false})})})})};
       if(nome==='dt_config') return {doc:()=>({get:async()=>({exists:true,data:()=>({token:'tok',url_hml:'https://hml.exemplo',ambiente:'homologacao',timeout:30})})})};
       return {doc:()=>({get:async()=>({exists:false})})};
     },
@@ -25,13 +25,13 @@ function loadServico(fetchMock,loja,firestoreMock){
   return window;
 }
 
-test('um tipo de produto falhando na Bluesoft (ex.: 500) não derruba os tipos que já vieram bem — falha fica registrada, não perdida',async()=>{
+test('um tipo de produto falhando na Bluesoft (ex.: 500 em TODA página, mesmo após tentar de novo) não derruba os tipos que já vieram bem — falha fica registrada, não perdida (PEDIDO AO VIVO: nem uma página ruim isolada nem um tipo inteiro travado escondem o que deu certo)',async()=>{
   const fetchMock=async(_url,opts)=>{
     const body=JSON.parse(opts.body);
     const qs=new URLSearchParams(body.path.split('?')[1]||'');
     const tipo=qs.get('tipoProduto')||'';
     const page=Number(qs.get('currentPage'));
-    if(tipo==='PRODUTO_ACABADO') return {ok:false,status:500,text:async()=>JSON.stringify({erro:'Ocorreu um erro inesperado.'})};
+    if(tipo==='PRODUTO_ACABADO') return {ok:false,status:500,text:async()=>JSON.stringify({type:'about:blank',title:'Ocorreu um erro inesperado.',status:500,message:'Ocorreu um erro inesperado.',erros:[{mensagem:'Ocorreu um erro inesperado.'}],validations:{}})};
     const catalogo={VENDA:[{produtoKey:1,descricao:'Refrigerante',status:'ATIVO'}]};
     return {ok:true,text:async()=>JSON.stringify({currentPage:page,pageSize:200,data:page===0?(catalogo[tipo]||[]):[]})};
   };
@@ -39,9 +39,14 @@ test('um tipo de produto falhando na Bluesoft (ex.: 500) não derruba os tipos q
   const catalogo=await w.obterCatalogoBluesoft(true,{tipos:['VENDA','PRODUTO_ACABADO']});
   assert.equal(catalogo.length,1);
   assert.equal(catalogo[0].cod,'1');
+  // Com a busca resiliente (não joga mais tudo fora por causa de páginas
+  // ruins), PRODUTO_ACABADO não lança mais exceção — ele esgota as
+  // tentativas em cada página até 5 rodadas seguidas sem novidade e desiste
+  // SÓ daquele tipo, registrando quantas páginas não vieram (mais útil pro
+  // usuário que só repetir "500").
   assert.equal(catalogo.falhas.length,1);
   assert.equal(catalogo.falhas[0].tipo,'PRODUTO_ACABADO');
-  assert.match(catalogo.falhas[0].erro,/500/);
+  assert.match(catalogo.falhas[0].erro,/página.*não vieram/);
 });
 
 test('obterEstoqueBluesoft cai pra /api/comercial/estoques/ficha-estoque quando a rota rica volta vazia pra uma loja com produto ativo',async()=>{
@@ -50,7 +55,7 @@ test('obterEstoqueBluesoft cai pra /api/comercial/estoques/ficha-estoque quando 
     const qs=new URLSearchParams(body.path.split('?')[1]||'');
     const page=Number(qs.get('currentPage'));
     if(body.path.startsWith('/api/comercial/estoques/ficha-estoque')){
-      const data=page===0?[{produtokey:1,gtinprincipal:'789',quantidade:'12,50'}]:[];
+      const data=page===0?[{produtoKey:1,gtinPrincipal:'789',quantidade:'12,50'}]:[];
       return {ok:true,text:async()=>JSON.stringify({currentPage:page,pageSize:200,data})};
     }
     if(body.path.startsWith('/api/comercial/estoques')){
@@ -64,6 +69,28 @@ test('obterEstoqueBluesoft cai pra /api/comercial/estoques/ficha-estoque quando 
   assert.equal(r.totalRecebido,1);
   assert.equal(r.rotaSimplificada,true);
   assert.equal(r.itens[0].estoqueAtual,12.5);
+});
+
+test('estoque de CD/WMS lê os nomes camelCase do schema oficial e soma paletes do mesmo produto',async()=>{
+  let chamadasWms=0;
+  const fetchMock=async(_url,opts)=>{
+    const body=JSON.parse(opts.body);
+    if(body.path.startsWith('/api/wms/ajuste-estoque-logistico')){
+      chamadasWms++;
+      return {ok:true,text:async()=>JSON.stringify([
+        {produtoKey:48398,quantidadeDisponivelEmUnidades:10,paleteKey:1},
+        {produtoKey:48398,quantidadeDisponivelEmUnidades:7,paleteKey:2},
+        {produtoKey:48023,quantidadeDisponivelEmUnidades:4,paleteKey:3},
+      ])};
+    }
+    return {ok:true,text:async()=>JSON.stringify({data:[]})};
+  };
+  const w=loadServico(fetchMock,{nome:'Filial',bluesoft_loja_cd:true});
+  const r=await w.obterEstoqueBluesoft({nome:'Filial',bluesoft_loja_key:'14',bluesoft_loja_cd:true},true,{incluirTodos:true});
+  assert.equal(r.totalRecebido,2);
+  assert.equal(r.itens.find(x=>x.produtoKey==='48398').estoqueAtual,17);
+  assert.equal(r.itens.find(x=>x.produtoKey==='48023').estoqueAtual,4);
+  assert.equal(chamadasWms,1,'endpoint WMS devolve array direto e deve ser chamado uma única vez');
 });
 
 test('obterEstoqueBluesoft não usa o fallback quando a rota rica já devolveu itens normalmente',async()=>{

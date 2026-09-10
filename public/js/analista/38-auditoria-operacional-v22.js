@@ -33,19 +33,6 @@
     return colecaoAuditorias().doc(String(id));
   }
 
-  function comTimeout(promise, ms, rotulo){
-    let timer;
-    return Promise.race([
-      Promise.resolve(promise),
-      new Promise(function(_,reject){
-        timer=setTimeout(function(){
-          const erro=new Error('Tempo excedido ao carregar '+(rotulo||'os dados')+'.');
-          erro.code='auditoria/timeout';
-          reject(erro);
-        },ms);
-      })
-    ]).finally(function(){ clearTimeout(timer); });
-  }
 
   function callable(nome){
     return firebase.app().functions('southamerica-east1').httpsCallable(nome);
@@ -109,14 +96,16 @@
     carregando.querySelector('#aud39-cancelar-loading').onclick=cancelar;
     criacaoPromise=(async function(){
     try{
-      // Nunca deixa a criação presa esperando Firebase. Primeiro tenta usar o cache
-      // já carregado e limita cada consulta a poucos segundos.
+      // Bases grandes podem demorar; aguarda a conclusão real (sem timeout
+      // artificial de 8s — Promise.race com timeout não cancela a busca,
+      // só desiste de esperar e derrubava a criação de auditoria mesmo
+      // quando a base ia terminar de carregar bem, só um pouco depois).
       if(window.DTProdutos && typeof window.DTProdutos.carregar==='function'){
-        await comTimeout(window.DTProdutos.carregar(false), 8000, 'a base de produtos');
+        await window.DTProdutos.carregar(false);
       }
       if(meuToken!==criacaoToken) return;
       const familias=(window.DTProdutos?.familias?.()||[]).filter(function(f){ return f && f.produtos && f.produtos.length; });
-      const ends=await comTimeout(enderecosGerais(), 8000, 'a base de endereços');
+      const ends=await enderecosGerais();
       if(meuToken!==criacaoToken) return;
       const ruas=[...new Set(ends.map(e=>ruaDoEndereco(e.endereco||e.codigo||e.id)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,undefined,{numeric:true}));
       carregando.remove();
@@ -736,6 +725,18 @@
   }
 
   async function atualizarListaAuditorias(){
+    // PEDIDO AO VIVO: "bipou um produto que ainda não tava cadastrado, ficou
+    // sem nome; depois de cadastrar e clicar em Atualizar continuava sem
+    // nome" — normalizarItem() já resolve o DUN lido contra DTProdutos toda
+    // vez que roda (prefere o cadastro atual a um "Produto não identificado"
+    // salvo no bip), mas o "Atualizar" daqui nunca recarregava o CADASTRO em
+    // si — só relia os documentos da auditoria e comparava contra o cache de
+    // produtos que já estava em memória, potencialmente de antes do
+    // cadastro novo. carregar(false) é barato quando nada mudou (só compara
+    // a versão publicada) e reindexa quando um produto novo entrou.
+    if(window.DTProdutos && typeof window.DTProdutos.carregar==='function'){
+      try{ await window.DTProdutos.carregar(false); }catch(e){ console.warn('[AUDITORIA] Falha ao atualizar base de produtos:',e); }
+    }
     const metas=await popularSelect();
     const sel=document.getElementById('aud-op-auditoria');
     if(sel?.value) await selecionarAuditoria(sel.value);
@@ -767,8 +768,24 @@
   window.atualizarListaAuditorias=atualizarListaAuditorias;
   window.atualizarAuditoriaOperacionalManual=atualizarListaAuditorias;
   window.exportarAuditoriaOperacional=exportar;
+  // PEDIDO AO VIVO: em vez de depender do botão "🔄 Atualizar" (removido do
+  // topo desta tela) — que além disso tinha um bug de permissão real:
+  // aplicarPermissoesAnalista() (37-usuarios-permissoes.js) esconde
+  // qualquer botão cujo onclick contenha "atualizar"/"refresh" atrás de uma
+  // ação chamada "atualizar", que não existe em NENHUM módulo da árvore de
+  // permissões — então o botão nunca aparecia pra conta nenhuma que não
+  // fosse admin, não importava o que fosse marcado — a tela agora se
+  // atualiza sozinha toda vez que o Analista entra nela (inclusive saindo
+  // pra outra aba e voltando), reaproveitando a mesma lógica que o botão
+  // já fazia (relê a auditoria selecionada E recarrega a base de produtos).
+  let _auditoriaAutoAtualizando=false;
   window.renderAuditoriaOperacional=function(){
     renderizar();
+    if(_auditoriaAutoAtualizando) return;
+    _auditoriaAutoAtualizando=true;
+    Promise.resolve(atualizarListaAuditorias()).catch(function(e){
+      console.error('[AUDITORIA] Falha ao atualizar automaticamente ao entrar na tela:',e);
+    }).finally(function(){ _auditoriaAutoAtualizando=false; });
   };
   window.encerrarListenerAuditoriaPorTrocaLoja=function(){
     encerrarListener();

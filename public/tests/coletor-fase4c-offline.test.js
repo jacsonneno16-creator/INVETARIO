@@ -311,6 +311,6 @@ test('IndexedDB: store de bips de recebimento existe na mesma base, versão do b
 });
 
 test('roteamento: coletor.html carrega o script da fila offline logo depois do de recebimento, e tem a tela de NF',()=>{
-  assert.match(htmlCode,/22-recebimento\.js[^"]*"><\/script><script src="js\/coletor\/23-recebimento-offline\.js/);
+  assert.match(htmlCode,/22-recebimento\.js[^"]*"[^>]*><\/script><script src="js\/coletor\/23-recebimento-offline\.js/);
   assert.match(htmlCode,/id="screen-recebimento-nf"/);
 });

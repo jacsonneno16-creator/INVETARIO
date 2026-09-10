@@ -1,4 +1,4 @@
-var CACHE='dt-inventario-20260823-e64c01aca538';
+var CACHE='dt-inventario-20260909-c095d2e397d6';
 var PRECACHE=[
   '/',
   '/index.html',
@@ -104,27 +104,47 @@ self.addEventListener('fetch',function(e){
   var u=new URL(e.request.url);
   var local=u.origin===self.location.origin;
   if(local){
+    // REVERT 2026-09-09 (2ª vez): a tentativa de cache-first pra .js/.css
+    // com skipWaiting()/clients.claim() removidos (pra não trocar de SW no
+    // meio da sessão) AINDA ASSIM coincidiu com telas de dado "ao vivo"
+    // (ex. Transbordo) parando de mostrar nada em produção. Ainda não sei
+    // se a causa é o cache-first em si, a remoção do skipWaiting, ou algo
+    // não relacionado ao SW — voltando pro comportamento que pelo menos
+    // funciona (sempre busca .js/.css/.html na rede, sem cache-first, COM
+    // skipWaiting/clients.claim como sempre foi) até investigar com calma,
+    // fora do horário de uso ao vivo. NÃO tentar essa otimização nesta
+    // tela de novo sem antes reproduzir e confirmar num ambiente de teste.
     var arquivoCritico=e.request.mode==='navigate' ||
       u.pathname.slice(-5)==='.html' ||
       u.pathname.slice(-3)==='.js' ||
       u.pathname.slice(-4)==='.css';
     if(arquivoCritico){
+      // BUG AO VIVO REAL (2026-08-28): gravar/procurar por u.pathname
+      // (sem "?v=...") faz uma falha de rede devolver QUALQUER versão já
+      // cacheada daquele arquivo, mesmo desatualizada — o cache-busting do
+      // resto do app não tem efeito nenhum nesse cenário. A chave tem que
+      // ser a URL COMPLETA (e.request, com querystring); "ignoreSearch"
+      // fica só como último recurso, quando não existe cópia daquela
+      // versão exata em cache nenhuma.
       e.respondWith(fetch(e.request,{cache:'no-store'}).then(function(r){
         if(!r||!r.ok)throw new Error('Resposta inválida');
         var copia=r.clone();
         e.waitUntil(caches.open(CACHE).then(function(c){
-          return c.put(u.pathname,copia);
+          return c.put(e.request,copia);
         }).catch(function(err){ console.warn('[SW] Falha ao atualizar cache:',err); }));
         return r;
       }).catch(function(){
-        return caches.match(u.pathname,{ignoreSearch:true}).then(function(exata){
+        return caches.match(e.request).then(function(exata){
           if(exata)return exata;
-          if(e.request.mode==='navigate'){
-            var fallback=u.pathname.indexOf('coletor')>=0?'/coletor.html':
-              (u.pathname.indexOf('analista')>=0?'/analista.html':'/index.html');
-            return caches.match(fallback,{ignoreSearch:true});
-          }
-          return new Response('',{status:504,statusText:'Offline'});
+          return caches.match(u.pathname,{ignoreSearch:true}).then(function(qualquerVersao){
+            if(qualquerVersao)return qualquerVersao;
+            if(e.request.mode==='navigate'){
+              var fallback=u.pathname.indexOf('coletor')>=0?'/coletor.html':
+                (u.pathname.indexOf('analista')>=0?'/analista.html':'/index.html');
+              return caches.match(fallback,{ignoreSearch:true});
+            }
+            return new Response('',{status:504,statusText:'Offline'});
+          });
         });
       }));
       return;

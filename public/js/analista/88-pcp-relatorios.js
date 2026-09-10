@@ -13,25 +13,46 @@
     ['ruptura', 'Ruptura de Estoque'],
     ['cobertura', 'Cobertura de Estoque'],
     ['estoque-projetado', 'Estoque Projetado'],
-    ['compras', 'Compras'],
-    ['variacao-preco', 'Variação de Preço'],
   ];
   let _relatorio = 'necessidade';
 
   function _linhas() {
     const internos = global._pcpInternals;
-    const visao = internos.construirVisao();
+    const visao = internos.construirVisao({ estoqueBi: internos.getEstoqueBi?.() });
     const reqs = internos.getReqs?.() || [];
     const produtos = internos.getProdutos?.() || [];
+    const produzidoInternamente = internos.produzidoInternamente || (() => false);
     switch (_relatorio) {
-      case 'necessidade':
-        return visao.filter(x => x.necessidade > 0).map(x => {
+      case 'necessidade': {
+        // PEDIDO AO VIVO (2026-09-02): produzido internamente não é "de
+        // compra" — mesmo filtro que comprasHtml (78-pcp-central.js) já usa.
+        // PEDIDO AO VIVO (2026-09-07): "eu queria que somasse e colocasse a
+        // data necessária de umas três compras futuras... toda vez que
+        // consultar ele vai ajustando" — Data1ª/2ª/3ª Compra e as
+        // quantidades correspondentes vêm de calcularProximasDatasCompra
+        // (83-pcp-timeline.js), recalculado do zero a cada render — nunca
+        // uma data fixada/salva. DataNecessaria/Prioridade da requisição
+        // MANUAL (quando existe uma já criada por alguém) continuam
+        // aparecendo à parte — são coisas diferentes: uma é o que o
+        // sistema PROJETA que vai precisar, a outra é o que uma PESSOA já
+        // decidiu pedir.
+        const calc = global._pcpTimelineInternals?.calcularProximasDatasCompra;
+        return visao.filter(x => x.necessidade > 0 && !produzidoInternamente(x.key)).map(x => {
           const prod = produtos.find(p => internos.keyOf(p) === x.key);
           const multiplo = Math.max(1, n(prod?.multiploCompra) || 1);
           const sugerida = Math.ceil(x.necessidade / multiplo) * multiplo;
           const reqProduto = reqs.find(r => internos.keyOf(r) === x.key);
-          return { Produto: x.produto, Estoque: x.estoqueAtual, Cobertura: x.coberturaDias, Necessidade: x.necessidade, QuantidadeSugerida: sugerida, DataNecessaria: reqProduto?.dataNecessaria || '', Prioridade: reqProduto?.prioridade || '' };
+          const proximasCompras = calc ? calc(x, 3) : [];
+          const [c1, c2, c3] = proximasCompras;
+          return {
+            Produto: x.produto, Estoque: x.estoqueAtual, Cobertura: x.coberturaDias, Necessidade: x.necessidade, QuantidadeSugerida: sugerida,
+            DataNecessaria: reqProduto?.dataNecessaria || '', Prioridade: reqProduto?.prioridade || '',
+            Data1aCompra: c1?.dataNecessaria || '', Qtd1aCompra: c1?.quantidadeSugerida ?? '',
+            Data2aCompra: c2?.dataNecessaria || '', Qtd2aCompra: c2?.quantidadeSugerida ?? '',
+            Data3aCompra: c3?.dataNecessaria || '', Qtd3aCompra: c3?.quantidadeSugerida ?? '',
+          };
         });
+      }
       case 'demandas':
         return reqs.map(r => ({ Data: r.criadoEm, Produto: r.produto, Quantidade: n(r.quantidade), PCPResponsavel: r.pcpResponsavel || '', Status: r.status || '', Comprador: r.compradorNome || r.compradorEmail || '', QuantidadeComprada: n(r.quantidadeComprada), Saldo: Math.max(0, n(r.quantidade) - n(r.quantidadeComprada)) }));
       case 'ruptura':
@@ -40,23 +61,6 @@
         return visao.map(x => ({ Produto: x.produto, CoberturaAtual: x.coberturaDias, CoberturaDesejada: x.diasAlvo, Situacao: x.coberturaDias == null ? 'sem dados' : x.coberturaDias < x.diasAlvo ? 'abaixo' : x.coberturaDias > x.diasAlvo * 1.5 ? 'acima' : 'dentro' }));
       case 'estoque-projetado':
         return visao.map(x => ({ Produto: x.produto, EstoqueAtual: x.estoqueAtual, SaldoProjetado: x.saldo, Necessidade: x.necessidade, Excesso: x.excesso }));
-      case 'compras':
-        return reqs.filter(r => n(r.quantidadeComprada) > 0).map(r => {
-          const prod = produtos.find(p => internos.keyOf(p) === internos.keyOf(r));
-          return { Data: r.compradoEm || '', Produto: r.produto, Categoria: prod?.categoria || '', Fornecedor: r.fornecedor || '', Comprador: r.compradorNome || r.compradorEmail || '', Quantidade: n(r.quantidadeComprada), PrecoUnitario: n(r.precoUnitario), Valor: n(r.valorTotal) };
-        });
-      case 'variacao-preco': {
-        const porProduto = new Map();
-        reqs.filter(r => n(r.precoUnitario) > 0).forEach(r => { const k = internos.keyOf(r); const arr = porProduto.get(k) || []; arr.push(r); porProduto.set(k, arr); });
-        const out = [];
-        porProduto.forEach(lista => {
-          const ordenada = lista.slice().sort((a, b) => String(a.compradoEm || '').localeCompare(String(b.compradoEm || '')));
-          const precos = ordenada.map(r => n(r.precoUnitario));
-          const primeiro = precos[0], ultimo = precos[precos.length - 1];
-          out.push({ Produto: ordenada[0].produto, PrimeiroPreco: primeiro, UltimoPreco: ultimo, VariacaoPct: primeiro > 0 ? Number(((ultimo - primeiro) / primeiro * 100).toFixed(1)) : null, MaiorPreco: Math.max(...precos), MenorPreco: Math.min(...precos), PrecoMedio: Number((precos.reduce((s, p) => s + p, 0) / precos.length).toFixed(2)) });
-        });
-        return out.sort((a, b) => (b.VariacaoPct ?? -999) - (a.VariacaoPct ?? -999));
-      }
       default: return [];
     }
   }
@@ -110,6 +114,7 @@
 
   global.pcpRegistrarPagina?.('relatorios', { elId: 'page-pcp-relatorios', render: 'renderPCPRelatorios', titulo: 'Relatórios' });
   global.renderPCPRelatorios = renderPCPRelatorios;
+  global._pcpRelatoriosInternals = { _linhas, setRelatorio: v => { _relatorio = v; } };
 
   document.addEventListener('click', function (event) {
     if (event.target.closest('[data-pcprel-excel]')) { _exportarExcel(); return; }

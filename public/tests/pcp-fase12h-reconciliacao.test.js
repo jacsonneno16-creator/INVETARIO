@@ -7,7 +7,7 @@ const rules=fs.readFileSync(path.join(__dirname,'../../firestore.rules'),'utf8')
 function mockRawFirestore(loja){
   return {
     collection:(nome)=>{
-      if(nome==='lojas') return {doc:()=>({get:async()=>({exists:true,data:()=>loja})})};
+      if(nome==='lojas') return {doc:()=>({get:async()=>({exists:true,data:()=>loja}),collection:()=>({doc:()=>({get:async()=>({exists:false})})})})};
       if(nome==='dt_config') return {doc:()=>({get:async()=>({exists:true,data:()=>({token:'tok',url_hml:'https://hml.exemplo',ambiente:'homologacao',timeout:30})})})};
       return {doc:()=>({get:async()=>({exists:false})})};
     },

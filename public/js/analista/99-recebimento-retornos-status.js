@@ -72,11 +72,51 @@
   // atalhos sem burocracia/sem data associada na planilha real.
   const DATA_POR_STATUS = { '': 'liberadoParaRecusarEm', AGUARD_FISCAL: 'dataSolicitacaoFiscalEm', CTE: 'dataDaRecusaEm', ENDERECANDO: 'dataDoEnderecamentoEm' };
 
+  // PEDIDO AO VIVO (2026-09-08): "cada nota tem que gerar uma linha... se
+  // ela tiver junta e uma for reentrega e a outra for recusa" — um
+  // documento de recebimento_recusas é 1 EVENTO de conferência (motorista
+  // chegou com N notas bipadas juntas), mas Tratamento/Status precisam ser
+  // decididos por NOTA, não pro evento inteiro. Campos novos ficam DENTRO
+  // de cada item de `notas[i]` (opcionais — ausente = nunca editado nesta
+  // nota desde esta migração, cai pro valor antigo do documento, que
+  // continua intocado, cobrindo 100% do histórico sem migração em massa).
+  // Duplicada de propósito em 97/99/103 (mesmo padrão de
+  // `_agruparNotasBiPorChave`, duplicada entre 97 e 100 — telas
+  // independentes, sem acoplar).
+  const CAMPOS_POR_NOTA = ['tratamento', 'tratamentoDefinidoEm', 'tratamentoDefinidoPor',
+    'liberadoParaRecusarEm', 'statusRetorno', 'statusRetornoHistorico',
+    'dataSolicitacaoFiscalEm', 'dataDaRecusaEm', 'dataDoEnderecamentoEm',
+    'dataProgramadaEm', 'dataSaidaEm'];
+  function _linhaDaNota(r, nota) {
+    const linha = Object.assign({}, r, { notas: [nota], _recusaId: r._id, _notaChave: nota.chave || '' });
+    CAMPOS_POR_NOTA.forEach(c => { linha[c] = nota[c] != null ? nota[c] : r[c]; });
+    if (linha.tratamento == null) linha.tratamento = '';
+    if (linha.statusRetorno == null) linha.statusRetorno = '';
+    if (!Array.isArray(linha.statusRetornoHistorico)) linha.statusRetornoHistorico = [];
+    return linha;
+  }
+  function linhasPorNota(recusas) {
+    const linhas = [];
+    recusas.forEach(r => (Array.isArray(r.notas) && r.notas.length ? r.notas : [{}]).forEach(n => linhas.push(_linhaDaNota(r, n))));
+    return linhas;
+  }
+
   let _recusas = [];
   let _filtroStatus = ''; // '' = todos, 'ABERTOS' = tudo que não é FINALIZADO, ou um status específico
   let _filtroTratamento = '';
   let _periodoInicio = '';
   let _periodoFim = '';
+  // PEDIDO AO VIVO (2026-09-09): a estrutura da tela (título, filtros,
+  // botão Atualizar) não depende do Firestore pra existir — só a tabela
+  // depende. desenhar() já é seguro com _recusas vazio (mostra zerado).
+  let _statusCarregando = false;
+  let _statusErro = '';
+  // PEDIDO AO VIVO (2026-09-09): "os indicadores que tá demorando" —
+  // carregarDados() buscava recebimento_recusas do zero toda vez, mesmo
+  // reentrando na tela segundos depois. Só busca de novo quando ainda não
+  // carregou nada, ou quando pedido explicitamente (Atualizar/Tentar de
+  // novo).
+  let _carregadoStatus = false;
 
   function fs() {
     if (typeof global.getDTFirestore === 'function') return global.getDTFirestore();
@@ -96,13 +136,34 @@
   }
   function ehReentrega(r) { return (r.tratamento || '') === 'REENTREGA'; }
 
-  async function carregarDados() {
+  // Sem timeout artificial: uma coleção grande pode legitimamente levar
+  // mais tempo, e Promise.race com timeout não cancela a busca real, só
+  // desiste de esperar — a estrutura da tela já aparece na hora (ver
+  // renderRecebimentoRetornosStatus/_atualizarDados), então uma consulta
+  // lenta não deixa mais a tela em branco, só demora um pouco pra
+  // atualizar os dados.
+  async function carregarDados(forcar) {
+    if (_carregadoStatus && !forcar) return;
     const snap = await fs().collection(COL_RECUSAS).get();
-    _recusas = snap.docs.map(d => ({ _id: d.id, ...d.data() })).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
+    // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
+    // 'AUTOMATICO') já nasce CONFERIDA — não tem sentido nenhum ela ficar
+    // "Aguard. Monitoramento"/fiscal/CTE, esse fluxo é só pra recebimento
+    // físico real processado pelo Coletor. Indicador próprio em
+    // 102-devolucoes-bi-indicadores.js.
+    // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a ser
+    // gravado numa rodada posterior — registros auto-salvos antes disso não
+    // têm esse campo, mas sempre tiveram `motivoAutomaticoTexto` (exclusivo
+    // desse fluxo), que serve de marcador retroativo.
+    _recusas = snap.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
+    _carregadoStatus = true;
   }
 
+  // PEDIDO AO VIVO (2026-09-08): roda sobre `linhasPorNota(_recusas)` (1
+  // linha por nota, não por documento) — o resto do arquivo (kpis, tabela,
+  // médias de dias parado) já opera em cima do que isto devolve, sem
+  // precisar saber que antes era por documento.
   function recusasFiltradas() {
-    return _recusas.filter(r => {
+    return linhasPorNota(_recusas).filter(r => {
       if (_periodoInicio || _periodoFim) {
         const d = r.criadoEm ? new Date(r.criadoEm) : null;
         if (!d || isNaN(d)) return false;
@@ -167,26 +228,49 @@
     ].filter(Boolean);
   }
 
+  // PEDIDO AO VIVO (2026-09-08): Status (e as datas nomeadas) passaram de
+  // campo do documento pra campo de cada item de `notas[]` — mesmo mote de
+  // `alterarTratamento` em 97-recebimento-recusas.js. `recusaId` acha o
+  // documento, `notaChave` acha QUAL nota dentro dele; se o documento
+  // ainda não tem `notas` real (registro bem antigo), cria o placeholder
+  // que a tela já mostrava (mesmo comportamento de `linhasPorNota`).
+  function _acharOuCriarNota(r, notaChave) {
+    const notas = Array.isArray(r.notas) ? r.notas.slice() : [];
+    let idx = notas.findIndex(n => (n.chave || '') === notaChave);
+    if (idx === -1) { if (notas.length) return null; idx = 0; notas.push({}); }
+    return { notas, idx };
+  }
+
   // Pedido ao vivo do usuário ("nem toda vez para em CTE, às vezes fica
   // parado com fiscal"): status agora é seleção LIVRE, sem ordem forçada —
   // qualquer valor pode ser escolhido a qualquer momento. As datas
   // nomeadas (DATA_POR_STATUS) só são gravadas na 1ª vez que o status
-  // ENTRA nesse valor — nunca sobrescritas, mesmo voltando pra trás.
-  async function mudarStatusRetorno(recusaId, novoStatus) {
+  // ENTRA nesse valor — nunca sobrescritas, mesmo voltando pra trás. Se o
+  // documento antigo já tinha essa data (de antes desta migração), a NOTA
+  // herda o valor real em vez de carimbar "agora" na 1ª edição pós-
+  // migração — não perde histórico de verdade.
+  async function mudarStatusRetorno(recusaId, notaChave, novoStatus) {
     const r = _recusas.find(x => x._id === recusaId);
     if (!r) return;
-    if ((r.statusRetorno || '') === novoStatus) return;
+    const achado = _acharOuCriarNota(r, notaChave);
+    if (!achado) return;
+    const { notas, idx } = achado;
+    const nota = notas[idx];
+    const statusAtual = nota.statusRetorno != null ? nota.statusRetorno : (r.statusRetorno || '');
+    if (statusAtual === novoStatus) return;
     const u = usuarioAtual();
     const evento = { status: novoStatus, em: new Date().toISOString(), por: u.email || u.uid || '' };
-    const historico = [...(Array.isArray(r.statusRetornoHistorico) ? r.statusRetornoHistorico : []), evento];
-    const payload = { statusRetorno: novoStatus, statusRetornoHistorico: historico };
+    const historicoBase = Array.isArray(nota.statusRetornoHistorico) ? nota.statusRetornoHistorico
+      : (Array.isArray(r.statusRetornoHistorico) ? r.statusRetornoHistorico : []);
+    const patchNota = { statusRetorno: novoStatus, statusRetornoHistorico: [...historicoBase, evento] };
     const campoData = DATA_POR_STATUS[novoStatus];
-    if (campoData && !r[campoData]) payload[campoData] = evento.em;
-    const select = document.querySelector('[data-status-mudar="' + recusaId + '"]');
+    if (campoData && !nota[campoData]) patchNota[campoData] = r[campoData] || evento.em;
+    const select = document.querySelector('[data-status-mudar="' + recusaId + '|' + notaChave + '"]');
     if (select) select.disabled = true;
     try {
-      await fs().collection(COL_RECUSAS).doc(recusaId).update(payload);
-      Object.assign(r, payload);
+      const notasAtualizadas = notas.map((n, i) => i === idx ? Object.assign({}, n, patchNota) : n);
+      await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas });
+      r.notas = notasAtualizadas;
       desenhar();
       global.showToast?.('Status atualizado: ' + STATUS_RETORNO_LABELS[novoStatus], 'success');
     } catch (e) {
@@ -195,14 +279,19 @@
     }
   }
   // Datas de Reentrega (Data Programada / Data de Saída) — campos livres,
-  // editados direto, sem depender do status (igual à planilha real).
-  async function salvarDataReentrega(recusaId, campo, valorData) {
+  // editados direto, sem depender do status (igual à planilha real). Por
+  // NOTA, mesmo mecanismo de mudarStatusRetorno acima.
+  async function salvarDataReentrega(recusaId, notaChave, campo, valorData) {
     const r = _recusas.find(x => x._id === recusaId);
     if (!r) return;
+    const achado = _acharOuCriarNota(r, notaChave);
+    if (!achado) return;
+    const { notas, idx } = achado;
     const iso = valorData ? new Date(valorData + 'T00:00:00').toISOString() : null;
     try {
-      await fs().collection(COL_RECUSAS).doc(recusaId).update({ [campo]: iso });
-      r[campo] = iso;
+      const notasAtualizadas = notas.map((n, i) => i === idx ? Object.assign({}, n, { [campo]: iso }) : n);
+      await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas });
+      r.notas = notasAtualizadas;
       desenhar();
     } catch (e) { global.showToast?.('Erro ao salvar data: ' + (e.message || e), 'error'); }
   }
@@ -258,8 +347,8 @@
     if (ehReentrega(r)) {
       const dias = diasParadoReentrega(r);
       return `<div style="display:flex;flex-direction:column;gap:4px;font-size:.72rem">
-        <label>Programada: <input type="date" data-reentrega-data="${esc(r._id)}:dataProgramadaEm" value="${isoParaInputDate(r.dataProgramadaEm)}" ${podeEditarFlag ? '' : 'disabled'} style="padding:3px"></label>
-        <label>Saída: <input type="date" data-reentrega-data="${esc(r._id)}:dataSaidaEm" value="${isoParaInputDate(r.dataSaidaEm)}" ${podeEditarFlag ? '' : 'disabled'} style="padding:3px"></label>
+        <label>Programada: <input type="date" data-reentrega-data="${esc(r._recusaId)}|${esc(r._notaChave)}:dataProgramadaEm" value="${isoParaInputDate(r.dataProgramadaEm)}" ${podeEditarFlag ? '' : 'disabled'} style="padding:3px"></label>
+        <label>Saída: <input type="date" data-reentrega-data="${esc(r._recusaId)}|${esc(r._notaChave)}:dataSaidaEm" value="${isoParaInputDate(r.dataSaidaEm)}" ${podeEditarFlag ? '' : 'disabled'} style="padding:3px"></label>
         <span style="color:var(--muted)">${dias == null ? '—' : Math.round(dias) + ' dia(s) parado'}</span>
       </div>`;
     }
@@ -283,10 +372,18 @@
       const statusSelect = ehReentrega(r)
         ? '<span style="color:var(--muted);font-size:.72rem">— (reentrega)</span>'
         : podeEditarFlag
-          ? `<select class="field" style="padding:5px;font-size:.75rem" data-status-mudar="${esc(r._id)}">${Object.keys(STATUS_RETORNO_LABELS).map(k => `<option value="${k}" ${k===status?'selected':''}>${esc(STATUS_RETORNO_LABELS[k])}</option>`).join('')}</select>`
+          ? `<select class="field" style="padding:5px;font-size:.75rem" data-status-mudar="${esc(r._recusaId)}|${esc(r._notaChave)}">${Object.keys(STATUS_RETORNO_LABELS).map(k => `<option value="${k}" ${k===status?'selected':''}>${esc(STATUS_RETORNO_LABELS[k])}</option>`).join('')}</select>`
           : badgeStatusHtml(status);
       return `<tr><td>${fmtDataHora(r.criadoEm)}</td><td><b>${esc((r.notas || []).map(n => n.numeroNota).filter(Boolean).join(', ') || '—')}</b></td><td>${esc(r.motoristaNome || '—')}</td><td>${esc(r.conferenteNome || '—')}</td><td>${esc(r.tratamento || '—')}</td><td>${statusSelect}</td><td>${celulaDetalheHtml(r, podeEditarFlag)}</td></tr>`;
     }).join('')}</tbody></table></div>`;
+  }
+
+  // Banner pequeno, só sobre a área de dados — nunca substitui a tela
+  // inteira (pedido ao vivo: a estrutura tem que aparecer na hora).
+  function _statusCarregandoHtml() {
+    if (_statusCarregando) return '<div style="font-size:.76rem;color:var(--muted);margin:8px 0">🔄 Atualizando...</div>';
+    if (_statusErro) return '<div style="font-size:.76rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin:8px 0;display:flex;justify-content:space-between;align-items:center;gap:10px"><span>⚠️ Não foi possível atualizar: ' + esc(_statusErro) + '</span><button type="button" class="btn btn-ghost btn-sm" data-status-tentar-de-novo="1">Tentar de novo</button></div>';
+    return '';
   }
 
   function desenhar() {
@@ -297,6 +394,7 @@
         <div><h2 style="margin:0">🧾 Status de Retornos</h2><div style="color:var(--muted);font-size:.78rem;margin-top:4px">Aguard. Monitoramento, Aguard. Fiscal, OK, Em tratativa, CTE, Endereçando ou Finalizado — escolha livre, sem ordem obrigatória. Reentrega usa Data Programada/Saída em vez disso.</div></div>
         <button class="btn btn-ghost" data-status-atualizar="1">↻ Atualizar</button>
       </div>
+      ${_statusCarregandoHtml()}
       ${resumoHtml()}
       <div class="tc" style="padding:16px;margin:14px 0"><div class="tc-title">📊 Tempo médio (dias)</div>${global.dashHorizontalBarChart ? global.dashHorizontalBarChart(graficoResumo(), { limit: 10 }) : ''}</div>
       <div class="tc" style="padding:16px">
@@ -306,7 +404,7 @@
 
     if (!pagina._statusListenerBound) {
       pagina.addEventListener('click', ev => {
-        if (ev.target.closest('[data-status-atualizar]')) { carregarDados().then(desenhar); }
+        if (ev.target.closest('[data-status-atualizar]') || ev.target.closest('[data-status-tentar-de-novo]')) _atualizarDados(true);
       });
       pagina.addEventListener('change', ev => {
         if (ev.target.id === 'status-filtro-status') { _filtroStatus = ev.target.value || ''; desenhar(); return; }
@@ -314,22 +412,45 @@
         if (ev.target.id === 'status-periodo-ini') { _periodoInicio = ev.target.value || ''; desenhar(); return; }
         if (ev.target.id === 'status-periodo-fim') { _periodoFim = ev.target.value || ''; desenhar(); return; }
         const selectStatus = ev.target.closest('[data-status-mudar]');
-        if (selectStatus) { mudarStatusRetorno(selectStatus.dataset.statusMudar, selectStatus.value); return; }
+        if (selectStatus) {
+          const [recusaId, notaChave] = String(selectStatus.dataset.statusMudar).split('|');
+          mudarStatusRetorno(recusaId, notaChave, selectStatus.value);
+          return;
+        }
         const inputReentrega = ev.target.closest('[data-reentrega-data]');
         if (inputReentrega) {
-          const [id, campo] = inputReentrega.dataset.reentregaData.split(':');
-          salvarDataReentrega(id, campo, inputReentrega.value);
+          const [idNota, campo] = inputReentrega.dataset.reentregaData.split(':');
+          const [recusaId, notaChave] = idNota.split('|');
+          salvarDataReentrega(recusaId, notaChave, campo, inputReentrega.value);
         }
       });
       pagina._statusListenerBound = true;
     }
   }
 
+  // PEDIDO AO VIVO (2026-09-09): "a tela precisa ficar o tempo todo em
+  // carregamento sem mostrar nem a estrutura?" — desenhar() já é seguro com
+  // _recusas vazio, então chama ela ANTES do fetch (estrutura/filtros/
+  // botão aparecem na hora) e de novo depois (com o dado real ou o aviso de
+  // erro, sem nunca esconder a estrutura). Usada tanto no 1º carregamento
+  // quanto nos botões "Atualizar"/"Tentar de novo".
+  async function _atualizarDados(forcar) {
+    _statusCarregando = true;
+    _statusErro = '';
+    desenhar();
+    try { await carregarDados(forcar); } catch (e) { _statusErro = e.message || String(e); }
+    _statusCarregando = false;
+    desenhar();
+  }
+
+  // _atualizarDados() sempre resolve (nunca rejeita — erro vira
+  // _statusErro, tratado dentro do próprio desenhar()), então não precisa
+  // de __dtBackground: o .catch() genérico de _callPage nunca chega a
+  // disparar aqui de qualquer jeito.
   async function renderRecebimentoRetornosStatus() {
     const pagina = document.getElementById('page-recebimento-retornos-status');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-title">Carregando Status de Retornos...</div></div>';
-    try { await carregarDados(); desenhar(); } catch (e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Status de Retornos</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; }
+    await _atualizarDados();
   }
 
   global.renderRecebimentoRetornosStatus = renderRecebimentoRetornosStatus;

@@ -538,6 +538,47 @@
       z-index: 999; backdrop-filter: blur(5px);
     }
     .modal-bg.open, .modal-bg.on { display: flex; }
+    /* PEDIDO AO VIVO (2026-08-27): "hoje eu clico e ele aparece lá no final
+       da página, ele tem que aparecer um modal na frente" — 3 modais do PCP
+       (Memória de Cálculo, Nova Solicitação, Recebimento de Agendamento em
+       78-pcp-central.js) usavam essas classes (modal-overlay/modal-card/
+       modal-header/modal-x/modal-body) que nunca tinham sido definidas em
+       lugar nenhum do CSS — só apareciam soltos, no fluxo normal da página
+       (#pcp-modal-host fica no final do conteúdo do setor PCP), nunca como
+       overlay de verdade. Mesmo comportamento visual de .modal-bg/.modal
+       (usado no resto do sistema), só com os nomes que o PCP já chama.
+       Corrigido aqui em vez de reescrever os 3 lugares que já usam essas
+       classes. */
+    .modal-overlay {
+      position: fixed; inset: 0;
+      background: rgba(8,18,32,.48);
+      display: none; align-items: center; justify-content: center;
+      z-index: 999; backdrop-filter: blur(5px);
+    }
+    .modal-card {
+      background: var(--surface);
+      border-radius: var(--r-lg);
+      width: 92%;
+      box-shadow: 0 28px 70px rgba(0,0,0,.20), 0 4px 20px rgba(0,0,0,.10);
+      display: flex; flex-direction: column;
+      animation: mIn .24s cubic-bezier(.34,1.4,.64,1);
+      border-top: 4px solid var(--orange);
+    }
+    .modal-header {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 18px 22px; border-bottom: 1px solid var(--border);
+      font-size: .97rem; font-weight: 700; letter-spacing: -.015em;
+    }
+    .modal-x {
+      border: none; background: transparent; font-size: 1.3rem; line-height: 1; cursor: pointer;
+      color: var(--muted); padding: 4px 8px; border-radius: 8px;
+    }
+    .modal-x:hover { background: var(--surface-2); color: var(--text); }
+    .modal-body { padding: 18px 22px; overflow-y: auto; }
+    .modal .modal-footer, .modal-card .modal-footer {
+      padding: 14px 22px; border-top: 1px solid var(--border);
+      display: flex; justify-content: flex-end; gap: 10px;
+    }
     .modal {
       background: var(--surface);
       border-radius: var(--r-lg);
@@ -1066,8 +1107,19 @@ input,select,textarea{
 .page.on{display:flex !important;position:relative !important;top:0 !important;left:0 !important;right:auto !important;margin:0 !important;padding-top:0 !important;transform:none !important;min-height:0 !important;height:auto !important;justify-content:flex-start !important;align-items:stretch !important;align-content:flex-start !important;}
 @media(max-width:768px){.content{padding:12px !important;}}
 
-/* Matriz de permissões (modal Criar/Editar Usuário) — cards por módulo,
-   contagem "X de Y", indeterminate no toggle do módulo, busca no topo. */
+/* PEDIDO AO VIVO (2026-08-27): "aquele card está muito grande... mudar o
+   visual dele, mais sofisticada, mais atual... tão uma coisa muito antiga,
+   muito feia" — visual do modal Criar Usuário. Seções agrupadas em cards
+   soltos (.op-secao) em vez de divs de borda solta, e os seletores de
+   canal/setor viram chips clicáveis (todo o botão realça quando marcado,
+   não só o quadradinho) em vez de checkbox+label genérico. */
+.op-secao{background:var(--surface-2);border:1px solid var(--border);border-radius:14px;padding:14px 16px}
+.op-secao-titulo{display:flex;align-items:center;gap:7px;font-size:.8rem;font-weight:700;color:var(--text);margin-bottom:3px}
+.op-secao-sub{font-size:.71rem;color:var(--muted);margin-bottom:11px;line-height:1.4}
+.op-toggle-chip{display:flex;align-items:center;gap:9px;padding:10px 15px;border:1.5px solid var(--border);border-radius:12px;cursor:pointer;font-size:.83rem;font-weight:600;transition:.15s ease;background:var(--surface);color:var(--text)}
+.op-toggle-chip:hover{border-color:var(--orange)}
+.op-toggle-chip:has(input:checked){border-color:var(--orange);background:rgba(255,122,24,.09);color:var(--orange)}
+.op-toggle-chip input{accent-color:var(--orange);width:15px;height:15px;margin:0}
 .perm-presets{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
 .perm-presets-label{font-size:.68rem;font-weight:700;color:var(--muted);white-space:nowrap}
 .perm-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}

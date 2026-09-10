@@ -86,3 +86,57 @@ test('Programação: numeração "#" continua entre páginas — ((pg-1)*PAGE_SI
   assert.match(page2, /<td style="color:var\(--muted\)">16<\/td>/, 'primeira linha da página 2 deveria ser #16, não #1 de novo');
   assert.doesNotMatch(page2, /<td style="color:var\(--muted\)">1<\/td>/, 'página 2 não deveria repetir a numeração da página 1');
 });
+
+// PEDIDO AO VIVO (2026-09-02): "quando for gerar uma nova programação de um
+// produto pra produzir, ele não traz as informações de quanto vai usar de
+// cada insumo... e qual é o estoque, se vai dar ou não" — preview ao vivo
+// no modal de Nova Solicitação, reaproveitando a mesma conta que já colore
+// a tabela de OPs (_statusInsumosOP).
+function carregarPaginaComInsumos(fichas, estoqueIns) {
+  const dom = new JSDOM('<!doctype html><html><body><div id="page-producao-programacao"></div><div id="pprog-insumos"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const win = dom.window; const document = win.document;
+  win.getDTFirestore = () => ({
+    collection: (nome) => ({
+      producao_registros: mockColecao([]),
+      producao_produtos: mockColecao([]),
+      producao_maquinas: mockColecao([]),
+      producao_ficha_tecnica: mockColecao(fichas.map((f, i) => ({ id: 'f' + i, data: f }))),
+      producao_insumos_estoque: mockColecao(estoqueIns.map((e, i) => ({ id: 'e' + i, data: e }))),
+    }[nome] || mockColecao([])),
+  });
+  win.getDTRawFirestore = () => ({ collection: () => ({ where: () => ({ get: async () => ({ docs: [] }) }) }) });
+  win.getDTLojaAtiva = () => 'loja1';
+  win.temPermissao = () => true;
+  win.DTProducao = { registrarInvalidacao: () => {} };
+  win.eval(code);
+  return { win, document };
+}
+
+test('_insumosDetalheOP: cruza a ficha técnica com o estoque de insumo e calcula se cobre a quantidade de caixas', async () => {
+  const { win } = carregarPaginaComInsumos(
+    [{ cod: '304', desc: 'Tapioca', insumos: [{ insumo: 'Fécula de mandioca', qty: 0.5 }, { insumo: 'Sem estoque cadastrado', qty: 1 }] }],
+    [{ insumo: 'Fécula de mandioca', quantidade: 40 }],
+  );
+  await win.renderProducaoProgramacao();
+  const detalhe = win._pprogInternals._insumosDetalheOP('304', 100);
+  const fecula = detalhe.find(d => d.insumo === 'Fécula de mandioca');
+  assert.equal(fecula.necessario, 50, '0.5 por caixa * 100 caixas');
+  assert.equal(fecula.estoqueAtual, 40);
+  assert.equal(fecula.cobre, false, '40 em estoque não cobre os 50 necessários');
+  const semDados = detalhe.find(d => d.insumo === 'Sem estoque cadastrado');
+  assert.equal(semDados.temDados, false);
+  assert.equal(semDados.cobre, null, 'sem dado de estoque, não afirma cobre nem falta');
+});
+
+test('_atualizarInsumosModal: preenche o preview do modal com o que vai gastar de cada insumo', async () => {
+  const { win, document } = carregarPaginaComInsumos(
+    [{ cod: '304', desc: 'Tapioca', insumos: [{ insumo: 'Fécula de mandioca', qty: 0.5 }] }],
+    [{ insumo: 'Fécula de mandioca', quantidade: 1000 }],
+  );
+  await win.renderProducaoProgramacao();
+  win._pprogInternals._atualizarInsumosModal('304', 100);
+  const html = document.getElementById('pprog-insumos').innerHTML;
+  assert.match(html, /Fécula de mandioca/);
+  assert.match(html, />50(,00)?</, 'necessário = 0.5 * 100 caixas');
+  assert.match(html, /Sim/, 'estoque de 1000 cobre a necessidade de 50');
+});

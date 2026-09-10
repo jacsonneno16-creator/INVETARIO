@@ -23,7 +23,7 @@ function mockColecao(docsIniciais){
       id,
       get: async()=>{ const data=registro.get(id); return { exists: data!==undefined, id, data:()=>data }; },
     }),
-    where:()=>({ limit:()=>({ get: async()=>snapshot([]) }) }),
+    where:()=>({ limit:()=>({ get: async()=>snapshot([]) }), get: async()=>snapshot([]) }),
     _registro: registro,
   };
 }
@@ -41,7 +41,7 @@ function carregarColetorReal(colecoes){
   win.obterDeviceId=()=>'dt_teste123';
   win.getDTLojaAtiva=()=>'loja1';
   win.getDTRawFirestore=()=>({ collection:()=>mockColecao([]) });
-  win.showToast=()=>{};
+  win.toast=()=>{};
   Object.defineProperty(win.navigator,'onLine',{ get:()=>true, configurable:true });
   win.eval(navCode);   // goScreen real
   win.eval(recCode);   // abrirAreaRecebimento / abrirTransbordoRecebimento reais
@@ -76,6 +76,7 @@ test('card "Notas Retornadas" da tela de escolha chama abrirRecusasRecebimento()
   win.abrirAreaRecebimento();
   await win.abrirRecusasRecebimento();
   assert.deepEqual(telaAtiva(document),['screen-recebimento-recusas']);
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   assert.match(document.getElementById('recusa-fluxo-host').innerHTML,/Bipe a chave de acesso/);
 });
 

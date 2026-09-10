@@ -22,7 +22,7 @@ function mockColecao(docsIniciais){
       get: async()=>{ const data=registro.get(id); return { exists: data!==undefined, id, data:()=>data }; },
     }),
     add: async(payload)=>{ const docId='novo'+(seq++); registro.set(docId,payload); return {id:docId}; },
-    where:()=>({ limit:()=>({ get: async()=>snapshot([]) }) }),
+    where:()=>({ limit:()=>({ get: async()=>snapshot([]) }), get: async()=>snapshot([]) }),
     _registro: registro,
   };
 }
@@ -32,7 +32,7 @@ function carregarColetorReal(colecoes){
   const win=dom.window; const document=win.document;
   win.FS={ collection:(nome)=>colecoes?.[nome]||mockColecao([]) };
   win.getDTFirestore=()=>win.FS;
-  win.showToast=()=>{};
+  win.toast=()=>{};
   Object.defineProperty(win.navigator,'onLine',{ get:()=>true, configurable:true });
   win.eval(navCode);
   win.eval(recusasCode);
@@ -50,6 +50,11 @@ function selecionarComboOpcao(document,prefixo,valor){
   const opcao=document.querySelector(`[data-combo-opcao="${prefixo}"][data-combo-valor="${valor}"]`);
   opcao.dispatchEvent(new win.MouseEvent('mousedown',{bubbles:true}));
 }
+// PEDIDO AO VIVO (2026-09-03): Box+Pallets virou o ÚLTIMO passo (depois da
+// conferência dos produtos), não mais antes da escolha de conferência —
+// este helper agora para na tela de escolha ("Conferir produtos" / "Receber
+// somente o volume"); preencher Box é responsabilidade de quem testa o fim
+// do fluxo, via preencherBoxEConcluir() abaixo.
 async function avancarAteConferencia(document,{ notaExtra }={}){
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
@@ -60,8 +65,10 @@ async function avancarAteConferencia(document,{ notaExtra }={}){
   document.getElementById('recusa-continuar-2').click();
   document.getElementById('recusa-volume').value='10';
   document.getElementById('recusa-continuar-3').click();
-  document.getElementById('recusa-box').value='box 7';
-  document.getElementById('recusa-pallets').value='3';
+}
+function preencherBoxEConcluir(document,{ box, pallets }={}){
+  document.getElementById('recusa-box').value=box||'box 7';
+  document.getElementById('recusa-pallets').value=pallets!=null?pallets:'3';
   document.getElementById('recusa-continuar-4').click();
 }
 
@@ -78,6 +85,7 @@ test('PEDIDO AO VIVO: campo de motorista filtra a lista ao digitar, e digitar de
   ]);
   const { win, document }=carregarColetorReal({ recebimento_recusas_notas:notas, recebimento_recusas_motoristas:motoristas, recebimento_recusas_motivos:mockColecao([{id:'v1',data:{nome:'Cliente ausente',ativo:true}}]) });
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
@@ -109,6 +117,7 @@ test('nota vinda da Bluesoft com pareceDevolucao=true mostra o badge "Nota de de
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Mercado Atacadão',volumes:10,origemImportacao:'BLUESOFT',pareceDevolucao:true,itens:[]}}]);
   const { win, document }=carregarColetorReal({ recebimento_recusas_notas:notas, recebimento_recusas_motoristas:mockColecao([{id:'m1',data:{nome:'João',ativo:true}}]), recebimento_recusas_motivos:mockColecao([{id:'v1',data:{nome:'Cliente ausente',ativo:true}}]) });
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
@@ -119,6 +128,7 @@ test('nota importada por PDF (sem origemImportacao=BLUESOFT) não mostra nenhum 
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Mercado Atacadão',volumes:10}}]);
   const { win, document }=carregarColetorReal({ recebimento_recusas_notas:notas, recebimento_recusas_motoristas:mockColecao([{id:'m1',data:{nome:'João',ativo:true}}]), recebimento_recusas_motivos:mockColecao([{id:'v1',data:{nome:'Cliente ausente',ativo:true}}]) });
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
@@ -129,6 +139,7 @@ test('sem itens[] disponíveis, "Conferir produtos" fica desabilitado — só "R
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:10}}]);
   const { win, document }=carregarColetorReal({ recebimento_recusas_notas:notas, recebimento_recusas_motoristas:mockColecao([{id:'m1',data:{nome:'João',ativo:true}}]), recebimento_recusas_motivos:mockColecao([{id:'v1',data:{nome:'Cliente ausente',ativo:true}}]) });
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   await avancarAteConferencia(document);
   assert.equal(document.getElementById('recusa-conf-itens').disabled,true);
 });
@@ -145,6 +156,7 @@ test('bipagem de GTIN soma 1 na quantidade conferida; produto não conferido ger
     recebimento_recusas_motivos:mockColecao([{id:'v1',data:{nome:'Cliente ausente',ativo:true}}]),
   });
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   await avancarAteConferencia(document);
   assert.equal(document.getElementById('recusa-conf-itens').disabled,false);
   document.getElementById('recusa-conf-itens').click();
@@ -157,6 +169,8 @@ test('bipagem de GTIN soma 1 na quantidade conferida; produto não conferido ger
   assert.match(document.getElementById('recusa-fluxo-host').innerHTML,/1\/2 produto/);
 
   document.getElementById('recusa-conf-concluir').click();
+  assert.ok(document.getElementById('recusa-box'),'concluir a conferência leva pro último passo (Box+Pallets), não grava ainda');
+  preencherBoxEConcluir(document);
   await new Promise(r=>setTimeout(r,0));
 
   assert.equal(recusas._registro.size,1);
@@ -172,8 +186,9 @@ test('bipagem de GTIN desconhecido mostra erro e não altera nenhum item',async(
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:10,itens:[{produtoKey:1,descricao:'Refrigerante 2L',gtin:'789',quantidade:2}]}}]);
   const toasts=[];
   const { win, document }=carregarColetorReal({ recebimento_recusas_notas:notas, recebimento_recusas_motoristas:mockColecao([{id:'m1',data:{nome:'João',ativo:true}}]), recebimento_recusas_motivos:mockColecao([{id:'v1',data:{nome:'Cliente ausente',ativo:true}}]) });
-  win.showToast=(m,t)=>toasts.push({m,t});
+  win.toast=(m,t)=>toasts.push({m,t});
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   await avancarAteConferencia(document);
   document.getElementById('recusa-conf-itens').click();
   document.getElementById('recusa-conf-scan').value='999999';
@@ -191,8 +206,11 @@ test('"Receber somente o volume" grava statusConferenciaOperacional=NAO_REALIZAD
     recebimento_recusas_motivos:mockColecao([{id:'v1',data:{nome:'Cliente ausente',ativo:true}}]),
   });
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   await avancarAteConferencia(document);
   document.getElementById('recusa-conf-somente-volume').click();
+  assert.ok(document.getElementById('recusa-box'),'"somente volume" também leva pro último passo (Box+Pallets), não grava ainda');
+  preencherBoxEConcluir(document);
   await new Promise(r=>setTimeout(r,0));
   const payload=[...recusas._registro.values()][0];
   assert.equal(payload.statusConferenciaOperacional,'NAO_REALIZADA');

@@ -1,7 +1,10 @@
 const test=require('node:test');const assert=require('node:assert/strict');const fs=require('fs');const path=require('path');
 const base=path.join(__dirname,'../js/analista');
-const compras=fs.readFileSync(path.join(base,'79-compras-central.js'),'utf8');const pcp=fs.readFileSync(path.join(base,'78-pcp-central.js'),'utf8');const prog=fs.readFileSync(path.join(base,'62-producao-programacao.js'),'utf8');const real=fs.readFileSync(path.join(base,'73-producao-realizado.js'),'utf8');const rules=fs.readFileSync(path.join(__dirname,'../../firestore.rules'),'utf8');
-test('compra efetivada gera um agendamento ligado à requisição',()=>{assert.match(compras,/CAGE='pcp_agendamentos'/);assert.match(compras,/doc\('req_'\+id\)\.set/);assert.match(compras,/requisicaoId:id/);assert.match(compras,/status:'prevista'/);});
+const compras=fs.readFileSync(path.join(base,'79-compras-central.js'),'utf8');const comprasProfissional=fs.readFileSync(path.join(base,'121-compras-profissional.js'),'utf8');const pcp=fs.readFileSync(path.join(base,'78-pcp-central.js'),'utf8');const prog=fs.readFileSync(path.join(base,'62-producao-programacao.js'),'utf8');const real=fs.readFileSync(path.join(base,'73-producao-realizado.js'),'utf8');const rules=fs.readFileSync(path.join(__dirname,'../../firestore.rules'),'utf8');
+// PEDIDO AO VIVO (2026-08-27): a ação de registrar compra (e o agendamento
+// que ela cria) migrou de "Minhas requisições" (79) pra "Solicitações PCP"
+// (121-compras-profissional.js) — mesma lógica, novo lugar.
+test('compra efetivada gera um agendamento ligado à requisição',()=>{assert.match(comprasProfissional,/schedules:'pcp_agendamentos'/);assert.match(comprasProfissional,/doc\('req_'\+id\)\.set/);assert.match(comprasProfissional,/requisicaoId:id/);assert.match(comprasProfissional,/status:'prevista'/);});
 test('PCP recebe parcial ou totalmente e devolve status à requisição',()=>{assert.match(pcp,/data-pcp-age-receber/);assert.match(pcp,/quantidadeRecebida:total,status:st/);assert.match(pcp,/status:final\?'finalizada':'parcialmente_recebida'/);});
 test('Realizado sincroniza OP de PCP para em produção e produzida',()=>{assert.match(real,/CPCP='pcp_solicitacoes_producao_global'/);assert.match(real,/em_producao:'em_producao'/);assert.match(real,/concluido:'produzida'/);assert.match(real,/await syncPCP\(r,novoStatus\)/);});
 test('Produção consegue finalizar solicitação depois de produzida',()=>{assert.match(prog,/pprogFinalizarPCP/);assert.match(prog,/status:'finalizada'/);assert.match(prog,/data-pprog-pcp-finalizar/);});

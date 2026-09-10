@@ -1,10 +1,8 @@
-
-
 // ══════════════════════════════════════════════════════════
 //  MENU TRÊS PONTOS  (melhoria 3)
 // ══════════════════════════════════════════════════════════
 function toggleMenu3pts() {
-  const dd  = document.getElementById('menu3pts-dropdown');
+  const dd = document.getElementById('menu3pts-dropdown');
   const btn = document.getElementById('btn-menu3pts');
   if (!dd) return;
   const aberto = dd.style.display !== 'none';
@@ -13,20 +11,20 @@ function toggleMenu3pts() {
   // Fechar ao clicar fora
   if (!aberto) {
     setTimeout(() => {
-      document.addEventListener('click', _fecharMenu3pts, { once: true });
+      document.addEventListener('click', _fecharMenu3pts, {
+        once: true
+      });
     }, 0);
   }
 }
-
 function toggleMenu3ptsMode() {
   var menu = document.getElementById('menu3pts-dropdown-mode');
   if (!menu) return;
   var abrir = menu.style.display === 'none' || !menu.style.display;
   menu.style.display = abrir ? 'block' : 'none';
 }
-
 function toggleMenu3ptsLogin() {
-  const dd  = document.getElementById('menu3pts-dropdown-login');
+  const dd = document.getElementById('menu3pts-dropdown-login');
   const btn = document.getElementById('btn-menu3pts-login');
   if (!dd) return;
   const aberto = dd.style.display !== 'none';
@@ -34,18 +32,18 @@ function toggleMenu3ptsLogin() {
   if (btn) btn.classList.toggle('aberto', !aberto);
   if (!aberto) {
     setTimeout(() => {
-      document.addEventListener('click', _fecharMenu3ptsLogin, { once: true });
+      document.addEventListener('click', _fecharMenu3ptsLogin, {
+        once: true
+      });
     }, 0);
   }
 }
-
 function _fecharMenu3ptsLogin(e) {
   const dd = document.getElementById('menu3pts-dropdown-login');
   if (dd) dd.style.display = 'none';
   const btn = document.getElementById('btn-menu3pts-login');
   if (btn) btn.classList.remove('aberto');
 }
-
 function _fecharMenu3pts(e) {
   const dd = document.getElementById('menu3pts-dropdown');
   if (dd) dd.style.display = 'none';
@@ -70,34 +68,38 @@ window.addEventListener('DOMContentLoaded', () => {
 
 // Chave localStorage para versão confirmada pelo usuário
 const LS_APP_VER = 'col_app_ver_confirmada';
-
 async function atualizarAplicativo() {
   _fecharMenu3pts();
 
   // Mostrar modal de verificação
   _showUpdateModal({
-    icon: '🔄', title: 'Verificando atualização…',
+    icon: '🔄',
+    title: 'Verificando atualização…',
     msg: 'Buscando a versão mais recente do aplicativo…',
     ver: 'v' + APP_VERSION,
-    barPct: 20, showBtns: false
+    barPct: 20,
+    showBtns: false
   });
 
   // Verificar SW registrado
   if (!('serviceWorker' in navigator)) {
     _showUpdateModal({
-      icon: '⚠️', title: 'Service Worker não disponível',
+      icon: '⚠️',
+      title: 'Service Worker não disponível',
       msg: 'Para atualizar, feche e reabra o aplicativo no navegador ou recarregue a página.',
-      ver: 'v' + APP_VERSION, barPct: 0, showBtns: true,
-      btnOk: 'Recarregar', onOk: () => location.reload(true),
-      btnCancel: 'Fechar',  onCancel: _hideUpdateModal
+      ver: 'v' + APP_VERSION,
+      barPct: 0,
+      showBtns: true,
+      btnOk: 'Recarregar',
+      onOk: () => location.reload(true),
+      btnCancel: 'Fechar',
+      onCancel: _hideUpdateModal
     });
     return;
   }
-
   try {
     _updateModalProgress(40, 'Contactando servidor…');
     const regs = await navigator.serviceWorker.getRegistrations();
-
     if (regs.length > 0) {
       // Forçar check de atualização em todos os SWs registrados
       await Promise.all(regs.map(r => r.update()));
@@ -108,14 +110,24 @@ async function atualizarAplicativo() {
       if (waiting) {
         _updateModalProgress(100, 'Nova versão encontrada!');
         _showUpdateModal({
-          icon: '🚀', title: 'Nova versão disponível!',
+          icon: '🚀',
+          title: 'Nova versão disponível!',
           msg: 'Uma nova versão do aplicativo está pronta para ser instalada.',
-          ver: 'Atualizando…', barPct: 100, showBtns: true,
-          btnOk: 'Instalar agora', onOk: () => {
-            regs.forEach(r => r.waiting?.postMessage({ type: 'SKIP_WAITING' }));
+          ver: 'Atualizando…',
+          barPct: 100,
+          showBtns: true,
+          btnOk: 'Instalar agora',
+          onOk: () => {
+            regs.forEach(r => {
+              var _r$waiting;
+              return (_r$waiting = r.waiting) === null || _r$waiting === void 0 ? void 0 : _r$waiting.postMessage({
+                type: 'SKIP_WAITING'
+              });
+            });
             setTimeout(() => location.reload(true), 500);
           },
-          btnCancel: 'Depois', onCancel: _hideUpdateModal
+          btnCancel: 'Depois',
+          onCancel: _hideUpdateModal
         });
         return;
       }
@@ -126,44 +138,59 @@ async function atualizarAplicativo() {
     let novaVersaoRemota = false;
     try {
       const resp = await fetch(location.href, {
-        method: 'HEAD', cache: 'no-cache',
-        headers: { 'Cache-Control': 'no-cache' }
+        method: 'HEAD',
+        cache: 'no-cache',
+        headers: {
+          'Cache-Control': 'no-cache'
+        }
       });
-      const etag       = resp.headers.get('ETag') || '';
-      const lastMod    = resp.headers.get('Last-Modified') || '';
+      const etag = resp.headers.get('ETag') || '';
+      const lastMod = resp.headers.get('Last-Modified') || '';
       const chaveLocal = localStorage.getItem(LS_APP_VER) || '';
       const chaveRemota = etag || lastMod;
       if (chaveRemota && chaveRemota !== chaveLocal) {
         novaVersaoRemota = true;
         localStorage.setItem(LS_APP_VER, chaveRemota);
       }
-    } catch(e) { /* offline ou CORS */ }
-
+    } catch (e) {/* offline ou CORS */}
     _updateModalProgress(100);
-
     if (novaVersaoRemota) {
       _showUpdateModal({
-        icon: '🚀', title: 'Nova versão disponível!',
+        icon: '🚀',
+        title: 'Nova versão disponível!',
         msg: 'Atualizando para a versão mais recente do aplicativo…',
-        ver: 'Recarregando…', barPct: 100, showBtns: true,
-        btnOk: 'Recarregar agora', onOk: () => location.reload(true),
-        btnCancel: 'Depois', onCancel: _hideUpdateModal
+        ver: 'Recarregando…',
+        barPct: 100,
+        showBtns: true,
+        btnOk: 'Recarregar agora',
+        onOk: () => location.reload(true),
+        btnCancel: 'Depois',
+        onCancel: _hideUpdateModal
       });
     } else {
       _showUpdateModal({
-        icon: '✅', title: 'Aplicativo atualizado!',
+        icon: '✅',
+        title: 'Aplicativo atualizado!',
         msg: 'Você já está usando a versão mais recente do aplicativo.',
-        ver: 'v' + APP_VERSION, barPct: 100, showBtns: true,
-        btnOk: 'OK', onOk: _hideUpdateModal,
+        ver: 'v' + APP_VERSION,
+        barPct: 100,
+        showBtns: true,
+        btnOk: 'OK',
+        onOk: _hideUpdateModal,
         btnCancel: null
       });
     }
-  } catch(e) {
+  } catch (e) {
     _showUpdateModal({
-      icon: '❌', title: 'Erro ao verificar',
+      icon: '❌',
+      title: 'Erro ao verificar',
       msg: 'Não foi possível verificar atualizações: ' + (e.message || e),
-      ver: 'v' + APP_VERSION, barPct: 0, showBtns: true,
-      btnOk: 'Fechar', onOk: _hideUpdateModal, btnCancel: null
+      ver: 'v' + APP_VERSION,
+      barPct: 0,
+      showBtns: true,
+      btnOk: 'Fechar',
+      onOk: _hideUpdateModal,
+      btnCancel: null
     });
   }
 }
@@ -172,19 +199,39 @@ async function atualizarAplicativo() {
 async function atualizarBase() {
   _fecharMenu3pts();
   if (!APP.inventario) {
-    toast('Selecione um inventário primeiro', 'w'); return;
+    toast('Selecione um inventário primeiro', 'w');
+    return;
   }
   // Apagar versão salva para forçar novo download
   const invId = APP.inventario.id;
   bVerSave(invId, ''); // zerar versão → forçará download na próxima vez
 
-  showConfirm(`Atualizar base do inventário "${escHTML(APP.inventario.nome)}"? As contagens desta sessão serão mantidas.`, () => { _iniciarTelaDowload(APP.inventario); }, { title: '🔄 Atualizar base', icon: '🔄', okLabel: 'Atualizar', okColor: '#00d68f' }); return;
+  showConfirm(`Atualizar base do inventário "${escHTML(APP.inventario.nome)}"? As contagens desta sessão serão mantidas.`, () => {
+    _iniciarTelaDowload(APP.inventario);
+  }, {
+    title: '🔄 Atualizar base',
+    icon: '🔄',
+    okLabel: 'Atualizar',
+    okColor: '#00d68f'
+  });
+  return;
 }
 
 // ── Helpers do modal de atualização ────────────────────────
-let _updateOkFn = null, _updateCancelFn = null;
-
-function _showUpdateModal({ icon, title, msg, ver, barPct, showBtns, btnOk, onOk, btnCancel, onCancel }) {
+let _updateOkFn = null,
+  _updateCancelFn = null;
+function _showUpdateModal({
+  icon,
+  title,
+  msg,
+  ver,
+  barPct,
+  showBtns,
+  btnOk,
+  onOk,
+  btnCancel,
+  onCancel
+}) {
   let overlay = document.getElementById('update-overlay');
   if (!overlay) {
     overlay = document.createElement('div');
@@ -207,11 +254,11 @@ function _showUpdateModal({ icon, title, msg, ver, barPct, showBtns, btnOk, onOk
     document.body.appendChild(overlay);
   }
   overlay.style.display = 'flex';
-  document.getElementById('upd-icon').textContent  = icon;
+  document.getElementById('upd-icon').textContent = icon;
   document.getElementById('upd-title').textContent = title;
-  document.getElementById('upd-msg').textContent   = msg;
-  document.getElementById('upd-ver').textContent   = ver;
-  document.getElementById('upd-bar').style.width   = barPct + '%';
+  document.getElementById('upd-msg').textContent = msg;
+  document.getElementById('upd-ver').textContent = ver;
+  document.getElementById('upd-bar').style.width = barPct + '%';
   document.getElementById('upd-btns').style.display = showBtns ? 'flex' : 'none';
   if (showBtns) {
     const ok = document.getElementById('upd-btn-ok');
@@ -220,7 +267,8 @@ function _showUpdateModal({ icon, title, msg, ver, barPct, showBtns, btnOk, onOk
     _updateOkFn = onOk || _hideUpdateModal;
     ok.onclick = () => _updateOkFn();
     if (btnCancel) {
-      ca.style.display = ''; ca.textContent = btnCancel;
+      ca.style.display = '';
+      ca.textContent = btnCancel;
       _updateCancelFn = onCancel || _hideUpdateModal;
       ca.onclick = () => _updateCancelFn();
     } else {
@@ -228,7 +276,6 @@ function _showUpdateModal({ icon, title, msg, ver, barPct, showBtns, btnOk, onOk
     }
   }
 }
-
 function _updateModalProgress(pct, msg) {
   const bar = document.getElementById('upd-bar');
   if (bar) bar.style.width = pct + '%';
@@ -237,7 +284,6 @@ function _updateModalProgress(pct, msg) {
     if (el) el.textContent = msg;
   }
 }
-
 function _hideUpdateModal() {
   const overlay = document.getElementById('update-overlay');
   if (overlay) overlay.style.display = 'none';
@@ -245,12 +291,11 @@ function _hideUpdateModal() {
 
 // ── SERVICE WORKER via <script type="text/js-worker"> ──
 // O arquivo é servido via link direto — registrar SW via URL do próprio HTML com parâmetro ?sw=1
-(function() {
+(function () {
   if (!('serviceWorker' in navigator)) return;
 
   // Detectar a URL base do próprio app
   const selfUrl = location.href.split('?')[0].split('#')[0];
-
   window.addEventListener('load', () => {
     // Verificar se há um SW já registrado para este escopo
     navigator.serviceWorker.getRegistration(selfUrl).then(reg => {
@@ -262,7 +307,7 @@ function _hideUpdateModal() {
       // Como é um arquivo .html, o SW não pode ser registrado normalmente.
       // Para instalação PWA, tentamos via importScripts workaround.
       dbg('[SW] arquivo HTML — instalação via "Adicionar à tela inicial" disponível');
-    }).catch((erro) => {
+    }).catch(erro => {
       console.warn('[PWA] Não foi possível consultar o registro do Service Worker', erro);
     });
   });
@@ -281,7 +326,6 @@ function _hideUpdateModal() {
 
 // ── INSTALL BANNER (A2HS) ──
 let _deferredPrompt = null;
-
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault();
   _deferredPrompt = e;
@@ -295,14 +339,12 @@ window.addEventListener('beforeinstallprompt', e => {
     if (el) el.style.display = 'block';
   });
 });
-
 function instalarPWA() {
-  const instalado = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+  const instalado = window.matchMedia && window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
   if (instalado) {
     toast('✅ O aplicativo já está instalado neste dispositivo.', 's');
     return;
   }
-
   if (!_deferredPrompt) {
     const ua = String(navigator.userAgent || '').toLowerCase();
     let mensagem = 'Para colocar o aplicativo na tela inicial:\n\nAbra o menu do navegador (⋮) e escolha "Adicionar à tela inicial" ou "Instalar aplicativo".';
@@ -313,7 +355,6 @@ function instalarPWA() {
     toast('Use o menu do navegador para adicionar à tela inicial.', 'w');
     return;
   }
-
   _deferredPrompt.prompt();
   _deferredPrompt.userChoice.then(result => {
     if (result.outcome === 'accepted') {
@@ -331,7 +372,6 @@ function instalarPWA() {
     alert('Abra o menu do navegador (⋮) e escolha "Adicionar à tela inicial".');
   });
 }
-
 async function diagnosticoFirebase() {
   const el = document.getElementById('inv-list');
   el.innerHTML = '<div class="empty-inv"><div style="font-size:1.5rem">🔍</div><div>Verificando Firebase…</div></div>';
@@ -356,7 +396,7 @@ async function diagnosticoFirebase() {
       ${docs.length ? docs.join('') : '<div style="color:var(--muted)">Coleção vazia — clique em 🔥 Sync Firebase no analista</div>'}
       <button onclick="carregarInventarios()" style="background:var(--primary);color:#fff;border:none;border-radius:8px;padding:8px;font-size:.78rem;cursor:pointer">← Voltar</button>
     </div>`;
-  } catch(err) {
+  } catch (err) {
     el.innerHTML = `<div style="font-size:.75rem;padding:12px;gap:8px;display:flex;flex-direction:column">
       <div style="background:rgba(248,113,113,.1);border-radius:8px;padding:10px">
         <b style="color:#f87171">❌ Erro Firebase</b><br>
@@ -364,17 +404,12 @@ async function diagnosticoFirebase() {
         <span style="color:var(--muted);word-break:break-all">${err.message}</span>
       </div>
       <div style="color:var(--muted);font-size:.7rem">
-        ${err.code === 'permission-denied'
-          ? '⚠️ Regras do Firestore estão bloqueando. Ajuste em Firebase Console > Firestore > Rules para permitir leitura autenticada.'
-          : err.code === 'unavailable'
-          ? '📶 Sem conexão com o Firebase. Verifique internet.'
-          : 'Verifique o console do navegador para mais detalhes.'}
+        ${err.code === 'permission-denied' ? '⚠️ Regras do Firestore estão bloqueando. Ajuste em Firebase Console > Firestore > Rules para permitir leitura autenticada.' : err.code === 'unavailable' ? '📶 Sem conexão com o Firebase. Verifique internet.' : 'Verifique o console do navegador para mais detalhes.'}
       </div>
       <button onclick="carregarInventarios()" style="background:var(--primary);color:#fff;border:none;border-radius:8px;padding:8px;font-size:.78rem;cursor:pointer">← Voltar</button>
     </div>`;
   }
 }
-
 function fecharBannerPWA() {
   const banner = document.getElementById('pwa-install-banner');
   if (banner) banner.style.display = 'none';
@@ -385,15 +420,16 @@ if (window.matchMedia('(display-mode: standalone)').matches || window.navigator.
   dbg('[PWA] rodando em modo standalone (instalado)');
 }
 
-
 // Ouvir mensagem do SW quando voltar online
 navigator.serviceWorker && navigator.serviceWorker.addEventListener('message', event => {
-  if (event.data?.type === 'BACK_ONLINE') {
+  var _event$data;
+  if (((_event$data = event.data) === null || _event$data === void 0 ? void 0 : _event$data.type) === 'BACK_ONLINE') {
     toast('🌐 Conexão restaurada — enviando pendentes...', 's');
-    setTimeout(() => { if (typeof enviarFilaPendente === 'function') enviarFilaPendente(); }, 1000);
+    setTimeout(() => {
+      if (typeof enviarFilaPendente === 'function') enviarFilaPendente();
+    }, 1000);
   }
 });
-
 window.addEventListener('appinstalled', () => {
   toast('🎉 DT Coletor instalado!', 's');
   const banner = document.getElementById('pwa-install-banner');

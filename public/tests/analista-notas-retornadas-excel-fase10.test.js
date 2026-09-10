@@ -16,11 +16,47 @@ function mockColecao(docsIniciais){
     _registro: registro,
   };
 }
+// PEDIDO AO VIVO (2026-08-27): recebimento_recusas_notas agora migra pra
+// recebimento_recusas_notas_chunks na primeira leitura (ver
+// _migrarParaChunksSeNecessario em 97-recebimento-recusas.js) — isso usa
+// getDTRawFirestore().batch(), que esta suíte não tinha antes.
+function _comColecaoNoDoc(colecao, nome){
+  const docOriginal = colecao.doc;
+  colecao.doc = (id) => ({ ...docOriginal(id), _colecao: nome });
+  return colecao;
+}
+function mockRawFirestore(colecoes){
+  return { batch:()=>{
+    const ops=[];
+    return {
+      set:(ref,payload,opts)=>ops.push({ref,payload,merge:!!opts?.merge}),
+      delete:(ref)=>ops.push({ref,excluir:true}),
+      commit: async()=>{ ops.forEach(op=>{
+        const col=colecoes[op.ref._colecao];
+        if(!col)return;
+        if(op.excluir){ col._registro.delete(op.ref.id); return; }
+        const atual=col._registro.get(op.ref.id)||{};
+        col._registro.set(op.ref.id, op.merge?{...atual,...op.payload}:op.payload);
+      }); },
+    };
+  } };
+}
 
-function carregarPagina(colecoes){
+// buscarBiAutomatico() (97-recebimento-recusas.js) agenda um setInterval de
+// auto-refresh a cada render — timer real em jsdom, que precisa ser
+// derrubado com window.close() ou o node --test nunca sai sozinho.
+let _janelasAbertas = [];
+test.afterEach(() => { _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} }); _janelasAbertas = []; });
+
+function carregarPagina(colecoesEntrada){
   const dom=new JSDOM('<!doctype html><html><body><div id="page-recebimento-recusas"></div></body></html>',{ url:'http://localhost/', runScripts:'outside-only' });
   const win=dom.window; const document=win.document;
-  win.getDTFirestore=()=>({ collection:(nome)=>colecoes?.[nome]||mockColecao([]) });
+  _janelasAbertas.push(win);
+  const colecoes={...(colecoesEntrada||{})};
+  if(!colecoes.recebimento_recusas_notas_chunks) colecoes.recebimento_recusas_notas_chunks=mockColecao([]);
+  Object.keys(colecoes).forEach(nome=>_comColecaoNoDoc(colecoes[nome],nome));
+  win.getDTFirestore=()=>({ collection:(nome)=>{ if(!colecoes[nome]) colecoes[nome]=_comColecaoNoDoc(mockColecao([]),nome); return colecoes[nome]; } });
+  win.getDTRawFirestore=()=>mockRawFirestore(colecoes);
   win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }) };
   win.showToast=()=>{};
   win.aplicarPermissoesAnalista=()=>{};

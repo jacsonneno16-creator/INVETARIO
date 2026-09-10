@@ -18,7 +18,7 @@
     const internos = global._pcpInternals || {};
     const reqs = internos.getReqs?.() || [];
     const agend = internos.getAgend?.() || [];
-    const visao = internos.construirVisao?.() || [];
+    const visao = internos.construirVisao?.({ estoqueBi: internos.getEstoqueBi?.() }) || [];
     const keyOf = internos.keyOf || (x => String(x.prodKey || x.cod || ''));
     const hojeStr = new Date().toISOString().slice(0, 10);
     return reqs.map(r => {
@@ -82,8 +82,8 @@
         <label style="display:flex;align-items:center;gap:5px;font-size:.76rem"><input type="checkbox" id="pcpca-f-criticas" ${_f.criticas ? 'checked' : ''}> Críticas</label>
       </div>
       <div class="tc"><div style="overflow:auto"><table class="dt-table">
-        <thead><tr><th>Produto</th><th>Solicitado</th><th>Comprado</th><th>Recebido</th><th>Saldo</th><th>Fornecedor</th><th>Preço unit.</th><th>Data pedido</th><th>Previsão</th><th>Dias</th><th>Status</th><th>Impacto cobertura</th></tr></thead>
-        <tbody>${linhas.length ? linhas.map(x => `<tr ${x.atrasada ? 'style="background:rgba(239,68,68,.08)"' : ''}><td><b style="cursor:pointer" data-pcp-360="${esc(global._pcpInternals?.keyOf?.(x) || '')}">${esc(x.produto)}</b>${x.critica ? ' <span class="badge b-red" style="font-size:.6rem">crítico</span>' : ''}</td><td>${x.solicitado.toLocaleString('pt-BR')}</td><td>${x.comprado.toLocaleString('pt-BR')}</td><td>${x.recebido.toLocaleString('pt-BR')}</td><td><span class="badge ${x.saldo > 0 ? 'b-orange' : 'b-green'}">${x.saldo.toLocaleString('pt-BR')}</span></td><td>${esc(x.fornecedor || '—')}</td><td>${x.precoUnitario ? Number(x.precoUnitario).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) : '—'}</td><td>${esc(x.compradoEm ? String(x.compradoEm).slice(0, 10) : '—')}</td><td>${esc(x.dataPrevista || '—')}</td><td>${x.dias == null ? '—' : (x.dias < 0 ? `<span class="badge b-red">${x.dias}d</span>` : x.dias + 'd')}</td><td>${_statusBadge(x.status)}</td><td>${x.impactoCobertura == null ? '—' : x.impactoCobertura.toFixed(1) + 'd'}</td></tr>`).join('') : '<tr><td colspan="12">Nenhuma requisição encontrada com os filtros atuais.</td></tr>'}</tbody>
+        <thead><tr><th>Produto</th><th>Solicitado</th><th>Comprado</th><th>Recebido</th><th>Saldo</th><th>Fornecedor</th><th>Data pedido</th><th>Previsão</th><th>Dias</th><th>Status</th><th>Impacto cobertura</th></tr></thead>
+        <tbody>${linhas.length ? linhas.map(x => `<tr ${x.atrasada ? 'style="background:rgba(239,68,68,.08)"' : ''}><td><b style="cursor:pointer" data-pcp-360="${esc(global._pcpInternals?.keyOf?.(x) || '')}">${esc(x.produto)}</b>${x.critica ? ' <span class="badge b-red" style="font-size:.6rem">crítico</span>' : ''}</td><td>${x.solicitado.toLocaleString('pt-BR')}</td><td>${x.comprado.toLocaleString('pt-BR')}</td><td>${x.recebido.toLocaleString('pt-BR')}</td><td><span class="badge ${x.saldo > 0 ? 'b-orange' : 'b-green'}">${x.saldo.toLocaleString('pt-BR')}</span></td><td>${esc(x.fornecedor || '—')}</td><td>${esc(x.compradoEm ? String(x.compradoEm).slice(0, 10) : '—')}</td><td>${esc(x.dataPrevista || '—')}</td><td>${x.dias == null ? '—' : (x.dias < 0 ? `<span class="badge b-red">${x.dias}d</span>` : x.dias + 'd')}</td><td>${_statusBadge(x.status)}</td><td>${x.impactoCobertura == null ? '—' : x.impactoCobertura.toFixed(1) + 'd'}</td></tr>`).join('') : '<tr><td colspan="11">Nenhuma requisição encontrada com os filtros atuais.</td></tr>'}</tbody>
       </table></div></div>`;
   }
 

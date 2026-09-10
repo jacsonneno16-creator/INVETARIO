@@ -33,7 +33,7 @@ function productRows(inv){
    const productMaster=window.DTProdutos?.buscarSync?.(k);
    const factorMaster=productMaster?.encontrado ? n(productMaster.fator_caixa||productMaster.fatorCaixa) : 0;
    const fator=factorImported||factorMaster||1;
-   if(!map.has(k)) map.set(k,{codigo:k,descricao:r.descricao_produto||r.descricao||'Produto',fator:fator,sistema:0,contado:0,enderecos:new Set(),tipo:r.tipo_produto||'NAO CLASSIFICADO'});
+   if(!map.has(k)) map.set(k,{codigo:k,descricao:r.descricao_produto||r.descricao||'Produto',fator:fator,sistema:0,contado:0,enderecos:new Set(),tipo:r.tipo_produto||'NAO CLASSIFICADO',motivo:r.tipo_produto_motivo||''});
    const o=map.get(k);
    o.sistema += n(r.total_unidades_sistema) || (n(r.quantidade_esperada) * fator);
  }
@@ -44,7 +44,7 @@ function productRows(inv){
    const productMaster=window.DTProdutos?.buscarSync?.(k);
    const factorMaster=productMaster?.encontrado ? n(productMaster.fator_caixa||productMaster.fatorCaixa) : 0;
    const fator=factorImported||factorMaster||1;
-   if(!map.has(k)) map.set(k,{codigo:k,descricao:c.descricao_produto||c.produtoLidoNome||c.descricao||'Produto não previsto',fator:fator,sistema:0,contado:0,enderecos:new Set(),tipo:'EXTRA'});
+   if(!map.has(k)) map.set(k,{codigo:k,descricao:c.descricao_produto||c.produtoLidoNome||c.descricao||'Produto não previsto',fator:fator,sistema:0,contado:0,enderecos:new Set(),tipo:'EXTRA',motivo:'Contado no inventário mas não estava na base importada'});
    const o=map.get(k);
    const un = n(c.quantidade_unidades) || (n(c.quantidade) * (String(c.tipo_bipagem||'').toUpperCase()==='DUN' ? fator : 1));
    o.contado += un;
@@ -55,8 +55,16 @@ function productRows(inv){
 function renderProductView(){
  const host=document.getElementById('acomp-produtos-v275');if(!host)return;const inv=selectedInv();if(!inv){host.innerHTML='<div class="empty"><div class="empty-title">Selecione um inventário</div></div>';return;}
  const rows=productRows(inv);const sys=rows.reduce((a,x)=>a+x.sistema,0),cnt=rows.reduce((a,x)=>a+x.contado,0),gain=rows.reduce((a,x)=>a+Math.max(0,x.diferenca),0),loss=rows.reduce((a,x)=>a+Math.max(0,-x.diferenca),0);
- host.innerHTML=`<div class="kpi-grid" style="margin-bottom:12px"><div class="kpi-card"><div class="kpi-label">Produtos</div><div class="kpi-value">${rows.length.toLocaleString('pt-BR')}</div></div><div class="kpi-card"><div class="kpi-label">Sistema (un.)</div><div class="kpi-value">${sys.toLocaleString('pt-BR')}</div></div><div class="kpi-card"><div class="kpi-label">Contado (un.)</div><div class="kpi-value">${cnt.toLocaleString('pt-BR')}</div></div><div class="kpi-card"><div class="kpi-label">Ganho / Perda</div><div class="kpi-value">+${gain.toLocaleString('pt-BR')} / -${loss.toLocaleString('pt-BR')}</div></div></div><div class="tc"><div class="tc-header"><div><div class="tc-title">📦 Acompanhamento por Produto</div><div class="sec-sub">Sistema, contado e diferença consolidados em unidades</div></div><input id="acomp-prod-busca-v275" class="search" placeholder="Buscar produto ou código" style="max-width:260px"></div><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Produto</th><th>Código</th><th>Tipo</th><th>Fator</th><th>Sistema (un.)</th><th>Contado (un.)</th><th>Diferença</th><th>Situação</th><th>Endereços</th></tr></thead><tbody id="acomp-prod-tbody-v275">${rows.map(r=>`<tr data-q="${esc((r.descricao+' '+r.codigo).toLowerCase())}"><td><b>${esc(r.descricao)}</b></td><td>${esc(r.codigo)}</td><td>${esc(r.tipo)}</td><td>${r.fator}</td><td>${r.sistema.toLocaleString('pt-BR')}</td><td>${r.contado.toLocaleString('pt-BR')}</td><td style="font-weight:800;color:${r.diferenca<0?'var(--danger)':r.diferenca>0?'var(--success)':'var(--muted)'}">${r.diferenca>0?'+':''}${r.diferenca.toLocaleString('pt-BR')}</td><td>${r.diferenca>0?'GANHO':r.diferenca<0?'PERDA':'IGUAL'}</td><td>${r.enderecos.size}</td></tr>`).join('')}</tbody></table></div></div>`;
+ host.innerHTML=`<div class="kpi-grid" style="margin-bottom:12px"><div class="kpi-card"><div class="kpi-label">Produtos</div><div class="kpi-value">${rows.length.toLocaleString('pt-BR')}</div></div><div class="kpi-card"><div class="kpi-label">Sistema (un.)</div><div class="kpi-value">${sys.toLocaleString('pt-BR')}</div></div><div class="kpi-card"><div class="kpi-label">Contado (un.)</div><div class="kpi-value">${cnt.toLocaleString('pt-BR')}</div></div><div class="kpi-card"><div class="kpi-label">Ganho / Perda</div><div class="kpi-value">+${gain.toLocaleString('pt-BR')} / -${loss.toLocaleString('pt-BR')}</div></div></div><div class="tc"><div class="tc-header"><div><div class="tc-title">📦 Acompanhamento por Produto</div><div class="sec-sub">Sistema, contado e diferença consolidados em unidades · clique numa linha pra ver o motivo do tipo</div></div><input id="acomp-prod-busca-v275" class="search" placeholder="Buscar produto ou código" style="max-width:260px"></div><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Produto</th><th>Código</th><th>Tipo</th><th>Fator</th><th>Sistema (un.)</th><th>Contado (un.)</th><th>Diferença</th><th>Situação</th><th>Endereços</th></tr></thead><tbody id="acomp-prod-tbody-v275">${rows.map(r=>`<tr data-q="${esc((r.descricao+' '+r.codigo).toLowerCase())}" data-tipo-codigo="${esc(r.codigo)}" style="cursor:pointer" title="Clique para ver o motivo da classificação"><td><b>${esc(r.descricao)}</b></td><td>${esc(r.codigo)}</td><td>${esc(r.tipo)}</td><td>${r.fator}</td><td>${r.sistema.toLocaleString('pt-BR')}</td><td>${r.contado.toLocaleString('pt-BR')}</td><td style="font-weight:800;color:${r.diferenca<0?'var(--danger)':r.diferenca>0?'var(--success)':'var(--muted)'}">${r.diferenca>0?'+':''}${r.diferenca.toLocaleString('pt-BR')}</td><td>${r.diferenca>0?'GANHO':r.diferenca<0?'PERDA':'IGUAL'}</td><td>${r.enderecos.size}</td></tr>`).join('')}</tbody></table></div></div>`;
  const q=document.getElementById('acomp-prod-busca-v275');if(q)q.oninput=()=>document.querySelectorAll('#acomp-prod-tbody-v275 tr').forEach(tr=>tr.style.display=tr.dataset.q.includes(q.value.toLowerCase())?'':'none');
+ const rowsByCode=new Map(rows.map(r=>[r.codigo,r]));
+ document.getElementById('acomp-prod-tbody-v275')?.querySelectorAll('tr[data-tipo-codigo]').forEach(tr=>{tr.onclick=()=>abrirDetalheTipoProduto(rowsByCode.get(tr.dataset.tipoCodigo));});
+}
+function abrirDetalheTipoProduto(r){
+ if(!r)return;
+ document.getElementById('v275-tipo-modal')?.remove();
+ document.body.insertAdjacentHTML('beforeend',`<div id="v275-tipo-modal" class="v295-overlay" role="dialog" aria-modal="true"><div class="v295-dialog"><div class="modal-hdr"><div class="modal-title">🏷️ Classificação de tipo</div><button type="button" class="modal-close" data-close>✕</button></div><div style="padding:4px 2px 14px;display:flex;flex-direction:column;gap:10px"><div><div style="font-weight:700">${esc(r.descricao)}</div><div class="sec-sub">Código ${esc(r.codigo)}</div></div><div><div class="sec-sub" style="margin-bottom:2px">Tipo classificado</div><div style="font-weight:700">${esc(r.tipo)}</div></div><div><div class="sec-sub" style="margin-bottom:2px">Motivo</div><div>${esc(r.motivo||'Sem motivo registrado para esta importação (dado anterior a esta melhoria).')}</div></div></div><div class="modal-actions"><button type="button" class="btn btn-primary" data-close>Fechar</button></div></div></div>`);
+ document.querySelectorAll('#v275-tipo-modal [data-close]').forEach(b=>b.onclick=()=>document.getElementById('v275-tipo-modal')?.remove());
 }
 function ensureAcompTabs(){
  const page=document.getElementById('page-acompanhamento');if(!page||document.getElementById('acomp-tabs-v275'))return;
@@ -67,5 +75,5 @@ function ensureAcompTabs(){
 const oldRender=window.renderAcompanhamento;if(oldRender)window.renderAcompanhamento=function(){const r=oldRender.apply(this,arguments);setTimeout(()=>{ensureAcompTabs();if(document.getElementById('acomp-produtos-v275')?.style.display!=='none')renderProductView();},0);return r;};
 let __ctxRef=null; setInterval(()=>{const c=st().ui?.inventarioImportCtx;if(c&&c!==__ctxRef){__ctxRef=c;refreshTypes();}else if(!c){__ctxRef=null;}},500);
 document.addEventListener('DOMContentLoaded',()=>{ensureTypeBox();ensureAcompTabs();});
-window.DTV275={refreshTypes,renderProductView};
+window.DTV275={refreshTypes,renderProductView,productRows,abrirDetalheTipoProduto};
 })();

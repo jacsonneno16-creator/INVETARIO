@@ -14,26 +14,47 @@
   const COL_SETUP = 'producao_setup';
   const COL_FICHAS = 'producao_ficha_tecnica';
   const COL_INSUMOS_ESTOQUE = 'producao_insumos_estoque';
+  // PEDIDO AO VIVO (2026-09-07): "a produção vai ser baseada em cima do
+  // saldo, se o saldo está negativo ele tem que pôr o saldo pra chegar a
+  // zero e depois repor pra chegar aos trinta dias. Pra não produzir e
+  // acabar tendo pedido e já vai zerar logo em seguida" — mesma coleção e
+  // mesma fórmula de "comprometido" já usadas em 78-pcp-central.js
+  // (construirVisao), só que aplicadas aqui pra descontar do estoque ANTES
+  // de calcular a necessidade de produção, não só pra decidir compra.
+  const COL_PEDIDOS = 'pcp_pedidos';
   const DIA = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 
-  let _produtos = [], _maquinas = [], _registros = [], _setups = [], _fichas = [], _insumosEstoque = [];
-  let _carregado = false, _sugestoes = [], _auditoria = [], _simulacao = false;
+  let _produtos = [], _maquinas = [], _registros = [], _setups = [], _fichas = [], _insumosEstoque = [], _pedidos = [];
+  let _carregado = false, _sugestoes = [], _auditoria = [], _simulacao = false, _semanasCalculo = [];
 
   function fs(){ return global.getDTFirestore(); }
-  function domingo(d){ const r=new Date(d); r.setHours(12,0,0,0); r.setDate(r.getDate()-r.getDay()); return r; }
+  function inicioSemana(d){
+    const r=new Date(d); r.setHours(12,0,0,0);
+    const dia=r.getDay();
+    r.setDate(r.getDate()-(dia===0?6:dia-1));
+    return r;
+  }
   function iso(d){ return d.toISOString().slice(0,10); }
   function fmt(d){ return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit'}); }
   function clamp(n,a,b){ return Math.max(a,Math.min(b,n)); }
   function n(v,def=0){ const x=Number(v); return Number.isFinite(x)?x:def; }
   function norm(v){ return String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim(); }
+  function texto(v){return String(v??'').trim();}
+  function variantesChave(v){const s=texto(v);if(!s)return[];const a=[s];if(/^\d+$/.test(s))a.push(String(Number(s)));return Array.from(new Set(a.filter(Boolean)));}
+  function codigoProduto(p){return texto(p?.cod??p?.codigo??p?.COD??p?.CODIGO??p?.produtoKey??p?.produto_key??p?.bluesoftProdutoKey??p?._firestoreId);}
+  function aliasesProduto(p){return [codigoProduto(p),p?.cod,p?.codigo,p?.COD,p?.CODIGO,p?.produtoKey,p?.produto_key,p?.bluesoftProdutoKey,p?.produtoUnitarioKeyBluesoft,p?.produtoUnitarioKey,p?.gtin,p?.ean].flatMap(variantesChave);}
 
   async function carregarProgAutomatica(forcar){
     if(_carregado && !forcar) return;
     await global.carregarProducaoProjecao?.(forcar);
-    const [p,m,r,s,f,i]=await Promise.all([
+    const [p,m,r,s,f,i,ped]=await Promise.all([
       fs().collection(COL_PRODUTOS).get(), fs().collection(COL_MAQUINAS).get(),
       fs().collection(COL_REGISTROS).get(), fs().collection(COL_SETUP).get(),
       fs().collection(COL_FICHAS).get(), fs().collection(COL_INSUMOS_ESTOQUE).get().catch(()=>({docs:[]})),
+      // best-effort: sem permissão de PCP ou coleção vazia, o desconto de
+      // comprometido simplesmente fica 0 pra todo mundo — nunca trava a
+      // Programação Automática por causa disso.
+      fs().collection(COL_PEDIDOS).get().catch(()=>({docs:[]})),
     ]);
     _produtos=p.docs.map(d=>({_firestoreId:d.id,...d.data()}));
     _maquinas=m.docs.map(d=>({_firestoreId:d.id,...d.data()})).filter(x=>x.ativo!==false && x.status!=='inativa');
@@ -41,11 +62,14 @@
     _setups=s.docs.map(d=>({_firestoreId:d.id,...d.data()}));
     _fichas=f.docs.map(d=>({_firestoreId:d.id,...d.data()}));
     _insumosEstoque=i.docs.map(d=>({_firestoreId:d.id,...d.data()}));
+    _pedidos=ped.docs.map(d=>({_firestoreId:d.id,...d.data()}));
     _carregado=true;
   }
 
   function produtoCad(proj){
-    return _produtos.find(p=>String(p.cod)===String(proj.cod)) || _produtos.find(p=>norm(p.nome)===norm(proj.produto));
+    const alvo=new Set(aliasesProduto(proj));
+    return _produtos.find(p=>aliasesProduto(p).some(k=>alvo.has(k))) ||
+      _produtos.find(p=>norm(p.nome||p.descricao||p.desc)===norm(proj.produto));
   }
   function fichaCad(prod){
     if(!prod) return null;
@@ -97,6 +121,40 @@
     return _registros.filter(r=>r.maquina===nome && r.status!=='concluido')
       .sort((a,b)=>n(b.sortOrder)-n(a.sortOrder))[0]?.produto||'';
   }
+  function caixasRestantesRegistro(r){
+    if(norm(r.status)==='CONCLUIDO') return 0;
+    const total=n(r.qntCaixas??r.quantidadeCaixas??r.qtdCaixas);
+    const feito=n(r.qntProduzida??r.qtdProduzida??r.realizadoCx??r.caixasRealizadas);
+    return Math.max(0,total-feito);
+  }
+  function producaoProgramadaNaSemana(estado,week){
+    const aliases=new Set(aliasesProduto(estado.prod));
+    return _registros.reduce((s,r)=>{
+      const data=texto(r.data??r.dtDesejada??r.dtSolicitacao);
+      if(!data||data<iso(week.inicio)||data>iso(week.fim))return s;
+      const mesmoCodigo=aliasesProduto({cod:r.prodCod??r.cod??r.codigo}).some(k=>aliases.has(k));
+      const mesmoNome=norm(r.produto)===norm(estado.prod.nome||estado.prod.descricao||estado.proj.produto);
+      return s+(mesmoCodigo||mesmoNome?caixasRestantesRegistro(r):0);
+    },0);
+  }
+  // PEDIDO AO VIVO (2026-09-07): mesma fórmula de "comprometido" de
+  // 78-pcp-central.js (construirVisao: `pendente=max(0,qtdPedidos-atendida)`
+  // somado por pedido não-cancelado) — duplicada aqui de propósito, não
+  // reusada via _pcpInternals, pra não depender do módulo PCP Central estar
+  // carregado (nem da permissão de PCP) só pra Programação Automática de
+  // Produção funcionar. Pedido pendente é um compromisso JÁ ASSUMIDO (não
+  // recorrente como a demanda semanal) — por isso entra só UMA VEZ, no
+  // estoque inicial (antes da semana 0), não a cada semana.
+  function comprometidoDoProduto(estado){
+    const aliases=new Set(aliasesProduto(estado.prod));
+    return _pedidos.reduce((s,x)=>{
+      if(/cancel/i.test(String(x.status||'')))return s;
+      const mesmoCodigo=aliasesProduto({cod:x.prodCod??x.cod??x.codigo}).some(k=>aliases.has(k));
+      const mesmoNome=norm(x.produto)===norm(estado.prod.nome||estado.prod.descricao||estado.proj.produto);
+      if(!mesmoCodigo&&!mesmoNome)return s;
+      return s+Math.max(0,n(x.quantidade)-n(x.quantidadeAtendida));
+    },0);
+  }
   function setupMin(maquina,orig,dest){ return global.getSetupMin?.(maquina,orig,dest,_setups)||0; }
 
   function estoqueInsumosMap(){
@@ -135,9 +193,9 @@
     };
   }
   function inicioPlanejamento(p){
-    if(p.modo==='semana' && p.semana) return domingo(new Date(p.semana+'T12:00:00'));
-    if(p.modo==='mes' && p.mes){ const [y,m]=p.mes.split('-').map(Number); return domingo(new Date(y,m-1,1,12)); }
-    return domingo(new Date());
+    if(p.modo==='semana' && p.semana) return inicioSemana(new Date(p.semana+'T12:00:00'));
+    if(p.modo==='mes' && p.mes){ const [y,m]=p.mes.split('-').map(Number); return inicioSemana(new Date(y,m-1,1,12)); }
+    return inicioSemana(new Date());
   }
   function semanasPlanejamento(p){
     const base=inicioPlanejamento(p), arr=[];
@@ -158,49 +216,216 @@
     score-=semanaIdx*5;
     return score;
   }
-  function distribuirDias(cx,week,maquina){
-    const dias=[]; let pesos=[];
+  // PEDIDO AO VIVO (2026-09-07): "ficou um negócio estranho, produzindo o
+  // mesmo produto várias vezes em vários dias... vamos supor a canjica
+  // branca, vinte e cinco caixas por dia. Por que não pegou logo e não
+  // produziu essas caixas todas dentro de um dia só?" — a versão anterior
+  // dividia a quantidade da semana PROPORCIONALMENTE pelo peso (horas de
+  // turno) de cada dia disponível, sem saber quantas caixas cabem de fato
+  // num dia (não recebia a velocidade da máquina) — por isso fatiava em
+  // pedacinhos iguais espalhados pela semana toda, mesmo quando o lote
+  // inteiro caberia tranquilamente num único dia. Agora preenche os dias
+  // em SEQUÊNCIA (igual uma produção de verdade rodando até acabar o
+  // turno): cada dia recebe o quanto couber da capacidade real da máquina
+  // (turno em minutos ÷ minutos por caixa), só passando pro dia seguinte
+  // quando o dia atual não tem mais espaço — nunca mais fatias artificiais
+  // menores que o necessário.
+  // PEDIDO AO VIVO (2026-09-07): "cada [produto] é vinte e oito vírgula
+  // zero cinco por minuto, pacotinhos" — pcMin é UNIDADES POR MINUTO, não
+  // caixas por hora (confirmado batendo com 63-producao-agenda.js:
+  // `cxPerMin=pcMin/unidPorCx` — e com 62-producao-programacao.js:
+  // `_calcTempoHoras=qntUnid/pcMin/60`, os dois já certos). Esta função (e
+  // o cálculo principal logo abaixo) usava `60/pcMin`, tratando pcMin como
+  // caixas/hora — superestimava o tempo de produção em ~5x pros valores
+  // reais do usuário, fazendo o motor "achar" que a máquina já estava
+  // cheia bem antes da capacidade de verdade acabar. minCx (minutos por
+  // caixa) precisa de unidPorCx pra converter certo: unidPorCx/pcMin.
+  function distribuirDias(cx,week,maquina,pcMin,unidPorCx){
+    const dias=[]; let pesosMin=[];
     for(let i=0;i<7;i++){
       const d=new Date(week.inicio);d.setDate(d.getDate()+i); if(d>week.fim)break;
       const t=(maquina.turnos?.[d.getDay()]||maquina.turnos?.[String(d.getDay())]||[]).filter(x=>x&&x.ativo!==false);
       const peso=t.length?t.reduce((s,f)=>{const [h1,m1]=String(f.ini||'00:00').split(':').map(Number),[h2,m2]=String(f.fim||'00:00').split(':').map(Number);let a=h1*60+m1,b=h2*60+m2;if(b<=a)b+=1440;return s+Math.max(0,b-a)},0):(d.getDay()>=1&&d.getDay()<=5?540:0);
-      if(peso>0){dias.push(d);pesos.push(peso);}
+      if(peso>0){dias.push(d);pesosMin.push(peso);}
     }
-    const total=pesos.reduce((a,b)=>a+b,0)||1; let restante=cx;
-    return dias.map((d,i)=>{ const q=i===dias.length-1?restante:Math.min(restante,Math.round(cx*(pesos[i]/total))); restante-=q; return {data:iso(d),caixas:q,dia:DIA[d.getDay()]}; }).filter(x=>x.caixas>0);
+    if(!dias.length) return [];
+    const minCx=n(pcMin)>0?Math.max(1,n(unidPorCx,1))/n(pcMin):0;
+    let restante=cx; const out=[];
+    for(let i=0;i<dias.length && restante>0;i++){
+      const capDiaCx=minCx>0?Math.floor(pesosMin[i]/minCx):restante; // sem velocidade conhecida, não fragmenta — usa o resto todo
+      const q=Math.max(0,Math.min(restante,capDiaCx));
+      if(q>0){ out.push({data:iso(dias[i]),caixas:q,dia:DIA[dias[i].getDay()]}); restante-=q; }
+    }
+    // Sobra que não coube em nenhum turno disponível na semana: não pode
+    // desaparecer — empilha no último dia disponível (mesma regra que já
+    // existia pro resto da divisão proporcional antiga).
+    if(restante>0){
+      const ultimo=dias[dias.length-1], data=iso(ultimo), dia=DIA[ultimo.getDay()];
+      const existente=out.find(x=>x.data===data);
+      if(existente) existente.caixas+=restante; else out.push({data,caixas:restante,dia});
+    }
+    return out;
   }
 
+  // Mesma regra do original (buildPlanejamento, app.js:13986-13991): 1º dia
+  // ÚTIL da máquina dentro da semana (olhando os turnos cadastrados dela);
+  // sem turno algum na semana toda, cai na própria segunda-feira. É a data
+  // que vai no registro — quem espalha a produção pelos dias de verdade é
+  // o motor de agenda (buildProducaoSchedule) na hora de desenhar o Gantt,
+  // não esta função.
+  function primeiroDiaUtil(week,maquina){
+    for(let i=0;i<7;i++){
+      const d=new Date(week.inicio); d.setDate(d.getDate()+i); if(d>week.fim) break;
+      const min=typeof global.getTurnoMinutosDoDia==='function'?global.getTurnoMinutosDoDia(maquina,d.getDay()):(d.getDay()>=1&&d.getDay()<=5?540:0);
+      if(min>0) return iso(d);
+    }
+    return iso(week.inicio);
+  }
+
+  // PEDIDO AO VIVO (2026-09-03): "no original ele mostra o produto aí, qual
+  // semana vai produzir, a quantidade" — comparado com renderProgAutomatica
+  // Resultado do original (app.js:13748): a tabela de lá é UMA LINHA POR
+  // PRODUTO, consolidando as até 4 semanas (Semana 1 / Total Mês / mini
+  // barra das 4 semanas), nunca uma linha por evento de alocação como
+  // estava aqui. O motor por baixo (round-robin) continua o mesmo — só
+  // troca ONDE cada alocação é registrada: em vez de _sugestoes.push a
+  // cada `cx` alocado, acumula num Map por produto (_juntarEventoProduto)
+  // e só no final consolida pra 1 linha por produto (_consolidarSugestoes).
+  function _buildMotivo(cob,riscoLim,cobMin){
+    if(cob<=0) return '🔴 Estoque zerado — produção imediata';
+    if(cob<=riscoLim) return `🔴 Ruptura em ${cob.toFixed(1)}d — produção urgente`;
+    if(cob<=cobMin) return `🟠 Abaixo do mínimo (${cobMin}d) — cobertura atual ${cob.toFixed(1)}d`;
+    if(cob<=cobMin*2) return `🟡 Vai cair abaixo do mínimo — cobertura atual ${cob.toFixed(1)}d`;
+    return `🟢 Reposição preventiva — cobertura ${cob.toFixed(1)}d`;
+  }
   async function gerarSugestoes(simulacao=false){
     const p=parametros(); _simulacao=!!simulacao;
     const proj=global.calcularProjecaoComRisco?.(document.getElementById('pproj-metodo')?.value||'simples')||[];
-    const semanas=semanasPlanejamento(p); const insumos=estoqueInsumosMap();
-    const carga=new Map(), ultimo=new Map(); _auditoria=[]; _sugestoes=[];
+    // PEDIDO AO VIVO (2026-09-07): "calcula certo, mas quando vai pra
+    // Programação Visual fica tudo errado" — investigando, achado um risco
+    // real: aplicarSugestoesSelecionadas() recalculava `semanas` do zero a
+    // partir do formulário (parametros()+semanasPlanejamento()) no momento
+    // do clique em Aplicar, em vez de reusar as MESMAS semanas que geraram
+    // `_sugestoes` (detalhesSemanas[0..3] é posicional — depende de bater
+    // exatamente com as datas usadas no cálculo). Se o período no formulário
+    // mudar entre "Gerar/Recalcular" e "Aplicar" (ex.: o seletor de semana
+    // se reconstrói a cada render com base em "hoje", ou o usuário troca de
+    // mês/semana sem recalcular de novo antes de aplicar), as OPs eram
+    // gravadas nas datas ERRADAS — o motor calculou certo, só a gravação
+    // podia ir pra semana/mês errado. Agora as semanas usadas no cálculo
+    // ficam congeladas em `_semanasCalculo` e Aplicar reusa exatamente elas,
+    // nunca recalcula por conta própria.
+    const semanas=semanasPlanejamento(p); _semanasCalculo=semanas;
+    const insumos=estoqueInsumosMap();
+    const carga=new Map(), ultimo=new Map(); _auditoria=[];
+    const porProduto=new Map(); // cod -> registro consolidado (ver _juntarEventoProduto)
+    const semMaquina=new Map(); // cod -> {cod,produto,semMaquina:true,...}
     semanas.forEach(w=>_maquinas.forEach(m=>{
       const key=m.nome+'|'+iso(w.inicio), cap=capacidadeMinSemana(m,w.inicio), usada=cargaExistenteMin(m,w.inicio);
       carga.set(key,{cap,usada,novas:0,porProduto:new Map()}); ultimo.set(key,ultimoProdutoNaMaquina(m.nome));
     }));
 
     const estados=proj.map(x=>{
-      const prod=produtoCad(x); const demandaSem=n(x.projSemanal); return {proj:x,prod,demandaSem,estoque:n(x.estoqueAtual),produzido:0};
+      const prod=produtoCad(x); const demandaSem=n(x.projSemanal);
+      // PEDIDO AO VIVO (2026-09-07): "se o saldo está negativo ele tem que
+      // pôr o saldo pra chegar a zero e depois repor pra chegar aos trinta
+      // dias" — desconta pedidos pendentes (comprometido) do estoque JÁ NA
+      // PARTIDA (antes da semana 0), uma vez só (não é recorrente como a
+      // demanda semanal). Pode deixar o estoque inicial NEGATIVO de
+      // propósito — a fórmula de necessidade (alvo-estoque) já lida com
+      // isso normalmente, aumentando a necessidade sozinha, sem precisar
+      // de nenhum caso especial.
+      const comprometido=prod?comprometidoDoProduto({prod,proj:x}):0;
+      return {proj:x,prod,demandaSem,estoque:n(x.estoqueAtual)-comprometido,produzido:0};
     }).filter(x=>x.prod && x.prod.ativo!==false && x.demandaSem>0);
 
+    function registro(e){
+      if(!porProduto.has(e.proj.cod)){
+        const diaria=e.demandaSem/7, cobInicial=diaria>0?e.estoque/diaria:9999;
+        porProduto.set(e.proj.cod,{
+          cod:e.proj.cod,produto:e.proj.produto,produtoCad:e.prod,
+          coberturaAtual:cobInicial,estoque:e.estoque,demandaSemanal:e.demandaSem,
+          risco:cobInicial<=p.riscoCritico?'critico':'baixo',motivo:_buildMotivo(cobInicial,p.riscoCritico,p.coberturaMin),
+          unidPorCx:Math.max(1,n(e.prod.unid,1)),
+          semanas:[0,0,0,0],minutosSemanas:[0,0,0,0],detalhesSemanas:[[],[],[],[]],
+          maquinasCx:new Map(),insumoFaltas:new Map(),distribuicaoS1:new Map(),
+          coberturaPos:cobInicial,
+        });
+      }
+      return porProduto.get(e.proj.cod);
+    }
+
     for(const w of semanas){
+      // Igual ao original: OP já criada e ainda não concluída entra no saldo
+      // projetado na semana em que será produzida. Sem isso o motor sugere
+      // novamente uma quantidade que já está no Gantt.
+      estados.forEach(e=>e.estoque+=producaoProgramadaNaSemana(e,w));
       // consumo previsto ocorre antes de calcular necessidade da semana; para a primeira,
       // preservamos o estoque atual como ponto de partida.
       if(w.index>0) estados.forEach(e=>e.estoque=Math.max(0,e.estoque-e.demandaSem));
+      // PEDIDO AO VIVO (2026-09-07): "os cálculos não estão certos... mudo
+      // pra semana e recalculo, as horas continuam as mesmas" — achado por
+      // rastreamento empírico (não suposição): `fila` era montada com
+      // `{...e,...}` (CÓPIA rasa por elemento), então `e.estoque+=cx`
+      // dentro do round-robin só mutava a cópia daquela semana — nunca
+      // voltava pro array `estados`, que é a fonte usada pra montar a
+      // `fila` da semana SEGUINTE. Resultado: toda semana recomeçava o
+      // cálculo de necessidade a partir do estoque ORIGINAL (menos só o
+      // consumo já subtraído direto em `estados`), completamente cega à
+      // produção que ela mesma tinha acabado de sugerir na semana anterior
+      // — produzindo cada vez mais, semana após semana, sem nunca
+      // reconhecer que o estoque projetado já tinha sido reabastecido.
+      // Fix: `fila` guarda os MESMOS objetos de `estados` (só acrescenta
+      // cob/prioProduto/prio), não cópias — mutações em .estoque/.produzido
+      // durante o round-robin agora persistem de verdade entre semanas.
       const fila=estados.map(e=>{
         const diaria=e.demandaSem/7, cob=diaria>0?e.estoque/diaria:9999;
         const prioProduto=Math.max(1,n(e.prod.prioridadeProducao,2));
-        return {...e,cob,prioProduto,prio:prioridade(cob,p.riscoCritico,p.coberturaMin,w.index)+Math.max(0,(4-prioProduto))*200};
+        e.cob=cob; e.prioProduto=prioProduto; e.prio=prioridade(cob,p.riscoCritico,p.coberturaMin,w.index)+Math.max(0,(4-prioProduto))*200;
+        return e;
       }).filter(e=>e.cob<p.coberturaMin).sort((a,b)=>b.prio-a.prio || a.cob-b.cob);
+      // PEDIDO AO VIVO (2026-09-07): "tem produto que está com onze dias,
+      // no final da produção está ficando com doze" — achado com repro
+      // isolada (não suposição): registro() só criava a linha consolidada
+      // NA HORA da 1ª alocação bem-sucedida, ou seja, DEPOIS de
+      // `e.estoque+=cx` já ter somado a primeira caixa alocada — a coluna
+      // "Cobertura Atual"/"Estoque" mostrada na tabela nascia com o valor
+      // JÁ PARCIALMENTE PRODUZIDO, não o valor real de antes de calcular.
+      // Isso escondia o quanto a produção realmente melhorou a cobertura
+      // (o antes ficava artificialmente perto do depois). Agora a linha é
+      // criada aqui, ANTES de qualquer alocação desta semana — captura o
+      // estado de verdade.
+      fila.forEach(e=>registro(e));
 
-      // Round-robin: uma passada aloca uma fração; repete enquanto houver necessidade
-      // e capacidade. Evita um produto monopolizar a máquina.
-      let progresso=true, guard=0;
-      while(progresso && guard++<30){
-        progresso=false;
+      // PEDIDO AO VIVO (2026-09-07), varredura geral: "bate o código
+      // original, aplica do jeito que ele faz" — depois de 3 rodadas de
+      // remendo em cima do meu round-robin próprio (chunk de 1/3 por
+      // passagem + bônus de continuidade/concentração) sem convencer o
+      // usuário, fui ler o motor de verdade do original (app.js:12409,
+      // "LOOP PRINCIPAL") e portei a lógica dele, que é mais simples E mais
+      // robusta: cada produto (em ordem de prioridade) tenta resolver a
+      // NECESSIDADE INTEIRA da semana numa passada só — não fatiada em 1/3
+      // — contra a capacidade que sobrar NAQUELE INSTANTE. "Concentração":
+      // procura primeiro 1 máquina que sozinha absorve tudo; só divide (no
+      // máximo 2 máquinas, igual ao original) quando nenhuma sozinha dá
+      // conta. MAX_PASSES=8 (igual ao original) é uma rede de segurança —
+      // como cada produto já tenta pegar tudo que precisa na 1ª passada,
+      // raramente uma 2ª faz diferença; não existe mais o conceito de
+      // "continuidade" porque não é mais necessário: a máquina que sozinha
+      // resolve tudo já é achada direto, sem precisar de bônus artificial
+      // brigando contra o placar de carga.
+      for(let pass=0;pass<8;pass++){
+        let algumAlocado=false;
         for(const e of fila){
-          const diaria=e.demandaSem/7, alvoDias=Math.max(1,n(e.prod.metaCoberturaDias||e.prod.coberturaDias,p.coberturaAlvo)), alvo=diaria*alvoDias;
+          // PEDIDO AO VIVO (2026-09-07): "mudo a cobertura ali... aí se eu
+          // mudar pra trinta, em vez de aumentar a quantidade não aumenta"
+          // — o produto tinha uma meta própria (metaCoberturaDias/
+          // coberturaDias, configurável em PCP → Parâmetros) que vencia o
+          // slider da tela sem avisar. Decisão do usuário: o controle desta
+          // tela manda sempre — a meta por produto deixa de valer aqui
+          // (continua existindo/configurável, só não participa mais deste
+          // cálculo).
+          const diaria=e.demandaSem/7, alvoDias=Math.max(1,n(p.coberturaAlvo,20)), alvo=diaria*alvoDias;
           let necessidade=Math.max(0,Math.ceil(alvo-e.estoque));
           const minimo=Math.max(0,n(e.prod.producaoMinima));
           const multiplo=Math.max(0,n(e.prod.multiploProducao));
@@ -208,54 +433,60 @@
           if(necessidade>0 && multiplo>0) necessidade=Math.ceil(necessidade/multiplo)*multiplo;
           if(necessidade<=0) continue;
           const comps=maquinasCompativeis(e.prod); if(!comps.length){
-            if(!_sugestoes.some(s=>s.cod===e.proj.cod && s.semMaquina)) _sugestoes.push({cod:e.proj.cod,produto:e.proj.produto,semMaquina:true,semana:iso(w.inicio),coberturaAtual:e.cob,motivo:'Sem máquina compatível'});
+            if(!semMaquina.has(e.proj.cod)) semMaquina.set(e.proj.cod,{cod:e.proj.cod,produto:e.proj.produto,semMaquina:true,semana:iso(w.inicio),coberturaAtual:e.cob,motivo:'Sem máquina compatível'});
             continue;
           }
           if(p.insumo==='limitado') necessidade=maxCaixasPorInsumos(e.prod,necessidade,insumos).max;
           if(necessidade<=0) continue;
 
-          const scored=comps.map(c=>{
+          const unidPorCx=Math.max(1,n(e.prod.unid,1));
+          const candidatos=comps.map(c=>{
             const key=c.maquina.nome+'|'+iso(w.inicio), st=carga.get(key), prev=ultimo.get(key)||'';
-            const setup=setupMin(c.maquina,prev,e.prod.nome); const minCx=60/Math.max(.0001,c.pcMin);
-            const cargaPct=st.cap>0?(st.usada+st.novas)/st.cap:999;
-            return {...c,key,st,setup,minCx,score:cargaPct*10000+setup*8+(1000/Math.max(1,c.pcMin))};
-          }).sort((a,b)=>a.score-b.score);
-
-          let alocou=false;
-          for(const c of scored){
-            if(c.st.cap<=0) continue;
-            const prodUsado=c.st.porProduto.get(norm(e.prod.nome))||0;
-            const limiteProdutoMin=c.st.cap*p.maxPct;
-            const dispMin=Math.max(0,c.st.cap-c.st.usada-c.st.novas-c.setup);
+            const setup=setupMin(c.maquina,prev,e.prod.nome); const minCx=unidPorCx/Math.max(.0001,c.pcMin);
+            const prodUsado=st.porProduto.get(norm(e.prod.nome))||0;
+            const limiteProdutoMin=st.cap*p.maxPct;
+            const dispMin=Math.max(0,st.cap-st.usada-st.novas-setup);
             const dispProdMin=Math.max(0,limiteProdutoMin-prodUsado);
-            const poss=Math.floor(Math.min(dispMin,dispProdMin)/c.minCx);
-            if(poss<=0) continue;
-            // rodada distribui no máximo 1/3 da necessidade por passagem, favorecendo equilíbrio
-            let cx=Math.max(1,Math.min(necessidade,poss,Math.ceil(necessidade/3)));
-            if(e.produzido<=0 && minimo>0 && poss>=minimo) cx=Math.max(cx,minimo);
-            if(multiplo>0){ const arred=Math.ceil(cx/multiplo)*multiplo; if(arred<=poss) cx=arred; else cx=Math.max(multiplo,Math.floor(poss/multiplo)*multiplo); }
-            cx=Math.min(cx,necessidade,poss);
-            let faltas=[];
-            if(p.insumo==='limitado'){ const lim=maxCaixasPorInsumos(e.prod,cx,insumos); cx=Math.min(cx,lim.max); faltas=lim.faltas; }
-            else faltas=maxCaixasPorInsumos(e.prod,cx,insumos).faltas;
+            const poss=Math.floor(Math.min(dispMin,dispProdMin)/minCx);
+            const cargaPct=st.cap>0?(st.usada+st.novas)/st.cap:999;
+            return {...c,key,st,setup,minCx,prodUsado,poss,score:cargaPct*10000+setup*8+(1000/Math.max(1,c.pcMin))};
+          }).filter(c=>c.poss>0);
+          if(!candidatos.length) continue;
+
+          // Concentração: 1 máquina que sozinha resolve tudo tem prioridade
+          // absoluta sobre espalhar por várias — só divide (máx. 2) quando
+          // nenhuma dá conta inteira.
+          const absorve=candidatos.find(c=>c.poss>=necessidade);
+          const usar=absorve?[absorve]:[...candidatos].sort((a,b)=>a.score-b.score).slice(0,2);
+
+          let restante=necessidade;
+          for(const c of usar){
+            if(restante<=0) break;
+            const cx=Math.min(restante,c.poss);
             if(cx<=0) continue;
-            const minutos=cx*c.minCx+c.setup;
-            c.st.novas+=minutos; c.st.porProduto.set(norm(e.prod.nome),prodUsado+minutos); ultimo.set(c.key,e.prod.nome);
-            if(p.insumo==='limitado') consumirInsumos(e.prod,cx,insumos);
-            e.estoque+=cx; e.produzido+=cx; progresso=true; alocou=true;
+            let faltas=[];
+            let cxFinal=cx;
+            if(p.insumo==='limitado'){ const lim=maxCaixasPorInsumos(e.prod,cx,insumos); cxFinal=lim.max; faltas=lim.faltas; }
+            else faltas=maxCaixasPorInsumos(e.prod,cx,insumos).faltas;
+            if(cxFinal<=0) continue;
+            const minutos=cxFinal*c.minCx+c.setup;
+            c.st.novas+=minutos; c.st.porProduto.set(norm(e.prod.nome),c.prodUsado+minutos); ultimo.set(c.key,e.prod.nome);
+            if(p.insumo==='limitado') consumirInsumos(e.prod,cxFinal,insumos);
+            e.estoque+=cxFinal; e.produzido+=cxFinal; restante-=cxFinal; algumAlocado=true;
             const novaCob=diaria>0?e.estoque/diaria:9999;
-            _sugestoes.push({
-              cod:e.proj.cod,produto:e.proj.produto,produtoCad:e.prod,semana:iso(w.inicio),semanaFim:iso(w.fim),
-              coberturaAtual:e.cob,coberturaPos:novaCob,qtyCaixas:cx,maquina:c.maquina.nome,maquinaCad:c.maquina,
-              pcMin:c.pcMin,unidPorCx:Math.max(1,n(e.prod.unid,1)),setupMin:c.setup,minutos,
-              risco:e.cob<=p.riscoCritico?'critico':'baixo',insumoFaltas:faltas,distribuicao:distribuirDias(cx,w,c.maquina),
-              metaCoberturaDias:alvoDias,producaoMinima:minimo,multiploProducao:multiplo,prioridadeProducao:e.prioProduto,alergenico:e.prod.alergenico===true,
-              motivo:e.cob<=p.riscoCritico?'Risco crítico de ruptura':'Cobertura abaixo do mínimo', selecionada:true,
+            const reg=registro(e);
+            reg.semanas[w.index]+=cxFinal; reg.minutosSemanas[w.index]+=minutos;
+            reg.detalhesSemanas[w.index].push({maquina:c.maquina.nome,maquinaCad:c.maquina,cx:cxFinal,pcMin:c.pcMin,setupMin:c.setup,minutos});
+            reg.maquinasCx.set(c.maquina.nome,(reg.maquinasCx.get(c.maquina.nome)||0)+cxFinal);
+            reg.coberturaPos=novaCob;
+            faltas.forEach(f=>{ if(!reg.insumoFaltas.has(f.insumo)) reg.insumoFaltas.set(f.insumo,f); });
+            if(w.index===0) distribuirDias(cxFinal,w,c.maquina,c.pcMin,unidPorCx).forEach(d=>{
+              const atual=reg.distribuicaoS1.get(d.data)||{data:d.data,dia:d.dia,caixas:0};
+              atual.caixas+=d.caixas; reg.distribuicaoS1.set(d.data,atual);
             });
-            break;
           }
-          if(!alocou) continue;
         }
+        if(!algumAlocado) break;
       }
     }
 
@@ -263,20 +494,96 @@
       const key=m.nome+'|'+iso(w.inicio), st=carga.get(key); if(!st)return;
       _auditoria.push({maquina:m.nome,semana:iso(w.inicio),capacidade:st.cap,existente:st.usada,nova:st.novas,total:st.usada+st.novas,pct:st.cap>0?(st.usada+st.novas)/st.cap*100:0});
     }));
+
+    // ── Consolidação final: 1 linha por produto (Semana 1 / Total Mês /
+    // mini plano de 4 semanas), igual ao renderProgAutomaticaResultado do
+    // original — nunca 1 linha por evento de alocação.
+    const semana0=semanas[0];
+    _sugestoes=[...porProduto.values()].map(reg=>{
+      const maquinaPrincipal=[...reg.maquinasCx.entries()].sort((a,b)=>b[1]-a[1])[0]?.[0]||'';
+      const maquinasUsadas=[...reg.maquinasCx.keys()];
+      const capSemana1=maquinaPrincipal?capacidadeMinSemana(_maquinas.find(m=>m.nome===maquinaPrincipal)||{nome:maquinaPrincipal},semana0.inicio):0;
+      const pctMaquina=capSemana1>0?Math.min(100,reg.minutosSemanas[0]/capSemana1*100):0;
+      return {
+        cod:reg.cod,produto:reg.produto,produtoCad:reg.produtoCad,motivo:reg.motivo,risco:reg.risco,
+        estoque:reg.estoque,demandaSemanal:Math.round(reg.demandaSemanal),
+        coberturaAtual:reg.coberturaAtual,coberturaPos:reg.coberturaPos,
+        qtyCaixas:reg.semanas[0],cxAlocadasTotal:reg.semanas.reduce((s,v)=>s+v,0),semanasArr:reg.semanas,
+        minutos:reg.minutosSemanas[0],minutosTotal:reg.minutosSemanas.reduce((s,v)=>s+v,0),
+        maquina:maquinaPrincipal,maquinasUsadas,pctMaquina,
+        unidPorCx:reg.unidPorCx,insumoFaltas:[...reg.insumoFaltas.values()],
+        distribuicao:[...reg.distribuicaoS1.values()],detalhesSemanas:reg.detalhesSemanas,
+        selecionada:true,
+      };
+    }).sort((a,b)=>(b.risco==='critico')-(a.risco==='critico') || a.coberturaAtual-b.coberturaAtual);
+    _sugestoes.push(...[...semMaquina.values()]);
     _desenharProgAutomatica();
   }
 
   async function renderProducaoProgAutomatica(){
     const pagina=document.getElementById('page-producao-prog-automatica'); if(!pagina)return;
     pagina.innerHTML='<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try{await carregarProgAutomatica();}catch(e){pagina.innerHTML='<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">'+esc(e.message||e)+'</div></div>';return;}
+    // A tela depende de projeção, estoque, produtos, máquinas e OPs. Sempre
+    // relê ao abrir para não calcular usando o cache vazio de outra loja ou
+    // dados anteriores à última sincronização.
+    try{await carregarProgAutomatica(true);}catch(e){pagina.innerHTML='<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Falha ao carregar</div><div class="empty-sub">'+esc(e.message||e)+'</div></div>';return;}
     _desenharProgAutomatica();
   }
   function optionsSemanas(){
-    const base=domingo(new Date()); return Array.from({length:8},(_,i)=>{const d=new Date(base);d.setDate(d.getDate()+i*7);const f=new Date(d);f.setDate(f.getDate()+6);return `<option value="${iso(d)}">${fmt(d)} – ${fmt(f)} / ${d.getFullYear()}</option>`}).join('');
+    const base=inicioSemana(new Date()); return Array.from({length:8},(_,i)=>{const d=new Date(base);d.setDate(d.getDate()+i*7);const f=new Date(d);f.setDate(f.getDate()+6);return `<option value="${iso(d)}">${fmt(d)} – ${fmt(f)} / ${d.getFullYear()}</option>`}).join('');
   }
   function optionsMeses(){
     const d=new Date(); return Array.from({length:6},(_,i)=>{const x=new Date(d.getFullYear(),d.getMonth()+i,1);const v=x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0');return `<option value="${v}">${x.toLocaleDateString('pt-BR',{month:'long',year:'numeric'})}</option>`}).join('');
+  }
+  // PEDIDO AO VIVO (2026-09-03): "no original ele mostra o produto aí, qual
+  // semana vai produzir, a quantidade" comparado por print lado a lado — o
+  // original agrupa a tabela POR MÁQUINA (card com nome + badge "N
+  // crítico(s)" + resumo de cx/tempo/%máquina no cabeçalho, sugestões
+  // daquela máquina embaixo), não uma lista corrida com a máquina numa
+  // coluna. O motor (gerarSugestoes) já calculava tudo certo — só a tabela
+  // não agrupava. _auditoria já tinha a capacidade por máquina/semana
+  // calculada; só faltava mostrar por linha (coluna %Máq.) e no cabeçalho
+  // do grupo (média das semanas visíveis daquela máquina).
+  function fmtHrsMin(min){ const h=Math.floor(min/60), m=Math.round(min%60); return h+'h'+String(m).padStart(2,'0')+'min'; }
+  // PEDIDO AO VIVO (2026-09-03, 2ª rodada): comparado direto com
+  // renderProgAutomaticaResultado do original (app.js:13748) — cada linha
+  // ali é 1 PRODUTO consolidado (não 1 evento de alocação), com colunas
+  // Motivo/Risco, Estoque, Cob. Atual, Dem. Sem., Semana 1, Total Mês,
+  // Tempo, %Máq. (com barrinha), Cob. Final, Insumos (clicável, expande
+  // detalhe) e Distribuição (pills do dia da S1 + mini-plano das 4
+  // semanas). gerarSugestoes() já consolida assim agora — só faltava a
+  // tabela render.
+  function _grupoMaquinaHtml(maquina,linhas){
+    const criticos=new Set(linhas.filter(s=>s.risco==='critico').map(s=>s.cod)).size;
+    const semInsumo=linhas.filter(s=>s.insumoFaltas?.length).length;
+    const totalCxS1=linhas.reduce((s,x)=>s+n(x.qtyCaixas),0);
+    const totalCxMes=linhas.reduce((s,x)=>s+n(x.cxAlocadasTotal),0);
+    const totalHrs=linhas.reduce((s,x)=>s+n(x.minutos),0)/60;
+    const audMaq=_auditoria.filter(a=>a.maquina===maquina);
+    const pctMedio=audMaq.length?audMaq.reduce((s,a)=>s+a.pct,0)/audMaq.length:null;
+    const coxMesLabel=totalCxMes>totalCxS1?` · ${totalCxMes.toLocaleString('pt-BR')} cx/mês`:'';
+    const linhasHtml=linhas.map(s=>{
+      const idx=_sugestoes.indexOf(s);
+      const cobColor=s.risco==='critico'?'var(--danger)':'var(--orange)';
+      const maqExtra=(s.maquinasUsadas||[]).filter(m=>m!==maquina);
+      const semanas=s.semanasArr||[s.qtyCaixas||0,0,0,0];
+      const maxSem=Math.max(...semanas,1);
+      const semPills=semanas.map((cx,i)=>`<div style="display:inline-flex;flex-direction:column;align-items:center;gap:1px;min-width:34px"><div style="font-size:.58rem;color:var(--muted)">S${i+1}</div><div style="height:4px;width:34px;background:var(--border);border-radius:2px"><div style="height:4px;width:${Math.round(cx/maxSem*34)}px;background:${i===0?'var(--cyan)':'rgba(34,211,238,.5)'};border-radius:2px"></div></div><div style="font-size:.6rem;color:${i===0?'var(--cyan)':'var(--muted)'};font-weight:${i===0?700:400}">${cx>0?cx+'cx':'—'}</div></div>`).join('');
+      const dayPills=(s.distribuicao||[]).map(d=>`<span class="badge" style="font-size:.6rem">${esc(d.dia)} ${d.caixas}cx</span>`).join(' ');
+      const insId='ppa-ins-'+idx;
+      const insBadge=s.insumoFaltas?.length
+        ? `<span style="cursor:pointer" class="badge b-orange" data-ppa-ins-toggle="${insId}" title="${esc(s.insumoFaltas.map(f=>f.insumo).join(', '))}">⚠️ ${s.insumoFaltas.length} falta(s) ▾</span>`
+        : '<span class="badge b-green">OK</span>';
+      const insDetalhe=s.insumoFaltas?.length?`<tr id="${insId}" style="display:none"><td colspan="12" style="padding:8px 14px;background:var(--surface-2)"><div style="font-size:.68rem;font-weight:700;color:var(--muted);margin-bottom:4px">Insumos faltando — ${esc(s.produto)}</div>${s.insumoFaltas.map(f=>`<div style="font-size:.7rem">${esc(f.insumo)}: necessário ${n(f.necessario).toLocaleString('pt-BR')} / disponível ${n(f.disponivel).toLocaleString('pt-BR')} (dá pra ${n(f.possivelCx)}cx)</div>`).join('')}</td></tr>`:'';
+      return `<tr><td><input type="checkbox" data-ppa-check="${idx}" ${s.selecionada!==false?'checked':''}></td><td><b>${esc(s.produto)}</b><div style="font-size:.62rem;color:var(--muted)">Cód. ${esc(s.cod)}</div>${maqExtra.length?`<div style="font-size:.6rem;color:var(--muted)">+ ${esc(maqExtra.join(', '))}</div>`:''}</td><td style="max-width:170px;white-space:normal;font-size:.7rem">${s.motivo}</td><td>${s.estoque!=null?n(s.estoque).toLocaleString('pt-BR'):'—'}</td><td style="color:${cobColor};font-weight:700">${Number.isFinite(s.coberturaAtual)?s.coberturaAtual.toFixed(1)+'d':'—'}</td><td>${n(s.demandaSemanal).toLocaleString('pt-BR')}</td><td style="color:var(--cyan);font-weight:700">${s.qtyCaixas||'—'} cx</td><td style="color:var(--purple);font-weight:600">${s.cxAlocadasTotal||s.qtyCaixas||'—'} cx</td><td>${fmtHrsMin(s.minutosTotal||s.minutos||0)}</td><td>${s.pctMaquina!=null?s.pctMaquina.toFixed(0)+'%':'—'}</td><td style="font-weight:700">${Number.isFinite(s.coberturaPos)?s.coberturaPos.toFixed(1)+'d':'—'}</td><td>${insBadge}</td><td style="white-space:normal"><div style="margin-bottom:4px">${dayPills||'—'}</div><div style="display:flex;gap:3px">${semPills}</div></td></tr>${insDetalhe}`;
+    }).join('');
+    return `<div class="tc" style="margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:8px"><b style="font-size:.86rem">${esc(maquina)}</b>${criticos?`<span class="badge b-red">${criticos} crítico(s)</span>`:''}${semInsumo?`<span class="badge b-orange">${semInsumo} sem insumo</span>`:''}</div>
+        <div style="font-size:.7rem;color:var(--muted)">${totalCxS1.toLocaleString('pt-BR')} cx S1${coxMesLabel} · ${totalHrs.toLocaleString('pt-BR',{maximumFractionDigits:1})}h${pctMedio!=null?` · ${pctMedio.toFixed(0)}% da semana`:''}</div>
+      </div>
+      <div style="overflow:auto"><table class="dt-table"><thead><tr><th></th><th>Produto</th><th>Motivo / Risco</th><th>Estoque</th><th>Cob. Atual</th><th>Dem. Sem.</th><th>Semana 1</th><th>Total Mês</th><th>Tempo</th><th>%Máq.</th><th>Cob. Final</th><th>Insumos</th><th>Distribuição S1 + Plano 4 Sem.</th></tr></thead><tbody>${linhasHtml}</tbody></table></div>
+    </div>`;
   }
   function _desenharProgAutomatica(){
     const pagina=document.getElementById('page-producao-prog-automatica'); if(!pagina)return;
@@ -284,24 +591,31 @@
     const filtro=document.getElementById('ppa-maq-filter')?.value||'';
     const vis=_sugestoes.filter(s=>!filtro||s.maquina===filtro);
     const reais=_sugestoes.filter(s=>!s.semMaquina), maqSet=new Set(reais.map(s=>s.maquina));
-    const hrs=reais.reduce((a,s)=>a+n(s.minutos),0)/60, risco=new Set(reais.filter(s=>s.risco==='critico').map(s=>s.cod)).size;
+    // PEDIDO AO VIVO (2026-09-07): "mudo pra semana e recalculo... as horas
+    // de produção continua 348" — este KPI somava só reg.minutosSemanas[0]
+    // (s.minutos = Semana 1), então em modo Mês ele NUNCA contava as horas
+    // de produtos cuja necessidade só aparece nas semanas 2-4 (ficam com
+    // minutosSemanas[0]=0). Coincidência: em modo Semana só existe a
+    // semana 0 mesmo, então o valor batia por acaso — mascarando que Mês
+    // estava subcontando. Correto é somar o plano inteiro (minutosTotal).
+    const hrs=reais.reduce((a,s)=>a+n(s.minutosTotal||s.minutos),0)/60, risco=new Set(reais.filter(s=>s.risco==='critico').map(s=>s.cod)).size;
     const maquinasOpts=_maquinas.map(m=>`<option value="${esc(m.nome)}" ${filtro===m.nome?'selected':''}>${esc(m.nome)}</option>`).join('');
     const avisoSemMaq=_sugestoes.filter(s=>s.semMaquina).length;
     const periodoAlvoLabel = p.modo==='semana' ? (document.getElementById('ppa-semana')?.selectedOptions?.[0]?.textContent||'—') : (document.getElementById('ppa-mes')?.selectedOptions?.[0]?.textContent||'—');
     pagina.innerHTML=`
-      <div class="kpi-grid" style="margin-bottom:16px">
-        <div class="kpi orange"><span class="kpi-icon">⚠️</span><div class="kpi-val">${risco}</div><div class="kpi-lbl">Em Risco de Ruptura</div></div>
-        <div class="kpi blue"><span class="kpi-icon">📋</span><div class="kpi-val">${reais.length}</div><div class="kpi-lbl">Sugestões Geradas</div></div>
-        <div class="kpi purple"><span class="kpi-icon">🏭</span><div class="kpi-val">${maqSet.size}</div><div class="kpi-lbl">Máquinas Envolvidas</div></div>
-        <div class="kpi green"><span class="kpi-icon">⏱️</span><div class="kpi-val">${hrs.toLocaleString('pt-BR',{maximumFractionDigits:1})}h</div><div class="kpi-lbl">Horas de Produção</div></div>
-        <div class="kpi"><div class="kpi-val" style="font-size:1rem">${esc(periodoAlvoLabel)}</div><div class="kpi-lbl">Período Alvo</div></div>
+      <div class="ppa-summary-row">
+        <div class="dc dc-orange"><div class="dc-lbl">Em Risco de Ruptura</div><div class="dc-num" style="font-size:26px">${risco}</div></div>
+        <div class="dc dc-cyan"><div class="dc-lbl">Sugestões Geradas</div><div class="dc-num" style="font-size:26px">${reais.length}</div></div>
+        <div class="dc dc-purple"><div class="dc-lbl">Máquinas Envolvidas</div><div class="dc-num" style="font-size:26px">${maqSet.size}</div></div>
+        <div class="dc dc-green"><div class="dc-lbl">Horas de Produção</div><div class="dc-num" style="font-size:22px">${hrs.toLocaleString('pt-BR',{maximumFractionDigits:1})}h</div></div>
+        <div class="dc"><div class="dc-lbl">Período Alvo</div><div class="dc-num" style="font-size:16px;padding-top:6px">${esc(periodoAlvoLabel)}</div></div>
       </div>
       <div class="tc" style="padding:10px 14px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span style="font-size:.68rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;min-width:60px">Período</span>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 14px;border-radius:20px;border:1px solid ${p.modo==='mes'?'var(--orange)':'var(--border)'};font-size:.76rem;font-weight:600"><input type="radio" name="ppa-modo" value="mes" ${p.modo==='mes'?'checked':''}> 📅 Mês</label>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer;padding:5px 14px;border-radius:20px;border:1px solid ${p.modo==='semana'?'var(--orange)':'var(--border)'};font-size:.76rem;font-weight:600"><input type="radio" name="ppa-modo" value="semana" ${p.modo==='semana'?'checked':''}> 📆 Semana</label>
-        <select id="ppa-mes" class="field" style="min-width:180px;${p.modo==='mes'?'':'display:none'}">${optionsMeses()}</select>
-        <select id="ppa-semana" class="field" style="min-width:220px;${p.modo==='semana'?'':'display:none'}">${optionsSemanas()}</select>
+        <select id="ppa-mes" class="field" style="${p.modo==='mes'?'':'display:none'}">${optionsMeses()}</select>
+        <select id="ppa-semana" class="field" style="${p.modo==='semana'?'':'display:none'}">${optionsSemanas()}</select>
         <span style="font-size:.64rem;color:var(--muted)">venda + estoque desejado − estoque atual, distribuído nas semanas</span>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px">
@@ -309,8 +623,9 @@
         <button class="btn btn-ghost" data-ppa-recalcular="1">🔄 Recalcular</button>
         ${reais.length?'<button class="btn btn-primary" data-ppa-aplicar="1" style="background:var(--success)">✅ Aplicar no Gantt / Programação</button>':''}
         <button class="btn btn-ghost" data-ppa-simular="1">🔬 Simular Cenário</button>
+        ${reais.length?'<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:.76rem;color:var(--muted)"><input type="checkbox" data-ppa-check-todos="1" checked> Selecionar todos</label>':''}
         <div style="flex:1"></div>
-        <select id="ppa-maq-filter" class="field" style="min-width:160px"><option value="">Todas as máquinas</option>${maquinasOpts}</select>
+        <select id="ppa-maq-filter" class="field"><option value="">Todas as máquinas</option>${maquinasOpts}</select>
       </div>
       <div class="tc" style="padding:14px;margin-bottom:16px">
         <div style="font-weight:700;font-size:.8rem;margin-bottom:10px">⚙️ Parâmetros da Programação Automática</div>
@@ -329,33 +644,118 @@
       </div>
       ${_simulacao && reais.length?'<div class="tc" style="padding:10px 14px;margin-bottom:12px;border-left:4px solid var(--orange)"><b>🔬 Modo simulação:</b> nenhuma OP foi gravada. Ajuste os parâmetros e compare o cenário.</div>':''}
       ${avisoSemMaq?`<div class="tc" style="padding:10px 14px;margin-bottom:12px;border-left:4px solid var(--danger)">⚠️ ${avisoSemMaq} produto(s) em risco não possuem máquina compatível cadastrada.</div>`:''}
+      ${!_simulacao&&_auditoria.length&&!reais.length&&!avisoSemMaq?'<div class="tc" style="padding:10px 14px;margin-bottom:12px;border-left:4px solid var(--orange)">⚠️ Nenhum produto entrou na fila de produção — normalmente é porque nenhum tem projeção de vendas cadastrada (venda_m1/m2/m3). Vá em <b>Produção › Projeção de Vendas</b> e clique em <b>"📊 Buscar do BI"</b> pra preencher a partir da escadinha, depois gere de novo.</div>':''}
       ${_auditoria.length?`<div class="tc" style="padding:12px;margin-bottom:16px"><div style="font-weight:700;margin-bottom:8px">📊 Auditoria de capacidade por máquina</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:8px">${_auditoria.filter(a=>!filtro||a.maquina===filtro).map(a=>`<div style="border:1px solid var(--border);border-radius:8px;padding:9px"><div style="display:flex;justify-content:space-between"><b>${esc(a.maquina)}</b><span>${a.pct.toFixed(0)}%</span></div><div style="font-size:.66rem;color:var(--muted)">${esc(a.semana)} · atual ${(a.existente/60).toFixed(1)}h + nova ${(a.nova/60).toFixed(1)}h / cap ${(a.capacidade/60).toFixed(1)}h</div><div style="height:5px;background:var(--border);border-radius:9px;margin-top:5px"><div style="height:100%;width:${Math.min(100,a.pct)}%;background:${a.pct>100?'var(--danger)':a.pct>85?'var(--orange)':'var(--green-mid)'};border-radius:9px"></div></div></div>`).join('')}</div></div>`:''}
-      ${_sugestoes.length?`<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th><input type="checkbox" data-ppa-check-todos="1" checked></th><th>Semana</th><th>Produto</th><th>Cobertura</th><th>Qtd.</th><th>Máquina</th><th>Setup</th><th>Distribuição</th><th>Insumos</th></tr></thead><tbody>${vis.map((s)=>{const idx=_sugestoes.indexOf(s);return `<tr><td>${s.semMaquina?'—':`<input type="checkbox" data-ppa-check="${idx}" ${s.selecionada!==false?'checked':''}>`}</td><td>${esc(s.semana||'—')}</td><td><b>${esc(s.produto)}</b><div style="font-size:.62rem;color:var(--muted)">Cód. ${esc(s.cod)}</div></td><td>${Number.isFinite(s.coberturaAtual)?s.coberturaAtual.toFixed(1)+'d':'—'} → ${Number.isFinite(s.coberturaPos)?s.coberturaPos.toFixed(1)+'d':'—'}</td><td>${s.qtyCaixas||'—'} cx</td><td>${s.maquina?esc(s.maquina):'<span class="badge b-red">Sem máquina</span>'}</td><td>${s.setupMin?Math.round(s.setupMin)+' min':'—'}</td><td style="font-size:.68rem">${(s.distribuicao||[]).map(d=>d.dia+' '+d.caixas).join(' · ')||'—'}</td><td>${s.insumoFaltas?.length?`<span class="badge b-orange" title="${esc(s.insumoFaltas.map(f=>f.insumo).join(', '))}">${s.insumoFaltas.length} falta(s)</span>`:'<span class="badge b-green">OK</span>'}</td></tr>`}).join('')}</tbody></table></div></div>`:'<div class="empty"><div class="empty-icon">🤖</div><div class="empty-title">Configure os parâmetros e gere a programação automática.</div></div>'}
+      ${_sugestoes.length?(()=>{
+        const porMaquina=new Map();
+        vis.filter(s=>!s.semMaquina).forEach(s=>{ if(!porMaquina.has(s.maquina))porMaquina.set(s.maquina,[]); porMaquina.get(s.maquina).push(s); });
+        const grupos=[...porMaquina.entries()].sort((a,b)=>a[0].localeCompare(b[0],'pt-BR')).map(([maq,linhas])=>_grupoMaquinaHtml(maq,linhas)).join('');
+        const semMaq=vis.filter(s=>s.semMaquina);
+        const semMaqHtml=semMaq.length?`<div class="tc" style="margin-bottom:14px">
+          <div style="padding:12px 14px;border-bottom:1px solid var(--border)"><b style="font-size:.86rem">⚠️ Sem máquina compatível</b></div>
+          <div style="overflow:auto"><table class="dt-table"><thead><tr><th>Semana</th><th>Produto</th><th>Cobertura</th></tr></thead><tbody>${semMaq.map(s=>`<tr><td>${esc(s.semana||'—')}</td><td><b>${esc(s.produto)}</b><div style="font-size:.62rem;color:var(--muted)">Cód. ${esc(s.cod)}</div></td><td>${Number.isFinite(s.coberturaAtual)?s.coberturaAtual.toFixed(1)+'d':'—'}</td></tr>`).join('')}</tbody></table></div>
+        </div>`:'';
+        return (grupos+semMaqHtml) || '<div class="empty"><div class="empty-icon">🤖</div><div class="empty-title">Nenhuma sugestão para a máquina selecionada.</div></div>';
+      })():'<div class="empty"><div class="empty-icon">🤖</div><div class="empty-title">Configure os parâmetros e gere a programação automática.</div></div>'}
     `;
     // preserva seleções de período quando redesenha
     const mes=document.getElementById('ppa-mes'); if(mes&&p.mes)mes.value=p.mes;
     const sem=document.getElementById('ppa-semana'); if(sem&&p.semana)sem.value=p.semana;
   }
 
+  // PEDIDO AO VIVO (2026-09-03, 2ª rodada): desde que gerarSugestoes passou
+  // a consolidar 1 linha por produto (Semana 1 / Total Mês / 4 semanas), a
+  // aplicação também precisa criar 1 OP por (semana × máquina) que teve
+  // alocação de verdade — igual ao original (aplicarProgAutomaticaNoGantt/
+  // buildPlanejamento), não mais 1 OP por linha da tabela.
   async function aplicarSugestoesSelecionadas(){
     const ids=new Set(Array.from(document.querySelectorAll('[data-ppa-check]:checked')).map(x=>Number(x.getAttribute('data-ppa-check'))));
     const lista=_sugestoes.filter((s,i)=>ids.has(i)&&!s.semMaquina);
     if(!lista.length){global.showToast?.('Selecione ao menos uma sugestão.','error');return;}
+    // Reusa exatamente as semanas do cálculo que gerou `_sugestoes` — nunca
+    // recalcula do formulário aqui (ver comentário em gerarSugestoes).
+    const semanas=_semanasCalculo.length?_semanasCalculo:semanasPlanejamento(parametros());
     const executar=async()=>{
       try{
-        const agora=new Date().toISOString(); let gravadas=0;
+        const agora=new Date().toISOString(); let gravadas=0, removidas=0;
+        // PEDIDO AO VIVO (2026-09-07), varredura geral: "você sempre diz
+        // que ajustou mas continua do mesmo jeito" — achada a causa: esta
+        // função só ADICIONAVA OPs novas, nunca removia as sugestões
+        // automáticas ANTIGAS do mesmo produto/semana (nem as de antes de
+        // qualquer correção de hoje). Recalcular e aplicar de novo só
+        // empilhava OPs em cima das antigas — o Gantt continuava mostrando
+        // o resultado velho (às vezes exclusivamente, se nenhum checkbox
+        // novo cobria aquele produto/semana). Antes de gravar as novas,
+        // apaga as OPs automáticas PENDENTES (nada apontado ainda) do
+        // mesmo produto+semana — nunca mexe em OP criada manualmente nem
+        // em qualquer coisa que já tenha produção real registrada.
         for(const s of lista){
-          const snapshot=typeof global.buildProducaoConfigSnapshot==='function'?global.buildProducaoConfigSnapshot(s.produtoCad,s.maquinaCad,s.pcMin,s.unidPorCx):null;
-          await fs().collection(COL_REGISTROS).add({
-            produto:s.produto,prodCod:s.cod,maquina:s.maquina,pcMin:s.pcMin,unidPorCx:s.unidPorCx,
-            qntCaixas:s.qtyCaixas,qntUnid:s.qtyCaixas*s.unidPorCx,categoria:s.maquinaCad?.categoria||'',
-            status:'pendente',data:(s.distribuicao?.[0]?.data)||s.semana,horaInicio:'',
-            obs:'Gerada pela Programação Automática V341',origem:'programacao_automatica',semanaPlanejada:s.semana,
-            distribuicaoPlanejada:s.distribuicao||[],setupPrevistoMin:s.setupMin||0,
-            ...(snapshot?{configSnapshot:snapshot}:{}),sortOrder:Date.now()+gravadas,criadoEm:agora,atualizadoEm:agora,
-          }); gravadas++;
+          for(let si=0;si<(s.detalhesSemanas||[]).length;si++){
+            const w=semanas[si]; if(!w) continue;
+            const semanaIso=iso(w.inicio);
+            const antigos=_registros.filter(r=>
+              r.origem==='programacao_automatica' &&
+              r.semanaPlanejada===semanaIso &&
+              norm(r.status)!=='CONCLUIDO' &&
+              n(r.qntProduzida??r.qtdProduzida??r.realizadoCx??r.caixasRealizadas)<=0 &&
+              (String(r.prodCod??'')===String(s.cod??'') || norm(r.produto)===norm(s.produto))
+            );
+            for(const r of antigos){ await fs().collection(COL_REGISTROS).doc(r._firestoreId).delete(); removidas++; }
+          }
         }
-        global.showToast?.(`${gravadas} OP(s) aplicadas à Programação/Gantt.`,'success');
+        for(const s of lista){
+          for(let si=0;si<(s.detalhesSemanas||[]).length;si++){
+            const w=semanas[si]; if(!w) continue;
+            const porMaquina=new Map();
+            (s.detalhesSemanas[si]||[]).forEach(d=>{
+              if(!d.cx||d.cx<=0)return;
+              const atual=porMaquina.get(d.maquina)||{cx:0,pcMin:d.pcMin||0,maquinaCad:d.maquinaCad};
+              atual.cx+=d.cx; atual.pcMin=d.pcMin||atual.pcMin;
+              porMaquina.set(d.maquina,atual);
+            });
+            for(const [maquina,info] of porMaquina){
+              // PEDIDO AO VIVO (2026-09-07), varredura final: lendo
+              // aplicarProgAutomaticaNoGantt do original (app.js:13950) do
+              // início ao fim — achado o erro de arquitetura real. O
+              // original cria só **1 registro por (produto × semana ×
+              // máquina)**, com a quantidade da semana INTEIRA, datado pro
+              // 1º dia útil daquela máquina — e é só isso. Ele NUNCA
+              // pré-divide por dia (distribuirPorDia nem é chamada aqui).
+              // Quem faz a produção aparecer espalhada corretamente pelos
+              // dias da semana no Gantt é o PRÓPRIO motor de agenda
+              // (buildProducaoSchedule, já portado em 63-producao-agenda.js
+              // e já usado pra desenhar o Gantt) — ele lê 1 registro grande
+              // e vai avançando cursor de dia em dia conforme a capacidade
+              // enche, sozinho, na hora de renderizar. Eu estava chamando
+              // distribuirDias() AQUI e pré-fatiando em várias OPs (1 doc
+              // por dia) — redundante E prejudicial: o buildProducaoSchedule
+              // então recebia VÁRIOS registros pequenos do mesmo produto em
+              // vez de 1 grande, e a interação entre o cursor dele e os
+              // fragmentos de vários produtos entrelaçados é o que
+              // bagunçava a Programação Visual, mesmo com o cálculo
+              // correto por trás. Voltando a criar 1 OP só por
+              // produto/semana/máquina, como o original — o Gantt já sabe
+              // desenhar isso certo sozinho.
+              const dataOp=primeiroDiaUtil(w,info.maquinaCad||{});
+              const snapshot=typeof global.buildProducaoConfigSnapshot==='function'?global.buildProducaoConfigSnapshot(s.produtoCad,info.maquinaCad,info.pcMin,s.unidPorCx):null;
+              await fs().collection(COL_REGISTROS).add({
+                produto:s.produto,prodCod:s.cod,maquina,pcMin:info.pcMin,unidPorCx:s.unidPorCx,
+                qntCaixas:info.cx,qntUnid:info.cx*s.unidPorCx,categoria:info.maquinaCad?.categoria||'',
+                status:'pendente',data:dataOp,horaInicio:'',
+                // obs fica em branco pro usuário preencher (pedido ao
+                // vivo); motorVersao é um campo interno (não aparece na
+                // UI) só pra dar rastreabilidade.
+                obs:'',origem:'programacao_automatica',motorVersao:'20260907i',semanaPlanejada:iso(w.inicio),
+                ...(snapshot?{configSnapshot:snapshot}:{}),sortOrder:Date.now()+gravadas,criadoEm:agora,atualizadoEm:agora,
+              }); gravadas++;
+            }
+          }
+        }
+        // Todas as telas de Produção mantêm dados em memória. Sem esta
+        // invalidação, as OPs aplicadas aqui só apareciam no Dashboard,
+        // Gantt, Máquinas, Realizado e Relatórios após recarregar o site.
+        global.DTProducao?.invalidarTudo?.();
+        global.showToast?.(`${gravadas} OP(s) aplicadas à Programação/Gantt.${removidas?` (${removidas} OP(s) automática(s) antiga(s) substituída(s))`:''}`,'success');
         _registros=[]; _carregado=false; _sugestoes=[]; _auditoria=[]; _simulacao=false; await carregarProgAutomatica(true); _desenharProgAutomatica();
       }catch(e){global.showToast?.('Erro ao aplicar: '+(e.message||e),'error');}
     };
@@ -365,13 +765,16 @@
   global.renderProducaoProgAutomatica=renderProducaoProgAutomatica;
   global.gerarProducaoAutomaticaAvancada=gerarSugestoes;
   global.aplicarProducaoAutomatica=aplicarSugestoesSelecionadas;
+  global._DTProgAutomaticaInternals={getSugestoes:()=>_sugestoes,getAuditoria:()=>_auditoria,distribuirDias,primeiroDiaUtil,semanaIsoDoIndice:i=>iso(semanasPlanejamento(parametros())[i].inicio)};
 
   document.addEventListener('click',e=>{
     if(e.target.closest('[data-ppa-gerar]')){gerarSugestoes(false);return;}
     if(e.target.closest('[data-ppa-recalcular]')){gerarSugestoes(false);return;}
     if(e.target.closest('[data-ppa-simular]')){gerarSugestoes(true);return;}
     if(e.target.closest('[data-ppa-aplicar]')){aplicarSugestoesSelecionadas();return;}
-    if(e.target.hasAttribute('data-ppa-check-todos')){document.querySelectorAll('[data-ppa-check]').forEach(c=>{if(!c.disabled)c.checked=e.target.checked;});}
+    if(e.target.hasAttribute('data-ppa-check-todos')){document.querySelectorAll('[data-ppa-check]').forEach(c=>{if(!c.disabled)c.checked=e.target.checked;});return;}
+    const insToggle=e.target.closest('[data-ppa-ins-toggle]');
+    if(insToggle){const el=document.getElementById(insToggle.getAttribute('data-ppa-ins-toggle'));if(el)el.style.display=el.style.display==='none'?'table-row':'none';return;}
   });
   document.addEventListener('change',e=>{
     if(e.target?.name==='ppa-modo')_desenharProgAutomatica();

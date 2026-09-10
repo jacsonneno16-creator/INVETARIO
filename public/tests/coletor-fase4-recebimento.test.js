@@ -1026,8 +1026,13 @@ test('roteamento: coletor.html tem as 4 telas da fase 4 e os 3 pontos de login v
 });
 
 test('scanner de hardware: Enter em rec-scan-input confirma o código; num campo de NF (qualquer linha, [data-nf-input]) ADICIONA a nota à lista (pedido ao vivo: dá pra bipar mais de uma NF em sequência antes de confirmar)',()=>{
-  assert.match(scannerCode,/rec-scan-input.*confirmarCodigoRecebimento/);
-  assert.match(scannerCode,/\[data-nf-input\].*adicionarNotaFiscalRecebimento/);
+  // [\s\S]* (não `.*`) — o Coletor passou a ser transpilado (Babel/preset-env
+  // mirando Chrome 66, pro WebView de coletores industriais antigos como o
+  // Datalogic Memor K) e o transpilador pode reformatar um `if` de uma linha
+  // só em várias linhas; o teste verifica a ORDEM real do código, não se
+  // cabe numa linha física só.
+  assert.match(scannerCode,/rec-scan-input[\s\S]*confirmarCodigoRecebimento/);
+  assert.match(scannerCode,/\[data-nf-input\][\s\S]*adicionarNotaFiscalRecebimento/);
 });
 
 test('REGRESSÃO: menu de três pontinhos e "Trocar loja" ficam na parte superior (top-bar) das telas iniciais de cada etapa (pedido ao vivo do usuário) — Acesso, Modo e Recebimento',()=>{
@@ -1041,4 +1046,18 @@ test('REGRESSÃO: menu de três pontinhos e "Trocar loja" ficam na parte superio
   // botão fixo antigo (só existia dentro do card da tela de Modo) não existe
   // mais — a ação virou item de menu, reaproveitável em qualquer tela
   assert.doesNotMatch(htmlCode,/id="coletor-trocar-loja"/);
+});
+
+// BUG AO VIVO REAL (2026-09-08): "quando seleciono para trocar de loja não
+// dá para ler muito bem" — screenshot mostrava o nome da loja quase
+// invisível (branco sobre o fundo branco/verde-claro do menu). `<button>`
+// NÃO herda `color` do container por padrão (UA stylesheet) — só o `<div>`
+// do menu tinha `color:#111827`; sem cor explícita no próprio botão/span,
+// WebView/Chrome em modo escuro do celular aplicava branco automático nos
+// controles nativos. Correção: cor explícita no botão E no span do nome.
+test('menu de trocar loja: nome da loja e o próprio botão têm cor explícita (não dependem de herança do container)',()=>{
+  const trecho=authCode.slice(authCode.indexOf('function trocarLojaColetor'),authCode.indexOf('window.trocarLojaColetor'));
+  assert.match(trecho,/color-scheme:light/,'menu deveria travar o color-scheme pra light, evitando o WebView escurecer os controles nativos');
+  assert.match(trecho,/;color:#111827;font:inherit;text-align:left;cursor:pointer/,'o próprio <button> precisa de color explícita');
+  assert.match(trecho,/<span style="font-weight:'[\s\S]*?;color:#111827">/,'o <span> do nome da loja precisa de color explícita');
 });

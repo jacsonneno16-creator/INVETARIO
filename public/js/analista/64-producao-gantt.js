@@ -36,9 +36,16 @@
   let _dragReorderIdx = null;
   // Largura das colunas Produto/Observação da grade semanal — arrastável,
   // igual à original (persistida por usuário, mesmo padrão de localStorage).
-  let _larguraColProduto = parseInt(localStorage.getItem('dt-pgantt-produto-w') || '220', 10) || 220;
-  let _larguraColObs = parseInt(localStorage.getItem('dt-pgantt-obs-w') || '130', 10) || 130;
+  let _larguraColProduto = parseInt(localStorage.getItem('gantt-label-width') || '280', 10) || 280;
+  let _larguraColObs = parseInt(localStorage.getItem('gantt-obs-width') || '140', 10) || 140;
   let _resizeGanttAtivo = null; // {campo, startX, startW}
+  // PEDIDO AO VIVO (pendência #3, rodada de correção): o original começa
+  // com #gantt-summary escondido (display:none, index.html:353) — estado
+  // inicial precisa ser IGUAL, não uma divergência deliberada. Em memória
+  // apenas (nunca localStorage), pra garantir que toda entrada na tela
+  // comece oculta feito o original — "persistir só como melhoria opcional"
+  // não pode mudar esse estado inicial, então não persiste entre sessões.
+  let _resumoAberto = false;
 
   function fs() { return global.getDTFirestore(); }
   function podeEditarGantt() { return typeof global.temPermissao !== 'function' || global.temPermissao('producao-gantt', 'editar'); }
@@ -113,14 +120,6 @@
     }).join('');
   }
 
-  function _legendaGantt() {
-    return `<div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:.68rem;color:var(--muted);margin:0 0 12px">
-      <span><i style="display:inline-block;width:11px;height:7px;border-radius:2px;background:var(--orange);margin-right:4px"></i>Produção</span>
-      <span><i style="display:inline-block;width:11px;height:7px;border-radius:2px;background:repeating-linear-gradient(45deg,#9CA3AF,#9CA3AF 3px,#D1D5DB 3px,#D1D5DB 6px);margin-right:4px"></i>Setup</span>
-      <span>🖱️ Clique na barra: editar OP</span><span>↔ Arraste: reprogramar dia</span><span>⇅ Reordenar: prioridade da fila</span>
-    </div>`;
-  }
-
   // PEDIDO AO VIVO (auditoria 2ª rodada, seção 8): removido o título grande
   // "Gantt — Programação de Produção" — o original (index.html:282-297)
   // não tem bloco de título nenhum, começa direto no seletor Semanal/
@@ -159,7 +158,6 @@
             <div style="display:flex;gap:6px"><button class="btn btn-ghost" data-pgantt-export="1">📊 Excel</button><button class="btn btn-ghost" data-pgantt-pdf="1">📄 PDF</button></div>
           </div>`}
       </div>
-      ${_legendaGantt()}
       ${_avisoSetupNaoConfiguradoHtml()}
       ${_painelDiagnosticoVelocidade()}
       <div class="tc" style="margin-bottom:14px"><div style="padding:8px 12px;display:flex;align-items:center;justify-content:space-between;cursor:pointer" data-pgantt-diagnostico-toggle="1"><div style="font-size:.76rem;font-weight:600">🔧 Diagnóstico de setup faltando</div><div style="font-size:.7rem;color:var(--muted)">${_diagnosticoAberto ? '▲ ocultar' : '▼ mostrar'}</div></div>${_diagnosticoAberto ? _painelDiagnosticoSetup() : ''}</div>`;
@@ -265,8 +263,15 @@
   // da original (uma linha por produto dentro de cada máquina, não uma
   // linha só por máquina), pra expor qtd/tempo/setup/obs sem precisar
   // passar o mouse ou clicar em nada.
+  // CORREÇÃO (comparação com screenshot real do original rodando): a
+  // tentativa anterior de mover Observação pra logo depois de Produto
+  // estava ERRADA — baseada numa leitura desatualizada do código de
+  // referência. O app real mostra Observação DEPOIS de H.Prog, logo antes
+  // dos 7 dias (Máquina → Produto → Qtd → Tempo → Setup → H.Prog →
+  // Observação → dias) — a ordem que este arquivo já tinha antes daquela
+  // tentativa. Revertido pra essa ordem.
   function _gridColsGantt() {
-    return `84px ${_larguraColProduto}px 52px 56px 56px 64px ${_larguraColObs}px repeat(7,1fr)`;
+    return `72px ${_larguraColProduto}px 48px 52px 52px 68px ${_larguraColObs}px repeat(7,1fr) repeat(7,36px)`;
   }
   function _aplicarGridGantt() {
     const g = _gridColsGantt();
@@ -316,94 +321,90 @@
       <div class="tc" style="padding:0;overflow:hidden">
         <div style="overflow:auto">
           <div class="pgantt-grid-row" style="display:grid;grid-template-columns:${gridCols};background:var(--surface-2);border-bottom:1px solid var(--border)">
-            <div style="padding:5px 8px;font-size:.62rem;font-weight:700;color:var(--muted)">Máquina</div>
-            <div style="padding:5px 8px;font-size:.62rem;font-weight:700;color:var(--muted)">Produto</div>
-            <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">Qtd<br>cx</div>
-            <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">Tempo<br>h</div>
-            <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">Set Up<br>h</div>
-            <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">H.<br>Prog.</div>
-            <div style="padding:5px 8px;font-size:.62rem;font-weight:700;color:var(--muted)">Observação</div>
-            ${diasSemana.map(d => `<div style="padding:5px 4px;font-size:.62rem;font-weight:700;text-align:center;color:${d.toDateString() === hojeStr ? 'var(--orange)' : 'var(--muted)'}">${DIA_LABEL[d.getDay()]}<br>${_fmtDataCurta(d)}</div>`).join('')}
+            <div style="padding:5px 8px;font-size:.54rem;font-weight:700;color:var(--muted)">Máquina</div>
+            <div style="padding:5px 8px;font-size:.54rem;font-weight:700;color:var(--muted);position:relative;border-left:1px solid var(--border)">Produto<div data-pgantt-resize="produto" class="pgantt-col-resizer" title="Arraste para redimensionar"><i></i></div></div>
+            <div style="padding:5px 4px;font-size:.54rem;font-weight:700;color:var(--muted);text-align:center;border-left:1px solid var(--border)">Qtd<br>cx</div>
+            <div style="padding:5px 4px;font-size:.54rem;font-weight:700;color:var(--muted);text-align:center;border-left:1px solid var(--border)">Tempo<br>h</div>
+            <div style="padding:5px 4px;font-size:.54rem;font-weight:700;color:var(--muted);text-align:center;border-left:1px solid var(--border)">Set Up<br>h</div>
+            <div style="padding:5px 4px;font-size:.54rem;font-weight:700;color:var(--muted);text-align:center;border-left:1px solid var(--border)">H.<br>Prog.</div>
+            <div style="padding:5px 8px;font-size:.54rem;font-weight:700;color:var(--muted);position:relative;border-left:1px solid var(--border)">Obser-<br>vação<div data-pgantt-resize="obs" class="pgantt-col-resizer" title="Arraste para redimensionar observação"><i></i></div></div>
+            ${diasSemana.map(d => `<div style="padding:4px 4px;font-size:.56rem;font-weight:700;text-align:center;border-left:1px solid var(--border);color:${d.toDateString() === hojeStr ? 'var(--orange)' : 'var(--muted)'}">${DIA_LABEL[d.getDay()]}<br>${_fmtDataCurta(d)}</div>`).join('')}
+            ${diasSemana.map(d => `<div class="pgantt-qtd-head">${DIA_LABEL[d.getDay()]}<br><span>${_fmtDataCurta(d)}</span></div>`).join('')}
           </div>
           <div class="empty" style="padding:40px 20px"><div class="empty-icon">📅</div><div class="empty-title">Nenhuma OP agendada nesta semana</div><div class="empty-sub">Cadastre uma Ordem de Produção com data dentro deste período (Programação) e configure os turnos da máquina (Máquinas)</div></div>
         </div>
       </div>`;
 
-    return `
-      ${_legendaOPsSemana(resultado)}
-      ${nomesComOPs.map(nome => {
-        const maquina = maquinasPorNome[nome] || {};
-        const dados = resultado.porMaquina[nome];
-        const ocupPct = dados.capacidadeMinutosSemana > 0 ? Math.round((dados.totalMinutosUsados / dados.capacidadeMinutosSemana) * 100) : 0;
-        const ocupCor = ocupPct > 100 ? 'var(--danger)' : ocupPct >= 80 ? 'var(--warn)' : 'var(--success)';
-        const turnosAtivos = _numTurnosAtivos(maquina, diasSemana);
+    // PEDIDO AO VIVO (usuário: "o layout que eu quero que mude, verifica
+    // essa merda direito") — no original (renderGantt, gantt-table) existe
+    // UMA grade contínua só: o cabeçalho de colunas aparece 1x no topo, e
+    // cada máquina vira só uma FAIXA separadora fina (nome + % ocupação)
+    // dentro dessa mesma grade — não um card próprio com o cabeçalho de
+    // coluna repetido dentro. Essa versão tinha um `.tc` (card) por
+    // máquina, cada um com seu PRÓPRIO cabeçalho de coluna completo
+    // repetido — errado, restaurado pra 1 cabeçalho + faixas separadoras.
+    const secoesMaquinas = nomesComOPs.map(nome => {
+      const maquina = maquinasPorNome[nome] || {};
+      const dados = resultado.porMaquina[nome];
+      const ocupPct = dados.capacidadeMinutosSemana > 0 ? Math.round((dados.totalMinutosUsados / dados.capacidadeMinutosSemana) * 100) : 0;
+      const ocupCor = ocupPct > 100 ? 'var(--danger)' : ocupPct >= 80 ? 'var(--warn)' : 'var(--success)';
+      const turnosAtivos = _numTurnosAtivos(maquina, diasSemana);
 
-        // Agrupa os segmentos da semana por produto (+ observação, quando
-        // manual) — igual à consolidação da original — pra virar UMA linha
-        // por produto dentro da máquina, em vez de tudo empilhado numa
-        // faixa só.
-        const grupos = {};
-        for (let di = 0; di < 7; di++) {
-          dados.porDia[di].forEach(seg => {
-            const reg = registrosPorId[seg.registroId];
-            const nomeProduto = seg.tipo === 'setup' ? (reg?.produto || seg.produto) : seg.produto;
-            const obsReg = (reg?.obs || '').trim();
-            const chave = obsReg ? (nomeProduto.toLowerCase() + '||' + obsReg.toLowerCase()) : nomeProduto.toLowerCase();
-            if (!grupos[chave]) grupos[chave] = { produto: nomeProduto, obs: obsReg, qtd: 0, minProd: 0, minSetup: 0, porDia: [[], [], [], [], [], [], []], registroIds: new Set() };
-            const g = grupos[chave];
-            g.registroIds.add(seg.registroId);
-            if (seg.tipo === 'producao') { g.qtd += seg.caixasNoDia; g.minProd += seg.minutosNoDia; }
-            else { g.minSetup += seg.minutosNoDia; }
-            g.porDia[di].push(seg);
-          });
-        }
-        const listaGrupos = Object.values(grupos).filter(g => g.minProd > 0 || g.minSetup > 0);
+      // Agrupa os segmentos da semana por produto (+ observação, quando
+      // manual) — igual à consolidação da original — pra virar UMA linha
+      // por produto dentro da máquina, em vez de tudo empilhado numa
+      // faixa só.
+      const grupos = {};
+      for (let di = 0; di < 7; di++) {
+        dados.porDia[di].forEach(seg => {
+          const reg = registrosPorId[seg.registroId];
+          const nomeProduto = seg.tipo === 'setup' ? (reg?.produto || seg.produto) : seg.produto;
+          const obsReg = (reg?.obs || '').trim();
+          const chave = obsReg ? (nomeProduto.toLowerCase() + '||' + obsReg.toLowerCase()) : nomeProduto.toLowerCase();
+          if (!grupos[chave]) grupos[chave] = { produto: nomeProduto, obs: obsReg, qtd: 0, minProd: 0, minSetup: 0, porDia: [[], [], [], [], [], [], []], registroIds: new Set() };
+          const g = grupos[chave];
+          g.registroIds.add(seg.registroId);
+          if (seg.tipo === 'producao') { g.qtd += seg.caixasNoDia; g.minProd += seg.minutosNoDia; }
+          else { g.minSetup += seg.minutosNoDia; }
+          g.porDia[di].push(seg);
+        });
+      }
+      const listaGrupos = Object.values(grupos).filter(g => g.minProd > 0 || g.minSetup > 0);
 
-        return `
-        <div class="tc" style="padding:0;margin-bottom:12px;overflow:hidden">
-          <div style="padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--surface-2);border-bottom:1px solid var(--border)">
-            <div style="font-weight:700">🏭 ${esc(nome)}
-              <span style="font-size:.65rem;color:var(--muted);font-weight:600">${turnosAtivos} dia(s) c/ turno · ${listaGrupos.length} produto(s)</span>
-            </div>
-            <div style="display:flex;align-items:center;gap:10px;font-family:monospace;font-size:.7rem">
-              <span style="color:var(--muted)">${(dados.totalMinutosUsados / 60).toFixed(1)}h prog. / ${(dados.capacidadeMinutosSemana / 60).toFixed(1)}h disp.</span>
-              <span style="font-weight:700;color:${ocupCor}">${ocupPct}% ocupação</span>
-              <span style="display:inline-block;width:70px;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
-                <span style="display:block;height:100%;width:${Math.min(100, ocupPct)}%;background:${ocupCor}"></span>
-              </span>
-            </div>
+      // Faixa separadora fina (grid-column:1/-1 span a largura toda da
+      // MESMA grade), no lugar do card com cabeçalho repetido — igual à
+      // ".g-maq-sep" do original.
+      const faixaMaquina = `<div class="pgantt-grid-row" style="display:grid;grid-template-columns:${gridCols}">
+        <div style="grid-column:1/-1;padding:5px 10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:var(--surface-3,#e9ebe9);border-top:2px solid var(--border-2,var(--border));border-bottom:1px solid var(--border-2,var(--border))">
+          <div style="font-size:.68rem;font-weight:700">🏭 ${esc(nome)}
+            <span style="font-size:.56rem;color:var(--muted);font-weight:600">${turnosAtivos} dia(s) c/ turno · ${listaGrupos.length} produto(s)</span>
           </div>
-          <div style="overflow:auto">
-            <div class="pgantt-grid-row" style="display:grid;grid-template-columns:${gridCols};background:var(--surface-2);border-bottom:1px solid var(--border)">
-              <div style="padding:5px 8px;font-size:.62rem;font-weight:700;color:var(--muted)">Máquina</div>
-              <div style="padding:5px 8px;font-size:.62rem;font-weight:700;color:var(--muted);position:relative">Produto
-                <div data-pgantt-resize="produto" title="Arraste para redimensionar" style="position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize"></div>
-              </div>
-              <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">Qtd<br>cx</div>
-              <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">Tempo<br>h</div>
-              <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">Set Up<br>h</div>
-              <div style="padding:5px 4px;font-size:.62rem;font-weight:700;color:var(--muted);text-align:center">H.<br>Prog.</div>
-              <div style="padding:5px 8px;font-size:.62rem;font-weight:700;color:var(--muted);position:relative">Observação
-                <div data-pgantt-resize="obs" title="Arraste para redimensionar" style="position:absolute;right:0;top:0;bottom:0;width:7px;cursor:col-resize"></div>
-              </div>
-              ${diasSemana.map(d => `<div style="padding:5px 4px;font-size:.62rem;font-weight:700;text-align:center;color:${d.toDateString() === hojeStr ? 'var(--orange)' : 'var(--muted)'}">${DIA_LABEL[d.getDay()]}<br>${_fmtDataCurta(d)}</div>`).join('')}
-            </div>
-            ${listaGrupos.map((g, gi) => {
+          <div style="display:flex;align-items:center;gap:10px;font-family:monospace;font-size:.6rem">
+            <span style="color:var(--muted)">${(dados.totalMinutosUsados / 60).toFixed(1)}h prog. / ${(dados.capacidadeMinutosSemana / 60).toFixed(1)}h disp.</span>
+            <span style="font-weight:700;color:${ocupCor}">${ocupPct}% ocupação</span>
+            <span style="display:inline-block;width:70px;height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+              <span style="display:block;height:100%;width:${Math.min(100, ocupPct)}%;background:${ocupCor}"></span>
+            </span>
+          </div>
+        </div>
+      </div>`;
+
+      const linhasMaquina = listaGrupos.map((g, gi) => {
               const corGrupo = _corDoRegistro([...g.registroIds][0]);
               const tempoStr = (g.minProd / 60).toFixed(1) + 'h';
               const setupStr = g.minSetup > 0 ? (g.minSetup / 60).toFixed(1) + 'h' : '—';
               return `<div class="pgantt-grid-row" style="display:grid;grid-template-columns:${gridCols};border-bottom:1px solid var(--border)">
-                <div style="padding:6px 8px;font-size:.68rem;color:var(--muted);display:flex;align-items:center">${gi === 0 ? esc(nome) : ''}</div>
-                <div style="padding:6px 8px;font-size:.72rem;font-weight:600;display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(g.produto)}${g.obs ? ' — ' + esc(g.obs) : ''}">${esc(g.produto)}</div>
-                <div style="padding:6px 4px;font-size:.7rem;text-align:center;display:flex;align-items:center;justify-content:center;font-family:monospace">${Math.round(g.qtd).toLocaleString('pt-BR')}</div>
-                <div style="padding:6px 4px;font-size:.7rem;text-align:center;display:flex;align-items:center;justify-content:center;font-family:monospace;color:var(--warn)">${tempoStr}</div>
-                <div style="padding:6px 4px;font-size:.7rem;text-align:center;display:flex;align-items:center;justify-content:center;font-family:monospace;color:${g.minSetup > 0 ? 'var(--orange)' : 'var(--muted)'}">${setupStr}</div>
-                <div style="padding:6px 4px;font-size:.7rem;text-align:center;display:flex;align-items:center;justify-content:center;font-family:monospace;font-weight:700;color:${ocupCor}">${gi === 0 ? (dados.totalMinutosUsados / 60).toFixed(1) + 'h' : ''}</div>
-                <div style="padding:6px 8px;font-size:.68rem;color:var(--muted);display:flex;align-items:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(g.obs)}">${esc(g.obs)}</div>
+                <div style="padding:3px 8px;font-size:.64rem;color:var(--muted);display:flex;align-items:center">${gi === 0 ? esc(nome) : ''}</div>
+                <div style="padding:3px 8px;font-size:.68rem;font-weight:600;display:flex;align-items:center;min-width:0;border-left:1px solid var(--border)" title="${esc(g.produto)}${g.obs ? ' — ' + esc(g.obs) : ''}"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${esc(g.produto)}</span></div>
+                <div style="padding:3px 4px;font-size:.66rem;text-align:center;display:flex;align-items:center;justify-content:center;font-family:monospace;border-left:1px solid var(--border)">${Math.round(g.qtd).toLocaleString('pt-BR')}</div>
+                <div style="padding:3px 4px;font-size:.66rem;text-align:center;display:flex;align-items:center;justify-content:center;font-family:monospace;color:var(--warn);border-left:1px solid var(--border)">${tempoStr}</div>
+                <div style="padding:3px 4px;font-size:.66rem;text-align:center;display:flex;align-items:center;justify-content:center;font-family:monospace;color:${g.minSetup > 0 ? 'var(--orange)' : 'var(--muted)'};border-left:1px solid var(--border)">${setupStr}</div>
+                <div style="padding:3px 4px;font-size:.66rem;text-align:center;display:flex;align-items:center;justify-content:center;font-family:monospace;font-weight:700;color:${ocupCor};border-left:1px solid var(--border)">${gi === 0 ? (dados.totalMinutosUsados / 60).toFixed(1) + 'h' : ''}</div>
+                <div style="padding:3px 8px;font-size:.64rem;color:var(--muted);display:flex;align-items:center;min-width:0;border-left:1px solid var(--border)" title="${esc(g.obs)}"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">${esc(g.obs)}</span></div>
                 ${g.porDia.map((segmentosDoDia, dayIdx) => {
                   const capacidadeDia = segmentosDoDia[0]?.capacidadeDoDiaMin || (typeof global.getTurnoMinutosDoDia === 'function' ? global.getTurnoMinutosDoDia(maquina, dayIdx) : 0);
                   return `
-                  <div data-pgantt-day-drop="${dayIdx}" data-pgantt-day-maquina="${esc(nome)}" style="position:relative;height:30px;margin:4px 3px;background:var(--surface-2);border-radius:4px;overflow:hidden">
+                  <div data-pgantt-day-drop="${dayIdx}" data-pgantt-day-maquina="${esc(nome)}" style="position:relative;height:28px;margin:2px 1px;background:var(--surface-2);border-radius:3px;overflow:hidden">
                     ${capacidadeDia > 0 ? segmentosDoDia.map(seg => {
                       const leftPct = Math.max(0, Math.min(100, (seg.inicioMin / capacidadeDia) * 100));
                       const widthPct = Math.max(2, Math.min(100 - leftPct, (seg.minutosNoDia / capacidadeDia) * 100));
@@ -414,25 +415,56 @@
                     }).join('') : ''}
                   </div>`;
                 }).join('')}
+                ${g.porDia.map((segmentosDoDia, dayIdx) => {
+                  const cxDia = segmentosDoDia.filter(seg => seg.tipo === 'producao').reduce((a, seg) => a + (Number(seg.caixasNoDia) || 0), 0);
+                  const semTurno = typeof global.getTurnoMinutosDoDia === 'function' && global.getTurnoMinutosDoDia(maquina, diasSemana[dayIdx].getDay()) <= 0;
+                  return `<div class="pgantt-qtd-dia" style="color:${cxDia > 0 ? (semTurno ? 'var(--muted)' : 'var(--orange)') : 'var(--muted)'}">${cxDia > 0 ? Math.round(cxDia).toLocaleString('pt-BR') : '—'}</div>`;
+                }).join('')}
               </div>`;
-            }).join('')}
+      }).join('');
+
+      return faixaMaquina + linhasMaquina;
+    }).join('');
+
+    return `
+      ${_legendaOPsSemana(resultado)}
+      <div class="tc" style="padding:0;overflow:hidden">
+        <div style="overflow:auto">
+          <div class="pgantt-grid-row" style="display:grid;grid-template-columns:${gridCols};background:var(--surface-2);border-bottom:1px solid var(--border)">
+            <div style="padding:5px 8px;font-size:.54rem;font-weight:700;color:var(--muted)">Máquina</div>
+            <div style="padding:5px 8px;font-size:.54rem;font-weight:700;color:var(--muted);position:relative;border-left:1px solid var(--border)">Produto
+              <div data-pgantt-resize="produto" title="Arraste para redimensionar" class="pgantt-col-resizer"><i></i></div>
+            </div>
+            <div style="padding:5px 4px;font-size:.54rem;font-weight:700;color:var(--muted);text-align:center;border-left:1px solid var(--border)">Qtd<br>cx</div>
+            <div style="padding:5px 4px;font-size:.54rem;font-weight:700;color:var(--muted);text-align:center;border-left:1px solid var(--border)">Tempo<br>h</div>
+            <div style="padding:5px 4px;font-size:.54rem;font-weight:700;color:var(--muted);text-align:center;border-left:1px solid var(--border)">Set Up<br>h</div>
+            <div style="padding:5px 4px;font-size:.54rem;font-weight:700;color:var(--muted);text-align:center;border-left:1px solid var(--border)">H.<br>Prog.</div>
+            <div style="padding:5px 8px;font-size:.54rem;font-weight:700;color:var(--muted);position:relative;border-left:1px solid var(--border)">Obser-<br>vação
+              <div data-pgantt-resize="obs" title="Arraste para redimensionar observação" class="pgantt-col-resizer"><i></i></div>
+            </div>
+            ${diasSemana.map(d => `<div style="padding:4px 4px;font-size:.56rem;font-weight:700;text-align:center;border-left:1px solid var(--border);color:${d.toDateString() === hojeStr ? 'var(--orange)' : 'var(--muted)'}">${DIA_LABEL[d.getDay()]}<br>${_fmtDataCurta(d)}</div>`).join('')}
+            ${diasSemana.map(d => `<div class="pgantt-qtd-head">${DIA_LABEL[d.getDay()]}<br><span>${_fmtDataCurta(d)}</span></div>`).join('')}
           </div>
-        </div>`;
-      }).join('')}
-      ${_resumoSemanal(resultado, diasSemana)}
+          ${secoesMaquinas}
+        </div>
+      </div>
+      <div style="margin-top:12px">
+        <button type="button" class="btn btn-ghost btn-sm" data-pgantt-resumo-toggle="1">${_resumoAberto ? '▴ Ocultar resumo' : '▾ Mostrar resumo'}</button>
+        ${_resumoAberto ? _resumoSemanal(resultado, diasSemana) : ''}
+      </div>
     `;
   }
 
-  // PEDIDO AO VIVO (auditoria 2ª rodada, seção 8): o original TEM essa
-  // tabela por máquina/produto/dia pronta (renderGanttSummary, app.js:
-  // 4299-4349 — mesmo formato reproduzido abaixo, com .gs-table/.gs-maq),
-  // mas o container #gantt-summary nasce com style="display:none" no HTML
-  // (index.html:353) e nada no app.js remove isso — é uma tela morta,
-  // calculada e nunca mostrada de verdade no original. Reproduzir a
-  // "paridade" literal aqui seria esconder um recurso que já funciona
-  // nesta integração; em vez disso, mantido VISÍVEL (largura cheia, não
-  // painel lateral de 340px — essa combinação nunca foi exercitada no
-  // original) com o mesmo formato de dados que o original calculava.
+  // PEDIDO AO VIVO (auditoria 2ª rodada, seção 8, revisada na pendência
+  // #3): o original TEM essa tabela por máquina/produto/dia pronta
+  // (renderGanttSummary, app.js:4299-4349 — mesmo formato reproduzido
+  // abaixo, com .gs-table/.gs-maq), mas o container #gantt-summary nasce
+  // com style="display:none" (index.html:353) e nada no app.js remove
+  // isso — estado inicial oculto de verdade. Fidelidade real: começa
+  // oculto igual ao original (_resumoAberto=false), com um botão
+  // discreto "▾ Mostrar resumo" pra quem quiser abrir — a tabela em si
+  // não foi removida, só deixou de forçar visibilidade que o original
+  // nunca teve por padrão.
   function _resumoSemanal(resultado, diasSemana) {
     const diasComHoras = diasSemana.map((d, i) => ({ d, i })).filter(({ d }) => {
       const j = global.PRODUCAO_JORNADA;
@@ -575,6 +607,12 @@
     _desenharProducaoGantt();
   }
   function pganttModo(modo) { _modoGantt = modo; _desenharProducaoGantt(); }
+  function pganttGetModo() { return _modoGantt; }
+  // Roteador: precisa setar o resumo pra um valor específico (idempotente),
+  // não só alternar — o toggle de clique continua alternando, chamando esta
+  // mesma função com o valor invertido.
+  function pganttResumoSet(v) { _resumoAberto = !!v; _desenharProducaoGantt(); }
+  function pganttGetResumoAberto() { return _resumoAberto; }
   function pganttMes(dir) { _mesRef.setMonth(_mesRef.getMonth() + dir); _desenharProducaoGantt(); }
   function pganttMesHoje() { _mesRef = new Date(); _desenharProducaoGantt(); }
   function pganttDiagnosticoToggle() { _diagnosticoAberto = !_diagnosticoAberto; _desenharProducaoGantt(); }
@@ -690,6 +728,9 @@
   global.pganttHoje = pganttHoje;
   global.pganttGoDate = pganttGoDate;
   global.pganttModo = pganttModo;
+  global.pganttGetModo = pganttGetModo;
+  global.pganttResumoSet = pganttResumoSet;
+  global.pganttGetResumoAberto = pganttGetResumoAberto;
   global.pganttMes = pganttMes;
   global.pganttMesHoje = pganttMesHoje;
   global.pganttDiagnosticoToggle = pganttDiagnosticoToggle;
@@ -713,6 +754,7 @@
     if (hoje) { pganttHoje(); return; }
     const modo = event.target.closest('[data-pgantt-modo]');
     if (modo) { pganttModo(modo.getAttribute('data-pgantt-modo')); return; }
+    if (event.target.closest('[data-pgantt-resumo-toggle]')) { pganttResumoSet(!_resumoAberto); return; }
     const mes = event.target.closest('[data-pgantt-mes]');
     if (mes) { pganttMes(Number(mes.getAttribute('data-pgantt-mes'))); return; }
     const mesHoje = event.target.closest('[data-pgantt-mes-hoje]');
@@ -761,9 +803,11 @@
   document.addEventListener('mousemove', function (event) {
     if (!_resizeGanttAtivo) return;
     const delta = event.clientX - _resizeGanttAtivo.startX;
-    const novaLargura = Math.max(100, Math.min(480, _resizeGanttAtivo.startW + delta));
-    if (_resizeGanttAtivo.campo === 'produto') { _larguraColProduto = novaLargura; localStorage.setItem('dt-pgantt-produto-w', String(novaLargura)); }
-    else { _larguraColObs = novaLargura; localStorage.setItem('dt-pgantt-obs-w', String(novaLargura)); }
+    const novaLargura = _resizeGanttAtivo.campo === 'produto'
+      ? Math.max(120, Math.min(520, _resizeGanttAtivo.startW + delta))
+      : Math.max(60, Math.min(400, _resizeGanttAtivo.startW + delta));
+    if (_resizeGanttAtivo.campo === 'produto') { _larguraColProduto = novaLargura; localStorage.setItem('gantt-label-width', String(novaLargura)); }
+    else { _larguraColObs = novaLargura; localStorage.setItem('gantt-obs-width', String(novaLargura)); }
     _aplicarGridGantt();
   });
   document.addEventListener('mouseup', function () { _resizeGanttAtivo = null; });
@@ -785,5 +829,5 @@
       _dragReorderIdx = null;
     }
   });
-  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _registros=[]; _maquinas=[]; _setups=[]; });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _registros=[]; _maquinas=[]; _setups=[]; _resumoAberto=false; });
 })(window);

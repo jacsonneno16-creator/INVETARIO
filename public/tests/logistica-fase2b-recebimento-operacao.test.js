@@ -138,7 +138,7 @@ test('Firestore rules: correção de horário em recebimentos é um ramo separad
   // quando saiu de um lugar eles biparam o motorista errado") — ainda o
   // MESMO ramo administrativo, sem abrir permissão nova nem tocar em
   // status/loja (origemLojaId/destinoLojaId continuam fora desta lista).
-  assert.match(trecho,/affectedKeys\(\)\.hasOnly\(\['status','horaChegada','horaInicioDescarga','horaFimDescarga','horaFechamentoRecebimento','horaSaida','tempoViagemMin','tempoEsperaMin','tempoDescargaMin','tempoTotalMin','tempoAteFechamentoMin','atualizadoEm','atualizadoPor','notaFiscalTransferencia','notasVolumesTransferencia','volumes','notaFiscalConfirmadaEm','notaFiscalConfirmadaPor','motoristaId','motoristaNome','transportadora'\]\)/);
+  assert.match(trecho,/affectedKeys\(\)\.hasOnly\(\['status','horaChegada','horaInicioDescarga','horaFimDescarga','horaFechamentoRecebimento','horaSaida','tempoViagemMin','tempoEsperaMin','tempoDescargaMin','tempoTotalMin','tempoAteFechamentoMin','atualizadoEm','atualizadoPor','notaFiscalTransferencia','notasVolumesTransferencia','volumes','notaFiscalConfirmadaEm','notaFiscalConfirmadaPor','motoristaId','motoristaNome','transportadora','identificadorCodigo'\]\)/);
 });
 
 test('REGRESSÃO: "Voltar etapa" (pedido ao vivo do usuário: "não quero que uma ação errada deixe o transbordo preso em uma etapa sem possibilidade de correção") reverte status e limpa só o horário daquele passo, sem mexer no resto',async()=>{

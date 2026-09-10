@@ -1,4 +1,4 @@
-const test=require('node:test');const assert=require('node:assert/strict');const fs=require('fs');const path=require('path');const vm=require('vm');
+const test=require('node:test');const assert=require('node:assert/strict');const fs=require('fs');const path=require('path');const vm=require('vm');const { JSDOM } = require('jsdom');
 const base=path.join(__dirname,'../js/analista');
 const servicoCode=fs.readFileSync(path.join(base,'90-bluesoft-service.js'),'utf8');
 const navCode=fs.readFileSync(path.join(base,'03-core-navigation.js'),'utf8');
@@ -9,7 +9,7 @@ const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8');
 function mockRawFirestore(loja){
   return {
     collection:(nome)=>{
-      if(nome==='lojas') return {doc:()=>({get:async()=>({exists:true,data:()=>loja})})};
+      if(nome==='lojas') return {doc:()=>({get:async()=>({exists:true,data:()=>loja}),collection:()=>({doc:()=>({get:async()=>({exists:false})})})})};
       if(nome==='dt_config') return {doc:()=>({get:async()=>({exists:true,data:()=>({token:'tok',url_hml:'https://hml.exemplo',ambiente:'homologacao',timeout:30})})})};
       return {doc:()=>({get:async()=>({exists:false})})};
     },
@@ -135,7 +135,12 @@ test('sincronizarAgendaBluesoft: Bluesoft não tem YMS/agendamento de mercadoria
   const doc=agendamentos.registro.get(docId);
   assert.equal(doc.numeroPedido,500);
   assert.equal(doc.fornecedorNome,'Fornecedor Dez');
-  assert.equal(doc.dataAgendada,'2026-08-20');
+  // Campo renomeado/desdobrado por outra frente em andamento: dataPrevista
+  // (sugestão vinda da Bluesoft) agora é separada de dataAgendada (só
+  // preenchida quando o Analista confirma manualmente) — na criação,
+  // dataAgendada começa vazia de propósito.
+  assert.equal(doc.dataPrevista,'2026-08-20');
+  assert.equal(doc.dataAgendada,'');
   assert.equal(doc.dataEntregaFinal,'2026-08-22');
   assert.equal(doc.origem,'bluesoft');
   assert.equal(doc.status,'AGENDADO');
@@ -372,7 +377,7 @@ test('dashboard de Recebimento tem botão de sync, filtro de período e vários 
 test('PEDIDO AO VIVO: sidebar de Recebimento tem os itens agrupados por seção (Geral/Fornecedor/Transbordo/Notas Retornadas), não mais numa lista só',()=>{
   const trechoShell=htmlCode.split('id="setor-logistica-recebimento-shell"')[1].split('</aside>')[0];
   const secoes=[...trechoShell.matchAll(/<div class="sb-sec">([^<]+)<\/div>/g)].map(m=>m[1]);
-  assert.deepEqual(secoes,['Recebimento','Fornecedor','Transbordo','Notas Retornadas']);
+  assert.deepEqual(secoes,['Recebimento','Fornecedor','Transbordo','Paletes','Notas Retornadas']);
 
   // cada nav-item precisa vir DEPOIS da seção certa e ANTES da próxima —
   // checagem por posição de índice no HTML, não por regex frágil.
@@ -380,7 +385,8 @@ test('PEDIDO AO VIVO: sidebar de Recebimento tem os itens agrupados por seção 
   const posSecao=nome=>trechoShell.indexOf('<div class="sb-sec">'+nome+'</div>');
   const geralFim=posSecao('Fornecedor');
   const fornecedorFim=posSecao('Transbordo');
-  const transbordoFim=posSecao('Notas Retornadas');
+  const transbordoFim=posSecao('Paletes');
+  const paletesFim=posSecao('Notas Retornadas');
 
   ['nav-recebimento-dashboard','nav-recebimento-operacao','nav-recebimento-historico','nav-recebimento-config'].forEach(id=>{
     assert.ok(pos(id)>posSecao('Recebimento') && pos(id)<geralFim, id+' precisa estar na seção Geral');
@@ -391,7 +397,117 @@ test('PEDIDO AO VIVO: sidebar de Recebimento tem os itens agrupados por seção 
   ['nav-recebimento-transbordo','nav-recebimento-tempos'].forEach(id=>{
     assert.ok(pos(id)>fornecedorFim && pos(id)<transbordoFim, id+' precisa estar na seção Transbordo (Tempos/Performance é transbordo-only, apesar do nome genérico)');
   });
-  ['nav-recebimento-recusas','nav-recebimento-retornos-indicadores','nav-recebimento-retornos-status','nav-recebimento-recusas-cadastros'].forEach(id=>{
-    assert.ok(pos(id)>transbordoFim, id+' precisa estar na seção Notas Retornadas');
+  ['nav-recebimento-paletes'].forEach(id=>{
+    assert.ok(pos(id)>transbordoFim && pos(id)<paletesFim, id+' precisa estar na seção Paletes');
   });
+  ['nav-recebimento-recusas','nav-recebimento-retornos-indicadores','nav-recebimento-retornos-status','nav-recebimento-recusas-cadastros'].forEach(id=>{
+    assert.ok(pos(id)>paletesFim, id+' precisa estar na seção Notas Retornadas');
+  });
+});
+
+// BUG AO VIVO REAL (2026-09-08): "esses meses abaixo das colunas deixar só
+// o mês e o ano, dos últimos meses e na sequência correta" — os gráficos
+// "Notas recebidas por mês"/"Valor recebido por mês" agrupavam com
+// `.slice(0,7)` direto na data crua da Bluesoft, assumindo formato ISO. Um
+// valor em 'DD/MM/AAAA' virava uma chave tipo '29/01/2' — nem formatava
+// certo (`_fmtMesLabel` só reconhece 'AAAA-MM'), nem ordenava certo (sort
+// alfabético de string, não cronológico). `_mesChave()` normaliza os dois
+// formatos pra 'AAAA-MM' de verdade antes de agrupar/ordenar.
+// PEDIDO AO VIVO (2026-09-09): "por que não tá puxando os meses mais
+// próximos, tipo julho agosto" — os 2 gráficos "por mês" passaram a vir de
+// `obterHistoricoComprasRealBi()` (BI de compras, sincronizado sozinho a
+// cada 4h), não mais de `recebimento_notas` (só atualiza com clique manual
+// em "Buscar recebimento"). `comprasBi` simula o retorno dessa função,
+// já no formato salvo por sincronizarComprasHistoricoBiAgendado
+// (functions/index.js): loja_key, data_emissao/data_recebimento, nf_numero,
+// Custo_liquido_total, tipo_operacao.
+function carregarDashboardRecebimento(notas, cargas, comprasBi) {
+  const dom = new JSDOM('<!doctype html><html><body><div id="page-recebimento-dashboard"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const win = dom.window; const document = win.document;
+  const chamadasChart = [];
+  win.Chart = function (ctx, cfg) { chamadasChart.push(cfg); return { destroy() {} }; };
+  win.getDTLojaAtiva = () => 'loja1';
+  win.getDTFirestore = () => ({
+    collection: nome => {
+      if (nome === 'recebimento_notas') return { get: async () => ({ docs: (notas || []).map((d, i) => ({ id: 'n' + i, data: () => d })) }) };
+      if (nome === 'recebimento_cargas') return { get: async () => ({ docs: (cargas || []).map((d, i) => ({ id: 'c' + i, data: () => d })) }) };
+      if (nome === 'lojas') return { doc: () => ({ get: async () => ({ exists: true, data: () => ({ bluesoft_loja_key: '9' }) }) }) };
+      return { get: async () => ({ docs: [] }) };
+    },
+  });
+  win.obterHistoricoComprasRealBi = async () => comprasBi || [];
+  win.eval(dashCode);
+  return { win, document, chamadasChart };
+}
+
+test('gráfico "Notas recebidas por mês": rótulos são "mês/ano" mesmo com data em formato BR (DD/MM/AAAA), nunca a data completa', async () => {
+  const comprasBi = [
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_emissao: '29/01/2026', nf_numero: '111', Custo_liquido_total: 100 },
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_emissao: '29/01/2026', nf_numero: '222', Custo_liquido_total: 50 },
+  ];
+  const { win, chamadasChart } = carregarDashboardRecebimento([], [], comprasBi);
+  await win.renderRecebimentoDashboard();
+  const cfg = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Notas recebidas');
+  assert.ok(cfg, 'gráfico de notas por mês precisa existir');
+  assert.deepEqual([...cfg.data.labels], ['jan/2026'], 'as duas notas de janeiro têm que virar um rótulo só, "jan/2026"');
+  assert.deepEqual([...cfg.data.datasets[0].data], [2], 'as duas notas (números diferentes) do mesmo mês têm que somar junto, não virar 2 barras separadas');
+  cfg.data.labels.forEach(l => assert.doesNotMatch(l, /^\d{2}\/\d{2}\/\d/, 'rótulo não pode ser uma data completa (formato antigo do bug)'));
+});
+
+test('gráfico "Notas recebidas por mês": mistura de formato ISO e BR nos dados agrupa tudo certo, no mês certo', async () => {
+  const comprasBi = [
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_emissao: '2026-01-05T10:00:00.000Z', nf_numero: '1', Custo_liquido_total: 10 }, // ISO
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_emissao: '20/01/2026', nf_numero: '2', Custo_liquido_total: 20 }, // BR, mesmo mês
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_recebimento: '2026-03-15', data_emissao: '2026-03-15', nf_numero: '3', Custo_liquido_total: 30 }, // ISO, mês diferente
+  ];
+  const { win, chamadasChart } = carregarDashboardRecebimento([], [], comprasBi);
+  await win.renderRecebimentoDashboard();
+  const cfg = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Valor recebido (R$)');
+  assert.deepEqual([...cfg.data.labels], ['jan/2026', 'mar/2026']);
+  assert.deepEqual([...cfg.data.datasets[0].data], [30, 30], 'os dois formatos (ISO e BR) de janeiro somam juntos (10+20=30); março fica separado');
+});
+
+test('gráfico "Notas recebidas por mês": meses saem em ordem CRONOLÓGICA, não alfabética da string', async () => {
+  const comprasBi = [
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_emissao: '2026-11-01', nf_numero: '1', Custo_liquido_total: 1 },
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_emissao: '2026-02-01', nf_numero: '2', Custo_liquido_total: 1 },
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_emissao: '2025-12-01', nf_numero: '3', Custo_liquido_total: 1 },
+  ];
+  const { win, chamadasChart } = carregarDashboardRecebimento([], [], comprasBi);
+  await win.renderRecebimentoDashboard();
+  const cfg = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Notas recebidas');
+  assert.deepEqual([...cfg.data.labels], ['dez/2025', 'fev/2026', 'nov/2026'], 'ordem cronológica: dez/2025 antes de fev/2026 antes de nov/2026');
+});
+
+// PEDIDO AO VIVO (2026-09-09): a fonte nova é por ITEM da nota (1 linha por
+// produto) — sem dedupe por nota, "notas recebidas" contaria produto, não
+// nota fiscal.
+test('gráfico "Notas recebidas por mês": conta NOTA única (loja+número+emissão), não item — uma nota com 3 produtos não vira 3', async () => {
+  const comprasBi = [
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_emissao: '2026-05-10', nf_numero: '500', Custo_liquido_total: 10, produto_key: 1 },
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_emissao: '2026-05-10', nf_numero: '500', Custo_liquido_total: 20, produto_key: 2 },
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_emissao: '2026-05-10', nf_numero: '500', Custo_liquido_total: 30, produto_key: 3 },
+  ];
+  const { win, chamadasChart } = carregarDashboardRecebimento([], [], comprasBi);
+  await win.renderRecebimentoDashboard();
+  const cfgNotas = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Notas recebidas');
+  const cfgValor = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Valor recebido (R$)');
+  assert.deepEqual([...cfgNotas.data.datasets[0].data], [1], '3 itens da MESMA nota contam como 1 nota só');
+  assert.deepEqual([...cfgValor.data.datasets[0].data], [60], 'o valor soma os 3 itens (10+20+30=60)');
+});
+
+// PEDIDO AO VIVO (2026-09-09): loja de outra unidade (loja_key diferente) e
+// operação que não é COMPRA (ex.: TRANSFERENCIA entre lojas) nunca podem
+// aparecer aqui — mesmo recorte "só Fornecedor" que o resto da tela já
+// aplica em cima de _notas.
+test('gráfico "Notas recebidas por mês": ignora loja diferente (loja_key) e operação que não é COMPRA (ex.: TRANSFERENCIA)', async () => {
+  const comprasBi = [
+    { loja_key: '9', tipo_operacao: 'COMPRA', data_emissao: '2026-05-10', nf_numero: '1', Custo_liquido_total: 10 },
+    { loja_key: '7', tipo_operacao: 'COMPRA', data_emissao: '2026-05-10', nf_numero: '2', Custo_liquido_total: 999 }, // outra loja
+    { loja_key: '9', tipo_operacao: 'TRANSFERENCIA', data_emissao: '2026-05-10', nf_numero: '3', Custo_liquido_total: 999 }, // não é fornecedor
+  ];
+  const { win, chamadasChart } = carregarDashboardRecebimento([], [], comprasBi);
+  await win.renderRecebimentoDashboard();
+  const cfgValor = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Valor recebido (R$)');
+  assert.deepEqual([...cfgValor.data.datasets[0].data], [10], 'só a linha da loja1 (loja_key 9) com tipo_operacao COMPRA deveria contar');
 });

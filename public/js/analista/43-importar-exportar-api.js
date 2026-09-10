@@ -434,6 +434,14 @@
     updateCounts(); fillInventories(); loadConfig(); renderHistory(); renderQueue();
     if (tab === 'api') carregarConfigRemota();
   };
+  // Roteador: leitura pura de DOM (qual painel está visível agora), sem
+  // estado próprio novo — ieSetTab já é a única fonte da verdade.
+  global.ieGetTabAtual = function () {
+    return ['exportar','importar','api','fila'].find(function (name) {
+      var panel = el('ie-panel-' + name);
+      return panel && panel.style.display !== 'none';
+    }) || 'exportar';
+  };
   global.ieAbrirPagina = function () { global.ieSetTab('exportar'); };
   global.ieAbrirImportBase = function () {
     if (!value('ie-import-inv')) return toast('Selecione o inventário de destino.', 'w');
@@ -1016,9 +1024,20 @@
   // grupo "NAO CLASSIFICADO" e o filtro por tipo/departamento não teria
   // como funcionar para dados vindos do Bluesoft.
   var _bluesoftCatalogoCache = null;
+  // PEDIDO AO VIVO (usuário reportou ao vivo: "matéria-prima às vezes fica
+  // mapeado em outro... embalagem em umas mapeia certo, outras errado —
+  // quando abre só embalagens não traz todas, quando abre matéria-prima
+  // não abre todas"): a ordem original usava `principaldestinoproduto`
+  // (texto livre da Bluesoft, sem garantia de valor fixo/consistente)
+  // ANTES das flags estruturadas de `tipoproduto` (mercadoriaParaRevenda/
+  // produtoAcabado/subProduto/materiaPrima/embalagem/
+  // mercadoriaParaUsoConsumo — campos confirmados no schema oficial da
+  // API). Produto com o texto livre preenchido de forma diferente do
+  // esperado caía num bucket errado mesmo com a flag estruturada correta
+  // batendo. Corrigido: flags estruturadas (confiáveis) decidem primeiro;
+  // o texto livre só é usado quando NENHUMA flag bate, como último
+  // recurso pra não perder classificação nenhuma.
   function _bluesoftClassificarTipoProduto(item) {
-    var destino = String(item.principaldestinoproduto || '').trim();
-    if (destino) return destino.toUpperCase();
     var flags = item.tipoproduto || {};
     if (flags.mercadoriaParaRevenda) return 'PRODUTO DE VENDA';
     if (flags.produtoAcabado) return 'PRODUTO ACABADO';
@@ -1026,7 +1045,49 @@
     if (flags.materiaPrima) return 'MATERIA PRIMA';
     if (flags.embalagem) return 'EMBALAGEM';
     if (flags.mercadoriaParaUsoConsumo) return 'INSUMO/CONSUMO';
+    var destino = String(item.principaldestinoproduto || '').trim();
+    if (destino) return destino.toUpperCase();
     return 'NAO CLASSIFICADO';
+  }
+  // Explica de onde saiu o resultado de _bluesoftClassificarTipoProduto —
+  // mesma ordem de prioridade, só que devolvendo o motivo em vez do tipo.
+  // Usado na tela Acompanhamento → Por Produto pra o usuário auditar um
+  // produto que pareça classificado errado (PEDIDO AO VIVO: "aí eu vou
+  // saber detalhar bem").
+  function _bluesoftMotivoTipoProduto(item) {
+    var flags = item.tipoproduto || {};
+    if (flags.mercadoriaParaRevenda) return 'Flag da Bluesoft: mercadoriaParaRevenda';
+    if (flags.produtoAcabado) return 'Flag da Bluesoft: produtoAcabado';
+    if (flags.subProduto) return 'Flag da Bluesoft: subProduto';
+    if (flags.materiaPrima) return 'Flag da Bluesoft: materiaPrima';
+    if (flags.embalagem) return 'Flag da Bluesoft: embalagem';
+    if (flags.mercadoriaParaUsoConsumo) return 'Flag da Bluesoft: mercadoriaParaUsoConsumo';
+    var destino = String(item.principaldestinoproduto || '').trim();
+    if (destino) return 'Sem flag estruturada — usado o texto livre principalDestinoProduto: "' + destino + '"';
+    return 'Nenhuma flag nem principalDestinoProduto preenchidos na Bluesoft';
+  }
+  // PEDIDO AO VIVO: endereço vazio (sem produto na Bluesoft agora) entrava
+  // sempre como 'SEM PRODUTO NA BLUESOFT', misturando endereços de QUALQUER
+  // área do armazém. Ao filtrar só um tipo (ex.: "só embalagens") com opção
+  // de incluir vazios, isso traria vazios de matéria-prima/produto acabado
+  // junto — falsa impressão de endereçamento. O cadastro de endereço já tem
+  // um campo "Local de estoque" (setor/local, ex.: "PRODUTO ACABADO") que o
+  // usuário já preenche pra organizar o armazém; usamos esse texto pra
+  // deduzir o tipo do endereço vazio e ele aparecer no filtro certo. Local
+  // sem correspondência clara continua como 'SEM PRODUTO NA BLUESOFT'
+  // (visível só na visão geral, não entra em filtro de tipo específico).
+  function _bluesoftTipoProdutoPorLocalEstoque(local) {
+    var l = String(local || '').trim().toUpperCase()
+      .replace(/[ÁÀÂÃ]/g, 'A').replace(/[ÉÊ]/g, 'E').replace(/[ÍÎ]/g, 'I')
+      .replace(/[ÓÔÕ]/g, 'O').replace(/[ÚÛ]/g, 'U').replace(/Ç/g, 'C');
+    if (!l) return null;
+    if (/PRODUTO ACABADO/.test(l)) return 'PRODUTO ACABADO';
+    if (/SUBPRODUTO/.test(l)) return 'SUBPRODUTO';
+    if (/MATERIA[ -]?PRIMA/.test(l)) return 'MATERIA PRIMA';
+    if (/EMBALAGE/.test(l)) return 'EMBALAGEM';
+    if (/USO E CONSUMO|USO\/CONSUMO|INSUMO/.test(l)) return 'INSUMO/CONSUMO';
+    if (/VENDA/.test(l)) return 'PRODUTO DE VENDA';
+    return null;
   }
   // Só os campos realmente usados (classificação + auto-cadastro) — o item
   // bruto da Bluesoft vem com centenas de campos (fiscal, fornecedores,
@@ -1142,6 +1203,14 @@
     });
     return mapa;
   }
+  function _bluesoftMapaMotivosTipoProduto(itensCatalogo) {
+    var mapa = new Map();
+    (itensCatalogo || []).forEach(function (item) {
+      var key = String(item.produtokey || '').trim();
+      if (key) mapa.set(key, _bluesoftMotivoTipoProduto(item));
+    });
+    return mapa;
+  }
   // Cadastro automático na Base de Produtos: só INSERE produtos que ainda não
   // existem localmente (por bluesoft_produto_key ou GTIN/DUN) — nunca
   // atualiza nem sobrescreve um produto já cadastrado, manual ou anterior.
@@ -1238,6 +1307,7 @@
       _invApiFlowRender('🏷️', 'Carregando catálogo de produtos...', 'Isso é usado para classificar os tipos de produto e para completar a Base de Produtos automaticamente.');
       var itensCatalogo = await _bluesoftCatalogoProdutos();
       var mapaTipos = _bluesoftMapaTiposProduto(itensCatalogo);
+      var mapaMotivosTipo = _bluesoftMapaMotivosTipoProduto(itensCatalogo);
       var mapaFatorCaixa = _bluesoftMapaFatorCaixa(itensCatalogo);
       var rotuloRota = loja.bluesoft_loja_cd === true ? 'endereços físicos (WMS)' : 'saldo de estoque';
       function progresso(carregados, total) {
@@ -1272,6 +1342,7 @@
             quantidade_esperada: Math.max(0, parseFloat(String(item.quantidadedisponivelemunidades || 0).replace(',','.')) || 0),
             total_unidades_sistema: Math.max(0, parseFloat(String(item.quantidadedisponivelemunidades || 0).replace(',','.')) || 0),
             fator_caixa: mapaFatorCaixa.get(chaveProduto) || 1, tipo_produto: mapaTipos.get(chaveProduto) || 'NAO CLASSIFICADO', tipo_endereco: tipoEnd,
+            tipo_produto_motivo: mapaMotivosTipo.get(chaveProduto) || 'Produto não veio no catálogo da Bluesoft',
             contabiliza_inventario: infoLocal ? infoLocal.contabiliza_inventario !== false : true,
             permite_multiplos_operadores: tipoEnd === 'VIRTUAL' || (infoLocal && infoLocal.permite_multiplos_operadores === true) || false,
             lote_produto: tipoEnd === 'VIRTUAL' ? '' : String(item.numerodolote || '').trim(),
@@ -1301,13 +1372,18 @@
         var enderecosLocaisFaltantes = enderecosLocaisTotal.filter(function (e) {
           return e && e.endereco && !enderecosComDadosBluesoft.has(String(e.endereco).trim().toUpperCase());
         }).map(function (e) {
+          var localEstoque = e.setor || e.local || e.nome_local || '';
           return {
             endereco: e.endereco, codigo_produto: '', gtin: '', descricao_produto: '',
             quantidade_esperada: 0, total_unidades_sistema: 0, fator_caixa: 1,
-            tipo_produto: 'SEM PRODUTO NA BLUESOFT', tipo_endereco: e.tipo_endereco || 'FISICO',
+            tipo_produto: _bluesoftTipoProdutoPorLocalEstoque(localEstoque) || 'SEM PRODUTO NA BLUESOFT',
+            tipo_produto_motivo: localEstoque
+              ? (_bluesoftTipoProdutoPorLocalEstoque(localEstoque) ? 'Endereço vazio agora — tipo deduzido do "Local de estoque": ' + localEstoque : 'Endereço vazio agora — "Local de estoque" ("' + localEstoque + '") não bateu com nenhum tipo conhecido')
+              : 'Endereço vazio agora e sem "Local de estoque" cadastrado',
+            tipo_endereco: e.tipo_endereco || 'FISICO',
             contabiliza_inventario: e.ativo !== false, permite_multiplos_operadores: false,
             lote_produto: '', validade: '', palete: '', custo_bruto: 0,
-            setor: e.setor || e.local || '', rua: e.rua || '', nivel: '', observacao: ''
+            setor: localEstoque, rua: e.rua || '', nivel: '', observacao: ''
           };
         });
         base = base.concat(enderecosLocaisFaltantes);
@@ -1323,6 +1399,7 @@
             quantidade_esperada: Math.max(0, parseFloat(String(item.quantidade || 0).replace(',','.')) || 0),
             total_unidades_sistema: Math.max(0, parseFloat(String(item.quantidade || 0).replace(',','.')) || 0),
             fator_caixa: mapaFatorCaixa.get(chaveProduto) || 1, tipo_produto: mapaTipos.get(chaveProduto) || 'NAO CLASSIFICADO', tipo_endereco: 'VIRTUAL',
+            tipo_produto_motivo: mapaMotivosTipo.get(chaveProduto) || 'Produto não veio no catálogo da Bluesoft',
             contabiliza_inventario: true, permite_multiplos_operadores: true,
             lote_produto: '', validade: '', palete: '',
             custo_bruto: 0, setor: '', rua: '', nivel: '', observacao: ''
@@ -1415,5 +1492,5 @@
     // visita prévia à aba.
     carregarConfigRemota();
   });
-  global._importarExportarApiInternals = { _bluesoftCatalogoProdutos, _bluesoftPaginarTudo, _bluesoftMapaTiposProduto, _bluesoftClassificarTipoProduto, _resetCacheCatalogoBluesoft: function () { _bluesoftCatalogoCache = null; } };
+  global._importarExportarApiInternals = { _bluesoftCatalogoProdutos, _bluesoftPaginarTudo, _bluesoftMapaTiposProduto, _bluesoftMapaMotivosTipoProduto, _bluesoftClassificarTipoProduto, _bluesoftMotivoTipoProduto, _bluesoftTipoProdutoPorLocalEstoque, _resetCacheCatalogoBluesoft: function () { _bluesoftCatalogoCache = null; } };
 })(window);

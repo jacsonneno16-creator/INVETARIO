@@ -59,8 +59,8 @@ test('PEDIDO AO VIVO ("nem toda vez para em CTE, às vezes fica parado com fisca
   await new Promise(r=>setTimeout(r,0));
 
   const doc=recusas._registro.get('r1');
-  assert.equal(doc.statusRetorno,'ENDERECANDO','pulou CTE de propósito — tem que ser aceito sem exigir passar por ele antes');
-  assert.equal(doc.statusRetornoHistorico.length,1);
+  assert.equal(doc.notas[0].statusRetorno,'ENDERECANDO','pulou CTE de propósito — tem que ser aceito sem exigir passar por ele antes');
+  assert.equal(doc.notas[0].statusRetornoHistorico.length,1);
 });
 
 test('as 4 datas nomeadas (liberadoParaRecusarEm/dataSolicitacaoFiscalEm/dataDaRecusaEm/dataDoEnderecamentoEm) são gravadas na 1ª vez que o status entra nesse valor, e NUNCA sobrescritas depois — mesmo voltando pra trás',async()=>{
@@ -76,26 +76,26 @@ test('as 4 datas nomeadas (liberadoParaRecusarEm/dataSolicitacaoFiscalEm/dataDaR
   // começa em '' (Aguard. Monitoramento) — pula direto pro fiscal.
   await mudar('AGUARD_FISCAL');
   const doc1=recusas._registro.get('r1');
-  assert.ok(doc1.dataSolicitacaoFiscalEm,'entrar em Aguard. Fiscal grava dataSolicitacaoFiscalEm');
-  assert.ok(!doc1.liberadoParaRecusarEm,'pulou o "Aguard. Monitoramento" de propósito — não grava a data dele');
-  const solicitadaOriginal=doc1.dataSolicitacaoFiscalEm;
+  assert.ok(doc1.notas[0].dataSolicitacaoFiscalEm,'entrar em Aguard. Fiscal grava dataSolicitacaoFiscalEm');
+  assert.ok(!doc1.notas[0].liberadoParaRecusarEm,'pulou o "Aguard. Monitoramento" de propósito — não grava a data dele');
+  const solicitadaOriginal=doc1.notas[0].dataSolicitacaoFiscalEm;
 
   await mudar(''); // volta pra "Aguard. Monitoramento"
   const doc2=recusas._registro.get('r1');
-  assert.ok(doc2.liberadoParaRecusarEm,'entrar em Aguard. Monitoramento grava liberadoParaRecusarEm');
+  assert.ok(doc2.notas[0].liberadoParaRecusarEm,'entrar em Aguard. Monitoramento grava liberadoParaRecusarEm');
 
   await mudar('AGUARD_FISCAL'); // e entra em Aguard. Fiscal de novo
   const doc3=recusas._registro.get('r1');
-  assert.equal(doc3.dataSolicitacaoFiscalEm,solicitadaOriginal,'nunca regrava a data — a 1ª vez é a que vale, mesmo voltando e entrando de novo');
+  assert.equal(doc3.notas[0].dataSolicitacaoFiscalEm,solicitadaOriginal,'nunca regrava a data — a 1ª vez é a que vale, mesmo voltando e entrando de novo');
 
   await mudar('CTE');
   const doc4=recusas._registro.get('r1');
-  assert.ok(doc4.dataDaRecusaEm,'entrar em CTE grava dataDaRecusaEm');
+  assert.ok(doc4.notas[0].dataDaRecusaEm,'entrar em CTE grava dataDaRecusaEm');
 
   await mudar('ENDERECANDO');
   const doc5=recusas._registro.get('r1');
-  assert.ok(doc5.dataDoEnderecamentoEm,'entrar em Endereçando grava dataDoEnderecamentoEm');
-  assert.equal(doc5.statusRetornoHistorico.length,5,'todo clique conta no histórico, inclusive o "voltar pra trás"');
+  assert.ok(doc5.notas[0].dataDoEnderecamentoEm,'entrar em Endereçando grava dataDoEnderecamentoEm');
+  assert.equal(doc5.notas[0].statusRetornoHistorico.length,5,'todo clique conta no histórico, inclusive o "voltar pra trás"');
 });
 
 // BUG AO VIVO CORRIGIDO 2026-08-21: a 1ª versão carimbava liberadoParaRecusarEm
@@ -113,11 +113,11 @@ test('status OK (e Em tratativa) nunca carimbam nenhuma das 4 datas nomeadas —
   };
   await mudar('OK');
   let doc=recusas._registro.get('r1');
-  assert.ok(!doc.liberadoParaRecusarEm && !doc.dataSolicitacaoFiscalEm && !doc.dataDaRecusaEm && !doc.dataDoEnderecamentoEm, 'OK não carimba nenhuma data');
+  assert.ok(!doc.notas[0].liberadoParaRecusarEm && !doc.notas[0].dataSolicitacaoFiscalEm && !doc.notas[0].dataDaRecusaEm && !doc.notas[0].dataDoEnderecamentoEm, 'OK não carimba nenhuma data');
 
   await mudar('EM_TRATATIVA');
   doc=recusas._registro.get('r1');
-  assert.ok(!doc.liberadoParaRecusarEm && !doc.dataSolicitacaoFiscalEm && !doc.dataDaRecusaEm && !doc.dataDoEnderecamentoEm, 'Em tratativa também não carimba nenhuma data');
+  assert.ok(!doc.notas[0].liberadoParaRecusarEm && !doc.notas[0].dataSolicitacaoFiscalEm && !doc.notas[0].dataDaRecusaEm && !doc.notas[0].dataDoEnderecamentoEm, 'Em tratativa também não carimba nenhuma data');
 });
 
 test('diasParadoFiscalCte e diasOperacao são calculados a partir das datas nomeadas, contando até AGORA quando ainda em aberto',()=>{
@@ -152,9 +152,9 @@ test('PEDIDO AO VIVO (planilha real: "Reentrega é diferente"): nota de Reentreg
   await new Promise(r=>setTimeout(r,0));
 
   const doc=recusas._registro.get('r1');
-  assert.ok(doc.dataSaidaEm,'data de saída da reentrega foi salva');
+  assert.ok(doc.notas[0].dataSaidaEm,'data de saída da reentrega foi salva');
   const internals=win._recebimentoRetornosStatusInternals;
-  assert.equal(Math.round(internals.diasParadoReentrega({...doc})),2,'01/08 até 03/08 = 2 dias parado (reentrega)');
+  assert.equal(Math.round(internals.diasParadoReentrega({ criadoEm: doc.criadoEm, dataSaidaEm: doc.notas[0].dataSaidaEm })),2,'01/08 até 03/08 = 2 dias parado (reentrega)');
 });
 
 test('KPIs contam por status e calculam a média das 2 métricas reais (dias parado no fiscal/CTE e dias de operação) só das notas que NÃO são reentrega',async()=>{
@@ -247,4 +247,54 @@ test('PEDIDO AO VIVO: filtro de Tratamento inclui "Pendente" (planilha real: 120
   const select=document.getElementById('status-filtro-tratamento');
   const valores=[...select.options].map(o=>o.value);
   assert.ok(valores.includes('PENDENTE'),'Pendente precisa aparecer como opção de tratamento');
+});
+
+// PEDIDO AO VIVO (2026-09-08): "cada nota tem que gerar uma linha... se
+// ela tiver junta e uma for reentrega e a outra for recusa" — Status
+// passou de campo do documento pra campo de cada item de `notas[]`.
+test('2 notas do mesmo evento progridem de status de forma INDEPENDENTE — mudar uma não mexe na outra',async()=>{
+  const recusas=mockColecao([{id:'r1',data:{box:'BOX 1',criadoEm:'2026-08-01T08:00:00.000Z',notas:[
+    { chave:'CH1', numeroNota:'601' },
+    { chave:'CH2', numeroNota:'602' },
+  ]}}]);
+  const { win, document }=carregarPagina({ recebimento_recusas:recusas });
+  await win.renderRecebimentoRetornosStatus();
+
+  const selectCH1=document.querySelector('[data-status-mudar="r1|CH1"]');
+  const selectCH2=document.querySelector('[data-status-mudar="r1|CH2"]');
+  assert.ok(selectCH1 && selectCH2,'cada nota precisa da sua própria linha/select de status');
+
+  selectCH1.value='CTE'; selectCH1.dispatchEvent(new win.Event('change',{bubbles:true}));
+  await new Promise(r=>setTimeout(r,0));
+
+  const doc=recusas._registro.get('r1');
+  const n1=doc.notas.find(n=>n.chave==='CH1'), n2=doc.notas.find(n=>n.chave==='CH2');
+  assert.equal(n1.statusRetorno,'CTE');
+  assert.equal(n2.statusRetorno,undefined,'a outra nota do mesmo evento não pode ter sido alterada junto');
+});
+
+test('registro antigo (1 nota só) com statusRetorno/datas gravados no DOCUMENTO — a tela mostra e edita através da nota, herdando o valor antigo em vez de perder o histórico',async()=>{
+  const recusas=mockColecao([{id:'r1',data:{
+    box:'BOX 1', criadoEm:'2026-08-01T08:00:00.000Z',
+    statusRetorno:'AGUARD_FISCAL', dataSolicitacaoFiscalEm:'2026-08-02T08:00:00.000Z',
+    statusRetornoHistorico:[{status:'AGUARD_FISCAL',em:'2026-08-02T08:00:00.000Z',por:'analista@daterrinha.com'}],
+    notas:[{ chave:'CH1', numeroNota:'1' }],
+  }}]);
+  const { win, document }=carregarPagina({ recebimento_recusas:recusas });
+  await win.renderRecebimentoRetornosStatus();
+  const select=document.querySelector('[data-status-mudar="r1|CH1"]');
+  assert.equal(select.value,'AGUARD_FISCAL','herda o status do documento antigo enquanto a nota não tiver o próprio');
+
+  // Avança pra CTE — a data nomeada de AGUARD_FISCAL (dataSolicitacaoFiscalEm)
+  // já existia no documento antigo, então não muda; mas o histórico da nota
+  // precisa CONTINUAR a partir do histórico antigo do documento, não
+  // começar do zero.
+  select.value='CTE'; select.dispatchEvent(new win.Event('change',{bubbles:true}));
+  await new Promise(r=>setTimeout(r,0));
+
+  const doc=recusas._registro.get('r1');
+  assert.equal(doc.notas[0].dataSolicitacaoFiscalEm,undefined,'nunca escreve de volta a data herdada do documento — só o valor efetivo de LEITURA herda');
+  assert.ok(doc.notas[0].dataDaRecusaEm,'entrar em CTE carimba a data nova, na nota');
+  assert.equal(doc.notas[0].statusRetornoHistorico.length,2,'histórico da nota começou a partir do histórico antigo do documento (1) + o evento novo (1)');
+  assert.equal(doc.notas[0].statusRetornoHistorico[0].status,'AGUARD_FISCAL','preserva o evento antigo do documento');
 });

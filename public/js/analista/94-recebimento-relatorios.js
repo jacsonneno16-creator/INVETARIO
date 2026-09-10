@@ -101,7 +101,7 @@
     pagina.innerHTML = `
       <div style="margin-bottom:14px">
         <div class="page-title" style="font-size:1.15rem">📄 Notas Fiscais</div>
-        <div style="font-size:.74rem;color:var(--muted)">${linhasBs.length.toLocaleString('pt-BR')} nota(s) da Bluesoft${(_filtroBsCategoria || 'FORNECEDOR') === 'FORNECEDOR' ? ' (categoria: Fornecedor — transbordo fica na aba Transbordo)' : ''}</div>
+        <div style="font-size:.74rem;color:var(--muted)">${linhasBs.length.toLocaleString('pt-BR')} nota(s)${(_filtroBsCategoria || 'FORNECEDOR') === 'FORNECEDOR' ? ' (categoria: Fornecedor — transbordo fica na aba Transbordo)' : ''}</div>
       </div>
       <div class="tc" style="padding:12px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <input type="month" class="field" id="recnf-bs-f-periodo" value="${esc(_filtroBsPeriodo)}" style="max-width:160px">
@@ -132,13 +132,13 @@
                   <td><input type="datetime-local" class="field" style="font-size:.72rem;padding:4px 6px;min-width:170px" value="${x.chegadaPortaria ? esc(String(x.chegadaPortaria).slice(0, 16)) : ''}" data-recnf-bs-portaria="${esc(x.notaFiscalKey)}"></td>
                   <td>${fmtMin(x.tempoPortariaAteRecebimentoMin)}</td>
                   <td>${n(x.valor).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
-                </tr>`).join('') : '<tr><td colspan="10"><div class="empty"><div class="empty-icon">🚚</div><div class="empty-title">Nenhuma nota encontrada</div><div class="empty-sub">Sincronize a Bluesoft no Dashboard pra trazer os dados.</div></div></td></tr>'}
+                </tr>`).join('') : '<tr><td colspan="10"><div class="empty"><div class="empty-icon">🚚</div><div class="empty-title">Nenhuma nota encontrada</div><div class="empty-sub">Busque os dados no Dashboard pra trazer as notas.</div></div></td></tr>'}
             </tbody>
           </table>
         </div>
         ${totalPaginasBs > 1 ? `<div style="display:flex;justify-content:center;gap:8px;align-items:center;padding:10px"><button type="button" class="btn btn-ghost btn-sm" data-recnf-bs-pg="-1" ${_paginaBs <= 1 ? 'disabled' : ''}>‹ Anterior</button><span style="font-size:.75rem;color:var(--muted)">Página ${_paginaBs} de ${totalPaginasBs}</span><button type="button" class="btn btn-ghost btn-sm" data-recnf-bs-pg="1" ${_paginaBs >= totalPaginasBs ? 'disabled' : ''}>Próxima ›</button></div>` : ''}
       </div>
-      <div style="margin:18px 0 10px"><b style="font-size:.92rem">📋 Notas registradas nos recebimentos (Fornecedor/Transbordo)</b><div style="font-size:.72rem;color:var(--muted)">Anotadas na hora do check-in — podem chegar antes da Bluesoft sincronizar</div></div>
+      <div style="margin:18px 0 10px"><b style="font-size:.92rem">📋 Notas registradas nos recebimentos (Fornecedor/Transbordo)</b><div style="font-size:.72rem;color:var(--muted)">Anotadas na hora do check-in — podem chegar antes da busca</div></div>
       <div class="kpi-grid" style="margin-bottom:14px">
         <div class="kpi blue"><div class="kpi-val">${linhas.length.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Notas</div></div>
         <div class="kpi teal"><div class="kpi-val">${valorTotal.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div><div class="kpi-lbl">Valor total</div></div>
@@ -165,7 +165,11 @@
   }
   function _agregarFornecedores() {
     const recs = recebimentosOperacionais().filter(r => r.tipo === 'FORNECEDOR' && r.fornecedorNome);
-    const notasBluesoft = global._recebimentoInternals?.notasFiltradas?.() || [];
+    // O ranking não pode herdar filtros deixados na tela de Notas Fiscais:
+    // usa a base completa e apenas cruza as divergências do fornecedor.
+    const notasBluesoft = typeof global._recebimentoInternals?.notasTodas === 'function'
+      ? global._recebimentoInternals.notasTodas()
+      : (global._recebimentoInternals?.notasFiltradas?.() || []);
     const divergenciasPorFornecedor = new Map();
     notasBluesoft.forEach(x => {
       if (!x.temDivergencia || !x.fornecedorNome) return;
@@ -236,6 +240,7 @@
   // ── Agenda / Cargas (CRUD, seção 18) ─────────────────────────────────────
   let _agendamentos = [];
   let _agendamentosCarregados = false;
+  let _filtrosAgenda = { loja: '', produto: '', tipo: '', agendado: '' };
   // Precisa ser estado do módulo (não só textContent do elemento) porque
   // _sincronizarAgenda chama _desenharRecebimentoAgendamentos logo depois de
   // escrever o status — isso reconstrói pagina.innerHTML do zero, criando um
@@ -258,32 +263,38 @@
     _desenharRecebimentoAgendamentos();
   }
   const AGENDA_STATUS_INFO = { AGENDADO: { label: 'Agendado', cor: 'b-blue' }, UTILIZADO: { label: 'Utilizado', cor: 'b-green' }, CANCELADO: { label: 'Cancelado', cor: 'b-gray' } };
+  function _tipoItemAgenda(item) { const t=String(item?.tipoProduto||'').toUpperCase(),p=String(item?.produto||'').toUpperCase(); return t==='INSUMO'||/^MP\s*[-–]/.test(p)?'materia_prima':t==='PRODUTO_ACABADO'||t==='VENDA'?'produto_acabado':'outros'; }
   function _desenharRecebimentoAgendamentos() {
     const pagina = document.getElementById('page-recebimento-agendamentos');
     if (!pagina) return;
-    const linhas = _agendamentos.slice().sort((a, b) => String(a.dataAgendada || '').localeCompare(String(b.dataAgendada || '')));
+    const lojas=[...new Map(_agendamentos.map(a=>[String(a.lojaId||''),a.lojaNome||a.lojaId||'Loja ativa'])).entries()],produtos=[...new Set(_agendamentos.flatMap(a=>(a.itensPedido||[]).map(i=>i.produto)).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+    const linhas = _agendamentos.filter(a=>{const itens=a.itensPedido||[],ag=!!a.dataAgendada;if(_filtrosAgenda.loja&&String(a.lojaId||'')!==_filtrosAgenda.loja)return false;if(_filtrosAgenda.produto&&!itens.some(i=>i.produto===_filtrosAgenda.produto))return false;if(_filtrosAgenda.tipo&&!itens.some(i=>_tipoItemAgenda(i)===_filtrosAgenda.tipo))return false;if(_filtrosAgenda.agendado==='sim'&&!ag)return false;if(_filtrosAgenda.agendado==='nao'&&ag)return false;return true;}).sort((a, b) => String(a.dataAgendada || a.dataPrevista || '').localeCompare(String(b.dataAgendada || b.dataPrevista || '')));
     pagina.innerHTML = `
       <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">
         <div><div class="page-title" style="font-size:1.15rem">📅 Agenda / Cargas</div><div style="font-size:.74rem;color:var(--muted)">${linhas.length.toLocaleString('pt-BR')} agendamento(s) — pedidos de compra pendentes de entrega são puxados automaticamente ao sincronizar</div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-          <button type="button" class="btn btn-ghost btn-sm" data-recag-sync="1">🔄 Sincronizar pedidos pendentes (Bluesoft)</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-recag-sync="1">🔎 Buscar pedidos pendentes</button>
+          ${global.DTBiPastaLocal?.suportado?.() ? '<button type="button" class="btn btn-ghost btn-sm" data-recag-buscar-bi="1">📊 Buscar do BI</button>' : ''}
           <button type="button" class="btn btn-primary btn-sm" data-recag-novo="1">+ Novo Agendamento</button>
         </div>
       </div>
-      <div id="recag-sync-status" style="font-size:.72rem;color:var(--muted);margin:-8px 0 12px">${esc(_ultimoSyncAgenda)}</div>
+      <div id="recag-sync-status" style="font-size:.72rem;color:var(--muted);margin:-8px 0 6px">${esc(_ultimoSyncAgenda)}</div>
+      ${_ultimaBuscaBiCompras ? `<div style="font-size:.7rem;color:var(--muted);margin:0 0 12px;padding:6px 10px;border-radius:8px;background:#f3f4f6">${esc(_ultimaBuscaBiCompras)}</div>` : ''}
+      <div class="tc" style="padding:10px;margin-bottom:12px;display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:7px"><select class="field" data-recag-filter="loja"><option value="">Todas as lojas</option>${lojas.map(([id,nome])=>`<option value="${esc(id)}" ${_filtrosAgenda.loja===id?'selected':''}>${esc(nome)}</option>`).join('')}</select><select class="field" data-recag-filter="produto"><option value="">Todos os produtos</option>${produtos.map(p=>`<option ${_filtrosAgenda.produto===p?'selected':''}>${esc(p)}</option>`).join('')}</select><select class="field" data-recag-filter="tipo"><option value="">Matéria-prima + produto acabado</option><option value="materia_prima" ${_filtrosAgenda.tipo==='materia_prima'?'selected':''}>Matéria-prima</option><option value="produto_acabado" ${_filtrosAgenda.tipo==='produto_acabado'?'selected':''}>Produto acabado</option><option value="outros" ${_filtrosAgenda.tipo==='outros'?'selected':''}>Outros</option></select><select class="field" data-recag-filter="agendado"><option value="">Agendados e não agendados</option><option value="sim" ${_filtrosAgenda.agendado==='sim'?'selected':''}>Agendados</option><option value="nao" ${_filtrosAgenda.agendado==='nao'?'selected':''}>Não agendados</option></select></div>
       <div class="tc"><div style="overflow:auto"><table class="dt-table">
-        <thead><tr><th>Origem</th><th>Fornecedor</th><th>Data</th><th>Hora</th><th>Código</th><th>Motorista</th><th>Placa</th><th>Status</th><th>Observação</th><th></th></tr></thead>
-        <tbody>${linhas.length ? linhas.map(a => { const st = AGENDA_STATUS_INFO[a.status] || AGENDA_STATUS_INFO.AGENDADO; return `<tr><td>${a.origem === 'bluesoft' ? '<span class="badge b-blue" style="font-size:.6rem" title="Puxado automaticamente da Bluesoft">🔗 Bluesoft</span>' : '<span class="badge b-gray" style="font-size:.6rem">Manual</span>'}</td><td><b>${esc(a.fornecedorNome)}</b></td><td>${fmtData(a.dataAgendada)}</td><td>${esc(a.horaAgendada || '—')}</td><td class="mono">${esc(a.codigo || '—')}</td><td>${esc(a.motoristaNome || '—')}</td><td class="mono">${esc(a.placa || '—')}</td><td><span class="badge ${st.cor}" style="font-size:.62rem">${st.label}</span></td><td>${esc(a.observacao || '—')}</td><td style="white-space:nowrap"><button type="button" class="acao-lapis" title="Editar" data-recag-editar="${esc(a._id)}">✏️</button><button type="button" class="acao-lapis" title="Excluir" data-recag-excluir="${esc(a._id)}">🗑️</button></td></tr>`; }).join('') : '<tr><td colspan="10"><div class="empty"><div class="empty-icon">📅</div><div class="empty-title">Nenhum agendamento cadastrado</div></div></td></tr>'}</tbody>
+        <thead><tr><th>Origem</th><th>Loja</th><th>Pedido</th><th>Fornecedor</th><th>Produtos</th><th>Previsto</th><th>Agendado</th><th>Hora</th><th>Status</th><th></th></tr></thead>
+        <tbody>${linhas.length ? linhas.map(a => { const st = AGENDA_STATUS_INFO[a.status] || AGENDA_STATUS_INFO.AGENDADO,itens=a.itensPedido||[]; return `<tr><td>${a.origem==='bi'?'<span class="badge b-blue" style="font-size:.6rem">🔗 SharePoint</span>':a.origem==='bluesoft'?'<span class="badge b-blue" style="font-size:.6rem">🔗 Bluesoft</span>':'<span class="badge b-gray" style="font-size:.6rem">Manual</span>'}</td><td>${esc(a.lojaNome||a.lojaId||'—')}</td><td class="mono">${esc(a.numeroPedido||a.codigo||'—')}</td><td><b>${esc(a.fornecedorNome)}</b></td><td>${itens.length?itens.map(i=>`<div><b>${esc(i.produto||'Produto')}</b> · ${Number(i.quantidadePendente||0).toLocaleString('pt-BR')}</div>`).join(''):'—'}</td><td>${fmtData(a.dataPrevista)}</td><td>${a.dataAgendada?`<span class="badge b-green">${fmtData(a.dataAgendada)}</span>`:'<span class="badge b-orange">Não agendado</span>'}</td><td>${esc(a.horaAgendada || '—')}</td><td><span class="badge ${st.cor}" style="font-size:.62rem">${st.label}</span></td><td style="white-space:nowrap"><button type="button" class="acao-lapis" title="Editar" data-recag-editar="${esc(a._id)}">✏️</button><button type="button" class="acao-lapis" title="Excluir" data-recag-excluir="${esc(a._id)}">🗑️</button></td></tr>`; }).join('') : '<tr><td colspan="10"><div class="empty"><div class="empty-icon">📅</div><div class="empty-title">Nenhum agendamento encontrado</div></div></td></tr>'}</tbody>
       </table></div></div>`;
     global.aplicarPermissoesAnalista?.();
+    _iniciarAutoRefreshBiCompras();
   }
   async function _sincronizarAgenda() {
     const statusEl = document.getElementById('recag-sync-status');
-    if (typeof global.sincronizarAgendaBluesoft !== 'function') { global.showToast?.('Serviço de integração Bluesoft indisponível.', 'error'); return; }
-    if (statusEl) statusEl.textContent = '⏳ Buscando pedidos de compra pendentes na Bluesoft...';
+    if (typeof global.sincronizarAgendaBluesoft !== 'function') { global.showToast?.('Serviço de busca indisponível.', 'error'); return; }
+    if (statusEl) statusEl.textContent = '⏳ Buscando pedidos de compra pendentes...';
     try {
       const r = await global.sincronizarAgendaBluesoft();
-      const avisoSemPedidos = r.totalPedidos === 0 ? ' — esta loja não tem nenhum Pedido de Compra cadastrado na Bluesoft (provavelmente lança nota direto, sem PO)' : '';
+      const avisoSemPedidos = r.totalPedidos === 0 ? ' — esta loja não tem nenhum Pedido de Compra cadastrado (provavelmente lança nota direto, sem PO)' : '';
       _ultimoSyncAgenda = r.totalPedidosPendentes.toLocaleString('pt-BR') + ' de ' + r.totalPedidos.toLocaleString('pt-BR') + ' pedido(s) pendente(s) (' + r.criados + ' novo(s), ' + r.atualizados + ' atualizado(s))' + avisoSemPedidos + ' · ' + new Date().toLocaleString('pt-BR');
       await _carregarAgendamentos(true);
       _desenharRecebimentoAgendamentos();
@@ -292,6 +303,57 @@
       if (statusEl) statusEl.textContent = 'Erro: ' + (e.message || e);
       global.showToast?.('Erro ao sincronizar agenda: ' + (e.message || e), 'error');
     }
+  }
+  // PEDIDO AO VIVO (2026-08-26): mesmo padrão "conecta a pasta do BI uma
+  // vez, clica em Buscar" das outras telas — compras_a_receber.json alimenta
+  // a MESMA Agenda de Recebimento (recebimento_agendamentos), via
+  // importarComprasAReceberBiJson (90-bluesoft-service.js).
+  const ARQUIVO_BI_COMPRAS_A_RECEBER = 'compras_a_receber.json';
+  const INTERVALO_AUTO_BUSCA_BI_MS = 30 * 60 * 1000; // pedido ao vivo: a cada 30 minutos
+  let _ultimaBuscaBiCompras = '';
+  let _autoRefreshBiComprasIniciado = false;
+  function _fmtHoraCompras(v) {
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }
+  function _resultadoImportComprasBiTexto(r) {
+    return `${r.totalPedidosPendentes.toLocaleString('pt-BR')} pedido(s) pendente(s) do BI (${r.criados} novo(s), ${r.atualizados} atualizado(s))`;
+  }
+  async function _processarComprasAReceberBiRegistros(registros) {
+    if (typeof global.importarComprasAReceberBiJson !== 'function') { global.showToast?.('Serviço de importação indisponível.', 'error'); return; }
+    const r = await global.importarComprasAReceberBiJson(registros);
+    await _carregarAgendamentos(true);
+    return r;
+  }
+  async function _buscarComprasAReceberBiAutomatico() {
+    if (!global.DTBiPastaLocal?.suportado?.()) return;
+    const status = await global.DTBiPastaLocal.status();
+    if (status !== 'conectado') {
+      const resultado = await global.DTBiPastaLocal.conectar();
+      if (!resultado.ok) { global.showToast?.(resultado.erro, 'error'); return; }
+    }
+    try {
+      const registros = await global.DTBiPastaLocal.lerJson(ARQUIVO_BI_COMPRAS_A_RECEBER);
+      const r = await _processarComprasAReceberBiRegistros(registros);
+      _ultimaBuscaBiCompras = `Última atualização: ${_fmtHoraCompras(new Date().toISOString())} — ${_resultadoImportComprasBiTexto(r)}.`;
+      _desenharRecebimentoAgendamentos();
+    } catch (e) {
+      _ultimaBuscaBiCompras = `Falha na última busca (${_fmtHoraCompras(new Date().toISOString())}): ${e.message || e}`;
+      global.showToast?.('Erro ao buscar no BI: ' + (e.message || e), 'error');
+      _desenharRecebimentoAgendamentos();
+    }
+  }
+  function _iniciarAutoRefreshBiCompras() {
+    if (_autoRefreshBiComprasIniciado) return;
+    if (!global.DTBiPastaLocal?.suportado?.() || typeof global.setInterval !== 'function') return;
+    _autoRefreshBiComprasIniciado = true;
+    global.setInterval(async () => {
+      try {
+        const status = await global.DTBiPastaLocal.status();
+        if (status === 'conectado') await _buscarComprasAReceberBiAutomatico();
+      } catch (e) { /* silencioso — só o clique manual mostra erro */ }
+    }, INTERVALO_AUTO_BUSCA_BI_MS);
   }
   function recagNovo() { _abrirModalRecag({ _novo: true, fornecedorNome: '', dataAgendada: '', horaAgendada: '', codigo: '', motoristaNome: '', placa: '', status: 'AGENDADO', observacao: '' }); }
   function recagEditar(id) { const item = _agendamentos.find(a => a._id === id); if (item) _abrirModalRecag(item); }
@@ -319,6 +381,9 @@
       placa: String(document.getElementById('recag-placa').value || '').trim().toUpperCase(),
       status: document.getElementById('recag-status').value || 'AGENDADO',
       observacao: String(document.getElementById('recag-observacao').value || '').trim(),
+      agendamentoConfirmadoManual: true,
+      lojaId: global.getDTLojaAtiva?.() || '',
+      lojaNome: global.getDTLojaAtivaNome?.() || global.getDTLojaAtiva?.() || '',
       atualizadoEm: new Date().toISOString(),
     };
     const docId = document.getElementById('recag-doc-id').value || '';
@@ -425,10 +490,11 @@
   global.renderRecebimentoAgendamentos = renderRecebimentoAgendamentos;
   global.renderRecebimentoHistorico = renderRecebimentoHistorico;
   global.recagSalvar = recagSalvar;
-  global._recebimentoRelatoriosInternals = { notasAchatadas: _notasAchatadas, notasBluesoftFiltradas: _notasBluesoftFiltradas, agregarFornecedores: _agregarFornecedores, historicoFiltrado: _historicoFiltrado, sincronizarAgenda: _sincronizarAgenda, etapasDoRecebimento: _etapasDoRecebimento, carregarAuditoriaTodas: _carregarAuditoriaTodas, verEtapasHistorico: _verEtapasHistorico };
+  global._recebimentoRelatoriosInternals = { notasAchatadas: _notasAchatadas, notasBluesoftFiltradas: _notasBluesoftFiltradas, agregarFornecedores: _agregarFornecedores, historicoFiltrado: _historicoFiltrado, sincronizarAgenda: _sincronizarAgenda, etapasDoRecebimento: _etapasDoRecebimento, carregarAuditoriaTodas: _carregarAuditoriaTodas, verEtapasHistorico: _verEtapasHistorico, buscarComprasAReceberBiAutomatico: _buscarComprasAReceberBiAutomatico, ARQUIVO_BI_COMPRAS_A_RECEBER };
 
   document.addEventListener('click', function (event) {
     if (event.target.closest('[data-recag-sync]')) { _sincronizarAgenda(); return; }
+    if (event.target.closest('[data-recag-buscar-bi]')) { _buscarComprasAReceberBiAutomatico(); return; }
     if (event.target.closest('[data-recag-novo]')) { recagNovo(); return; }
     const edit = event.target.closest('[data-recag-editar]'); if (edit) { recagEditar(edit.getAttribute('data-recag-editar')); return; }
     const del = event.target.closest('[data-recag-excluir]'); if (del) { recagExcluir(del.getAttribute('data-recag-excluir')); return; }
@@ -437,6 +503,7 @@
     const etapas = event.target.closest('[data-recist-etapas]'); if (etapas) { _verEtapasHistorico(etapas.getAttribute('data-recist-etapas')); return; }
   });
   document.addEventListener('change', function (event) {
+    const agendaFiltro=event.target.closest('[data-recag-filter]'); if(agendaFiltro){_filtrosAgenda[agendaFiltro.getAttribute('data-recag-filter')]=agendaFiltro.value;_desenharRecebimentoAgendamentos();return;}
     if (event.target.id === 'recnf-f-periodo') { _filtroNotasPeriodo = event.target.value; _desenharRecebimentoNotas(); return; }
     if (event.target.id === 'recnf-f-fornecedor') { _filtroNotasFornecedor = event.target.value; _desenharRecebimentoNotas(); return; }
     if (event.target.id === 'recist-f-periodo') { _filtroHistPeriodo = event.target.value; _desenharRecebimentoHistorico(); return; }

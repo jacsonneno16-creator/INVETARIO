@@ -400,3 +400,93 @@ test('botão "limpar" do painel remove só o filtro DAQUELE painel — o outro c
   html=document.getElementById('page-recebimento-retornos-indicadores').innerHTML;
   assert.match(html,/Mercado Devolução Finalizada/,'limpar SÓ o painel de Ação já traz a nota de Devolução de volta, mesmo com Status="Finalizado" ainda marcado — ela também é Finalizada, só não era Recusa');
 });
+
+// PEDIDO AO VIVO (2026-09-08): "cada nota tem que gerar uma linha... se
+// ela tiver junta e uma for reentrega e a outra for recusa" — Tratamento/
+// Status passaram de campo do documento pra campo de cada nota. Este
+// arquivo (98) continua contando EVENTOS pros KPIs de quantidade física
+// (não explode em linhas), mas os painéis de Ação/Status agora enxergam
+// os dois valores quando as notas do mesmo evento divergem.
+test('PEDIDO AO VIVO: evento com 2 notas de Tratamento diferente conta nas DUAS barras do painel de Ação (mesmo evento contribui pros dois)',async()=>{
+  const recusas=mockColecao([
+    {id:'r1',data:{notas:[
+      {chave:'CH1',tratamento:'RECUSA'},
+      {chave:'CH2',tratamento:'REENTREGA'},
+    ]}},
+  ]);
+  const { win, document }=carregarPagina({ recebimento_recusas:recusas },{ tratamentoLabels:{ RECUSA:'Recusa', REENTREGA:'Reentrega' } });
+  await win.renderRecebimentoRetornosIndicadores();
+  const caixas=[...document.querySelectorAll('[data-indic-painel="tratamento"]')].map(el=>el.dataset.indicPainelValor);
+  assert.deepEqual(caixas.sort(),['Recusa','Reentrega'].sort(),'as 2 classificações do mesmo evento aparecem, cada uma vinda de uma nota diferente');
+});
+
+test('PEDIDO AO VIVO: filtrar pelo painel de Ação por "Recusa" mantém o evento mesmo se OUTRA nota dele for Reentrega (evento passa se QUALQUER nota bater)',async()=>{
+  const recusas=mockColecao([
+    {id:'r1',data:{notas:[
+      {chave:'CH1',tratamento:'RECUSA'},
+      {chave:'CH2',tratamento:'REENTREGA'},
+    ],motoristaNome:'Motorista Misto'}},
+    {id:'r2',data:{notas:[{chave:'CH3',tratamento:'DEVOLUCAO'}],motoristaNome:'Motorista Só Devolução'}},
+  ]);
+  const { win, document }=carregarPagina({ recebimento_recusas:recusas },{ tratamentoLabels:{ RECUSA:'Recusa', REENTREGA:'Reentrega', DEVOLUCAO:'Devolução' } });
+  await win.renderRecebimentoRetornosIndicadores();
+  const chk=[...document.querySelectorAll('[data-indic-painel="tratamento"]')].find(el=>el.dataset.indicPainelValor==='Recusa');
+  chk.checked=true; chk.dispatchEvent(new win.Event('change',{bubbles:true}));
+  const html=document.getElementById('page-recebimento-retornos-indicadores').innerHTML;
+  assert.match(html,/Motorista Misto/);
+  assert.doesNotMatch(html,/Motorista Só Devolução/);
+});
+
+test('registro antigo (1 nota só) com tratamento gravado no DOCUMENTO — o painel de Ação continua enxergando através do valor herdado pela nota',async()=>{
+  const recusas=mockColecao([{id:'r1',data:{tratamento:'RECUSA',notas:[{chave:'CH1'}]}}]);
+  const { win, document }=carregarPagina({ recebimento_recusas:recusas },{ tratamentoLabels:{ RECUSA:'Recusa' } });
+  await win.renderRecebimentoRetornosIndicadores();
+  const caixas=[...document.querySelectorAll('[data-indic-painel="tratamento"]')].map(el=>el.dataset.indicPainelValor);
+  assert.deepEqual(caixas,['Recusa']);
+});
+
+// PEDIDO AO VIVO (2026-09-08): "a soma MÉDIA DE DIAS P/ FINALIZAR vai ser
+// a partir de quando colocar o STATUS em ENDEREÇANDO" — substitui o proxy
+// antigo (emissão da NF → registro da volta) pela métrica real: Endereçando
+// → Finalizado (ou até agora, se ainda não finalizou), usando o status POR
+// NOTA (ver 97/99/103).
+test('diasParaFinalizarDaRecusa: conta de dataDoEnderecamentoEm até o evento FINALIZADO do histórico da nota',async()=>{
+  const { win }=carregarPagina({});
+  const r = { notas: [{ chave:'CH1', dataDoEnderecamentoEm:'2026-08-01T00:00:00.000Z', statusRetornoHistorico:[
+    { status:'ENDERECANDO', em:'2026-08-01T00:00:00.000Z' },
+    { status:'FINALIZADO', em:'2026-08-04T00:00:00.000Z' },
+  ] }] };
+  const dias = win._recebimentoRetornosIndicadoresInternals.diasParaFinalizarDaRecusa(r);
+  assert.equal(Math.round(dias), 3);
+});
+
+test('diasParaFinalizarDaRecusa: nota que nunca chegou em Endereçando não entra na média (nunca inventa data)',async()=>{
+  const { win }=carregarPagina({});
+  const r = { notas: [{ chave:'CH1', statusRetorno:'AGUARD_FISCAL' }] };
+  assert.equal(win._recebimentoRetornosIndicadoresInternals.diasParaFinalizarDaRecusa(r), null);
+});
+
+test('diasParaFinalizarDaRecusa: ainda não finalizada conta até AGORA (não fica parada em null)',async()=>{
+  const { win }=carregarPagina({});
+  const tresDiasAtras = new Date(Date.now() - 3*86400000).toISOString();
+  const r = { notas: [{ chave:'CH1', dataDoEnderecamentoEm: tresDiasAtras, statusRetornoHistorico:[{ status:'ENDERECANDO', em: tresDiasAtras }] }] };
+  const dias = win._recebimentoRetornosIndicadoresInternals.diasParaFinalizarDaRecusa(r);
+  assert.ok(dias > 2.9, 'ainda em aberto — conta até agora, não some da média');
+});
+
+test('registro antigo (1 nota só) com dataDoEnderecamentoEm/statusRetornoHistorico gravados no DOCUMENTO — a métrica continua funcionando através do valor herdado',async()=>{
+  const { win }=carregarPagina({});
+  const r = { dataDoEnderecamentoEm:'2026-08-01T00:00:00.000Z', statusRetornoHistorico:[{ status:'FINALIZADO', em:'2026-08-03T00:00:00.000Z' }], notas:[{ chave:'CH1' }] };
+  const dias = win._recebimentoRetornosIndicadoresInternals.diasParaFinalizarDaRecusa(r);
+  assert.equal(Math.round(dias), 2);
+});
+
+test('KPI "MÉDIA DE DIAS P/ FINALIZAR" na tela usa a nova métrica (Endereçando → Finalizado)',async()=>{
+  const recusas=mockColecao([
+    {id:'r1',data:{notas:[{chave:'A',dataDoEnderecamentoEm:'2026-08-01T00:00:00.000Z',statusRetornoHistorico:[{status:'FINALIZADO',em:'2026-08-05T00:00:00.000Z'}]}]}},
+  ]);
+  const { win }=carregarPagina({ recebimento_recusas:recusas });
+  await win.renderRecebimentoRetornosIndicadores();
+  const k=win._recebimentoRetornosIndicadoresInternals.kpis();
+  assert.equal(Math.round(k.mediaDias), 4);
+});

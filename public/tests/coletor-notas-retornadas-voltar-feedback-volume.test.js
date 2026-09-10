@@ -26,7 +26,7 @@ function mockColecao(docsIniciais){
       get: async()=>{ const data=registro.get(id); return { exists: data!==undefined, id, data:()=>data }; },
     }),
     add: async(payload)=>{ const docId='novo'+(seq++); registro.set(docId,payload); return {id:docId}; },
-    where:()=>({ limit:()=>({ get: async()=>snapshot([]) }) }),
+    where:()=>({ limit:()=>({ get: async()=>snapshot([]) }), get: async()=>snapshot([]) }),
     _registro: registro,
   };
 }
@@ -36,7 +36,7 @@ function carregarColetorReal(colecoes){
   const win=dom.window; const document=win.document;
   win.FS={ collection:(nome)=>colecoes?.[nome]||mockColecao([]) };
   win.getDTFirestore=()=>win.FS;
-  win.showToast=()=>{};
+  win.toast=()=>{};
   Object.defineProperty(win.navigator,'onLine',{ get:()=>true, configurable:true });
   win.eval(navCode);
   win.eval(recusasCode);
@@ -80,6 +80,7 @@ test('etapa de volume mostra o volume esperado da nota antes de digitar qualquer
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:8}}]);
   const { win, document }=carregarColetorReal(colecoesPadrao(notas));
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
@@ -94,6 +95,7 @@ test('digitar um volume que bate com o esperado mostra feedback de OK, ao vivo, 
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:8}}]);
   const { win, document }=carregarColetorReal(colecoesPadrao(notas));
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
@@ -114,6 +116,7 @@ test('digitar um volume divergente do esperado mostra alerta com a diferença, a
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:8}}]);
   const { win, document }=carregarColetorReal(colecoesPadrao(notas));
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
@@ -137,6 +140,7 @@ test('volume esperado soma quando há mais de uma nota no mesmo retorno',async()
   ]);
   const { win, document }=carregarColetorReal(colecoesPadrao(notas));
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
@@ -153,6 +157,7 @@ test('PEDIDO AO VIVO: voltar da etapa de motorista/motivo/conferente pra chave, 
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:8}}]);
   const { win, document }=carregarColetorReal(colecoesPadrao(notas));
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
@@ -165,29 +170,75 @@ test('PEDIDO AO VIVO: voltar da etapa de motorista/motivo/conferente pra chave, 
   assert.ok(document.getElementById('recusa-motorista-busca'),'precisa conseguir avançar de novo normalmente depois de voltar');
 });
 
-test('PEDIDO AO VIVO: preencher motorista/motivo/conferente, avançar até volume, voltar, e o que foi selecionado continua lá',async()=>{
+test('PEDIDO AO VIVO: preencher motorista/motivo, avançar até volume, voltar, e o que foi selecionado continua lá',async()=>{
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:8}}]);
   const { win, document }=carregarColetorReal(colecoesPadrao(notas));
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
   document.getElementById('recusa-continuar-1').click();
   selecionarComboOpcao(document,'recusa-motorista','m1');
   selecionarComboOpcao(document,'recusa-motivo','v1');
-  selecionarComboOpcao(document,'recusa-conferente','c1');
   document.getElementById('recusa-continuar-2').click();
 
   document.getElementById('recusa-voltar-3').click();
   assert.equal(document.getElementById('recusa-motorista-busca').value,'João Pereira','motorista selecionado precisa continuar marcado ao voltar');
   assert.equal(document.getElementById('recusa-motivo-busca').value,'Cliente ausente');
-  assert.equal(document.getElementById('recusa-conferente-busca').value,'Ana Conferente');
 });
 
-test('PEDIDO AO VIVO: digitar volume, avançar pro Box, voltar pro volume — o número digitado continua lá (não zera)',async()=>{
+// PEDIDO AO VIVO (2026-09-03): "o conferente não vai precisar nem
+// selecionar... vai descobrir pelo login" — substitui o combo manual de
+// conferente por resolução automática (e-mail do login batendo com o
+// cadastro), testada aqui em vez da seleção manual acima.
+test('PEDIDO AO VIVO: conferente é detectado sozinho pelo e-mail de login, sem precisar selecionar — e continua detectado ao voltar/avançar',async()=>{
+  const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:8}}]);
+  const { win, document }=carregarColetorReal({...colecoesPadrao(notas), recebimento_recusas_conferentes:mockColecao([{id:'c1',data:{nome:'Ana Conferente',ativo:true,email:'ana@daterrinha.com'}}])});
+  win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'ana@daterrinha.com' } }) };
+  win.getDTAuth=win.firebase.auth;
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
+  document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
+  document.getElementById('recusa-add-chave').click();
+  await new Promise(r=>setTimeout(r,0));
+  document.getElementById('recusa-continuar-1').click();
+  assert.equal(document.getElementById('recusa-conferente-busca'),null,'não existe mais combo manual de conferente');
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML,/Conferente:.*Ana Conferente/s,'conferente detectado sozinho pelo login, sem seleção manual');
+
+  selecionarComboOpcao(document,'recusa-motorista','m1');
+  selecionarComboOpcao(document,'recusa-motivo','v1');
+  document.getElementById('recusa-continuar-2').click();
+  document.getElementById('recusa-voltar-3').click();
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML,/Conferente:.*Ana Conferente/s,'continua detectado ao voltar pra etapa de motorista');
+});
+
+test('login sem conferente cadastrado com esse e-mail mostra aviso, não trava o fluxo',async()=>{
+  const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:8}}]);
+  const { win, document }=carregarColetorReal(colecoesPadrao(notas));
+  win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'sem-cadastro@daterrinha.com' } }) };
+  win.getDTAuth=win.firebase.auth;
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
+  document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
+  document.getElementById('recusa-add-chave').click();
+  await new Promise(r=>setTimeout(r,0));
+  document.getElementById('recusa-continuar-1').click();
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML,/Não foi possível identificar o conferente/);
+  selecionarComboOpcao(document,'recusa-motorista','m1');
+  selecionarComboOpcao(document,'recusa-motivo','v1');
+  document.getElementById('recusa-continuar-2').click();
+  assert.ok(document.getElementById('recusa-volume'),'sem conferente identificado o fluxo continua normalmente');
+});
+
+// FASE 11 (2026-09-03): Box+Pallets virou o ÚLTIMO passo do fluxo, depois
+// da conferência dos produtos — este teste passou a cobrir "voltar da
+// escolha de conferência pro volume", não mais "voltar do Box pro volume".
+test('PEDIDO AO VIVO: digitar volume, avançar pra escolha de conferência, voltar pro volume — o número digitado continua lá (não zera)',async()=>{
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:8}}]);
   const { win, document }=carregarColetorReal(colecoesPadrao(notas));
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
@@ -198,20 +249,22 @@ test('PEDIDO AO VIVO: digitar volume, avançar pro Box, voltar pro volume — o 
   document.getElementById('recusa-volume').value='8';
   document.getElementById('recusa-continuar-3').click();
 
-  document.getElementById('recusa-voltar-4').click();
-  assert.equal(document.getElementById('recusa-volume').value,'8','o volume contado não pode sumir ao voltar do Box');
+  document.getElementById('recusa-voltar-conferencia').click();
+  assert.equal(document.getElementById('recusa-volume').value,'8','o volume contado não pode sumir ao voltar da escolha de conferência');
 });
 
 // BUG AO VIVO REAL: "erro alguma coisa no passo anterior e aperto em
 // voltar para ajustar o anterior ele volta tudo e tem que refazer tudo"
-// — cenário completo: chega até Box, volta até o volume pra corrigir, e
-// TUDO que já estava preenchido (notas, motorista, motivo, conferente,
-// box, pallets) continua lá até o fim.
-test('BUG AO VIVO REAL: corrigir o volume no meio do fluxo (voltar de Box até Volume) não obriga a refazer nota/motorista/motivo/box',async()=>{
+// — cenário completo: chega até a escolha de conferência, volta até o
+// volume pra corrigir, e TUDO que já estava preenchido (notas, motorista,
+// motivo, conferente) continua lá até o fim — inclusive o Box, preenchido
+// só no final agora (FASE 11).
+test('BUG AO VIVO REAL: corrigir o volume no meio do fluxo (voltar até Volume) não obriga a refazer nota/motorista/motivo',async()=>{
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:8}}]);
   const recusas=mockColecao([]);
   const { win, document }=carregarColetorReal({...colecoesPadrao(notas), recebimento_recusas:recusas});
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
@@ -220,20 +273,17 @@ test('BUG AO VIVO REAL: corrigir o volume no meio do fluxo (voltar de Box até V
   selecionarComboOpcao(document,'recusa-motivo','v1');
   document.getElementById('recusa-continuar-2').click();
   document.getElementById('recusa-volume').value='5'; // errado de propósito
-  document.getElementById('recusa-continuar-3').click();
-  document.getElementById('recusa-box').value='box 9';
-  document.getElementById('recusa-continuar-4').click(); // chegou na escolha de conferência
+  document.getElementById('recusa-continuar-3').click(); // -> escolha de conferência
 
-  document.getElementById('recusa-voltar-conferencia').click(); // -> box
-  document.getElementById('recusa-voltar-4').click(); // -> volume
+  document.getElementById('recusa-voltar-conferencia').click(); // -> volume
   assert.equal(document.getElementById('recusa-volume').value,'5','volume errado ainda visível pra corrigir');
 
   document.getElementById('recusa-volume').value='8'; // corrige
-  document.getElementById('recusa-continuar-3').click();
-  assert.equal(document.getElementById('recusa-box').value,'BOX 9','box preenchido antes não pode ter sumido');
+  document.getElementById('recusa-continuar-3').click(); // -> escolha de conferência de novo
 
+  document.getElementById('recusa-conf-somente-volume').click(); // -> Box (último passo)
+  document.getElementById('recusa-box').value='box 9';
   document.getElementById('recusa-continuar-4').click();
-  document.getElementById('recusa-conf-somente-volume').click();
   await new Promise(r=>setTimeout(r,0));
 
   assert.equal(recusas._registro.size,1);
@@ -245,10 +295,14 @@ test('BUG AO VIVO REAL: corrigir o volume no meio do fluxo (voltar de Box até V
   assert.equal(payload.conferenciaStatus,'CONFERIDO');
 });
 
-test('voltar da escolha de conferência retorna pro Box, e voltar da etapa de itens retorna pra escolha de conferência',async()=>{
+// FASE 11: a escolha de conferência agora vem logo depois do volume (não
+// mais depois do Box); e o Box (agora o último passo) volta pra "itens" ou
+// pra "conferencia", dependendo do caminho escolhido.
+test('voltar da escolha de conferência retorna pro volume; voltar da etapa de itens retorna pra escolha de conferência; voltar do Box (último passo) retorna pros itens',async()=>{
   const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:8,itens:[{produtoKey:1,descricao:'Item A',gtin:'789',quantidade:2}]}}]);
   const { win, document }=carregarColetorReal(colecoesPadrao(notas));
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
   document.getElementById('recusa-add-chave').click();
   await new Promise(r=>setTimeout(r,0));
@@ -258,17 +312,23 @@ test('voltar da escolha de conferência retorna pro Box, e voltar da etapa de it
   document.getElementById('recusa-continuar-2').click();
   document.getElementById('recusa-volume').value='8';
   document.getElementById('recusa-continuar-3').click();
-  document.getElementById('recusa-box').value='box 1';
-  document.getElementById('recusa-continuar-4').click();
 
-  assert.ok(document.getElementById('recusa-conf-itens'),'chegou na tela de escolha de conferência');
+  assert.ok(document.getElementById('recusa-conf-itens'),'chegou na tela de escolha de conferência logo depois do volume');
+  document.getElementById('recusa-voltar-conferencia').click();
+  assert.ok(document.getElementById('recusa-volume'),'voltar da escolha de conferência cai no volume, não mais no Box');
+  document.getElementById('recusa-continuar-3').click();
+
   document.getElementById('recusa-conf-itens').click();
   assert.ok(document.getElementById('recusa-voltar-itens'),'etapa de itens (fluxo normal, não delegado) precisa ter botão de voltar');
   document.getElementById('recusa-voltar-itens').click();
   assert.ok(document.getElementById('recusa-conf-itens'),'voltou pra escolha de conferência');
 
-  document.getElementById('recusa-voltar-conferencia').click();
-  assert.equal(document.getElementById('recusa-box').value,'BOX 1','voltou pro Box com o valor preservado');
+  document.getElementById('recusa-conf-itens').click();
+  document.getElementById('recusa-conf-concluir').click();
+  document.getElementById('recusa-box').value='box 1';
+  assert.ok(document.getElementById('recusa-voltar-4'),'chegou no Box, o último passo');
+  document.getElementById('recusa-voltar-4').click();
+  assert.ok(document.getElementById('recusa-conf-scan'),'voltar do Box (veio de "conferir produtos") cai de volta nos itens, não na escolha');
 });
 
 test('conferência delegada (modoTarefa) não mostra botão de voltar na etapa de itens — não há passo anterior nesse fluxo',async()=>{
@@ -276,7 +336,9 @@ test('conferência delegada (modoTarefa) não mostra botão de voltar na etapa d
   const tarefas=mockColecaoComWhere([{id:'t1',data:{atribuidoPara:'op@x.com',status:'PENDENTE',box:'BOX 1',recusaId:'r1',notas:[{chave:CHAVE_VALIDA,numeroNota:'12345'}]}}]);
   const { win, document }=carregarColetorReal({...colecoesPadrao(notas), recebimento_recusas_tarefas_conferencia:tarefas});
   win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'op@x.com' } }) };
+  win.getDTAuth=win.firebase.auth;
   await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
   await new Promise(r=>setTimeout(r,0));
   const botaoIniciar=document.querySelector('[data-tarefa-iniciar]');
   assert.ok(botaoIniciar,'tarefa pendente precisa aparecer pro operador certo');

@@ -2,7 +2,11 @@
 //  UTILS
 // ═══════════════════════════════════════════════════
 function fmtTime(d) {
-  return d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  return d.toLocaleTimeString('pt-BR', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit'
+  });
 }
 
 // Enter handler — movido para a seção de scanner de hardware acima
@@ -11,17 +15,19 @@ function fmtTime(d) {
 updateSteps();
 // ServiceWorker não necessário — Firebase SDK gerencia offline
 
-
 // ── Sincronização unificada e silenciosa ────────────────────────────────────
 // Contagens e auditorias usam armazenamentos diferentes, mas para o operador
 // existe uma única fila lógica. A reconexão apenas dispara os envios; nunca
 // recarrega a página e nunca bloqueia a operação atual.
 let _syncTudoPromise = null;
 async function sincronizarTudoEmSegundoPlano(origem = 'automatico') {
-  if (!navigator.onLine) return { contagens: 0, auditorias: 0, offline: true };
+  if (!navigator.onLine) return {
+    contagens: 0,
+    auditorias: 0,
+    offline: true
+  };
   if (_syncTudoPromise) return _syncTudoPromise;
-
-  _syncTudoPromise = (async function(){
+  _syncTudoPromise = async function () {
     let erros = [];
     try {
       if (typeof idbGetPendentes === 'function' && typeof enviarFilaPendente === 'function') {
@@ -30,43 +36,68 @@ async function sincronizarTudoEmSegundoPlano(origem = 'automatico') {
         filaSave(FILA_ENVIO);
         if (FILA_ENVIO.length) await enviarFilaPendente();
       }
-    } catch (e) { erros.push(e); console.warn('[SYNC] Contagens permanecem pendentes:', e); }
-
+    } catch (e) {
+      erros.push(e);
+      console.warn('[SYNC] Contagens permanecem pendentes:', e);
+    }
     try {
       if (typeof window.sincronizarFilaAuditoria === 'function') {
         await window.sincronizarFilaAuditoria();
       }
-    } catch (e) { erros.push(e); console.warn('[SYNC] Auditorias permanecem pendentes:', e); }
-
+    } catch (e) {
+      erros.push(e);
+      console.warn('[SYNC] Auditorias permanecem pendentes:', e);
+    }
     try {
       if (typeof window.sincronizarFilaRecebimento === 'function') {
         await window.sincronizarFilaRecebimento();
       }
-    } catch (e) { erros.push(e); console.warn('[SYNC] Bips de Recebimento permanecem pendentes:', e); }
-
-    try { await atualizarFilaStatus(); } catch(e){ console.warn("[Erro tratado]", e); }
-    try { if (typeof atualizarBarraStatus === 'function') atualizarBarraStatus(); } catch(e){ console.warn("[Erro tratado]", e); }
-    return { origem, erros: erros.length };
-  })();
-
-  try { return await _syncTudoPromise; }
-  finally { _syncTudoPromise = null; }
+    } catch (e) {
+      erros.push(e);
+      console.warn('[SYNC] Bips de Recebimento permanecem pendentes:', e);
+    }
+    try {
+      await atualizarFilaStatus();
+    } catch (e) {
+      console.warn("[Erro tratado]", e);
+    }
+    try {
+      if (typeof atualizarBarraStatus === 'function') atualizarBarraStatus();
+    } catch (e) {
+      console.warn("[Erro tratado]", e);
+    }
+    return {
+      origem,
+      erros: erros.length
+    };
+  }();
+  try {
+    return await _syncTudoPromise;
+  } finally {
+    _syncTudoPromise = null;
+  }
 }
 window.sincronizarTudoEmSegundoPlano = sincronizarTudoEmSegundoPlano;
 
 /** Botão manual para enviar fila (aba STATUS) */
 async function enviarFilaManual() {
-  if (!navigator.onLine) { toast('📶 Sem internet — os registros continuam salvos no aparelho', 'w'); return; }
+  if (!navigator.onLine) {
+    toast('📶 Sem internet — os registros continuam salvos no aparelho', 'w');
+    return;
+  }
   toast('⬆️ Sincronizando contagens e auditorias em segundo plano…', 'w');
   await sincronizarTudoEmSegundoPlano('manual');
   updateStats();
   await atualizarFilaStatus();
   const contagens = typeof idbGetPendentes === 'function' ? (await idbGetPendentes()).length : 0;
   let auditorias = 0;
-  try { auditorias = window.DTAuditoriaStorage ? (await window.DTAuditoriaStorage.filaAll()).length : 0; } catch(e){ console.warn("[Erro tratado]", e); }
+  try {
+    auditorias = window.DTAuditoriaStorage ? (await window.DTAuditoriaStorage.filaAll()).length : 0;
+  } catch (e) {
+    console.warn("[Erro tratado]", e);
+  }
   const total = contagens + auditorias;
-  if (total === 0) toast('✅ Contagens e auditorias enviadas com sucesso!', 's');
-  else toast(`⚠️ ${total} registro(s) ainda pendente(s) — nova tentativa será automática`, 'w');
+  if (total === 0) toast('✅ Contagens e auditorias enviadas com sucesso!', 's');else toast(`⚠️ ${total} registro(s) ainda pendente(s) — nova tentativa será automática`, 'w');
 }
 
 /** Atualiza o indicador de fila na aba STATUS */
@@ -80,9 +111,15 @@ async function atualizarFilaStatus() {
       n = pendentes.length;
       FILA_ENVIO = pendentes;
       filaSave(FILA_ENVIO);
-    } catch(e){ console.warn("[Erro tratado]", e); }
+    } catch (e) {
+      console.warn("[Erro tratado]", e);
+    }
     let auditorias = 0;
-    try { auditorias = window.DTAuditoriaStorage ? (await window.DTAuditoriaStorage.filaAll()).length : 0; } catch(e){ console.warn("[Erro tratado]", e); }
+    try {
+      auditorias = window.DTAuditoriaStorage ? (await window.DTAuditoriaStorage.filaAll()).length : 0;
+    } catch (e) {
+      console.warn("[Erro tratado]", e);
+    }
     const total = n + auditorias;
     el.textContent = total > 0 ? total + ' pendente(s) (' + n + ' contagem(ns), ' + auditorias + ' auditoria(s))' : '✓ Tudo enviado';
     el.style.color = total > 0 ? 'var(--warn)' : 'var(--success)';

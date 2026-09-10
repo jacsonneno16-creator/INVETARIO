@@ -404,5 +404,81 @@ function abrirConfigColetor(colId) {
   });
 }
 
+// ── Novo coletor por código (pré-aprovação) ──────────────────────────
+// PEDIDO AO VIVO (2026-09-04): "no lugar de ficar entrando no coletor e
+// ficar indo no analista aprovar... quero que no analista cadastre o ID do
+// coletor e na hora que abrir o aplicativo ele já peça o id pra aprovar, e
+// depois fique aprovado" — em vez do Analista precisar esperar o aparelho
+// aparecer como "pendente" na tabela pra só então clicar em Aprovar, ele
+// gera o código AQUI, ANTES, dá um nome pro aparelho, e passa esse código
+// pro operador digitar direto na tela de espera do Coletor (ver
+// resgatarCodigoAprovacaoColetor em 02-sync-dispositivo.js) — libera na
+// hora, sem outra ida ao painel do Analista.
+function abrirModalNovoColetorComCodigo() {
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:14px;padding:24px 22px;max-width:400px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.2)">
+      <div style="font-weight:800;font-size:1rem;margin-bottom:4px">➕ Novo Coletor</div>
+      <div style="font-size:.78rem;color:var(--muted);margin-bottom:16px">Dê um nome pro aparelho e gere um código. Passe esse código pro operador digitar na tela de aprovação do Coletor — ele libera o acesso na hora, sem precisar voltar aqui pra aprovar.</div>
+      <div id="novocol-form">
+        <label style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);display:block;margin-bottom:6px">Nome do coletor</label>
+        <input id="novocol-nome-input" type="text" placeholder="Ex: Coletor Câmara Fria"
+          style="width:100%;padding:10px 12px;border:1.5px solid var(--border);border-radius:8px;font-size:.95rem;font-family:var(--sans);outline:none;margin-bottom:14px">
+        <button id="novocol-btn-gerar" style="width:100%;padding:10px;border-radius:8px;border:none;background:var(--orange);color:#fff;font-size:.85rem;font-weight:700;cursor:pointer;font-family:var(--sans)">🔑 Gerar código</button>
+      </div>
+      <div id="novocol-codigo-box" style="display:none;text-align:center;padding:18px;background:#f0fdf4;border:1.5px solid #86efac;border-radius:10px;margin-top:6px">
+        <div style="font-size:.7rem;color:#166534;font-weight:700;letter-spacing:.06em">CÓDIGO DE APROVAÇÃO</div>
+        <div id="novocol-codigo-valor" style="font-size:1.9rem;font-weight:900;letter-spacing:5px;color:#15803d;font-family:var(--mono,monospace);margin-top:6px"></div>
+        <div style="font-size:.72rem;color:#166534;margin-top:8px">Vale só uma vez. Passe pro operador digitar no aparelho.</div>
+      </div>
+      <div id="novocol-pendentes" style="margin-top:16px"></div>
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button id="novocol-btn-fechar" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:.85rem;cursor:pointer;font-family:var(--sans)">Fechar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  const fechar = () => modal.remove();
+  document.getElementById('novocol-btn-fechar').onclick = fechar;
+  modal.addEventListener('click', e => { if (e.target === modal) fechar(); });
+
+  async function renderPendentes() {
+    const wrap = document.getElementById('novocol-pendentes');
+    if (!wrap || !wrap.isConnected) return;
+    const lista = await carregarCodigosAprovacaoColetorPendentes();
+    if (!lista.length) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = '<div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:8px">Códigos ainda não usados</div>' +
+      lista.map(c => `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:#f8fafc;border-radius:8px;margin-bottom:6px">
+        <div><b style="font-family:var(--mono,monospace);letter-spacing:2px">${escapeHTML(c.id)}</b> <span style="color:var(--muted);font-size:.76rem">${escapeHTML(c.nome_coletor || '')}</span></div>
+        <button class="btn btn-ghost btn-sm" data-novocol-cancelar="${escapeHTML(c.id)}" style="color:var(--danger)">✕</button>
+      </div>`).join('');
+    wrap.querySelectorAll('[data-novocol-cancelar]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const ok = await cancelarCodigoAprovacaoColetor(btn.dataset.novocolCancelar);
+        if (ok) renderPendentes();
+      });
+    });
+  }
+  renderPendentes();
+
+  document.getElementById('novocol-btn-gerar').onclick = async () => {
+    const input = document.getElementById('novocol-nome-input');
+    const nome = (input.value || '').trim();
+    if (!nome) { input.style.borderColor = 'var(--danger)'; input.focus(); return; }
+    const btn = document.getElementById('novocol-btn-gerar');
+    btn.disabled = true;
+    btn.textContent = 'Gerando…';
+    const codigo = await gerarCodigoAprovacaoColetor(nome);
+    btn.disabled = false;
+    btn.textContent = '🔑 Gerar código';
+    if (!codigo) return;
+    document.getElementById('novocol-codigo-box').style.display = 'block';
+    document.getElementById('novocol-codigo-valor').textContent = codigo;
+    input.value = '';
+    renderPendentes();
+  };
+}
+window.abrirModalNovoColetorComCodigo = abrirModalNovoColetorComCodigo;
+
 // A Auditoria Operacional pertence exclusivamente ao módulo
 // 38-auditoria-operacional-v22.js. Não manter implementações paralelas aqui.

@@ -5,88 +5,118 @@ function _capaNumero(val) {
   if (!/^\d+$/.test(String(val || '').trim())) return NaN;
   return parseInt(String(val).trim(), 10);
 }
-
 function _capaExisteNaBase(val) {
   const alvo = String(val || '').trim().replace(/^0+(?=\d)/, '');
   if (!alvo) return false;
   return (APP.base || []).some(r => {
-    const bruto = r.pallete_ou_capa ?? r.capa_palete ?? r.capa ?? r.palete_key ?? r.pallet ?? '';
+    var _ref, _ref2, _ref3, _ref4, _r$pallete_ou_capa;
+    const bruto = (_ref = (_ref2 = (_ref3 = (_ref4 = (_r$pallete_ou_capa = r.pallete_ou_capa) !== null && _r$pallete_ou_capa !== void 0 ? _r$pallete_ou_capa : r.capa_palete) !== null && _ref4 !== void 0 ? _ref4 : r.capa) !== null && _ref3 !== void 0 ? _ref3 : r.palete_key) !== null && _ref2 !== void 0 ? _ref2 : r.pallet) !== null && _ref !== void 0 ? _ref : '';
     return String(bruto).trim().replace(/^0+(?=\d)/, '') === alvo;
   });
 }
-
 function _validarCapaInformada(val) {
   const texto = String(val == null ? '' : val).replace(/\D/g, '');
   const n = _capaNumero(texto);
-  if (!texto || isNaN(n) || n < 1) return { ok:false, msg:'Capa Palete inválida' };
+  if (!texto || isNaN(n) || n < 1) return {
+    ok: false,
+    msg: 'Capa Palete inválida'
+  };
 
   // Capas físicas/padrão com exatamente 7 dígitos são sempre permitidas.
   // Elas não usam o range reservado do operador.
   if (texto.length === 7) {
-    return { ok:true, existente:_capaExisteNaBase(texto), manualSeteDigitos:true, n, valor:texto };
+    return {
+      ok: true,
+      existente: _capaExisteNaBase(texto),
+      manualSeteDigitos: true,
+      n,
+      valor: texto
+    };
   }
 
   // Uma capa curta já cadastrada na base do inventário é física/válida e pode
   // ser usada independentemente do range atual do operador.
   const existenteNaBase = _capaExisteNaBase(texto);
   if (texto.length < 7 && existenteNaBase) {
-    return { ok:true, existente:true, nova:false, n, valor:String(n).padStart(3,'0') };
+    return {
+      ok: true,
+      existente: true,
+      nova: false,
+      n,
+      valor: String(n).padStart(3, '0')
+    };
   }
 
   // Capa curta ainda inexistente representa uma capa criada pelo sistema e precisa
   // obrigatoriamente pertencer ao range reservado do operador.
   if (texto.length < 7) {
     const range = APP.capaRange;
-    if (!range || !range.min || !range.max) return { ok:false, msg:'Range do operador ainda não foi reservado. Atualize a base e tente novamente.' };
-    if (n < range.min || n > range.max) return { ok:false, msg:`Capas com menos de 7 dígitos que ainda não existem na base só podem ser criadas dentro do seu range (${String(range.min).padStart(3,'0')}–${String(range.max).padStart(3,'0')})` };
-    return { ok:true, existente:false, nova:true, n, valor:String(n).padStart(3,'0') };
+    if (!range || !range.min || !range.max) return {
+      ok: false,
+      msg: 'Range do operador ainda não foi reservado. Atualize a base e tente novamente.'
+    };
+    if (n < range.min || n > range.max) return {
+      ok: false,
+      msg: `Capas com menos de 7 dígitos que ainda não existem na base só podem ser criadas dentro do seu range (${String(range.min).padStart(3, '0')}–${String(range.max).padStart(3, '0')})`
+    };
+    return {
+      ok: true,
+      existente: false,
+      nova: true,
+      n,
+      valor: String(n).padStart(3, '0')
+    };
   }
-
-  return { ok:false, msg:'A capa deve ter exatamente 7 dígitos ou estar dentro do range reservado.' };
+  return {
+    ok: false,
+    msg: 'A capa deve ter exatamente 7 dígitos ou estar dentro do range reservado.'
+  };
 }
 function onCapaInput() {
   const elCapa = document.getElementById('f-capa');
   elCapa.value = elCapa.value.replace(/\D/g, '').slice(0, 7);
   const val = elCapa.value.trim();
   const fb = document.getElementById('fb-capa');
-  if (!val) { fb.innerHTML = ''; APP.atual.capaGerada = false; return; }
-
+  if (!val) {
+    fb.innerHTML = '';
+    APP.atual.capaGerada = false;
+    return;
+  }
   const v = _validarCapaInformada(val);
   if (!v.ok) {
     fb.innerHTML = `<div class="fb err">✗ ${v.msg}</div>`;
     elCapa.className = 'field field-err';
     return;
   }
-  fb.innerHTML = v.manualSeteDigitos
-    ? `<div class="fb ok">✓ Capa de 7 dígitos aceita: ${v.valor}</div>`
-    : (v.existente
-      ? `<div class="fb ok">✓ Capa dentro do seu range: ${v.valor}</div>`
-      : `<div class="fb info">⚡ Nova capa dentro do seu range: ${v.valor}</div>`);
+  fb.innerHTML = v.manualSeteDigitos ? `<div class="fb ok">✓ Capa de 7 dígitos aceita: ${v.valor}</div>` : v.existente ? `<div class="fb ok">✓ Capa dentro do seu range: ${v.valor}</div>` : `<div class="fb info">⚡ Nova capa dentro do seu range: ${v.valor}</div>`;
   elCapa.className = 'field field-ok';
 }
-
 function confirmarCapa() {
   const input = document.getElementById('f-capa');
   const val = input.value.trim();
   const v = _validarCapaInformada(val);
-  if (!v.ok) { toast(v.msg, 'e'); beepErr(); return; }
-
-  const capaFinal = v.manualSeteDigitos ? v.valor : (v.valor || String(v.n).padStart(3, '0'));
+  if (!v.ok) {
+    toast(v.msg, 'e');
+    beepErr();
+    return;
+  }
+  const capaFinal = v.manualSeteDigitos ? v.valor : v.valor || String(v.n).padStart(3, '0');
   input.value = capaFinal;
   beepSuave();
   APP.atual.capa = capaFinal;
   APP.atual.capaGerada = !!v.nova;
   APP.atual.step = 3;
-
   if (APP.atual.somentesDun) {
     document.getElementById('gtin-label').textContent = '🔢 Etapa 3 — DUN (obrigatório)';
     document.getElementById('gtin-sublabel').textContent = 'Este endereço só aceita DUN';
-    const _glt = document.getElementById('gtin-label-txt'); if (_glt) _glt.textContent = 'DUN (obrigatório)';
+    const _glt = document.getElementById('gtin-label-txt');
+    if (_glt) _glt.textContent = 'DUN (obrigatório)';
     document.getElementById('f-gtin').placeholder = 'DUN (14 dígitos)';
   } else {
     document.getElementById('gtin-label').textContent = '🔢 Etapa 3 — GTIN / DUN';
     document.getElementById('gtin-sublabel').textContent = 'Bipe ou digite o código';
-    const _glt2 = document.getElementById('gtin-label-txt'); if (_glt2) _glt2.textContent = 'GTIN / DUN';
+    const _glt2 = document.getElementById('gtin-label-txt');
+    if (_glt2) _glt2.textContent = 'GTIN / DUN';
     document.getElementById('f-gtin').placeholder = 'GTIN (13) ou DUN (14)';
   }
   document.getElementById('f-gtin').value = '';
@@ -100,28 +130,32 @@ function confirmarCapa() {
 //  ETAPA 3: GTIN / DUN  (melhoria 2: usa base normalizada)
 // ═══════════════════════════════════════════════════
 function onGtinInput() {
-  const val  = document.getElementById('f-gtin').value.trim();
-  const fb   = document.getElementById('fb-gtin');
+  const val = document.getElementById('f-gtin').value.trim();
+  const fb = document.getElementById('fb-gtin');
   const pbox = document.getElementById('prod-found-box');
-  if (!val) { fb.innerHTML = ''; pbox.style.display='none'; APP.atual.produtoAtual=null; return; }
-
+  if (!val) {
+    fb.innerHTML = '';
+    pbox.style.display = 'none';
+    APP.atual.produtoAtual = null;
+    return;
+  }
   const isDun = val.length === 14;
-
   if (APP.atual.somentesDun && !isDun) {
     fb.innerHTML = `<div class="fb err">✗ Este endereço só aceita DUN (14 dígitos). Digitado: ${val.length}</div>`;
     document.getElementById('f-gtin').className = 'field icon-r field-err';
-    APP.atual.produtoAtual = null; pbox.style.display='none'; return;
+    APP.atual.produtoAtual = null;
+    pbox.style.display = 'none';
+    return;
   }
-
   if (APP.base.length) {
+    var _window$DTProdutos;
     // Busca com normalização forte — elimina diferenças de case/espaços do scanner
     const valNorm = normProd(val);
-    const _match = r =>
-      normProd(r.gtin)           === valNorm ||
-      normProd(r.dun)            === valNorm ||
-      normProd(r.codigo_produto) === valNorm;
+    const _match = r => normProd(r.gtin) === valNorm || normProd(r.dun) === valNorm || normProd(r.codigo_produto) === valNorm;
     const regInventario = APP.base.find(_match);
-    const produtoGeral = window.DTProdutos?.buscarSync(val) || { encontrado:false };
+    const produtoGeral = ((_window$DTProdutos = window.DTProdutos) === null || _window$DTProdutos === void 0 ? void 0 : _window$DTProdutos.buscarSync(val)) || {
+      encontrado: false
+    };
     const reg = regInventario || (produtoGeral.encontrado ? {
       codigo_produto: produtoGeral.codigoInterno || produtoGeral.produtoId || valNorm,
       descricao_produto: produtoGeral.nomeProduto || 'Produto sem descrição',
@@ -137,7 +171,6 @@ function onGtinInput() {
       const endNorm = APP.atual._endNorm || _normStr(APP.atual.endereco);
       const pertenceAoEnd = APP.base.some(r => r._end === endNorm && _match(r));
       APP.atual.produtoDivergenteEnd = endNorm && !pertenceAoEnd;
-
       if (APP.atual.produtoDivergenteEnd) {
         fb.innerHTML = `<div class="fb warn">⚠ Produto fora deste endereço — será avaliado pelo analista</div>`;
         document.getElementById('f-gtin').className = 'field icon-r field-warn';
@@ -147,38 +180,35 @@ function onGtinInput() {
         document.getElementById('f-gtin').className = 'field icon-r field-ok';
         // ► SEM SOM AQUI — o som suave toca em confirmarGtin() quando Enter chega
       }
-
       pbox.style.display = '';
-      const nomeProduto = produtoGeral.encontrado
-        ? produtoGeral.nomeProduto
-        : (reg.descricao_produto || 'Produto sem descrição');
-      const codigoCadastro = produtoGeral.encontrado
-        ? (produtoGeral.codigoInterno || reg.codigo_produto || '')
-        : (reg.codigo_produto || '');
+      const nomeProduto = produtoGeral.encontrado ? produtoGeral.nomeProduto : reg.descricao_produto || 'Produto sem descrição';
+      const codigoCadastro = produtoGeral.encontrado ? produtoGeral.codigoInterno || reg.codigo_produto || '' : reg.codigo_produto || '';
       pbox.innerHTML = `
         <div class="prod-card">
           <div class="prod-icon">📦</div>
           <div style="min-width:0">
-            <div class="prod-code" style="font-size:.82rem;font-weight:800">${escHTML(isDun?'DUN':'GTIN')}: ${escHTML(val)}${codigoCadastro ? ` · Cód. ${escHTML(codigoCadastro)}` : ''}</div>
+            <div class="prod-code" style="font-size:.82rem;font-weight:800">${escHTML(isDun ? 'DUN' : 'GTIN')}: ${escHTML(val)}${codigoCadastro ? ` · Cód. ${escHTML(codigoCadastro)}` : ''}</div>
             <div class="prod-name" style="font-size:.7rem;font-weight:600;margin-top:3px;line-height:1.25;color:var(--muted)">${escHTML(nomeProduto)}</div>
           </div>
         </div>`;
     } else {
+      var _window$DTProdutos2, _window$DTProdutos3;
       APP.atual.produtoAtual = null;
       APP.atual.produtoDivergenteEnd = false;
-      const produtosCarregados = !!window.DTProdutos?.cache?.carregado;
-      fb.innerHTML = produtosCarregados
-        ? `<div class="fb err">✗ Código não encontrado na base</div>`
-        : `<div class="fb warn">⏳ Consultando a Base Geral de Produtos…</div>`;
+      const produtosCarregados = !!((_window$DTProdutos2 = window.DTProdutos) !== null && _window$DTProdutos2 !== void 0 && (_window$DTProdutos2 = _window$DTProdutos2.cache) !== null && _window$DTProdutos2 !== void 0 && _window$DTProdutos2.carregado);
+      fb.innerHTML = produtosCarregados ? `<div class="fb err">✗ Código não encontrado na base</div>` : `<div class="fb warn">⏳ Consultando a Base Geral de Produtos…</div>`;
       document.getElementById('f-gtin').className = produtosCarregados ? 'field icon-r field-err' : 'field icon-r';
       pbox.style.display = 'none';
-      if (!produtosCarregados && window.DTProdutos?.carregar) {
+      if (!produtosCarregados && (_window$DTProdutos3 = window.DTProdutos) !== null && _window$DTProdutos3 !== void 0 && _window$DTProdutos3.carregar) {
         const codigoConsultado = val;
         window.DTProdutos.carregar().then(() => {
           const campo = document.getElementById('f-gtin');
           if (campo && campo.value.trim() === codigoConsultado) onGtinInput();
-        }).catch((erro) => {
-          console.warn('[Produtos] Falha ao atualizar a base durante a consulta', { codigo: codigoConsultado, erro });
+        }).catch(erro => {
+          console.warn('[Produtos] Falha ao atualizar a base durante a consulta', {
+            codigo: codigoConsultado,
+            erro
+          });
           if (fb) fb.innerHTML = '<div class="fb err">✗ Não foi possível consultar a Base Geral de Produtos</div>';
         });
       }
@@ -190,17 +220,26 @@ function onGtinInput() {
       <span style="font-size:.72rem">Volte e selecione o inventário para baixar a base.</span>
       <button onclick="voltarInventarios()" style="padding:5px 12px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:.75rem;font-weight:700;cursor:pointer;margin-top:2px">↩ Recarregar</button>
     </div>`;
-    APP.atual.produtoAtual = { descricao_produto: 'Código sem cadastro', codigo_produto: val, gtin: val };
+    APP.atual.produtoAtual = {
+      descricao_produto: 'Código sem cadastro',
+      codigo_produto: val,
+      gtin: val
+    };
     APP.atual.produtoDivergenteEnd = false;
     pbox.style.display = 'none';
   }
 }
-
 function confirmarGtin() {
   const val = document.getElementById('f-gtin').value.trim();
-  if (!val) { toast('Informe o código', 'e'); beepErr(); return; }
+  if (!val) {
+    toast('Informe o código', 'e');
+    beepErr();
+    return;
+  }
   if (APP.atual.somentesDun && val.length !== 14) {
-    toast('Este endereço só aceita DUN (14 dígitos)', 'e'); beepErr(); return;
+    toast('Este endereço só aceita DUN (14 dígitos)', 'e');
+    beepErr();
+    return;
   }
 
   // Se produto não encontrado na base, avisa mas DEIXA PROSSEGUIR
@@ -209,7 +248,7 @@ function confirmarGtin() {
     APP.atual.produtoAtual = {
       descricao_produto: 'Código sem cadastro',
       codigo_produto: normProd(val),
-      gtin:           normProd(val),
+      gtin: normProd(val),
       _nao_encontrado: true
     };
     APP.atual.produtoDivergenteEnd = false;
@@ -222,7 +261,7 @@ function confirmarGtin() {
   if (APP.atual.produtoDivergenteEnd) {
     beepErroForte(); // ✗ produto bipado não pertence ao endereço informado
   } else if (APP.atual.produtoAtual && !APP.atual.produtoAtual._nao_encontrado) {
-    beepSuave();     // ✓ produto correto para este endereço
+    beepSuave(); // ✓ produto correto para este endereço
   }
   // ────────────────────────────────────────────────────────────────────────
 
@@ -242,7 +281,10 @@ function confirmarGtin() {
     const cw = document.getElementById('calc-wrap');
     if (cw) cw.style.display = 'none';
     updateSteps();
-    setTimeout(() => document.getElementById('f-qty')?.focus(), 100);
+    setTimeout(() => {
+      var _document$getElementB;
+      return (_document$getElementB = document.getElementById('f-qty')) === null || _document$getElementB === void 0 ? void 0 : _document$getElementB.focus();
+    }, 100);
     return;
   }
 
@@ -271,11 +313,15 @@ function onValidadeInput() {
   if (fb) fb.innerHTML = `<div class="fb ok">✓ Lote informado: ${escHTML(val.trim())}</div>`;
   el.className = 'field field-ok';
 }
-
 function confirmarValidade() {
+  var _document$getElementB2;
   // Compatibilidade: o campo mantém o id antigo, mas agora representa lote.
-  const val = String(document.getElementById('f-validade')?.value || '').trim();
-  if (!val) { toast('Informe o número do lote', 'e'); beepErr(); return; }
+  const val = String(((_document$getElementB2 = document.getElementById('f-validade')) === null || _document$getElementB2 === void 0 ? void 0 : _document$getElementB2.value) || '').trim();
+  if (!val) {
+    toast('Informe o número do lote', 'e');
+    beepErr();
+    return;
+  }
   APP.atual.loteProduto = val;
   APP.atual.validade = '';
   APP.atual.step = 5;
@@ -283,7 +329,7 @@ function confirmarValidade() {
   _calcExpr = '';
   _calcResultado = null;
   _calcMode = false;
-  document.getElementById('f-qty').value = '';   // vazio — operador deve digitar
+  document.getElementById('f-qty').value = ''; // vazio — operador deve digitar
   // Esconder calculadora ao entrar na etapa
   const cw = document.getElementById('calc-wrap');
   if (cw) cw.style.display = 'none';
@@ -295,8 +341,9 @@ function confirmarValidade() {
 //  ETAPA 5: QUANTIDADE + CALCULADORA
 // ═══════════════════════════════════════════════════
 function _onQtyInput() {
+  var _document$getElementB3;
   // Sincroniza digitação manual no campo f-qty com _calcExpr e _calcResultado
-  const val = (document.getElementById('f-qty')?.value || '').trim();
+  const val = (((_document$getElementB3 = document.getElementById('f-qty')) === null || _document$getElementB3 === void 0 ? void 0 : _document$getElementB3.value) || '').trim();
   if (val === '') {
     _calcExpr = '';
     _calcResultado = null;
@@ -311,7 +358,6 @@ function _onQtyInput() {
     _calcExpr = val;
   }
 }
-
 function changeQty(d) {
   // Se calculadora estiver ativa, não interfere
   if (_calcMode) return;
@@ -322,12 +368,10 @@ function changeQty(d) {
   _calcExpr = String(novo);
   _calcResultado = novo;
 }
-
 function mostrarCalculadora() {
   const cw = document.getElementById('calc-wrap');
   if (cw) cw.style.display = '';
 }
-
 function toggleCalculadora() {
   const cw = document.getElementById('calc-wrap');
   if (!cw) return;
@@ -339,8 +383,7 @@ function toggleCalculadora() {
     // Se campo tem expressão incompleta, limpar
     if (_calcExpr && /[+\-*/]/.test(_calcExpr.slice(-1))) {
       _calcExpr = '';
-      if (_calcResultado !== null) _qtyDisplay(String(_calcResultado));
-      else _qtyDisplay('');
+      if (_calcResultado !== null) _qtyDisplay(String(_calcResultado));else _qtyDisplay('');
     }
   } else {
     // Abrir: ativar modo calc
@@ -362,15 +405,14 @@ function toggleCalculadora() {
 // ═══════════════════════════════════════════════════
 //  ETAPA 5: CALCULADORA  (usa f-qty como display)
 // ═══════════════════════════════════════════════════
-let _calcExpr = '';          // expressão em construção
-let _calcResultado = null;   // último resultado confirmado
-let _calcMode = false;       // true enquanto calculadora estiver aberta
+let _calcExpr = ''; // expressão em construção
+let _calcResultado = null; // último resultado confirmado
+let _calcMode = false; // true enquanto calculadora estiver aberta
 
 function _qtyDisplay(val) {
   const el = document.getElementById('f-qty');
   if (el) el.value = val;
 }
-
 function calcNum(n) {
   // Se acabou de calcular um resultado e digita número novo, recomeça
   if (_calcResultado !== null && _calcExpr === '') {
@@ -379,7 +421,6 @@ function calcNum(n) {
   _calcExpr += n;
   _qtyDisplay(_calcExpr);
 }
-
 function calcOp(op) {
   // Se expressão vazia mas tem resultado anterior, continua a partir dele
   if (!_calcExpr && _calcResultado !== null) {
@@ -388,15 +429,16 @@ function calcOp(op) {
   _calcExpr += op;
   _qtyDisplay(_calcExpr);
 }
-
 function calcAc() {
   _calcExpr = '';
   _calcResultado = null;
-  APP.calc = { expr: '', resultado: null };
+  APP.calc = {
+    expr: '',
+    resultado: null
+  };
   _qtyDisplay('');
   document.getElementById('f-qty').placeholder = '0';
 }
-
 function calcEq() {
   if (!_calcExpr) return;
   try {
@@ -405,7 +447,7 @@ function calcEq() {
     const arredondado = Math.round(res * 100) / 100;
     _calcResultado = arredondado;
     APP.calc.resultado = arredondado;
-    _calcExpr = '';  // limpa expressão, mantém resultado para continuar operando
+    _calcExpr = ''; // limpa expressão, mantém resultado para continuar operando
     _qtyDisplay(String(arredondado));
   } catch {
     _qtyDisplay('ERRO');
@@ -415,38 +457,31 @@ function calcEq() {
     }, 800);
   }
 }
-
-function calcUsar() { /* não usado mais — o resultado já está no campo */ }
-
-function atualizarCalcDisplay() { /* compatibilidade */ }
-
+function calcUsar() {/* não usado mais — o resultado já está no campo */}
+function atualizarCalcDisplay() {/* compatibilidade */}
 
 // ═══════════════════════════════════════════════════
 //  SALVAR CONTAGEM
 // ═══════════════════════════════════════════════════
 // ── Anti-duplo disparo (Enter repetido / scanner duplo / clique duplo) ──────
-let _salvandoContagem      = false;
+let _salvandoContagem = false;
 let _ultimaAssinaturaContagem = null;
-let _ultimoSalvamentoTs    = 0;
-
+let _ultimoSalvamentoTs = 0;
 function _assinaturaContagem(atual, qty) {
-  return [
-    String(atual._endNorm || atual.endereco || '').trim().toUpperCase(),
-    String(atual.capa     || '').trim().toUpperCase(),
-    String(atual.gtin     || '').trim().toUpperCase(),
-    String(atual.validade || '').trim(),
-    Number(qty),
-    String(APP.operador?.name || '').trim().toUpperCase(),
-  ].join('|');
+  var _APP$operador;
+  return [String(atual._endNorm || atual.endereco || '').trim().toUpperCase(), String(atual.capa || '').trim().toUpperCase(), String(atual.gtin || '').trim().toUpperCase(), String(atual.validade || '').trim(), Number(qty), String(((_APP$operador = APP.operador) === null || _APP$operador === void 0 ? void 0 : _APP$operador.name) || '').trim().toUpperCase()].join('|');
 }
-
 function salvarContagem() {
+  var _a$produtoAtual;
   // Trava: não abrir modal se já existe um em progresso
   if (_salvandoContagem) return;
 
   // Pegar valor do campo — pode ser resultado de cálculo ou digitação direta
   const rawVal = document.getElementById('f-qty').value.trim();
-  if (!rawVal || rawVal === 'ERRO') { toast('Informe a quantidade', 'e'); return; }
+  if (!rawVal || rawVal === 'ERRO') {
+    toast('Informe a quantidade', 'e');
+    return;
+  }
 
   // Se a expressão tiver operadores pendentes, calcular antes de salvar
   let qty;
@@ -458,13 +493,17 @@ function salvarContagem() {
       _qtyDisplay(String(qty));
       _calcResultado = qty;
       _calcExpr = '';
-    } catch { toast('Expressão inválida — use = antes de salvar', 'e'); return; }
+    } catch {
+      toast('Expressão inválida — use = antes de salvar', 'e');
+      return;
+    }
   } else {
     qty = parseInt(rawVal);
   }
-
-  if (isNaN(qty) || qty < 0) { toast('Quantidade inválida', 'e'); return; }
-
+  if (isNaN(qty) || qty < 0) {
+    toast('Quantidade inválida', 'e');
+    return;
+  }
   const a = APP.atual;
 
   // ── Modal de confirmação com resumo ──────────────────────────
@@ -491,7 +530,7 @@ function salvarContagem() {
         </div>
         <div style="display:flex;justify-content:space-between;padding:7px 10px;background:var(--card);border-radius:8px;gap:8px">
           <span style="color:var(--muted);flex-shrink:0">📦 Produto</span>
-          <span style="font-weight:600;color:var(--text);text-align:right;font-size:.72rem">${escHTML(a.produtoAtual?.descricao_produto || a.gtin)}</span>
+          <span style="font-weight:600;color:var(--text);text-align:right;font-size:.72rem">${escHTML(((_a$produtoAtual = a.produtoAtual) === null || _a$produtoAtual === void 0 ? void 0 : _a$produtoAtual.descricao_produto) || a.gtin)}</span>
         </div>
         <div style="display:flex;justify-content:space-between;padding:7px 10px;background:var(--card);border-radius:8px">
           <span style="color:var(--muted)">🏷️ Lote</span>
@@ -500,12 +539,12 @@ function salvarContagem() {
         <div style="display:flex;justify-content:space-between;padding:10px 12px;background:rgba(232,117,26,.08);border:1px solid rgba(232,117,26,.2);border-radius:8px">
           <span style="color:var(--muted);font-weight:700">🔢 Quantidade</span>
           <span style="font-family:var(--mono);font-weight:800;font-size:1.2rem;color:var(--accent)">${(() => {
-            const _gBip = normProd(a.gtin || '');
-            if (_gBip.length === 14) {
-              return '<b>' + qty + '</b> CX';
-            }
-            return '<b>' + qty + '</b> und';
-          })()}</span>
+    const _gBip = normProd(a.gtin || '');
+    if (_gBip.length === 14) {
+      return '<b>' + qty + '</b> CX';
+    }
+    return '<b>' + qty + '</b> und';
+  })()}</span>
         </div>
       </div>
       <div style="display:flex;gap:10px">
@@ -520,32 +559,39 @@ function salvarContagem() {
         ">✓ Confirmar</button>
       </div>
     </div>`;
-
   document.body.appendChild(modal);
-
   document.getElementById('btn-conf-ok').onclick = () => {
     const btnOk = document.getElementById('btn-conf-ok');
-    if (btnOk) { btnOk.disabled = true; btnOk.textContent = 'Salvando…'; }
+    if (btnOk) {
+      btnOk.disabled = true;
+      btnOk.textContent = 'Salvando…';
+    }
     modal.remove();
     _executarSalvar(qty);
   };
-  document.getElementById('btn-conf-cancelar').onclick = () => { modal.remove(); };
-  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+  document.getElementById('btn-conf-cancelar').onclick = () => {
+    modal.remove();
+  };
+  modal.addEventListener('click', e => {
+    if (e.target === modal) modal.remove();
+  });
 }
-
 function _executarSalvar(qty) {
+  var _a$produtoAtual2, _a$produtoAtual3, _window$DTProdutos4, _a$produtoAtual4, _APP$inventario, _APP$inventario2, _APP$inventario3, _a$produtoAtual5, _a$produtoAtual6, _APP$operador2, _APP$operador3, _APP$operador4, _APP$operador5, _APP$operador6, _APP$operador7, _APP$operador8, _ref9, _APP$endCapacidade$a$, _APP$endCapacidade2;
   // ── Trava anti-duplo: bloquear re-execução dentro de 1500ms com mesma assinatura ──
   if (_salvandoContagem) return;
   const _assin = _assinaturaContagem(APP.atual, qty);
   const _agora = Date.now();
-  if (_ultimaAssinaturaContagem === _assin && (_agora - _ultimoSalvamentoTs) < 1500) {
+  if (_ultimaAssinaturaContagem === _assin && _agora - _ultimoSalvamentoTs < 1500) {
     console.warn('[DT] Contagem duplicada bloqueada:', _assin);
     return;
   }
   _salvandoContagem = true;
   _ultimaAssinaturaContagem = _assin;
   _ultimoSalvamentoTs = _agora;
-  setTimeout(() => { _salvandoContagem = false; }, 800);
+  setTimeout(() => {
+    _salvandoContagem = false;
+  }, 800);
 
   // ── Verificar se o inventário ainda está ativo antes de salvar ──
   if (!APP.inventario) {
@@ -564,83 +610,79 @@ function _executarSalvar(qty) {
     _salvandoContagem = false;
     return;
   }
-
   const a = APP.atual;
-  const qtdEsp = a.produtoAtual?.quantidade_esperada;
+  const qtdEsp = (_a$produtoAtual2 = a.produtoAtual) === null || _a$produtoAtual2 === void 0 ? void 0 : _a$produtoAtual2.quantidade_esperada;
 
   // Divergência real é decidida pelo analista ao processar — o coletor apenas registra.
   // Manter divergente=false para não contaminar o cálculo de divergências com
   // avaliação local de quantidade. O alerta abaixo é apenas visual/informativo.
   const divergente = false;
-  const _alertaQtd = (
-    qtdEsp !== '' &&
-    qtdEsp !== undefined &&
-    qty !== parseInt(qtdEsp)
-  );
+  const _alertaQtd = qtdEsp !== '' && qtdEsp !== undefined && qty !== parseInt(qtdEsp);
 
   // Salvar sempre a quantidade como informada pelo operador (caixas ou unidades)
   // A conversão para unidades ocorre APENAS na Análise por Produto do analista
-  const _gtinBipado  = normProd(a.gtin);
+  const _gtinBipado = normProd(a.gtin);
   const _isDunBipado = _gtinBipado.length === 14;
-  const _fatorCx     = Math.max(1, parseFloat(a.produtoAtual?.fator_caixa) || 1);
-
-  const _produtoGlobal = window.DTProdutos?.buscarSync(_gtinBipado) || { encontrado:false };
-  const _nomeProdutoLido = _produtoGlobal.encontrado
-    ? _produtoGlobal.nomeProduto
-    : (a.produtoAtual?.descricao_produto || 'Produto não identificado');
-
+  const _fatorCx = Math.max(1, parseFloat((_a$produtoAtual3 = a.produtoAtual) === null || _a$produtoAtual3 === void 0 ? void 0 : _a$produtoAtual3.fator_caixa) || 1);
+  const _produtoGlobal = ((_window$DTProdutos4 = window.DTProdutos) === null || _window$DTProdutos4 === void 0 ? void 0 : _window$DTProdutos4.buscarSync(_gtinBipado)) || {
+    encontrado: false
+  };
+  const _nomeProdutoLido = _produtoGlobal.encontrado ? _produtoGlobal.nomeProduto : ((_a$produtoAtual4 = a.produtoAtual) === null || _a$produtoAtual4 === void 0 ? void 0 : _a$produtoAtual4.descricao_produto) || 'Produto não identificado';
   const contagem = {
-    id:   Date.now(),
+    id: Date.now(),
     uuid: gerarUUID(),
-    inventario_id:     APP.inventario?.id     || '',
-    inventario_nome:   APP.inventario?.nome   || '',
-    inventario_codigo: APP.inventario?.codigo || '',
+    inventario_id: ((_APP$inventario = APP.inventario) === null || _APP$inventario === void 0 ? void 0 : _APP$inventario.id) || '',
+    inventario_nome: ((_APP$inventario2 = APP.inventario) === null || _APP$inventario2 === void 0 ? void 0 : _APP$inventario2.nome) || '',
+    inventario_codigo: ((_APP$inventario3 = APP.inventario) === null || _APP$inventario3 === void 0 ? void 0 : _APP$inventario3.codigo) || '',
     endereco: a.endereco,
     capa: a.capa,
-    gtin:           _gtinBipado,
-    codigo_produto: normProd(a.produtoAtual?.codigo_produto || a.gtin),
-    produto_codigo: normProd(a.produtoAtual?.codigo_produto || a.gtin),
-    codigoLido:       _gtinBipado,
-    dunLido:          _gtinBipado.length === 14 ? _gtinBipado : '',
-    gtinLido:         _gtinBipado.length !== 14 ? _gtinBipado : (_produtoGlobal.gtin || ''),
-    produtoLidoId:    _produtoGlobal.encontrado ? _produtoGlobal.produtoId : '',
-    produtoLidoNome:  _nomeProdutoLido,
-    descricao:         _nomeProdutoLido,
+    gtin: _gtinBipado,
+    codigo_produto: normProd(((_a$produtoAtual5 = a.produtoAtual) === null || _a$produtoAtual5 === void 0 ? void 0 : _a$produtoAtual5.codigo_produto) || a.gtin),
+    produto_codigo: normProd(((_a$produtoAtual6 = a.produtoAtual) === null || _a$produtoAtual6 === void 0 ? void 0 : _a$produtoAtual6.codigo_produto) || a.gtin),
+    codigoLido: _gtinBipado,
+    dunLido: _gtinBipado.length === 14 ? _gtinBipado : '',
+    gtinLido: _gtinBipado.length !== 14 ? _gtinBipado : _produtoGlobal.gtin || '',
+    produtoLidoId: _produtoGlobal.encontrado ? _produtoGlobal.produtoId : '',
+    produtoLidoNome: _nomeProdutoLido,
+    descricao: _nomeProdutoLido,
     descricao_produto: _nomeProdutoLido,
-    lote_produto: a.enderecoVirtual ? '' : (a.loteProduto || ''),
-    validade: a.enderecoVirtual ? '' : (a.validade || ''),
-    tipo_endereco: a.enderecoVirtual ? 'VIRTUAL' : (a.tipoEndereco || 'FISICO'),
+    lote_produto: a.enderecoVirtual ? '' : a.loteProduto || '',
+    validade: a.enderecoVirtual ? '' : a.validade || '',
+    tipo_endereco: a.enderecoVirtual ? 'VIRTUAL' : a.tipoEndereco || 'FISICO',
     contabiliza_inventario: a.contabilizaInventario !== false,
     permite_multiplos_operadores: a.permiteMultiplosOperadores === true,
-    quantidade: qty,                               // sempre em caixas (ou unidades, se GTIN)
-    qtd_caixas:  _isDunBipado ? qty : null,        // quantas caixas o operador informou
-    fator_caixa: _isDunBipado ? _fatorCx : 1,      // fator de conversão cx→und
-    quantidade_unidades: _isDunBipado ? (qty * _fatorCx) : qty,
+    quantidade: qty,
+    // sempre em caixas (ou unidades, se GTIN)
+    qtd_caixas: _isDunBipado ? qty : null,
+    // quantas caixas o operador informou
+    fator_caixa: _isDunBipado ? _fatorCx : 1,
+    // fator de conversão cx→und
+    quantidade_unidades: _isDunBipado ? qty * _fatorCx : qty,
     unidade_contagem: _isDunBipado ? 'CAIXA' : 'UNIDADE',
-    tipo_bipagem: _isDunBipado ? 'DUN' : 'GTIN',   // qual código foi bipado
+    tipo_bipagem: _isDunBipado ? 'DUN' : 'GTIN',
+    // qual código foi bipado
     quantidade_esperada: qtdEsp || '',
     divergente,
     // Indicador local/informativo para o status offline do coletor.
     // A divergência oficial continua sendo validada pelo Analista.
     _alertaQtd: _alertaQtd,
     divergencia_potencial: _alertaQtd,
-    operador:       APP.operador?.name  || '',
-    operador_id:    APP.operador?.email || APP.operador?.usuario || APP.operador?.login || '',
-    operador_nome:  APP.operador?.name  || APP.operador?.nome || '',
-    operador_email: APP.operador?.email || '',
-    coletor_id:     localStorage.getItem('dt_device_id') || '',
-    origem:         'COLETOR',
-    tipo_contagem:    APP.modoRecontagem ? 'RECONTAGEM' : 'PRIMEIRA',
-    recontagem_id:    APP.modoRecontagem ? (APP.modoRecontagem.id || null) : null,
-    divergencia_id:   APP.modoRecontagem ? (APP.modoRecontagem.divergencia_id || (APP.modoRecontagem._col === 'divergencia' ? APP.modoRecontagem.id : null)) : null,
+    operador: ((_APP$operador2 = APP.operador) === null || _APP$operador2 === void 0 ? void 0 : _APP$operador2.name) || '',
+    operador_id: ((_APP$operador3 = APP.operador) === null || _APP$operador3 === void 0 ? void 0 : _APP$operador3.email) || ((_APP$operador4 = APP.operador) === null || _APP$operador4 === void 0 ? void 0 : _APP$operador4.usuario) || ((_APP$operador5 = APP.operador) === null || _APP$operador5 === void 0 ? void 0 : _APP$operador5.login) || '',
+    operador_nome: ((_APP$operador6 = APP.operador) === null || _APP$operador6 === void 0 ? void 0 : _APP$operador6.name) || ((_APP$operador7 = APP.operador) === null || _APP$operador7 === void 0 ? void 0 : _APP$operador7.nome) || '',
+    operador_email: ((_APP$operador8 = APP.operador) === null || _APP$operador8 === void 0 ? void 0 : _APP$operador8.email) || '',
+    coletor_id: localStorage.getItem('dt_device_id') || '',
+    origem: 'COLETOR',
+    tipo_contagem: APP.modoRecontagem ? 'RECONTAGEM' : 'PRIMEIRA',
+    recontagem_id: APP.modoRecontagem ? APP.modoRecontagem.id || null : null,
+    divergencia_id: APP.modoRecontagem ? APP.modoRecontagem.divergencia_id || (APP.modoRecontagem._col === 'divergencia' ? APP.modoRecontagem.id : null) : null,
     // Rodada explícita para auditoria e recuperação de registros offline/legados.
     // 1 = primeira recontagem (2ª contagem); 2 = segunda recontagem (3ª contagem).
     numero_recontagem: APP.modoRecontagem ? Number(APP.modoRecontagem.numero_recontagem || 1) : null,
-    dataHora:   new Date(),
-    criado_em:  new Date().toISOString(),
-    numero: APP.contagens.filter(c => c.endereco === a.endereco && c.gtin === a.gtin).length + 1,
+    dataHora: new Date(),
+    criado_em: new Date().toISOString(),
+    numero: APP.contagens.filter(c => c.endereco === a.endereco && c.gtin === a.gtin).length + 1
   };
-
   contagem.bateu_auditoria = false;
   _marcarAuditoriaBatidaSeHouver(contagem).then(ok => {
     if (ok) {
@@ -653,28 +695,35 @@ function _executarSalvar(qty) {
 
   // Encerrar a tarefa de endereço atribuída após a primeira contagem salva.
   if (!APP.modoRecontagem && navigator.onLine) {
-    const tarefa = APP.atribuicoesContagem?.get(a._endNorm || _normStr(a.endereco));
-    if (tarefa?.id) {
+    var _APP$atribuicoesConta;
+    const tarefa = (_APP$atribuicoesConta = APP.atribuicoesContagem) === null || _APP$atribuicoesConta === void 0 ? void 0 : _APP$atribuicoesConta.get(a._endNorm || _normStr(a.endereco));
+    if (tarefa !== null && tarefa !== void 0 && tarefa.id) {
+      var _APP$operador9, _APP$operador0;
       FS.collection('dt_atribuicoes_contagem').doc(tarefa.id).set({
-        status:'CONCLUIDA', concluida_em:new Date().toISOString(),
-        concluida_por:APP.operador?.name || APP.operador?.nome || '',
-        contagem_uuid:contagem.uuid
-      }, { merge:true }).catch(e => console.warn('[Atribuições] conclusão:', e?.message || e));
+        status: 'CONCLUIDA',
+        concluida_em: new Date().toISOString(),
+        concluida_por: ((_APP$operador9 = APP.operador) === null || _APP$operador9 === void 0 ? void 0 : _APP$operador9.name) || ((_APP$operador0 = APP.operador) === null || _APP$operador0 === void 0 ? void 0 : _APP$operador0.nome) || '',
+        contagem_uuid: contagem.uuid
+      }, {
+        merge: true
+      }).catch(e => console.warn('[Atribuições] conclusão:', (e === null || e === void 0 ? void 0 : e.message) || e));
       APP.atribuicoesContagem.delete(a._endNorm || _normStr(a.endereco));
     }
   }
-
   const n = parseInt(a.capa);
   if (!isNaN(n) && n >= APP.proximoCapa) APP.proximoCapa = n + 1;
-
-  const contagemFila = { ...contagem, dataHora: contagem.dataHora.toISOString() };
+  const contagemFila = {
+    ...contagem,
+    dataHora: contagem.dataHora.toISOString()
+  };
   enfileirarContagem(contagemFila);
   // O card de status precisa registrar a contagem no mesmo instante em que ela
   // entra na fila. Antes apenas o envio confirmado era registrado, portanto
   // Total/Pendentes permaneciam em zero durante o trabalho offline.
   try {
     if (window.DTStatusLedger) {
-      DTStatusLedger.mark('inventario', contagem.inventario_id || APP.inventario?.id, contagemFila, 'PENDENTE');
+      var _APP$inventario4;
+      DTStatusLedger.mark('inventario', contagem.inventario_id || ((_APP$inventario4 = APP.inventario) === null || _APP$inventario4 === void 0 ? void 0 : _APP$inventario4.id), contagemFila, 'PENDENTE');
     }
   } catch (e) {
     console.warn('[Status] Falha ao registrar contagem pendente:', e);
@@ -697,23 +746,16 @@ function _executarSalvar(qty) {
   // cadastrada na base geral de enderecos. Nao concluir apos o primeiro
   // palete quando o endereco comporta mais de um.
   if (APP.modoRecontagem) {
+    var _ref5, _ref6, _ref7, _ref8, _APP$endCapacidade$_e, _APP$endCapacidade;
     const _endRec = a._endNorm || a.endereco || APP.modoRecontagem.endereco || '';
-    const _capRec = Number(
-      APP.endCapacidade?.[_endRec] ??
-      a.capacidadeEnd ??
-      APP.modoRecontagem.capacidade_pallets ??
-      APP.modoRecontagem.capacidade_paletes ??
-      APP.modoRecontagem.capacidade ?? 0
-    ) || 0;
+    const _capRec = Number((_ref5 = (_ref6 = (_ref7 = (_ref8 = (_APP$endCapacidade$_e = (_APP$endCapacidade = APP.endCapacidade) === null || _APP$endCapacidade === void 0 ? void 0 : _APP$endCapacidade[_endRec]) !== null && _APP$endCapacidade$_e !== void 0 ? _APP$endCapacidade$_e : a.capacidadeEnd) !== null && _ref8 !== void 0 ? _ref8 : APP.modoRecontagem.capacidade_pallets) !== null && _ref7 !== void 0 ? _ref7 : APP.modoRecontagem.capacidade_paletes) !== null && _ref6 !== void 0 ? _ref6 : APP.modoRecontagem.capacidade) !== null && _ref5 !== void 0 ? _ref5 : 0) || 0;
     const _usadosRec = _palletsNoEnderecoAtual(_endRec);
-
     APP.recPalletAtual = _usadosRec + 1;
     if (typeof _atualizarBannerRecontagem === 'function') {
       APP.modoRecontagem._paletes_contados_rodada = _usadosRec;
       APP.modoRecontagem._capacidade_rodada = _capRec;
       _atualizarBannerRecontagem(APP.modoRecontagem);
     }
-
     if (_capRec > 0 && _usadosRec >= _capRec) {
       toast(`✅ Recontagem concluida: ${_usadosRec}/${_capRec} paletes registrados`, 's');
       resetContagem();
@@ -726,17 +768,15 @@ function _executarSalvar(qty) {
     // ENDERECO VAZIO quando nao houver mais paletes fisicos.
     _manterEnderecoAtivo(a.endereco, _endRec, _capRec || a.capacidadeEnd, a.somentesDun);
     const faltam = _capRec > 0 ? Math.max(0, _capRec - _usadosRec) : null;
-    toast(faltam === null
-      ? `📦 Palete ${_usadosRec} salvo — bipe o proximo ou encerre o endereco`
-      : `📦 Palete ${_usadosRec}/${_capRec} salvo — faltam ${faltam}`, 's');
+    toast(faltam === null ? `📦 Palete ${_usadosRec} salvo — bipe o proximo ou encerre o endereco` : `📦 Palete ${_usadosRec}/${_capRec} salvo — faltam ${faltam}`, 's');
     return;
   }
 
   // ── Verificar capacidade após salvar ─────────────────────────────────
   // Re-ler capacidade diretamente do mapa (mais confiável que APP.atual.capacidadeEnd)
-  const _capMapa = APP.endCapacidade?.[a._endNorm] ?? a.capacidadeEnd ?? 0;
-  const _cap     = _capMapa;
-  const _usados  = _palletsNoEnderecoAtual(a._endNorm);
+  const _capMapa = (_ref9 = (_APP$endCapacidade$a$ = (_APP$endCapacidade2 = APP.endCapacidade) === null || _APP$endCapacidade2 === void 0 ? void 0 : _APP$endCapacidade2[a._endNorm]) !== null && _APP$endCapacidade$a$ !== void 0 ? _APP$endCapacidade$a$ : a.capacidadeEnd) !== null && _ref9 !== void 0 ? _ref9 : 0;
+  const _cap = _capMapa;
+  const _usados = _palletsNoEnderecoAtual(a._endNorm);
 
   // Regra explícita: capacidade 1 → encerrar após o primeiro pallet
   if (_cap === 1 && _usados >= 1) {
@@ -781,7 +821,7 @@ function finalizarEnderecoAtual() {
     produtoDivergenteEnd: false,
     validade: '',
     quantidade: 0,
-    somentesDun: false,
+    somentesDun: false
   };
   _endVerif = null;
 
@@ -792,20 +832,27 @@ function finalizarEnderecoAtual() {
   if (stepEnd) stepEnd.style.display = '';
 
   // Limpar inputs
-  ['f-endereco','f-capa','f-gtin','f-validade'].forEach(id => {
+  ['f-endereco', 'f-capa', 'f-gtin', 'f-validade'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) { el.value = ''; el.className = el.className.replace(/field-(ok|err|warn)/g,'').trim(); el.disabled = false; }
+    if (el) {
+      el.value = '';
+      el.className = el.className.replace(/field-(ok|err|warn)/g, '').trim();
+      el.disabled = false;
+    }
   });
   const fqty = document.getElementById('f-qty');
   if (fqty) fqty.value = '';
-  _calcExpr = ''; _calcResultado = null; _calcMode = false;
+  _calcExpr = '';
+  _calcResultado = null;
+  _calcMode = false;
   const cw = document.getElementById('calc-wrap');
   if (cw) cw.style.display = 'none';
-  calcAc?.();
+  calcAc === null || calcAc === void 0 || calcAc();
 
   // Limpar feedbacks
-  ['fb-endereco','fb-capa','fb-gtin','fb-validade','fb-rebipar'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.innerHTML = '';
+  ['fb-endereco', 'fb-capa', 'fb-gtin', 'fb-validade', 'fb-rebipar'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
   });
   const pb = document.getElementById('prod-found-box');
   if (pb) pb.style.display = 'none';
@@ -813,12 +860,15 @@ function finalizarEnderecoAtual() {
   // Ocultar botão vazio (nada confirmado ainda no próximo endereço)
   const vaziow = document.getElementById('btn-vazio-wrap');
   if (vaziow) vaziow.style.display = 'none';
-
   updateSteps();
-  setTimeout(() => { try { document.getElementById('f-endereco').focus(); } catch(e){ console.warn("[Erro tratado]", e); } }, 100);
+  setTimeout(() => {
+    try {
+      document.getElementById('f-endereco').focus();
+    } catch (e) {
+      console.warn("[Erro tratado]", e);
+    }
+  }, 100);
 }
-
-
 function _manterEnderecoAtivo(endereco, endNorm, cap, somentesDun) {
   // Pedido do usuário: o endereço já foi confirmado no palete anterior —
   // não faz sentido pedir pra rebipar de novo a cada palete do mesmo
@@ -838,7 +888,6 @@ function _manterEnderecoAtivo(endereco, endNorm, cap, somentesDun) {
     finalizarEnderecoAtual();
     return;
   }
-
   APP.atual = {
     step: 1,
     endereco: '',
@@ -851,22 +900,29 @@ function _manterEnderecoAtivo(endereco, endNorm, cap, somentesDun) {
     produtoDivergenteEnd: false,
     validade: '',
     quantidade: 0,
-    somentesDun: somentesDun || false,
+    somentesDun: somentesDun || false
   };
 
   // Limpar campos das etapas 2-5
-  ['f-capa','f-gtin','f-validade'].forEach(id => {
+  ['f-capa', 'f-gtin', 'f-validade'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) { el.value = ''; el.className = el.className.replace(/\bfield-(ok|err|warn)\b/g,'').trim(); el.disabled = false; }
+    if (el) {
+      el.value = '';
+      el.className = el.className.replace(/\bfield-(ok|err|warn)\b/g, '').trim();
+      el.disabled = false;
+    }
   });
   const fqty = document.getElementById('f-qty');
   if (fqty) fqty.value = '';
-  _calcExpr = ''; _calcResultado = null; _calcMode = false;
+  _calcExpr = '';
+  _calcResultado = null;
+  _calcMode = false;
   const cw = document.getElementById('calc-wrap');
   if (cw) cw.style.display = 'none';
   calcAc();
-  ['fb-capa','fb-gtin','fb-validade'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.innerHTML = '';
+  ['fb-capa', 'fb-gtin', 'fb-validade'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
   });
   const pb = document.getElementById('prod-found-box');
   if (pb) pb.style.display = 'none';
@@ -878,38 +934,37 @@ function _manterEnderecoAtivo(endereco, endNorm, cap, somentesDun) {
   if (stepEnd) stepEnd.style.display = '';
   const blocoTravado = document.getElementById('bloco-endereco-travado');
   if (blocoTravado) blocoTravado.style.display = 'none';
-
   _prosseguirComEndereco(endNorm);
 }
 
 /** Confirma o rebipar do endereço no estado travado */
 function confirmarRebipar() {
+  var _ref0, _APP$endCapacidade$en, _APP$endCapacidade3;
   const fReb = document.getElementById('f-rebipar-endereco');
   const fbReb = document.getElementById('fb-rebipar');
   if (!fReb || !fbReb) return;
-
   const val = _normStr(fReb.value);
   const esperado = _normStr(APP.atual._pendingEndereco || '');
-
   if (!val) {
     fbReb.innerHTML = `<div class="fb err">🚫 Bipe o endereço primeiro</div>`;
-    beepErr(); return;
+    beepErr();
+    return;
   }
-
   if (val !== esperado) {
-    fbReb.innerHTML = `<div class="fb err">🚫 Endereço incorreto — esperado: <b>${(APP.atual._pendingEndereco||'').toUpperCase()}</b></div>`;
+    fbReb.innerHTML = `<div class="fb err">🚫 Endereço incorreto — esperado: <b>${(APP.atual._pendingEndereco || '').toUpperCase()}</b></div>`;
     fReb.className = 'field field-err';
-    beepErr(); return;
+    beepErr();
+    return;
   }
 
   // Endereço correto — sair do modo travado
   const endNorm = APP.atual._pendingEndereco;
   const capRebipar = APP.atual.capacidadeEnd || 0;
   APP.atual._pendingEndereco = null;
-  APP.atual._pendingPallets  = null;
+  APP.atual._pendingPallets = null;
 
   // Re-ler capacidade do mapa (mais confiável)
-  const capRebiparMapa = APP.endCapacidade?.[endNorm] ?? capRebipar ?? 0;
+  const capRebiparMapa = (_ref0 = (_APP$endCapacidade$en = (_APP$endCapacidade3 = APP.endCapacidade) === null || _APP$endCapacidade3 === void 0 ? void 0 : _APP$endCapacidade3[endNorm]) !== null && _APP$endCapacidade$en !== void 0 ? _APP$endCapacidade$en : capRebipar) !== null && _ref0 !== void 0 ? _ref0 : 0;
   // Verificar capacidade ANTES de prosseguir — pode já estar cheia
   const usadosRebipar = _palletsNoEnderecoAtual(endNorm);
   if (capRebiparMapa === 1 && usadosRebipar >= 1) {
@@ -929,14 +984,30 @@ function confirmarRebipar() {
   if (stepEnd) stepEnd.style.display = '';
   const blocoTravado = document.getElementById('bloco-endereco-travado');
   if (blocoTravado) blocoTravado.style.display = 'none';
-
   _prosseguirComEndereco(endNorm);
 }
-
 function resetContagem() {
-  APP.atual = { step:1, endereco:'', _endNorm:'', enderecoValido:false, capa:'', gtin:'', produtoAtual:null, produtoDivergenteEnd:false, loteProduto:'', validade:'', quantidade:0, somentesDun:false, capacidadeEnd:0, tipoEndereco:'FISICO', enderecoVirtual:false, contabilizaInventario:true, permiteMultiplosOperadores:false };
+  APP.atual = {
+    step: 1,
+    endereco: '',
+    _endNorm: '',
+    enderecoValido: false,
+    capa: '',
+    gtin: '',
+    produtoAtual: null,
+    produtoDivergenteEnd: false,
+    loteProduto: '',
+    validade: '',
+    quantidade: 0,
+    somentesDun: false,
+    capacidadeEnd: 0,
+    tipoEndereco: 'FISICO',
+    enderecoVirtual: false,
+    contabilizaInventario: true,
+    permiteMultiplosOperadores: false
+  };
   _endVerif = null; // invalidar cache de verificação
-  _loteReset();     // limpar estado de lançamento rápido
+  _loteReset(); // limpar estado de lançamento rápido
 
   // Garantir que o bloco travado esteja oculto e o step-endereco visível
   const blocoTravado = document.getElementById('bloco-endereco-travado');
@@ -945,32 +1016,47 @@ function resetContagem() {
   if (stepEnd) stepEnd.style.display = '';
 
   // Limpar inputs e classes de validação
-  ['f-endereco','f-capa','f-gtin','f-validade'].forEach(id => {
+  ['f-endereco', 'f-capa', 'f-gtin', 'f-validade'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) { el.value = ''; el.className = el.className.replace(/\bfield-(ok|err|warn)\b/g,'').trim(); el.disabled = false; }
+    if (el) {
+      el.value = '';
+      el.className = el.className.replace(/\bfield-(ok|err|warn)\b/g, '').trim();
+      el.disabled = false;
+    }
   });
 
   // Limpar qty e calculadora
   const fqty = document.getElementById('f-qty');
   if (fqty) fqty.value = '';
-  _calcExpr = ''; _calcResultado = null; _calcMode = false;
+  _calcExpr = '';
+  _calcResultado = null;
+  _calcMode = false;
   const cw = document.getElementById('calc-wrap');
   if (cw) cw.style.display = 'none';
   calcAc();
 
   // Limpar feedbacks
-  ['fb-endereco','fb-capa','fb-gtin','fb-validade'].forEach(id => {
-    const el = document.getElementById(id); if (el) el.innerHTML = '';
+  ['fb-endereco', 'fb-capa', 'fb-gtin', 'fb-validade'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = '';
   });
   const pb = document.getElementById('prod-found-box');
   if (pb) pb.style.display = 'none';
 
   // Limpar sf-val (valor inline)
-  ['sf-val-endereco','sf-val-capa','sf-val-gtin','sf-val-validade'].forEach(id => {
+  ['sf-val-endereco', 'sf-val-capa', 'sf-val-gtin', 'sf-val-validade'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) { el.textContent = ''; el.style.display = 'none'; }
+    if (el) {
+      el.textContent = '';
+      el.style.display = 'none';
+    }
     // Restaurar input visível na linha
-    const stepMap = { 'sf-val-endereco':'step-endereco', 'sf-val-capa':'step-capa', 'sf-val-gtin':'step-gtin', 'sf-val-validade':'step-validade' };
+    const stepMap = {
+      'sf-val-endereco': 'step-endereco',
+      'sf-val-capa': 'step-capa',
+      'sf-val-gtin': 'step-gtin',
+      'sf-val-validade': 'step-validade'
+    };
     const stepEl = document.getElementById(stepMap[id]);
     if (stepEl) {
       const inp = stepEl.querySelector('.sf-input-wrap .field');
@@ -983,11 +1069,13 @@ function resetContagem() {
   if (vaziow) vaziow.style.display = 'none';
 
   // Limpar classes dos step-fields
-  ['step-endereco','step-capa','step-gtin','step-validade','step-quantidade'].forEach(id => {
+  ['step-endereco', 'step-capa', 'step-gtin', 'step-validade', 'step-quantidade'].forEach(id => {
     const el = document.getElementById(id);
-    if (el) el.classList.remove('done','ativo');
+    if (el) el.classList.remove('done', 'ativo');
   });
-
   updateSteps();
-  setTimeout(() => { const el = document.getElementById('f-endereco'); if (el) el.focus(); }, 80);
+  setTimeout(() => {
+    const el = document.getElementById('f-endereco');
+    if (el) el.focus();
+  }, 80);
 }

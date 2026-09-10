@@ -1,0 +1,14 @@
+{
+  "appId": "com.daterrinha.coletor",
+  "appName": "DT Coletor",
+  "webDir": "www",
+  "server": {
+    "url": "https://daterrinha-inventario.web.app/coletor.html",
+    "cleartext": false,
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#060d1a"
+  }
+}

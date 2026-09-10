@@ -92,6 +92,6 @@
     const ws=XLSX.utils.json_to_sheet(dados), wb=XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb,ws,'Rastreabilidade'); XLSX.writeFile(wb,'Rastreabilidade_DT_Inventario.xlsx');
   };
 
-  const optional=['ieAbrirImportBase','ieExportarBluesoft','ieExportarProdutos','ieSetTab','oplSetTab','opAbrirModalCriar','opFecharModal','opFecharModalCriar','opGerarSenha','opSalvarEdicao','opSelecionarTipo','opSetModoLojasCriar','opSetModoLojasEditar','toggleOpSenha','toggleOpeditSenha'];
+  const optional=['ieAbrirImportBase','ieExportarBluesoft','ieExportarProdutos','ieSetTab','oplSetTab','opAbrirModalCriar','opFecharModal','opFecharModalCriar','opGerarSenha','opSalvarEdicao','opSetModoLojasCriar','opSetModoLojasEditar','toggleOpSenha','toggleOpeditSenha'];
   optional.forEach(n=>{ if(typeof window[n]!=='function') window[n]=function(){ console.warn('[Módulo opcional]',n); window.showToast?.('Função em revisão: '+n,'w'); }; });
 })();

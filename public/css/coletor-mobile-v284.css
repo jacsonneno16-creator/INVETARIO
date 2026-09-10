@@ -7,7 +7,7 @@
     min-height: 50px; padding: 6px 10px; position: sticky; top: 0; z-index: 30;
     background: rgba(8,20,37,.97); border-bottom: 1px solid var(--border);
   }
-  .btn-back { font-size: .7rem; padding: 6px 8px; }
+  .app-header .btn-back { font-size: .7rem; padding: 6px 8px; }
   .app-inv-name { font-size: .75rem; max-width: 34vw; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   #conn-pill { padding: 4px 7px !important; }
   .op-badge { max-width: 92px; overflow:hidden; }

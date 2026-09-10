@@ -1,4 +1,29 @@
 {
   "indexes": [],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "recebimento_recusas_notas_chunks",
+      "fieldPath": "notas",
+      "ttl": false,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "relatorios_bi_compras_historico_chunks",
+      "fieldPath": "registros",
+      "ttl": false,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "recebimento_recusas_notas_chunks",
+      "fieldPath": "*",
+      "ttl": false,
+      "indexes": []
+    },
+    {
+      "collectionGroup": "relatorios_bi_compras_historico_chunks",
+      "fieldPath": "*",
+      "ttl": false,
+      "indexes": []
+    }
+  ]
 }

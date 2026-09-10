@@ -18,7 +18,7 @@
     try {
       const ref = fs().collection(COL_SNAP).doc(hoje());
       const snap = await ref.get();
-      if (snap.exists) return;
+      if (snap.exists) return false;
       const estoqueTotalCx = visao.reduce((s, x) => s + x.estoqueAtual, 0);
       const comCobertura = visao.filter(x => x.coberturaDias != null);
       const coberturaMediaDias = comCobertura.length ? comCobertura.reduce((s, x) => s + x.coberturaDias, 0) / comCobertura.length : 0;
@@ -26,15 +26,22 @@
       const produtosAbaixoMinimo = visao.filter(x => x.estoqueMinimo > 0 && x.estoqueAtual < x.estoqueMinimo).length;
       const abertas = (reqs || []).filter(x => !/final|cancel|rejeit/i.test(String(x.status || '')));
       const comprasAbertasQtd = abertas.length;
-      const comprasAbertasValor = abertas.reduce((s, x) => s + (Number(x.valorTotal) || 0), 0);
       const agora = new Date().toISOString();
-      await ref.set({ data: hoje(), estoqueTotalCx, coberturaMediaDias, produtosCriticos, produtosAbaixoMinimo, comprasAbertasQtd, comprasAbertasValor, criadoEm: agora, atualizadoEm: agora }, { merge: true });
-    } catch (e) { console.warn('[pcp-dashboard] snapshot diário:', e); }
+      await ref.set({ data: hoje(), estoqueTotalCx, coberturaMediaDias, produtosCriticos, produtosAbaixoMinimo, comprasAbertasQtd, criadoEm: agora, atualizadoEm: agora }, { merge: true });
+      return true;
+    } catch (e) { console.warn('[pcp-dashboard] snapshot diário:', e); return false; }
   }
 
-  async function _carregarSnapshots(dias) {
-    const snap = await fs().collection(COL_SNAP).get().catch(() => ({ docs: [] }));
-    return snap.docs.map(d => ({ _id: d.id, ...d.data() }))
+  // Só recarrega a coleção inteira se ainda não tem nada em memória nesta
+  // sessão da tela, ou se um snapshot novo acabou de ser gravado agora.
+  let _snapshotsCache = null;
+  async function _carregarSnapshots(dias, forcar) {
+    if (!_snapshotsCache || forcar) {
+      const snap = await fs().collection(COL_SNAP).get().catch(() => ({ docs: [] }));
+      _snapshotsCache = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    }
+    return _snapshotsCache
+      .slice()
       .sort((a, b) => String(a.data).localeCompare(String(b.data)))
       .slice(-(dias || 30));
   }
@@ -47,11 +54,26 @@
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando dashboard...</div></div>';
     try {
       await global._pcpInternals.carregar();
-      const visao = global._pcpInternals.construirVisao();
+      // PEDIDO AO VIVO (2026-09-02): "maior consumo diário tá calculando
+      // errado" — investigado via console real do usuário: o Dashboard só
+      // usa o BI (plano da escadinha, fonte certa) quando _estoqueBi já
+      // estava em memória; se ninguém tinha clicado em "Buscar do BI" na
+      // aba Estoque/Pedidos x Estoque nesta sessão, ele caía no fallback
+      // (venda_m1/m2/m3 de producao_projecao) — que fica velho quando
+      // ninguém reimporta e pode ficar bem abaixo da demanda real (caso
+      // real confirmado: CANJICA mostrava 55/dia calculado a partir de
+      // venda_m1/m2/m3 desatualizados, contra 200/dia do plano do BI atual
+      // pro mesmo produto). DTBiPastaLocal.lerJson chama uma Cloud Function
+      // (Graph API/SharePoint), não pede permissão de pasta local — seguro
+      // buscar sozinho, sem exigir clique antes de abrir o Dashboard.
+      if (!global._pcpInternals.getEstoqueBi?.() && global.DTBiPastaLocal?.suportado?.()) {
+        await global._pcpInternals.buscarEstoqueBi?.().catch(() => {});
+      }
+      const visao = global._pcpInternals.construirVisao({ estoqueBi: global._pcpInternals.getEstoqueBi?.() });
       const reqs = global._pcpInternals.getReqs();
       const agend = global._pcpInternals.getAgend();
-      await _garantirSnapshotHoje(visao, reqs);
-      const snapshots = await _carregarSnapshots(30);
+      const snapshotNovo = await _garantirSnapshotHoje(visao, reqs);
+      const snapshots = await _carregarSnapshots(30, snapshotNovo);
       _desenhar(visao, reqs, agend, snapshots);
     } catch (e) {
       pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>';
@@ -73,11 +95,15 @@
     const criticos = visao.filter(x => x.coberturaDias != null && x.coberturaDias <= 3);
     const proxRuptura = visao.filter(x => x.rupturaEm && x.rupturaEm !== 'sem data');
     const excesso = visao.filter(x => x.excesso > 0);
-    const necessidades = visao.filter(x => x.necessidade > 0);
+    // PEDIDO AO VIVO (2026-09-02): "todo produto cadastrado na produção não
+    // é feito compra" — produto produzido internamente (empresaProdutoraId)
+    // nunca deve contar como "necessidade de COMPRA" (mesmo filtro que
+    // comprasHtml já aplica em 78-pcp-central.js, faltava aqui).
+    const produzidoInternamente = global._pcpInternals.produzidoInternamente || (() => false);
+    const necessidades = visao.filter(x => x.necessidade > 0 && !produzidoInternamente(x.key));
     const necessidadeTotalCx = necessidades.reduce((s, x) => s + x.necessidade, 0);
     const abertas = (reqs || []).filter(x => !/final|cancel|rejeit/i.test(String(x.status || '')));
     const atrasadas = (agend || []).filter(x => x.dataPrevista && x.dataPrevista < hojeStr && !/final/i.test(String(x.status || '')));
-    const valorComprometido = (reqs || []).filter(x => /comprad|parcial/i.test(String(x.status || ''))).reduce((s, x) => s + (Number(x.valorTotal) || 0), 0);
     const produtosComProducao = visao.filter(x => x.producaoProgramada > 0).length;
     const maiorConsumo = visao.slice().sort((a, b) => b.consumoDia - a.consumoDia).filter(x => x.consumoDia > 0).slice(0, 6);
 
@@ -98,7 +124,7 @@
         ${_kpi('orange', necessidadeTotalCx.toLocaleString('pt-BR', { maximumFractionDigits: 0 }), 'Necessidade de compra (cx)', 'compras')}
         ${_kpi('blue', abertas.length, 'Requisições abertas', 'compras')}
         ${_kpi(atrasadas.length ? 'red' : 'green', atrasadas.length, 'Compras atrasadas', 'agendamentos')}
-        ${_kpi('teal', valorComprometido.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }), 'Valor comprometido em compras', 'agendamentos')}
+        ${_kpi('teal', agend.filter(x => !/final|cancel/i.test(String(x.status || ''))).length, 'Entregas previstas', 'agendamentos')}
         ${_kpi('purple', produtosComProducao, 'Produtos com produção programada', 'producao')}
       </div>
       <div style="display:grid;grid-template-columns:1.2fr 1fr;gap:14px;margin-bottom:14px">
@@ -107,7 +133,7 @@
           <div style="height:220px;margin-top:8px"><canvas id="pcpd-evolucao"></canvas></div>
         </div>
         <div class="tc" style="padding:12px">
-          <b>🛒 Compras por mês (valor)</b>
+          <b>🛒 Compras por mês (quantidade)</b>
           <div style="height:220px;margin-top:8px"><canvas id="pcpd-compras-mes"></canvas></div>
         </div>
       </div>
@@ -143,12 +169,12 @@
       const porMes = new Map();
       (reqs || []).filter(x => x.compradoEm).forEach(x => {
         const mes = String(x.compradoEm).slice(0, 7);
-        porMes.set(mes, (porMes.get(mes) || 0) + (Number(x.valorTotal) || 0));
+        porMes.set(mes, (porMes.get(mes) || 0) + (Number(x.quantidadeComprada) || 0));
       });
       const meses = [...porMes.keys()].sort();
       charts.push(new global.Chart(ctxCompras, {
         type: 'bar',
-        data: { labels: meses, datasets: [{ label: 'Valor comprado (R$)', data: meses.map(m => porMes.get(m)), backgroundColor: '#f59e0b' }] },
+        data: { labels: meses, datasets: [{ label: 'Quantidade comprada', data: meses.map(m => porMes.get(m)), backgroundColor: '#f59e0b' }] },
         options: { responsive: true, maintainAspectRatio: false },
       }));
     }

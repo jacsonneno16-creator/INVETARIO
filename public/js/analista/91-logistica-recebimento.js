@@ -24,6 +24,27 @@
     if (!m) return String(mesAAAAMM || '—');
     return (MESES_PT[Number(m[2]) - 1] || '?') + '/' + m[1];
   }
+  // BUG AO VIVO REAL (2026-09-08): "esses meses abaixo das colunas deixar só
+  // o mês e o ano... na sequência correta" — os gráficos agrupavam por
+  // `.slice(0,7)` direto na data crua, assumindo formato ISO ('AAAA-MM-DD').
+  // A Bluesoft não garante isso pra todo campo (`processamento`/
+  // `dataRecebimento`/`dataGeracao` vêm de endpoints/sincronizações
+  // diferentes) — um valor em 'DD/MM/AAAA' virava uma chave tipo '29/01/2'
+  // (nem bate com `_fmtMesLabel`, que só reconhece 'AAAA-MM', nem ordena
+  // certo num sort alfabético). Normaliza pra 'AAAA-MM' de verdade não
+  // importa o formato de entrada, então agrupamento/ordenação/filtro de
+  // período passam a funcionar igual pra qualquer um dos dois formatos.
+  function _mesChave(valor) {
+    const s = String(valor || '').trim();
+    if (!s) return '';
+    let m = s.match(/^(\d{4})-(\d{2})/);
+    if (m) return m[1] + '-' + m[2];
+    m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (m) return m[3] + '-' + m[2];
+    const d = new Date(s);
+    if (!isNaN(d)) return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    return '';
+  }
 
   let _notas = [];
   let _cargas = [];
@@ -34,6 +55,10 @@
 
   async function carregarLogisticaRecebimento(forcar) {
     if (_carregado && !forcar) return;
+    // Sem timeout artificial: bases grandes devem terminar de carregar,
+    // mesmo quando levam mais de 20/30 segundos (Promise.race com timeout
+    // não cancela a busca real, só desiste de esperar — pior UX numa
+    // consulta só lenta, não travada de verdade).
     const [notasSnap, cargasSnap] = await Promise.all([
       fs().collection('recebimento_notas').get(),
       fs().collection('recebimento_cargas').get(),
@@ -41,6 +66,51 @@
     _notas = notasSnap.docs.map(d => ({ _id: d.id, ...d.data() }));
     _cargas = cargasSnap.docs.map(d => ({ _id: d.id, ...d.data() }));
     _carregado = true;
+  }
+
+  // BUG AO VIVO REAL (2026-09-09): "por que não tá puxando os meses mais
+  // próximos, tipo julho agosto" — os gráficos "Notas recebidas por mês" e
+  // "Valor recebido por mês" vinham de `recebimento_notas`, que só ganha
+  // dado novo quando alguém aperta "Buscar recebimento" (API ao vivo da
+  // Bluesoft) — ninguém apertou desde junho, então os meses mais recentes
+  // simplesmente não existiam gravados. `relatorios_bi_compras_historico_
+  // chunks` (101-relatorios-bi.js, aba "Histórico de Compras") já tem
+  // exatamente esse dado — sincronizado SOZINHO a cada 4h por
+  // sincronizarComprasHistoricoBiAgendado (functions/index.js), confirmado
+  // rodando com sucesso hoje (ver firebase functions:log). Só os 2
+  // gráficos de "por mês" passam a usar essa fonte — o resto do Dashboard
+  // (KPIs de tempo/divergência, ranking de fornecedores, caption "X notas
+  // neste período") continua em `_notas`/Bluesoft ao vivo de propósito:
+  // tempoLancamentoMin/temDivergencia/comparavel não existem no BI de
+  // compras, misturar as duas fontes ali bagunçaria os números.
+  let _comprasBi = [];
+  let _comprasBiCarregado = false;
+  // PEDIDO AO VIVO (2026-09-09): "a tela precisa ficar o tempo todo em
+  // carregamento sem mostrar nem a estrutura do site?" — a estrutura
+  // (título, filtros, botão de sync) não depende de nenhum dado do
+  // Firestore pra existir; só os números/gráficos dependem. `_desenhar()`
+  // já é seguro de chamar com os arrays ainda vazios (mostra zerado) — só
+  // faltava chamá-la ANTES do fetch terminar, não só depois.
+  let _dashCarregando = false;
+  let _dashErro = '';
+  async function _carregarComprasBi(forcar) {
+    if (_comprasBiCarregado && !forcar) return;
+    _comprasBi = [];
+    const lojaId = global.getDTLojaAtiva?.();
+    if (!lojaId) { _comprasBiCarregado = true; return; }
+    try {
+      const lojaSnap = await fs().collection('lojas').doc(lojaId).get();
+      const chaveBluesoft = lojaSnap.exists ? String(lojaSnap.data().bluesoft_loja_key || '').trim() : '';
+      if (!chaveBluesoft) { _comprasBiCarregado = true; return; } // loja não vinculada à Bluesoft — nada pra cruzar
+      const todas = typeof global.obterHistoricoComprasRealBi === 'function' ? await global.obterHistoricoComprasRealBi(forcar) : [];
+      // TIPO_OPERACAO 'COMPRA' = fornecedor de verdade — TRANSFERENCIA
+      // (entre lojas) e outros tipos já têm tela própria (Transbordo), mesmo
+      // recorte que o resto desta tela já aplica em cima de `_notas`.
+      _comprasBi = todas.filter(r => String(r.loja_key) === chaveBluesoft && String(r.tipo_operacao || '').toUpperCase() === 'COMPRA');
+    } catch (e) {
+      console.warn('[Recebimento] Falha ao ler histórico de compras (BI):', e && e.message ? e.message : e);
+    }
+    _comprasBiCarregado = true;
   }
 
   // Dashboard/histórico geral é a tela de FORNECEDOR — devolução NUNCA conta
@@ -57,10 +127,10 @@
       .filter(x => {
         const cat = global.categoriaNotaBluesoft?.(x) || 'FORNECEDOR';
         return _filtroDashCategoria === 'TODAS' || cat === (_filtroDashCategoria || 'FORNECEDOR');
-      }).filter(x => !_filtroDashPeriodo || String(x.processamento || x.dataRecebimento || '').slice(0, 7) === _filtroDashPeriodo);
+      }).filter(x => !_filtroDashPeriodo || _mesChave(x.processamento || x.dataRecebimento) === _filtroDashPeriodo);
   }
   function _cargasFiltradas() {
-    return _cargas.filter(c => !_filtroDashPeriodo || String(c.dataGeracao || '').slice(0, 7) === _filtroDashPeriodo);
+    return _cargas.filter(c => !_filtroDashPeriodo || _mesChave(c.dataGeracao) === _filtroDashPeriodo);
   }
   // Não existe endpoint de portaria/pátio confirmado na Bluesoft (ver
   // cabeçalho do arquivo) — na falta desse dado, o tempo de recebimento
@@ -97,14 +167,22 @@
     return [...porFornecedor.entries()].map(([nome, acc]) => ({ nome, entregas: acc.entregas, valor: acc.valor })).sort((a, b) => b.entregas - a.entregas);
   }
 
+  // Sempre resolve (nunca rejeita — erro vira _dashErro, tratado dentro do
+  // próprio _desenhar), então não precisa de __dtBackground nem de deixar
+  // de ser async: o .catch() genérico de _callPage nunca chega a disparar
+  // aqui de qualquer jeito.
   async function renderRecebimentoDashboard() {
     const pagina = document.getElementById('page-recebimento-dashboard');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
+    _dashCarregando = true;
+    _dashErro = '';
+    _desenhar(); // estrutura + o que já estiver em memória (zerado na 1ª vez, ou da última visita) — nunca espera a rede pra aparecer
     try {
-      await Promise.all([carregarLogisticaRecebimento(), global._recebimentoOperacaoInternals?.carregar?.()]);
+      await Promise.all([carregarLogisticaRecebimento(), global._recebimentoOperacaoInternals?.carregar?.(), _carregarComprasBi()]);
+    } catch (e) {
+      _dashErro = e.message || String(e);
     }
-    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
+    _dashCarregando = false;
     _desenhar();
   }
 
@@ -155,12 +233,21 @@
       '</div>';
   }
 
+  // Banner pequeno, só sobre a área de dados — nunca cobre a tela inteira
+  // (pedido ao vivo do usuário: a estrutura tem que aparecer na hora, só o
+  // que depende do Firestore fica esperando).
+  function _statusCarregamentoDashHtml() {
+    if (_dashCarregando) return '<div style="font-size:.76rem;color:var(--muted);margin-bottom:10px">🔄 Atualizando dados...</div>';
+    if (_dashErro) return '<div style="font-size:.76rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px"><span>⚠️ Não foi possível atualizar: ' + esc(_dashErro) + '</span><button type="button" class="btn btn-ghost btn-sm" data-reb-tentar-de-novo="1">Tentar de novo</button></div>';
+    return '';
+  }
+
   function _desenhar() {
     const pagina = document.getElementById('page-recebimento-dashboard');
     if (!pagina) return;
     const linhas = _notasFiltradas();
     const cargasLinhas = _cargasFiltradas();
-    const notasDoPeriodo = _notas.filter(x => !_filtroDashPeriodo || String(x.processamento || x.dataRecebimento || '').slice(0, 7) === _filtroDashPeriodo);
+    const notasDoPeriodo = _notas.filter(x => !_filtroDashPeriodo || _mesChave(x.processamento || x.dataRecebimento) === _filtroDashPeriodo);
     const transbordoNoPeriodo = notasDoPeriodo.filter(x => (global.categoriaNotaBluesoft?.(x) || 'FORNECEDOR') === 'TRANSBORDO').length;
     const devolucoesExcluidas = notasDoPeriodo.filter(x => global.ehNotaDevolucaoBluesoft?.(x)).length;
 
@@ -190,19 +277,29 @@
     const tempoMedioConferencia = temposConferencia.length ? temposConferencia.reduce((s, v) => s + v, 0) / temposConferencia.length : null;
 
     // ── Séries por mês (notas: quantidade e valor; cargas: tempo de recebimento) ──
-    const notasPorMes = new Map();
+    // Fonte: _comprasBi (relatorios_bi_compras_historico_chunks, atualizado
+    // sozinho a cada 4h) — não `linhas`/_notas (só atualiza com clique
+    // manual em "Buscar recebimento"). Ver comentário em _carregarComprasBi.
+    // O BI vem por ITEM da nota (1 linha por produto) — conta nota única por
+    // loja+número+emissão pra não multiplicar "notas recebidas" pela
+    // quantidade de produtos dela; valor soma todos os itens normalmente
+    // (a soma dos itens já É o valor da nota).
+    const notasChavesPorMes = new Map();
     const valorPorMes = new Map();
-    linhas.forEach(x => {
-      const mes = String(x.processamento || x.dataRecebimento || '').slice(0, 7);
+    _comprasBi.forEach(x => {
+      const mes = _mesChave(x.data_recebimento || x.data_emissao);
       if (!mes) return;
-      notasPorMes.set(mes, (notasPorMes.get(mes) || 0) + 1);
-      valorPorMes.set(mes, (valorPorMes.get(mes) || 0) + n(x.valor));
+      const chaveNota = x.loja_key + '|' + x.nf_numero + '|' + String(x.data_emissao || '').slice(0, 10);
+      if (!notasChavesPorMes.has(mes)) notasChavesPorMes.set(mes, new Set());
+      notasChavesPorMes.get(mes).add(chaveNota);
+      valorPorMes.set(mes, (valorPorMes.get(mes) || 0) + n(x.Custo_liquido_total));
     });
+    const notasPorMes = new Map([...notasChavesPorMes.entries()].map(([mes, set]) => [mes, set.size]));
     const tempoRecebPorMes = new Map();
     const tempoEsperaPorMes = new Map();
     const tempoConferenciaPorMes = new Map();
     cargasLinhas.forEach(c => {
-      const mes = String(c.dataGeracao || '').slice(0, 7);
+      const mes = _mesChave(c.dataGeracao);
       if (!mes) return;
       const t = _tempoRecebimentoMin(c);
       if (t != null) { const arr = tempoRecebPorMes.get(mes) || []; arr.push(t); tempoRecebPorMes.set(mes, arr); }
@@ -221,9 +318,10 @@
         <div class="page-title" style="font-size:1.15rem">🚚 Recebimento</div>
         <div style="font-size:.74rem;color:var(--muted)">Visão operacional de hoje — clique num card pra ver a lista filtrada</div>
       </div>
+      ${_statusCarregamentoDashHtml()}
       ${_kpisOperacionaisHtml()}
       <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin:22px 0 14px;align-items:center">
-        <div><b>📊 Histórico Bluesoft</b><div style="font-size:.74rem;color:var(--muted)">${totalNotas.toLocaleString('pt-BR')} nota(s) ${rotuloCategoria} neste período — números de nota individuais ficam na aba "Notas Fiscais"${notaRodape ? ' · ' + notaRodape : ''}</div></div>
+        <div><b>📊 Histórico</b><div style="font-size:.74rem;color:var(--muted)">${totalNotas.toLocaleString('pt-BR')} nota(s) ${rotuloCategoria} neste período — números de nota individuais ficam na aba "Notas Fiscais"${notaRodape ? ' · ' + notaRodape : ''}</div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
           <select class="field" id="reb-f-categoria" style="max-width:170px" title="Categoria da nota — devolução nunca conta como recebimento">
             <option value=""${!_filtroDashCategoria ? ' selected' : ''}>Fornecedor (padrão)</option>
@@ -231,7 +329,7 @@
             <option value="TODAS"${_filtroDashCategoria === 'TODAS' ? ' selected' : ''}>Todas</option>
           </select>
           <input type="month" class="field" id="reb-f-periodo" value="${esc(_filtroDashPeriodo)}" style="max-width:150px" title="Filtrar por período">
-          <button type="button" class="btn btn-primary btn-sm" data-reb-sync>🔄 Sincronizar recebimento (Bluesoft)</button>
+          <button type="button" class="btn btn-primary btn-sm" data-reb-sync>🔎 Buscar recebimento</button>
         </div>
       </div>
       <div id="reb-sync-status" style="font-size:.72rem;color:var(--muted);margin:-8px 0 12px">${esc(_ultimoSync)}</div>
@@ -246,8 +344,8 @@
         <div class="kpi purple"><div class="kpi-val">${fmtMin(tempoMedioConferencia)}</div><div class="kpi-lbl">Tempo médio de conferência (início → fechamento)</div></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-        <div class="tc" style="padding:12px"><b>📈 Notas recebidas por mês</b><div style="height:220px;margin-top:8px"><canvas id="reb-graf-notas"></canvas></div></div>
-        <div class="tc" style="padding:12px"><b>💰 Valor recebido por mês</b><div style="height:220px;margin-top:8px"><canvas id="reb-graf-valor"></canvas></div></div>
+        <div class="tc" style="padding:12px"><b>📈 Notas recebidas por mês</b><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Compras (BI) — atualiza sozinho a cada 4h, sem precisar clicar em nada</div><div style="height:220px;margin-top:8px"><canvas id="reb-graf-notas"></canvas></div></div>
+        <div class="tc" style="padding:12px"><b>💰 Valor recebido por mês</b><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Custo líquido das compras (BI) — atualiza sozinho a cada 4h</div><div style="height:220px;margin-top:8px"><canvas id="reb-graf-valor"></canvas></div></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
         <div class="tc" style="padding:12px"><b>⏱️ Tempo de recebimento por mês (espera + conferência)</b><div style="height:220px;margin-top:8px"><canvas id="reb-graf-tempo"></canvas></div></div>
@@ -285,12 +383,12 @@
 
   async function _sincronizar() {
     const statusEl = document.getElementById('reb-sync-status');
-    if (typeof global.sincronizarRecebimentoBluesoft !== 'function') { global.showToast?.('Serviço de integração Bluesoft indisponível.', 'error'); return; }
-    if (statusEl) statusEl.textContent = '⏳ Buscando recebimento na Bluesoft...';
+    if (typeof global.sincronizarRecebimentoBluesoft !== 'function') { global.showToast?.('Serviço de busca indisponível.', 'error'); return; }
+    if (statusEl) statusEl.textContent = '⏳ Buscando recebimento...';
     try {
       const r = await global.sincronizarRecebimentoBluesoft({
         meses: 12,
-        onProgresso: n2 => { if (statusEl) statusEl.textContent = '⏳ ' + n2.toLocaleString('pt-BR') + ' nota(s) recebida(s) da Bluesoft...'; },
+        onProgresso: n2 => { if (statusEl) statusEl.textContent = '⏳ ' + n2.toLocaleString('pt-BR') + ' nota(s) recebida(s)...'; },
       });
       _ultimoSync = r.totalNotas.toLocaleString('pt-BR') + ' nota(s) (' + r.criadas + ' nova(s), ' + r.atualizadas + ' atualizada(s)) — ' +
         r.comDivergencia + ' com divergência — ' + r.totalCargas.toLocaleString('pt-BR') + ' carga(s) — últimos ' + r.meses + ' mês(es) · ' + new Date().toLocaleString('pt-BR');
@@ -652,6 +750,7 @@
 
   document.addEventListener('click', function (event) {
     if (event.target.closest('[data-reb-sync]')) _sincronizar();
+    if (event.target.closest('[data-reb-tentar-de-novo]')) renderRecebimentoDashboard();
     const perfAtualizar = event.target.closest('[data-rebperf-atualizar]');
     if (perfAtualizar) { global._recebimentoOperacaoInternals?.carregar?.(true).then(() => _desenharRecebimentoTempos()).catch(e => global.showToast?.('Erro ao atualizar performance: ' + (e.message || e), 'error')); }
     const kpi = event.target.closest('[data-reb-kpi-status]');

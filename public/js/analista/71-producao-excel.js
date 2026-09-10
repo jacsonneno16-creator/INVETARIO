@@ -62,6 +62,11 @@
 
   function _json(v, fallback={}) { try { return v ? JSON.parse(String(v)) : fallback; } catch (e) { return fallback; } }
   function _dadosLinha(r) { const x=_json(r?.dadosJson ?? r?.dados ?? '', null); return x && typeof x==='object' && !Array.isArray(x) ? x : {}; }
+  async function _emLotes(itens, tamanho, executar) {
+    for (let i = 0; i < itens.length; i += tamanho) {
+      await Promise.all(itens.slice(i, i + tamanho).map(executar));
+    }
+  }
 
   async function exportarProducaoTemplate() {
     try {
@@ -115,6 +120,7 @@
     if (!file) return;
     if (!global.XLSX) { global.showToast?.('Biblioteca do Excel não carregada.', 'error'); return; }
     try {
+      global.showToast?.('Lendo e validando o arquivo de Produção...', 'info');
       const bytes = await file.arrayBuffer();
       const book = global.XLSX.read(bytes, { type: 'array', raw: false, cellText: true });
       const linhasMaquinas = _achaAba(book, 'maquina');
@@ -131,6 +137,18 @@
       const linhasCategorias = _achaAba(book, 'categoria');
       const linhasConfiguracoes = _achaAba(book, 'configur');
 
+      // Aceita tanto o template de três linhas do sistema original quanto o
+      // backup completo gerado por esta integração. Um backup válido precisa
+      // ter ao menos uma das bases principais; assim o usuário recebe um erro
+      // claro em vez de uma importação aparentemente silenciosa.
+      if (!linhasMaquinas.length && !linhasProdutos.length && !linhasFichaFull.length) {
+        throw new Error('Nenhuma máquina, produto ou ficha técnica reconhecida. Use o Excel exportado pela Produção.');
+      }
+      global.showToast?.(
+        `Arquivo reconhecido: ${linhasMaquinas.length} máquina(s), ${linhasProdutos.length} produto(s), ${linhasFichaFull.length || new Set(linhasInsumos.map(r => String(r.cod_produto || '').trim()).filter(Boolean)).size} ficha(s) e ${linhasSetup.length} setup(s). Importando...`,
+        'info'
+      );
+
       const [snapMaq, snapProd, snapFicha, snapSetup, snapReg, snapApon, snapFunc, snapEst, snapProj, snapProc, snapCat, snapCfg] = await Promise.all([
         fs().collection(COL_MAQUINAS).get(), fs().collection(COL_PRODUTOS).get(), fs().collection(COL_FICHAS).get(), fs().collection(COL_SETUP).get(),
         fs().collection(COL_REGISTROS).get(), fs().collection(COL_APONTAMENTOS).get(), fs().collection(COL_FUNCIONARIOS).get(), fs().collection(COL_ESTOQUE_INSUMOS).get(), fs().collection(COL_PROJECAO).get(),
@@ -143,9 +161,9 @@
       const agora = new Date().toISOString();
       let criados = 0, atualizados = 0;
 
-      for (const r of linhasMaquinas) {
+      await _emLotes(linhasMaquinas, 40, async r => {
         const nome = String(r.nome || '').trim();
-        if (!nome) continue;
+        if (!nome) return;
         // PEDIDO AO VIVO: nomes de coluna EXATOS do template real do original
         // (app.js:9468 hdrMaq / app.js:9638-9658 importarArquivoPadrao) —
         // 'undMin'→pcMin, 'setup'→setupPadraoMin, 'produtos' é lista separada
@@ -170,22 +188,40 @@
         if (existente) { await fs().collection(COL_MAQUINAS).doc(existente._id).set(payload, { merge: true }); atualizados++; }
         else if(id){ await fs().collection(COL_MAQUINAS).doc(id).set({...payload,ativo:payload.ativo!==false,criadoEm:payload.criadoEm||agora},{merge:true}); criados++; }
         else { await fs().collection(COL_MAQUINAS).add({ ...payload, ativo: payload.ativo!==false, criadoEm: payload.criadoEm||agora }); criados++; }
-      }
+      });
 
-      for (const r of linhasProdutos) {
+      // PEDIDO AO VIVO (2026-09-02): "vou subir pra cada loja, eu vou subir
+      // um [arquivo]... vai levar a empresa produtora por onde ele for
+      // cadastrado" — mesmo comportamento já combinado pro cadastro em
+      // lote pelo catálogo (pftCatalogoCadastrarSelecionados): quem sobe o
+      // Excel de dentro de uma loja específica, o produto nasce com essa
+      // loja como empresa produtora, sem precisar escolher em nenhum
+      // seletor. Busca a lista de lojas UMA vez fora do laço (não por
+      // linha) — mesmo padrão de _carregarLojasProdutoras em
+      // 60-producao-ficha-tecnica.js.
+      const lojaAtivaId = global.getDTLojaAtiva?.() || '';
+      const lojasDisponiveis = lojaAtivaId ? await (global.DTLoja?.listar?.(false) || Promise.resolve([])) : [];
+      const lojaAtivaNome = lojasDisponiveis.find(l => String(l.id) === String(lojaAtivaId))?.nome || lojaAtivaId;
+
+      await _emLotes(linhasProdutos, 40, async r => {
         const cod = String(r.cod || '').trim();
-        if (!cod) continue;
+        if (!cod) return;
         // PEDIDO AO VIVO: original usa 'descricao' (não 'nome') e
         // 'alergênico' com acento (app.js:9479 hdrProd); 'status' é
         // ATIVO/DESATIVADO, vira o campo 'ativo' (booleano).
         const full=_dadosLinha(r);
         const statusCol = r.status ?? full.status;
-        const payload = { ...full, cod, nome: String(r.descricao ?? r.nome ?? full.nome ?? ''), unid: Number(r.unid ?? full.unid) || 1, pc_min: Number(r.pc_min ?? full.pc_min) || 0, maquina: String(r.maquina ?? full.maquina ?? ''), categoria:String(r.categoria??full.categoria??''), classificacao:String(r.classificacao??full.classificacao??''), metaCoberturaDias:Number(r.coberturaDias??r.metaCoberturaDias??full.metaCoberturaDias??full.coberturaDias)||0, producaoMinima:Number(r.producaoMinima??full.producaoMinima)||0, multiploProducao:Number(r.multiploProducao??full.multiploProducao)||0, tipoMinimo:String(r.tipoMinimo??full.tipoMinimo??'').toLowerCase(), prioridadeProducao:Math.max(1,Number(r.prioridadeProducao??full.prioridadeProducao)||2), alergenico:String(r['alergênico']??r.alergenico??'').trim().toUpperCase()==='SIM'||r.alergenico===true||full.alergenico===true, ativo: statusCol!=null&&statusCol!=='' ? _parseAtivoStatus(statusCol) : (full.ativo!==false), atualizadoEm: agora };
+        // Só estampa em produto novo (full.empresaProdutoraId ausente) —
+        // nunca sobrescreve uma empresa produtora já definida manualmente
+        // numa reimportação/atualização do mesmo produto.
+        const empresaProdutoraId = full.empresaProdutoraId ?? lojaAtivaId;
+        const empresaProdutoraNome = full.empresaProdutoraNome ?? (lojaAtivaId ? lojaAtivaNome : '');
+        const payload = { ...full, cod, nome: String(r.descricao ?? r.nome ?? full.nome ?? ''), unid: Number(r.unid ?? full.unid) || 1, pc_min: Number(r.pc_min ?? full.pc_min) || 0, maquina: String(r.maquina ?? full.maquina ?? ''), categoria:String(r.categoria??full.categoria??''), classificacao:String(r.classificacao??full.classificacao??''), metaCoberturaDias:Number(r.coberturaDias??r.metaCoberturaDias??full.metaCoberturaDias??full.coberturaDias)||0, producaoMinima:Number(r.producaoMinima??full.producaoMinima)||0, multiploProducao:Number(r.multiploProducao??full.multiploProducao)||0, tipoMinimo:String(r.tipoMinimo??full.tipoMinimo??'').toLowerCase(), prioridadeProducao:Math.max(1,Number(r.prioridadeProducao??full.prioridadeProducao)||2), alergenico:String(r['alergênico']??r.alergenico??'').trim().toUpperCase()==='SIM'||r.alergenico===true||full.alergenico===true, ativo: statusCol!=null&&statusCol!=='' ? _parseAtivoStatus(statusCol) : (full.ativo!==false), empresaProdutoraId, empresaProdutoraNome, atualizadoEm: agora };
         const existente = produtosExistentes.find(p => String(p.cod) === cod); const id=String(r.id||'').trim();
         if (existente) { await fs().collection(COL_PRODUTOS).doc(existente._id).set(payload, { merge: true }); atualizados++; }
         else if(id){ await fs().collection(COL_PRODUTOS).doc(id).set({...payload,criadoEm:payload.criadoEm||agora},{merge:true}); criados++; }
         else { await fs().collection(COL_PRODUTOS).add({ ...payload, criadoEm: payload.criadoEm||agora }); criados++; }
-      }
+      });
 
       const insumosPorCod = {};
       linhasInsumos.forEach(r => {
@@ -196,35 +232,38 @@
         if (!cod || !r.insumo) return;
         (insumosPorCod[cod] = insumosPorCod[cod] || []).push({ insumo: String(r.insumo), qty: Number(r.qty) || 0, categoria: String(r.categoria || '') });
       });
-      for (const cod of Object.keys(insumosPorCod)) {
+      // No backup completo, Ficha_Tecnica/dadosJson é a fonte integral e já
+      // contém os insumos. Não grava a mesma ficha duas vezes. No template do
+      // original (sem essa aba), recompõe normalmente a ficha pela aba Insumos.
+      const codigosFichaCompleta = new Set(linhasFichaFull.map(r => String(r.cod || _dadosLinha(r).cod || '').trim()).filter(Boolean));
+      await _emLotes(Object.keys(insumosPorCod).filter(cod => !codigosFichaCompleta.has(cod)), 40, async cod => {
         const produto = produtosExistentes.find(p => String(p.cod) === cod) || linhasProdutos.find(p => String(p.cod) === cod);
         const existente = fichasExistentes.find(f => String(f.cod) === cod);
         const payload = { cod, desc: produto?.nome || produto?.descricao || existente?.desc || '', unid: Number(produto?.unid) || existente?.unid || 1, pc_min: Number(produto?.pc_min) || existente?.pc_min || 0, maquina: produto?.maquina || existente?.maquina || '', insumos: insumosPorCod[cod], atualizadoEm: agora };
         if (existente) { await fs().collection(COL_FICHAS).doc(existente._id).set(payload, { merge: true }); atualizados++; }
         else { await fs().collection(COL_FICHAS).add({ ...payload, criadoEm: agora }); criados++; }
-      }
+      });
 
-      for (const r of linhasFichaFull) {
-        const id=String(r.id||'').trim(), cod=String(r.cod||'').trim(), full=_dadosLinha(r); if(!id&&!cod)continue;
+      await _emLotes(linhasFichaFull, 40, async r => {
+        const id=String(r.id||'').trim(), cod=String(r.cod||'').trim(), full=_dadosLinha(r); if(!id&&!cod)return;
         const existente=fichasExistentes.find(f=>(id&&f._id===id)||(cod&&String(f.cod)===cod));
         const payload={...full,cod:cod||full.cod||'',desc:String(r.desc||full.desc||full.nome||''),atualizadoEm:agora};
-        if(existente) await fs().collection(COL_FICHAS).doc(existente._id).set(payload,{merge:true});
-        else if(id) await fs().collection(COL_FICHAS).doc(id).set({...payload,criadoEm:payload.criadoEm||agora},{merge:true});
-        else await fs().collection(COL_FICHAS).add({...payload,criadoEm:payload.criadoEm||agora});
-        atualizados++;
-      }
+        if(existente) { await fs().collection(COL_FICHAS).doc(existente._id).set(payload,{merge:true}); atualizados++; }
+        else if(id) { await fs().collection(COL_FICHAS).doc(id).set({...payload,criadoEm:payload.criadoEm||agora},{merge:true}); criados++; }
+        else { await fs().collection(COL_FICHAS).add({...payload,criadoEm:payload.criadoEm||agora}); criados++; }
+      });
 
-      for (const r of linhasSetup) {
+      await _emLotes(linhasSetup, 50, async r => {
         // PEDIDO AO VIVO: original usa 'de'/'para' (app.js:9526 hdrSetup),
         // não 'produtoOrigem'/'produtoDestino'.
         const maquina = String(r.maquina || '').trim(), origem = String(r.de ?? r.produtoOrigem ?? '').trim(), destino = String(r.para ?? r.produtoDestino ?? '').trim();
-        if (!maquina || !origem || !destino) continue;
+        if (!maquina || !origem || !destino) return;
         const full=_dadosLinha(r), payload = { ...full, maquina, produtoOrigem: origem, produtoDestino: destino, minutos: Number(r.minutos ?? full.minutos) || 0, atualizadoEm: agora };
         const existente = setupsExistentes.find(s => s.maquina === maquina && s.produtoOrigem === origem && s.produtoDestino === destino), id=String(r.id||'').trim();
         if (existente) { await fs().collection(COL_SETUP).doc(existente._id).set(payload, { merge: true }); atualizados++; }
         else if(id){ await fs().collection(COL_SETUP).doc(id).set({...payload,criadoEm:payload.criadoEm||agora},{merge:true}); criados++; }
         else { await fs().collection(COL_SETUP).add({ ...payload, criadoEm: payload.criadoEm||agora }); criados++; }
-      }
+      });
 
       // As abas abaixo fazem parte do backup completo V341. Quando presentes,
       // preservamos os IDs para manter os vínculos Programação ↔ Realizado.
@@ -248,8 +287,11 @@
       global.showToast?.(criados + ' criado(s), ' + atualizados + ' atualizado(s). Nada foi apagado.', 'success');
       await global._desenharProducaoMaquinas?.();
       if (typeof global.renderProducaoMaquinas === 'function') global.renderProducaoMaquinas();
+      return { ok:true, criados, atualizados };
     } catch (e) {
       global.showToast?.('Erro ao importar: ' + (e.message || e), 'error');
+      console.error('[importarProducaoTemplate]', e);
+      return { ok:false, erro:e };
     }
   }
 

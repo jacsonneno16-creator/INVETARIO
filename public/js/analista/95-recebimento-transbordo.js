@@ -90,6 +90,7 @@
   // qualquer um dos dois lados = sem limite naquela ponta.
   let _filtroDataInicio = '';
   let _filtroDataFim = '';
+  let _timerFiltroData = null;
 
   async function _carregarIdentificadores(forcar) {
     if (_carregado && !forcar) return;
@@ -508,17 +509,10 @@
 <div class="form-group"><label>Motorista</label><select class="field" id="rebt-motorista"></select></div>
 <div class="form-group"><label>Veículo</label><select class="field" id="rebt-veiculo"></select></div>
 </div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-<div class="form-group"><label>Volumes</label><input class="field" id="rebt-volumes" type="number" min="0"/></div>
 <div class="form-group"><label>Responsável pelo envio</label><input class="field" id="rebt-responsavel-envio" placeholder="Nome"/></div>
-</div>
-<div class="form-group"><label>Nota(s) Fiscal(is) <span style="font-size:.68rem;font-weight:400;color:var(--muted)">(opcional — pode informar mais de uma)</span></label>
-<div id="rebt-nf-novo-lista" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"></div>
-<div style="display:flex;gap:8px">
-<input class="field" id="rebt-nf-novo-numero" placeholder="Ex.: 123456" autocomplete="off" style="flex:1"/>
-<button type="button" class="btn btn-ghost" onclick="adicionarNotaFiscalTransbordo('novo')" title="Adicionar outra nota fiscal">+</button>
-</div>
-<div id="rebt-nf-novo-status" style="font-size:.78rem;color:var(--muted);min-height:18px"></div>
+<div class="form-group"><label>Nota(s) Fiscal(is) e Volume <span style="font-size:.68rem;font-weight:400;color:var(--muted)">(NF opcional — o volume de cada uma fica separado, igual no Coletor)</span></label>
+<div id="rebt-nf-novo-lista"></div>
+<button type="button" class="btn btn-ghost btn-sm" data-rebtnfv-add="novo">+ Adicionar nota</button>
 </div>
 <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:3px 0 10px;background:var(--surface-2,#f7f8fa)">
 <div style="font-size:.78rem;font-weight:700;margin-bottom:8px">🕓 Horários da operação <span style="font-size:.68rem;font-weight:400;color:var(--muted)">(opcionais — data e hora digitáveis)</span></div>
@@ -548,14 +542,11 @@
       const selDestino = document.getElementById('rebt-destino');
       if (selOrigem) selOrigem.innerHTML = '<option value="">Carregando...</option>';
       if (selDestino) selDestino.innerHTML = '<option value="">Carregando...</option>';
-      const volumes = document.getElementById('rebt-volumes'); if (volumes) volumes.value = '';
       const resp = document.getElementById('rebt-responsavel-envio'); if (resp) resp.value = '';
       const obs = document.getElementById('rebt-observacao'); if (obs) obs.value = '';
       _HORARIOS_TRANSBORDO.forEach(([sufixo]) => _preencherDataHora('rebt-hora-' + sufixo, ''));
-      const nfNovoNumero = document.getElementById('rebt-nf-novo-numero'); if (nfNovoNumero) nfNovoNumero.value = '';
-      const nfNovoStatus = document.getElementById('rebt-nf-novo-status'); if (nfNovoStatus) nfNovoStatus.textContent = '';
-      _notasFiscaisPorModo.novo = [];
-      _redesenharListaNfTransbordo('novo');
+      _notasFiscaisVolumePorModo.novo = [{ numero: '', volumes: '' }];
+      _redesenharListaNfVolumeTransbordo('novo');
       const selMot = document.getElementById('rebt-motorista');
       if (selMot) selMot.innerHTML = '<option value="">— Selecionar —</option>' + (i?.motoristas?.() || []).map(m => `<option value="${esc(m._id)}">${esc(m.nome)}</option>`).join('');
       const selVeic = document.getElementById('rebt-veiculo');
@@ -612,25 +603,30 @@
     const status = _statusPorHorarios(horarios);
     const origem = origemLoja.nome || origemLoja.id;
     const destino = destinoLoja.nome || destinoLoja.id;
-    // Pedido ao vivo do usuário: "lá não tem o espaço pra mim colocar a
-    // nota... tem que ter a opção pra colocar mais de uma nota" — mesmo
-    // padrão de lista+"+" já usado na Nota Fiscal de saída/chegada; o texto
-    // ainda digitado (não adicionado com o "+") entra também, mesmo cuidado
-    // de lá.
-    const restanteNfNovo = String(document.getElementById('rebt-nf-novo-numero')?.value || '').trim();
-    if (restanteNfNovo && !_listaNfEmEdicao('novo').includes(restanteNfNovo)) _listaNfEmEdicao('novo').push(restanteNfNovo);
-    const notaFiscalTransferencia = _listaNfEmEdicao('novo').length ? _juntarNotasFiscais(_listaNfEmEdicao('novo')) : null;
+    // Pedido ao vivo do usuário: "no Coletor cada nota tem seu volume, no
+    // Analista só dava pra colocar um volume total, não dava pra saber qual
+    // era o volume de cada nota" — mesmo modelo do Coletor
+    // (notasVolumesTransferencia: [{numero, volumes}]), uma linha NF+Volume
+    // por nota em vez de lista de números + um campo de volume solto.
+    _sincronizarNfVolumeDosCampos('novo');
+    const itensNovoBrutos = _notasFiscaisVolumePorModo.novo;
+    const numerosNovo = itensNovoBrutos.map(x => String(x.numero || '').trim()).filter(Boolean);
+    if (new Set(numerosNovo).size !== numerosNovo.length) { global.showToast?.('Há Nota Fiscal repetida. Remova a duplicada antes de salvar.', 'error'); return; }
+    const comNumeroNovo = itensNovoBrutos.filter(x => String(x.numero || '').trim());
+    const notaFiscalTransferencia = comNumeroNovo.length ? comNumeroNovo.map(x => String(x.numero).trim()).join(', ') : null;
+    const notasVolumesTransferencia = comNumeroNovo.length ? comNumeroNovo.map(x => ({ numero: String(x.numero).trim(), volumes: Math.round(Number(x.volumes)) || 0 })) : null;
+    const volumeTotalNovo = itensNovoBrutos.reduce((s, x) => s + (Math.round(Number(x.volumes)) || 0), 0);
     const payload = {
       tipo: 'TRANSBORDO', status,
       origem, origemLojaId, destino, destinoLojaId,
       motoristaId, motoristaNome: motorista?.nome || '', veiculoId, placa: veiculo?.placa || '',
       transportadora: motorista?.transportadora || veiculo?.transportadora || '',
-      volumes: Number(document.getElementById('rebt-volumes').value) || 0,
+      volumes: volumeTotalNovo,
       responsavelEnvio: String(document.getElementById('rebt-responsavel-envio').value || '').trim(),
       identificadorCodigo: codigo, observacao: String(document.getElementById('rebt-observacao').value || '').trim(),
       responsavel: autor, criadoEm: agora, criadoPor: autor, atualizadoEm: agora, atualizadoPor: autor,
       ...horarios,
-      notaFiscalTransferencia, notasVolumesTransferencia: null,
+      notaFiscalTransferencia, notasVolumesTransferencia,
       notaFiscalConfirmadaEm: null, notaFiscalConfirmadaPor: null,
     };
     // Mesmo cálculo oficial de 93-recebimento-operacao.js; assim os cards
@@ -893,6 +889,56 @@
     _redesenharListaNfTransbordo(modo);
   }
 
+  // ── Nota Fiscal + Volume por nota ('novo' e 'editar' apenas) ────────────
+  // PEDIDO AO VIVO (usuário: "no Coletor, pra cada nota que você coloca,
+  // você coloca um volume... no Analista ele só deixa colocar um volume,
+  // não consigo identificar qual o volume de cada nota") — replica aqui o
+  // MESMO modelo já usado pelo Coletor (22-recebimento.js:
+  // `notasVolumesTransferencia: [{numero, volumes}]`), com uma linha
+  // NF+Volume por nota em vez de uma lista de chips só com o número + um
+  // campo de Volume total solto. NF continua opcional (diferente do
+  // Coletor, que exige) — uma linha sem número ainda pode carregar um
+  // volume, pra não quebrar quem só quer registrar o total sem informar NF.
+  const _notasFiscaisVolumePorModo = { novo: [{ numero: '', volumes: '' }], editar: [{ numero: '', volumes: '' }] };
+  function _detalhesNfTransbordo(r) {
+    const salvos = Array.isArray(r?.notasVolumesTransferencia) ? r.notasVolumesTransferencia : [];
+    if (salvos.length) return salvos.map(x => ({ numero: String(x?.numero || ''), volumes: x?.volumes != null ? String(x.volumes) : '' }));
+    const nfs = String(r?.notaFiscalTransferencia || '').split(',').map(x => x.trim()).filter(Boolean);
+    const total = r?.volumes != null ? String(r.volumes) : '';
+    if (!nfs.length) return [{ numero: '', volumes: total }];
+    return nfs.map((numero, idx) => ({ numero, volumes: idx === 0 ? total : '' }));
+  }
+  function _sincronizarNfVolumeDosCampos(modo) {
+    const cont = document.getElementById(_idListaNf(modo));
+    if (!cont) return _notasFiscaisVolumePorModo[modo];
+    const itens = [];
+    cont.querySelectorAll('[data-nfv-row]').forEach(row => {
+      const idx = Number(row.getAttribute('data-nfv-row'));
+      const numero = row.querySelector('[data-nfv-input]')?.value || '';
+      const volEl = row.querySelector('[data-nfv-volume]');
+      const vol = volEl ? volEl.value : '';
+      itens[idx] = { numero: String(numero).trim(), volumes: vol === '' ? '' : vol };
+    });
+    _notasFiscaisVolumePorModo[modo] = itens.length ? itens : [{ numero: '', volumes: '' }];
+    return _notasFiscaisVolumePorModo[modo];
+  }
+  function _redesenharListaNfVolumeTransbordo(modo, focarIdx) {
+    const cont = document.getElementById(_idListaNf(modo));
+    if (!cont) return;
+    const lista = (_notasFiscaisVolumePorModo[modo] && _notasFiscaisVolumePorModo[modo].length)
+      ? _notasFiscaisVolumePorModo[modo] : (_notasFiscaisVolumePorModo[modo] = [{ numero: '', volumes: '' }]);
+    cont.innerHTML = lista.map((item, idx) => `
+      <div data-nfv-row="${idx}" style="display:grid;grid-template-columns:minmax(0,1.6fr) minmax(90px,.7fr) ${lista.length > 1 ? '28px' : ''};gap:7px;align-items:center;margin-bottom:6px">
+        <input class="field" data-nfv-input="${idx}" data-nfv-modo="${modo}" placeholder="Nota Fiscal" value="${esc(item.numero)}" autocomplete="off" style="min-width:0">
+        <input class="field" type="number" min="0" step="1" data-nfv-volume="${idx}" data-nfv-modo="${modo}" placeholder="Volume" value="${item.volumes === '' || item.volumes == null ? '' : esc(item.volumes)}" style="min-width:0">
+        ${lista.length > 1 ? `<button type="button" data-nfv-remover="${idx}" data-nfv-modo="${modo}" title="Remover" style="border:0;background:transparent;color:#ff6b6b;font-weight:800;cursor:pointer;font-size:1.05rem">×</button>` : ''}
+      </div>`).join('');
+    if (Number.isInteger(focarIdx)) {
+      const alvo = cont.querySelector(`[data-nfv-input="${focarIdx}"]`);
+      if (alvo) setTimeout(() => alvo.focus(), 40);
+    }
+  }
+
   // Saída: exige o número da NF antes de concluir — vai junto com a mesma
   // escrita de status/horaSaida (recopRegistrarSaida já mescla `campos`).
   function recbtAbrirNfSaida(id) {
@@ -974,6 +1020,10 @@
   // horários, tempos calculados, notaFiscalTransferencia, volumes — já
   // cobre exatamente o que este modal edita).
   let _edicaoCompletaId = null;
+  // Motorista que a carga já tinha ANTES de abrir o modal — usado no salvar
+  // pra nunca apagar um motorista que o usuário não tocou (ver comentário
+  // completo em recbtAbrirEdicaoCompleta).
+  let _edicaoCompletaMotoristaBase = { id: '', nome: '' };
   // Mesma compatibilidade defensiva de _ensureNovoTransbordoModal() — se o
   // HTML antigo (sem este modal) continuar em cache, o botão ✏️ ainda
   // funciona.
@@ -985,14 +1035,9 @@
 <div class="modal-title">✏️ Editar Transbordo</div>
 <div id="rebt-edit-completo-info" style="font-size:.78rem;color:var(--muted);padding:9px 11px;border:1px solid var(--border);border-radius:8px;margin-bottom:10px"></div>
 <div class="form-group"><label>Motorista</label><select class="field" id="rebtedit-motorista"></select></div>
-<div class="form-group"><label>Volumes</label><input class="field" id="rebt-edit-completo-volumes" type="number" min="0"/></div>
-<div class="form-group"><label>Nota(s) Fiscal(is)</label>
-<div id="rebt-nf-editar-lista" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"></div>
-<div style="display:flex;gap:8px">
-<input class="field" id="rebt-nf-editar-numero" placeholder="Ex.: 123456" autocomplete="off" style="flex:1"/>
-<button type="button" class="btn btn-ghost" type="button" onclick="window.adicionarNotaFiscalTransbordo('editar')" title="Adicionar outra nota fiscal">+</button>
-</div>
-<div id="rebt-nf-editar-status" style="font-size:.78rem;color:var(--muted);min-height:18px"></div>
+<div class="form-group"><label>Nota(s) Fiscal(is) e Volume <span style="font-size:.68rem;font-weight:400;color:var(--muted)">(o volume de cada nota fica separado, igual no Coletor)</span></label>
+<div id="rebt-nf-editar-lista"></div>
+<button type="button" class="btn btn-ghost btn-sm" data-rebtnfv-add="editar">+ Adicionar nota</button>
 </div>
 <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:3px 0 10px;background:var(--surface-2,#f7f8fa)">
 <div style="font-size:.78rem;font-weight:700;margin-bottom:8px">🕓 Horários da operação <span style="font-size:.68rem;font-weight:400;color:var(--muted)">(data e hora digitáveis)</span></div>
@@ -1020,32 +1065,49 @@
     // texto na linha de info acima, sem jeito de corrigir um bip errado no
     // Coletor). Mesmo cadastro/padrão de <select> já usado no "+ Novo
     // Transbordo" (rebt-motorista).
+    // BUG AO VIVO REAL (usuário: "toda vez que eu edito alguma informação o
+    // motorista some, e também não consigo trocar o motorista caso
+    // colocaram errado") — a lista só traz motoristas ATIVOS
+    // (opInternals().motoristas() já filtra ativo!==false). Se o motorista
+    // que a carga já tinha foi desativado/excluído do cadastro depois,
+    // `selMotorista.value = r.motoristaId` não achava nenhuma <option>
+    // correspondente e o campo ficava em branco (silenciosamente, sem
+    // erro nenhum) — quem salvasse assim gravava motoristaNome:'' por
+    // cima do que já existia. Mesmo padrão de "opção antiga preservada"
+    // já usado no motivo de devolução (97-recebimento-recusas.js).
+    // BUG AO VIVO REAL (2ª rodada — usuário continuou vendo o motorista
+    // sumir): existem cargas com `motoristaNome` preenchido mas SEM
+    // `motoristaId` (campo entrou depois na gravação, registros mais
+    // antigos nunca ganharam ele retroativamente). Nesse caso
+    // `motoristaIdAtual` ficava '' e a condição acima (que só age quando
+    // `motoristaIdAtual` existe) nunca disparava — o <select> abria em
+    // branco mesmo com um motorista já salvo, e "não mexer em nada" ao
+    // salvar apagava o nome. Por isso guarda-se um "estado inicial"
+    // (`_edicaoCompletaMotoristaBase`) e o salvar só troca o motorista se
+    // o usuário realmente selecionar outra opção — nunca por rederivar do
+    // id, que pode nem existir.
     const selMotorista = document.getElementById('rebtedit-motorista');
     if (selMotorista) {
       const motoristas = opInternals()?.motoristas?.() || [];
-      selMotorista.innerHTML = '<option value="">— Selecionar —</option>' + motoristas.map(m => `<option value="${esc(m._id)}">${esc(m.nome)}</option>`).join('');
-      selMotorista.value = r.motoristaId || '';
+      const motoristaIdAtual = r.motoristaId || '';
+      const aindaAtivo = motoristaIdAtual && motoristas.some(m => m._id === motoristaIdAtual);
+      const semIdMasComNome = !motoristaIdAtual && r.motoristaNome;
+      selMotorista.innerHTML = '<option value="">— Selecionar —</option>'
+        + motoristas.map(m => `<option value="${esc(m._id)}">${esc(m.nome)}</option>`).join('')
+        + (motoristaIdAtual && !aindaAtivo ? `<option value="${esc(motoristaIdAtual)}" selected>${esc(r.motoristaNome || 'Motorista antigo/inativo')}</option>` : '')
+        + (semIdMasComNome ? `<option value="__atual__" selected>${esc(r.motoristaNome)}</option>` : '');
+      selMotorista.value = motoristaIdAtual || (semIdMasComNome ? '__atual__' : '');
+      _edicaoCompletaMotoristaBase = { id: motoristaIdAtual, nome: r.motoristaNome || '' };
     }
-    // `?? ''` (não `|| ''`) — volumes:0 é um valor real (era exatamente o
-    // que faltava no relato ao vivo), `||` trataria 0 como "sem valor" e
-    // limparia o campo à toa.
-    const volumes = document.getElementById('rebt-edit-completo-volumes');
-    if (volumes) volumes.value = r.volumes ?? '';
     _HORARIOS_TRANSBORDO.forEach(([sufixo, , campo]) => _preencherDataHora('rebtedit-hora-' + sufixo, r[campo]));
-    _notasFiscaisPorModo.editar = String(r.notaFiscalTransferencia || '').split(',').map(s => s.trim()).filter(Boolean);
-    _redesenharListaNfTransbordo('editar');
-    const nfNumero = document.getElementById('rebt-nf-editar-numero'); if (nfNumero) nfNumero.value = '';
-    const nfStatus = document.getElementById('rebt-nf-editar-status'); if (nfStatus) nfStatus.textContent = '';
+    _notasFiscaisVolumePorModo.editar = _detalhesNfTransbordo(r);
+    _redesenharListaNfVolumeTransbordo('editar');
     const statusEl = document.getElementById('rebt-edit-completo-status'); if (statusEl) statusEl.textContent = '';
     global.openModal?.('modal-rebt-editar-completo');
   }
   async function recbtSalvarEdicaoCompleta() {
     const r = transbordos().find(x => x._id === _edicaoCompletaId);
     if (!r) { global.showToast?.('Transbordo não encontrado.', 'error'); return; }
-
-    const restante = String(document.getElementById('rebt-nf-editar-numero')?.value || '').trim();
-    if (restante && !_listaNfEmEdicao('editar').includes(restante)) _listaNfEmEdicao('editar').push(restante);
-    _redesenharListaNfTransbordo('editar');
 
     const horarios = {
       horaSaida: _valorDataHoraCombinada('rebtedit-hora-saida'),
@@ -1057,26 +1119,66 @@
     const erro = _validarHorariosNovo(horarios);
     const statusEl = document.getElementById('rebt-edit-completo-status');
     if (erro) { if (statusEl) { statusEl.textContent = erro; statusEl.style.color = 'var(--danger,#ef4444)'; } return; }
+
+    // PEDIDO AO VIVO: "no Coletor cada nota tem seu volume, aqui só dava
+    // pra colocar um volume total" — mesmo modelo do "+ Novo Transbordo"
+    // (ver comentário lá).
+    _sincronizarNfVolumeDosCampos('editar');
+    const itensEditarBrutos = _notasFiscaisVolumePorModo.editar;
+    const numerosEditar = itensEditarBrutos.map(x => String(x.numero || '').trim()).filter(Boolean);
+    if (new Set(numerosEditar).size !== numerosEditar.length) {
+      if (statusEl) { statusEl.textContent = 'Há Nota Fiscal repetida. Remova a duplicada antes de salvar.'; statusEl.style.color = 'var(--danger,#ef4444)'; }
+      return;
+    }
     if (statusEl) statusEl.textContent = '';
+    const comNumeroEditar = itensEditarBrutos.filter(x => String(x.numero || '').trim());
+    const notaFiscalTransferencia = comNumeroEditar.length ? comNumeroEditar.map(x => String(x.numero).trim()).join(', ') : null;
+    const notasVolumesTransferencia = comNumeroEditar.length ? comNumeroEditar.map(x => ({ numero: String(x.numero).trim(), volumes: Math.round(Number(x.volumes)) || 0 })) : null;
+    const volumeTotalEditar = itensEditarBrutos.reduce((s, x) => s + (Math.round(Number(x.volumes)) || 0), 0);
 
     const i = opInternals();
     const status = _statusPorHorarios(horarios);
-    const notaFiscalTransferencia = _listaNfEmEdicao('editar').length ? _juntarNotasFiscais(_listaNfEmEdicao('editar')) : null;
     const agora = new Date().toISOString();
     const autor = global._currentAnalistaUser?.email || '';
     // Motorista errado bipado na saída (pedido ao vivo do usuário) — troca
     // igual ao "+ Novo Transbordo": resolve pelo cadastro e grava id+nome
     // juntos, nunca só um dos dois solto.
-    const motoristaId = document.getElementById('rebtedit-motorista')?.value || '';
-    const motorista = (i?.motoristas?.() || []).find(m => m._id === motoristaId);
+    // BUG AO VIVO REAL (2ª rodada): a comparação antiga só preservava o
+    // motorista quando `motoristaId` batia com o que a carga já tinha —
+    // registros SEM motoristaId (só motoristaNome) nunca batiam com nada e
+    // o nome era apagado mesmo sem o usuário ter mexido. Agora usa o
+    // "estado inicial" capturado na abertura do modal: se o valor
+    // selecionado é exatamente o que já estava lá (com ou sem id), o
+    // motorista não é tocado; só troca de verdade quando o usuário
+    // seleciona outra opção.
+    const motoristaIdSel = document.getElementById('rebtedit-motorista')?.value || '';
+    let motoristaId, motoristaNome, motorista;
+    if (motoristaIdSel === '__atual__') {
+      motoristaId = _edicaoCompletaMotoristaBase.id;
+      motoristaNome = _edicaoCompletaMotoristaBase.nome;
+    } else {
+      motoristaId = motoristaIdSel;
+      motorista = (i?.motoristas?.() || []).find(m => m._id === motoristaIdSel);
+      motoristaNome = motorista?.nome || (motoristaIdSel && motoristaIdSel === _edicaoCompletaMotoristaBase.id ? _edicaoCompletaMotoristaBase.nome : '');
+    }
     const payload = {
       status, ...horarios,
-      motoristaId, motoristaNome: motorista?.nome || '',
+      motoristaId, motoristaNome,
       transportadora: motorista?.transportadora || r.transportadora || '',
-      volumes: Number(document.getElementById('rebt-edit-completo-volumes')?.value) || 0,
-      notaFiscalTransferencia,
+      volumes: volumeTotalEditar,
+      notaFiscalTransferencia, notasVolumesTransferencia,
       atualizadoEm: agora, atualizadoPor: autor,
     };
+    // PEDIDO AO VIVO (2026-09-08): "quando mudar o nome do motorista tem que
+    // trazer automaticamente o código do motorista escolhido" — o código
+    // exibido na coluna "Carga" (`identificadorCodigo`, ex.: MOT-...) é o QR
+    // fixo do motorista (gravado como `motorista.codigo` na hora do bip, ver
+    // 22-recebimento.js:817). Trocar o motorista aqui sem atualizar esse
+    // código deixava a carga mostrando o código do motorista ERRADO mesmo
+    // depois de corrigido o nome. Só atualiza quando um motorista NOVO de
+    // verdade foi resolvido (tem `.codigo` no cadastro) — preservar
+    // '__atual__' ou limpar a seleção não mexe no código já gravado.
+    if (motorista && motorista.codigo) payload.identificadorCodigo = motorista.codigo;
     const tempos = i?.recalcularTempos ? i.recalcularTempos({ ...r, ...payload }) : null;
     if (tempos) Object.assign(payload, tempos);
 
@@ -1170,6 +1272,24 @@
       _redesenharListaNfTransbordo(modo);
       return;
     }
+    const nfvAdd = event.target.closest('[data-rebtnfv-add]');
+    if (nfvAdd) {
+      const modo = nfvAdd.getAttribute('data-rebtnfv-add');
+      _sincronizarNfVolumeDosCampos(modo);
+      _notasFiscaisVolumePorModo[modo].push({ numero: '', volumes: '' });
+      _redesenharListaNfVolumeTransbordo(modo, _notasFiscaisVolumePorModo[modo].length - 1);
+      return;
+    }
+    const nfvRemover = event.target.closest('[data-nfv-remover]');
+    if (nfvRemover) {
+      const modo = nfvRemover.getAttribute('data-nfv-modo');
+      _sincronizarNfVolumeDosCampos(modo);
+      const lista = _notasFiscaisVolumePorModo[modo];
+      lista.splice(Number(nfvRemover.getAttribute('data-nfv-remover')), 1);
+      if (!lista.length) lista.push({ numero: '', volumes: '' });
+      _redesenharListaNfVolumeTransbordo(modo);
+      return;
+    }
     const iniciar = event.target.closest('[data-rebt-iniciar]'); if (iniciar) { opInternals()?.iniciarDescarga?.(iniciar.getAttribute('data-rebt-iniciar')); return; }
     const fimDescarga = event.target.closest('[data-rebt-fim-descarga]'); if (fimDescarga) { opInternals()?.finalizarDescarga?.(fimDescarga.getAttribute('data-rebt-fim-descarga')); return; }
     const finalizar = event.target.closest('[data-rebt-finalizar]'); if (finalizar) { opInternals()?.finalizar?.(finalizar.getAttribute('data-rebt-finalizar')); return; }
@@ -1214,7 +1334,17 @@
   document.addEventListener('change', function (event) {
     if (event.target.id === 'rebt-origem') { _atualizarDestinosNovo(); return; }
     if (/^rebt-hora-(saida|chegada|inicio-descarga|fim-descarga|fechamento)-(data|hora)$/.test(event.target.id)) _atualizarResumoHorariosNovo();
-    if (event.target.id === 'rebt-f-data-inicio') { _filtroDataInicio = event.target.value || ''; _desenharTransbordo(); }
-    if (event.target.id === 'rebt-f-data-fim') { _filtroDataFim = event.target.value || ''; _desenharTransbordo(); }
+    // BUG AO VIVO REAL (2026-09-08): "quando vou colocar a data quando
+    // chega no ano ele para e da só para colocar o 2" — `<input type="date">`
+    // dispara `change` a cada dígito que o navegador já considera "válido"
+    // (o campo de ano aceita menos de 4 dígitos como valor válido, então
+    // digitar só "2" já forma uma data completa tipo 0002-08-31). Redesenhar
+    // a tela NA HORA recriava esse mesmo `<input>` do zero (via innerHTML),
+    // destruindo o foco/estado de edição nativo do navegador no meio da
+    // digitação — cada dígito novo precisava de um clique de novo pra
+    // continuar. Agora só redesenha depois de uma pausa na digitação, dando
+    // tempo do navegador aceitar o ano inteiro sem a gente interromper.
+    if (event.target.id === 'rebt-f-data-inicio') { _filtroDataInicio = event.target.value || ''; clearTimeout(_timerFiltroData); _timerFiltroData = setTimeout(_desenharTransbordo, 600); }
+    if (event.target.id === 'rebt-f-data-fim') { _filtroDataFim = event.target.value || ''; clearTimeout(_timerFiltroData); _timerFiltroData = setTimeout(_desenharTransbordo, 600); }
   });
 })(window);

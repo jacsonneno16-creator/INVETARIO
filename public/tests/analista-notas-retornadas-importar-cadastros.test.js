@@ -31,6 +31,12 @@ const LINHAS_PLANILHA=[
   ['JOSÉ ANTONIO','ELQ1J17','VALIDADE CURTA'],
 ];
 
+// buscarBiAutomatico() (97-recebimento-recusas.js) agenda um setInterval de
+// auto-refresh a cada render — timer real em jsdom, que precisa ser
+// derrubado com window.close() ou o node --test nunca sai sozinho.
+let _janelasAbertas = [];
+test.afterEach(() => { _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} }); _janelasAbertas = []; });
+
 function carregarPagina(colecoes){
   // PEDIDO AO VIVO (usuário: "as partes de cadastro da parte de recebimento
   // fazer em um menu só... deixar bem separado e organizado") — a
@@ -38,6 +44,7 @@ function carregarPagina(colecoes){
   // virou parte da tela própria de Cadastros.
   const dom=new JSDOM('<!doctype html><html><body><div id="page-recebimento-recusas"></div><div id="page-recebimento-recusas-cadastros"></div></body></html>',{ url:'http://localhost/', runScripts:'outside-only' });
   const win=dom.window; const document=win.document;
+  _janelasAbertas.push(win);
   win.getDTFirestore=()=>({ collection:(nome)=>colecoes?.[nome]||mockColecao([]) });
   win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }) };
   win.showToast=()=>{};

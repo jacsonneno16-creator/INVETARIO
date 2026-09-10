@@ -95,9 +95,14 @@ test('75-producao-estoque.js foi migrado pro serviço compartilhado (sem duplica
   assert.doesNotMatch(estoqueCode,/function _paginarTudo/);
 });
 
-test('76 ganhou o botão de sincronizar produtos, ligado ao serviço novo',()=>{
-  assert.match(importacaoCode,/data-pimp-bluesoft-produtos/);
-  assert.match(importacaoCode,/global\.sincronizarProdutosBluesoft/);
+// PEDIDO AO VIVO (2026-08-27): "tira tudo da bluesoft" — cadastro de
+// produto com estoque já vem do SharePoint (sincronizarBiAgendado em
+// functions/index.js), botão removido de 76. sincronizarProdutosBluesoft
+// (90-bluesoft-service.js) continua existindo e testada acima — só não
+// tem mais botão nesta tela que a chame.
+test('76 NÃO tem mais o botão de sincronizar produtos (Bluesoft) — produto com estoque já vem do SharePoint',()=>{
+  assert.doesNotMatch(importacaoCode,/data-pimp-bluesoft-produtos/);
+  assert.doesNotMatch(importacaoCode,/global\.sincronizarProdutosBluesoft/);
 });
 
 test('Firestore rules dão uma 3ª via de escrita em producao_produtos pra sincronização, restrita a campos de catálogo',()=>{

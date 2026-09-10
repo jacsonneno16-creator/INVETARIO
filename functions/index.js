@@ -107,33 +107,36 @@ async function obterOuCriarUsuario(email, password, displayName) {
   }
 }
 
-exports.criarUsuarioVinculado = functions
-  .region('southamerica-east1')
-  .https.onCall(async (data, context) => {
-    if (!context.auth) {
-      throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
-    }
-    const solicitante = await acessoSolicitante(context);
-    if (!podeCriarUsuarios(solicitante)) {
-      throw new functions.https.HttpsError('permission-denied', 'Seu login não pode criar usuários.');
-    }
-
+// Extraído do handler .https.onCall (que só faz auth+permissão e delega
+// aqui) pra poder ser testado direto, sem depender de como cada versão do
+// SDK do firebase-functions expõe/invoca o callable por baixo — mesmo
+// padrão já usado em _graphBiInternals pra sincronização do BI.
+async function _criarUsuarioVinculadoInterno(data) {
     const nome = String(data?.nome || '').trim();
     const senha = String(data?.senha || '');
-    const emailAnalista = emailNormalizado(data?.emailAnalista);
-    const emailColetor = emailNormalizado(data?.emailColetor);
     const criarAnalista = data?.criarAnalista === true;
-    if (!nome || nome.length > MAX_NOME || !NOME_VALIDO.test(nome) || !emailColetor || (criarAnalista && !emailAnalista)) {
+    // PEDIDO AO VIVO (2026-08-27): "eu selecionei só analista, sem
+    // coletor... não precisa criar um login pra coletor" — antes desta
+    // correção, o login de Coletor era SEMPRE criado, mesmo quando só
+    // Analista era pedido (emailColetor era obrigatório incondicionalmente,
+    // e emailNormalizado() lança erro pra string vazia SEM checar se aquele
+    // e-mail é sequer necessário). Agora só normaliza/exige o e-mail de
+    // cada canal quando aquele canal é realmente pedido.
+    const criarColetor = data?.criarColetor === true;
+    if (!nome || nome.length > MAX_NOME || !NOME_VALIDO.test(nome) || (!criarAnalista && !criarColetor)) {
       throw new functions.https.HttpsError('invalid-argument', 'Nome, login e senha são obrigatórios.');
     }
+    const emailAnalista = criarAnalista ? emailNormalizado(data?.emailAnalista) : null;
+    const emailColetor = criarColetor ? emailNormalizado(data?.emailColetor) : null;
     validarSenha(senha);
 
-    const coletor = await obterOuCriarUsuario(emailColetor, senha, nome);
+    let coletor = null;
     let analista = null;
     try {
+      if (criarColetor) coletor = await obterOuCriarUsuario(emailColetor, senha, nome);
       if (criarAnalista) analista = await obterOuCriarUsuario(emailAnalista, senha, nome);
     } catch (error) {
-      if (!coletor.existente) {
+      if (coletor && !coletor.existente) {
         try {
           await admin.auth().deleteUser(coletor.user.uid);
         } catch (rollbackError) {
@@ -147,12 +150,27 @@ exports.criarUsuarioVinculado = functions
     }
     return {
       ok: true,
-      uid: analista?.user.uid || coletor.user.uid,
+      uid: analista?.user.uid || coletor?.user.uid,
       analista_uid: analista?.user.uid || null,
-      coletor_uid: coletor.user.uid,
-      conta_existente: coletor.existente || analista?.existente === true
+      coletor_uid: coletor?.user.uid || null,
+      conta_existente: coletor?.existente === true || analista?.existente === true
     };
+}
+
+exports.criarUsuarioVinculado = functions
+  .region('southamerica-east1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    }
+    const solicitante = await acessoSolicitante(context);
+    if (!podeCriarUsuarios(solicitante)) {
+      throw new functions.https.HttpsError('permission-denied', 'Seu login não pode criar usuários.');
+    }
+    return _criarUsuarioVinculadoInterno(data);
   });
+
+exports._criarUsuarioVinculadoInterno = _criarUsuarioVinculadoInterno;
 
 exports.alterarSenhaUsuario = functions
   .region('southamerica-east1')
@@ -517,6 +535,126 @@ exports.registrarOcorrenciaAuditoria = functions.region('southamerica-east1')
     return {ok:true,status:'PRODUTO_FORA_AUDITORIA',lojaId:refs.lojaId||lojaId||'',origem:refs.origem,itemId:ocorrenciaId};
   });
 
+// PEDIDO AO VIVO (2026-09-04): "no lugar de ficar entrando no coletor e
+// ficar indo no analista aprovar... quero que no analista cadastre o ID do
+// coletor e na hora que abrir o aplicativo ele já peça o id pra aprovar, e
+// depois fique aprovado" — o Analista pré-gera um código (dt_codigos_coletor)
+// com um nome/apelido pro aparelho; o operador digita esse código na tela
+// "aguardando aprovação" do Coletor (ver 02-sync-dispositivo.js) e o
+// aparelho já entra aprovado, sem precisar do Analista abrir a lista de
+// coletores e clicar em Aprovar. Roda como Cloud Function (Admin SDK,
+// ignora as regras do Firestore) porque as regras de dt_coletores
+// deliberadamente IMPEDEM o próprio aparelho de se auto-aprovar (ver
+// firestore.rules) — só um código válido, verificado aqui no servidor
+// dentro de uma transação (evita 2 aparelhos usarem o mesmo código ao
+// mesmo tempo), pode liberar o acesso.
+async function _resgatarCodigoAprovacaoColetorInterno({codigo, deviceId, uid, email, nomeExibicao}) {
+  const codigoNormalizado = String(codigo || '').trim().toUpperCase().slice(0, 20);
+  const deviceIdSeguro = String(deviceId || '').trim().slice(0, 120);
+  if (!codigoNormalizado) throw new functions.https.HttpsError('invalid-argument', 'Informe o código.');
+  if (!deviceIdSeguro) throw new functions.https.HttpsError('invalid-argument', 'Aparelho não identificado.');
+  const codigoRef = db.collection('dt_codigos_coletor').doc(codigoNormalizado);
+  const deviceRef = db.collection('dt_coletores').doc(deviceIdSeguro);
+  const agora = admin.firestore.FieldValue.serverTimestamp();
+  const nome = nomeExibicao || email || 'Coletor';
+  const resultado = await db.runTransaction(async tx => {
+    const [codSnap, devSnap] = await Promise.all([tx.get(codigoRef), tx.get(deviceRef)]);
+    if (!codSnap.exists) throw new functions.https.HttpsError('not-found', 'Código inválido.');
+    const cod = codSnap.data() || {};
+    if (cod.usado === true) throw new functions.https.HttpsError('failed-precondition', 'Esse código já foi usado. Peça um código novo ao Analista.');
+    const dadosDevice = devSnap.exists ? (devSnap.data() || {}) : {};
+    if (dadosDevice.aprovado === 'bloqueado') throw new functions.https.HttpsError('permission-denied', 'Este aparelho foi bloqueado pelo Analista.');
+    const numero = deviceIdSeguro.slice(-4).toUpperCase();
+    tx.set(deviceRef, {
+      uid, device_id: deviceIdSeguro,
+      nome_coletor: cod.nome_coletor || dadosDevice.nome_coletor || ('Coletor ' + numero),
+      numero: dadosDevice.numero || numero,
+      operador_atual: nome,
+      operador_email: email || null,
+      operador_uid: uid,
+      status: 'offline',
+      aprovado: 'aprovado',
+      aprovado_em: agora,
+      aprovado_via_codigo: codigoNormalizado,
+      data_registro: dadosDevice.data_registro || agora,
+      ultimo_ping: agora,
+      sessao: null,
+      contagens_enviadas: dadosDevice.contagens_enviadas || 0,
+      contagens_pendentes: dadosDevice.contagens_pendentes || 0,
+      excluido: false,
+      revogado_em: null,
+    }, {merge: true});
+    tx.set(codigoRef, {
+      usado: true, usado_em: agora, usado_por_device_id: deviceIdSeguro, usado_por_uid: uid,
+    }, {merge: true});
+    return {nome_coletor: cod.nome_coletor || ''};
+  });
+  return {ok: true, nome_coletor: resultado.nome_coletor};
+}
+exports._resgatarCodigoAprovacaoColetorInterno = _resgatarCodigoAprovacaoColetorInterno;
+
+exports.resgatarCodigoAprovacaoColetor = functions.region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    return _resgatarCodigoAprovacaoColetorInterno({
+      codigo: data?.codigo,
+      deviceId: data?.deviceId,
+      uid: context.auth.uid,
+      email: context.auth.token.email,
+      nomeExibicao: context.auth.token.name || context.auth.token.email,
+    });
+  });
+
+// BUG AO VIVO REAL (2026-09-06): "Registro do aparelho falhou: permission-
+// denied" repetindo por HORAS pra uma conta específica, mesmo depois de
+// corrigir o menu que escondia o Diagnóstico. As firestore.rules de
+// dt_coletores foram relidas com cuidado e, na teoria, deveriam aceitar
+// esta escrita (allow create só exige signedIn(); allow update/pendente não
+// depende de active()/canais_acesso) — ou seja, o texto da regra sozinho
+// não explica o erro real. Em vez de continuar adivinhando pela leitura das
+// regras, esta função (Admin SDK, ignora as regras) devolve o estado
+// REAL gravado hoje pra esta conta+aparelho, pro Diagnóstico do coletor
+// mostrar isso na tela em vez de só o código do erro. Só lê dados da
+// PRÓPRIA conta autenticada (usuarios_acessos/{uid}) e do device_id que o
+// próprio aparelho informa (o mesmo que já usa pra tentar se registrar) —
+// nenhum dado de outra conta/aparelho é exposto.
+exports.diagnosticarAparelhoColetor = functions.region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const deviceId = String(data?.deviceId || '').trim().slice(0, 120);
+    const [accSnap, devSnap] = await Promise.all([
+      db.collection('usuarios_acessos').doc(context.auth.uid).get(),
+      deviceId ? db.collection('dt_coletores').doc(deviceId).get() : Promise.resolve(null),
+    ]);
+    const acc = accSnap.exists ? (accSnap.data() || {}) : null;
+    const dev = devSnap && devSnap.exists ? (devSnap.data() || {}) : null;
+    return {
+      ok: true,
+      uid: context.auth.uid,
+      usuarios_acessos: acc ? {
+        existe: true,
+        ativo: acc.ativo !== false,
+        perfil: acc.perfil || null,
+        admin_mestre: acc.admin_mestre === true || acc.administrador_mestre === true,
+        canais_acesso: acc.canais_acesso || null,
+        lojas_permitidas: Array.isArray(acc.lojas_permitidas) ? acc.lojas_permitidas : [],
+        acesso_todas_lojas: acc.acesso_todas_lojas === true,
+      } : {existe: false},
+      dt_coletores: dev ? {
+        existe: true,
+        aprovado: dev.aprovado ?? null,
+        status: dev.status ?? null,
+        excluido: dev.excluido ?? null,
+        uid: dev.uid ?? null,
+        operador_uid: dev.operador_uid ?? null,
+        device_id: dev.device_id ?? null,
+        revogado_em: dev.revogado_em ? String(dev.revogado_em) : null,
+      } : {existe: false, device_id_consultado: deviceId || null},
+    };
+  });
+
 exports.finalizarAuditoria = functions.region('southamerica-east1')
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
@@ -618,469 +756,1243 @@ exports.bluesoftProxy = functions
   .runWith({timeoutSeconds: 120, memory: '256MB'})
   .https.onRequest((req, res) => {
     cors(req, res, async () => {
-      if (req.method !== 'POST') {
-        return res.status(405).json({erro: 'Use POST.'});
-      }
-      const usuario = await usuarioAutenticadoPorHeader(req);
-      if (!usuario) {
-        return res.status(401).json({erro: 'Faça login novamente.'});
-      }
-
-      const {method, path, baseUrl, token, body} = req.body || {};
-      const metodo = String(method || 'GET').toUpperCase();
-      const caminho = String(path || '');
-      const base = String(baseUrl || '').replace(/\/+$/, '');
-
-      if (!METODOS_PERMITIDOS.has(metodo)) {
-        return res.status(400).json({erro: 'Método HTTP inválido.'});
-      }
-      if (!caminho.startsWith('/') || !BLUESOFT_HOST_PERMITIDO.test(base) || !token) {
-        return res.status(400).json({
-          erro: "Envie 'baseUrl' (host da Bluesoft), 'path' (iniciando com /) e 'token' válidos."
-        });
-      }
-
+      // PEDIDO AO VIVO (usuário reportou vários "500" seguidos no console,
+      // sem detalhe nenhum): só a chamada fetch() tinha try/catch — uma
+      // exceção em qualquer coisa ANTES dela (verifyIdToken, parse do body,
+      // validação) virava rejeição não tratada dentro do callback async
+      // passado pro `cors`, que o runtime do Cloud Functions converte num
+      // 500 genérico, sem corpo, sem mensagem — o navegador só reporta
+      // "responded with a status of 500 ()", sem dar pra saber o motivo.
+      // Envolve a função inteira, não só o fetch, pra qualquer erro real
+      // sempre voltar como JSON com mensagem (o app já mostra isso no
+      // diagnóstico da busca).
       try {
-        const resposta = await fetch(base + caminho, {
-          method: metodo,
-          headers: {'x-CustomToken': String(token), 'Content-Type': 'application/json'},
-          body: metodo !== 'GET' && metodo !== 'HEAD' && body != null ? JSON.stringify(body) : undefined
-        });
-        const texto = await resposta.text();
-        let dados;
-        try { dados = texto ? JSON.parse(texto) : null; }
-        catch (_) { dados = texto; }
-        return res.status(resposta.status).json(dados);
-      } catch (erro) {
-        console.error('Erro no proxy Bluesoft:', erro);
-        return res.status(502).json({erro: 'Falha ao conectar com a Bluesoft.', detalhe: String(erro.message || erro)});
+        if (req.method !== 'POST') {
+          return res.status(405).json({erro: 'Use POST.'});
+        }
+        const usuario = await usuarioAutenticadoPorHeader(req);
+        if (!usuario) {
+          return res.status(401).json({erro: 'Faça login novamente.'});
+        }
+
+        const {method, path, baseUrl, token, body} = req.body || {};
+        const metodo = String(method || 'GET').toUpperCase();
+        const caminho = String(path || '');
+        const base = String(baseUrl || '').replace(/\/+$/, '');
+
+        if (!METODOS_PERMITIDOS.has(metodo)) {
+          return res.status(400).json({erro: 'Método HTTP inválido.'});
+        }
+        if (!caminho.startsWith('/') || !BLUESOFT_HOST_PERMITIDO.test(base) || !token) {
+          return res.status(400).json({
+            erro: "Envie 'baseUrl' (host da Bluesoft), 'path' (iniciando com /) e 'token' válidos."
+          });
+        }
+
+        try {
+          const resposta = await fetch(base + caminho, {
+            method: metodo,
+            headers: {'x-CustomToken': String(token), 'Content-Type': 'application/json'},
+            body: metodo !== 'GET' && metodo !== 'HEAD' && body != null ? JSON.stringify(body) : undefined
+          });
+          const texto = await resposta.text();
+          let dados;
+          try { dados = texto ? JSON.parse(texto) : null; }
+          catch (_) { dados = texto; }
+          return res.status(resposta.status).json(dados);
+        } catch (erro) {
+          console.error('Erro no proxy Bluesoft:', erro);
+          return res.status(502).json({erro: 'Falha ao conectar com a Bluesoft.', detalhe: String(erro.message || erro)});
+        }
+      } catch (erroInesperado) {
+        console.error('Erro inesperado no proxy Bluesoft (fora do fetch):', erroInesperado);
+        if (!res.headersSent) {
+          return res.status(500).json({erro: 'Erro inesperado no proxy.', detalhe: String(erroInesperado && erroInesperado.message || erroInesperado)});
+        }
       }
     });
   });
 
 // ─────────────────────────────────────────────────────────────────────────
-// Notas Retornadas — sincronização automática (Cloud Scheduler)
-// Pedido ao vivo do usuário: "essas atualizações via api tem como colocar
-// horarios programados para atualizar automaticamente" — escolheu
-// explicitamente "buscar E salvar sozinho" pra Notas Retornadas, 2-3x ao
-// dia. Roda servidor-a-servidor (sem passar pelo bluesoftProxy — aqui já
-// SOMOS o servidor, com o token vindo direto de dt_config, sem precisar de
-// usuário logado nem token de ID do Firebase).
-//
-// O que é gravado (lojas/{lojaId}/recebimento_recusas_notas/{chave}) é só
-// uma tabela de REFERÊNCIA — o mesmo destino do botão manual "Salvar
-// importação" em 97-recebimento-recusas.js. NÃO é o registro final de
-// recebimento: isso continua exigindo um operador no Coletor escanear a
-// nota e passar pelo fluxo de motorista/motivo/box/volume contado
-// fisicamente (24-recebimento-recusas.js) — o volume aqui é só ponto de
-// partida (lido do XML quando disponível), nunca a contagem oficial. Por
-// isso `volumes` pode ficar `null` aqui (a validação de "volumes
-// obrigatório" do botão manual não se aplica a esta gravação de
-// referência).
-//
-// Duplica de propósito a lógica de descoberta/normalização já existente em
-// 90-bluesoft-service.js — não dá pra reusar aquele arquivo direto: ele
-// espera window.fetch/getDTFirestore()/token de auth do navegador, nada
-// disso existe aqui. Se a lógica de devolução mudar de um lado, replicar
-// a mudança no outro.
-const CFOPS_DEVOLUCAO_VENDA_SRV = ['1201', '1202', '1203', '1204', '1410', '1411', '2201', '2202', '2203', '2204', '2410', '2411'];
-const RE_NATUREZA_NAO_RECEBIMENTO_SRV = /\bDEV(OL|\.)|\bRETORNO\b/;
-function _normTxtSrv(v) { return String(v || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase(); }
-function _ehDevolucaoSrv(nota) {
-  if (['DEVOLUCAO_ENTRE_LOJAS', 'DEVOLUCAO_CLIENTE'].includes(nota && nota.tipoTransferencia)) return true;
-  return RE_NATUREZA_NAO_RECEBIMENTO_SRV.test(_normTxtSrv(nota && nota.natureza));
-}
-// PEDIDO AO VIVO (usuário, com print real das telas do Bluesoft: "hoje ela
-// traz notas canceladas e recusadas, também não é para vim essas notas") —
-// duplica o mesmo filtro aplicado em 90-bluesoft-service.js (ver comentário
-// completo lá): "Status da NF-e" (Rejeitada/Inutilizada) e "Status"
-// (Cancelada) confirmados ao vivo contra as telas reais do Bluesoft.
-const RE_STATUS_NAO_VALIDO_SRV = /CANCELAD|REJEITAD|INUTILIZAD|DENEGAD/;
-function _notaComStatusValidoSrv(x) {
-  return !RE_STATUS_NAO_VALIDO_SRV.test(_normTxtSrv(x && x.status));
-}
-function _pareceDevolucaoSrv(n) {
-  if (CFOPS_DEVOLUCAO_VENDA_SRV.includes(String(n.cfop || '').replace(/\D/g, ''))) return true;
-  return RE_NATUREZA_NAO_RECEBIMENTO_SRV.test(_normTxtSrv(n.naturezaOperacao || n.natureza || ''));
-}
-function _normalizarNotaRetornoSrv(n) {
-  const origem = (n.itens || []).map(it => it.notaFiscalOrigem).find(Boolean) || null;
-  const pareceDevolucao = _pareceDevolucaoSrv(n);
-  return {
-    chave: n.nfChave || '', numeroNota: n.nfNumero != null ? String(n.nfNumero) : '', serie: n.nfSerie != null ? String(n.nfSerie) : '',
-    cfop: n.cfop || '', tipoOperacao: n.tipoNota || '', naturezaLabel: pareceDevolucao ? 'Devolução' : 'Venda',
-    dataEmissao: n.dataEmissao || null, valorTotal: Number(n.valorTotalNota) || 0,
-    destinatarioNome: n.nomeRazaoFornecedor || '', destinatarioCnpj: n.cpfCnpjFornecedor || '',
-    itens: (n.itens || []).map(it => ({produtoKey: it.produtoKey != null ? it.produtoKey : null, descricao: it.descricao || '', quantidade: Number(it.quantidade) || 0, gtin: it.gtin || '', ncm: it.ncm || ''})),
-    notaOriginalChave: origem && origem.chave || null, notaOriginalNumero: origem && origem.numero != null ? String(origem.numero) : null,
-    pareceDevolucao,
-  };
-}
-function _extrairVolumesSrv(xmlTexto) {
-  const blocos = String(xmlTexto || '').match(/<vol>[\s\S]*?<\/vol>/gi) || [];
-  let total = 0, achou = false;
-  blocos.forEach(bloco => { const m = bloco.match(/<qVol>(\d+)<\/qVol>/i); if (m) { total += Number(m[1]) || 0; achou = true; } });
-  return achou ? total : null;
-}
-function _fmtDataBRSrv(d) { return String(d.getDate()).padStart(2, '0') + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + d.getFullYear(); }
+// Leitura do BI via Microsoft Graph API (SharePoint) — PEDIDO AO VIVO
+// (2026-08-27): "amanhã eu vou colocar pra ir via a API, que aí fica mais
+// fácil pra atualizar automaticamente". App Registration "App PCP e
+// Compras" no Azure AD, fluxo client_credentials (servidor-a-servidor,
+// sem usuário logado). O client secret NUNCA passa por código nem por esta
+// conversa — fica só no Secret Manager (GRAPH_CLIENT_SECRET), injetado em
+// process.env só dentro da função, por causa do `secrets:[...]` no
+// runWith(). Tenant/Client ID e o caminho do SharePoint não são segredo
+// (são só identificadores), por isso ficam aqui como constante mesmo.
+const GRAPH_TENANT_ID = 'ed1c5836-e579-4f4d-be52-e0f3a971457a';
+const GRAPH_CLIENT_ID = '07548f43-35db-4da8-bb71-463339e1793e';
+const GRAPH_SHAREPOINT_HOSTNAME = 'daterrinhaalimentoscombr.sharepoint.com';
+const GRAPH_SHAREPOINT_SITE_PATH = 'DT-BI';
+// Caminho da pasta do BI DENTRO do drive padrão do site (ver
+// _resolverDriveGraphApi) — "Shared Documents" costuma SER o próprio drive
+// raiz, então não repete aqui; testarGraphApi confirma isso na prática.
+const GRAPH_PASTA_BI = 'PCP/extracao_dados_planejamento_estoque';
 
-async function _bluesoftGetSrv(baseUrl, path, token, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs || 30000);
-  try {
-    const resp = await fetch(baseUrl.replace(/\/+$/, '') + path, {
-      method: 'GET', headers: {'x-CustomToken': String(token), 'Content-Type': 'application/json'}, signal: controller.signal,
-    });
-    const texto = await resp.text();
-    let dados; try { dados = texto ? JSON.parse(texto) : null; } catch (_) { dados = texto; }
-    if (!resp.ok) throw new Error('HTTP ' + resp.status + ' em ' + path + (dados && dados.erro ? ': ' + dados.erro : ''));
-    return dados;
-  } finally { clearTimeout(timer); }
+let _graphTokenCache = null; // {token, expiraEm} — reaproveitado entre invocações "quentes" da função
+async function _obterTokenGraphApi(clientSecret) {
+  if (_graphTokenCache && _graphTokenCache.expiraEm > Date.now() + 30000) return _graphTokenCache.token;
+  const resp = await fetch(`https://login.microsoftonline.com/${GRAPH_TENANT_ID}/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+    body: new URLSearchParams({
+      grant_type: 'client_credentials', client_id: GRAPH_CLIENT_ID, client_secret: clientSecret,
+      scope: 'https://graph.microsoft.com/.default',
+    }).toString(),
+  });
+  const dados = await resp.json();
+  if (!resp.ok) throw new Error('Falha ao autenticar no Graph API: ' + (dados.error_description || dados.error || resp.status));
+  _graphTokenCache = {token: dados.access_token, expiraEm: Date.now() + (Number(dados.expires_in) || 3600) * 1000};
+  return _graphTokenCache.token;
 }
-// Pedido ao vivo do usuário (2026-08-20): "vou deixar no automático" — a
-// sincronização agendada tem 540s pra TODAS as lojas, uma de cada vez. Essa
-// função paginava UMA página por vez, em série — o mesmo ponto lento que
-// deixou a busca manual "mais de 5m sem trazer nada" do lado do cliente.
-// Paginação concorrente (mesmo padrão de 90-bluesoft-service.js), com
-// dedup por chave de identidade pra nunca duplicar item por causa da
-// concorrência.
-const CONCORRENCIA_PAGINAS_SRV = 3;
-async function _paginarTudoSrv(baseUrl, path, params, token, chaveIdentidade) {
-  const itens = [];
-  const vistos = new Set();
-  let pagina = 0, acabou = false, paginasSemNovidade = 0;
-  while (!acabou) {
-    const indices = Array.from({length: CONCORRENCIA_PAGINAS_SRV}, (_, i) => pagina + i);
-    const respostas = await Promise.all(indices.map(p => {
-      const qs = new URLSearchParams(Object.assign({}, params, {currentPage: p, pageSize: 200})).toString();
-      return _bluesoftGetSrv(baseUrl, path + '?' + qs, token);
-    }));
-    for (const dados of respostas) {
-      const linhas = Array.isArray(dados) ? dados : ((dados && (dados.data || dados.items || dados.results)) || []);
-      if (!linhas.length) { acabou = true; break; }
-      let novos = 0;
-      linhas.forEach(item => {
-        const chave = chaveIdentidade ? String(chaveIdentidade(item)) : JSON.stringify(item);
-        if (!vistos.has(chave)) { vistos.add(chave); itens.push(item); novos++; }
-      });
-      if (novos === 0) { paginasSemNovidade++; if (paginasSemNovidade >= 5) { acabou = true; break; } }
-      else paginasSemNovidade = 0;
-      if (linhas.length < 200) { acabou = true; break; }
-    }
-    pagina += CONCORRENCIA_PAGINAS_SRV;
-    if (pagina > 300) throw new Error('Limite de páginas excedido em ' + path);
+let _graphDriveIdCache = null; // driveId do site resolvido — não muda, cacheado entre invocações quentes
+async function _resolverDriveGraphApi(token) {
+  if (_graphDriveIdCache) return _graphDriveIdCache;
+  const headers = {Authorization: 'Bearer ' + token};
+  const siteResp = await fetch(`https://graph.microsoft.com/v1.0/sites/${GRAPH_SHAREPOINT_HOSTNAME}:/sites/${GRAPH_SHAREPOINT_SITE_PATH}`, {headers});
+  const site = await siteResp.json();
+  if (!siteResp.ok) throw new Error('Falha ao achar o site do SharePoint: ' + (site.error?.message || siteResp.status));
+  const driveResp = await fetch(`https://graph.microsoft.com/v1.0/sites/${site.id}/drive`, {headers});
+  const drive = await driveResp.json();
+  if (!driveResp.ok) throw new Error('Falha ao achar a biblioteca de documentos: ' + (drive.error?.message || driveResp.status));
+  _graphDriveIdCache = drive.id;
+  return _graphDriveIdCache;
+}
+async function _listarArquivosBiGraphApi(token, driveId) {
+  const headers = {Authorization: 'Bearer ' + token};
+  const resp = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(GRAPH_PASTA_BI).replace(/%2F/g, '/')}:/children?$select=name,size,lastModifiedDateTime`, {headers});
+  const dados = await resp.json();
+  if (!resp.ok) throw new Error('Falha ao listar a pasta do BI: ' + (dados.error?.message || resp.status));
+  return (dados.value || []).map(f => ({nome: f.name, tamanho: f.size, modificadoEm: f.lastModifiedDateTime}));
+}
+async function _lerArquivoBiGraphApi(token, driveId, nomeArquivo) {
+  const headers = {Authorization: 'Bearer ' + token};
+  const resp = await fetch(`https://graph.microsoft.com/v1.0/drives/${driveId}/root:/${encodeURIComponent(GRAPH_PASTA_BI).replace(/%2F/g, '/')}/${encodeURIComponent(nomeArquivo)}:/content`, {headers});
+  if (!resp.ok) {
+    const dados = await resp.json().catch(() => ({}));
+    throw new Error('Falha ao ler ' + nomeArquivo + ' no SharePoint: ' + (dados.error?.message || resp.status));
   }
-  return itens;
-}
-// Mesmo helper de lotes paralelos de 90-bluesoft-service.js — lookups
-// targetados (1 chamada por cliente/vendedor único) rodavam um de cada vez.
-// Reduzido de 8 pra 4 no mesmo dia (ver comentário em 90-bluesoft-
-// service.js): lote grande demais provavelmente esbarrava no limite de
-// requisições simultâneas da Bluesoft.
-const TAMANHO_LOTE_LOOKUP_SRV = 4;
-async function _emLotesParalelosSrv(itens, fn, tamanhoLote) {
-  tamanhoLote = tamanhoLote || TAMANHO_LOTE_LOOKUP_SRV;
-  for (let i = 0; i < itens.length; i += tamanhoLote) {
-    await Promise.all(itens.slice(i, i + tamanhoLote).map(fn));
-  }
+  return resp.json();
 }
 
-// Fonte de descoberta de devolução "em aberto": recebimento_notas, já
-// sincronizado pelo Dashboard (sincronizarRecebimentoBluesoft, endpoint
-// PROVADO em produção) — ver histórico completo do bug em 90-bluesoft-
-// service.js. Enriquecida com um lookup targetado por chave (com lojaKey,
-// obrigatório mesmo com nfChave informado — outro bug ao vivo real já
-// corrigido do lado do cliente).
-// BUG AO VIVO REAL (usuário: "não esquece que tem que puxar as notas de
-// devolução que não foram dado entrada no nosso sistema ainda") — mesmo
-// bug do lado do cliente (ver comentário completo em 90-bluesoft-
-// service.js): filtrar por `dataRecebimento` excluía exatamente as notas
-// ainda não recebidas (esse campo só é preenchido depois). Corrigido pra
-// filtrar por `processamento`, que sempre vem preenchido.
-async function _descobrirNotasDevolucaoSrv(lojaId, baseUrl, lojaKey, token) {
-  const snap = await db.collection('lojas').doc(lojaId).collection('recebimento_notas').get();
-  const agora = new Date();
-  const inicio = new Date(); inicio.setDate(inicio.getDate() - 30);
-  const candidatas = snap.docs.map(d => d.data() || {}).filter(x => _ehDevolucaoSrv(x)).filter(_notaComStatusValidoSrv).filter(x => {
-    const dp = x.processamento ? new Date(x.processamento) : null;
-    return dp && !isNaN(dp) && dp >= inicio && dp <= agora;
-  });
-  return Promise.all(candidatas.map(async x => {
-    try {
-      const qs = new URLSearchParams({nfChave: x.chaveNota, lojaKey, currentPage: 0, pageSize: 10}).toString();
-      const dados = await _bluesoftGetSrv(baseUrl, '/api/estoques/notas-fiscais?' + qs, token);
-      const linha = Array.isArray(dados) ? dados[0] : ((dados && dados.data) || [])[0];
-      if (linha) return _normalizarNotaRetornoSrv(linha);
-    } catch (e) { /* cai pro fallback abaixo */ }
-    return {
-      chave: x.chaveNota || '', numeroNota: x.numeroNota != null ? String(x.numeroNota) : '', serie: x.serieNota != null ? String(x.serieNota) : '',
-      cfop: '', tipoOperacao: '', naturezaLabel: 'Devolução', dataEmissao: null, valorTotal: Number(x.valor) || 0,
-      destinatarioNome: '', destinatarioCnpj: String(x.cnpjRemetente || '').replace(/\D/g, ''), itens: [],
-      notaOriginalChave: null, notaOriginalNumero: null, pareceDevolucao: true, statusRecebimento: x.statusRecebimento || '',
-    };
-  }));
-}
-
-// Venda faturada ainda não entregue — GET /api/forca-de-vendas/pedidos.
-// HISTÓRICO (ver comentário completo em 90-bluesoft-service.js): a
-// primeira versão usava /api/venda/pedidovenda, testado ao vivo com o
-// token real e CONFIRMADO sem nenhuma atividade de 2026. O usuário mandou
-// print de dentro do próprio Bluesoft mostrando 6.732 pedidos reais de
-// junho/2026 numa tela DIFERENTE — "Pedido Força de Venda", objeto
-// diferente no schema. Endpoint certo, confirmado ao vivo: filtra por
-// filialKey+dataEmissaoInicial/Final+pedidoVendaStatus (valor único, não
-// array). Cada pedido tem clientes[], e cada cliente já traz nfChave/
-// nfNumero/nfSerie DIRETO — nenhum lookup extra por nota é necessário.
-const STATUS_FATURADO_NAO_ENTREGUE_SRV = ['FATURADO_POR_NOTA_FISCAL', 'FATURADO_POR_CUPOM', 'ROTEIRIZADO'];
-async function _obterPedidosVendaFaturadosSrv(baseUrl, filialKey, token) {
-  const fim = new Date(); const inicio = new Date(); inicio.setMonth(inicio.getMonth() - 6);
-  const porKey = new Map();
-  const itensPorStatus = await Promise.all(STATUS_FATURADO_NAO_ENTREGUE_SRV.map(status => _paginarTudoSrv(baseUrl, '/api/forca-de-vendas/pedidos', {
-    filialKey, pedidoVendaStatus: status,
-    dataEmissaoInicial: _fmtDataBRSrv(inicio) + ' 00:00', dataEmissaoFinal: _fmtDataBRSrv(fim) + ' 23:59',
-  }, token, item => item.pedidoForcaVendaKey)));
-  itensPorStatus.forEach(itens => itens.forEach(it => porKey.set(it.pedidoForcaVendaKey, it)));
-  const notas = [];
-  porKey.forEach(p => {
-    (p.clientes || []).filter(c => c.nfChave || c.nfNumero).forEach(c => {
-      notas.push({
-        chave: c.nfChave || '', numeroNota: c.nfNumero != null ? String(c.nfNumero) : '', serie: c.nfSerie != null ? String(c.nfSerie) : '',
-        cfop: '', tipoOperacao: 'SAIDA', naturezaLabel: 'Venda',
-        dataEmissao: c.nfDataEmissao || p.dataEmissao || null, valorTotal: Number(c.valorNf != null ? c.valorNf : c.valorTotal) || 0,
-        destinatarioNome: '', destinatarioCnpj: '',
-        itens: (p.itens || []).filter(it => it.clienteKey === c.clienteKey).map(it => ({produtoKey: it.produtoKey != null ? it.produtoKey : null, descricao: '', quantidade: Number(it.quantidadePedida) || 0, gtin: '', ncm: ''})),
-        notaOriginalChave: null, notaOriginalNumero: null, pareceDevolucao: false,
-        vendedorKey: p.vendedorExternoKey != null ? p.vendedorExternoKey : null, clienteKey: c.clienteKey != null ? c.clienteKey : null,
-      });
-    });
-  });
-  const clienteKeysUnicos = [...new Set(notas.map(n => n.clienteKey).filter(k => k != null))];
-  const clientePorKey = new Map();
-  await _emLotesParalelosSrv(clienteKeysUnicos, async ck => {
-    try {
-      const dados = await _bluesoftGetSrv(baseUrl, '/api/clientes?' + new URLSearchParams({clienteKey: ck, currentPage: 0, pageSize: 1}).toString(), token);
-      const linha = Array.isArray(dados) ? dados[0] : ((dados && dados.data) || [])[0];
-      if (linha) clientePorKey.set(ck, linha);
-    } catch (e) { /* um cliente faltando não trava os outros */ }
-  });
-  // BUG AO VIVO REAL (2026-08-21, mesmo bug do lado do cliente): forca-de-
-  // vendas/pedidos nunca traz descrição do item, só produtoKey. Lookup
-  // targetado, um por produtoKey único.
-  const produtoKeysUnicos = [...new Set(notas.flatMap(n => n.itens.map(it => it.produtoKey)).filter(k => k != null))];
-  const produtoPorKey = new Map();
-  await _emLotesParalelosSrv(produtoKeysUnicos, async pk => {
-    try {
-      const dados = await _bluesoftGetSrv(baseUrl, '/api/comercial/produtos?' + new URLSearchParams({produtoKey: pk, currentPage: 0, pageSize: 1}).toString(), token);
-      const linha = Array.isArray(dados) ? dados[0] : ((dados && dados.data) || [])[0];
-      if (linha) produtoPorKey.set(pk, linha);
-    } catch (e) { /* um produto faltando não trava os outros */ }
-  });
-  return notas.map(n => {
-    const cli = clientePorKey.get(n.clienteKey);
-    return {
-      ...n, destinatarioNome: (cli && (cli.nomeRazao || cli.nomeFantasia || cli.nomeAbreviado)) || '', destinatarioCnpj: String((cli && cli.cpfCnpj) || '').replace(/\D/g, ''),
-      itens: n.itens.map(it => ({...it, descricao: (produtoPorKey.get(it.produtoKey) && produtoPorKey.get(it.produtoKey).descricao) || ''})),
-    };
-  });
-}
-async function _buscarVendedorSrv(baseUrl, vendedorKey, token) {
-  if (vendedorKey == null) return null;
-  const dados = await _bluesoftGetSrv(baseUrl, '/api/forca-de-vendas/vendedores?vendedorKey=' + encodeURIComponent(vendedorKey), token);
-  const linha = Array.isArray(dados) ? dados[0] : ((dados && dados.data) || [])[0];
-  if (!linha) return null;
-  // Gerente removido (pedido ao vivo do usuário: "o gerente pode tirar,
-  // que sempre será 1 pq de gerente só tem ele").
-  return {
-    nome: linha.vendedorNomeAbreviado || '', email: linha.vendedorEmail || '',
-    supervisorNome: linha.supervisorNomeAbreviado || '', supervisorEmail: linha.supervisorEmail || '',
-  };
-}
-
-async function _sincronizarNotasRetornadasDaLoja(lojaId, loja) {
-  const cfgSnap = await db.collection('lojas').doc(lojaId).collection('dt_config').doc('integracao_api').get();
-  const cfg = cfgSnap.exists ? (cfgSnap.data() || {}) : {};
-  const baseUrl = cfg.ambiente === 'producao' ? cfg.url_prd : cfg.url_hml;
-  if (!baseUrl || !cfg.token) return {loja: loja.nome || lojaId, pulou: 'sem configuração de API'};
-  const lojaKey = loja.bluesoft_loja_key;
-  const fim = new Date(); const inicio = new Date(); inicio.setDate(inicio.getDate() - 30);
-  const paramsEntrada = {lojaKey, tipoNota: 'ENTRADA', dataRecebimentoInicial: _fmtDataBRSrv(inicio), dataRecebimentoFinal: _fmtDataBRSrv(fim)};
-
-  // Cada fonte é melhor esforço (mesmo padrão do lado do cliente, ver
-  // 90-bluesoft-service.js) — uma fonte falhando (timeout, 429, etc.) nunca
-  // derruba as outras duas nem zera a loja inteira nesse ciclo.
-  const [brutasEntrada, extras, pedidosFaturados] = await Promise.all([
-    _paginarTudoSrv(baseUrl, '/api/estoques/notas-fiscais', paramsEntrada, cfg.token, item => item.nfChave)
-      .catch(e => { console.error('[NotasRetornadas automático] Falha na fonte principal (notas de entrada)', lojaId, e.message || e); return []; }),
-    _descobrirNotasDevolucaoSrv(lojaId, baseUrl, lojaKey, cfg.token)
-      .catch(e => { console.error('[NotasRetornadas automático] Falha na 2ª fonte (devolução)', lojaId, e.message || e); return []; }),
-    _obterPedidosVendaFaturadosSrv(baseUrl, lojaKey, cfg.token).catch(e => { console.error('[NotasRetornadas automático] Falha na 3ª fonte (venda faturada)', lojaId, e.message || e); return []; }),
-  ]);
-  // BUG AO VIVO REAL (2026-08-20, mesmo bug do lado do cliente — ver
-  // comentário completo em 90-bluesoft-service.js): essa fonte (tipoNota=
-  // ENTRADA) só traz notas onde a loja RECEBE a mercadoria — nunca uma
-  // venda de verdade. Compra normal de fornecedor (sem relação com
-  // devolução) caía no "senão" e virava "Venda" por engano. Filtra só o
-  // que realmente parece devolução; venda de verdade vem só da 3ª fonte
-  // (_obterPedidosVendaFaturadosSrv).
-  const notasEntrada = brutasEntrada.map(_normalizarNotaRetornoSrv).filter(n => n.pareceDevolucao);
-  const chavesConhecidas = new Set(notasEntrada.filter(n => n.chave).map(n => n.chave));
-  const numerosConhecidos = new Set(notasEntrada.filter(n => n.numeroNota).map(n => n.numeroNota));
-  const extrasNovas = extras.filter(n => !(n.chave && chavesConhecidas.has(n.chave)) && !(n.numeroNota && numerosConhecidos.has(n.numeroNota)));
-  extrasNovas.forEach(n => { if (n.chave) chavesConhecidas.add(n.chave); if (n.numeroNota) numerosConhecidos.add(n.numeroNota); });
-
-  // _obterPedidosVendaFaturadosSrv já devolve cada nota com chave/número/
-  // destinatário resolvidos (a NF já vem direto no cliente do pedido) — só
-  // falta dedup e vendedor.
-  const pedidosNovos = pedidosFaturados.filter(n => (n.chave || n.numeroNota) && !(n.chave && chavesConhecidas.has(n.chave)) && !(n.numeroNota && numerosConhecidos.has(n.numeroNota)));
-  const vendedorKeysUnicos = [...new Set(pedidosNovos.map(n => n.vendedorKey).filter(k => k != null))];
-  const vendedorPorKey = new Map();
-  await _emLotesParalelosSrv(vendedorKeysUnicos, async vk => {
-    try { const v = await _buscarVendedorSrv(baseUrl, vk, cfg.token); if (v) vendedorPorKey.set(vk, v); }
-    catch (e) { /* um vendedor faltando não trava os outros */ }
-  });
-  const extrasVenda = pedidosNovos.map(n => {
-    const vd = vendedorPorKey.get(n.vendedorKey);
-    return {...n, vendedorNome: (vd && vd.nome) || '', vendedorEmail: (vd && vd.email) || '', supervisorNome: (vd && vd.supervisorNome) || '', supervisorEmail: (vd && vd.supervisorEmail) || ''};
-  });
-
-  const todasNotas = notasEntrada.concat(extrasNovas, extrasVenda);
-
-  // Pedido ao vivo do usuário: "se eu fizer outra busca... ela já tem as
-  // notas salvas, e já com o XML gravado... não precisaria buscar de
-  // novo" — carrega ANTES do loop quais notas de Venda já estão salvas com
-  // volume > 0 (genuinamente resolvido, não só o 0 padrão de quem nunca
-  // chegou a carregar). Reaproveitado também pela limpeza de venda já
-  // entregue logo abaixo (uma leitura só pras duas coisas).
-  let salvasVendaSnap = null;
-  const volumeJaSalvoPorChave = new Map();
-  try {
-    salvasVendaSnap = await db.collection('lojas').doc(lojaId).collection('recebimento_recusas_notas')
-      .where('naturezaLabel', '==', 'Venda').get();
-    salvasVendaSnap.docs.forEach(d => {
-      const x = d.data() || {};
-      if (Number(x.volumes) > 0) volumeJaSalvoPorChave.set(d.id, Number(x.volumes));
-    });
-  } catch (e) { console.error('[NotasRetornadas automático] Falha ao carregar vendas já salvas (segue sem cache)', lojaId, e.message || e); }
-
-  const agora = new Date().toISOString();
-  let salvas = 0, comMotivoOuVolume = 0, erros = 0, reaproveitadas = 0;
-  for (let i = 0; i < todasNotas.length; i += 20) {
-    const lote = todasNotas.slice(i, i + 20);
-    await Promise.all(lote.map(async n => {
-      if (!n.chave) return;
-      let motivo = '', volumes = null;
-      // Pedido ao vivo do usuário (2026-08-20): "não quero mais o motivo e
-      // nem o volume das notas de devolução" — devolução NUNCA mais lê o
-      // XML; só venda lê, e só pra pegar o volume (venda nunca teve motivo).
-      const volumeCache = !n.pareceDevolucao ? volumeJaSalvoPorChave.get(n.chave) : undefined;
-      if (volumeCache != null) {
-        volumes = volumeCache;
-        reaproveitadas++;
-      } else if (!n.pareceDevolucao) {
-        try {
-          const linkDados = await _bluesoftGetSrv(baseUrl, '/api/estoques/notas-fiscais/xml/' + n.chave.replace(/\D/g, ''), cfg.token);
-          const url = (linkDados && (linkDados.URL_S3 || linkDados.url_s3)) || '';
-          if (url) {
-            const resp = await fetch(url);
-            if (resp.ok) {
-              const xmlTexto = await resp.text();
-              volumes = _extrairVolumesSrv(xmlTexto);
-              if (volumes != null) comMotivoOuVolume++;
-            }
-          }
-        } catch (e) { /* volume segue vazio — nota ainda é salva */ }
-      }
-      try {
-        await db.collection('lojas').doc(lojaId).collection('recebimento_recusas_notas').doc(n.chave).set({
-          chave: n.chave, numeroNota: n.numeroNota, volumes, destinatario: n.destinatarioNome || '', dataEmissao: n.dataEmissao || '',
-          valorTotal: Number(n.valorTotal) || 0,
-          transportadora: '', arquivoOrigem: '', serie: n.serie || '', cfop: n.cfop || '', naturezaLabel: n.naturezaLabel || '',
-          tipoOperacao: n.tipoOperacao || '', destinatarioCnpj: n.destinatarioCnpj || '',
-          notaOriginalChave: n.notaOriginalChave || null, notaOriginalNumero: n.notaOriginalNumero || null,
-          informacoesComplementares: motivo, itens: n.itens || [], pareceDevolucao: !!n.pareceDevolucao,
-          // BUG AO VIVO REAL (2026-08-20): "muitos mercados não trouxe [o
-          // vendedor]" — a sincronização automática já calculava vendedor/
-          // supervisor (venda faturada, via vendedorKey do pedido) mas
-          // nunca salvava isso aqui. Só a busca MANUAL ("Buscar" no
-          // Analista) gravava esses campos — qualquer nota que só passou
-          // pelo automático (06h/14h/17h) ficava sem vendedor pra sempre,
-          // mesmo já tendo o dado calculado em memória.
-          vendedorNome: n.vendedorNome || '', vendedorEmail: n.vendedorEmail || '',
-          supervisorNome: n.supervisorNome || '', supervisorEmail: n.supervisorEmail || '',
-          origemImportacao: 'BLUESOFT_AUTOMATICO', ativo: true, atualizadoEm: agora, atualizadoPor: 'sistema-automatico',
-        }, {merge: true});
-        salvas++;
-      } catch (e) { erros++; console.error('[NotasRetornadas automático] Falha ao salvar', n.chave, e.message || e); }
-    }));
-  }
-
-  // Pedido ao vivo do usuário: "toda vez que uma nota que ta publicada for
-  // atualizado que ela foi entregue, pode excluir ela da base anterior" —
-  // qualquer "venda faturada" já salva que NÃO está mais no conjunto atual
-  // de pendentes (pedidosFaturados, com os 3 status FATURADO/ROTEIRIZADO)
-  // significa que ela mudou de status — virou ENTREGUE (ou CANCELADO/
-  // DEVOLVIDO) — e não precisa mais ficar na tabela de referência. Só
-  // limpa o que a própria automação salvou (BLUESOFT_AUTOMATICO) com
-  // naturezaLabel=Venda — nunca mexe em devolução nem em importação
-  // manual por PDF.
-  let removidas = 0;
-  try {
-    const chavesVendaPendentesAgora = new Set(pedidosFaturados.filter(n => n.chave).map(n => n.chave));
-    // Reaproveita o snapshot carregado ANTES do loop (mesma leitura já usada
-    // pro cache de volume acima) — evita ler a coleção inteira duas vezes.
-    const paraRemover = (salvasVendaSnap ? salvasVendaSnap.docs : []).filter(d => {
-      const x = d.data() || {};
-      return x.origemImportacao === 'BLUESOFT_AUTOMATICO' && !chavesVendaPendentesAgora.has(d.id);
-    });
-    for (let i = 0; i < paraRemover.length; i += 300) {
-      const lote = paraRemover.slice(i, i + 300);
-      const batch = db.batch();
-      lote.forEach(d => batch.delete(d.ref));
-      await batch.commit();
-      removidas += lote.length;
-    }
-  } catch (e) { console.error('[NotasRetornadas automático] Falha ao limpar vendas já entregues', lojaId, e.message || e); }
-
-  return {loja: loja.nome || lojaId, encontradas: todasNotas.length, salvas, comMotivoOuVolume, erros, removidas, reaproveitadas};
-}
-
-async function _sincronizarNotasRetornadasTodasLojas() {
-  const lojasSnap = await db.collection('lojas').get();
-  const resultados = [];
-  for (const doc of lojasSnap.docs) {
-    const loja = doc.data() || {};
-    if (!loja.bluesoft_loja_key) continue;
-    try {
-      resultados.push(await _sincronizarNotasRetornadasDaLoja(doc.id, loja));
-    } catch (e) {
-      resultados.push({loja: loja.nome || doc.id, erro: e.message || String(e)});
-      console.error('[NotasRetornadas automático] Falha na loja', doc.id, e);
-    }
-  }
-  console.log('[NotasRetornadas automático] Resumo:', JSON.stringify(resultados));
-  return resultados;
-}
-
-exports.sincronizarNotasRetornadasAgendado = functions
+// Versão segura (callable, exige login+permissão) — usada pelas telas do
+// Analista pra buscar um arquivo específico do BI via API, no lugar da
+// pasta local sincronizada. Mesmo contrato de retorno que
+// DTBiPastaLocal.lerJson(arquivo) — troca só QUEM fornece o JSON.
+// PEDIDO AO VIVO: estourava "Memory limit of 256 MiB exceeded with 277 MiB
+// used" ao buscar arquivos grandes (ex.: notas_fiscais_jacson.json com
+// milhares de notas de venda) — a resposta ficava corrompida no meio do
+// estouro e o cliente via "Response is not valid JSON object", sem
+// nenhuma pista do motivo real (só aparecia nos logs da function, não na
+// tela). 256 MiB era o default do Cloud Functions v1, nunca configurado
+// explicitamente; alinhado aqui com as outras functions de BI do mesmo
+// arquivo (sincronizarBiAgendado etc., já em 512MB-1GB).
+exports.buscarArquivoBiGraphApi = functions
   .region('southamerica-east1')
-  .runWith({timeoutSeconds: 540, memory: '512MB'})
-  .pubsub.schedule('0 6,14,17 * * *')
-  .timeZone('America/Sao_Paulo')
-  .onRun(async () => { await _sincronizarNotasRetornadasTodasLojas(); return null; });
-
-// Gatilho manual (callable) — pra testar sem esperar o próximo horário
-// agendado, mesma checagem de permissão do botão "Buscar"/"Salvar" manual.
-exports.sincronizarNotasRetornadasAgora = functions
-  .region('southamerica-east1')
-  .runWith({timeoutSeconds: 540, memory: '512MB'})
+  .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 120, memory: '1GB'})
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
     const solicitante = await acessoSolicitante(context);
     const podeImportarRecusas = solicitante && solicitante.permissoes && solicitante.permissoes['recebimento-recusas'] &&
       solicitante.permissoes['recebimento-recusas'].importar === true;
     if (!administrador(solicitante) && !podeImportarRecusas) {
+      throw new functions.https.HttpsError('permission-denied', 'Seu login não pode buscar arquivos do BI.');
+    }
+    const arquivo = String(data && data.arquivo || '').trim();
+    if (!arquivo) throw new functions.https.HttpsError('invalid-argument', 'Informe o nome do arquivo.');
+    try {
+      const token = await _obterTokenGraphApi(process.env.GRAPH_CLIENT_SECRET);
+      const driveId = await _resolverDriveGraphApi(token);
+      const conteudo = await _lerArquivoBiGraphApi(token, driveId, arquivo);
+      return {ok: true, dados: conteudo};
+    } catch (e) {
+      throw new functions.https.HttpsError('internal', String(e.message || e));
+    }
+  });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Sincronização automática do BI via API (servidor, sem navegador aberto)
+// PEDIDO AO VIVO (2026-08-27): "coloca também uma atualização automática...
+// pra atualizar toda vez que o arquivo for atualizado" — começando pelos 2
+// fluxos mais simples (Ficha Técnica e Agenda de Recebimento — só merge,
+// sem pacotes/exclusão como o ledger de venda). Duplica de propósito a
+// mesma lógica já validada em produção do lado do cliente
+// (_agruparFichaTecnicaBiPorProduto em 60-producao-ficha-tecnica.js e
+// _agruparComprasAReceberBiPorPedido/_gravarAgendaPendentes em
+// 90-bluesoft-service.js) — aqui usando Admin SDK (acesso direto a
+// lojas/{lojaId}/..., sem o conceito de "loja ativa" que só existe no
+// navegador). Se a lógica de agrupamento mudar de um lado, replicar a
+// mudança no outro.
+async function _sincronizarFichaTecnicaBiLoja(lojaId, lojaKey, registrosFicha) {
+  const colProdutos = db.collection('lojas').doc(lojaId).collection('producao_produtos');
+  const colFichas = db.collection('lojas').doc(lojaId).collection('producao_ficha_tecnica');
+  const [produtosSnap, fichasSnap] = await Promise.all([colProdutos.get(), colFichas.get()]);
+  const codsComProduto = new Set(produtosSnap.docs.map(d => String((d.data() || {}).cod)));
+  const fichasPorCod = new Map(fichasSnap.docs.map(d => [String((d.data() || {}).cod), d.id]));
+
+  const porProduto = new Map();
+  registrosFicha.forEach(it => {
+    if (lojaKey != null && String(it.loja_key) !== String(lojaKey)) return;
+    const cod = it.produto_key != null ? String(it.produto_key) : '';
+    if (!cod) return;
+    if (!porProduto.has(cod)) porProduto.set(cod, {cod, desc: it.produto_acabado || '', insumos: []});
+    const produto = porProduto.get(cod);
+    if (!produto.desc && it.produto_acabado) produto.desc = it.produto_acabado;
+    const nomeInsumo = it.descricao_insumo || '';
+    if (!nomeInsumo) return;
+    produto.insumos.push({insumo: nomeInsumo, qty: Number(it.consumo_receita) || 0, categoria: ''});
+  });
+  const agrupadas = [...porProduto.values()];
+  const agora = new Date().toISOString();
+  let semProduto = 0;
+  for (let i = 0; i < agrupadas.length; i += 300) {
+    const lote = agrupadas.slice(i, i + 300);
+    const batch = db.batch();
+    lote.forEach(f => {
+      if (!codsComProduto.has(f.cod)) semProduto++;
+      const payload = {cod: f.cod, desc: f.desc, insumos: f.insumos, atualizadoEm: agora};
+      const idExistente = fichasPorCod.get(f.cod);
+      if (idExistente) batch.set(colFichas.doc(idExistente), payload, {merge: true});
+      else batch.set(colFichas.doc(), Object.assign({}, payload, {criadoEm: agora}));
+    });
+    await batch.commit();
+  }
+  return {total: agrupadas.length, semProduto};
+}
+
+async function _sincronizarAgendaBiLoja(lojaId, loja, registrosCompras) {
+  const lojaKey = loja.bluesoft_loja_key != null ? loja.bluesoft_loja_key : null;
+  const porPedido = new Map();
+  registrosCompras.forEach(it => {
+    if (lojaKey != null && String(it.loja_key) !== String(lojaKey)) return;
+    const pendente = Number(it.qtd_unidades_pendentes) || 0;
+    if (pendente <= 0) return;
+    const numeroPedido = it.pedido_key != null ? String(it.pedido_key) : '';
+    if (!numeroPedido) return;
+    if (!porPedido.has(numeroPedido)) {
+      porPedido.set(numeroPedido, {numeroPedido, fornecedorNome: it.fornecedor || '', compradorNome: it.comprador || '', dataEntregaInicial: '', dataEntregaFinal: '', itensPorProduto: new Map()});
+    }
+    const pedido = porPedido.get(numeroPedido);
+    const dataIni = it.data_entrega_inicial ? String(it.data_entrega_inicial).slice(0, 10) : '';
+    const dataFim = it.data_entrega_final ? String(it.data_entrega_final).slice(0, 10) : '';
+    if (dataIni && (!pedido.dataEntregaInicial || dataIni < pedido.dataEntregaInicial)) pedido.dataEntregaInicial = dataIni;
+    if (dataFim && (!pedido.dataEntregaFinal || dataFim > pedido.dataEntregaFinal)) pedido.dataEntregaFinal = dataFim;
+    const chaveProduto = it.produto_key != null ? String(it.produto_key) : (it.descricao || '');
+    // PEDIDO AO VIVO (2026-08-27): "traz os campos código do produto, valor,
+    // quantidade recebida" — o arquivo (compras_a_receber.json) já trazia
+    // esses campos (produto_key, custo_unitario, valor_pendente,
+    // qtd_unidades_recebidas), só não eram lidos. quantidadeRecebida e
+    // valorPendente somam entre parcelas do mesmo pedido/produto (campo
+    // "entrega" do arquivo pode fatiar um item em mais de uma linha);
+    // custoUnitario fica com o valor mais recente lido.
+    const atual = pedido.itensPorProduto.get(chaveProduto) || {produto: it.descricao || '', produtoKey: it.produto_key != null ? String(it.produto_key) : '', tipoProduto: '', quantidadePendente: 0, quantidadeRecebida: 0, valorPendente: 0, custoUnitario: 0};
+    atual.quantidadePendente += pendente;
+    atual.quantidadeRecebida += Number(it.qtd_unidades_recebidas) || 0;
+    atual.valorPendente += Number(it.valor_pendente) || 0;
+    if (Number(it.custo_unitario) > 0) atual.custoUnitario = Number(it.custo_unitario);
+    pedido.itensPorProduto.set(chaveProduto, atual);
+  });
+  const pendentes = [...porPedido.values()].map(p => ({
+    numeroPedido: p.numeroPedido, fornecedorNome: p.fornecedorNome, compradorNome: p.compradorNome,
+    dataEntregaInicial: p.dataEntregaInicial, dataEntregaFinal: p.dataEntregaFinal, itens: [...p.itensPorProduto.values()],
+  }));
+  if (!pendentes.length) return {totalPedidosPendentes: 0, criados: 0, atualizados: 0};
+
+  const colAgenda = db.collection('lojas').doc(lojaId).collection('recebimento_agendamentos');
+  const snap = await colAgenda.get();
+  const docPorNumeroPedido = new Map();
+  snap.docs.forEach(d => { const x = d.data() || {}; if (x.numeroPedido != null) docPorNumeroPedido.set(String(x.numeroPedido), {id: d.id, dados: x}); });
+  const agora = new Date().toISOString();
+  let criados = 0, atualizados = 0;
+  for (let i = 0; i < pendentes.length; i += 300) {
+    const lote = pendentes.slice(i, i + 300);
+    const batch = db.batch();
+    lote.forEach(p => {
+      const fornecedorNome = p.fornecedorNome || ('Fornecedor ' + p.numeroPedido);
+      const dataPrevista = p.dataEntregaInicial ? String(p.dataEntregaInicial).slice(0, 10) : '';
+      const existente = docPorNumeroPedido.get(String(p.numeroPedido));
+      // PEDIDO AO VIVO (2026-08-27): "tira tudo da bluesoft... pra quando
+      // você linkar no SharePoint, puxar essas informações atualizadas" —
+      // esta função já veio do SharePoint desde que foi criada (não da
+      // Bluesoft), mas gravava origem:'bluesoft' por ter copiado o payload
+      // do sync antigo sem trocar o rótulo. Corrigido pra origem:'bi' —
+      // sem isso, uma limpeza futura que apague "dado antigo da bluesoft"
+      // filtrando por origem==='bluesoft' apagaria também o dado NOVO,
+      // vindo do SharePoint, só porque o rótulo estava errado. Doc antigo
+      // (de antes desta correção) ainda pode estar marcado 'bluesoft' — por
+      // isso o `limparPrevisaoAntiga` aceita os dois valores, o que importa
+      // é "veio de sync automático", não qual sync.
+      if (existente) {
+        const limparPrevisaoAntiga = (existente.dados.origem === 'bluesoft' || existente.dados.origem === 'bi') && !existente.dados.agendamentoConfirmadoManual;
+        batch.set(colAgenda.doc(existente.id), Object.assign({
+          origem: 'bi', lojaId, lojaNome: loja.nome || loja.codigo || lojaId, numeroPedido: p.numeroPedido, fornecedorNome, dataPrevista,
+          dataEntregaFinal: p.dataEntregaFinal || null, compradorNome: p.compradorNome || '', itensPedido: p.itens || [], bluesoftSincronizadoEm: agora, atualizadoEm: agora,
+        }, limparPrevisaoAntiga ? {dataAgendada: ''} : {}), {merge: true});
+        atualizados++;
+      } else {
+        batch.set(colAgenda.doc(), {
+          origem: 'bi', lojaId, lojaNome: loja.nome || loja.codigo || lojaId, numeroPedido: p.numeroPedido, fornecedorNome, dataPrevista, dataAgendada: '', compradorNome: p.compradorNome || '', itensPedido: p.itens || [],
+          dataEntregaFinal: p.dataEntregaFinal || null, horaAgendada: '', codigo: 'PC-' + p.numeroPedido,
+          motoristaNome: '', placa: '', status: 'AGENDADO',
+          observacao: 'Pedido de compra #' + p.numeroPedido + ' — sincronizado automaticamente (BI)',
+          bluesoftSincronizadoEm: agora, criadoEm: agora, atualizadoEm: agora,
+        }, {merge: true});
+        criados++;
+      }
+    });
+    await batch.commit();
+  }
+  return {totalPedidosPendentes: pendentes.length, criados, atualizados};
+}
+
+const _idSeguro = v => String(v ?? '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+
+// PEDIDO AO VIVO (2026-08-27): "mas é para puxar do share point tudo nao
+// mais da bluesoft" — o estoque de insumos que o PCP usa pra sobrepor
+// `producao_projecao.estoqueAtual` (tela "Pedidos x Estoque", ver
+// 66-producao-projecao.js:97 e 78-pcp-central.js:35) vinha só da Bluesoft
+// (90-bluesoft-service.js, coleção pcp_estoque_bluesoft, origem:'bluesoft').
+// dados-insumos.json já é lido pela tela "Relatórios BI" (101-relatorios-bi.js,
+// aba "Estoque de Insumos") e tem loja como CHAVE NUMÉRICA (mesmo formato de
+// bluesoft_loja_key — confirmado nos dados reais: "1","10","11","14"), ao
+// contrário de dados-estoque.json (produto acabado), cujo campo `loja` é o
+// NOME do cliente/marca (ex.: "ROMARIZ","ALGO MAIS") e não mapeia direto pra
+// loja numérica — por isso fica de fora aqui, é um caso à parte.
+// Mesma coleção/doc-id que a Bluesoft já escrevia (`produto_<cod>`), pra não
+// precisar tocar em nenhum código de leitura (66-producao-projecao.js,
+// 78-pcp-central.js) — só troca QUEM alimenta o dado, com origem:'bi'.
+// NÃO aplica a mesma guarda de "só cod já cadastrado em producao_produtos"
+// que _sincronizarEstoqueProdutoAcabadoBiLoja usa logo abaixo (bug real de
+// contaminação por matéria-prima de outra planta): dados-insumos.json não
+// mostrou o mesmo problema de magnitude (valores batem com o esperado por
+// loja) e "09016 FARINHA DE MANDIOCA" — o caso real que esta função corrigiu
+// — é um insumo, podendo não estar cadastrado em producao_produtos da mesma
+// forma que produto acabado. Restringir aqui sem confirmar arriscava
+// reverter silenciosamente a correção original. Mantido como estava.
+async function _sincronizarEstoqueInsumosBiLoja(lojaId, lojaKey, registrosInsumos) {
+  const colEstoque = db.collection('lojas').doc(lojaId).collection('pcp_estoque_bluesoft');
+  const relevantes = (registrosInsumos || []).filter(it => lojaKey != null && String(it.loja) === String(lojaKey) && it.sku != null);
+  const agora = new Date().toISOString();
+  let gravados = 0;
+  for (let i = 0; i < relevantes.length; i += 300) {
+    const lote = relevantes.slice(i, i + 300);
+    const batch = db.batch();
+    lote.forEach(it => {
+      const cod = String(it.sku);
+      const payload = {
+        cod, produto: it.produto || ('Produto ' + cod),
+        estoqueAtual: Number(it.estoque) || 0,
+        unidadeExibicao: it.unidade || '',
+        consumoDiaMedioBluesoft: (Number(it.consumoMensal) || 0) / 30,
+        biSincronizadoEm: agora, atualizadoEm: agora, origem: 'bi',
+      };
+      batch.set(colEstoque.doc('produto_' + _idSeguro(cod)), payload, {merge: true});
+      gravados++;
+    });
+    await batch.commit();
+  }
+  return {total: relevantes.length, gravados};
+}
+
+// PEDIDO AO VIVO (2026-08-27): "migra tudo" — depois de confirmado que
+// produtos_estoque.json tem loja_key NUMÉRICO (ao contrário de
+// dados-estoque.json, que é por nome de cliente/marca) e já traz
+// `quantidadePedidos` (pedido de venda pendente/reservado — a cobertura
+// negativa nos dados reais bate com pedido > estoque, mesmo cálculo que
+// `disponivel=estoque-comprometido` em 78-pcp-central.js:35), este arquivo
+// cobre finalmente o produto ACABADO — dados-insumos.json acima só cobria
+// matéria-prima/embalagem. Mesmo padrão/doc-id de
+// _sincronizarEstoqueInsumosBiLoja (produto_<cod>, origem:'bi'), campo
+// `estoqueReservadoVenda` é o MESMO nome que 90-bluesoft-service.js já
+// gravava pra pedido de venda pendente — reaproveitado de propósito, pra
+// não precisar tocar em nenhum código de leitura.
+// BUG AO VIVO REAL (achado pelo usuário, "Estoque atual (CX)" do Dashboard
+// do PCP pulou pra 15 milhões): produtos_estoque.json mistura, sob o MESMO
+// campo `quantidade_estoque` sem indicar unidade, produto acabado em CAIXA
+// (ex.: "00001 TAPIOCA... - CX 12": 1482) com matéria-prima em KG vinda de
+// OUTRAS plantas/fornecedoras que nem são loja de venda de verdade (ex.:
+// loja_key 7 "TERRAFEC FECULA MANDIOCA", produto "000002 FECULA KG":
+// 806.000) — sem campo de unidade nem tipo pra distinguir os dois casos.
+// Corrigido restringindo a um `cod` já cadastrado nesta loja. PEDIDO AO
+// VIVO (2026-08-27) — correção do próprio filtro: "aquele cadastro da
+// produção é o que produz nela, mas tem produtos que vem de fornecedores,
+// então não pode usar o que tá lá para o restante do estoque" — restringir
+// só a producao_produtos (cadastro de FABRICAÇÃO) excluía todo produto
+// comprado de fornecedor e revendido pela loja, que nunca teve motivo pra
+// estar cadastrado como "produzido". A guarda agora aceita o MESMO cadastro
+// mais amplo que 78-pcp-central.js:68 já usa pra montar a própria tela
+// (producao_produtos UNIÃO pcp_produtos_bluesoft — este último cobre
+// venda/compra de fornecedor, não só fabricação) — matéria-prima de outra
+// planta (ex.: fécula de 806 mil "caixas") continua de fora, porque nunca
+// esteve cadastrada em nenhum dos dois.
+async function _sincronizarEstoqueProdutoAcabadoBiLoja(lojaId, lojaKey, registrosProdutos) {
+  const colEstoque = db.collection('lojas').doc(lojaId).collection('pcp_estoque_bluesoft');
+  const [produtosSnap, produtosBluesoftSnap] = await Promise.all([
+    db.collection('lojas').doc(lojaId).collection('producao_produtos').get(),
+    db.collection('lojas').doc(lojaId).collection('pcp_produtos_bluesoft').get(),
+  ]);
+  const codsRegistrados = new Set([
+    ...produtosSnap.docs.map(d => String((d.data() || {}).cod || '')),
+    ...produtosBluesoftSnap.docs.map(d => String((d.data() || {}).cod || '')),
+  ].filter(Boolean));
+  const relevantes = (registrosProdutos || []).filter(it => lojaKey != null && String(it.loja_key) === String(lojaKey) && it.produto_key != null && codsRegistrados.has(String(it.produto_key)));
+  const agora = new Date().toISOString();
+  let gravados = 0;
+  for (let i = 0; i < relevantes.length; i += 300) {
+    const lote = relevantes.slice(i, i + 300);
+    const batch = db.batch();
+    lote.forEach(it => {
+      const cod = String(it.produto_key);
+      const payload = {
+        cod, produto: it.produto || ('Produto ' + cod),
+        estoqueAtual: Number(it.quantidade_estoque) || 0,
+        estoqueReservadoVenda: Number(it.quantidadePedidos) || 0,
+        biSincronizadoEm: agora, atualizadoEm: agora, origem: 'bi',
+      };
+      batch.set(colEstoque.doc('produto_' + _idSeguro(cod)), payload, {merge: true});
+      gravados++;
+    });
+    await batch.commit();
+  }
+  return {total: relevantes.length, gravados};
+}
+
+// PEDIDO AO VIVO (2026-08-27): "migra tudo" — último dado real que faltava
+// pro PCP parar de depender da Bluesoft: venda_m1/m2/m3 (histórico de
+// vendas dos últimos 3 meses fechados, usado no cálculo de demanda
+// ponderada — ver memoriaDeCalculo em 78-pcp-central.js). notas_fiscais_
+// jacson.json é estrutura PLANA (1 item por linha, não nota+itens
+// aninhados — confirmado nos dados reais), com tipo_movimento 'VENDA' ou
+// 'DEVOLUCAO' — só 'VENDA' entra aqui (devolução não é demanda). Os 3
+// meses viram os 3 valores DISTINTOS mais recentes de data_emissao.slice(0,7)
+// presentes nos dados desta loja, não "hoje menos 1/2/3" fixo — evita M1/M2/M3
+// zerados se a extração do BI atrasar um dia. Grava em producao_projecao
+// (mesmo destino que a Bluesoft já usava), casando só por `cod` — a
+// coleção tem muito campo manual (maquina, pc_min, projeção manual) que o
+// merge:true nunca toca.
+async function _sincronizarHistoricoVendasBiLoja(lojaId, lojaKey, registrosNotas) {
+  const relevantes = (registrosNotas || []).filter(it => lojaKey != null && String(it.loja_key) === String(lojaKey) && it.tipo_movimento === 'VENDA' && it.produto_key != null && it.data_emissao);
+  const mesesDisponiveis = [...new Set(relevantes.map(it => String(it.data_emissao).slice(0, 7)))].sort().reverse().slice(0, 3);
+  const porProdutoMes = new Map();
+  relevantes.forEach(it => {
+    const idx = mesesDisponiveis.indexOf(String(it.data_emissao).slice(0, 7));
+    if (idx === -1) return;
+    const cod = String(it.produto_key);
+    const acc = porProdutoMes.get(cod) || [0, 0, 0];
+    acc[idx] += Number(it.quantidade_faturada) || 0;
+    porProdutoMes.set(cod, acc);
+  });
+  const colProjecao = db.collection('lojas').doc(lojaId).collection('producao_projecao');
+  const snap = await colProjecao.get();
+  const porCod = new Map();
+  snap.docs.forEach(d => { const x = d.data() || {}; if (x.cod != null) porCod.set(String(x.cod), d.id); });
+  const agora = new Date().toISOString();
+  let gravados = 0;
+  const entradas = [...porProdutoMes.entries()];
+  for (let i = 0; i < entradas.length; i += 300) {
+    const lote = entradas.slice(i, i + 300);
+    const batch = db.batch();
+    lote.forEach(([cod, [m1, m2, m3]]) => {
+      // BUG AO VIVO REAL (mesma causa raiz de _sincronizarEstoqueProdutoAcabadoBiLoja
+      // logo acima): criar um doc NOVO pra qualquer produto_key vendido —
+      // mesmo um item interno tipo "000002 FECULA KG" que nunca teve
+      // producao_projecao — vira linha fantasma nos KPIs do PCP (78-pcp-
+      // central.js:69 lê TUDO de producao_projecao sem filtrar cadastro).
+      // Só atualiza doc que já existe; produto sem projeção cadastrada
+      // fica de fora, nunca cria um novo.
+      const id = porCod.get(cod);
+      if (!id) return;
+      const payload = {cod, venda_m1: m1, venda_m2: m2, venda_m3: m3, historicoVendasMeses: mesesDisponiveis, biSincronizadoEm: agora, atualizadoEm: agora, origem: 'bi'};
+      batch.set(colProjecao.doc(id), payload, {merge: true});
+      gravados++;
+    });
+    await batch.commit();
+  }
+  return {total: entradas.length, gravados, meses: mesesDisponiveis};
+}
+
+// PEDIDO AO VIVO (2026-08-29): "se eu quiser que ela atualize sozinha, vai
+// atualizar" — o ledger de Notas Retornadas (recebimento_recusas_notas,
+// tela 97-recebimento-recusas.js) só era alimentado por clique manual em
+// "Buscar" ou por um setInterval de 30min QUE SÓ RODA com aquela aba do
+// navegador aberta — nada de verdade automático. Passa a rodar aqui,
+// dentro do mesmo sync agendado de 30min que já roda pras outras fontes,
+// sem depender de navegador nenhum aberto. Duplica de propósito a mesma
+// lógica já validada em produção do lado do cliente
+// (_agruparNotasBiPorChave/_gravarNotasVenda/_notaResumida em
+// 97-recebimento-recusas.js) — se a lógica de agrupamento/chunking mudar
+// de um lado, replicar a mudança no outro. O botão "Buscar" manual
+// continua existindo na tela (útil pra forçar uma atualização imediata),
+// mas deixa de ser a única forma de a lista se manter em dia.
+// BUG AO VIVO REAL (2026-09-03, duas vezes seguidas — 18:09 e 19:13):
+// "Falha na última busca: Document .../recebimento_recusas_notas_chunks/
+// chunk_N cannot be written because its size (~1.08MB) exceeds o máximo de
+// 1.048.576 bytes" — 1000 notas por chunk (só contagem, nunca bytes) já
+// não cabe: notas reais (destinatario/vendedorNome variam de tamanho)
+// davam ~1084 bytes/nota de verdade no Firestore. Esta é a sincronização
+// AGENDADA no servidor (roda sozinha a cada 30min, é aqui — não no
+// cliente — que as duas falhas de produção realmente aconteceram, porque
+// o botão manual do lado cliente só tinha sido corrigido primeiro sem
+// perceber que este duplicado também precisava do mesmo conserto).
+// TAMANHO_CHUNK_NOTAS_RETORNADAS caiu pra 400 — com folga generosa mesmo
+// se uma nota futura for maior que qualquer uma já vista (400 × ~1084 ≈
+// 434.000 bytes, 41% do limite real).
+const TAMANHO_CHUNK_NOTAS_RETORNADAS = 400;
+function _agruparNotasVendaBiPorChave(itens) {
+  const porChave = new Map();
+  itens.forEach(it => {
+    const chave = String(it.chave || '').trim();
+    if (!chave) return;
+    if (!porChave.has(chave)) {
+      porChave.set(chave, {
+        chave, numeroNota: it.nf_numero != null ? String(it.nf_numero) : '', serie: it.nf_serie != null ? String(it.nf_serie) : '',
+        destinatario: it.cliente || '', dataEmissao: String(it.data_emissao || '').slice(0, 10), cfop: it.cfop || '',
+        valorTotal: 0, vendedorNome: it.vendedor || '', supervisorNome: it.supervisor || '', itens: [],
+      });
+    }
+    const nota = porChave.get(chave);
+    nota.valorTotal += Number(it.valor_nota) || 0;
+    nota.itens.push({produtoKey: it.produto_key != null ? it.produto_key : null, descricao: it.produto || '', quantidade: Number(it.quantidade_faturada) || 0, gtin: '', ncm: ''});
+  });
+  return [...porChave.values()];
+}
+function _notaRetornadaResumida(n) {
+  return {
+    chave: n.chave, numeroNota: n.numeroNota, serie: n.serie, destinatario: n.destinatario || '',
+    destinatarioCnpj: n.destinatarioCnpj || '', dataEmissao: n.dataEmissao || '', valorTotal: Number(n.valorTotal) || 0,
+    cfop: n.cfop || '', naturezaLabel: n.naturezaLabel || '', tipoOperacao: n.tipoOperacao || '',
+    informacoesComplementares: n.informacoesComplementares || '', pareceDevolucao: !!n.pareceDevolucao, origemImportacao: n.origemImportacao || '',
+    vendedorNome: n.vendedorNome || '', vendedorEmail: n.vendedorEmail || '', supervisorNome: n.supervisorNome || '', supervisorEmail: n.supervisorEmail || '',
+    ativo: n.ativo !== false, atualizadoEm: n.atualizadoEm || '',
+  };
+}
+// BUG AO VIVO REAL (2026-09-03, causa raiz de verdade — descoberta com
+// diagnóstico real do usuário: "0 notas dentro, mas o documento pesa mais
+// de 1MB"): `.set(ref, {'notas.'+chave: valor}, {merge:true})` NUNCA criou
+// o mapa aninhado {notas:{chave:valor}} que esta sincronização sempre
+// assumiu ao ler `dados.notas` — criou um campo LITERAL solto na raiz do
+// documento, chamado "notas.CHAVE" (o ponto faz parte do NOME do campo,
+// não é um caminho aninhado). Isso é desde o INÍCIO deste recurso: toda
+// leitura de "quantas notas já tem nesse chunk" sempre via ZERO, então
+// `chavesExistentes` nunca continha nada, TODA nota da busca era tratada
+// como nova em TODA sincronização, e o chunk só crescia — nunca parava,
+// não importa o limite configurado. Lê os dois formatos (o aninhado
+// correto e os campos soltos legados) — nunca mais grava no formato
+// quebrado (ver o resto desta função: sempre `.set(ref,{notas:mapa})`
+// com o mapa JÁ COMPLETO, nunca merge com chave de ponto).
+function _notasRetornadasDoDocumentoChunk(dados) {
+  dados = dados || {};
+  const notas = Object.assign({}, dados.notas || {});
+  Object.keys(dados).forEach(k => {
+    if (!k.startsWith('notas.')) return;
+    const v = dados[k];
+    if (v && typeof v === 'object') notas[k.slice(6)] = v;
+  });
+  return notas;
+}
+// Lê o estado REAL de um chunk (curando campo solto legado na leitura) e
+// grava de volta com `.set()` SEM merge, sempre com o mapa {notas:...}
+// já completo calculado aqui — nunca mais um merge cego com chave de
+// ponto, que é a causa raiz de tudo isso.
+async function _lerEGravarChunkNotasRetornadas(colChunks, chunkIndex, mudar) {
+  const ref = colChunks.doc('chunk_' + chunkIndex);
+  const snap = await ref.get();
+  const notas = _notasRetornadasDoDocumentoChunk(snap.exists ? snap.data() : null);
+  mudar(notas);
+  const batch = db.batch();
+  batch.set(ref, {notas});
+  await batch.commit();
+}
+// BUG AO VIVO REAL (2026-09-03, três vezes seguidas — 18:09, 19:13, 19:30 e
+// de novo 21:04 com o MESMO tamanho de antes): reduzir TAMANHO_CHUNK_
+// NOTAS_RETORNADAS não resolveu sozinho porque o pacote que falha já
+// estava com MUITO mais notas do que o limite (de antes de qualquer
+// conserto existir) — reduzir o limite só evita que um pacote NOVO fique
+// grande, nunca divide um que JÁ está grande. O conserto manual (botão
+// "Reparar" em 97-recebimento-recusas.js) resolve, mas depende de alguém
+// clicar — e essa sincronização roda SOZINHA a cada 30min, então continua
+// batendo no mesmo pacote quebrado até alguém lembrar de clicar. Esta
+// função divide pacotes grandes demais automaticamente, ANTES de tentar
+// gravar qualquer nota nova — nenhuma dependência de ação manual.
+async function _dividirChunksNotasRetornadasGrandesDemaisSeNecessario(colChunks, colNotas, notasExistentes) {
+  const porChunk = new Map();
+  notasExistentes.forEach(n => {
+    const idx = n.chunkIndex != null ? n.chunkIndex : 0;
+    if (!porChunk.has(idx)) porChunk.set(idx, []);
+    porChunk.get(idx).push(n);
+  });
+  let proximoIndiceLivre = porChunk.size ? Math.max(...porChunk.keys()) + 1 : 0;
+  const resultado = [];
+  let dividiuAlgo = false;
+  for (const [idx, lista] of porChunk) {
+    if (lista.length <= TAMANHO_CHUNK_NOTAS_RETORNADAS) { resultado.push(...lista); continue; }
+    dividiuAlgo = true;
+    const ficam = lista.slice(0, TAMANHO_CHUNK_NOTAS_RETORNADAS);
+    let excedentes = lista.slice(TAMANHO_CHUNK_NOTAS_RETORNADAS);
+    const mapaFica = {};
+    ficam.forEach(n => { mapaFica[n.chave] = _notaRetornadaResumida(n); });
+    const batchFica = db.batch();
+    batchFica.set(colChunks.doc('chunk_' + idx), {notas: mapaFica});
+    await batchFica.commit();
+    resultado.push(...ficam);
+    while (excedentes.length) {
+      const bloco = excedentes.slice(0, TAMANHO_CHUNK_NOTAS_RETORNADAS);
+      excedentes = excedentes.slice(TAMANHO_CHUNK_NOTAS_RETORNADAS);
+      const novoIndice = proximoIndiceLivre++;
+      for (let i = 0; i < bloco.length; i += 300) {
+        const sublote = bloco.slice(i, i + 300);
+        const batchIndividual = db.batch();
+        sublote.forEach(n => batchIndividual.set(colNotas.doc(n.chave), {chunkIndex: novoIndice}, {merge: true}));
+        await batchIndividual.commit();
+      }
+      const mapaBloco = {};
+      bloco.forEach(n => { mapaBloco[n.chave] = _notaRetornadaResumida(n); n.chunkIndex = novoIndice; });
+      const batchNovo = db.batch();
+      batchNovo.set(colChunks.doc('chunk_' + novoIndice), {notas: mapaBloco});
+      await batchNovo.commit();
+      resultado.push(...bloco);
+    }
+  }
+  return {dividiuAlgo, notasExistentes: resultado};
+}
+// Mesma regra do lado cliente: "o jacson.json só traz venda ainda EM
+// ABERTO... caso a nota sumiu, é pra excluir também... a que já foi
+// recebida pelo Coletor, aí não vai apagar" — e "nunca reconcilia com uma
+// busca vazia" (guardado pelo `if (notas.length)` abaixo).
+async function _sincronizarNotasRetornadasVendaBiLoja(lojaId, lojaKey, registrosNotas) {
+  const relevantes = (registrosNotas || []).filter(it => lojaKey != null && String(it.loja_key) === String(lojaKey) && it.tipo_movimento === 'VENDA' && it.chave);
+  const notas = _agruparNotasVendaBiPorChave(relevantes);
+
+  const colNotas = db.collection('lojas').doc(lojaId).collection('recebimento_recusas_notas');
+  const colChunks = db.collection('lojas').doc(lojaId).collection('recebimento_recusas_notas_chunks');
+  const colRecusas = db.collection('lojas').doc(lojaId).collection('recebimento_recusas');
+  const [chunksSnap, recusasSnap] = await Promise.all([colChunks.get(), colRecusas.get()]);
+
+  let notasExistentes = [];
+  chunksSnap.docs.forEach(doc => {
+    const chunkIndex = Number(String(doc.id).replace('chunk_', '')) || 0;
+    Object.values(_notasRetornadasDoDocumentoChunk(doc.data())).forEach(nota => notasExistentes.push(Object.assign({}, nota, {chunkIndex})));
+  });
+  // BUG AO VIVO REAL (2026-09-03): "se não foi recebida, ela tem que
+  // apagar... senão só vai juntando nota lixo" — gravar notas NOVAS e
+  // REMOVER as que saíram de "em aberto" são 2 passos independentes, mas
+  // um erro no 1º (ex.: chunk estourou o 1MB do Firestore) subia direto e
+  // pulava o 2º inteiro — a limpeza nunca rodava. Isso deixava a "nota
+  // lixo" se acumular pra sempre, piorando exatamente o problema que
+  // causou a falha original (mais notas presas = chunk cada vez mais
+  // perto do limite de novo). Agora um erro ao dividir/gravar é reportado
+  // no fim, mas NUNCA impede a limpeza de rodar.
+  let erroAoGravar = null;
+  let notasNovasQtd = 0;
+  try {
+    ({notasExistentes} = await _dividirChunksNotasRetornadasGrandesDemaisSeNecessario(colChunks, colNotas, notasExistentes));
+    const chavesExistentes = new Set(notasExistentes.map(n => n.chave));
+    const notasNovas = notas.filter(n => !chavesExistentes.has(n.chave));
+    notasNovasQtd = notasNovas.length;
+
+    const agora = new Date().toISOString();
+    const contagemPorChunk = new Map();
+    notasExistentes.forEach(n => contagemPorChunk.set(n.chunkIndex, (contagemPorChunk.get(n.chunkIndex) || 0) + 1));
+    let chunkAtual = notasExistentes.length ? Math.max(...notasExistentes.map(n => n.chunkIndex != null ? n.chunkIndex : 0)) : 0;
+    let espacoNoChunkAtual = TAMANHO_CHUNK_NOTAS_RETORNADAS - (contagemPorChunk.get(chunkAtual) || 0);
+
+    for (let i = 0; i < notasNovas.length; i += 300) {
+      const lote = notasNovas.slice(i, i + 300);
+      const batchIndividual = db.batch();
+      const porChunkNesseLote = new Map();
+      lote.forEach(n => {
+        if (espacoNoChunkAtual <= 0) { chunkAtual++; espacoNoChunkAtual = TAMANHO_CHUNK_NOTAS_RETORNADAS; }
+        espacoNoChunkAtual--;
+        const payloadCompleto = {
+          chave: n.chave, numeroNota: n.numeroNota, serie: n.serie, volumes: null, destinatario: n.destinatario || '',
+          dataEmissao: n.dataEmissao || '', transportadora: '', arquivoOrigem: 'notas_fiscais_jacson.json',
+          valorTotal: Number(n.valorTotal) || 0, cfop: n.cfop || '', naturezaLabel: 'Venda', tipoOperacao: 'SAIDA',
+          destinatarioCnpj: '', notaOriginalChave: null, notaOriginalNumero: null, informacoesComplementares: '',
+          itens: n.itens || [], pareceDevolucao: false, origemImportacao: 'BI',
+          vendedorNome: n.vendedorNome || '', vendedorEmail: '', supervisorNome: n.supervisorNome || '', supervisorEmail: '',
+          ativo: true, atualizadoEm: agora, chunkIndex: chunkAtual,
+        };
+        batchIndividual.set(colNotas.doc(n.chave), payloadCompleto, {merge: true});
+        if (!porChunkNesseLote.has(chunkAtual)) porChunkNesseLote.set(chunkAtual, {});
+        porChunkNesseLote.get(chunkAtual)[n.chave] = _notaRetornadaResumida(payloadCompleto);
+      });
+      await batchIndividual.commit();
+      // Lê-modifica-grava por chunk (ver _lerEGravarChunkNotasRetornadas)
+      // — nunca mais merge cego com "notas.CHAVE", que é a causa raiz do
+      // bug real de hoje.
+      for (const [idx, mapaResumidas] of porChunkNesseLote) {
+        await _lerEGravarChunkNotasRetornadas(colChunks, idx, notasAtuais => Object.assign(notasAtuais, mapaResumidas));
+      }
+    }
+  } catch (e) {
+    erroAoGravar = e;
+  }
+
+  let removidas = 0;
+  if (notas.length) {
+    const chavesAbertasAgora = new Set(notas.map(n => n.chave));
+    const chavesComRecebimento = new Set(recusasSnap.docs.flatMap(d => (d.data() || {}).chaves || []));
+    const paraRemover = notasExistentes.filter(n => n.origemImportacao === 'BI' && n.naturezaLabel === 'Venda' && !chavesAbertasAgora.has(n.chave) && !chavesComRecebimento.has(n.chave));
+    for (let i = 0; i < paraRemover.length; i += 300) {
+      const lote = paraRemover.slice(i, i + 300);
+      const batchIndividual = db.batch();
+      const porChunkNesseLote = new Map();
+      lote.forEach(n => {
+        batchIndividual.delete(colNotas.doc(n.chave));
+        if (!porChunkNesseLote.has(n.chunkIndex)) porChunkNesseLote.set(n.chunkIndex, []);
+        porChunkNesseLote.get(n.chunkIndex).push(n.chave);
+      });
+      await batchIndividual.commit();
+      for (const [idx, chaves] of porChunkNesseLote) {
+        await _lerEGravarChunkNotasRetornadas(colChunks, idx, notasAtuais => chaves.forEach(c => delete notasAtuais[c]));
+      }
+    }
+    removidas = paraRemover.length;
+  }
+  // A limpeza já rodou (mesmo com erro ao gravar/dividir) — agora sim
+  // relata a falha, pra continuar aparecendo no resumo de erros por loja.
+  if (erroAoGravar) throw erroAoGravar;
+  return {total: notas.length, novas: notasNovasQtd, removidas};
+}
+
+async function _sincronizarBiTodasLojas() {
+  const token = await _obterTokenGraphApi(process.env.GRAPH_CLIENT_SECRET);
+  const driveId = await _resolverDriveGraphApi(token);
+  const [registrosFicha, registrosCompras, arquivoInsumos, arquivoProdutos, arquivoNotas] = await Promise.all([
+    _lerArquivoBiGraphApi(token, driveId, 'ficha_tecnica.json'),
+    _lerArquivoBiGraphApi(token, driveId, 'compras_a_receber.json'),
+    _lerArquivoBiGraphApi(token, driveId, 'dados-insumos.json'),
+    _lerArquivoBiGraphApi(token, driveId, 'produtos_estoque.json'),
+    _lerArquivoBiGraphApi(token, driveId, 'notas_fiscais_jacson.json'),
+  ]);
+  const registrosInsumos = (arquivoInsumos && arquivoInsumos.produtos) || arquivoInsumos || [];
+  const registrosProdutos = Array.isArray(arquivoProdutos) ? arquivoProdutos : ((arquivoProdutos && arquivoProdutos.produtos) || []);
+  const registrosNotas = Array.isArray(arquivoNotas) ? arquivoNotas : ((arquivoNotas && arquivoNotas.registros) || []);
+  const lojasSnap = await db.collection('lojas').get();
+  const resultados = [];
+  for (const doc of lojasSnap.docs) {
+    const loja = Object.assign({id: doc.id}, doc.data());
+    if (!loja.bluesoft_loja_key) continue;
+    try {
+      const ficha = await _sincronizarFichaTecnicaBiLoja(loja.id, loja.bluesoft_loja_key, registrosFicha);
+      const agenda = await _sincronizarAgendaBiLoja(loja.id, loja, registrosCompras);
+      const estoqueInsumos = await _sincronizarEstoqueInsumosBiLoja(loja.id, loja.bluesoft_loja_key, registrosInsumos);
+      const estoqueProdutos = await _sincronizarEstoqueProdutoAcabadoBiLoja(loja.id, loja.bluesoft_loja_key, registrosProdutos);
+      const historicoVendas = await _sincronizarHistoricoVendasBiLoja(loja.id, loja.bluesoft_loja_key, registrosNotas);
+      const notasRetornadas = await _sincronizarNotasRetornadasVendaBiLoja(loja.id, loja.bluesoft_loja_key, registrosNotas);
+      resultados.push({loja: loja.nome || loja.id, ficha, agenda, estoqueInsumos, estoqueProdutos, historicoVendas, notasRetornadas});
+    } catch (e) {
+      resultados.push({loja: loja.nome || loja.id, erro: e.message || String(e)});
+      console.error('[SincronizacaoBiAgendado] Falha na loja', loja.id, e);
+    }
+  }
+  console.log('[SincronizacaoBiAgendado] Resumo:', JSON.stringify(resultados));
+  return resultados;
+}
+
+// BUG AO VIVO REAL (2026-08-27) — limpeza retroativa: as duas correções de
+// contaminação acima (_sincronizarEstoqueProdutoAcabadoBiLoja e
+// _sincronizarHistoricoVendasBiLoja) só impedem gravação NOVA — os docs
+// contaminados que a versão anterior (sem guarda) já gravou continuam lá
+// pra sempre, inflando o Dashboard do PCP, até serem apagados uma vez.
+// Remove só doc com origem:'bi' (nunca origem:'bluesoft' — essa é a
+// limpeza separada, ainda pendente, do dado antigo de verdade da Bluesoft)
+// cujo cod não está cadastrado nesta loja (producao_produtos OU
+// pcp_produtos_bluesoft — mesma união usada em
+// _sincronizarEstoqueProdutoAcabadoBiLoja, corrigida depois que restringir
+// só a producao_produtos excluía produto comprado de fornecedor). Roda só
+// no gatilho MANUAL (sincronizarBiAgendadoAgora) — não no agendado de 30
+// min, pra não repetir a varredura de limpeza pra sempre.
+async function _limparEstoqueBiContaminadoLoja(lojaId) {
+  const colEstoque = db.collection('lojas').doc(lojaId).collection('pcp_estoque_bluesoft');
+  const [estoqueSnap, produtosSnap, produtosBluesoftSnap] = await Promise.all([
+    colEstoque.get(),
+    db.collection('lojas').doc(lojaId).collection('producao_produtos').get(),
+    db.collection('lojas').doc(lojaId).collection('pcp_produtos_bluesoft').get(),
+  ]);
+  const codsRegistrados = new Set([
+    ...produtosSnap.docs.map(d => String((d.data() || {}).cod || '')),
+    ...produtosBluesoftSnap.docs.map(d => String((d.data() || {}).cod || '')),
+  ].filter(Boolean));
+  const contaminados = estoqueSnap.docs.filter(d => {
+    const x = d.data() || {};
+    return x.origem === 'bi' && x.cod != null && !codsRegistrados.has(String(x.cod));
+  });
+  let removidos = 0;
+  for (let i = 0; i < contaminados.length; i += 300) {
+    const lote = contaminados.slice(i, i + 300);
+    const batch = db.batch();
+    lote.forEach(d => batch.delete(colEstoque.doc(d.id)));
+    await batch.commit();
+    removidos += lote.length;
+  }
+  return {verificados: estoqueSnap.docs.length, removidos};
+}
+async function _limparEstoqueBiContaminadoTodasLojas() {
+  const lojasSnap = await db.collection('lojas').get();
+  const resultados = [];
+  for (const doc of lojasSnap.docs) {
+    const loja = Object.assign({id: doc.id}, doc.data());
+    if (!loja.bluesoft_loja_key) continue;
+    try {
+      const limpeza = await _limparEstoqueBiContaminadoLoja(loja.id);
+      resultados.push({loja: loja.nome || loja.id, limpeza});
+    } catch (e) {
+      resultados.push({loja: loja.nome || loja.id, erro: e.message || String(e)});
+    }
+  }
+  return resultados;
+}
+
+// PEDIDO AO VIVO (2026-08-27): "vou apagar todo o banco... só estoque,
+// pedido antigo da Bluesoft, não é pra apagar configurações nem nada do
+// tipo" — dado (não cadastro) que ainda tem origem:'bluesoft' de verdade,
+// de antes de tudo isso existir. `pcp_estoque_bluesoft` é só sincronização,
+// sem nada manual — remove tudo com origem:'bluesoft'. `pcp_pedidos` e
+// `pcp_agendamentos` são coleções MISTAS (pedido/agendamento manual da
+// equipe convive com o que a Bluesoft sincronizava) — `salvarPedido()`/
+// `salvarAgendamento()` (78-pcp-central.js) nunca gravam campo `origem`,
+// então filtrar por origem==='bluesoft' nunca toca no que foi criado à
+// mão. `pcp_produtos_bluesoft` (cadastro fino: categoria/tipo/fator de
+// caixa) fica de fora de propósito — não é estoque nem pedido, é cadastro,
+// e não tem substituto no SharePoint ainda.
+async function _limparDadosAntigosBluesoftLoja(lojaId) {
+  const colEstoque = db.collection('lojas').doc(lojaId).collection('pcp_estoque_bluesoft');
+  const colPedidos = db.collection('lojas').doc(lojaId).collection('pcp_pedidos');
+  const colAgendamentos = db.collection('lojas').doc(lojaId).collection('pcp_agendamentos');
+  async function limparColecao(col) {
+    const snap = await col.get();
+    const alvos = snap.docs.filter(d => (d.data() || {}).origem === 'bluesoft');
+    let removidos = 0;
+    for (let i = 0; i < alvos.length; i += 300) {
+      const lote = alvos.slice(i, i + 300);
+      const batch = db.batch();
+      lote.forEach(d => batch.delete(col.doc(d.id)));
+      await batch.commit();
+      removidos += lote.length;
+    }
+    return {verificados: snap.docs.length, removidos};
+  }
+  const [estoque, pedidos, agendamentos] = await Promise.all([
+    limparColecao(colEstoque), limparColecao(colPedidos), limparColecao(colAgendamentos),
+  ]);
+  return {estoque, pedidos, agendamentos};
+}
+async function _limparDadosAntigosBluesoftTodasLojas() {
+  const lojasSnap = await db.collection('lojas').get();
+  const resultados = [];
+  for (const doc of lojasSnap.docs) {
+    const loja = Object.assign({id: doc.id}, doc.data());
+    if (!loja.bluesoft_loja_key) continue;
+    try {
+      const limpeza = await _limparDadosAntigosBluesoftLoja(loja.id);
+      resultados.push({loja: loja.nome || loja.id, limpeza});
+    } catch (e) {
+      resultados.push({loja: loja.nome || loja.id, erro: e.message || String(e)});
+    }
+  }
+  return resultados;
+}
+
+exports.sincronizarBiAgendado = functions
+  .region('southamerica-east1')
+  .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 540, memory: '1GB'})
+  .pubsub.schedule('every 30 minutes')
+  .onRun(async () => { await _sincronizarBiTodasLojas(); return null; });
+
+// Gatilho manual (callable) — pra testar sem esperar o próximo horário
+// agendado, mesma checagem de permissão do resto.
+exports.sincronizarBiAgendadoAgora = functions
+  .region('southamerica-east1')
+  .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 540, memory: '1GB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const solicitante = await acessoSolicitante(context);
+    if (!administrador(solicitante)) {
       throw new functions.https.HttpsError('permission-denied', 'Seu login não pode rodar essa sincronização.');
     }
-    const resultados = await _sincronizarNotasRetornadasTodasLojas();
+    const limpeza = await _limparEstoqueBiContaminadoTodasLojas();
+    const resultados = await _sincronizarBiTodasLojas();
+    return {ok: true, resultados, limpeza};
+  });
+
+// Ação separada e explícita (não roda junto do "Atualizar" de rotina) —
+// pedido ao vivo do usuário pra apagar, uma vez, o estoque/pedido/
+// agendamento que ainda tem origem:'bluesoft' de verdade, agora que
+// insumo, produto acabado, pedido de venda e agenda já vêm do SharePoint.
+// Botão em Produção → Importação/Exportação → "Limpeza de dados antigos".
+exports.limparDadosAntigosBluesoftAgora = functions
+  .region('southamerica-east1')
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const solicitante = await acessoSolicitante(context);
+    if (!administrador(solicitante)) {
+      throw new functions.https.HttpsError('permission-denied', 'Seu login não pode rodar essa limpeza.');
+    }
+    const resultados = await _limparDadosAntigosBluesoftTodasLojas();
     return {ok: true, resultados};
   });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Relatórios BI grandes (Compras/PCP/Produção) — gravação em pacotes
+// PEDIDO AO VIVO (2026-08-27): "quero gravar mais só os dados desse ano
+// pra frente" + "que seja por chunks aí pra não gerar tanta leitura" — os
+// relatórios de 101-relatorios-bi.js eram só leitura direta do BI (sem
+// gravar nada); agora passam a gravar no Firestore em PACOTES de até
+// TAMANHO_CHUNK_RELATORIOS registros por documento (mesma ideia de
+// recebimento_recusas_notas_chunks), pra quem abrir a tela depois já ver
+// os dados sem precisar clicar em Buscar de novo. Coleção GLOBAL (não por
+// loja) — a tela hoje mostra todas as lojas juntas, sem filtro de loja.
+// Registro histórico (nota fiscal já emitida) nunca muda depois de
+// lançado — só pula quem já existe, nunca reconcilia/apaga (diferente do
+// ledger de venda, que representa "em aberto"; aqui é log permanente).
+// Mesmo risco do TAMANHO_CHUNK_NOTAS_RETORNADAS acima (contagem fixa sem
+// olhar bytes reais) — reduzido preventivamente pela mesma razão, mesmo
+// sem ter falhado ainda aqui.
+const TAMANHO_CHUNK_RELATORIOS = 400;
+
+async function _sincronizarRelatorioBiChunkeadoGlobal(nomeColecaoChunks, registrosFiltrados, chaveFn, slimFn) {
+  const colChunks = db.collection(nomeColecaoChunks);
+  const chunksSnap = await colChunks.get();
+  const chavesExistentes = new Set();
+  const contagemPorChunk = new Map();
+  chunksSnap.docs.forEach(doc => {
+    const idx = Number(String(doc.id).replace('chunk_', '')) || 0;
+    const registrosDoc = (doc.data() || {}).registros || {};
+    const chaves = Object.keys(registrosDoc);
+    contagemPorChunk.set(idx, chaves.length);
+    chaves.forEach(k => chavesExistentes.add(k));
+  });
+
+  const novos = registrosFiltrados.filter(r => !chavesExistentes.has(String(chaveFn(r))));
+  let chunkAtual = contagemPorChunk.size ? Math.max(...contagemPorChunk.keys()) : 0;
+  let espaco = TAMANHO_CHUNK_RELATORIOS - (contagemPorChunk.get(chunkAtual) || 0);
+
+  for (let i = 0; i < novos.length; i += 300) {
+    const lote = novos.slice(i, i + 300);
+    const porChunkNesseLote = new Map();
+    lote.forEach(r => {
+      if (espaco <= 0) { chunkAtual++; espaco = TAMANHO_CHUNK_RELATORIOS; }
+      espaco--;
+      const chave = String(chaveFn(r));
+      if (!porChunkNesseLote.has(chunkAtual)) porChunkNesseLote.set(chunkAtual, {});
+      porChunkNesseLote.get(chunkAtual)['registros.' + chave] = slimFn(r);
+    });
+    const batch = db.batch();
+    porChunkNesseLote.forEach((campos, idx) => batch.set(colChunks.doc('chunk_' + idx), campos, {merge: true}));
+    await batch.commit();
+  }
+  return {totalFiltrados: registrosFiltrados.length, novos: novos.length, jaExistiam: registrosFiltrados.length - novos.length};
+}
+
+const ANO_MINIMO_RELATORIOS_BI = '2026'; // "quero gravar mais só os dados desse ano pra frente"
+
+// PEDIDO AO VIVO (2026-08-27): "aproveita que o histórico é grande, grava
+// todos os produtos... qual é o setor deles, que alguns eu vou pedir pra
+// deixar fora, tipo manutenção, patrimônio, marketing, resíduos... não
+// quero que apareça visualmente, só gravar" — o histórico completo de
+// compras (compras_produto.json TODOS os anos, não só 2026+ que a tela usa)
+// traz Departamento/Grupo/Seção por produto, dado que nenhuma tela usa
+// hoje. Gravado numa coleção própria e silenciosa — não é lida por
+// 101-relatorios-bi.js nem por nenhuma tela; só existe pra decidir depois
+// quais departamentos ficam de fora das telas de Compras. Roda dentro do
+// mesmo sync que já busca o arquivo (a cada 4h) — sem fetch extra, sem
+// mudar uma vírgula do que a tela "Histórico de Compras" mostra. Mantém
+// sempre a classificação mais recente por produto — reprocessa a cada
+// sync (não é uma gravação de uma vez só e nunca mais), o que é desejável:
+// produto pode mudar de departamento com o tempo.
+function _construirClassificacaoProdutosComprasBi(registros) {
+  const porProduto = new Map();
+  registros.forEach(r => {
+    if (r.produto_key == null) return;
+    const chave = String(r.produto_key);
+    const emissao = String(r.data_emissao || '');
+    const atual = porProduto.get(chave);
+    if (atual && atual._emissao >= emissao) return;
+    porProduto.set(chave, {
+      produtoKey: chave, descricao: r.descricao || '',
+      grupo: r.grupo || '', departamento: r.Departamento || '', secao: r.Secao || '',
+      _emissao: emissao,
+    });
+  });
+  return [...porProduto.values()].map(({_emissao, ...resto}) => resto);
+}
+
+async function _gravarClassificacaoProdutosComprasBi(lista) {
+  const col = db.collection('bi_classificacao_produtos');
+  const agora = new Date().toISOString();
+  let gravados = 0;
+  for (let i = 0; i < lista.length; i += 300) {
+    const lote = lista.slice(i, i + 300);
+    const batch = db.batch();
+    lote.forEach(item => { batch.set(col.doc(_idSeguro(item.produtoKey)), Object.assign({}, item, {atualizadoEm: agora}), {merge: true}); gravados++; });
+    await batch.commit();
+  }
+  return {totalProdutos: lista.length, gravados};
+}
+
+async function _sincronizarComprasHistoricoBi(registros) {
+  const classificacaoProdutos = await _gravarClassificacaoProdutosComprasBi(_construirClassificacaoProdutosComprasBi(registros));
+  const filtrados = registros.filter(r => String(r.data_emissao || '').slice(0, 4) >= ANO_MINIMO_RELATORIOS_BI);
+  const resultado = await _sincronizarRelatorioBiChunkeadoGlobal(
+    'relatorios_bi_compras_historico_chunks',
+    filtrados,
+    r => r.nota_fiscal_item_key,
+    // PEDIDO AO VIVO (2026-08-27): "MRO sai fora, logística sai fora, e o
+    // compras eu quero, mas com a seção... e o que é transferência da
+    // matriz pra filial, crie um campo Em Trânsito" — departamento/grupo/
+    // seção e o tipo de operação (COMPRA/TRANSFERENCIA/BONIFICAÇÃO/OUTROS)
+    // precisam estar na linha pra tela filtrar e rotular "Em Trânsito".
+    // Registro histórico não é reconciliado (dedupe por nota_fiscal_item_key
+    // nunca reescreve quem já existe) — linha já sincronizada ANTES desta
+    // mudança fica sem esses campos até a coleção ser reconstruída.
+    r => ({
+      chave: String(r.nota_fiscal_item_key), loja_key: r.loja_key, data_emissao: r.data_emissao, data_recebimento: r.data_recebimento,
+      nf_numero: r.nf_numero, produto_key: r.produto_key, descricao: r.descricao, quantidade_faturada: r.quantidade_faturada,
+      nome_abreviado: r.nome_abreviado, custo_liq_unit: r.custo_liq_unit, Custo_liquido_total: r.Custo_liquido_total, comprador_nome: r.comprador_nome,
+      departamento: r.Departamento || '', grupo: r.grupo || '', secao: r.Secao || '', tipo_operacao: r.TIPO_OPERACAO || '',
+    })
+  );
+  return Object.assign({}, resultado, {classificacaoProdutos});
+}
+
+// BUG AO VIVO REAL (2026-09-06): "não vem inventar coisa não, lá não
+// carregava era nada" — logs reais (firebase functions:log) mostraram a
+// função crashando por estouro de heap (V8 "allocation failure; scavenge
+// might not succeed" perto de 830MB, seguido de crash do processo) ao
+// processar compras_produto.json (89,7MB). Isso significa que o sync
+// provavelmente NUNCA terminou com sucesso — relatorios_bi_compras_
+// historico_chunks nunca chegou a ser gravado, por isso a tela de
+// Dashboard não mostrava nem dado novo nem antigo. memory subido de 1GB
+// pra 2GB (arquivo é o maior de todos os BIs sincronizados hoje; JSON
+// parseado + Map de classificação + Set de chaves existentes juntos
+// passam do limite anterior).
+exports.sincronizarComprasHistoricoBiAgendado = functions
+  .region('southamerica-east1')
+  .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 540, memory: '2GB'})
+  .pubsub.schedule('every 4 hours')
+  .onRun(async () => {
+    const token = await _obterTokenGraphApi(process.env.GRAPH_CLIENT_SECRET);
+    const driveId = await _resolverDriveGraphApi(token);
+    const registros = await _lerArquivoBiGraphApi(token, driveId, 'compras_produto.json');
+    const resultado = await _sincronizarComprasHistoricoBi(registros);
+    console.log('[ComprasHistoricoBiAgendado] Resumo:', JSON.stringify(resultado));
+    return null;
+  });
+
+exports.sincronizarComprasHistoricoBiAgora = functions
+  .region('southamerica-east1')
+  .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 540, memory: '2GB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const solicitante = await acessoSolicitante(context);
+    if (!administrador(solicitante)) {
+      throw new functions.https.HttpsError('permission-denied', 'Seu login não pode rodar essa sincronização.');
+    }
+    const token = await _obterTokenGraphApi(process.env.GRAPH_CLIENT_SECRET);
+    const driveId = await _resolverDriveGraphApi(token);
+    const registros = await _lerArquivoBiGraphApi(token, driveId, 'compras_produto.json');
+    const resultado = await _sincronizarComprasHistoricoBi(registros);
+    return {ok: true, resultado};
+  });
+
+// PEDIDO AO VIVO (2026-08-28): "ranking de fornecedores que você não
+// aplicou lá no Compras" — fornecedores_agregado.json (6MB, mas só ~600
+// fornecedores por categoria/ano — pequeno o bastante pra 1 doc por
+// categoria+ano, sem precisar de chunking) passa a ser gravado global,
+// pra tela real de Fornecedores do Compras (121-compras-profissional.js)
+// ler sem precisar buscar o arquivo toda vez.
+async function _sincronizarFornecedoresAgregadoBi(dados) {
+  const categorias = [['materia_prima', dados && dados.materia_prima], ['produto_acabado', dados && dados.produto_acabado]];
+  const agora = new Date().toISOString();
+  const batch = db.batch();
+  let gravados = 0;
+  categorias.forEach(([categoria, bloco]) => {
+    if (!bloco || !bloco.anoData) return;
+    Object.keys(bloco.anoData).forEach(ano => {
+      const top = (bloco.anoData[ano] || {}).top || [];
+      batch.set(db.collection('bi_fornecedores_agregado').doc(categoria + '_' + ano), {categoria, ano, top, atualizadoEm: agora}, {merge: true});
+      gravados++;
+    });
+  });
+  await batch.commit();
+  return {gravados};
+}
+
+exports.sincronizarFornecedoresAgregadoBiAgendado = functions
+  .region('southamerica-east1')
+  .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 300, memory: '512MB'})
+  .pubsub.schedule('every 4 hours')
+  .onRun(async () => {
+    const token = await _obterTokenGraphApi(process.env.GRAPH_CLIENT_SECRET);
+    const driveId = await _resolverDriveGraphApi(token);
+    const dados = await _lerArquivoBiGraphApi(token, driveId, 'fornecedores_agregado.json');
+    const resultado = await _sincronizarFornecedoresAgregadoBi(dados);
+    console.log('[FornecedoresAgregadoBiAgendado] Resumo:', JSON.stringify(resultado));
+    return null;
+  });
+
+exports.sincronizarFornecedoresAgregadoBiAgora = functions
+  .region('southamerica-east1')
+  .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 300, memory: '512MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const solicitante = await acessoSolicitante(context);
+    if (!administrador(solicitante)) {
+      throw new functions.https.HttpsError('permission-denied', 'Seu login não pode rodar essa sincronização.');
+    }
+    const token = await _obterTokenGraphApi(process.env.GRAPH_CLIENT_SECRET);
+    const driveId = await _resolverDriveGraphApi(token);
+    const dados = await _lerArquivoBiGraphApi(token, driveId, 'fornecedores_agregado.json');
+    const resultado = await _sincronizarFornecedoresAgregadoBi(dados);
+    return {ok: true, resultado};
+  });
+
+// PEDIDO AO VIVO (2026-08-28): "a quantidade que usa de cada insumo, você
+// não aplicou" — dados-consumo-insumos.json (resumo mensal, 452 linhas
+// loja×sku) somado por sku (perde granularidade por loja de propósito —
+// o pedido foi "quanto usa de cada insumo", uma visão por produto).
+function _construirConsumoInsumosResumoBi(dados) {
+  const registros = (dados && dados.produtos) || [];
+  const porSku = new Map();
+  registros.forEach(r => {
+    if (r.sku == null) return;
+    const chave = String(r.sku);
+    const atual = porSku.get(chave) || {sku: chave, produto: r.produto || '', categoria: r.categoria || '', tipo: r.tipo || '', mediaMensal: 0, totalPeriodo: 0};
+    atual.mediaMensal += Number(r.mediaMensal) || 0;
+    atual.totalPeriodo += Number(r.totalPeriodo) || 0;
+    porSku.set(chave, atual);
+  });
+  return [...porSku.values()];
+}
+
+async function _gravarConsumoInsumosResumoBi(lista) {
+  const col = db.collection('bi_consumo_insumos_resumo');
+  const agora = new Date().toISOString();
+  let gravados = 0;
+  for (let i = 0; i < lista.length; i += 300) {
+    const lote = lista.slice(i, i + 300);
+    const batch = db.batch();
+    lote.forEach(item => { batch.set(col.doc(_idSeguro(item.sku)), Object.assign({}, item, {atualizadoEm: agora}), {merge: true}); gravados++; });
+    await batch.commit();
+  }
+  return {totalInsumos: lista.length, gravados};
+}
+
+exports.sincronizarConsumoInsumosResumoBiAgendado = functions
+  .region('southamerica-east1')
+  .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 300, memory: '512MB'})
+  .pubsub.schedule('every 4 hours')
+  .onRun(async () => {
+    const token = await _obterTokenGraphApi(process.env.GRAPH_CLIENT_SECRET);
+    const driveId = await _resolverDriveGraphApi(token);
+    const dados = await _lerArquivoBiGraphApi(token, driveId, 'dados-consumo-insumos.json');
+    const resultado = await _gravarConsumoInsumosResumoBi(_construirConsumoInsumosResumoBi(dados));
+    console.log('[ConsumoInsumosResumoBiAgendado] Resumo:', JSON.stringify(resultado));
+    return null;
+  });
+
+exports.sincronizarConsumoInsumosResumoBiAgora = functions
+  .region('southamerica-east1')
+  .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 300, memory: '512MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const solicitante = await acessoSolicitante(context);
+    if (!administrador(solicitante)) {
+      throw new functions.https.HttpsError('permission-denied', 'Seu login não pode rodar essa sincronização.');
+    }
+    const token = await _obterTokenGraphApi(process.env.GRAPH_CLIENT_SECRET);
+    const driveId = await _resolverDriveGraphApi(token);
+    const dados = await _lerArquivoBiGraphApi(token, driveId, 'dados-consumo-insumos.json');
+    const resultado = await _gravarConsumoInsumosResumoBi(_construirConsumoInsumosResumoBi(dados));
+    return {ok: true, resultado};
+  });
+
+// PEDIDO AO VIVO (2026-08-28): "eu quero uma aba de cortes... só puxe o
+// total, não puxe tudo... vai juntar, vai compilar, e vai somar o que
+// aconteceu, vai colocar por mês, por produtos" — dados_cortes.json
+// (53.515 linhas) nunca é mostrado cru; agregado por mês+produto (poucas
+// centenas de combinações) e gravado 1 doc por mês, cada um com a lista de
+// produtos daquele mês (não chunk por causa de tamanho, e sim porque cada
+// consulta real é "me dá um mês" — ideal já vir separado por doc).
+function _construirCortesResumoMensalBi(registros) {
+  const porChave = new Map();
+  (registros || []).forEach(r => {
+    if (!r.data || r.produto_key == null) return;
+    const mes = String(r.data).slice(0, 7);
+    const produtoKey = String(r.produto_key);
+    const chave = mes + '_' + produtoKey;
+    const atual = porChave.get(chave) || {mes, produtoKey, descricao: r.descricao || '', quantidadePedidaCx: 0, quantidadeFaturadaCx: 0, corteRoteiroCx: 0, valorPedidoTotal: 0, faturamentoRs: 0};
+    atual.quantidadePedidaCx += Number(r.quantidadePedidaCx) || 0;
+    atual.quantidadeFaturadaCx += Number(r.quantidadeFaturadaCx) || 0;
+    atual.corteRoteiroCx += Number(r.corteRoteiroCx) || 0;
+    atual.valorPedidoTotal += Number(r.valorPedidoTotal) || 0;
+    atual.faturamentoRs += Number(r.faturamentoRs) || 0;
+    porChave.set(chave, atual);
+  });
+  return [...porChave.values()];
+}
+
+async function _gravarCortesResumoMensalBi(itens) {
+  const porMes = new Map();
+  itens.forEach(item => { const arr = porMes.get(item.mes) || []; arr.push(item); porMes.set(item.mes, arr); });
+  const col = db.collection('bi_cortes_mensal');
+  const agora = new Date().toISOString();
+  const meses = [...porMes.keys()];
+  for (let i = 0; i < meses.length; i += 300) {
+    const lote = meses.slice(i, i + 300);
+    const batch = db.batch();
+    lote.forEach(mes => batch.set(col.doc(mes), {mes, itens: porMes.get(mes), atualizadoEm: agora}));
+    await batch.commit();
+  }
+  return {totalMeses: meses.length, totalItens: itens.length};
+}
+
+exports.sincronizarCortesMensalBiAgendado = functions
+  .region('southamerica-east1')
+  .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 300, memory: '1GB'})
+  .pubsub.schedule('every 4 hours')
+  .onRun(async () => {
+    const token = await _obterTokenGraphApi(process.env.GRAPH_CLIENT_SECRET);
+    const driveId = await _resolverDriveGraphApi(token);
+    const registros = await _lerArquivoBiGraphApi(token, driveId, 'dados_cortes.json');
+    const resultado = await _gravarCortesResumoMensalBi(_construirCortesResumoMensalBi(registros));
+    console.log('[CortesMensalBiAgendado] Resumo:', JSON.stringify(resultado));
+    return null;
+  });
+
+exports.sincronizarCortesMensalBiAgora = functions
+  .region('southamerica-east1')
+  .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 300, memory: '1GB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const solicitante = await acessoSolicitante(context);
+    if (!administrador(solicitante)) {
+      throw new functions.https.HttpsError('permission-denied', 'Seu login não pode rodar essa sincronização.');
+    }
+    const token = await _obterTokenGraphApi(process.env.GRAPH_CLIENT_SECRET);
+    const driveId = await _resolverDriveGraphApi(token);
+    const registros = await _lerArquivoBiGraphApi(token, driveId, 'dados_cortes.json');
+    const resultado = await _gravarCortesResumoMensalBi(_construirCortesResumoMensalBi(registros));
+    return {ok: true, resultado};
+  });
+
+// Exportado só pra teste local contra o emulador do Firestore (nunca
+// chamado em produção) — mesmo padrão de `_XInternals` já usado nos
+// arquivos do front-end.
+exports._graphBiInternals = {
+  _sincronizarFichaTecnicaBiLoja, _sincronizarAgendaBiLoja, _sincronizarBiTodasLojas,
+  _sincronizarEstoqueInsumosBiLoja, _sincronizarEstoqueProdutoAcabadoBiLoja, _sincronizarHistoricoVendasBiLoja,
+  _sincronizarNotasRetornadasVendaBiLoja, _dividirChunksNotasRetornadasGrandesDemaisSeNecessario, _notasRetornadasDoDocumentoChunk,
+  _limparEstoqueBiContaminadoLoja, _limparEstoqueBiContaminadoTodasLojas,
+  _limparDadosAntigosBluesoftLoja, _limparDadosAntigosBluesoftTodasLojas,
+  _sincronizarRelatorioBiChunkeadoGlobal, _sincronizarComprasHistoricoBi,
+  _construirClassificacaoProdutosComprasBi, _gravarClassificacaoProdutosComprasBi,
+  _sincronizarFornecedoresAgregadoBi,
+  _construirConsumoInsumosResumoBi, _gravarConsumoInsumosResumoBi,
+  _construirCortesResumoMensalBi, _gravarCortesResumoMensalBi,
+};
+

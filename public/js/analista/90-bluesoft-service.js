@@ -15,11 +15,15 @@
   'use strict';
   const BLUESOFT_PROXY_URL = 'https://southamerica-east1-daterrinha-inventario.cloudfunctions.net/bluesoftProxy';
   const TAMANHO_PAGINA = 200;
-  // Reduzido de 5 pra 3: a Bluesoft documenta limite de 10 requisições em
-  // paralelo POR USUÁRIO — com produtos e estoque sendo buscados em
-  // sequência (não mais em paralelo, ver sincronizarEstoqueBluesoft), 3 dá
-  // folga suficiente sem deixar excessivamente lento.
-  const CONCORRENCIA_PAGINAS = 3;
+  // PEDIDO AO VIVO (2026-08-23): voltou pra 3 junto com a nova tentativa
+  // automática (pra recuperar de falha passageira sem perder o que já
+  // tinha sido buscado) e o usuário reportou AO VIVO que piorou — mais
+  // erro que com 1 só. Ou seja: concorrência de verdade importa aqui, não
+  // é só a falta de retry. De volta a 1 (serializado, mais lento mas com
+  // menos erro observado), com a tentativa automática mantida — as duas
+  // coisas juntas: menos carga simultânea na BlueSoft E não perde dado já
+  // coletado se uma página isolada falhar.
+  const CONCORRENCIA_PAGINAS = 1;
   const LIMITE_PAGINAS = 300;
   const CACHE_CATALOGO_MS = 24 * 60 * 60 * 1000; // 24h — mesmo padrão do snapshot diário do PCP (fase 8)
   const CACHE_CURTO_MS = 5 * 60 * 1000; // 5min — evita 2 chamadas na mesma sessão pro mesmo dado
@@ -39,20 +43,47 @@
   async function _config(forcar) {
     if (_cfgCache && !forcar && (Date.now() - _cfgCacheEm) < 60000) return _cfgCache;
     try {
-      const snap = await raw().collection('dt_config').doc('integracao_api').get();
-      _cfgCache = snap.exists ? (snap.data() || {}) : {};
+      const lojaId = global.getDTLojaAtiva?.() || '';
+      const porLoja = lojaId ? await raw().collection('lojas').doc(lojaId).collection('dt_config').doc('integracao_api').get().catch(() => null) : null;
+      const globalSnap = porLoja?.exists ? null : await raw().collection('dt_config').doc('integracao_api').get().catch(() => null);
+      _cfgCache = porLoja?.exists ? (porLoja.data() || {}) : globalSnap?.exists ? (globalSnap.data() || {}) : {};
+      _cfgCache._origemConfig = porLoja?.exists ? 'loja/' + lojaId : globalSnap?.exists ? 'global' : 'ausente';
     } catch (e) { _cfgCache = {}; }
     _cfgCacheEm = Date.now();
     return _cfgCache;
   }
   function _baseUrl(cfg) { return cfg.ambiente === 'producao' ? (cfg.url_prd || '') : (cfg.url_hml || ''); }
 
-  async function _requestBluesoft(pathComQuery, cfg, method, body) {
+  // PEDIDO AO VIVO (2026-08-23, print real do Network): centenas de
+  // páginas chegam com dado real (produto/estoque/fornecedor visíveis na
+  // resposta), mas se UMA página qualquer no meio de uma busca longa
+  // esbarrar no 500 aleatório e genérico que a própria BlueSoft às vezes
+  // devolve ("Ocorreu um erro inesperado", confirmado no corpo da
+  // resposta — não é bug daqui), _paginarTudo() descartava tudo que já
+  // tinha sido buscado com sucesso até ali. Com centenas de páginas, a
+  // chance de NENHUMA falhar no meio do caminho é praticamente zero — daí
+  // "funciona muito, mas no final não salva nada". _requestBluesoft agora
+  // tenta de novo (até 2 vezes, com uma pequena espera) só pra esse tipo
+  // de falha passageira (429 ou 5xx) antes de desistir da página — 401/400
+  // continuam falhando na hora, tentar de novo não ajudaria.
+  async function _requestBluesoft(pathComQuery, cfg, method, body, _tentativa) {
+    _tentativa = _tentativa || 1;
+    try {
+      return await _requestBluesoftUmaVez(pathComQuery, cfg, method, body);
+    } catch (e) {
+      if (e.retentavel && _tentativa < 3) {
+        await new Promise(r => setTimeout(r, 500 * _tentativa));
+        return _requestBluesoft(pathComQuery, cfg, method, body, _tentativa + 1);
+      }
+      throw e;
+    }
+  }
+  async function _requestBluesoftUmaVez(pathComQuery, cfg, method, body) {
     const idToken = await global.firebase?.auth?.().currentUser?.getIdToken();
-    if (!idToken) throw new Error('Faça login novamente para usar a integração Bluesoft.');
+    if (!idToken) throw new Error('Faça login novamente para usar a busca.');
     const baseUrl = _baseUrl(cfg);
-    if (!baseUrl) throw new Error('Configure a URL da Bluesoft (Homologação/Produção) em Importar/Exportar → Configuração da API.');
-    if (!cfg.token) throw new Error('Configure o Token/API Key da Bluesoft em Importar/Exportar → Configuração da API.');
+    if (!baseUrl) throw new Error('URL não encontrada na configuração da loja ativa nem na configuração global.');
+    if (!cfg.token) throw new Error('Token não encontrado na configuração da loja ativa nem na configuração global.');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), (Number(cfg.timeout) || 30) * 1000);
     let resposta;
@@ -65,17 +96,17 @@
       });
     } catch (e) {
       clearTimeout(timer);
-      if (e.name === 'AbortError') throw new Error('A Bluesoft demorou demais para responder (timeout) em ' + pathComQuery.split('?')[0] + '.');
-      throw new Error('Falha de rede ao chamar ' + pathComQuery.split('?')[0] + ': ' + (e.message || e));
+      if (e.name === 'AbortError') throw new Error('A busca demorou demais para responder (timeout) em ' + pathComQuery.split('?')[0] + '.');
+      throw Object.assign(new Error('Falha de rede ao chamar ' + pathComQuery.split('?')[0] + ': ' + (e.message || e)), { retentavel: true });
     }
     clearTimeout(timer);
     const texto = await resposta.text();
     let dados; try { dados = texto ? JSON.parse(texto) : null; } catch (_) { dados = texto; }
     if (!resposta.ok) {
-      if (resposta.status === 401) throw new Error('Token da Bluesoft inválido ou expirado.');
-      if (resposta.status === 429) throw new Error('Limite de requisições da Bluesoft atingido (muitas chamadas em paralelo) — tente novamente em instantes.');
+      if (resposta.status === 401) throw new Error('Token inválido ou expirado.');
+      if (resposta.status === 429) throw Object.assign(new Error('Limite de requisições atingido (muitas chamadas em paralelo) — tente novamente em instantes.'), { retentavel: true });
       const detalhe = dados && (dados.erro || dados.message) ? (dados.erro || dados.message) : String(texto).slice(0, 300);
-      throw new Error('HTTP ' + resposta.status + ' em ' + pathComQuery.split('?')[0] + (detalhe ? ': ' + detalhe : ''));
+      throw Object.assign(new Error('HTTP ' + resposta.status + ' em ' + pathComQuery.split('?')[0] + (detalhe ? ': ' + detalhe : '')), { status: resposta.status, retentavel: resposta.status >= 500 });
     }
     return dados;
   }
@@ -93,17 +124,36 @@
   // chamado a cada rodada com o total de itens já recebidos — a API não
   // devolve um total geral antecipado, então não dá pra mostrar % real sem
   // inventar um número; o chamador mostra uma contagem viva em vez disso.
+  // PEDIDO AO VIVO (2026-08-24, confirmado ao vivo com o usuário): mesmo
+  // com a tentativa automática de _requestBluesoft (até 3x), a BlueSoft às
+  // vezes erra com frequência ALTA o suficiente pra uma página específica
+  // esgotar as 3 tentativas mesmo assim — e como o Promise.all de uma
+  // rodada rejeitava inteiro nesse caso, TUDO que já tinha sido coletado
+  // com sucesso até ali (podem ser centenas de páginas boas) era jogado
+  // fora, resultando em "busca roda inteira, mas no final não salva nada".
+  // Agora cada página que falhar (mesmo depois das 3 tentativas) é
+  // registrada em `itens.falhas` e a busca CONTINUA pras próximas páginas
+  // — só para de vez se 5 rodadas seguidas não renderem nenhum item novo
+  // (falha ou vazio de verdade, mesmo critério de sempre). Dado parcial
+  // real é sempre melhor que descartar tudo.
   async function _paginarTudo(path, params, cfg, chaveIdentidade, onProgresso) {
     const itens = [];
     const vistos = new Set();
+    const falhas = [];
     let pagina = 0, acabou = false, paginasSemNovidade = 0;
     while (!acabou) {
       const indices = Array.from({ length: CONCORRENCIA_PAGINAS }, (_, i) => pagina + i);
       const respostas = await Promise.all(indices.map(p => {
         const qs = new URLSearchParams(Object.assign({}, params, { currentPage: p, pageSize: TAMANHO_PAGINA })).toString();
-        return _requestBluesoft(path + '?' + qs, cfg);
+        return _requestBluesoft(path + '?' + qs, cfg).catch(e => ({ __paginaFalhou: true, pagina: p, erro: e && e.message || String(e) }));
       }));
       for (const body of respostas) {
+        if (body && body.__paginaFalhou) {
+          falhas.push({ pagina: body.pagina, erro: body.erro });
+          paginasSemNovidade++;
+          if (paginasSemNovidade >= 5) { acabou = true; break; }
+          continue;
+        }
         const linhas = _linhasDe(body);
         if (!linhas.length) { acabou = true; break; }
         let novos = 0;
@@ -117,8 +167,9 @@
       }
       pagina += CONCORRENCIA_PAGINAS;
       if (typeof onProgresso === 'function') { try { onProgresso(itens.length); } catch (e) { /* nunca deixa o progresso quebrar a busca */ } }
-      if (pagina > LIMITE_PAGINAS) throw new Error('A busca passou do limite de segurança sem terminar — fale com o suporte da Bluesoft.');
+      if (pagina > LIMITE_PAGINAS) throw new Error('A busca passou do limite de segurança sem terminar — fale com o suporte.');
     }
+    itens.falhas = falhas;
     return itens;
   }
 
@@ -167,6 +218,8 @@
     return {
       produtoKey: p.produtoKey, cod: String(p.produtoKey), nome: p.descricao || '',
       unidade: p.tipoUnidadeMedida?.descricao || '',
+      fatorEstoque: Math.max(1, Number(p.fatorEstoque) || Number(p.quantidadeEmbalagemVenda) || 1),
+      produtoUnitarioKey: p.produtoUnitarioKey ?? null, caixa: p.caixa === true,
       gtin: p.gtinPrincipal || (p.gtins || [])[0] || '',
       status: p.status || '', categoria: p.subGrupoProduto || '',
       fornecedorPadraoKey: fornecedorPadrao?.fornecedorKey ?? p.fornecedorPadraoKey ?? null,
@@ -178,6 +231,57 @@
       tipoPrincipal: tp.produtoAcabado ? 'PRODUTO_ACABADO' : tp.mercadoriaParaRevenda ? 'VENDA' : tp.embalagem ? 'EMBALAGEM'
         : tp.materiaPrima ? 'INSUMO' : tp.subProduto ? 'SUBPRODUTO' : tp.mercadoriaParaUsoConsumo ? 'CONSUMO' : '',
     };
+  }
+
+  // Resolve a apresentação comercial do produto. Quando a chave recebida é
+  // do item unitário, consulta as caixas/fardos vinculados e escolhe a
+  // embalagem ativa cujo fator corresponde ao estoque/pedido. Assim nome,
+  // código e fator sempre pertencem à MESMA embalagem comercial.
+  async function _obterProdutoEmbalagemVenda(produtoKey, cfg, fatorPreferido) {
+    const cacheKey='produto_embalagem_'+produtoKey+'_'+(Number(fatorPreferido)||0);
+    const salvo=_cacheGet(cacheKey,CACHE_CATALOGO_MS);if(salvo?.naoEncontrado)return null;if(salvo)return salvo;
+    let dados;
+    try{
+      // A rota /{produtoKey} devolve 404 para chaves antigas presentes em
+      // pedidos pendentes da homologação, e o navegador registra cada 404
+      // como erro mesmo quando o JS trata. A listagem documentada aceita
+      // `produtoKey` como filtro e responde 200 + lista vazia nesses casos.
+      const qs=new URLSearchParams({produtoKey:String(produtoKey),currentPage:'0',pageSize:'10'}).toString();
+      const linhas=_linhasDe(await _requestBluesoft('/api/comercial/produtos?'+qs,cfg));
+      // Algumas versões da homologação ignoram silenciosamente o filtro
+      // produtoKey e devolvem a primeira página do catálogo. Nunca aceitar
+      // a primeira linha sem conferir a chave: isso associava o nome de um
+      // produto ao código de outro e depois impedia o estoque de casar.
+      dados=linhas.find(x=>String(x?.produtoKey??'').trim()===String(produtoKey).trim())||null;
+      if(!dados){_cacheSet(cacheKey,{naoEncontrado:true});return null;}
+    }
+    catch(e){
+      // Pedido pendente pode conservar a chave de um cadastro já inativo ou
+      // indisponível na homologação. 404 não é falha transitória: memoriza o
+      // resultado negativo e deixa o chamador usar catálogo/estoque local.
+      if(e?.status===404){_cacheSet(cacheKey,{naoEncontrado:true});return null;}
+      throw e;
+    }
+    const detalhe=Array.isArray(dados)?dados[0]:(dados?.data&&!Array.isArray(dados.data)?dados.data:dados);
+    if(!detalhe) return null;
+    let escolhido=detalhe;
+    const fatorAtual=Math.max(1,Number(detalhe.fatorEstoque)||Number(detalhe.quantidadeEmbalagemVenda)||1);
+    if(detalhe.caixa!==true&&fatorAtual<=1){
+      try{
+        const baseKey=detalhe.produtoUnitarioKey??detalhe.produtoKey??produtoKey;
+        const caixas=await _paginarTudo('/api/comercial/produtos/'+encodeURIComponent(baseKey)+'/caixas',{status:'ATIVO'},cfg,x=>x.produtoKey);
+        const ativas=caixas.filter(x=>x.status!=='INATIVO'&&(Number(x.fatorEstoque)||0)>1);
+        const alvo=Number(fatorPreferido)||Number(detalhe.quantidadeEmbalagemVenda)||0;
+        const caixa=(alvo>1?ativas.find(x=>Number(x.fatorEstoque)===alvo):null)||ativas[0];
+        if(caixa) escolhido={...detalhe,...caixa,caixa:true,produtoUnitarioKey:caixa.produtoUnitarioKey??baseKey,tipoProduto:detalhe.tipoProduto};
+      }catch(e){/* sem embalagem vinculada: mantém o cadastro retornado */}
+    }
+    const normalizado=_normalizarProduto(escolhido);
+    normalizado.canonicalKey=String(escolhido.produtoKey??produtoKey);
+    normalizado.embalagemKey=escolhido.embalagemKey||'';
+    normalizado.fator=Math.max(1,Number(normalizado.fatorEstoque)||1);
+    _cacheSet(cacheKey,normalizado);
+    return normalizado;
   }
   // Um doc de producao_produtos só pode ser apagado pela reconciliação
   // automática se ele NUNCA foi tocado por Ficha Técnica nem por Parâmetros
@@ -209,6 +313,13 @@
         const itens = await _paginarTudo('/api/comercial/produtos', params, cfg, item => item.produtoKey, n => { if (onProgresso) onProgresso(acumulado + n); });
         itens.forEach(it => porKey.set(it.produtoKey, it));
         acumulado = porKey.size;
+        // _paginarTudo não joga mais fora tudo por causa de UMA página
+        // ruim — mas se páginas específicas continuaram falhando mesmo
+        // com a tentativa automática, isso ainda precisa aparecer pro
+        // usuário (dado parcial, não escondido).
+        if (itens.falhas && itens.falhas.length) {
+          falhas.push({ tipo: tipo || '(todos)', erro: itens.falhas.length + ' página(s) não vieram mesmo após tentar de novo (dado parcial)' });
+        }
       } catch (e) {
         falhas.push({ tipo: tipo || '(todos)', erro: e.message || String(e) });
       }
@@ -236,24 +347,40 @@
   //    cache persistente (dado precisa estar fresco); só cache curto de
   //    memória pra não duplicar chamada na mesma sessão.
   function _normalizarEstoqueComercial(e) {
+    const fator = Math.max(1, Number(e.fatorEstoque) || 1);
     return {
       produtoKey: e.produtoKey, cod: String(e.produtoKey),
-      estoqueAtual: Number(e.saldoFisico) || 0, estoqueDisponivel: Number(e.saldoDisponivel) || 0,
-      estoqueReservado: Number(e.quantidadeReservada) || 0, estoqueEmTransito: Number(e.quantidadeEmTransito) || 0,
-      pedidosPendentes: Number(e.quantidadePendenteEmPedidos) || 0,
+      produtoUnitarioKey: e.produtoUnitarioKey ?? null,
+      fatorEstoque: fator, estoqueAtualUnidades: Number(e.saldoFisico) || 0,
+      estoqueAtual: (Number(e.saldoFisico) || 0) / fator, estoqueDisponivel: (Number(e.saldoDisponivel) || 0) / fator,
+      estoqueReservado: (Number(e.quantidadeReservada) || 0) / fator, estoqueEmTransito: (Number(e.quantidadeEmTransito) || 0) / fator,
+      pedidosPendentes: (Number(e.quantidadePendenteEmPedidos) || 0) / fator,
       // Reserva por PEDIDO DE VENDA em aberto — é o sinal que diferencia um
       // produto zerado mas irrelevante de um produto zerado com demanda
       // real represada (ruptura de verdade, que o PCP precisa enxergar).
-      pedidosVendaPendentes: Number(e.quantidadeReservadaEmPedidosVendaPendentes) || 0,
-      consumoDiaMedio: Number(e.mediaVendaDiaria) || 0,
+      pedidosVendaPendentes: (Number(e.quantidadeReservadaEmPedidosVendaPendentes) || 0) / fator,
+      consumoDiaMedio: (Number(e.mediaVendaDiaria) || 0) / fator,
       custoUltimaCompra: Number(e.custoBrutoUltimaCompra) || 0, custoMedioContabil: Number(e.custoMedioContabil) || 0,
       coberturaDiasBluesoft: e.diasDeCoberturaOnline != null ? Number(e.diasDeCoberturaOnline) : null,
     };
   }
   function _normalizarEstoqueWms(e) {
+    // A resposta oficial da Bluesoft usa camelCase (produtoKey e
+    // quantidadeDisponivelEmUnidades). Mantemos os aliases minúsculos por
+    // compatibilidade com respostas antigas/mocks, mas nunca dependemos
+    // exclusivamente deles.
+    const produtoKey = e.produtoKey ?? e.produtokey;
+    const quantidade = e.quantidadeDisponivelEmUnidades ?? e.quantidadedisponivelemunidades;
+    const fator = Math.max(1, Number(e.fatorEstoque ?? e.fatorestoque) || 1);
+    const unidades = Math.max(0, parseFloat(String(quantidade ?? 0).replace(',', '.')) || 0);
     return {
-      produtoKey: String(e.produtokey || '').trim(), cod: String(e.produtokey || '').trim(),
-      estoqueAtual: Math.max(0, parseFloat(String(e.quantidadedisponivelemunidades || 0).replace(',', '.')) || 0),
+      produtoKey: String(produtoKey ?? '').trim(), cod: String(produtoKey ?? '').trim(),
+      produtoUnitarioKey: e.produtoUnitarioKey ?? null,
+      descricaoProduto: e.descricaoProduto || '',
+      localDeEstoqueKey: e.localDeEstoqueKey ?? null,
+      enderecoLogisticoKey: e.enderecoLogisticoKey ?? null,
+      enderecoLogisticoDescritivo: e.enderecoLogisticoDescritivo || '',
+      fatorEstoque: fator, estoqueAtualUnidades: unidades, estoqueAtual: unidades / fator,
       estoqueDisponivel: null, estoqueReservado: null, estoqueEmTransito: null, pedidosPendentes: null, pedidosVendaPendentes: null,
       consumoDiaMedio: null, custoUltimaCompra: null, custoMedioContabil: null, coberturaDiasBluesoft: null,
     };
@@ -266,8 +393,9 @@
   // claramente tem produto ativo (sinal de que a rota "rica" não está
   // disponível pra essa conta/loja, não que a loja não tem estoque).
   function _normalizarEstoqueFicha(e) {
+    const produtoKey = e.produtoKey ?? e.produtokey;
     return {
-      produtoKey: String(e.produtokey || '').trim(), cod: String(e.produtokey || '').trim(),
+      produtoKey: String(produtoKey ?? '').trim(), cod: String(produtoKey ?? '').trim(),
       estoqueAtual: Math.max(0, parseFloat(String(e.quantidade || 0).replace(',', '.')) || 0),
       estoqueDisponivel: null, estoqueReservado: null, estoqueEmTransito: null, pedidosPendentes: null, pedidosVendaPendentes: null,
       consumoDiaMedio: null, custoUltimaCompra: null, custoMedioContabil: null, coberturaDiasBluesoft: null,
@@ -285,19 +413,38 @@
   async function obterEstoqueBluesoft(loja, forcar, opcoes) {
     opcoes = opcoes || {};
     const lojaKey = loja?.bluesoft_loja_key;
-    if (!lojaKey) throw new Error('Loja sem vínculo com a Bluesoft (bluesoft_loja_key). Vincule em Gestão de Lojas.');
-    const chave = 'estoque_' + lojaKey + (opcoes.incluirTodos ? '_todos' : '');
+    if (!lojaKey) throw new Error('Loja sem vínculo com a integração (bluesoft_loja_key). Vincule em Gestão de Lojas.');
+    let configLocais = {};
+    try { const s=await global.getDTFirestore().collection('pcp_configuracoes').doc('estoque_bluesoft').get();configLocais=s.exists?(s.data()||{}):{}; } catch(e) { configLocais={}; }
+    const locaisExcluidos = new Set((configLocais.locaisExcluidos || []).map(String));
+    const chave = 'estoque_' + lojaKey + (opcoes.incluirTodos ? '_todos' : '') + '_excl_' + Array.from(locaisExcluidos).sort().join('-');
     if (!forcar) { const c = _cacheGet(chave, CACHE_CURTO_MS); if (c) return c; }
     const cfg = await _config();
-    let normalizados, totalRecebido, rotaSimplificada = false;
+    let normalizados, totalRecebido, rotaSimplificada = false, falhas = [];
     if (loja.bluesoft_loja_cd === true) {
-      const itens = await _paginarTudo('/api/wms/ajuste-estoque-logistico', { lojaKey }, cfg, undefined, opcoes.onProgresso);
+      // Conforme o OpenAPI, esta rota WMS devolve um ARRAY direto e não uma
+      // PaginationResponse. Passá-la por _paginarTudo fazia repetir a mesma
+      // lista várias vezes (currentPage é ignorado pelo endpoint), gerando
+      // chamadas pesadas desnecessárias e possíveis timeouts/429.
+      const qs = new URLSearchParams({ lojaKey }).toString();
+      const respostaWms = await _requestBluesoft('/api/wms/ajuste-estoque-logistico?' + qs, cfg);
+      const itensBrutos = _linhasDe(respostaWms);
+      const nomesLocais = new Map();
+      try {
+        const respostaLocais = await _requestBluesoft('/api/modulos/estoque/operacoes/consultar-local-de-estoque?' + qs, cfg);
+        _linhasDe(respostaLocais).forEach(l => { const k=String(l.localDeEstoqueKey??'').trim(); if(k) nomesLocais.set(k,String(l.descricao||'').trim()); });
+      } catch(e) { /* nome é enriquecimento; a falta dele não bloqueia o saldo */ }
+      const locaisMap = new Map();
+      itensBrutos.forEach(item=>{const k=String(item.localDeEstoqueKey??'').trim();if(!k)return;const atual=locaisMap.get(k)||{key:k,nome:nomesLocais.get(k)||'',exemploEndereco:''};if(!atual.nome)atual.nome=nomesLocais.get(k)||'';if(!atual.exemploEndereco)atual.exemploEndereco=item.enderecoLogisticoDescritivo||'';locaisMap.set(k,atual);});
+      try { await global.getDTFirestore().collection('pcp_configuracoes').doc('estoque_bluesoft').set({locaisDetectados:Array.from(locaisMap.values()),atualizadoEm:new Date().toISOString()},{merge:true}); } catch(e) { /* configuração é auxiliar; estoque continua */ }
+      const itens = itensBrutos.filter(item=>!locaisExcluidos.has(String(item.localDeEstoqueKey??'')));
+      if (typeof opcoes.onProgresso === 'function') { try { opcoes.onProgresso(itens.length); } catch (e) { /* progresso não quebra a busca */ } }
       const porProduto = new Map();
       itens.forEach(item => {
-        const cod = String(item.produtokey || '').trim();
+        const cod = String(item.produtoKey ?? item.produtokey ?? '').trim();
         if (!cod) return;
         if (!porProduto.has(cod)) porProduto.set(cod, _normalizarEstoqueWms(item));
-        else porProduto.get(cod).estoqueAtual += _normalizarEstoqueWms(item).estoqueAtual;
+        else { const atual=_normalizarEstoqueWms(item), alvo=porProduto.get(cod); alvo.estoqueAtual += atual.estoqueAtual; alvo.estoqueAtualUnidades=(alvo.estoqueAtualUnidades||0)+(atual.estoqueAtualUnidades||0); }
       });
       normalizados = Array.from(porProduto.values());
       totalRecebido = normalizados.length; // WMS não tem sinal de "pedido pendente" pra filtrar — mantém como já era
@@ -305,6 +452,12 @@
       const itens = await _paginarTudo('/api/comercial/estoques', {
         lojaKey, retornarCustoUltimaCompra: true, retornarEstoqueEmTransito: true, ignoraProdutosInativos: true,
       }, cfg, item => item.produtoKey, opcoes.onProgresso);
+      // `.map()`/`.filter()` devolvem um array NOVO — a `.falhas` que
+      // _paginarTudo anexa no array original (páginas que não vieram
+      // mesmo após tentar de novo) se perdia silenciosamente aqui, e nunca
+      // chegava no `resultado` devolvido pro chamador. Guarda antes de
+      // qualquer .map()/.filter() reatribuir a variável.
+      falhas = itens.falhas || [];
       let todosNormalizados = itens.map(_normalizarEstoqueComercial);
       totalRecebido = todosNormalizados.length;
       if (!totalRecebido) {
@@ -314,13 +467,14 @@
         // Inventário) em vez de reportar "0 de estoque" quando na verdade é
         // a rota rica que não está disponível.
         const itensFicha = await _paginarTudo('/api/comercial/estoques/ficha-estoque', { lojaKey }, cfg, item => item.produtokey, opcoes.onProgresso);
+        falhas = itensFicha.falhas || [];
         todosNormalizados = itensFicha.map(_normalizarEstoqueFicha);
         totalRecebido = todosNormalizados.length;
         rotaSimplificada = totalRecebido > 0;
       }
       normalizados = opcoes.incluirTodos ? todosNormalizados : todosNormalizados.filter(_estoqueRelevante);
     }
-    const resultado = { itens: normalizados, totalRecebido, rotaSimplificada };
+    const resultado = { itens: normalizados, totalRecebido, rotaSimplificada, falhas };
     _cacheSet(chave, resultado);
     return resultado;
   }
@@ -348,13 +502,55 @@
     if (filtros.dataEntregaInicial) params.dataEntregaInicial = filtros.dataEntregaInicial;
     if (filtros.dataEntregaFinal) params.dataEntregaFinal = filtros.dataEntregaFinal;
     if (filtros.codigoDoFornecedor) params.codigoDoFornecedor = filtros.codigoDoFornecedor;
+    if (filtros.numeroDoPedido) params.numeroDoPedido = filtros.numeroDoPedido;
     const itens = await _paginarTudo('/api/compras/pedidos-de-compra', params, cfg, item => item.numeroPedido);
-    return itens.map(p => ({
+    const normalizados = itens.map(p => ({
       numeroPedido: p.numeroPedido, dataEmissao: p.dataEmissao, fornecedorKey: p.fornecedorKey,
       status: p.statusPedido || '', dataEntregaInicial: p.dataEntregaInicial, dataEntregaFinal: p.dataEntregaFinal,
       entregaPendente: p.entregaPendente === true,
       itens: (p.itens || []).map(it => ({ itemPedidoKey: it.itemPedidoKey, produtoKey: it.produtoKey, quantidadePedida: Number(it.quantidadePedida) || 0, quantidadePendente: Number(it.quantidadePendente) || 0 })),
     }));
+    normalizados.falhas = itens.falhas || []; // `.map()` devolve array novo — sem isto, a falha registrada por _paginarTudo se perde antes de chegar no chamador.
+    return normalizados;
+  }
+
+  // PEDIDO AO VIVO (PCP → Agendamentos): o comprador digita uma previsão
+  // manual hoje (produto/fornecedor/qtd/data/nº do pedido). Quando o
+  // fornecedor confirma a agenda de verdade, em vez de redigitar tudo, o
+  // comprador só informa o número do pedido — esta função busca ESSE pedido
+  // específico na Bluesoft (filtro numeroDoPedido, real e confirmado no
+  // schema oficial — não precisa varrer todos os pedidos pendentes) e
+  // resolve fornecedor/produto pra nome, pra tela só mostrar "usar este
+  // item" em vez de o comprador ter que digitar de novo.
+  async function buscarPedidoCompraBluesoftPorNumero(numeroPedido) {
+    const lojaId = global.getDTLojaAtiva?.();
+    if (!lojaId) throw new Error('Nenhuma loja selecionada.');
+    const lojaSnap = await raw().collection('lojas').doc(lojaId).get();
+    if (!lojaSnap.exists) throw new Error('Loja não encontrada.');
+    const loja = { id: lojaId, ...lojaSnap.data() };
+    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à integração (bluesoft_loja_key). Vincule em Gestão de Lojas.');
+    const [pedidos, fornecedores, produtosSnap] = await Promise.all([
+      obterPedidosCompraBluesoft({ lojaKey: loja.bluesoft_loja_key, numeroDoPedido: numeroPedido }),
+      obterFornecedoresBluesoft(false),
+      global.getDTFirestore().collection('producao_produtos').get(),
+    ]);
+    const pedido = pedidos.find(p => String(p.numeroPedido) === String(numeroPedido));
+    if (!pedido) throw new Error('Pedido nº ' + numeroPedido + ' não encontrado para esta loja.');
+    const fornecedorNome = fornecedores.find(f => f.fornecedorKey === pedido.fornecedorKey)?.nome || ('Fornecedor ' + pedido.fornecedorKey);
+    const produtoPorCod = new Map();
+    produtosSnap.docs.forEach(d => { const x = d.data() || {}; if (x.cod != null) produtoPorCod.set(String(x.cod).trim(), x); });
+    const itens = pedido.itens.map(it => {
+      const local = produtoPorCod.get(String(it.produtoKey).trim());
+      return {
+        produtoKey: it.produtoKey, cod: String(it.produtoKey), produtoNome: local?.nome || null,
+        cadastradoNaProducao: !!local, quantidadePedida: it.quantidadePedida, quantidadePendente: it.quantidadePendente,
+      };
+    });
+    return {
+      numeroPedido: pedido.numeroPedido, fornecedorKey: pedido.fornecedorKey, fornecedorNome,
+      dataEntregaInicial: pedido.dataEntregaInicial, dataEntregaFinal: pedido.dataEntregaFinal,
+      entregaPendente: pedido.entregaPendente, itens,
+    };
   }
 
   // ── Recebimento (Logística/FASE 15) ──────────────────────────────────────
@@ -483,7 +679,7 @@
     const lojaSnap = await raw().collection('lojas').doc(lojaId).get();
     if (!lojaSnap.exists) throw new Error('Loja não encontrada.');
     const loja = { id: lojaId, ...lojaSnap.data() };
-    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à Bluesoft (bluesoft_loja_key). Vincule em Gestão de Lojas.');
+    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à integração (bluesoft_loja_key). Vincule em Gestão de Lojas.');
     const lojaKey = loja.bluesoft_loja_key;
     const cfg = await _config();
 
@@ -754,6 +950,38 @@
     };
   }
 
+  // PEDIDO AO VIVO (2026-08-24): "eu queria colocar lá a data que eu quero
+  // buscar... não buscar automaticamente" — o usuário está numa cópia de
+  // homologação da Bluesoft datada de junho (só tem dado até lá), e no
+  // futuro vai trocar pra API de produção — uma janela fixa "hoje menos N
+  // meses" não é confiável em nenhum dos dois casos. Resolve um período
+  // explícito (Date, ou string 'dd/MM/yyyy'/'yyyy-MM-dd') quando o usuário
+  // informou `dataInicial`/`dataFinal`; sem isso, cai no automático de
+  // sempre (hoje menos `diasPadrao` dias, ou 6 meses se `diasPadrao` não
+  // for passado) — comportamento anterior 100% preservado quando ninguém
+  // escolhe período.
+  function _parseDataBluesoft(v) {
+    if (!v) return null;
+    if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+    const s = String(v).trim();
+    let m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    m = /^(\d{2})\/(\d{2})\/(\d{4})/.exec(s);
+    if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
+    return null;
+  }
+  function _resolverPeriodoBluesoft(opcoes, diasPadrao) {
+    opcoes = opcoes || {};
+    const inicioManual = _parseDataBluesoft(opcoes.dataInicial);
+    const fimManual = _parseDataBluesoft(opcoes.dataFinal);
+    if (inicioManual || fimManual) {
+      return { inicio: inicioManual || fimManual, fim: fimManual || new Date(), manual: true };
+    }
+    const fim = new Date(); const inicio = new Date();
+    if (diasPadrao) inicio.setDate(inicio.getDate() - diasPadrao); else inicio.setMonth(inicio.getMonth() - 6);
+    return { inicio, fim, manual: false };
+  }
+
   // ── Venda faturada ainda não entregue — GET /api/forca-de-vendas/pedidos ──
   // Pedido ao vivo do usuário: "é para ve notas faturadas ainda nao
   // entregues, mercador e todas as outras informações e atraves do
@@ -780,13 +1008,27 @@
   //   nota é necessário (diferente da tentativa anterior, que precisava
   //   buscar a nota do pedido à parte).
   const STATUS_FATURADO_NAO_ENTREGUE = ['FATURADO_POR_NOTA_FISCAL', 'FATURADO_POR_CUPOM', 'ROTEIRIZADO'];
-  async function obterPedidosVendaFaturadosNaoEntreguesBluesoft(filialKey, cfg) {
-    const fim = new Date(); const inicio = new Date(); inicio.setMonth(inicio.getMonth() - 6);
+  async function obterPedidosVendaFaturadosNaoEntreguesBluesoft(filialKey, cfg, periodo) {
+    const fim = (periodo && periodo.fim) || new Date();
+    const inicio = (periodo && periodo.inicio) || (() => { const d = new Date(); d.setMonth(d.getMonth() - 6); return d; })();
     const porKey = new Map();
     const itensPorStatus = await Promise.all(STATUS_FATURADO_NAO_ENTREGUE.map(status => _paginarTudo('/api/forca-de-vendas/pedidos', {
       filialKey, pedidoVendaStatus: status,
       dataEmissaoInicial: _fmtDataBR(inicio) + ' 00:00', dataEmissaoFinal: _fmtDataBR(fim) + ' 23:59',
     }, cfg, item => item.pedidoForcaVendaKey)));
+    // _paginarTudo não rejeita mais por página ruim (páginas que falham até
+    // esgotar as tentativas ficam registradas em .falhas em vez de derrubar
+    // o que já tinha vindo bem — ver 90-bluesoft-service.js). Mas se um
+    // status inteiro não trouxe NADA e tem falhas registradas, é a busca
+    // inteira que não respondeu (não uma página ruim isolada) — precisa
+    // continuar propagando como erro real, senão o diagnóstico de "3 fontes
+    // com melhor esforço" (obterNotasRetornoBluesoft) nunca mais marca essa
+    // fonte como falha, mesmo quando ela nunca respondeu de verdade.
+    const statusSemRespostaAlguma = STATUS_FATURADO_NAO_ENTREGUE.filter((_, i) => itensPorStatus[i].length === 0 && (itensPorStatus[i].falhas || []).length > 0);
+    if (statusSemRespostaAlguma.length) {
+      const primeiraFalha = itensPorStatus.flatMap(itens => itens.falhas || [])[0];
+      throw new Error('Falha ao buscar pedidos de força de venda (' + statusSemRespostaAlguma.join(', ') + '): ' + (primeiraFalha ? primeiraFalha.erro : 'sem resposta'));
+    }
     itensPorStatus.forEach(itens => itens.forEach(it => porKey.set(it.pedidoForcaVendaKey, it)));
     // Achata pedido→clientes: cada cliente do pedido com NF gerada vira uma
     // "nota" candidata — um pedido de força de venda pode ter vários
@@ -849,10 +1091,21 @@
     const lojaSnap = await raw().collection('lojas').doc(lojaId).get();
     if (!lojaSnap.exists) throw new Error('Loja não encontrada.');
     const loja = { id: lojaId, ...lojaSnap.data() };
-    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à Bluesoft (bluesoft_loja_key). Vincule em Gestão de Lojas.');
+    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à integração (bluesoft_loja_key). Vincule em Gestão de Lojas.');
     const cfg = await _config();
-    const dias = Math.max(1, Math.min(30, Number(opcoes.dias) || 30));
-    const fim = new Date(); const inicio = new Date(); inicio.setDate(inicio.getDate() - dias);
+    // Sem dataInicial/dataFinal explícitos, mantém o automático de sempre
+    // (janela de `opcoes.dias`, 1-30, padrão 30). Com data explícita
+    // (PEDIDO AO VIVO: usuário numa cópia de homologação datada de junho
+    // quer escolher o período em vez de confiar num cálculo relativo a
+    // hoje), usa exatamente o período informado, sem teto de 30 dias.
+    let inicio, fim, periodoManual = false;
+    if (opcoes.dataInicial || opcoes.dataFinal) {
+      const periodo = _resolverPeriodoBluesoft(opcoes);
+      inicio = periodo.inicio; fim = periodo.fim; periodoManual = true;
+    } else {
+      const dias = Math.max(1, Math.min(30, Number(opcoes.dias) || 30));
+      fim = new Date(); inicio = new Date(); inicio.setDate(inicio.getDate() - dias);
+    }
     const paramsEntrada = { lojaKey: loja.bluesoft_loja_key, tipoNota: 'ENTRADA', dataRecebimentoInicial: _fmtDataBR(inicio), dataRecebimentoFinal: _fmtDataBR(fim) };
     // Diagnóstico exposto no resultado (não só engolido em silêncio) — sem
     // isso, se alguma dessas fontes falhar, a tela mostra exatamente o
@@ -879,7 +1132,7 @@
       _descobrirNotasDevolucaoViaRecebimentoSincronizado(fs, inicio, fim)
         .then(itens => { diagnosticoSegundaFonte.totalBruto = itens.length; return itens; })
         .catch(e => { diagnosticoSegundaFonte = { ok: false, totalBruto: 0, erro: e.message || String(e) }; return []; }), // melhor esforço — se essa segunda fonte falhar, a via principal continua funcionando normalmente
-      obterPedidosVendaFaturadosNaoEntreguesBluesoft(loja.bluesoft_loja_key, cfg)
+      obterPedidosVendaFaturadosNaoEntreguesBluesoft(loja.bluesoft_loja_key, cfg, periodoManual ? { inicio, fim } : null)
         .then(itens => { diagnosticoTerceiraFonte.totalBruto = itens.length; return itens; })
         .catch(e => { diagnosticoTerceiraFonte = { ok: false, totalBruto: 0, erro: e.message || String(e) }; return []; }), // melhor esforço — se essa fonte falhar, as outras continuam funcionando normalmente
     ]);
@@ -1045,36 +1298,6 @@
   // encontrado — tipicamente 1 a 3 pra um punhado de notas) pra pegar o
   // e-mail do vendedor e o nome legível do gerente/supervisor (a comissão
   // só traz a key numérica deles).
-  function _normalizarComissaoVendedor(c) {
-    return {
-      cnpj: String(c.cnpj || '').replace(/\D/g, ''),
-      clienteKey: c.clienteKey ?? null, nomeCliente: c.nomeCliente || '',
-      vendedorKey: c.vendedorExternoKey ?? null, vendedorNome: c.vendedorExternoNome || '',
-      supervisorKey: c.supervisorKey ?? null,
-      numeroNotaFiscalOrigem: c.numeroNotaFiscalOrigem != null ? String(c.numeroNotaFiscalOrigem) : '',
-      motivoDevolucao: c.motivoDevolucao || '', tipoDePedido: c.tipoDePedido || '',
-    };
-  }
-  async function obterComissoesVendedorPorPeriodo(opcoes) {
-    opcoes = opcoes || {};
-    const cfg = await _config();
-    const params = {};
-    if (opcoes.dataInicial) params.dataInicial = opcoes.dataInicial;
-    if (opcoes.dataFinal) params.dataFinal = opcoes.dataFinal;
-    if (opcoes.tipoPedido) params.tipoPedido = opcoes.tipoPedido;
-    // BUG AO VIVO REAL (2026-08-19): esse endpoint é mais lento que os
-    // outros da Bluesoft pra essa conta. Piso de 130s, acima dos 120s da
-    // Cloud Function bluesoftProxy (functions/index.js) — senão o
-    // navegador espera mais que o próprio proxy (que já foi morto pelo
-    // Google antes), e o erro vira "Failed to fetch" em vez de um timeout
-    // limpo.
-    const cfgComissoes = { ...cfg, timeout: Math.max(Number(cfg.timeout) || 30, 130) };
-    const itens = await _paginarTudo('/api/forca-de-vendas/comissoes-vendedores', params, cfgComissoes,
-      item => (item.clienteKey || '') + '_' + (item.numeroNotaFiscalOrigem || '') + '_' + (item.vendedorExternoKey || ''));
-    return itens.map(_normalizarComissaoVendedor);
-  }
-  global.obterComissoesVendedorPorPeriodo = obterComissoesVendedorPorPeriodo;
-
   // Campos confirmados 2026-08-19 direto no schema oficial
   // (VendedorConsultarResponse): o nome do PRÓPRIO vendedor é
   // vendedorNomeAbreviado/vendedorEmail, e a chave de correlação é
@@ -1098,59 +1321,164 @@
   }
   global.obterDadosVendedorPorKey = obterDadosVendedorPorKey;
 
-  // Orquestra tudo: busca as comissões do MESMO período das notas (uma
-  // chamada), casa cada nota por número de NF (mais preciso) ou por CNPJ
-  // (fallback), e só então busca supervisor/e-mail dos vendedores
-  // realmente encontrados (poucos, targetados por key). Nunca escreve no
-  // Firestore — só enriquece em memória, igual ao resto do fluxo de
-  // pré-visualização desta tela.
-  async function enriquecerNotasComVendedorPorComissao(notas, opcoes) {
-    opcoes = opcoes || {};
-    if (!notas || !notas.length) return notas || [];
-    let comissoes = [];
-    try { comissoes = await obterComissoesVendedorPorPeriodo(opcoes); }
-    catch (e) { return notas; } // melhor esforço — sem comissão, as notas continuam aparecendo, só sem vendedor
-    const porNumeroNota = new Map(), porCnpj = new Map();
-    comissoes.forEach(c => {
-      if (c.numeroNotaFiscalOrigem && !porNumeroNota.has(c.numeroNotaFiscalOrigem)) porNumeroNota.set(c.numeroNotaFiscalOrigem, c);
-      if (c.cnpj && !porCnpj.has(c.cnpj)) porCnpj.set(c.cnpj, c);
-    });
-    const vendedorKeysUnicos = [...new Set(comissoes.map(c => c.vendedorKey).filter(k => k != null))];
-    const dadosVendedorPorKey = new Map();
-    await _emLotesParalelos(vendedorKeysUnicos, async vk => {
-      try { const d = await obterDadosVendedorPorKey(vk); if (d) dadosVendedorPorKey.set(vk, d); }
-      catch (e) { /* um vendedor faltando não trava os outros */ }
-    });
-    return notas.map(n => {
-      // BUG AO VIVO REAL (2026-08-20): "muitos mercados não trouxe [o
-      // vendedor]" — notas de venda faturada já chegam aqui com vendedor
-      // preenchido (lookup direto por vendedorKey, mais confiável). Se o
-      // número da NF ou o CNPJ dessa nota TAMBÉM batesse por acaso com uma
-      // comissão de outro contexto (comum em clientes grandes/recorrentes,
-      // ex.: redes como Sendas/Assai que aparecem várias vezes no período),
-      // esse código sobrescrevia o vendedor bom com o resultado de um
-      // lookup TARGETADO diferente — que podia falhar/vir vazio e apagar
-      // um dado que já estava certo. Agora nunca sobrescreve vendedor que
-      // a nota já trouxe; comissão só PREENCHE o que ainda está vazio
-      // (entrada/devolução, que não têm vendedorKey próprio).
-      if (n.vendedorNome) return n;
-      const cnpjNorm = String(n.destinatarioCnpj || '').replace(/\D/g, '');
-      const match = porNumeroNota.get(n.numeroNota) || (cnpjNorm ? porCnpj.get(cnpjNorm) : null);
-      if (!match) return n;
-      const vd = dadosVendedorPorKey.get(match.vendedorKey);
-      return {
-        ...n,
-        vendedorNome: match.vendedorNome || vd?.nome || '',
-        vendedorEmail: vd?.email || '',
-        supervisorNome: vd?.supervisorNome || '', supervisorEmail: vd?.supervisorEmail || '',
-        // Bônus: a comissão também tem um campo próprio de motivo de
-        // devolução — usado como fallback quando o XML da nota não tem
-        // <infCpl> preenchido.
-        motivoDevolucaoComissao: match.motivoDevolucao || '',
-      };
-    });
+  // PEDIDO AO VIVO (2026-08-24): API de comissão (/api/forca-de-vendas/
+  // comissoes-vendedores) removida por completo — exigia permissão extra e
+  // expunha dado de remuneração, e o usuário prefere um cadastro local
+  // (Analista registra vendedor/supervisor por CNPJ do mercado uma vez —
+  // ver recebimento_recusas_vendedores_mercado, cadastro em 97-recebimento-recusas.js) em
+  // vez de uma chamada à API pra isso. Venda faturada (3ª fonte, acima)
+  // continua resolvendo vendedor via /api/forca-de-vendas/vendedores
+  // (não é comissão) — o cadastro local só sobrepõe quando cadastrado.
+
+  // PCP: fluxos distintos. Pedido de venda aberto compromete estoque;
+  // pedido de compra pendente é entrada futura. Ambos são gravados item a
+  // item, em caixas, nas coleções que o PCP realmente lê.
+  const STATUS_VENDA_PENDENTE = ['ABERTO','FECHADO','EM_SEPARACAO','SEPARADO','REABERTO','AGUARDANDO_ANALISE_GERENCIAL','EM_ANALISE_GERENCIAL','APROVADO','ROTEIRIZADO','FATURANDO','EM_ANALISE_DE_CREDITO','AGUARDANDO_PAGAMENTO','AGUARDANDO_SEPARACAO_WMS'];
+  const _idSeguro = v => String(v ?? '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
+  function _produtoTemNomeValido(p){const nome=String(p?.nome||p?.produto||p?.descricao||'').trim();return !!nome&&!/^Produto\s+\d+$/i.test(nome);}
+  async function _obterCompradorBluesoft(compradorKey,cfg){
+    const key=String(compradorKey??'').trim();if(!key)return null;
+    const ck='comprador_'+key,c=_cacheGet(ck,CACHE_CATALOGO_MS);if(c)return c.naoEncontrado?null:c;
+    const qs=new URLSearchParams({compradorKey:key,currentPage:'0',pageSize:'10'}).toString();
+    const linhas=_linhasDe(await _requestBluesoft('/api/compras/compradores?'+qs,cfg));
+    const x=linhas.find(v=>String(v?.compradorKey??'').trim()===key);
+    if(!x){_cacheSet(ck,{naoEncontrado:true});return null;}
+    const out={compradorKey:key,nome:x.nomeAbreviado||x.nomeFantasia||x.nomeRazao||('Comprador '+key),documento:x.cpfCnpj||''};_cacheSet(ck,out);return out;
   }
-  global.enriquecerNotasComVendedorPorComissao = enriquecerNotasComVendedorPorComissao;
+  async function _contextoPcpBluesoft() {
+    const lojaId=global.getDTLojaAtiva?.(); if(!lojaId)throw new Error('Nenhuma loja selecionada.');
+    const lojaSnap=await raw().collection('lojas').doc(lojaId).get(); if(!lojaSnap.exists)throw new Error('Loja não encontrada.');
+    const loja={id:lojaId,...lojaSnap.data()}; if(!loja.bluesoft_loja_key)throw new Error('Loja sem bluesoft_loja_key.');
+    const fs=global.getDTFirestore(), [ps,pcps,ests,regrasSnap]=await Promise.all([fs.collection('producao_produtos').get(),fs.collection('pcp_produtos_bluesoft').get().catch(()=>({docs:[]})),fs.collection('pcp_estoque_bluesoft').get().catch(()=>({docs:[]})),fs.collection('compras_regras_comprador').get().catch(()=>({docs:[]}))]);
+    const produtos=new Map(),produtoProducaoPorAlias=new Map(); ps.docs.forEach(d=>{const x=d.data()||{},k=String(x.bluesoftProdutoKey??x.cod??'').trim();if(k){const p={id:d.id,...x,canonicalKey:String(x.cod??k),fator:Math.max(1,Number(x.unid)||Number(x.fatorCaixaBluesoft)||1)};produtos.set(k,p);[x.cod,x.bluesoftProdutoKey,x.produtoUnitarioKeyBluesoft,x.produtoUnitarioKey].forEach(a=>{a=String(a??'').trim();if(a)produtoProducaoPorAlias.set(a,p);});const unit=String(x.produtoUnitarioKeyBluesoft??'').trim();if(unit&&!produtos.has(unit))produtos.set(unit,p);}});
+    pcps.docs.forEach(d=>{const x=d.data()||{},k=String(x.bluesoftProdutoKey??x.cod??'').trim();if(k){const p={id:d.id,...x,canonicalKey:String(x.cod??k),fator:Math.max(1,Number(x.fatorCaixaBluesoft)||1)};if(!produtos.has(k))produtos.set(k,p);const unit=String(x.produtoUnitarioKeyBluesoft??'').trim();if(unit&&!produtos.has(unit))produtos.set(unit,p);}});
+    ests.docs.forEach(d=>{const x=d.data()||{},k=String(x.cod??'').trim();if(!k)return;const atual=produtos.get(k)||{};produtos.set(k,{...atual,nome:atual.nome||x.produto||'',fator:Math.max(1,Number(x.fatorCaixa)||Number(atual.fator)||1)});});
+    const vinculosComprador=new Map();regrasSnap.docs.forEach(d=>{const x=d.data()||{};if(x.ativo!==false&&x.tipo==='bluesoft_comprador'&&String(x.valor??'').trim())vinculosComprador.set(String(x.valor).trim(),{regraId:d.id,compradorUid:x.compradorUid||'',compradorEmail:x.compradorEmail||'',compradorNome:x.compradorNome||''});});
+    return {loja,fs,produtos,produtoProducaoPorAlias,vinculosComprador,cfg:await _config()};
+  }
+  async function sincronizarPedidosVendaPcpBluesoft(opcoes) {
+    opcoes=opcoes||{}; const {loja,fs,produtos,cfg}=await _contextoPcpBluesoft(); const falhas=[], porPedido=new Map();
+    // O PCP não precisa de cliente, destinatário nem de uma linha para cada
+    // pedido. Busca apenas os pedidos nos status pendentes e, assim que cada
+    // resposta chega, conserva somente os itens necessários para somar a
+    // demanda por produto. Os status são consultados em pequenos lotes
+    // paralelos para não transformar 13 buscas independentes numa espera
+    // sequencial muito longa.
+    await _emLotesParalelos(STATUS_VENDA_PENDENTE, async status => {
+      try {
+        const xs=await _paginarTudo('/api/forca-de-vendas/pedidos',{filialKey:loja.bluesoft_loja_key,pedidoVendaStatus:status},cfg,x=>x.pedidoForcaVendaKey);
+        xs.forEach(x=>porPedido.set(String(x.pedidoForcaVendaKey??x.numeroPedidoExterno??JSON.stringify(x.itens||[])),x));
+        if(xs.falhas?.length)falhas.push(...xs.falhas.map(f=>({status,...f})));
+      } catch(e) { falhas.push({status,erro:e.message||String(e)}); }
+    }, 3);
+    const chavesPedidos=new Set();porPedido.forEach(ped=>(ped.itens||[]).forEach(it=>{if(it.produtoKey!=null)chavesPedidos.add(String(it.produtoKey));}));
+    // Revalida todos os códigos encontrados nos pedidos. Além dos nomes
+    // vazios, versões anteriores podiam ter salvo uma descrição NÃO vazia,
+    // porém pertencente a outro produto porque o filtro da rota de lista
+    // foi ignorado. Consultar por chave corrige também esses registros.
+    const faltantes=Array.from(chavesPedidos);
+    await _emLotesParalelos(faltantes,async pk=>{try{const p=await _obterProdutoEmbalagemVenda(pk,cfg,produtos.get(pk)?.fator);if(!p)return;produtos.set(pk,p);produtos.set(p.canonicalKey,p);await fs.collection('pcp_produtos_bluesoft').doc('produto_'+_idSeguro(p.canonicalKey)).set({cod:p.canonicalKey,nome:p.nome,bluesoftProdutoKey:p.produtoKey,produtoUnitarioKeyBluesoft:p.produtoUnitarioKey,fatorCaixaBluesoft:p.fator,embalagemKeyBluesoft:p.embalagemKey||'',unidadeMedidaBluesoft:p.unidade,bluesoftTipoProduto:p.tipoPrincipal||null,origem:'bluesoft',atualizadoEm:new Date().toISOString()},{merge:true});}catch(e){falhas.push({produtoKey:pk,erro:'Cadastro do produto: '+(e.message||String(e))});}},1);
+    const totais=new Map();
+    porPedido.forEach(ped => (ped.itens||[]).forEach(it => {
+      const pkOriginal=String(it.produtoKey??'').trim(); if(!pkOriginal)return;
+      const p=produtos.get(pkOriginal)||{},pk=String(p.canonicalKey||p.produtoKey||pkOriginal), fator=Math.max(1,Number(p.fator)||1);
+      const unidades=Math.max(0,Number(it.quantidadePedida)||0), atendidasUn=Math.max(0,Number(it.quantidadeSeparada)||0);
+      if(unidades<=0)return;
+      const atual=totais.get(pk)||{quantidade:0,atendida:0,unidades:0,atendidasUn:0,fator,produto:p.nome||('Produto '+pk)};
+      atual.quantidade+=unidades/fator; atual.atendida+=Math.min(unidades,atendidasUn)/fator;
+      atual.unidades+=unidades; atual.atendidasUn+=Math.min(unidades,atendidasUn);
+      totais.set(pk,atual);
+    }));
+    const agora=new Date().toISOString(), vistos=new Set(); let gravados=0;
+    for(const [pk,total] of totais){const id='bs_venda_produto_'+_idSeguro(pk);vistos.add(id);await fs.collection('pcp_pedidos').doc(id).set({origem:'bluesoft',agrupadoPorProduto:true,pedido:'Total pendente BlueSoft',cod:pk,prodKey:pk,produto:total.produto,quantidade:total.quantidade,quantidadeAtendida:Math.min(total.quantidade,total.atendida),quantidadeUnidades:total.unidades,quantidadeAtendidaUnidades:total.atendidasUn,fatorCaixa:total.fator,unidade:'CX',destino:'',dataNecessaria:'',status:total.atendida>=total.quantidade?'atendido':total.atendida>0?'parcial':'pendente',bluesoftSincronizadoEm:agora,atualizadoEm:agora},{merge:true});gravados++;}
+    const snap=await fs.collection('pcp_pedidos').get();for(const d of snap.docs){const x=d.data()||{};if(x.origem==='bluesoft'&&!vistos.has(d.id))await fs.collection('pcp_pedidos').doc(d.id).delete();}
+    return {pedidos:porPedido.size,itens:gravados,produtos:gravados,gravados,falhas};
+  }
+  async function sincronizarPedidosCompraPendentesPcpBluesoft() {
+    const {loja,fs,produtos,vinculosComprador,cfg}=await _contextoPcpBluesoft();const pedidos=await _paginarTudo('/api/compras/pedidospendentes',{},cfg,x=>x.numeroPedido),falhas=[...(pedidos.falhas||[])];
+    const itensValidos=[];for(const ped of pedidos)for(const it of (ped.itens||[])){const destino=it.destinatarioKey??it.lojaKey;if(destino!=null&&String(destino)!==String(loja.bluesoft_loja_key))continue;if(it.produtoKey!=null)itensValidos.push({ped,it,pk:String(it.produtoKey)});}
+    const porChave=new Map();itensValidos.forEach(x=>{if(!porChave.has(x.pk))porChave.set(x.pk,x.it);});
+    // Revalida todos: uma versão anterior podia ter persistido um nome
+    // não vazio, porém de outro produto. Filtrar só nomes vazios manteria
+    // esse dado incorreto para sempre.
+    const produtosSemNome=Array.from(porChave.keys());
+    await _emLotesParalelos(produtosSemNome,async pk=>{try{const it=porChave.get(pk),p=await _obterProdutoEmbalagemVenda(pk,cfg,it?.fatorEstoque);if(!p)return;produtos.set(pk,p);produtos.set(p.canonicalKey,p);await fs.collection('pcp_produtos_bluesoft').doc('produto_'+_idSeguro(p.canonicalKey)).set({cod:p.canonicalKey,nome:p.nome,bluesoftProdutoKey:p.produtoKey,produtoUnitarioKeyBluesoft:p.produtoUnitarioKey,fatorCaixaBluesoft:p.fator,embalagemKeyBluesoft:p.embalagemKey||'',unidadeMedidaBluesoft:p.unidade,bluesoftTipoProduto:p.tipoPrincipal||null,origem:'bluesoft',atualizadoEm:new Date().toISOString()},{merge:true});}catch(e){falhas.push({produtoKey:pk,erro:'Cadastro do produto: '+(e.message||String(e))});}},1);
+    const compradorKeys=[...new Set(pedidos.map(p=>String(p.compradorKey??'').trim()).filter(Boolean))],compradores=new Map();
+    await _emLotesParalelos(compradorKeys,async k=>{try{const c=await _obterCompradorBluesoft(k,cfg);if(c)compradores.set(k,c);}catch(e){falhas.push({compradorKey:k,erro:'Cadastro do comprador: '+(e.message||String(e))});}},2);
+    const agora=new Date().toISOString(),vistos=new Set();let gravados=0;
+    for(const {ped,it,pk:pkOriginal} of itensValidos){const p=produtos.get(pkOriginal)||{};if(p.tipoPrincipal==='CONSUMO'||p.bluesoftTipoProduto==='CONSUMO')continue;const pk=String(p.canonicalKey||p.produtoKey||pkOriginal),fator=Math.max(1,Number(p.fator)||Number(it.fatorEstoque)||1),qUn=Math.max(0,Number(it.quantidadePendente)||0),q=qUn/fator;if(q<=0)continue;const buyerKey=String(ped.compradorKey??'').trim(),buyer=compradores.get(buyerKey)||{},vinculo=vinculosComprador.get(buyerKey)||{},id='bs_compra_'+_idSeguro(ped.numeroPedido)+'_'+_idSeguro(it.itemPedidoKey??pk);vistos.add(id);await fs.collection('pcp_agendamentos').doc(id).set({origem:'bluesoft',lojaId:loja.id,lojaNome:loja.nome||loja.codigo||loja.id,numeroCompra:String(ped.numeroPedido),cod:pk,prodKey:pk,produto:p.nome||('Produto '+pk),bluesoftTipoProduto:p.tipoPrincipal||p.bluesoftTipoProduto||'',fornecedor:String(ped.fornecedorKey||''),fornecedorKey:ped.fornecedorKey||null,quantidade:q,quantidadeRecebida:0,quantidadeUnidades:qUn,fatorCaixa:fator,unidade:'CX',dataPrevista:String(ped.dataEntregaInicial||ped.dataEntregaFinal||'').slice(0,10),dataEntregaFinal:ped.dataEntregaFinal||null,status:'prevista',bluesoftCompradorKey:buyerKey,bluesoftCompradorNome:buyer.nome||('Comprador '+buyerKey),compradorUid:vinculo.compradorUid||'',compradorEmail:vinculo.compradorEmail||'',compradorNome:vinculo.compradorNome||'',regraCompradorId:vinculo.regraId||'',bluesoftSincronizadoEm:agora,atualizadoEm:agora},{merge:true});gravados++;}
+    const snap=await fs.collection('pcp_agendamentos').get();for(const d of snap.docs){const x=d.data()||{};if(x.origem==='bluesoft'&&!vistos.has(d.id))await fs.collection('pcp_agendamentos').doc(d.id).delete();}
+    return {pedidos:pedidos.length,itens:gravados,gravados,falhas};
+  }
+  async function sincronizarHistoricoVendasPcpBluesoft(opcoes) {
+    opcoes=opcoes||{};const {loja,fs,produtos,produtoProducaoPorAlias,cfg}=await _contextoPcpBluesoft();let fim=opcoes.dataFinal?new Date(opcoes.dataFinal+'T12:00:00'):new Date();const meses=[];for(let i=0;i<3;i++){const end=new Date(fim.getFullYear(),fim.getMonth()-i+1,0,23,59),ini=new Date(end.getFullYear(),end.getMonth(),1,0,0);meses.push({ini,end,unidades:new Map(),total:new Map()});}
+    const falhas=[];for(const mes of meses){for(const status of ['ENTREGUE','FATURADO_POR_NOTA_FISCAL','FATURADO_POR_CUPOM']){try{const xs=await _paginarTudo('/api/forca-de-vendas/pedidos',{filialKey:loja.bluesoft_loja_key,pedidoVendaStatus:status,dataEmissaoInicial:_fmtDataBR(mes.ini)+' 00:00',dataEmissaoFinal:_fmtDataBR(mes.end)+' 23:59'},cfg,x=>x.pedidoForcaVendaKey);for(const ped of xs)for(const it of (ped.itens||[])){const pk=String(it.produtoKey??'').trim();if(pk)mes.unidades.set(pk,(mes.unidades.get(pk)||0)+Math.max(0,Number(it.quantidadePedida)||0));}}catch(e){falhas.push({mes:_fmtDataBR(mes.ini),status,erro:e.message||String(e)});}}}
+    const chavesOriginais=new Set(meses.flatMap(m=>Array.from(m.unidades.keys()))),chavesSemNome=Array.from(chavesOriginais);await _emLotesParalelos(chavesSemNome,async pk=>{try{const p=await _obterProdutoEmbalagemVenda(pk,cfg,produtos.get(pk)?.fator);if(!p)return;produtos.set(pk,p);produtos.set(p.canonicalKey,p);await fs.collection('pcp_produtos_bluesoft').doc('produto_'+_idSeguro(p.canonicalKey)).set({cod:p.canonicalKey,nome:p.nome,bluesoftProdutoKey:p.produtoKey,produtoUnitarioKeyBluesoft:p.produtoUnitarioKey,fatorCaixaBluesoft:p.fator,embalagemKeyBluesoft:p.embalagemKey||'',unidadeMedidaBluesoft:p.unidade,bluesoftTipoProduto:p.tipoPrincipal||null,origem:'bluesoft',atualizadoEm:new Date().toISOString()},{merge:true});}catch(e){falhas.push({produtoKey:pk,erro:'Cadastro do produto: '+(e.message||String(e))});}},1);
+    meses.forEach(m=>m.unidades.forEach((un,pkOriginal)=>{const p=produtos.get(pkOriginal)||{},pk=String(p.canonicalKey||p.produtoKey||pkOriginal),f=Math.max(1,Number(p.fator)||1);m.total.set(pk,(m.total.get(pk)||0)+(un/f));}));
+    const keys=new Set(meses.flatMap(m=>Array.from(m.total.keys()))),snap=await fs.collection('producao_projecao').get(),porCod=new Map();snap.docs.forEach(d=>{const x=d.data()||{};porCod.set(String(x.cod??''),d.id);});const agora=new Date().toISOString();let gravados=0;for(const pk of keys){const api=produtos.get(pk)||{},base=produtoProducaoPorAlias.get(pk)||produtoProducaoPorAlias.get(String(api.canonicalKey||''))||produtoProducaoPorAlias.get(String(api.produtoKey||''));if(!base)continue;const cod=String(base.cod??pk),payload={cod,produto:base.nome||base.descricao||base.desc||api.nome||('Produto '+cod),venda_m1:meses[0].total.get(pk)||0,venda_m2:meses[1].total.get(pk)||0,venda_m3:meses[2].total.get(pk)||0,historicoVendasMeses:meses.map(m=>m.ini.toISOString().slice(0,7)),historicoVendasSincronizadoEm:agora,atualizadoEm:agora};const id=porCod.get(cod);if(id)await fs.collection('producao_projecao').doc(id).set(payload,{merge:true});else await fs.collection('producao_projecao').add({...payload,criadoEm:agora});gravados++;}return {gravados,falhas,meses:meses.map(m=>m.ini.toISOString().slice(0,7))};
+  }
+
+  // Versão corrigida: M1 é sempre o mês disponível mais recente. Em bases
+  // de homologação defasadas não grava dois meses zerados (calendário atual)
+  // e um único mês antigo; recua até encontrar três meses com vendas reais.
+  async function sincronizarHistoricoVendasPcpBluesoftCorrigido(opcoes) {
+    opcoes=opcoes||{};
+    const {loja,fs,produtos,produtoProducaoPorAlias,cfg}=await _contextoPcpBluesoft();
+    if(!loja?.bluesoft_loja_key)throw new Error('Loja sem vínculo BlueSoft.');
+    const limite=opcoes.dataFinal?new Date(opcoes.dataFinal+'T12:00:00'):new Date();
+    // Sem data manual, começa pelo último mês encerrado. Com data manual,
+    // considera o mês escolhido pelo usuário como possível M1.
+    const inicioOffset=opcoes.dataFinal?0:1,meses=[],falhas=[];
+    for(let offset=inicioOffset;offset<inicioOffset+15&&meses.length<3;offset++){
+      const ini=new Date(limite.getFullYear(),limite.getMonth()-offset,1,0,0);
+      const end=new Date(ini.getFullYear(),ini.getMonth()+1,0,23,59);
+      const unidades=new Map();
+      for(const status of ['ENTREGUE','FATURADO_POR_NOTA_FISCAL','FATURADO_POR_CUPOM']){
+        try{
+          const xs=await _paginarTudo('/api/forca-de-vendas/pedidos',{filialKey:loja.bluesoft_loja_key,pedidoVendaStatus:status,dataEmissaoInicial:_fmtDataBR(ini)+' 00:00',dataEmissaoFinal:_fmtDataBR(end)+' 23:59'},cfg,x=>x.pedidoForcaVendaKey);
+          for(const ped of xs)for(const it of (ped.itens||[])){const pk=String(it.produtoKey??'').trim();if(pk)unidades.set(pk,(unidades.get(pk)||0)+Math.max(0,Number(it.quantidadePedida)||0));}
+        }catch(e){falhas.push({mes:_fmtDataBR(ini),status,erro:e.message||String(e)});}
+      }
+      if(unidades.size)meses.push({ini,end,unidades,total:new Map()});
+    }
+    while(meses.length<3){const base=meses[meses.length-1]?.ini||limite,ini=new Date(base.getFullYear(),base.getMonth()-1,1);meses.push({ini,end:new Date(ini.getFullYear(),ini.getMonth()+1,0),unidades:new Map(),total:new Map()});}
+    const chavesOriginais=new Set(meses.flatMap(m=>Array.from(m.unidades.keys())));
+    await _emLotesParalelos(Array.from(chavesOriginais),async pk=>{try{const p=await _obterProdutoEmbalagemVenda(pk,cfg,produtos.get(pk)?.fator);if(!p)return;produtos.set(pk,p);produtos.set(p.canonicalKey,p);await fs.collection('pcp_produtos_bluesoft').doc('produto_'+_idSeguro(p.canonicalKey)).set({cod:p.canonicalKey,nome:p.nome,bluesoftProdutoKey:p.produtoKey,produtoUnitarioKeyBluesoft:p.produtoUnitarioKey,fatorCaixaBluesoft:p.fator,embalagemKeyBluesoft:p.embalagemKey||'',unidadeMedidaBluesoft:p.unidade,bluesoftTipoProduto:p.tipoPrincipal||null,origem:'bluesoft',atualizadoEm:new Date().toISOString()},{merge:true});}catch(e){falhas.push({produtoKey:pk,erro:'Cadastro do produto: '+(e.message||String(e))});}},1);
+    meses.forEach(m=>m.unidades.forEach((un,pkOriginal)=>{const p=produtos.get(pkOriginal)||{},pk=String(p.canonicalKey||p.produtoKey||pkOriginal),f=Math.max(1,Number(p.fator)||1);m.total.set(pk,(m.total.get(pk)||0)+(un/f));}));
+    const keys=new Set(meses.flatMap(m=>Array.from(m.total.keys()))),snap=await fs.collection('producao_projecao').get(),porCod=new Map();
+    snap.docs.forEach(d=>{const x=d.data()||{};porCod.set(String(x.cod??''),d.id);});
+    const agora=new Date().toISOString(),labels=meses.map(m=>m.ini.toISOString().slice(0,7));let gravados=0;
+    for(const pk of keys){const api=produtos.get(pk)||{},base=produtoProducaoPorAlias.get(pk)||produtoProducaoPorAlias.get(String(api.canonicalKey||''))||produtoProducaoPorAlias.get(String(api.produtoKey||''));if(!base)continue;const cod=String(base.cod??pk),payload={cod,produto:base.nome||base.descricao||base.desc||api.nome||('Produto '+cod),venda_m1:meses[0].total.get(pk)||0,venda_m2:meses[1].total.get(pk)||0,venda_m3:meses[2].total.get(pk)||0,historicoVendasMeses:labels,historicoVendasSincronizadoEm:agora,atualizadoEm:agora};const id=porCod.get(cod);if(id)await fs.collection('producao_projecao').doc(id).set(payload,{merge:true});else await fs.collection('producao_projecao').add({...payload,criadoEm:agora});gravados++;}
+    return {gravados,falhas,meses:labels};
+  }
+  sincronizarHistoricoVendasPcpBluesoft=sincronizarHistoricoVendasPcpBluesoftCorrigido;
+  global.sincronizarPedidosVendaPcpBluesoft=sincronizarPedidosVendaPcpBluesoft;
+  global.sincronizarPedidosCompraPendentesPcpBluesoft=sincronizarPedidosCompraPendentesPcpBluesoft;
+  global.sincronizarHistoricoVendasPcpBluesoft=sincronizarHistoricoVendasPcpBluesoft;
+
+  // Busca geral do PCP/Compras: percorre todas as lojas vinculadas sem
+  // disparar troca visual de loja. Cada função continua gravando na
+  // subcoleção correta; ao terminar, a seleção original é restaurada.
+  async function sincronizarTodasLojasPcpBluesoft(opcoes) {
+    opcoes=opcoes||{};const rawFs=raw(),snap=await rawFs.collection('lojas').get();
+    const lojas=snap.docs.map(d=>({id:d.id,...d.data()})).filter(l=>l.ativa!==false&&l.bluesoft_loja_key);
+    const chave=global.DT_LOJA_KEY||'dt_loja_ativa_v1',original=global.getDTLojaAtiva?.()||'';
+    const totais={lojas:0,produtos:0,estoques:0,insumos:0,pedidosVenda:0,pedidosCompra:0,historicos:0,falhas:[]};
+    try{
+      for(let i=0;i<lojas.length;i++){
+        const loja=lojas[i];localStorage.setItem(chave,loja.id);opcoes.onEtapa?.(i+1,lojas.length,loja.nome||loja.codigo||loja.id);
+        try{const p=await sincronizarProdutosBluesoft({tipos:['PRODUTO_ACABADO','VENDA','INSUMO','EMBALAGEM']});totais.produtos+=p.gravados??p.total??0;}catch(e){totais.falhas.push({loja:loja.id,etapa:'Produtos',erro:e.message||String(e)});}
+        try{const s=await sincronizarEstoqueBluesoft({});totais.estoques+=s.total??s.atualizados??0;}catch(e){totais.falhas.push({loja:loja.id,etapa:'Estoque',erro:e.message||String(e)});}
+        try{const x=await sincronizarInsumosBluesoft({});totais.insumos+=x.comEstoque??x.gravados??0;}catch(e){totais.falhas.push({loja:loja.id,etapa:'Insumos',erro:e.message||String(e)});}
+        try{const v=await sincronizarPedidosVendaPcpBluesoft({});totais.pedidosVenda+=v.produtos??v.itens??0;}catch(e){totais.falhas.push({loja:loja.id,etapa:'Pedidos de clientes',erro:e.message||String(e)});}
+        try{const c=await sincronizarPedidosCompraPendentesPcpBluesoft({});totais.pedidosCompra+=c.itens??0;}catch(e){totais.falhas.push({loja:loja.id,etapa:'Pedidos de fornecedores',erro:e.message||String(e)});}
+        try{const h=await sincronizarHistoricoVendasPcpBluesoft(opcoes.dataFinal?{dataFinal:opcoes.dataFinal}:{});totais.historicos+=h.gravados??0;}catch(e){totais.falhas.push({loja:loja.id,etapa:'Histórico',erro:e.message||String(e)});}
+        totais.lojas++;
+      }
+    } finally {if(original)localStorage.setItem(chave,original);else localStorage.removeItem(chave);}
+    return totais;
+  }
+  global.sincronizarTodasLojasPcpBluesoft=sincronizarTodasLojasPcpBluesoft;
 
   // ── Agenda (fase 15, seção 18) — a Bluesoft não tem "agendamento de
   // mercadoria"/YMS confirmado (checado à exaustão no schema oficial: só
@@ -1163,27 +1491,66 @@
   // `status`/`observacao` depois de criado, porque o Analista pode ter
   // marcado como Utilizado/Cancelado ou anotado algo à mão (mesmo espírito
   // de nunca sobrescrever `chegadaPortaria` no recebimento).
-  async function sincronizarAgendaBluesoft() {
+  // PEDIDO AO VIVO (2026-08-24): sem período explícito, continua buscando
+  // TODOS os pedidos de entrega pendente (sem filtro de data — como já era)
+  // — mas o usuário quer poder restringir a uma janela específica (ex.:
+  // testando contra uma cópia de homologação datada de junho, onde uma
+  // busca sem filtro pode incluir/excluir coisa inesperada dependendo de
+  // como a Bluesoft trata período ausente).
+  async function sincronizarAgendaBluesoft(opcoes) {
+    opcoes = opcoes || {};
     const lojaId = global.getDTLojaAtiva?.();
     if (!lojaId) throw new Error('Nenhuma loja selecionada.');
     const lojaSnap = await raw().collection('lojas').doc(lojaId).get();
     if (!lojaSnap.exists) throw new Error('Loja não encontrada.');
     const loja = { id: lojaId, ...lojaSnap.data() };
-    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à Bluesoft (bluesoft_loja_key). Vincule em Gestão de Lojas.');
+    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à integração (bluesoft_loja_key). Vincule em Gestão de Lojas.');
     const lojaKey = loja.bluesoft_loja_key;
+    const filtrosPedidos = { lojaKey };
+    if (opcoes.dataInicial || opcoes.dataFinal) {
+      const periodo = _resolverPeriodoBluesoft(opcoes);
+      filtrosPedidos.dataEntregaInicial = _fmtDataBR(periodo.inicio);
+      filtrosPedidos.dataEntregaFinal = _fmtDataBR(periodo.fim);
+    }
 
-    const [pedidos, fornecedores] = await Promise.all([
-      obterPedidosCompraBluesoft({ lojaKey }),
+    const [pedidos, fornecedores, pcpSnap] = await Promise.all([
+      obterPedidosCompraBluesoft(filtrosPedidos),
       obterFornecedoresBluesoft(false),
+      global.getDTFirestore().collection('pcp_agendamentos').get().catch(()=>({docs:[]})),
     ]);
     const fornecedorPorKey = new Map(fornecedores.map(f => [f.fornecedorKey, f.nome]));
-    const pendentes = pedidos.filter(p => p.entregaPendente && p.numeroPedido != null);
-
+    // Compras/PCP usa /api/compras/pedidospendentes, que é a fonte que
+    // efetivamente devolve os pedidos ainda abertos nesta instalação. A
+    // Agenda antiga consultava só /pedidos-de-compra e podia dizer "0"
+    // mesmo com a tela de Recebimentos cheia. Reaproveita os documentos já
+    // sincronizados e agrupa os vários itens numa única carga por pedido.
+    const porPedidoPcp=new Map();
+    pcpSnap.docs.forEach(d=>{const x=d.data()||{};if(x.origem!=='bluesoft'||!x.numeroCompra||/final|cancel/i.test(String(x.status||'')))return;const numero=String(x.numeroCompra),a=porPedidoPcp.get(numero)||{numeroPedido:numero,lojaId:x.lojaId||loja.id,lojaNome:x.lojaNome||loja.nome||loja.codigo||loja.id,fornecedorKey:x.fornecedorKey||x.fornecedor||'',fornecedorNome:x.fornecedorNome||'',dataEntregaInicial:x.dataPrevista||'',dataEntregaFinal:x.dataEntregaFinal||null,entregaPendente:true,compradorNome:x.compradorNome||x.bluesoftCompradorNome||'',itens:[]};a.itens.push({produto:x.produto||'',tipoProduto:x.bluesoftTipoProduto||x.tipoProduto||'',quantidadePendente:Math.max(0,Number(x.quantidade||0)-Number(x.quantidadeRecebida||0))});if(!a.compradorNome)a.compradorNome=x.compradorNome||x.bluesoftCompradorNome||'';porPedidoPcp.set(numero,a);});
+    const pedidosPcp=[...porPedidoPcp.values()],fontePedidos=pedidosPcp.length?pedidosPcp:pedidos;
+    const pendentes = fontePedidos.filter(p => p.entregaPendente && p.numeroPedido != null);
+    const { criados, atualizados } = await _gravarAgendaPendentes(pendentes, loja, fornecedorPorKey);
+    // totalPedidos (sem filtro nenhum) ajuda a diferenciar duas situações
+    // que dão "0 pendente" mas são bem diferentes: totalPedidos:0 quer dizer
+    // que a loja não tem NENHUM Pedido de Compra na Bluesoft (não usa esse
+    // módulo — provavelmente lança nota direto, sem PO — o que também
+    // explica toda nota aparecer "sem comparação" na Divergência, já que os
+    // dois dependem do mesmo dado); totalPedidos > 0 com pendentes:0 quer
+    // dizer que a loja usa Pedido de Compra só que está tudo já entregue.
+    return { totalPedidos: fontePedidos.length, totalPedidosPendentes: pendentes.length, criados, atualizados, fonte:pedidosPcp.length?'pcp_agendamentos':'pedidos-de-compra', falhas: pedidos.falhas || [] };
+  }
+  // Extraído de sincronizarAgendaBluesoft pra ser reaproveitado pelo import
+  // direto do BI (compras_a_receber.json — ver importarComprasAReceberBiJson
+  // mais abaixo): MESMO shape de `pendentes` ({numeroPedido, lojaId,
+  // lojaNome, fornecedorNome|fornecedorKey, dataEntregaInicial,
+  // dataEntregaFinal, compradorNome, itens}), MESMA lógica de merge — só
+  // muda de onde `pendentes` veio (API da Bluesoft, ou JSON do BI).
+  async function _gravarAgendaPendentes(pendentes, loja, fornecedorPorKey) {
+    fornecedorPorKey = fornecedorPorKey || new Map();
     const fs = global.getDTFirestore();
     const rawFs = raw();
     const snap = await fs.collection('recebimento_agendamentos').get();
     const docPorNumeroPedido = new Map();
-    snap.docs.forEach(d => { const x = d.data() || {}; if (x.numeroPedido != null) docPorNumeroPedido.set(String(x.numeroPedido), d.id); });
+    snap.docs.forEach(d => { const x = d.data() || {}; if (x.numeroPedido != null) docPorNumeroPedido.set(String(x.numeroPedido), {id:d.id,dados:x}); });
 
     const agora = new Date().toISOString();
     let criados = 0, atualizados = 0;
@@ -1191,18 +1558,19 @@
       const lote = pendentes.slice(i, i + 300);
       const batch = rawFs.batch();
       lote.forEach(p => {
-        const fornecedorNome = fornecedorPorKey.get(p.fornecedorKey) || ('Fornecedor ' + p.fornecedorKey);
-        const dataAgendada = p.dataEntregaInicial ? String(p.dataEntregaInicial).slice(0, 10) : '';
-        const docId = docPorNumeroPedido.get(String(p.numeroPedido));
-        if (docId) {
-          batch.set(fs.collection('recebimento_agendamentos').doc(docId), {
-            origem: 'bluesoft', numeroPedido: p.numeroPedido, fornecedorNome, dataAgendada,
-            dataEntregaFinal: p.dataEntregaFinal || null, bluesoftSincronizadoEm: agora, atualizadoEm: agora,
+        const fornecedorNome = p.fornecedorNome || fornecedorPorKey.get(p.fornecedorKey) || ('Fornecedor ' + p.fornecedorKey);
+        const dataPrevista = p.dataEntregaInicial ? String(p.dataEntregaInicial).slice(0, 10) : '';
+        const existente = docPorNumeroPedido.get(String(p.numeroPedido));
+        if (existente) {
+          const limparPrevisaoAntiga = existente.dados.origem==='bluesoft' && !existente.dados.agendamentoConfirmadoManual;
+          batch.set(fs.collection('recebimento_agendamentos').doc(existente.id), {
+            origem: 'bluesoft', lojaId:p.lojaId||loja.id, lojaNome:p.lojaNome||loja.nome||loja.codigo||loja.id, numeroPedido: p.numeroPedido, fornecedorNome, dataPrevista,
+            ...(limparPrevisaoAntiga?{dataAgendada:''}:{}), dataEntregaFinal: p.dataEntregaFinal || null, compradorNome:p.compradorNome||'', itensPedido:p.itens||[], bluesoftSincronizadoEm: agora, atualizadoEm: agora,
           }, { merge: true });
           atualizados++;
         } else {
           batch.set(fs.collection('recebimento_agendamentos').doc(), {
-            origem: 'bluesoft', numeroPedido: p.numeroPedido, fornecedorNome, dataAgendada,
+            origem: 'bluesoft', lojaId:p.lojaId||loja.id, lojaNome:p.lojaNome||loja.nome||loja.codigo||loja.id, numeroPedido: p.numeroPedido, fornecedorNome, dataPrevista, dataAgendada:'', compradorNome:p.compradorNome||'', itensPedido:p.itens||[],
             dataEntregaFinal: p.dataEntregaFinal || null, horaAgendada: '', codigo: 'PC-' + p.numeroPedido,
             motoristaNome: '', placa: '', status: 'AGENDADO',
             observacao: 'Pedido de compra #' + p.numeroPedido + ' — sincronizado da Bluesoft',
@@ -1213,16 +1581,59 @@
       });
       await batch.commit();
     }
-    // totalPedidos (sem filtro nenhum) ajuda a diferenciar duas situações
-    // que dão "0 pendente" mas são bem diferentes: totalPedidos:0 quer dizer
-    // que a loja não tem NENHUM Pedido de Compra na Bluesoft (não usa esse
-    // módulo — provavelmente lança nota direto, sem PO — o que também
-    // explica toda nota aparecer "sem comparação" na Divergência, já que os
-    // dois dependem do mesmo dado); totalPedidos > 0 com pendentes:0 quer
-    // dizer que a loja usa Pedido de Compra só que está tudo já entregue.
-    return { totalPedidos: pedidos.length, totalPedidosPendentes: pendentes.length, criados, atualizados };
+    return { criados, atualizados };
+  }
+
+  // PEDIDO AO VIVO (2026-08-26): mesmo padrão de "conecta a pasta do BI uma
+  // vez, clica em Buscar" das outras telas — compras_a_receber.json é uma
+  // linha por ENTREGA (parcela) de um pedido_key, podendo ter várias
+  // entregas E vários produtos pro mesmo pedido; agrupa tudo por pedido
+  // antes de gravar (data prevista = mínima data_entrega_inicial entre as
+  // entregas pendentes, data final = máxima data_entrega_final, itens
+  // somados por produto).
+  function _agruparComprasAReceberBiPorPedido(itens, lojaKeyFiltro) {
+    const porPedido = new Map();
+    itens.forEach(it => {
+      if (lojaKeyFiltro != null && String(it.loja_key) !== String(lojaKeyFiltro)) return;
+      const pendente = Number(it.qtd_unidades_pendentes) || 0;
+      if (pendente <= 0) return;
+      const numeroPedido = it.pedido_key != null ? String(it.pedido_key) : '';
+      if (!numeroPedido) return;
+      if (!porPedido.has(numeroPedido)) {
+        porPedido.set(numeroPedido, { numeroPedido, fornecedorNome: it.fornecedor || '', compradorNome: it.comprador || '', dataEntregaInicial: '', dataEntregaFinal: '', itensPorProduto: new Map() });
+      }
+      const pedido = porPedido.get(numeroPedido);
+      const dataIni = it.data_entrega_inicial ? String(it.data_entrega_inicial).slice(0, 10) : '';
+      const dataFim = it.data_entrega_final ? String(it.data_entrega_final).slice(0, 10) : '';
+      if (dataIni && (!pedido.dataEntregaInicial || dataIni < pedido.dataEntregaInicial)) pedido.dataEntregaInicial = dataIni;
+      if (dataFim && (!pedido.dataEntregaFinal || dataFim > pedido.dataEntregaFinal)) pedido.dataEntregaFinal = dataFim;
+      const chaveProduto = it.produto_key != null ? String(it.produto_key) : (it.descricao || '');
+      const atual = pedido.itensPorProduto.get(chaveProduto) || { produto: it.descricao || '', tipoProduto: '', quantidadePendente: 0 };
+      atual.quantidadePendente += pendente;
+      pedido.itensPorProduto.set(chaveProduto, atual);
+    });
+    return [...porPedido.values()].map(p => ({
+      numeroPedido: p.numeroPedido, fornecedorNome: p.fornecedorNome, compradorNome: p.compradorNome,
+      entregaPendente: true, dataEntregaInicial: p.dataEntregaInicial, dataEntregaFinal: p.dataEntregaFinal,
+      itens: [...p.itensPorProduto.values()],
+    }));
+  }
+
+  async function importarComprasAReceberBiJson(registros) {
+    if (!Array.isArray(registros)) throw new Error('Formato inesperado — esperava uma lista de registros.');
+    const lojaId = global.getDTLojaAtiva?.();
+    if (!lojaId) throw new Error('Nenhuma loja selecionada.');
+    const lojaSnap = await raw().collection('lojas').doc(lojaId).get();
+    if (!lojaSnap.exists) throw new Error('Loja não encontrada.');
+    const loja = { id: lojaId, ...lojaSnap.data() };
+    const lojaKey = loja.bluesoft_loja_key != null ? loja.bluesoft_loja_key : null;
+    const pendentes = _agruparComprasAReceberBiPorPedido(registros, lojaKey);
+    if (!pendentes.length) throw new Error('Nenhum pedido de compra pendente encontrado' + (lojaKey != null ? ' para esta loja (loja_key ' + lojaKey + ' na Bluesoft).' : '.'));
+    const { criados, atualizados } = await _gravarAgendaPendentes(pendentes, loja);
+    return { totalPedidosPendentes: pendentes.length, criados, atualizados };
   }
   global.sincronizarAgendaBluesoft = sincronizarAgendaBluesoft;
+  global.importarComprasAReceberBiJson = importarComprasAReceberBiJson;
   // Usado por 91-logistica-recebimento.js e 94-recebimento-relatorios.js
   // pra excluir devolução das telas de recebimento sem duplicar a lista
   // de valores do enum em cada arquivo.
@@ -1245,6 +1656,22 @@
   // estoque/insumos) — o catálogo "ATIVO" da Bluesoft sozinho é muito maior
   // que o que a loja realmente movimenta; o restante fica de fora pra
   // cadastro manual, como pedido.
+  // PEDIDO AO VIVO: "não precisa buscar vários milhares de SKUs, só buscar
+  // o que tem estoque... e caso tenha saldo zero mas tenha pedido de venda
+  // pendente, trazer também" — a versão antiga buscava o CATÁLOGO INTEIRO
+  // (todos os tipos pedidos, sem filtro de estoque — inclui produto fora
+  // de linha há anos) e só DEPOIS cruzava com o estoque, jogando fora quem
+  // não tinha estoque. Isso multiplicava o número de páginas buscadas na
+  // Bluesoft (catálogo inteiro inteiro + estoque inteiro) — bem mais
+  // exposto à instabilidade da Bluesoft do que uma busca de notas com
+  // período filtrado (que já funciona em Recebimento/Recusas). Invertido:
+  // busca o ESTOQUE primeiro (obterEstoqueBluesoft já aplica exatamente o
+  // critério pedido via _estoqueRelevante — saldo diferente de zero OU
+  // pedido de venda pendente represado OU trânsito), e só busca detalhe de
+  // catálogo (nome/tipo/GTIN/fornecedor) PRODUTO A PRODUTO, um lookup
+  // targetado só pra quem tem estoque relevante — mesmo padrão já usado e
+  // comprovado em Notas Retornadas (nunca varre o catálogo inteiro pra
+  // completar descrição de item).
   async function sincronizarProdutosBluesoft(opcoes) {
     opcoes = opcoes || {};
     const lojaId = global.getDTLojaAtiva?.();
@@ -1252,11 +1679,31 @@
     const lojaSnap = await raw().collection('lojas').doc(lojaId).get();
     if (!lojaSnap.exists) throw new Error('Loja não encontrada.');
     const loja = { id: lojaId, ...lojaSnap.data() };
-    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à Bluesoft (bluesoft_loja_key). Vincule em Gestão de Lojas.');
-    const catalogoBruto = await obterCatalogoBluesoft(true, opcoes);
+    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à integração (bluesoft_loja_key). Vincule em Gestão de Lojas.');
+    const cfg = await _config();
     const resultadoEstoque = await obterEstoqueBluesoft(loja, true, { onProgresso: opcoes.onProgresso });
-    const comEstoque = new Set(resultadoEstoque.itens.map(e => e.produtoKey));
-    const catalogo = catalogoBruto.filter(p => comEstoque.has(p.produtoKey));
+    const tiposAlvo = new Set((opcoes.tipos && opcoes.tipos.length) ? opcoes.tipos : ['PRODUTO_ACABADO', 'VENDA']);
+    const produtoPorKey = new Map();
+    const falhasLookup = [];
+    await _emLotesParalelos(resultadoEstoque.itens, async e => {
+      try {
+        const produto = await _obterProdutoEmbalagemVenda(e.produtoKey, cfg, e.fatorEstoque);
+        produtoPorKey.set(e.produtoKey, produto || { produtoKey: e.produtoKey, cod: String(e.produtoKey), nome: e.descricaoProduto||'', unidade: '', gtin: '', status: 'ATIVO', categoria: '', fornecedorPadraoKey: null, fornecedorPadraoNome: '', multiploCompraSugerido: null, tipoPrincipal: '' });
+      } catch (err) {
+        falhasLookup.push({ produtoKey: e.produtoKey, erro: err.message || String(err) });
+        // Produto com estoque real confirmado mas cujo detalhe de catálogo
+        // falhou ainda entra (sem nome/tipo) — a alternativa (sumir) recria
+        // exatamente a queixa "não traz todas as matérias-primas/embalagens".
+        produtoPorKey.set(e.produtoKey, { produtoKey: e.produtoKey, cod: String(e.produtoKey), nome: '', unidade: '', gtin: '', status: 'ATIVO', categoria: '', fornecedorPadraoKey: null, fornecedorPadraoNome: '', multiploCompraSugerido: null, tipoPrincipal: '' });
+      }
+    });
+    const catalogoBruto = Array.from(produtoPorKey.values());
+    // Item sem tipo reconhecido (lookup falhou, ou a Bluesoft não marcou
+    // nenhuma flag de tipoProduto) ainda assim fica visível — só o tipo
+    // pedido explicitamente filtra fora quem TEM um tipo diferente do
+    // pedido; nunca filtra fora quem não tem tipo nenhum.
+    const catalogo = catalogoBruto.filter(p => !p.tipoPrincipal || tiposAlvo.has(p.tipoPrincipal));
+    const falhas = (resultadoEstoque.falhas || []).map(f => ({ tipo: '(estoque)', erro: f.erro })).concat(falhasLookup.map(f => ({ tipo: 'produtoKey ' + f.produtoKey, erro: f.erro })));
     const fs = global.getDTFirestore();
     const rawFs = raw();
     const snap = await fs.collection('producao_produtos').get();
@@ -1280,6 +1727,8 @@
           nome: p.nome, unidadeMedidaBluesoft: p.unidade, gtin: p.gtin, ativo: p.status === 'ATIVO',
           categoria: p.categoria, fornecedorPadrao: p.fornecedorPadraoNome, fornecedorPadraoKey: p.fornecedorPadraoKey,
           bluesoftProdutoKey: p.produtoKey, bluesoftTipoProduto: p.tipoPrincipal || null,
+          fatorCaixaBluesoft: p.fatorEstoque, produtoUnitarioKeyBluesoft: p.produtoUnitarioKey,
+          embalagemKeyBluesoft: p.embalagemKey || '', caixaBluesoft: p.caixa,
           bluesoftSincronizadoEm: agora, atualizadoEm: agora, atualizadoPor: autor,
         };
         // Pré-preenche múltiplo de compra só se o PCP ainda não configurou
@@ -1287,13 +1736,12 @@
         if (p.multiploCompraSugerido && !(existente && Number(existente.multiploCompra) > 0)) {
           payload.multiploCompra = p.multiploCompraSugerido;
         }
+        const pcpProdutosCol=fs.collection('pcp_produtos_bluesoft');
+        if(typeof pcpProdutosCol.doc==='function')batch.set(pcpProdutosCol.doc('produto_'+_idSeguro(p.cod)), { ...payload, cod:p.cod, origem:'bluesoft' }, { merge:true });
         if (docId) {
           batch.set(fs.collection('producao_produtos').doc(docId), payload, { merge: true });
           atualizados++;
-        } else {
-          batch.set(fs.collection('producao_produtos').doc(), { ...payload, cod: p.cod, criadoEm: agora, criadoPor: autor }, { merge: true });
-          criados++;
-        }
+        } else criados++; // criado somente no catálogo auxiliar do PCP
       });
       await batch.commit();
     }
@@ -1304,16 +1752,25 @@
     // produto de EMBALAGEM sincronizado antes não pode ser apagado só
     // porque esta chamada só pediu VENDA) e nunca toca produto que Ficha
     // Técnica ou Parâmetros PCP já configuraram.
-    const tiposAtuais = new Set((opcoes.tipos && opcoes.tipos.length) ? opcoes.tipos : ['PRODUTO_ACABADO', 'VENDA']);
     const chavesAtuais = new Set(catalogo.map(p => String(p.produtoKey)));
     const alvosRemocao = [];
-    docs.forEach((x, id) => {
-      if (x.bluesoftProdutoKey == null) return;
-      if (!tiposAtuais.has(x.bluesoftTipoProduto)) return;
-      if (chavesAtuais.has(String(x.bluesoftProdutoKey))) return;
-      if (_produtoProtegidoPcp(x)) return;
-      alvosRemocao.push(id);
-    });
+    // PEDIDO AO VIVO (correção de segurança, achada revisando o mesmo bug):
+    // se a busca veio INCOMPLETA (falhas.length>0 — página de estoque ou
+    // lookup de produto que não voltou), um produto que só não apareceu
+    // por causa dessa falha NÃO pode ser confundido com "perdeu o estoque
+    // de verdade" e ser apagado. Reconciliação só roda numa busca que
+    // terminou sem nenhuma falha registrada — senão, cada tentativa que
+    // esbarra numa instabilidade da Bluesoft piora a base em vez de só
+    // deixar de atualizar.
+    if (!falhas.length) {
+      docs.forEach((x, id) => {
+        if (x.bluesoftProdutoKey == null) return;
+        if (!tiposAlvo.has(x.bluesoftTipoProduto)) return;
+        if (chavesAtuais.has(String(x.bluesoftProdutoKey))) return;
+        if (_produtoProtegidoPcp(x)) return;
+        alvosRemocao.push(id);
+      });
+    }
     let removidos = 0;
     for (let i = 0; i < alvosRemocao.length; i += 300) {
       const lote = alvosRemocao.slice(i, i + 300);
@@ -1323,7 +1780,7 @@
       removidos += lote.length;
     }
     _invalidarCachesDependentes();
-    return { totalCatalogo: catalogoBruto.length, comEstoque: catalogo.length, total: catalogo.length, criados, atualizados, removidos, falhas: catalogoBruto.falhas || [] };
+    return { totalCatalogo: resultadoEstoque.itens.length, comEstoque: catalogo.length, total: catalogo.length, criados, atualizados, removidos, falhas };
   }
   global.sincronizarProdutosBluesoft = sincronizarProdutosBluesoft;
 
@@ -1353,16 +1810,38 @@
     const lojaSnap = await raw().collection('lojas').doc(lojaId).get();
     if (!lojaSnap.exists) throw new Error('Loja não encontrada.');
     const loja = { id: lojaId, ...lojaSnap.data() };
-    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à Bluesoft (bluesoft_loja_key). Vincule em Gestão de Lojas.');
+    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à integração (bluesoft_loja_key). Vincule em Gestão de Lojas.');
     const fs = global.getDTFirestore();
     const rawFs = raw();
-    const [resultadoEstoque, produtosSnap] = await Promise.all([
+    const [resultadoEstoque, produtosSnap, pcpProdutosSnap] = await Promise.all([
       obterEstoqueBluesoft(loja, true, { onProgresso: opcoes.onProgresso }),
       fs.collection('producao_produtos').get(),
+      fs.collection('pcp_produtos_bluesoft').get().catch(()=>({docs:[]})),
     ]);
     const itensEstoque = resultadoEstoque.itens;
-    const nomesPorCod = new Map();
-    produtosSnap.docs.forEach(d => { const x = d.data() || {}; if (x.cod != null) nomesPorCod.set(String(x.cod).trim(), x.nome || ''); });
+    const nomesPorCod = new Map(), fatoresPorCod=new Map(), canonicalPorCod=new Map(), tiposPorCod=new Map();
+    pcpProdutosSnap.docs.forEach(d=>{const x=d.data()||{},k=String(x.cod??x.bluesoftProdutoKey??'').trim();if(k){nomesPorCod.set(k,x.nome||'');fatoresPorCod.set(k,Math.max(1,Number(x.fatorCaixaBluesoft)||1));tiposPorCod.set(k,String(x.bluesoftTipoProduto||x.tipoPrincipal||'').toUpperCase());canonicalPorCod.set(k,k);const unit=String(x.produtoUnitarioKeyBluesoft??'').trim();if(unit){canonicalPorCod.set(unit,k);tiposPorCod.set(unit,tiposPorCod.get(k)||'');}}});
+    const produtoProducaoPorAlias=new Map();
+    produtosSnap.docs.forEach(d => { const x = d.data() || {}; if (x.cod != null){const k=String(x.cod).trim();nomesPorCod.set(k,x.nome||x.descricao||'');fatoresPorCod.set(k,Math.max(1,Number(x.unid)||Number(x.fatorCaixaBluesoft)||1));[x.cod,x.bluesoftProdutoKey,x.produtoUnitarioKeyBluesoft,x.produtoUnitarioKey].forEach(a=>{a=String(a??'').trim();if(a)produtoProducaoPorAlias.set(a,{id:d.id,...x,cod:k});});} });
+    // A sincronização de estoque também precisa funcionar quando a etapa de
+    // catálogo foi parcial ou não foi executada antes. Resolve somente os
+    // itens relevantes ainda sem vínculo/nome e registra todos os aliases
+    // (embalagem comercial e produto unitário) antes de gravar os saldos.
+    // Assim a descrição e o estoque sempre chegam ao mesmo documento.
+    // Revalida todos os itens relevantes nesta rodada para também reparar
+    // nomes incorretos persistidos por versões anteriores.
+    const semVinculo=itensEstoque;
+    const enriquecidos=[];
+    await _emLotesParalelos(semVinculo,async e=>{
+      const original=String(e.produtoKey??e.cod??'').trim();if(!original)return;
+      try{const p=await _obterProdutoEmbalagemVenda(original,await _config(),e.fatorEstoque);if(p)enriquecidos.push(p);}catch(err){/* saldo continua sendo gravado com o dado local */}
+    },1);
+    for(const p of enriquecidos){
+      const canon=String(p.canonicalKey||p.produtoKey||'').trim();if(!canon)continue;
+      [canon,p.produtoKey,p.produtoUnitarioKey].forEach(a=>{a=String(a??'').trim();if(a)canonicalPorCod.set(a,canon);});
+      nomesPorCod.set(canon,p.nome||'');fatoresPorCod.set(canon,Math.max(1,Number(p.fator)||1));tiposPorCod.set(canon,String(p.tipoPrincipal||'').toUpperCase());
+      await fs.collection('pcp_produtos_bluesoft').doc('produto_'+_idSeguro(canon)).set({cod:canon,nome:p.nome||'',bluesoftProdutoKey:p.produtoKey,produtoUnitarioKeyBluesoft:p.produtoUnitarioKey??null,fatorCaixaBluesoft:Math.max(1,Number(p.fator)||1),embalagemKeyBluesoft:p.embalagemKey||'',unidadeMedidaBluesoft:p.unidade||'',bluesoftTipoProduto:p.tipoPrincipal||null,origem:'bluesoft',atualizadoEm:new Date().toISOString()},{merge:true});
+    }
     const snap = await fs.collection('producao_projecao').get();
     const porCod = new Map(), docsProjecao = new Map();
     snap.docs.forEach(d => {
@@ -1377,20 +1856,26 @@
       const lote = itensEstoque.slice(i, i + 300);
       const batch = rawFs.batch();
       lote.forEach(e => {
-        const payload = { estoqueAtual: e.estoqueAtual, bluesoftSincronizadoEm: agora, atualizadoEm: agora, atualizadoPor: autor };
+        const codOriginal=String(e.cod),cod=canonicalPorCod.get(codOriginal)||codOriginal;
+        if(tiposPorCod.get(cod)==='CONSUMO'||tiposPorCod.get(codOriginal)==='CONSUMO')return;
+        const unidades=e.estoqueAtualUnidades ?? (e.estoqueAtual*(e.fatorEstoque||1)),fator=Math.max(1,Number(fatoresPorCod.get(cod))||Number(e.fatorEstoque)||1);
+        const payload = { estoqueAtual: unidades/fator, estoqueAtualUnidades: unidades, fatorCaixa: fator, unidadeExibicao:'CX', bluesoftSincronizadoEm: agora, atualizadoEm: agora, atualizadoPor: autor };
         if (e.estoqueReservado != null) payload.estoqueReservado = e.estoqueReservado;
         if (e.estoqueEmTransito != null) payload.estoqueEmTransito = e.estoqueEmTransito;
         if (e.pedidosVendaPendentes != null) payload.estoqueReservadoVenda = e.pedidosVendaPendentes;
         if (e.custoUltimaCompra != null) payload.custoUltimaCompra = e.custoUltimaCompra;
         if (e.custoMedioContabil != null) payload.custoMedioContabil = e.custoMedioContabil;
         if (e.consumoDiaMedio != null) payload.consumoDiaMedioBluesoft = e.consumoDiaMedio;
-        const docId = porCod.get(e.cod);
-        if (docId) {
-          batch.set(fs.collection('producao_projecao').doc(docId), payload, { merge: true });
-          atualizados++;
-        } else {
-          batch.set(fs.collection('producao_projecao').doc(), { ...payload, cod: e.cod, produto: nomesPorCod.get(e.cod) || ('Produto ' + e.cod), criadoEm: agora }, { merge: true });
-          criados++;
+        // PCP/Compras recebem todo o estoque relevante. Produção recebe
+        // somente códigos já aprovados no Cadastro de Produtos da loja.
+        const pcpEstoqueCol=fs.collection('pcp_estoque_bluesoft');
+        if(typeof pcpEstoqueCol.doc==='function')batch.set(pcpEstoqueCol.doc('produto_'+_idSeguro(cod)), { ...payload, cod, produto:nomesPorCod.get(cod)||e.descricaoProduto||('Produto '+cod), produtoUnitarioKey:e.produtoUnitarioKey??codOriginal, origem:'bluesoft' }, { merge:true });
+        const base=produtoProducaoPorAlias.get(cod)||produtoProducaoPorAlias.get(codOriginal)||produtoProducaoPorAlias.get(String(e.produtoUnitarioKey??''));
+        if (base) {
+          const codProducao=String(base.cod),docId=porCod.get(codProducao);
+          const dadosProducao={...payload,cod:codProducao,produto:base.nome||base.descricao||base.desc||nomesPorCod.get(cod)||e.descricaoProduto||('Produto '+codProducao)};
+          if(docId){batch.set(fs.collection('producao_projecao').doc(docId),dadosProducao,{merge:true});atualizados++;}
+          else if(typeof fs.collection('producao_projecao').doc==='function'){batch.set(fs.collection('producao_projecao').doc(),{...dadosProducao,criadoEm:agora},{merge:true});criados++;}
         }
       });
       await batch.commit();
@@ -1400,14 +1885,21 @@
     // sincronizado antes que não voltou nesta rodada perdeu a relevância de
     // verdade (zerou e sem pedido pendente) — remove pra não acumular ruído
     // que trava as telas do PCP.
-    const chavesAtuais = new Set(itensEstoque.map(e => String(e.cod)));
+    // PEDIDO AO VIVO (correção de segurança): se `obterEstoqueBluesoft`
+    // registrou falhas (página que não voltou mesmo após tentar de novo),
+    // a busca está INCOMPLETA — um produto que só não apareceu por causa
+    // dessa falha não pode ser confundido com "zerou de verdade" e ser
+    // apagado da base. Só reconcilia numa busca sem nenhuma falha.
+    const chavesAtuais = new Set(itensEstoque.map(e => canonicalPorCod.get(String(e.cod))||String(e.cod)).filter(c=>tiposPorCod.get(c)!=='CONSUMO'));
     const alvosRemocao = [];
-    docsProjecao.forEach((x, id) => {
-      if (!x.bluesoftSincronizadoEm) return;
-      if (x.cod != null && chavesAtuais.has(String(x.cod))) return;
-      if (_projecaoTemDadoManual(x)) return;
-      alvosRemocao.push(id);
-    });
+    if (!(resultadoEstoque.falhas || []).length) {
+      docsProjecao.forEach((x, id) => {
+        if (!x.bluesoftSincronizadoEm) return;
+        if (x.cod != null && chavesAtuais.has(String(x.cod))) return;
+        if (_projecaoTemDadoManual(x)) return;
+        alvosRemocao.push(id);
+      });
+    }
     let removidos = 0;
     for (let i = 0; i < alvosRemocao.length; i += 300) {
       const lote = alvosRemocao.slice(i, i + 300);
@@ -1417,7 +1909,7 @@
       removidos += lote.length;
     }
     _invalidarCachesDependentes();
-    return { total: itensEstoque.length, totalRecebido: resultadoEstoque.totalRecebido, rotaSimplificada: resultadoEstoque.rotaSimplificada, criados, atualizados, removidos, lojaNome: loja.nome || loja.codigo || lojaId };
+    return { total: itensEstoque.length, totalRecebido: resultadoEstoque.totalRecebido, rotaSimplificada: resultadoEstoque.rotaSimplificada, criados, atualizados, removidos, falhas: resultadoEstoque.falhas || [], lojaNome: loja.nome || loja.codigo || lojaId };
   }
   global.sincronizarEstoqueBluesoft = sincronizarEstoqueBluesoft;
 
@@ -1430,12 +1922,13 @@
   // com produção). Casamento por NOME normalizado, mesma forma que
   // 65-producao-insumos.js já casa ficha↔estoque de insumo.
   const TIPOS_INSUMO_BLUESOFT = ['INSUMO', 'EMBALAGEM'];
+  function _canonInsumo(v){return normUpper(v).replace(/^\s*\d+\s*[-–—.:/]?\s*/,'').replace(/^\s*(MP|MAT(?:ERIA)?\s*PRIMA|MATERIA\s*PRIMA|LOGISTICA)\s*[-–—.:/]\s*/,'').replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim();}
   async function _nomesInsumosUsados() {
     const fs = global.getDTFirestore();
     const snap = await fs.collection('producao_ficha_tecnica').get();
-    const nomes = new Set();
-    snap.docs.forEach(d => { (d.data()?.insumos || []).forEach(i => { if (i.insumo) nomes.add(normUpper(i.insumo)); }); });
-    return nomes;
+    const nomes = new Set(), codigos = new Set();
+    snap.docs.forEach(d => { (d.data()?.insumos || []).forEach(i => { if (i.insumo){nomes.add(normUpper(i.insumo));nomes.add(_canonInsumo(i.insumo));}const k=i.bluesoftProdutoKey??i.produtoKey??i.cod??i.codigo;if(k!=null&&String(k).trim())codigos.add(String(k).trim()); }); });
+    return {nomes,codigos};
   }
   async function sincronizarInsumosBluesoft(opcoes) {
     opcoes = opcoes || {};
@@ -1444,29 +1937,49 @@
     const lojaSnap = await raw().collection('lojas').doc(lojaId).get();
     if (!lojaSnap.exists) throw new Error('Loja não encontrada.');
     const loja = { id: lojaId, ...lojaSnap.data() };
-    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à Bluesoft (bluesoft_loja_key). Vincule em Gestão de Lojas.');
-    const cfg = await _config();
-    const [catalogoInsumoBruto, usados] = await Promise.all([
-      _buscarProdutosPorTipos(TIPOS_INSUMO_BLUESOFT, cfg, opcoes.onProgresso),
+    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à integração (bluesoft_loja_key). Vincule em Gestão de Lojas.');
+    // A etapa Produtos, executada imediatamente antes desta, já deixou no
+    // catálogo auxiliar somente os produtos com posição relevante e todos
+    // os dados necessários (nome, código, tipo e unidade). Reutilizar esse
+    // catálogo evita varrer novamente TODO /api/comercial/produtos para
+    // INSUMO e EMBALAGEM — era essa repetição que tornava a etapa lenta e
+    // multiplicava timeouts/429. O estoque também usa o cache curto criado
+    // na etapa anterior, em vez de fazer uma segunda consulta idêntica.
+    const fs = global.getDTFirestore();
+    const [catalogoSnap, usados] = await Promise.all([
+      fs.collection('pcp_produtos_bluesoft').get().catch(()=>({docs:[]})),
       _nomesInsumosUsados(),
     ]);
-    const catalogoInsumo = catalogoInsumoBruto.map(_normalizarProduto);
-    const falhas = catalogoInsumoBruto.falhas || [];
-    const utilizados = catalogoInsumo.filter(p => usados.has(normUpper(p.nome)));
+    let catalogoInsumo = catalogoSnap.docs.map(d=>{const x=d.data()||{};return {produtoKey:String(x.bluesoftProdutoKey??x.cod??'').trim(),produtoUnitarioKey:String(x.produtoUnitarioKeyBluesoft??'').trim(),cod:String(x.cod??x.bluesoftProdutoKey??'').trim(),nome:x.nome||'',unidade:x.unidadeMedidaBluesoft||x.unidade||'',categoria:x.categoria||'',tipoPrincipal:x.bluesoftTipoProduto||''};}).filter(p=>p.produtoKey&&TIPOS_INSUMO_BLUESOFT.includes(p.tipoPrincipal));
+    const falhas = [];
+    // Compatibilidade para uma primeira sincronização isolada (antes de a
+    // etapa Produtos criar o catálogo auxiliar). No fluxo normal do botão
+    // essa consulta não acontece; só é fallback quando a base está vazia.
+    if (!catalogoInsumo.length) {
+      const brutos = await _buscarProdutosPorTipos(TIPOS_INSUMO_BLUESOFT, await _config(), opcoes.onProgresso);
+      catalogoInsumo = brutos.map(_normalizarProduto);
+      falhas.push(...(brutos.falhas || []));
+    }
+    const resultadoEstoque = await obterEstoqueBluesoft(loja, false, {});
+    // No WMS a própria posição já informa descriçãoProduto. Isso permite
+    // casar fichas técnicas antigas que guardavam apenas o nome do insumo,
+    // mesmo antes de existir bluesoftProdutoKey no cadastro local.
+    const chavesCatalogo=new Set(catalogoInsumo.map(p=>String(p.produtoKey)));
+    resultadoEstoque.itens.forEach(e=>{if(chavesCatalogo.has(String(e.produtoKey))||!e.descricaoProduto)return;const nomeNorm=normUpper(e.descricaoProduto),unit=String(e.produtoUnitarioKey??'');if(usados.nomes.has(nomeNorm)||usados.nomes.has(_canonInsumo(e.descricaoProduto))||usados.codigos.has(String(e.produtoKey))||(unit&&usados.codigos.has(unit))){catalogoInsumo.push({produtoKey:String(e.produtoKey),produtoUnitarioKey:unit,cod:String(e.produtoKey),nome:e.descricaoProduto,unidade:'',categoria:'',tipoPrincipal:'INSUMO'});chavesCatalogo.add(String(e.produtoKey));}});
+    const utilizados = catalogoInsumo.filter(p => usados.codigos.has(String(p.produtoKey)) || (p.produtoUnitarioKey&&usados.codigos.has(String(p.produtoUnitarioKey))) || usados.codigos.has(String(p.cod)) || usados.nomes.has(normUpper(p.nome)) || usados.nomes.has(_canonInsumo(p.nome)));
     if (!utilizados.length) return { totalCatalogo: catalogoInsumo.length, utilizados: 0, comEstoque: 0, criados: 0, atualizados: 0, removidos: 0, falhas };
-    const resultadoEstoque = await obterEstoqueBluesoft(loja, true, { incluirTodos: true });
-    const estoquePorKey = new Map(resultadoEstoque.itens.map(e => [e.produtoKey, e]));
+    const estoquePorKey = new Map();resultadoEstoque.itens.forEach(e=>{estoquePorKey.set(String(e.produtoKey),e);if(e.produtoUnitarioKey!=null)estoquePorKey.set(String(e.produtoUnitarioKey),e);});
     const comEstoque = utilizados
-      .map(p => ({ produto: p, estoque: estoquePorKey.get(p.produtoKey) }))
+      .map(p => ({ produto: p, estoque: estoquePorKey.get(String(p.produtoKey))||estoquePorKey.get(String(p.produtoUnitarioKey||''))||resultadoEstoque.itens.find(e=>_canonInsumo(e.descricaoProduto)===_canonInsumo(p.nome)) }))
       .filter(x => x.estoque && x.estoque.estoqueAtual > 0);
-    const fs = global.getDTFirestore();
     const rawFs = raw();
     const snap = await fs.collection('producao_insumos_estoque').get();
-    const porNome = new Map(), docsInsumos = new Map();
+    const porNome = new Map(), porKey = new Map(), docsInsumos = new Map();
     snap.docs.forEach(d => {
       const x = d.data() || {};
       docsInsumos.set(d.id, x);
       porNome.set(normUpper(x.insumo || x.nome || ''), d.id);
+      if(x.bluesoftProdutoKey!=null)porKey.set(String(x.bluesoftProdutoKey),d.id);
     });
     const agora = new Date().toISOString();
     let criados = 0, atualizados = 0;
@@ -1476,9 +1989,11 @@
       lote.forEach(({ produto, estoque }) => {
         const payload = {
           insumo: produto.nome, unidade: produto.unidade || '', categoria: produto.categoria || '',
-          quantidade: estoque.estoqueAtual, bluesoftProdutoKey: produto.produtoKey, bluesoftSincronizadoEm: agora, atualizadoEm: agora,
+          // Insumo permanece na unidade nativa da Bluesoft (kg, un, m...):
+          // fator de caixa só se aplica a produto acabado/pedido.
+          quantidade: estoque.estoqueAtualUnidades ?? estoque.estoqueAtual, bluesoftProdutoKey: produto.produtoKey, bluesoftSincronizadoEm: agora, atualizadoEm: agora,
         };
-        const docId = porNome.get(normUpper(produto.nome));
+        const docId = porKey.get(String(produto.produtoKey)) || porNome.get(normUpper(produto.nome));
         if (docId) { batch.set(fs.collection('producao_insumos_estoque').doc(docId), payload, { merge: true }); atualizados++; }
         else { batch.set(fs.collection('producao_insumos_estoque').doc(), { ...payload, criadoEm: agora }, { merge: true }); criados++; }
       });
@@ -1487,13 +2002,21 @@
     // Reconciliação (fase 12h) — mesma lógica de produtos/estoque: insumo já
     // sincronizado que não voltou nesta rodada (deixou de ter estoque ou
     // deixou de ser usado em ficha técnica) sai da base.
+    // PEDIDO AO VIVO (correção de segurança, mesmo bug já corrigido em
+    // produtos/estoque): busca incompleta (falhas do catálogo OU do
+    // estoque) nunca pode disparar remoção — um insumo que só não voltou
+    // por causa de uma falha de página não é a mesma coisa que "deixou de
+    // ter estoque de verdade".
+    falhas.push(...(resultadoEstoque.falhas || []));
     const nomesAtuais = new Set(comEstoque.map(({ produto }) => normUpper(produto.nome)));
     const alvosRemocao = [];
-    docsInsumos.forEach((x, id) => {
-      if (!x.bluesoftSincronizadoEm) return;
-      if (nomesAtuais.has(normUpper(x.insumo || x.nome || ''))) return;
-      alvosRemocao.push(id);
-    });
+    if (!falhas.length) {
+      docsInsumos.forEach((x, id) => {
+        if (!x.bluesoftSincronizadoEm) return;
+        if (nomesAtuais.has(normUpper(x.insumo || x.nome || ''))) return;
+        alvosRemocao.push(id);
+      });
+    }
     let removidos = 0;
     for (let i = 0; i < alvosRemocao.length; i += 300) {
       const lote = alvosRemocao.slice(i, i + 300);
@@ -1521,7 +2044,7 @@
     return { fichaTecnicaKey: f.fichaTecnicaKey, produtoKey: f.produtoKey, desc: f.descricao || '' };
   }
   function _normalizarInsumoFicha(i) {
-    return { insumo: i.descricao || '', qty: Number(i.pesoBrutoQtd ?? i.pesoLiquido) || 0 };
+    return { insumo: i.descricao || '', qty: Number(i.pesoBrutoQtd ?? i.pesoLiquido) || 0, bluesoftProdutoKey:i.produtoKey??null, fatorConversao:Number(i.fatorConversao)||1 };
   }
   async function sincronizarFichaTecnicaBluesoft(opcoes) {
     opcoes = opcoes || {};
@@ -1530,7 +2053,7 @@
     const lojaSnap = await raw().collection('lojas').doc(lojaId).get();
     if (!lojaSnap.exists) throw new Error('Loja não encontrada.');
     const loja = { id: lojaId, ...lojaSnap.data() };
-    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à Bluesoft (bluesoft_loja_key). Vincule em Gestão de Lojas.');
+    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à integração (bluesoft_loja_key). Vincule em Gestão de Lojas.');
     const cfg = await _config();
     const [resultadoEstoque, fichasBrutas] = await Promise.all([
       obterEstoqueBluesoft(loja, true),
@@ -1638,7 +2161,7 @@
     const lojaSnap = await raw().collection('lojas').doc(lojaId).get();
     if (!lojaSnap.exists) throw new Error('Loja não encontrada.');
     const loja = { id: lojaId, ...lojaSnap.data() };
-    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à Bluesoft (bluesoft_loja_key). Vincule em Gestão de Lojas.');
+    if (!loja.bluesoft_loja_key) throw new Error('Esta loja não está vinculada à integração (bluesoft_loja_key). Vincule em Gestão de Lojas.');
     const resultadoEstoque = await obterEstoqueBluesoft(loja, true);
     const chavesComEstoque = new Set(resultadoEstoque.itens.map(e => String(e.produtoKey)));
     const fs = global.getDTFirestore();
@@ -1668,6 +2191,24 @@
   global.obterEstoqueBluesoft = obterEstoqueBluesoft;
   global.obterFornecedoresBluesoft = obterFornecedoresBluesoft;
   global.obterPedidosCompraBluesoft = obterPedidosCompraBluesoft;
+  global.buscarPedidoCompraBluesoftPorNumero = buscarPedidoCompraBluesoftPorNumero;
+  global.diagnosticarBluesoft = async function () {
+    const cfg = await _config(true);
+    const lojaId = global.getDTLojaAtiva?.() || '';
+    const lojaSnap = lojaId ? await raw().collection('lojas').doc(lojaId).get().catch(() => null) : null;
+    const loja = lojaSnap?.exists ? { id: lojaId, ...lojaSnap.data() } : null;
+    const resultado = { lojaId, lojaEncontrada: !!loja, lojaKey: loja?.bluesoft_loja_key || '', origemConfig: cfg._origemConfig || 'ausente', urlConfigurada: !!_baseUrl(cfg), tokenConfigurado: !!cfg.token, proxy: BLUESOFT_PROXY_URL };
+    if (!lojaId) throw Object.assign(new Error('Nenhuma loja ativa selecionada.'), { diagnostico: resultado });
+    if (!loja) throw Object.assign(new Error('A loja ativa não foi encontrada no Firestore.'), { diagnostico: resultado });
+    if (!loja.bluesoft_loja_key) throw Object.assign(new Error('A loja ativa não possui bluesoft_loja_key.'), { diagnostico: resultado });
+    if (!resultado.urlConfigurada || !resultado.tokenConfigurado) throw Object.assign(new Error('Configuração da API incompleta.'), { diagnostico: resultado });
+    // Aqui validamos somente os pré-requisitos comuns. Antes, o diagnóstico
+    // chamava /api/fornecedores e uma falta de permissão exclusiva desse
+    // endpoint bloqueava também produtos e estoque, mesmo quando eles
+    // estavam autorizados. Cada etapa agora testa seu próprio endpoint e
+    // reporta sua própria falha.
+    return { ...resultado, ok: true };
+  };
   global.TIPOS_PRODUTO_BLUESOFT = TIPOS_PRODUTO_VALIDOS;
-  global._bluesoftServiceInternals = { _requestBluesoft, _paginarTudo, _config, _normalizarProduto, _normalizarEstoqueComercial, _normalizarEstoqueWms, _normalizarEstoqueFicha, _estoqueRelevante, _buscarProdutosPorTipos, _nomesInsumosUsados, _produtoProtegidoPcp, _projecaoTemDadoManual, _normalizarFichaTecnica, _normalizarInsumoFicha, _janelasMensais, _normalizarNotaRecebimento, _normalizarCargaRecebimento, _ehDevolucao, _categoriaNota, _normalizarNotaRetorno, _pareceDevolucao, _normalizarVendedor, _normalizarComissaoVendedor, enriquecerNotasComVendedorPorComissao, _extrairInfCplDoXml, _extrairVolumesDoXml, _descobrirNotasDevolucaoViaRecebimentoSincronizado, _buscarNotaFiscalPorChave, _normalizarNotaRecebimentoComoRetorno, obterPedidosVendaFaturadosNaoEntreguesBluesoft, obterUrlXmlNota };
+  global._bluesoftServiceInternals = { _requestBluesoft, _paginarTudo, _config, _normalizarProduto, _normalizarEstoqueComercial, _normalizarEstoqueWms, _normalizarEstoqueFicha, _estoqueRelevante, _buscarProdutosPorTipos, _nomesInsumosUsados, _produtoProtegidoPcp, _projecaoTemDadoManual, _normalizarFichaTecnica, _normalizarInsumoFicha, _janelasMensais, _normalizarNotaRecebimento, _normalizarCargaRecebimento, _ehDevolucao, _categoriaNota, _normalizarNotaRetorno, _pareceDevolucao, _normalizarVendedor, _extrairInfCplDoXml, _extrairVolumesDoXml, _descobrirNotasDevolucaoViaRecebimentoSincronizado, _buscarNotaFiscalPorChave, _normalizarNotaRecebimentoComoRetorno, obterPedidosVendaFaturadosNaoEntreguesBluesoft, obterUrlXmlNota, _parseDataBluesoft, _resolverPeriodoBluesoft, _agruparComprasAReceberBiPorPedido, _gravarAgendaPendentes };
 })(window);

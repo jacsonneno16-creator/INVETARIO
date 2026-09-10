@@ -64,6 +64,7 @@
     {id:'producao-config',nome:'Produção · Configurações',setor:'producao',canais:['analista'],acoes:['visualizar','editar']},
     {id:'producao-importacao',nome:'Produção · Importação / API',setor:'producao',canais:['analista'],acoes:['visualizar','importar','exportar','configurar']},
     {id:'producao-estoque',nome:'Produção · Estoque (Bluesoft)',setor:'producao',canais:['analista'],acoes:['visualizar']},
+    {id:'producao-relatorios-bi',nome:'Produção · Relatórios BI (Compras/PCP/Produção)',setor:'producao',canais:['analista'],acoes:['visualizar','exportar']},
     {id:'pcp-central',nome:'PCP · Central de Planejamento',setor:'pcp',canais:['analista'],acoes:['visualizar','criar','editar','excluir','configurar']},
     {id:'compras-central',nome:'Compras · Central de Compras',setor:'compras',canais:['analista'],acoes:['visualizar','editar','configurar']},
     // Recebimento operacional — módulos do setor, incluindo Recusas dentro de Recebimento.
@@ -76,6 +77,7 @@
     {id:'recebimento-fornecedores',nome:'Recebimento · Fornecedores',setor:'logistica',canais:['analista'],acoes:['visualizar','editar','exportar']},
     {id:'recebimento-agendamentos',nome:'Recebimento · Agenda / Cargas',setor:'logistica',canais:['analista'],acoes:['visualizar','criar','editar','excluir']},
     {id:'recebimento-transbordo',nome:'Recebimento · Transbordo',setor:'logistica',canais:['analista','coletor'],acoes:['visualizar','criar','editar','cancelar','finalizar','corrigir-horario','gerar-qrcode','excluir']},
+    {id:'recebimento-paletes',nome:'Recebimento · Paletes',setor:'logistica',canais:['analista','coletor'],acoes:['visualizar','criar','editar','excluir']},
     {id:'recebimento-recusas',nome:'Recebimento · Notas Retornadas',setor:'logistica',canais:['analista'],acoes:['visualizar','criar','editar','excluir','importar','exportar']},
     {id:'recebimento-retornos-indicadores',nome:'Recebimento · Indicadores de Retornos',setor:'logistica',canais:['analista'],acoes:['visualizar']},
     // Só "visualizar" — quem PODE avançar uma etapa é governado pela MESMA
@@ -85,6 +87,8 @@
     // sofrido duas vezes neste projeto com múltiplas permissões pro mesmo
     // registro. Checado manualmente em 99-recebimento-retornos-status.js.
     {id:'recebimento-retornos-status',nome:'Recebimento · Status de Retornos',setor:'logistica',canais:['analista'],acoes:['visualizar']},
+    {id:'recebimento-recusas-indicadores',nome:'Recebimento · Recusas',setor:'logistica',canais:['analista'],acoes:['visualizar']},
+    {id:'recebimento-consulta-notas',nome:'Recebimento · Consulta de Notas Fiscais',setor:'logistica',canais:['analista'],acoes:['visualizar','importar','exportar']},
     // Pedido ao vivo do usuário: "as partes de cadastro da parte de
     // recebimento fazer em um menu só... deixar bem separado e organizado"
     // — Motorista/Motivo/Conferente (que viviam misturados dentro da
@@ -98,7 +102,7 @@
     {id:'recebimento-config',nome:'Recebimento · Configurações',setor:'logistica',canais:['analista'],acoes:['visualizar','criar','editar','excluir']}
   ];
   const ROTULOS={visualizar:'Visualizar',criar:'Criar',editar:'Editar',excluir:'Excluir',importar:'Importar',exportar:'Exportar',publicar:'Liberar/Publicar',finalizar:'Finalizar',cancelar:'Cancelar',atualizar:'Atualizar',aprovar:'Aprovar',bloquear:'Bloquear',configurar:'Configurar',executar:'Executar/Enviar',reordenar:'Reordenar','corrigir-horario':'Corrigir horário','gerar-qrcode':'Gerar QR Code'};
-  const MODULO_ICONES={dashboard:'📊',inventarios:'📦',acompanhamento:'📈',auditoria:'🕵️',contagens:'🔢',pendencias:'⏳',recontagens:'🔁','rel-divergencias':'⚠️','capas-duplicadas':'🧾',produtividade:'🏆',enderecos:'📍',produtos:'🏷️',coletores:'📱',operadores:'👤',lojas:'🏪',rastreabilidade:'🔍','importar-exportar':'🔄','producao-dashboard':'📊','producao-ficha-tecnica':'🏭','producao-maquinas':'⚙️','producao-programacao':'📋','producao-gantt':'📅','producao-realizado':'✅','producao-insumos':'🧪','producao-projecao':'📈','producao-prog-automatica':'🤖','producao-funcionarios':'👷','producao-relatorios':'📊','producao-setup':'🔧','producao-mapa-fabrica':'🗺️','producao-config':'⚙️','producao-importacao':'🔄','producao-estoque':'📦','recebimento-dashboard':'📊','recebimento-operacao':'🚚','recebimento-notas':'📄','recebimento-fornecedores':'🏢','recebimento-agendamentos':'📅','recebimento-transbordo':'🚛','recebimento-recusas':'↩️','recebimento-retornos-indicadores':'📊','recebimento-config':'⚙️'};
+  const MODULO_ICONES={dashboard:'📊',inventarios:'📦',acompanhamento:'📈',auditoria:'🕵️',contagens:'🔢',pendencias:'⏳',recontagens:'🔁','rel-divergencias':'⚠️','capas-duplicadas':'🧾',produtividade:'🏆',enderecos:'📍',produtos:'🏷️',coletores:'📱',operadores:'👤',lojas:'🏪',rastreabilidade:'🔍','importar-exportar':'🔄','producao-dashboard':'📊','producao-ficha-tecnica':'🏭','producao-maquinas':'⚙️','producao-programacao':'📋','producao-gantt':'📅','producao-realizado':'✅','producao-insumos':'🧪','producao-projecao':'📈','producao-prog-automatica':'🤖','producao-funcionarios':'👷','producao-relatorios':'📊','producao-setup':'🔧','producao-mapa-fabrica':'🗺️','producao-config':'⚙️','producao-importacao':'🔄','producao-estoque':'📦','recebimento-dashboard':'📊','recebimento-operacao':'🚚','recebimento-notas':'📄','recebimento-fornecedores':'🏢','recebimento-agendamentos':'📅','recebimento-transbordo':'🚛','recebimento-recusas':'↩️','recebimento-retornos-indicadores':'📊','recebimento-recusas-indicadores':'📊','recebimento-config':'⚙️'};
   const todos=()=>Object.fromEntries(MODULOS.map(m=>[m.id,Object.fromEntries(m.acoes.map(a=>[a,true]))]));
   const normalizar=(p,legadoTotal)=>{
     if(!p||typeof p!=='object')return legadoTotal?todos():{};
@@ -120,6 +124,7 @@
       permissoes:{
         'recebimento-operacao':{visualizar:true,criar:true,editar:true,'corrigir-horario':true,'gerar-qrcode':true},
         'recebimento-transbordo':{visualizar:true,criar:true,editar:true,'corrigir-horario':true,'gerar-qrcode':true},
+        'recebimento-paletes':{visualizar:true,criar:true,editar:true},
       }},
     {id:'analista-recebimento',nome:'Analista de Recebimento',icone:'🚚',descricao:'Dashboard, recebimentos, notas, fornecedores, agenda, transbordo e configurações do setor.',
       permissoes:Object.fromEntries(MODULOS.filter(m=>m.id.startsWith('recebimento-')).map(m=>[m.id,_todasAcoesDe(m.id)]))},
@@ -209,7 +214,7 @@
   // (_permAtualizarVisibilidade) — mostra só setor/módulo compatível com o
   // que está marcado, nos dois sentidos (Coletor sozinho não vê nada
   // exclusivo do Analista, e vice-versa).
-  function renderCanais(prefix,c={}){const b=document.getElementById(`op-canais-${prefix}`);if(!b)return;b.innerHTML=[['coletor','📱 Coletor'],['analista','🖥️ Analista']].map(([id,n])=>`<label style="padding:10px 13px;border:1px solid var(--border);border-radius:10px;cursor:pointer"><input type="checkbox" data-canal="${id}" ${c[id]===true?'checked':''}> ${n}</label>`).join('');b.querySelectorAll('[data-canal]').forEach(chk=>chk.addEventListener('change',()=>_permAtualizarVisibilidade(prefix)));}
+  function renderCanais(prefix,c={}){const b=document.getElementById(`op-canais-${prefix}`);if(!b)return;b.innerHTML=[['coletor','📱 Coletor'],['analista','🖥️ Analista']].map(([id,n])=>`<label class="op-toggle-chip"><input type="checkbox" data-canal="${id}" ${c[id]===true?'checked':''}> ${n}</label>`).join('');b.querySelectorAll('[data-canal]').forEach(chk=>chk.addEventListener('change',()=>{_permAtualizarVisibilidade(prefix);if(prefix==='criar')opGerarUsername();}));}
   // Setores: fase 1 da unificação com o Sistema de Produção — controla só
   // quais abas de topo (Logística/Compras/PCP/Produção) aparecem pro login;
   // dentro de cada setor, os módulos continuam filtrados pelas permissões
@@ -217,8 +222,25 @@
   // Logística vem marcada por padrão (undefined !== false) pra ninguém
   // perder acesso ao que já usa hoje.
   var SETORES=[['logistica','🚚 Logística'],['compras','🛒 Compras'],['pcp','📋 PCP'],['producao','🏭 Produção']];
-  function renderSetores(prefix,s={}){const b=document.getElementById(`op-setores-${prefix}`);if(!b)return;b.innerHTML=SETORES.map(([id,n])=>`<label style="padding:10px 13px;border:1px solid var(--border);border-radius:10px;cursor:pointer"><input type="checkbox" data-setor="${id}" ${(id==='logistica'?s[id]!==false:s[id]===true)?'checked':''}> ${n}</label>`).join('');}
-  function lerSetores(prefix){const o={logistica:false,compras:false,pcp:false,producao:false};document.querySelectorAll(`#op-setores-${prefix} [data-setor]`).forEach(x=>o[x.dataset.setor]=x.checked);return o;}
+  // PEDIDO AO VIVO (2026-08-27): "seleciono a loja... aí seleciona os
+  // setores... aí só vai aparecer as permissões do que eu selecionar" —
+  // antes, marcar/desmarcar setor aqui não reagia em nada; a árvore de
+  // permissões (renderPermissoes) sempre mostrava TODOS os setores. Agora
+  // dispara o mesmo filtro que os canais já usam (_permAtualizarVisibilidade),
+  // que também esconde o setor inteiro quando ele não está marcado aqui.
+  // BUG AO VIVO REAL (2026-08-27 — "quando eu seleciono compras, ou PCP ou
+  // produção, a tela fica toda branca"): o checkbox aqui usava
+  // `data-setor`, o MESMO nome de atributo que a barra de navegação de
+  // Setores do topo do app já usa pra trocar de setor inteiro (ver
+  // document.addEventListener('click',...) mais abaixo, que casa QUALQUER
+  // `[data-setor]` clicado em qualquer lugar do documento e chama
+  // irParaSetor()). Clicar num checkbox "Compras/PCP/Produção" aqui também
+  // disparava irParaSetor('compras'/'pcp'/'producao') por baixo — trocando
+  // o setor do app inteiro e escondendo a shell onde o modal estava,
+  // exatamente a "tela em branco" relatada. Renomeado pra `data-op-setor`,
+  // que não colide com nada.
+  function renderSetores(prefix,s={}){const b=document.getElementById(`op-setores-${prefix}`);if(!b)return;b.innerHTML=SETORES.map(([id,n])=>`<label class="op-toggle-chip"><input type="checkbox" data-op-setor="${id}" ${(id==='logistica'?s[id]!==false:s[id]===true)?'checked':''}> ${n}</label>`).join('');b.querySelectorAll('[data-op-setor]').forEach(chk=>chk.addEventListener('change',()=>_permAtualizarVisibilidade(prefix)));}
+  function lerSetores(prefix){const o={logistica:false,compras:false,pcp:false,producao:false};document.querySelectorAll(`#op-setores-${prefix} [data-op-setor]`).forEach(x=>o[x.dataset.opSetor]=x.checked);return o;}
   // Reforma da tela de Usuários e Permissões (correção estrutural) — trocou
   // a grade solta de cards por uma árvore Canal → Setor → Módulo → Ação. O
   // Canal é o seletor "Onde este login pode entrar" logo ACIMA desta árvore
@@ -309,8 +331,14 @@
     const t=String(termoParam!==undefined?termoParam:(campoBusca?.value||'')).trim().toLowerCase();
     const canaisMarcados=lerCanais(prefix);
     const canaisAtivos=Object.keys(canaisMarcados).filter(c=>canaisMarcados[c]);
+    const setoresMarcados=lerSetores(prefix);
     let visiveis=0;
     grid.querySelectorAll('[data-perm-setor]').forEach(setorEl=>{
+      // "só vai aparecer as permissões do que eu selecionar" — setor
+      // desmarcado em "Setores" esconde o bloco inteiro, sem nem olhar os
+      // módulos de dentro (o filtro de canal continua rodando por cima,
+      // pros setores que ficaram visíveis).
+      if(!setoresMarcados[setorEl.dataset.permSetor]){setorEl.style.display='none';setorEl.querySelectorAll('[data-perm-card]').forEach(card=>card.style.display='none');return;}
       let algumVisivelNesteSetor=false;
       setorEl.querySelectorAll('[data-perm-card]').forEach(card=>{
         const canaisModulo=(card.dataset.permCanais||'').split(',').filter(Boolean);
@@ -488,28 +516,59 @@
   // a exigir essa permissão pra ações que o Coletor dispara sozinho, então
   // o painel agora fica sempre visível, não só quando o canal Analista tá
   // marcado.
-  function opAbrirModalCriar(){carregarLojas().then(()=>{montarChecks('op-lojas-criar-lista',[]);setModo('criar','todas');renderCanais('criar',{coletor:true,analista:false});renderSetores('criar',{});renderPermissoes('criar',{});document.getElementById('op-permissoes-criar').style.display='block';document.getElementById('op-modal-criar-bg').style.display='flex';});}
+  // PEDIDO AO VIVO (2026-08-27): "se eu cancelar... e colocar de novo criar
+  // novo usuário, não é pra vim com as informações, é pra vim do zero" —
+  // nome/senha/preview de login nunca eram limpos ao reabrir; se você
+  // cancelava e abria de novo, o que tinha digitado antes ainda estava lá.
+  function opAbrirModalCriar(){
+    const campoNome=document.getElementById('op-nome'),campoSenha=document.getElementById('op-senha');
+    if(campoNome)campoNome.value='';
+    if(campoSenha)campoSenha.value='';
+    const preview=document.getElementById('op-logins-preview');if(preview)preview.innerHTML='Informe o nome completo.';
+    carregarLojas().then(()=>{montarChecks('op-lojas-criar-lista',[]);setModo('criar','todas');renderCanais('criar',{coletor:true,analista:false});renderSetores('criar',{});renderPermissoes('criar',{});document.getElementById('op-permissoes-criar').style.display='block';document.getElementById('op-modal-criar-bg').style.display='flex';});
+  }
   function opFecharModalCriar(){document.getElementById('op-modal-criar-bg').style.display='none';}
-  function opSelecionarTipo(tipo){document.querySelectorAll('input[name="op-tipo"]').forEach(r=>r.checked=r.value===tipo);const an=tipo==='analista';const ac=document.querySelector('#op-canais-criar [data-canal="analista"]'),co=document.querySelector('#op-canais-criar [data-canal="coletor"]');if(ac)ac.checked=an;if(co)co.checked=true;opGerarUsername();}
-  function opGerarUsername(){const l=loginsDoNome(document.getElementById('op-nome')?.value),tipo=document.querySelector('input[name="op-tipo"]:checked')?.value||'operador',campo=document.getElementById('op-username'),preview=document.getElementById('op-logins-preview');if(campo)campo.value=l.coletor;if(preview)preview.innerHTML=l.primeiro?(tipo==='analista'?`<div><strong>Login do Analista:</strong> ${esc(l.analista)}</div><div><strong>Login do Coletor:</strong> ${esc(l.coletor||'informe também o segundo nome')}</div>`:`<div><strong>Login do Coletor:</strong> ${esc(l.coletor||'informe também o segundo nome')}</div>`):'Informe o nome completo.';}
+  // PEDIDO AO VIVO (2026-08-27): a prévia de login agora segue os
+  // checkboxes de "Onde este login pode entrar" (canais), não mais o card
+  // "Tipo de acesso" removido — mostra só a linha do canal marcado, e cada
+  // linha exige só o que aquele login precisa (Analista só usa o primeiro
+  // nome; Coletor precisa de primeiro+sobrenome).
+  function opGerarUsername(){const l=loginsDoNome(document.getElementById('op-nome')?.value),c=lerCanais('criar'),campo=document.getElementById('op-username'),preview=document.getElementById('op-logins-preview');if(campo)campo.value=l.coletor;const linhas=[];if(c.analista)linhas.push(`<div><strong>Login do Analista:</strong> ${l.primeiro?esc(l.analista):'informe o nome'}</div>`);if(c.coletor)linhas.push(`<div><strong>Login do Coletor:</strong> ${esc(l.coletor||'informe também o sobrenome')}</div>`);if(preview)preview.innerHTML=!l.primeiro?'Informe o nome completo.':linhas.length?linhas.join(''):'Marque Analista e/ou Coletor em "Onde este login pode entrar".';}
   function opGerarSenha(){document.getElementById('op-senha').value=Math.random().toString(36).slice(-4).toUpperCase()+Math.floor(1000+Math.random()*9000);}
   function toggleOpSenha(){const e=document.getElementById('op-senha');e.type=e.type==='password'?'text':'password';}function toggleOpeditSenha(){const e=document.getElementById('opedit-senha');e.type=e.type==='password'?'text':'password';}
   function opValidarUsername(){}function opValidarSenha(){}
   async function criarOperador(){
-    const nome=document.getElementById('op-nome').value.trim(),senha=document.getElementById('op-senha').value,tipo=document.querySelector('input[name="op-tipo"]:checked')?.value||'operador',logins=loginsDoNome(nome);
-    if(!logins.primeiro||!logins.segundo||!logins.coletor||!logins.coletorEmail)return global.showToast?.('Informe ao menos o primeiro e o segundo nome','error');
+    // PEDIDO AO VIVO (2026-08-27): "eu selecionei só analista, sem
+    // coletor... não precisa criar um login pra coletor" — antes disso, o
+    // login do Coletor era SEMPRE exigido/criado (mesmo senha do
+    // Analista escondida atrás de "tipo"), obrigando um sobrenome mesmo
+    // pra conta que nunca ia usar o Coletor. `c` (canais marcados em
+    // "Onde este login pode entrar") agora é a única fonte de verdade —
+    // cada exigência abaixo é condicional ao canal que ela realmente serve.
+    const nome=document.getElementById('op-nome').value.trim(),senha=document.getElementById('op-senha').value,c=lerCanais('criar'),logins=loginsDoNome(nome);
+    if(!logins.primeiro)return global.showToast?.('Informe o nome completo','error');
+    if(c.coletor&&(!logins.segundo||!logins.coletorEmail))return global.showToast?.('Informe também o sobrenome — necessário pro login do Coletor','error');
     if(senha.length<6)return global.showToast?.('Informe uma senha com no mínimo 6 caracteres (pode ser só números)','error');
     if(!validarAcesso('criar'))return;
     const modo=document.querySelector('input[name="op-lojas-criar-modo"]:checked')?.value||'todas',sel=[...document.querySelectorAll('#op-lojas-criar-lista input:checked')].map(x=>x.value);
     if(modo==='selecionadas'&&!sel.length)return global.showToast?.('Selecione ao menos uma loja','error');
     let contaExistente=false;
     try{
-      const criar=firebase.app().functions('southamerica-east1').httpsCallable('criarUsuarioVinculado'),resposta=await criar({nome,senha,emailAnalista:logins.analista,emailColetor:logins.coletorEmail,criarAnalista:tipo==='analista'}),auth=resposta?.data||{};
-      if(!auth.ok||!auth.uid||!auth.coletor_uid)throw new Error('O Firebase não confirmou a criação dos logins');
+      const criar=firebase.app().functions('southamerica-east1').httpsCallable('criarUsuarioVinculado'),resposta=await criar({nome,senha,emailAnalista:c.analista?logins.analista:null,emailColetor:c.coletor?logins.coletorEmail:null,criarAnalista:c.analista,criarColetor:c.coletor}),auth=resposta?.data||{};
+      if(!auth.ok||!auth.uid||(c.analista&&!auth.analista_uid)||(c.coletor&&!auth.coletor_uid))throw new Error('O Firebase não confirmou a criação dos logins');
       contaExistente=auth.conta_existente===true;
-      const c=lerCanais('criar'),agora=new Date().toISOString(),uids=[auth.uid,auth.coletor_uid].filter(Boolean),data={uid:auth.uid,analista_uid:auth.analista_uid||null,coletor_uid:auth.coletor_uid,uids_vinculados:[...new Set(uids)],email:tipo==='analista'?logins.analista:logins.coletorEmail,email_analista:tipo==='analista'?logins.analista:'',email_coletor:logins.coletorEmail,login_coletor:logins.coletor,nome,perfil:c.analista?'analista':'operador',ativo:true,canais_acesso:c,setores_permitidos:lerSetores('criar'),permissoes:lerPermissoes('criar'),acesso_todas_lojas:modo==='todas',lojas_permitidas:modo==='todas'?[]:sel,atualizado_em:agora};
+      const agora=new Date().toISOString(),uids=[auth.uid,auth.coletor_uid].filter(Boolean),data={uid:auth.uid,analista_uid:auth.analista_uid||null,coletor_uid:auth.coletor_uid||null,uids_vinculados:[...new Set(uids)],email:auth.analista_uid?logins.analista:logins.coletorEmail,email_analista:auth.analista_uid?logins.analista:'',email_coletor:auth.coletor_uid?logins.coletorEmail:'',login_coletor:auth.coletor_uid?logins.coletor:'',nome,perfil:c.analista?'analista':'operador',ativo:true,canais_acesso:c,setores_permitidos:lerSetores('criar'),permissoes:lerPermissoes('criar'),acesso_todas_lojas:modo==='todas',lojas_permitidas:modo==='todas'?[]:sel,atualizado_em:agora};
       if(!contaExistente)data.criado_em=agora;
       else data.recuperado_em=agora;
+      // PEDIDO AO VIVO (2026-09-08): "todo login criado, no primeiro
+      // acesso peça pra alterar a senha... só para acessos que têm
+      // Analista" — carimba só no documento PRINCIPAL (que é sempre a
+      // identidade Analista quando esse canal existe, ver `data.uid`
+      // acima) e nunca no `secundario` do Coletor logo abaixo — login que
+      // só tem Coletor nunca vê essa exigência, e a conta secundária de
+      // quem tem os dois canais também fica de fora de propósito (a
+      // troca acontece 1x, pela sessão do Analista).
+      if(c.analista)data.precisaTrocarSenha=true;
       await raw().collection(ACCESS).doc(auth.uid).set(data,{merge:true});
       // CORREÇÃO ESTRUTURAL (causa raiz do "admin liberou mas o Coletor
       // continua com permission-denied"): a conta secundária gravava
@@ -520,8 +579,11 @@
       // Coletor realmente usa (coletor_uid) precisa ter as MESMAS permissões
       // do formulário, não um mapa vazio. Fonte canônica = `data.permissoes`
       // (o que o admin marcou), espelhada em toda identidade vinculada.
-      if(auth.coletor_uid!==auth.uid){const secundario={...data,uid:auth.coletor_uid,email:logins.coletorEmail,perfil:'operador',canais_acesso:{coletor:true,analista:false},permissoes:data.permissoes,conta_secundaria:true,cadastro_principal_uid:auth.uid};await raw().collection(ACCESS).doc(auth.coletor_uid).set(secundario,{merge:true});}
-      for(const l of lojasCache.filter(l=>data.acesso_todas_lojas||sel.includes(l.id))){const base=raw().collection('lojas').doc(l.id).collection('dt_operadores');await base.doc(auth.uid).set(data,{merge:true});if(auth.coletor_uid!==auth.uid)await base.doc(auth.coletor_uid).set({...data,uid:auth.coletor_uid,email:logins.coletorEmail,perfil:'operador',canais_acesso:{coletor:true,analista:false},permissoes:data.permissoes,conta_secundaria:true,cadastro_principal_uid:auth.uid},{merge:true});}
+      // Só grava a conta secundária do Coletor quando ela realmente existe
+      // (canal Coletor marcado) — antes disso rodava sempre, mesmo sem
+      // coletor_uid, gravando um doc fantasma pra uid `null`.
+      if(auth.coletor_uid&&auth.coletor_uid!==auth.uid){const{precisaTrocarSenha:_flagAnalista,...dataSemFlagSenha}=data;const secundario={...dataSemFlagSenha,uid:auth.coletor_uid,email:logins.coletorEmail,perfil:'operador',canais_acesso:{coletor:true,analista:false},permissoes:data.permissoes,conta_secundaria:true,cadastro_principal_uid:auth.uid};await raw().collection(ACCESS).doc(auth.coletor_uid).set(secundario,{merge:true});}
+      for(const l of lojasCache.filter(l=>data.acesso_todas_lojas||sel.includes(l.id))){const base=raw().collection('lojas').doc(l.id).collection('dt_operadores');await base.doc(auth.uid).set(data,{merge:true});if(auth.coletor_uid&&auth.coletor_uid!==auth.uid)await base.doc(auth.coletor_uid).set({...data,uid:auth.coletor_uid,email:logins.coletorEmail,perfil:'operador',canais_acesso:{coletor:true,analista:false},permissoes:data.permissoes,conta_secundaria:true,cadastro_principal_uid:auth.uid},{merge:true});}
       opFecharModalCriar();
       global.showToast?.(contaExistente?'Usuário existente atualizado e logins vinculados':'Usuário criado com os logins vinculados','success');
       await listarOperadores();
@@ -568,6 +630,14 @@
     // exatamente o que foi configurado. Se ainda não existir, um Analista que
     // já tinha acesso ao Recebimento herda Recusas até o cadastro de usuário
     // ser salvo novamente com as permissões novas.
+    // Cargas (Montagem/Expedição) é conceitualmente um passo ANTES do
+    // transbordo de verdade — reaproveita a MESMA permissão de Transbordo
+    // (recebimento-transbordo) ou Recebimentos (recebimento-operacao), sem
+    // área de permissão própria (mesma decisão de engenharia já tomada nas
+    // firestore.rules pra essa coleção — ver hasPermissionRecebimento).
+    if(modulo==='recebimento-cargas'){
+      return a.permissoes?.['recebimento-transbordo']?.[acao]===true || a.permissoes?.['recebimento-operacao']?.[acao]===true;
+    }
     if(modulo==='recebimento-recusas'){
       const explicita=a.permissoes?.['recebimento-recusas'];
       if(explicita && typeof explicita==='object') return explicita?.[acao]===true;
@@ -582,7 +652,20 @@
     const a=global.DT_USUARIO_ACESSO_ATUAL;if(!a)return;
     const legado=!a.permissoes; if(legado)return;
     MODULOS.forEach(m=>{const nav=document.getElementById('nav-'+m.id),page=document.getElementById('page-'+m.id),ver=temPermissao(m.id);if(nav)nav.style.display=ver?'':'none';if(page&&!ver)page.classList.remove('on');});
-    document.querySelectorAll('[onclick],[onchange]').forEach(el=>{const txt=(el.getAttribute('onclick')||el.getAttribute('onchange')||'').toLowerCase(),page=el.closest('.page')?.id?.replace(/^page-/,'');if(!page||!MODULOS.some(m=>m.id===page))return;let acao='visualizar';if(/exclu|limpar|cancelar.*recont/.test(txt))acao='excluir';else if(/export|baixar|download/.test(txt))acao='exportar';else if(/import|processfile|handlefile/.test(txt))acao='importar';else if(/criar|novo|adicionar|registrar/.test(txt))acao='criar';else if(/public|liberar/.test(txt))acao='publicar';else if(/finaliz|fecharinvent|encerrar/.test(txt))acao='finalizar';else if(/aprovar/.test(txt))acao='aprovar';else if(/bloquear/.test(txt))acao='bloquear';else if(/salvarconfig|apiset|mapeamento/.test(txt))acao='configurar';else if(/enviar|executar/.test(txt))acao='executar';else if(/salvar|editar|reatrib|confirmar/.test(txt))acao='editar';else if(/atualizar|refresh/.test(txt))acao='atualizar';if(acao!=='visualizar'&&!temPermissao(page,acao))el.style.display='none';});
+    // BUG AO VIVO REAL (2026-09-03): "o site está travando... qualquer tela
+    // que eu entre demora pra carregar" — esta função roda a cada mutação
+    // no DOM inteiro (MutationObserver em document.body, debounced 40ms),
+    // e cada página visitada na sessão FICA no DOM (só escondida via CSS,
+    // nunca removida) — depois de navegar por várias telas ao longo do
+    // dia, document.querySelectorAll varria TODAS elas (inclusive as ~20
+    // escondidas) a cada mutação em QUALQUER lugar do app. Só a página
+    // ATIVA (.page.on) tem botão que dá pra clicar — escondida não
+    // interage com ninguém — então os dois scans abaixo (que antes eram
+    // document.querySelectorAll(...), varrendo tudo) agora ficam restritos
+    // a ela, cortando o trabalho de "todo o histórico de telas da sessão"
+    // pra "só a tela que a pessoa está olhando agora".
+    const escopo=document.querySelector('.page.on')||document;
+    escopo.querySelectorAll('[onclick],[onchange]').forEach(el=>{const txt=(el.getAttribute('onclick')||el.getAttribute('onchange')||'').toLowerCase(),page=el.closest('.page')?.id?.replace(/^page-/,'');if(!page||!MODULOS.some(m=>m.id===page))return;let acao='visualizar';if(/exclu|limpar|cancelar.*recont/.test(txt))acao='excluir';else if(/export|baixar|download/.test(txt))acao='exportar';else if(/import|processfile|handlefile/.test(txt))acao='importar';else if(/criar|novo|adicionar|registrar/.test(txt))acao='criar';else if(/public|liberar/.test(txt))acao='publicar';else if(/finaliz|fecharinvent|encerrar/.test(txt))acao='finalizar';else if(/aprovar/.test(txt))acao='aprovar';else if(/bloquear/.test(txt))acao='bloquear';else if(/salvarconfig|apiset|mapeamento/.test(txt))acao='configurar';else if(/enviar|executar/.test(txt))acao='executar';else if(/salvar|editar|reatrib|confirmar/.test(txt))acao='editar';else if(/atualizar|refresh/.test(txt))acao='atualizar';if(acao!=='visualizar'&&!temPermissao(page,acao))el.style.display='none';});
     // Recebimento (fase 15/FASE 5) usa clique delegado (data-*) em vez de
     // onclick inline (obrigatório porque as linhas são geradas
     // dinamicamente — onclick inline não reaplica em HTML injetado depois
@@ -706,7 +789,7 @@
       }
     }
   }
-  var RECEBIMENTO_MODULOS=['recebimento-dashboard','recebimento-operacao','recebimento-notas','recebimento-fornecedores','recebimento-agendamentos','recebimento-transbordo','recebimento-recusas','recebimento-config'];
+  var RECEBIMENTO_MODULOS=['recebimento-dashboard','recebimento-operacao','recebimento-notas','recebimento-fornecedores','recebimento-agendamentos','recebimento-transbordo','recebimento-paletes','recebimento-recusas','recebimento-config'];
   // Engrenagem de Configurações (pedido ao vivo do usuário) — Usuários/
   // Coletores/Lojas/API são cross-loja, não fazem sentido enterrados dentro
   // só do setor Inventário; ficam na mesma linha dos setores, sempre
@@ -725,14 +808,17 @@
     var podeOperadores=temPermissao('operadores'),podeColetores=temPermissao('coletores'),podeLojas=temPermissao('lojas');
     var podeApi=temPermissao('importar-exportar');
     if(!podeOperadores&&!podeColetores&&!podeLojas&&!podeApi)return '';
-    var primeiraAba=podeOperadores?'operadores':(podeColetores?'coletores':(podeLojas?'lojas':null));
-    // Sem nenhuma das 3 (só API liberada, caso raro) — engrenagem vira
-    // atalho direto pra Configuração da API em vez de abrir um modal vazio.
+    // "integracao" (Configuração da API — dt_config/integracao_api, usada
+    // por Produção/PCP/Compras via 90-bluesoft-service.js, não só
+    // Inventário) é a 4ª aba possível, mesmo padrão das outras 3 — cai pra
+    // ela quando é a única coisa liberada, em vez do atalho antigo que
+    // navegava direto pra Inventário → Importar/Exportar.
     // data-config-abrir (não onclick inline) porque este HTML é injetado via
     // .innerHTML — o sanitizador global de common-utils.js remove qualquer
     // atributo on* silenciosamente, sem erro nenhum no console; o clique
     // delegado em document já trata [data-config-abrir] mais abaixo.
-    if(!primeiraAba&&podeApi)return '<button type="button" id="setor-btn-config" data-config-api="1" style="background:transparent;border:none;color:rgba(255,255,255,.65);padding:12px 16px;font-size:1rem;cursor:pointer;margin-left:auto" title="Configuração da API">⚙️</button>';
+    var primeiraAba=podeOperadores?'operadores':(podeColetores?'coletores':(podeLojas?'lojas':(podeApi?'integracao':null)));
+    if(!primeiraAba)return '';
     return '<button type="button" id="setor-btn-config" data-config-abrir="'+primeiraAba+'" style="background:transparent;border:none;color:rgba(255,255,255,.65);padding:12px 16px;font-size:1rem;cursor:pointer;margin-left:auto" title="Configurações">⚙️</button>';
   }
   // Abas de dentro do modal seguem a MESMA permissão que antes decidia se o
@@ -745,8 +831,20 @@
       var el=document.getElementById(mapa[modulo]);
       if(el)el.style.display=temPermissao(modulo)?'':'none';
     });
+    // A aba de Integração API segue a MESMA permissão que já gateava o
+    // recurso em Inventário → Importar/Exportar ("importar-exportar") — não
+    // é um módulo novo, só um segundo lugar de abrir a mesma tela.
+    var elApi=document.getElementById('cfgm-tab-integracao');
+    if(elApi)elApi.style.display=temPermissao('importar-exportar')?'':'none';
   }
   function aplicarSetoresPermitidos(){
+    // Move page-integracao-api pro modal de Configurações já no boot (não só
+    // na primeira vez que a engrenagem abre) — sem isso, quem for direto em
+    // Inventário → Importar/Exportar → API antes de abrir a engrenagem veria
+    // o card sumido: ele começa dentro de #ie-panel-api com class="page"
+    // (escondida por padrão, só fica visível com .on), e só ganha .on
+    // quando abrirModalConfiguracoes('integracao') roda.
+    _moverPaginasParaModalConfiguracoes();
     var a=global.DT_USUARIO_ACESSO_ATUAL;if(!a)return;
     var admin=a.admin_mestre===true||a.administrador_mestre===true||a.perfil==='administrador';
     var setores=a.setores_permitidos||{};
@@ -793,7 +891,7 @@
   function _moverPaginasParaModalConfiguracoes(){
     var destino=document.getElementById('modal-config-conteudo');
     if(!destino)return;
-    ['page-operadores','page-coletores','page-lojas'].forEach(function(id){
+    ['page-operadores','page-coletores','page-lojas','page-integracao-api'].forEach(function(id){
       var el=document.getElementById(id);
       if(el&&el.parentNode!==destino)destino.appendChild(el);
     });
@@ -817,10 +915,34 @@
     document.querySelectorAll('#modal-configuracoes .cfgm-tab').forEach(function(b){b.classList.remove('on');});
     var tabBtn=document.getElementById('cfgm-tab-'+pageId);
     if(tabBtn)tabBtn.classList.add('on');
+    // "integracao" não é um módulo de permissão de verdade (é a mesma tela
+    // de sempre, "importar-exportar", só reaberta aqui) — goPage() genérico
+    // checaria temPermissao('integracao','visualizar'), que não existe pra
+    // ninguém, e bloquearia todo mundo. Mostra a página movida direto e
+    // reaproveita ieSetTab('api') (já existente em
+    // 43-importar-exportar-api.js) pra carregar a config salva nos campos.
+    if(pageId==='integracao'){
+      if(!temPermissao('importar-exportar')){global.showToast?.('Você não possui acesso a esta aba.','error');return;}
+      document.querySelectorAll('.page').forEach(function(p){p.classList.remove('on');});
+      var pg=document.getElementById('page-integracao-api');
+      if(pg)pg.classList.add('on');
+      var titEl=document.getElementById('page-title');if(titEl)titEl.textContent='Configurações · Integração API';
+      global.ieSetTab?.('api');
+      return;
+    }
     goPage(pageId,document.getElementById('nav-'+pageId));
   }
+  // PEDIDO AO VIVO (2026-08-27): "se eu tiver criando um e eu fechar, quando
+  // eu clicar de novo lá nas configurações não é pra abrir já onde eu
+  // estava, é pra abrir as configurações normal do começo" — fechar
+  // Configurações agora também fecha Criar/Editar Usuário se algum dos
+  // dois ficou aberto por cima, pra nunca reabrir Configurações já em cima
+  // de um modal de usuário esquecido aberto.
   function fecharModalConfiguracoes(){
     global.closeModal?.('modal-configuracoes');
+    const modalCriar=document.getElementById('op-modal-criar-bg');if(modalCriar)modalCriar.style.display='none';
+    const modalEditar=document.getElementById('op-modal-bg');if(modalEditar)modalEditar.style.display='none';
+    editando=null;editandoIndice=-1;
     if(_paginaAntesConfig)goPage(_paginaAntesConfig,document.getElementById('nav-'+_paginaAntesConfig));
     _paginaAntesConfig=null;
   }
@@ -850,14 +972,6 @@
     if(itemConfig){
       abrirModalConfiguracoes(itemConfig.dataset.configAbrir,itemConfig);
       itemConfig.closest('.setor-flyout-trigger')?.classList.remove('open');
-      return;
-    }
-    const itemApi=event.target.closest('[data-config-api]');
-    if(itemApi){
-      irParaSetor('logistica','inventario');
-      goPage('importar-exportar',document.getElementById('nav-importar-exportar'));
-      global.ieSetTab?.('api');
-      itemApi.closest('.setor-flyout-trigger')?.classList.remove('open');
       return;
     }
     const item=event.target.closest('.setor-flyout-item');
@@ -898,5 +1012,5 @@
   }
   function opCarregarOperadoresParaFiltro(){const s=document.getElementById('op-rec-filtro-operador');if(s)s.innerHTML='<option value="">Selecione um operador…</option>'+usuarios.map(u=>`<option value="${esc(u.uid||u.id)}">${esc(u.nome||u.email)}</option>`).join('');}
   function opVerificarMinhaConta(){}
-  Object.assign(global,{DT_MODULOS_PERMISSOES:MODULOS,DT_PRESETS_PERMISSOES:PRESETS,temPermissao,aplicarPermissoesAnalista,irParaPrimeiraPaginaPermitida,listarOperadores,opFiltrarLista,opEditarUsuario,opExcluirUsuario,opExcluirUsuarioAtual,opSalvarEdicao,opFecharModal,opAbrirModalCriar,opFecharModalCriar,opSetModoLojasCriar,opSetModoLojasEditar,opSelecionarTipo,opGerarUsername,opGerarSenha,toggleOpSenha,toggleOpeditSenha,opValidarUsername,opValidarSenha,criarOperador,oplSetTab,opCarregarOperadoresParaFiltro,opVerificarMinhaConta,opMarcarPermissoes,opMarcarModulo,opAtualizarContagemModulo,opFiltrarPermissoes,opAbrirDiagnostico,opRessincronizarPermissoes,opAplicarPreset,opBuscarPorUid});
+  Object.assign(global,{DT_MODULOS_PERMISSOES:MODULOS,DT_PRESETS_PERMISSOES:PRESETS,temPermissao,aplicarPermissoesAnalista,irParaPrimeiraPaginaPermitida,listarOperadores,opFiltrarLista,opEditarUsuario,opExcluirUsuario,opExcluirUsuarioAtual,opSalvarEdicao,opFecharModal,opAbrirModalCriar,opFecharModalCriar,opSetModoLojasCriar,opSetModoLojasEditar,opGerarUsername,opGerarSenha,toggleOpSenha,toggleOpeditSenha,opValidarUsername,opValidarSenha,criarOperador,oplSetTab,opCarregarOperadoresParaFiltro,opVerificarMinhaConta,opMarcarPermissoes,opMarcarModulo,opAtualizarContagemModulo,opFiltrarPermissoes,opAbrirDiagnostico,opRessincronizarPermissoes,opAplicarPreset,opBuscarPorUid});
 })(window);

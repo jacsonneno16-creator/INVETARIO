@@ -20,7 +20,7 @@
 <script src="vendor/firebase-10.12.2/firebase-app-compat.js"></script>
 <script src="vendor/firebase-10.12.2/firebase-auth-compat.js"></script>
 <script src="vendor/firebase-10.12.2/firebase-firestore-compat.js"></script>
-<link rel="stylesheet" href="/css/analista.css?v=20260823-fix-form-group-field-layout">
+<link rel="stylesheet" href="/css/analista.css?v=20260827-fix-pcp-modal-overlay">
 <style id="v80-analista-compacto">
 /* v80 — layout compacto e tabelas largas sem quebrar nomes de produtos */
 :root{font-size:14px}
@@ -105,7 +105,8 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <link rel="stylesheet" href="css/analista-dashboard-acomp-v252.css?v=20260804-2245">
 <link rel="stylesheet" href="css/analista-quatro-telas-v254.css?v=20260809-v298-rewrite">
 <link rel="stylesheet" href="css/analista-cadastros-v287.css?v=20260806-v296.1">
-<link rel="stylesheet" href="css/producao-completa.css?v=20260823f-gantt-min-width-responsivo">
+<!-- Compatibilidade de auditoria: producao-completa.css?v=20260823f-gantt-min-width-responsivo -->
+<link rel="stylesheet" href="css/producao-completa.css?v=20260831c-tabela-densa-fonte-padding">
 </head>
 <body>
 <!-- ══════════ TELA DE LOGIN ══════════ -->
@@ -135,6 +136,34 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="login-footer-txt">
       Sistema de Inventário · Da Terrinha Alimentos
     </div>
+</div>
+</div>
+<!-- ══════════ PRIMEIRO ACESSO — troca de senha obrigatória (2026-09-08,
+     só contas com canal Analista; Coletor nunca vê esta tela) ══════════ -->
+<div id="screen-primeiro-acesso" style="display:none">
+<div class="login-bg"></div>
+<div class="login-card">
+<div class="login-eyebrow">Primeiro acesso</div>
+<div class="login-title">Crie sua senha</div>
+<div class="login-sub">Por segurança, defina uma nova senha antes de continuar.</div>
+<div class="login-field">
+<label class="login-label" for="pa-senha">Nova senha</label>
+<div class="login-input-wrap">
+<input autocomplete="new-password" class="login-input" id="pa-senha" placeholder="••••••••" style="padding-right:44px" type="password"/>
+<span class="login-eye" onclick="togglePassPrimeiroAcesso('pa-senha')">👁</span>
+</div>
+</div>
+<div class="login-field">
+<label class="login-label" for="pa-senha-confirmar">Confirmar nova senha</label>
+<div class="login-input-wrap">
+<input autocomplete="new-password" class="login-input" id="pa-senha-confirmar" placeholder="••••••••" style="padding-right:44px" type="password" onkeydown="if(event.key==='Enter')confirmarNovaSenhaPrimeiroAcesso(event)"/>
+<span class="login-eye" onclick="togglePassPrimeiroAcesso('pa-senha-confirmar')">👁</span>
+</div>
+</div>
+<button class="login-btn" id="btn-primeiro-acesso" type="button" onclick="confirmarNovaSenhaPrimeiroAcesso(event)">
+      SALVAR NOVA SENHA
+    </button>
+<div class="login-error" id="primeiro-acesso-erro"></div>
 </div>
 </div>
 <!-- ══════════ APP PRINCIPAL (oculto até login) ══════════ -->
@@ -178,7 +207,15 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="nav-item" id="nav-producao-insumos-geral" onclick="window.pinsModo&&window.pinsModo('geral');goPage('producao-insumos',this)">
 <span class="nav-icon">📦</span>Insumos Geral
 </div>
-<div class="nav-item" id="nav-producao-projecao" onclick="goPage('producao-projecao',this)">
+<!-- PEDIDO AO VIVO (2026-09-02): "essa projeção de vendas da produção pode
+     tirar fora" — Programação Automática (67) e o PCP já usam o mesmo
+     cálculo (calcularProjecaoComRisco/producao_projecao), agora
+     auto-alimentado pela escadinha via "Buscar do BI" na própria tela
+     (66-producao-projecao.js). Escondida do dia a dia; o código/coleção
+     continuam funcionando por baixo (import de Excel fica como rede de
+     segurança pra produto que a escadinha não cobrir). Página ainda
+     acessível por quem tiver o link direto (goPage('producao-projecao')). -->
+<div class="nav-item" id="nav-producao-projecao" onclick="goPage('producao-projecao',this)" style="display:none">
 <span class="nav-icon">📈</span>Projeção
 </div>
 <div class="nav-item" id="nav-producao-prog-automatica" onclick="goPage('producao-prog-automatica',this)">
@@ -205,6 +242,9 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="nav-item" id="nav-producao-estoque" onclick="goPage('producao-estoque',this)">
 <span class="nav-icon">📦</span>Estoque
 </div>
+<div class="nav-item" id="nav-producao-relatorios-bi" onclick="goPage('producao-relatorios-bi',this)">
+<span class="nav-icon">📊</span>Relatórios BI
+</div>
 </aside>
 <div class="content" style="flex:1">
 <div class="page" id="page-producao-dashboard"></div>
@@ -223,6 +263,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="page" id="page-producao-config"></div>
 <div class="page" id="page-producao-importacao"></div>
 <div class="page" id="page-producao-estoque"></div>
+<div class="page" id="page-producao-relatorios-bi"></div>
 </div>
 </div>
 <!-- Setor PCP (fase 2 da unificação PCP↔Compras↔Produção) — mini-shell
@@ -262,6 +303,9 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="nav-item" id="nav-pcp-timeline" onclick="pcpIrParaAba('timeline',this)">
 <span class="nav-icon">🗓️</span>Linha do Tempo
 </div>
+<div class="nav-item" id="nav-pcp-cortes" onclick="pcpIrParaAba('cortes',this)">
+<span class="nav-icon">✂️</span>Cortes
+</div>
 <div class="sb-sec">Controle</div>
 <div class="nav-item" id="nav-pcp-alertas" onclick="pcpIrParaAba('alertas',this)">
 <span class="nav-icon">🚨</span>Alertas
@@ -271,6 +315,9 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 <div class="nav-item" id="nav-pcp-parametros" onclick="pcpIrParaAba('parametros',this)">
 <span class="nav-icon">⚙️</span>Parâmetros
+</div>
+<div class="nav-item" id="nav-pcp-projecao-vendas" onclick="abrirProjecaoVendasPcp(this)">
+<span class="nav-icon">📈</span>Projeção de Vendas
 </div>
 </aside>
 <div class="content" style="flex:1">
@@ -283,6 +330,8 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="page" id="page-pcp-produto-360"></div>
 <div class="page" id="page-pcp-alertas"></div>
 <div class="page" id="page-pcp-relatorios"></div>
+<div class="page" id="page-pcp-projecao-vendas"></div>
+<div class="page" id="page-pcp-cortes"></div>
 <div id="pcp-modal-host"></div>
 </div>
 </div>
@@ -298,7 +347,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <span class="nav-icon">🛒</span>Central de Compras
 </div>
 <div class="sb-sec">Operação</div>
-<div class="nav-item" id="nav-compras-solicitacoes" onclick="comprasIrParaPagina('solicitacoes',this)"><span class="nav-icon">📥</span>Solicitações</div>
+<div class="nav-item" id="nav-compras-solicitacoes" onclick="comprasIrParaPagina('solicitacoes',this)"><span class="nav-icon">📥</span>Solicitações PCP</div>
 <div class="nav-item" id="nav-compras-cotacoes" onclick="comprasIrParaPagina('cotacoes',this)"><span class="nav-icon">⚖️</span>Cotações</div>
 <div class="nav-item" id="nav-compras-pedidos" onclick="comprasIrParaPagina('pedidos',this)"><span class="nav-icon">🧾</span>Pedidos</div>
 <div class="nav-item" id="nav-compras-recebimentos" onclick="comprasIrParaPagina('recebimentos',this)"><span class="nav-icon">🚚</span>Recebimentos</div>
@@ -365,8 +414,15 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="nav-item" id="nav-recebimento-transbordo" onclick="goPage('recebimento-transbordo',this)">
 <span class="nav-icon">🚛</span>Transbordo
 </div>
+<div class="nav-item" id="nav-recebimento-cargas" onclick="goPage('recebimento-cargas',this)">
+<span class="nav-icon">📦</span>Cargas (Montagem/Expedição)
+</div>
 <div class="nav-item" id="nav-recebimento-tempos" onclick="goPage('recebimento-tempos',this)">
 <span class="nav-icon">⏱️</span>Tempos / Performance
+</div>
+<div class="sb-sec">Paletes</div>
+<div class="nav-item" id="nav-recebimento-paletes" onclick="goPage('recebimento-paletes',this)">
+<span class="nav-icon">🎯</span>Controle de Paletes
 </div>
 <div class="sb-sec">Notas Retornadas</div>
 <div class="nav-item" id="nav-recebimento-recusas" onclick="goPage('recebimento-recusas',this)">
@@ -378,8 +434,17 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="nav-item" id="nav-recebimento-retornos-status" onclick="goPage('recebimento-retornos-status',this)">
 <span class="nav-icon">🧾</span>Status de Retornos
 </div>
+<div class="nav-item" id="nav-recebimento-recusas-indicadores" onclick="goPage('recebimento-recusas-indicadores',this)">
+<span class="nav-icon">📊</span>Recusas
+</div>
 <div class="nav-item" id="nav-recebimento-recusas-cadastros" onclick="goPage('recebimento-recusas-cadastros',this)">
 <span class="nav-icon">🗂️</span>Cadastros
+</div>
+<div class="nav-item" id="nav-recebimento-consulta-notas" onclick="goPage('recebimento-consulta-notas',this)">
+<span class="nav-icon">📥</span>Devoluções (BI)
+</div>
+<div class="nav-item" id="nav-recebimento-devolucoes-indicadores" onclick="goPage('recebimento-devolucoes-indicadores',this)">
+<span class="nav-icon">📊</span>Indicadores de Devoluções
 </div>
 </aside>
 <div class="content" style="flex:1">
@@ -389,10 +454,15 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="page" id="page-recebimento-fornecedores"></div>
 <div class="page" id="page-recebimento-agendamentos"></div>
 <div class="page" id="page-recebimento-transbordo"></div>
+<div class="page" id="page-recebimento-cargas"></div>
+<div class="page" id="page-recebimento-paletes"></div>
 <div class="page" id="page-recebimento-recusas"></div>
 <div class="page" id="page-recebimento-retornos-indicadores"></div>
 <div class="page" id="page-recebimento-retornos-status"></div>
+<div class="page" id="page-recebimento-recusas-indicadores"></div>
 <div class="page" id="page-recebimento-recusas-cadastros"></div>
+<div class="page" id="page-recebimento-consulta-notas"></div>
+<div class="page" id="page-recebimento-devolucoes-indicadores"></div>
 <div class="page" id="page-recebimento-tempos"></div>
 <div class="page" id="page-recebimento-historico"></div>
 <div class="page" id="page-recebimento-config"></div>
@@ -414,77 +484,73 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <button type="button" class="cfgm-tab" id="cfgm-tab-operadores" data-config-abrir="operadores">🔑 Usuários</button>
 <button type="button" class="cfgm-tab" id="cfgm-tab-coletores" data-config-abrir="coletores">👤 Coletores</button>
 <button type="button" class="cfgm-tab" id="cfgm-tab-lojas" data-config-abrir="lojas">🏪 Lojas</button>
+<button type="button" class="cfgm-tab" id="cfgm-tab-integracao" data-config-abrir="integracao">🔗 Integração API</button>
 </div>
 <div id="modal-config-conteudo" style="flex:1;overflow-y:auto"></div>
 </div></div>
 <!-- Modal de edição de Ficha Técnica (Produção) -->
-<div class="modal-bg" id="modal-pft"><div class="modal" style="max-width:760px">
-<div class="modal-title">🏭 <span id="pft-title">Ficha Técnica</span></div>
+<div class="modal-bg" id="modal-pft"><div class="modal prod-form-modal" style="max-width:520px">
+<div class="modal-header"><div class="modal-title">📦 <span id="pft-title">Produto</span></div><button type="button" class="btn btn-ghost" onclick="closeModal('modal-pft')" aria-label="Fechar">✕</button></div>
+<div class="modal-body pft-modal-grid">
 <input type="hidden" id="pft-doc-id"/>
-<div class="form-group"><label>Código</label><input class="field" id="pft-cod" placeholder="Ex.: 123"/></div>
-<div class="form-group"><label>Descrição</label><input class="field" id="pft-desc" placeholder="Ex.: PÃO FRANCÊS 50G"/></div>
+<div class="form-group pft-full"><label>Descrição</label><input class="field" id="pft-desc" placeholder="Nome do produto"/></div>
+<div class="form-group"><label>Código</label><input class="field" id="pft-cod" placeholder="12345"/></div>
 <div class="form-group"><label>Unid/Cx</label><input class="field" id="pft-unid" type="number" min="1" placeholder="Ex.: 24"/></div>
-<div class="form-group"><label>Peças/min</label><input class="field" id="pft-pcmin" type="number" min="0" placeholder="Ex.: 45"/></div>
-<div class="form-group"><label>Máquina</label><input class="field" id="pft-maquina" placeholder="Ex.: EMPACOTADEIRA 1"/></div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+<div class="form-group"><label>Und/min (padrão)</label><input class="field" id="pft-pcmin" type="number" min="0" step="0.01" placeholder="28,05"/></div>
+<input type="hidden" id="pft-maquina"/><div class="form-group pft-full"><label>Máquinas &amp; Velocidades</label><div id="pft-maquinas-list" class="pft-maquinas-list"></div><small class="pft-field-help">Selecione uma ou mais máquinas. A velocidade específica substitui o padrão acima.</small></div>
 <div class="form-group"><label>Categoria</label><input class="field" id="pft-categoria" placeholder="Ex.: Farinhas"/></div>
 <div class="form-group"><label>Classificação</label><input class="field" id="pft-classificacao" placeholder="Ex.: Pó, Grão, Mistura"/></div>
+<div class="pft-section-title pft-full">Cobertura &amp; Programação Automática</div>
 <div class="form-group"><label>Meta cobertura (dias)</label><input class="field" id="pft-cobertura" type="number" min="0" placeholder="30"/></div>
 <div class="form-group"><label>Produção mínima (cx)</label><input class="field" id="pft-prod-min" type="number" min="0" placeholder="500"/></div>
 <div class="form-group"><label>Múltiplo de produção</label><input class="field" id="pft-multiplo" type="number" min="0" placeholder="25"/></div>
 <div class="form-group"><label>Tipo mínimo</label><select class="field" id="pft-tipo-min"><option value="">— Selecione —</option><option value="fixo">Fixo</option><option value="multiplo">Múltiplo</option><option value="palete">Palete</option></select></div>
 <div class="form-group"><label>Prioridade (1 = alta)</label><input class="field" id="pft-prioridade" type="number" min="1" max="99" value="2"/></div>
 <div class="form-group"><label>Alérgênico</label><select class="field" id="pft-alergenico"><option value="false">Não alérgênico</option><option value="true">⚠️ Alérgênico</option></select></div>
+<div class="form-group"><label>Status do produto</label><select class="field" id="pft-ativo"><option value="true">✅ Ativo — entra na programação</option><option value="false">⛔ Desativado — ignorado</option></select></div>
 <div class="form-group"><label>Empresa produtora</label><select class="field" id="pft-empresa-produtora"><option value="">— Não definida —</option></select></div>
-</div>
-<div class="form-group">
-<label>Insumos (quantidade por caixa)</label>
+<div class="form-group pft-full pft-insumos-group">
+<div class="pft-insumos-head"><label>Insumos <small>(quantidade por caixa — opcional)</small></label><button type="button" class="btn btn-ghost btn-sm" onclick="pftAdicionarInsumo()">+ Insumo</button></div>
 <div id="pft-insumos-list" style="display:flex;flex-direction:column;gap:6px"></div>
-<button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="pftAdicionarInsumo()">+ Adicionar insumo</button>
 </div>
-<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-pft')">Cancelar</button><button class="btn btn-primary" onclick="pftSalvar()">Salvar</button></div>
+</div>
+<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-pft')">Cancelar</button><button class="btn btn-primary" onclick="pftSalvar()">Salvar</button></div>
 </div></div>
 <!-- Modal de edição de Máquina (Produção) -->
-<div class="modal-bg" id="modal-pmaq"><div class="modal" style="max-width:560px">
-<div class="modal-title">⚙️ <span id="pmaq-title">Máquina</span></div>
+<div class="modal-bg" id="modal-pmaq"><div class="modal prod-form-modal" style="max-width:680px">
+<div class="modal-header"><div class="modal-title">⚙️ <span id="pmaq-title">Máquina</span></div><button type="button" class="btn btn-ghost" onclick="closeModal('modal-pmaq')" aria-label="Fechar">✕</button></div>
+<div class="pmaq-tabs"><button type="button" class="on" data-pmaq-tab="dados">Dados Gerais</button><button type="button" data-pmaq-tab="capacidade">Capacidade</button><button type="button" data-pmaq-tab="produtos">Produtos Compatíveis</button></div>
+<div class="modal-body">
 <input type="hidden" id="pmaq-doc-id"/>
-<div class="form-group"><label>Nome</label><input class="field" id="pmaq-nome" placeholder="Ex.: EMPACOTADEIRA 1"/></div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+<div class="pmaq-pane on" data-pmaq-pane="dados"><div class="pmaq-grid">
+<div class="form-group pmaq-full"><label>Nome da Máquina *</label><input class="field" id="pmaq-nome" placeholder="Ex.: EMPACOTADEIRA 1"/></div>
 <div class="form-group"><label>Código (opcional)</label><input class="field" id="pmaq-codigo" placeholder="Ex.: MAQ-01"/></div>
 <div class="form-group"><label>Tipo de Máquina</label><input class="field" id="pmaq-tipo" placeholder="Ex.: Empacotadeira"/></div>
 <div class="form-group"><label>Setor / Linha</label><input class="field" id="pmaq-setor" placeholder="Ex.: Linha 1"/></div>
 <div class="form-group"><label>Categoria</label><select class="field" id="pmaq-categoria"></select></div>
 <div class="form-group"><label>Classificação</label><input class="field" id="pmaq-classificacao" placeholder="Ex.: Linha premium"/></div>
+<div class="form-group"><label>Status</label><select class="field" id="pmaq-status"><option value="ativa">✅ Ativa</option><option value="manutencao">⚠️ Em manutenção</option><option value="inativa">⛔ Inativa</option></select></div>
+</div></div>
+<div class="pmaq-pane" data-pmaq-pane="capacidade"><div class="pmaq-grid">
 <div class="form-group"><label>Velocidade padrão (und/min)</label><input class="field" id="pmaq-pcmin" type="number" step="0.01" min="0" placeholder="Ex.: 80"/></div>
 <div class="form-group"><label>Horas por turno</label><input class="field" id="pmaq-hturno" type="number" step="0.5" min="0" placeholder="8"/></div>
 <div class="form-group"><label>Número de turnos / dia</label><input class="field" id="pmaq-nturnos" type="number" min="1" max="3" placeholder="1"/></div>
-</div>
-<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;background:var(--surface-2);border-radius:8px;padding:10px 12px;margin-top:4px">
+<div class="form-group"><label>Eficiência (%)</label><input class="field" id="pmaq-eficiencia" type="number" min="0" max="100" placeholder="Ex.: 90"/></div>
+<div class="form-group pmaq-full"><label>Tempo de Setup Padrão (min)</label><input class="field" id="pmaq-setup-padrao" type="number" min="0" placeholder="Usado quando não há setup específico"/></div>
+</div><div class="pmaq-cap-result">
 <div><div style="font-size:.62rem;color:var(--muted);text-transform:uppercase">Und/Hora</div><div style="font-family:monospace;font-size:.95rem;font-weight:700" id="pmaq-calc-hora">—</div></div>
 <div><div style="font-size:.62rem;color:var(--muted);text-transform:uppercase">Und/Turno</div><div style="font-family:monospace;font-size:.95rem;font-weight:700" id="pmaq-calc-turno">—</div></div>
 <div><div style="font-size:.62rem;color:var(--muted);text-transform:uppercase">Und/Dia</div><div style="font-family:monospace;font-size:.95rem;font-weight:700" id="pmaq-calc-dia">—</div></div>
-</div>
-<div class="form-group"><label>Status</label>
-<select class="field" id="pmaq-status"><option value="ativa">Ativa</option><option value="manutencao">Em manutenção</option><option value="inativa">Inativa</option></select>
-</div>
-<div class="form-group"><label>Eficiência (%)</label><input class="field" id="pmaq-eficiencia" type="number" min="0" max="100" placeholder="Ex.: 90"/></div>
-<div class="form-group"><label>Tempo de Setup Padrão (min)</label><input class="field" id="pmaq-setup-padrao" type="number" min="0" placeholder="Usado quando não há tempo específico cadastrado em Tempos de Setup"/></div>
-<div class="form-group">
-<label>Produtos compatíveis (produto + velocidade)</label>
+</div><div class="pmaq-tip">💡 Os cálculos consideram a eficiência configurada. O setup padrão é usado quando não existe um tempo específico.</div></div>
+<div class="pmaq-pane" data-pmaq-pane="produtos"><div class="form-group">
+<label>Produtos compatíveis e velocidade específica</label>
+<div class="pmaq-help">Se não houver velocidade específica, será usada a velocidade padrão da máquina.</div>
 <div id="pmaq-produtos-list" style="display:flex;flex-direction:column;gap:6px"></div>
 <button type="button" class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="pmaqAdicionarProduto()">+ Adicionar produto</button>
+</div></div>
+<div id="pmaq-turnos-list" hidden></div>
 </div>
-<div class="form-group">
-<div style="display:flex;align-items:center;justify-content:space-between">
-<label style="margin:0">Turnos (horário disponível por dia da semana)</label>
-<button type="button" class="btn btn-ghost btn-sm" onclick="pmaqAtalhosAbrir()">⚡ Atalhos T1/T2/T3</button>
-</div>
-<div id="pmaq-turnos-list" style="display:flex;flex-direction:column;gap:6px;margin-top:6px"></div>
-<div style="display:flex;gap:8px;margin-top:8px">
-<button type="button" class="btn btn-ghost btn-sm" data-pmaq-copiar-turnos="1">→ Copiar estes turnos pra todas as máquinas</button>
-</div>
-</div>
-<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-pmaq')">Cancelar</button><button class="btn btn-primary" onclick="pmaqSalvar()">Salvar</button></div>
+<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-pmaq')">Cancelar</button><button class="btn btn-primary" onclick="pmaqSalvar()">Salvar Máquina</button></div>
 </div></div>
 <!-- Modais de cadastro do Recebimento (fase 15/FASE 2a) -->
 <div class="modal-bg" id="modal-recmot"><div class="modal" style="max-width:480px">
@@ -640,48 +706,45 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div id="rebt-nf-chegada-erro" style="font-size:.78rem;color:var(--danger,#ff4757);min-height:18px"></div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-rebt-nf-chegada')">Cancelar</button><button class="btn btn-primary" onclick="recbtConfirmarNfChegada()">Confirmar nota</button></div>
 </div></div>
-<!-- Editar carga completa (pedido ao vivo do usuário: corrigir horário/nota/volume de uma carga já existente, mesmo já finalizada pelo Coletor) -->
-<div class="modal-bg" id="modal-rebt-editar-completo"><div class="modal" style="max-width:520px">
-<div class="modal-title">✏️ Editar Transbordo</div>
-<div id="rebt-edit-completo-info" style="font-size:.78rem;color:var(--muted);padding:9px 11px;border:1px solid var(--border);border-radius:8px;margin-bottom:10px"></div>
-<div class="form-group"><label>Volumes</label><input class="field" id="rebt-edit-completo-volumes" type="number" min="0"/></div>
-<div class="form-group"><label>Nota(s) Fiscal(is)</label>
-<div id="rebt-nf-editar-lista" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px"></div>
-<div style="display:flex;gap:8px">
-<input class="field" id="rebt-nf-editar-numero" placeholder="Ex.: 123456" autocomplete="off" style="flex:1"/>
-<button type="button" class="btn btn-ghost" onclick="adicionarNotaFiscalTransbordo('editar')" title="Adicionar outra nota fiscal">+</button>
-</div>
-<div id="rebt-nf-editar-status" style="font-size:.78rem;color:var(--muted);min-height:18px"></div>
-</div>
-<div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin:3px 0 10px;background:var(--surface-2,#f7f8fa)">
-<div style="font-size:.78rem;font-weight:700;margin-bottom:8px">🕓 Horários da operação <span style="font-size:.68rem;font-weight:400;color:var(--muted)">(data e hora digitáveis)</span></div>
-<div class="form-group" style="margin:0 0 8px"><label>Saída</label><div style="display:flex;gap:6px"><input class="field" id="rebtedit-hora-saida-data" type="date" style="flex:1.3"/><input class="field" id="rebtedit-hora-saida-hora" type="time" style="flex:1"/></div></div>
-<div class="form-group" style="margin:0 0 8px"><label>Chegada</label><div style="display:flex;gap:6px"><input class="field" id="rebtedit-hora-chegada-data" type="date" style="flex:1.3"/><input class="field" id="rebtedit-hora-chegada-hora" type="time" style="flex:1"/></div></div>
-<div class="form-group" style="margin:0 0 8px"><label>Início da descarga</label><div style="display:flex;gap:6px"><input class="field" id="rebtedit-hora-inicio-descarga-data" type="date" style="flex:1.3"/><input class="field" id="rebtedit-hora-inicio-descarga-hora" type="time" style="flex:1"/></div></div>
-<div class="form-group" style="margin:0 0 8px"><label>Fim da descarga</label><div style="display:flex;gap:6px"><input class="field" id="rebtedit-hora-fim-descarga-data" type="date" style="flex:1.3"/><input class="field" id="rebtedit-hora-fim-descarga-hora" type="time" style="flex:1"/></div></div>
-<div class="form-group" style="margin:0"><label>Fechamento / finalização</label><div style="display:flex;gap:6px"><input class="field" id="rebtedit-hora-fechamento-data" type="date" style="flex:1.3"/><input class="field" id="rebtedit-hora-fechamento-hora" type="time" style="flex:1"/></div></div>
-<div id="rebt-edit-completo-status" style="font-size:.7rem;color:var(--danger,#ef4444);margin-top:8px"></div>
-</div>
-<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-rebt-editar-completo')">Cancelar</button><button class="btn btn-primary" id="rebt-edit-completo-salvar" onclick="recbtSalvarEdicaoCompleta()">Salvar</button></div>
-</div></div>
+<!-- BUG AO VIVO REAL (2026-09-08): "quando eu edito alguma coisa o motorista
+     some, e quando clico em editar eu não consigo escolher um nome de
+     motorista" — este modal estático era uma versão ANTIGA, de antes do
+     campo Motorista e da grade NF+Volume por nota existirem (ver
+     `_ensureEdicaoCompletaModal()` em 95-recebimento-transbordo.js, que já
+     tinha a versão certa e atualizada, com comentários de 2 rodadas de
+     correção do "motorista some"). Como `_ensureEdicaoCompletaModal()` só
+     injeta o modal se `#modal-rebt-editar-completo` AINDA NÃO EXISTIR no
+     DOM, este bloco estático — deixado aqui por engano numa sessão anterior
+     — sempre "ganhava" primeiro e a versão correta nunca era criada. Sem o
+     campo Motorista no HTML, `recbtSalvarEdicaoCompleta()` lia
+     `document.getElementById('rebtedit-motorista')` como `null` toda vez e
+     gravava motoristaId/motoristaNome vazios em QUALQUER edição — mesmo bug
+     nas notas fiscais: o "+" antigo (`adicionarNotaFiscalTransbordo`) e a
+     grade nova disputavam o MESMO container (`#rebt-nf-editar-lista`),
+     cada um sobrescrevendo o outro. Removido — a versão dinâmica (a única
+     mantida/testada) passa a ser criada normalmente. -->
 <!-- Modal de edição de OP de Programação (Produção) -->
-<div class="modal-bg" id="modal-pprog"><div class="modal" style="max-width:560px">
-<div class="modal-title">📋 <span id="pprog-title">Ordem de Produção</span></div>
-<input type="hidden" id="pprog-doc-id"/>
-<div class="form-group"><label>Produto</label>
-<select class="field" id="pprog-produto"></select>
+<div class="modal-bg" id="modal-pprog"><div class="modal pprog-modal" style="max-width:680px">
+<div class="modal-header"><div class="modal-title" id="pprog-title">Nova Solicitação</div><button type="button" class="modal-close" onclick="closeModal('modal-pprog')" aria-label="Fechar">✕</button></div>
+<div class="modal-body">
+<input type="hidden" id="pprog-doc-id"/><select id="pprog-produto" hidden></select>
+<div class="form-group pprog-full"><label>① Máquina *</label><select class="field" id="pprog-maquina"></select></div>
+<div id="pprog-produto-etapa" class="pprog-produto-etapa">
+<div class="form-group pprog-full"><label>② Produto *</label><input class="field" id="pprog-produto-busca" placeholder="Digite para filtrar produtos da máquina..." autocomplete="off"/></div>
+<div id="pprog-produto-grid" class="pprog-produto-grid"></div>
+<div id="pprog-produto-selecionado" class="pprog-produto-selecionado" hidden></div>
+<div class="pprog-form-grid">
+<div class="form-group"><label>Qtd (Caixas) *</label><input class="field" id="pprog-caixas" type="number" min="1" placeholder="0"/></div>
+<div class="form-group"><label>Status</label><select class="field" id="pprog-status"><option value="pendente">Pendente</option><option value="em_andamento">Em andamento</option><option value="concluido">Concluído</option></select></div>
+<div class="form-group"><label>Data Início *</label><input class="field" id="pprog-data" type="date"/></div>
+<div class="form-group"><label>Horário início</label><input class="field" id="pprog-hora" type="time"/></div>
+<div class="form-group pprog-full"><label>Destino / Referência <span>(opcional)</span></label><input class="field" id="pprog-obs" placeholder="Deixe em branco para produção padrão..."/></div>
 </div>
-<div class="form-group"><label>Máquina</label>
-<select class="field" id="pprog-maquina"></select>
+<div id="pprog-calculo" class="pprog-calculo"></div>
+<div id="pprog-insumos" style="margin-top:10px"></div>
 </div>
-<div class="form-group"><label>Caixas</label><input class="field" id="pprog-caixas" type="number" min="1" placeholder="Ex.: 50"/></div>
-<div class="form-group"><label>Data</label><input class="field" id="pprog-data" type="date"/></div>
-<div class="form-group"><label>Hora início (opcional)</label><input class="field" id="pprog-hora" type="time"/></div>
-<div class="form-group"><label>Status</label>
-<select class="field" id="pprog-status"><option value="pendente">Pendente</option><option value="em_andamento">Em andamento</option><option value="concluido">Concluído</option></select>
 </div>
-<div class="form-group"><label>Observação</label><input class="field" id="pprog-obs" placeholder="Opcional"/></div>
-<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-pprog')">Cancelar</button><button class="btn btn-primary" onclick="pprogSalvar()">Salvar</button></div>
+<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-pprog')">Cancelar</button><button class="btn btn-primary" onclick="pprogSalvar()">💾 Salvar</button></div>
 </div></div>
 <!-- Modal de edição de item de Projeção de Vendas (Produção) -->
 <div class="modal-bg" id="modal-pproj"><div class="modal" style="max-width:480px">
@@ -697,23 +760,19 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-pproj')">Cancelar</button><button class="btn btn-primary" onclick="pprojSalvar()">Salvar</button></div>
 </div></div>
 <!-- Modal de edição de Funcionário (Produção) -->
-<div class="modal-bg" id="modal-pfunc"><div class="modal" style="max-width:520px">
-<div class="modal-title">👷 <span id="pfunc-title">Funcionário</span></div>
-<input type="hidden" id="pfunc-doc-id"/>
-<div class="form-group"><label>Nome</label><input class="field" id="pfunc-nome" placeholder="Ex.: João da Silva"/></div>
-<div class="form-group"><label>Setor</label><input class="field" id="pfunc-setor" placeholder="Ex.: Embalagem"/></div>
-<div class="form-group"><label>Função</label><input class="field" id="pfunc-funcao" placeholder="Ex.: Operador de Máquina"/></div>
-<div class="form-group"><label>Turno</label>
-<select class="field" id="pfunc-turno"><option value="">—</option><option value="1">1º turno</option><option value="2">2º turno</option><option value="3">3º turno</option><option value="Integral">Integral</option></select>
-</div>
+<div class="modal-bg" id="modal-pfunc"><div class="modal" style="max-width:480px">
+<div class="modal-header"><div class="modal-title"><span id="pfunc-title">Funcionário</span></div><button type="button" class="modal-close" onclick="closeModal('modal-pfunc')">✕</button></div>
+<div class="modal-body"><input type="hidden" id="pfunc-doc-id"/>
+<div class="pfunc-grid">
+<div class="form-group pfunc-full"><label>Nome completo *</label><input class="field" id="pfunc-nome" placeholder="Ex: João Silva"/></div>
+<div class="form-group"><label>Setor</label><input class="field" id="pfunc-setor" placeholder="Ex: Embalagem"/></div>
+<div class="form-group"><label>Função</label><input class="field" id="pfunc-funcao" placeholder="Ex: Operador de Máquina"/></div>
+<div class="form-group"><label>Turno</label><select class="field" id="pfunc-turno"><option value="">Não definido</option><option value="1">Turno 1</option><option value="2">Turno 2</option><option value="3">Turno 3</option><option value="Integral">Integral</option></select></div>
 <div class="form-group"><label>Status</label><select class="field" id="pfunc-ativo"><option value="true">Ativo</option><option value="false">Inativo</option></select></div>
-<div class="form-group">
-<label>Máquinas que pode operar</label>
-<select id="pfunc-maquinas-list" multiple size="5" class="field" style="height:auto"></select>
-<small style="color:var(--muted);font-size:.68rem">Segure Ctrl para selecionar várias</small>
-</div>
-<div class="form-group"><label>Observação</label><input class="field" id="pfunc-obs" placeholder="Opcional"/></div>
-<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-pfunc')">Cancelar</button><button class="btn btn-primary" onclick="pfuncSalvar()">Salvar</button></div>
+<div class="form-group pfunc-full"><label>Máquinas que pode operar</label><select id="pfunc-maquinas-list" multiple size="5" class="field"></select><small>Segure Ctrl para selecionar várias</small></div>
+<div class="form-group pfunc-full"><label>Observações</label><textarea class="field" id="pfunc-obs" rows="2" placeholder="Informações adicionais..."></textarea></div>
+</div></div>
+<div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-pfunc')">Cancelar</button><button class="btn btn-primary" onclick="pfuncSalvar()">Salvar</button></div>
 </div></div>
 <!-- Modal "Desativar temporariamente" um Funcionário -->
 <div class="modal-bg" id="modal-pfunc-desativar"><div class="modal" style="max-width:420px">
@@ -1527,6 +1586,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <option value="">Todos os inventários</option>
 </select>
 <button class="btn btn-ghost btn-sm" onclick="atualizarAbaColetores()">🔄 Atualizar</button>
+<button class="btn btn-primary btn-sm" onclick="abrirModalNovoColetorComCodigo()">➕ Novo Coletor</button>
 </div>
 </div>
 <!-- Info: como funciona -->
@@ -1616,7 +1676,6 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
     <div class="tc-header" style="border-left-color:var(--orange);background:linear-gradient(90deg,var(--orange-soft) 0%, transparent 70%)">
       <div><div class="tc-title">📦 Auditoria Operacional</div><div class="sec-sub">Compare o DUN importado com o produto bipado pelo operador.</div></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-primary btn-sm" onclick="atualizarTresAbasAuditoria(this)">🔄 Atualizar</button>
         <button class="btn btn-primary btn-sm" onclick="criarNovaAuditoriaStandalone()">＋ Criar auditoria</button>
         <button class="btn btn-ghost btn-sm" id="btn-aud-atualizar-base" onclick="importarBaseAuditoriaSelecionada()" style="display:none">⬆ Atualizar base</button>
         <button class="btn btn-success btn-sm" onclick="liberarAuditoriaColetores()">📲 Liberar para coletores</button>
@@ -1722,108 +1781,89 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div>
 <!-- MODAL: Criar Usuário -->
-<div id="op-modal-criar-bg" onclick="if(event.target===this)opFecharModalCriar()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:950;align-items:center;justify-content:center">
-<div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:0;width:100%;max-width:560px;max-height:88vh;margin:20px;overflow:auto">
-<div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-<div style="font-weight:700;font-size:1.05rem">➕ Criar Usuário</div>
-<button onclick="opFecharModalCriar()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--muted);line-height:1">✕</button>
-</div>
-<div style="padding:20px 24px;display:flex;flex-direction:column;gap:16px">
-<!-- Tipo de usuário -->
-<div class="fi">
-<div class="fl" style="margin-bottom:8px">Tipo de acesso <span style="color:var(--danger)">*</span></div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-<label id="op-tipo-op-label" onclick="opSelecionarTipo('operador')" style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:2px solid var(--accent);border-radius:10px;cursor:pointer;background:rgba(0,229,255,.06)">
-<input checked="" name="op-tipo" style="margin-top:2px;accent-color:var(--accent)" type="radio" value="operador">
-<div>
-<div style="font-weight:700;font-size:.85rem">📦 Operador</div>
-<div style="font-size:.72rem;color:var(--muted);margin-top:2px">Acesso somente ao coletor de inventário</div>
-</div>
-</input></label>
-<label id="op-tipo-an-label" onclick="opSelecionarTipo('analista')" style="display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:2px solid var(--border);border-radius:10px;cursor:pointer">
-<input name="op-tipo" style="margin-top:2px;accent-color:var(--accent)" type="radio" value="analista">
-<div>
-<div style="font-weight:700;font-size:.85rem">🖥️ Analista</div>
-<div style="font-size:.72rem;color:var(--muted);margin-top:2px">Acesso ao painel analista + coletor</div>
-</div>
-</input></label>
-</div>
-</div>
-<!-- Nome completo -->
+<!-- PEDIDO AO VIVO (2026-08-27): "mudar todo o visual desse modal, um
+     negócio mais criativo, mais sofisticada, mais atual" — reconstruído
+     com .modal-overlay/.modal-card/.modal-header/.modal-body/.modal-footer
+     (o mesmo sistema de modal moderno já usado no resto do app, com
+     entrada animada e cantos arredondados) em vez de divs soltas com
+     bordas ad-hoc. Seções viram cards (.op-secao) com título+ícone, e os
+     seletores de loja/canal/setor viram chips clicáveis (.op-toggle-chip)
+     — o botão inteiro realça quando marcado, não só o quadradinho.
+     Também removido o bloco #op-preview/#pv-* (nunca era preenchido por
+     nenhum JS — órfão de uma versão anterior do formulário; o preview de
+     verdade é o #op-logins-preview logo abaixo do campo Login). -->
+<div class="modal-overlay" id="op-modal-criar-bg" onclick="if(event.target===this)opFecharModalCriar()" style="display:none">
+<div class="modal-card" style="max-width:600px;max-height:90vh">
+<div class="modal-header"><span>➕ Criar Usuário</span><button class="modal-x" onclick="opFecharModalCriar()">×</button></div>
+<div class="modal-body" style="display:flex;flex-direction:column;gap:14px">
+<!-- Nome + Login + Senha -->
+<div class="op-secao" style="display:flex;flex-direction:column;gap:14px">
 <div class="fi">
 <div class="fl">Nome completo <span style="color:var(--danger)">*</span></div>
-<input autocomplete="off" id="op-nome" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--orange)'" oninput="opGerarUsername()" placeholder="Ex: João Silva" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.85rem;outline:none">
+<input autocomplete="off" id="op-nome" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--orange)'" oninput="opGerarUsername()" placeholder="Ex: João Silva" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.85rem;outline:none;background:var(--surface)">
 </input></div>
-<!-- Login -->
 <div class="fi">
 <div class="fl" style="display:flex;justify-content:space-between">
 <span>Login <span style="color:var(--danger)">*</span></span>
 <span style="font-size:.68rem;color:var(--muted);font-weight:400">gerado pelo nome</span>
 </div>
 <input id="op-username" type="hidden">
-<div id="op-logins-preview" style="padding:11px 13px;border:1.5px solid var(--border);border-radius:var(--r);background:var(--surface-2);font-family:var(--mono);font-size:.8rem;line-height:1.7;color:var(--text)">Informe o nome completo.</div>
+<div id="op-logins-preview" style="padding:11px 13px;border:1.5px solid var(--border);border-radius:var(--r);background:var(--surface);font-family:var(--mono);font-size:.8rem;line-height:1.7;color:var(--text)">Informe o nome completo.</div>
 <div id="op-username-fb" style="font-size:.73rem;margin-top:4px;min-height:16px"></div>
 </div>
-<!-- Cargo / Setor REMOVIDO -->
-<!-- Senha -->
 <div class="fi">
 <div class="fl" style="display:flex;justify-content:space-between;align-items:center">
 <span>Senha <span style="color:var(--danger)">*</span></span>
 <button class="btn btn-ghost btn-sm" onclick="opGerarSenha()" style="font-size:.7rem" type="button">⚡ Gerar</button>
 </div>
 <div style="position:relative">
-<input id="op-senha" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--orange)'" oninput="opValidarSenha()" placeholder="mínimo 6 caracteres" style="width:100%;padding:9px 36px 9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--mono);font-size:.85rem;outline:none" type="password">
+<input id="op-senha" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--orange)'" oninput="opValidarSenha()" placeholder="mínimo 6 caracteres" style="width:100%;padding:9px 36px 9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--mono);font-size:.85rem;outline:none;background:var(--surface)" type="password">
 <span onclick="toggleOpSenha()" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--muted)">👁</span>
 </input></div>
 <div id="op-senha-fb" style="font-size:.73rem;margin-top:4px;min-height:16px"></div>
 </div>
-<!-- Preview -->
-<div class="fi full">
-<div class="fl" style="margin-bottom:8px">Acesso às lojas</div>
-<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-<label id="op-lojas-criar-todas-wrap" onclick="opSetModoLojasCriar('todas')" style="display:flex;align-items:center;gap:8px;padding:10px 12px;border:1.5px solid var(--border);border-radius:12px;cursor:pointer;min-width:180px">
-<input checked="" name="op-lojas-criar-modo" style="accent-color:var(--accent)" type="radio" value="todas">
+</div>
+<!-- Onde este login pode entrar (canais) -->
+<div class="op-secao">
+<div class="op-secao-titulo">📲 Onde este login pode entrar</div>
+<div class="op-secao-sub">Cria só a(s) conta(s) marcada(s) — Analista e Coletor são logins separados.</div>
+<div id="op-canais-criar" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+</div>
+<!-- Acesso às lojas -->
+<div class="op-secao">
+<div class="op-secao-titulo">🏪 Acesso às lojas</div>
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin:8px 0 10px">
+<label id="op-lojas-criar-todas-wrap" class="op-toggle-chip" onclick="opSetModoLojasCriar('todas')" style="min-width:170px">
+<input checked="" name="op-lojas-criar-modo" type="radio" value="todas">
 <span>Todas as lojas</span>
 </input></label>
-<label id="op-lojas-criar-sel-wrap" onclick="opSetModoLojasCriar('selecionadas')" style="display:flex;align-items:center;gap:8px;padding:10px 12px;border:1.5px solid var(--border);border-radius:12px;cursor:pointer;min-width:180px">
-<input name="op-lojas-criar-modo" style="accent-color:var(--accent)" type="radio" value="selecionadas">
-<span>Somente lojas selecionadas</span>
+<label id="op-lojas-criar-sel-wrap" class="op-toggle-chip" onclick="opSetModoLojasCriar('selecionadas')" style="min-width:170px">
+<input name="op-lojas-criar-modo" type="radio" value="selecionadas">
+<span>Somente selecionadas</span>
 </input></label>
 </div>
-<div id="op-lojas-criar-box" style="display:none;padding:8px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface-2);max-height:220px;overflow:auto">
+<div id="op-lojas-criar-box" style="display:none;padding:8px 12px;border:1px solid var(--border);border-radius:12px;background:var(--surface);max-height:200px;overflow:auto">
 <div id="op-lojas-criar-lista" style="display:flex;flex-direction:column;gap:2px"></div>
 <div style="font-size:.7rem;color:var(--muted);margin-top:8px">Selecione as lojas que este usuário pode acessar.</div>
 </div>
 </div>
-<div class="fi full">
-<div class="fl" style="margin-bottom:8px">Onde este login pode entrar</div>
-<div id="op-canais-criar" style="display:flex;gap:10px;flex-wrap:wrap"></div>
-</div>
-<div class="fi full">
-<div class="fl" style="margin-bottom:8px">Setores</div>
-<div style="font-size:.7rem;color:var(--muted);margin-bottom:9px">Quais áreas do sistema este login vê ao entrar.</div>
+<!-- Setores -->
+<div class="op-secao">
+<div class="op-secao-titulo">🧭 Setores</div>
+<div class="op-secao-sub">Quais áreas do sistema este login vê ao entrar — a lista de permissões abaixo mostra só o setor marcado aqui.</div>
 <div id="op-setores-criar" style="display:flex;gap:10px;flex-wrap:wrap"></div>
 </div>
-<div class="fi full">
-<div class="fl" style="margin-bottom:8px">Permissões detalhadas do Analista</div>
-<div style="font-size:.72rem;color:var(--muted);margin-bottom:9px">Sem a permissão “Visualizar”, a aba não aparecerá para este login.</div>
+<!-- Permissões detalhadas -->
+<div class="op-secao">
+<div class="op-secao-titulo">🔐 Permissões detalhadas</div>
+<div class="op-secao-sub">Sem a permissão "Visualizar", a aba não aparecerá para este login.</div>
 <div id="op-permissoes-criar"></div>
-</div>
-<div id="op-preview" style="display:none;background:rgba(0,214,143,.07);border:1px solid rgba(0,214,143,.25);border-radius:var(--r);padding:12px 14px">
-<div style="font-size:.72rem;font-weight:700;color:var(--green-mid);margin-bottom:8px;text-transform:uppercase;letter-spacing:.05em">📋 Conta que será criada</div>
-<div style="display:grid;grid-template-columns:auto 1fr;gap:4px 12px;font-size:.8rem">
-<span style="color:var(--muted)">Nome:</span><strong id="pv-nome">—</strong>
-<span style="color:var(--muted)">Login:</span><code id="pv-username" style="font-family:var(--mono);color:var(--accent)">—</code>
-<span style="color:var(--muted)">Tipo:</span><span id="pv-tipo">—</span>
-<span style="color:var(--muted)">Senha:</span><span id="pv-senha" style="font-family:var(--mono)">—</span>
-</div>
-<div style="font-size:.71rem;color:var(--muted);margin-top:8px">⚠️ Anote a senha antes de criar — ela não será exibida novamente.</div>
 </div>
 <div id="op-feedback" style="display:none"></div>
 </div>
-<div style="padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:8px">
-<button class="btn btn-ghost" onclick="opFecharModalCriar()" style="flex:1">Cancelar</button>
-<button class="btn btn-success" id="btn-criar-op" onclick="criarOperador()" style="flex:2;padding:11px;font-size:.9rem">✓ Criar</button>
+<div class="modal-footer">
+<button class="btn btn-ghost" onclick="opFecharModalCriar()">Cancelar</button>
+<button class="btn btn-success" id="btn-criar-op" onclick="criarOperador()">✓ Criar usuário</button>
 </div>
 </div>
 </div>
@@ -1852,7 +1892,11 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div>
 <!-- Modal editar operador -->
-<div id="op-modal-bg" onclick="if(event.target===this)opFecharModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:900;display:none;align-items:center;justify-content:center">
+<!-- PEDIDO AO VIVO (2026-08-27): mesmo bug de z-index já achado e corrigido
+     em #loja-edit-modal-bg/#loja-modal-bg hoje — z-index:900 é MENOR que o
+     999 de #modal-configuracoes (Usuários fica dentro desse modal), então
+     Editar Usuário abria escondido atrás da tela de Configurações. -->
+<div id="op-modal-bg" onclick="if(event.target===this)opFecharModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1050;align-items:center;justify-content:center">
 <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:560px;max-height:88vh;overflow:auto;margin:20px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
 <div style="font-weight:700;font-size:1rem">✏️ Editar Operador</div>
@@ -1927,7 +1971,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div><!-- /opl-page-operadores -->
 </div><!-- /page-operadores -->
 <!-- ════ MODAL: NOVA LOJA ════ -->
-<div id="loja-modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:960;align-items:center;justify-content:center">
+<div id="loja-modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1050;align-items:center;justify-content:center">
 <div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:0;width:100%;max-width:500px;margin:20px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.25)">
 <!-- Header do modal -->
 <div style="padding:22px 26px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:linear-gradient(135deg,rgba(245,158,11,.08),transparent)">
@@ -1978,7 +2022,13 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div>
 <!-- ════ MODAL: EDITAR LOJA ════ -->
-<div id="loja-edit-modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:960;align-items:center;justify-content:center">
+<!-- PEDIDO AO VIVO (2026-08-27): "clico no lápis da loja lá para editar mas
+não funciona" — este modal tinha z-index:960, MENOR que o z-index:999 do
+próprio #modal-configuracoes (Configurações → Lojas fica DENTRO desse
+modal). Ao abrir, ficava renderizado por baixo do Configurações — display
+mudava pra flex de verdade, só que invisível atrás do modal pai. Mesmo bug
+em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
+<div id="loja-edit-modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1050;align-items:center;justify-content:center">
 <div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:0;width:100%;max-width:460px;margin:20px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.25)">
 <div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
 <div style="font-weight:800;font-size:1rem">✏️ Editar Loja</div>
@@ -2266,8 +2316,14 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <!-- ══ PAINEL API ══ -->
 <div id="ie-panel-api" style="display:none">
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-<!-- Card: Configuração da API -->
-<div class="tc" style="border-top:3px solid var(--info);grid-column:1/-1">
+<!-- Card: Configuração da API — movido em tempo de execução (mesmo padrão
+     de page-operadores/coletores/lojas) pra dentro do modal global de
+     Configurações (⚙️ no topo), porque essa config (dt_config/integracao_api)
+     já serve Produção/PCP/Compras via 90-bluesoft-service.js, não só
+     Inventário. Continua com id="ie-panel-api" como pai só pelo layout em
+     grid — o nó real que se move é este (page-integracao-api). -->
+<div class="page" id="page-integracao-api" style="grid-column:1/-1">
+<div class="tc" style="border-top:3px solid var(--info)">
 <div class="tc-header" style="border-left:none;background:none">
 <div>
 <div class="tc-title">🔌 Configuração da API</div>
@@ -2387,6 +2443,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div id="api-config-status"></div>
 </div>
 </div>
+</div><!-- /page-integracao-api -->
 <!-- Card: Exportar via API -->
 <div class="tc" style="border-top:3px solid var(--orange)">
 <div class="tc-header" style="border-left:none;background:none">
@@ -3057,7 +3114,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <!-- ══════════ JAVASCRIPT ══════════ -->
 
 
-</div><script src="js/shared/common-utils.js?v=20260731-234-auditoria"></script><script src="js/shared/address-state-engine.js?v=20260731-234-auditoria"></script><script src="js/shared/address-state-selectors.js?v=20260731-234-auditoria"></script><script src="js/shared/address-state-view.js?v=20260731-234-auditoria"></script><script src="js/shared/firebase-shared.js?v=20260816-traduzir-erro-permissao"></script><script src="js/shared/enderecos-service.js?v=20260731-234-auditoria"></script><script src="js/shared/produtos-service.js?v=20260731-234-auditoria"></script><script src="js/analista/actions.js?v=20260731-234-auditoria"></script><script src="js/analista/reducers.js?v=20260731-234-auditoria"></script><script src="js/analista/store.js?v=20260731-234-auditoria"></script><script src="js/analista/00-auth-login.js?v=20260816-producao-integrada-final"></script><script src="js/analista/01-core-base-storage.js?v=20260731-234-auditoria"></script><script src="js/analista/services/inventarioService.js?v=20260731-234-auditoria"></script><script src="js/analista/services/auditoriaService.js?v=20260731-234-auditoria"></script><script src="js/analista/services/divergenciaService.js?v=20260731-234-auditoria"></script><script src="js/analista/firebaseService.js?v=20260731-234-auditoria"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260731-234-auditoria"></script><script src="js/analista/03-core-navigation.js?v=20260821-rota-cadastros-retornos"></script><script src="js/analista/04-compat-pages.js?v=20260731-234-auditoria"></script><script src="js/analista/09-fs-publicar.js?v=20260809-v325-tipo-endereco-fix"></script><script src="js/analista/10-inventarios-negocio.js?v=20260809-v323-diag-inativos"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260809-v306-fixes"></script><script src="js/analista/12-validacao-operacional.js?v=20260809-v307-perf-pendencias"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260806-v296-4"></script><script src="js/analista/20-sync-contagens.js?v=20260731-234-auditoria"></script><script src="js/analista/services/rodadaFisicaService.js?v=20260731-234-auditoria"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260819-vendedor-targetado-por-nota"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260805-dashboard-v282"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260809-v304-delegacao-cliques"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260809-v307-perf-pendencias"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260805-recontagem-v258"></script><script src="js/analista/33-render-enderecos.js?v=20260806-v296-4"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260818-limpa-operador-no-logout"></script><script src="js/analista/35-coletores-render.js?v=20260818-fix-salvar-nome-ao-aprovar"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260731-234-auditoria"></script><script src="js/analista/39-base-produtos.js?v=20260809-v317-export-dun"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260731-234-auditoria"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260809-v306-fixes"></script>
+</div><script src="js/shared/common-utils.js?v=20260909c-sem-timeout-artificial"></script><script src="js/shared/address-state-engine.js?v=20260901-webview66-compat"></script><script src="js/shared/address-state-selectors.js?v=20260901-webview66-compat"></script><script src="js/shared/address-state-view.js?v=20260901-webview66-compat"></script><script src="js/shared/firebase-shared.js?v=20260909-getlojaativa-try-catch"></script><script src="js/shared/enderecos-service.js?v=20260901-webview66-compat"></script><script src="js/shared/produtos-service.js?v=20260909-sem-timeout-artificial"></script><script src="js/analista/actions.js?v=20260731-234-auditoria"></script><script src="js/analista/reducers.js?v=20260731-234-auditoria"></script><script src="js/analista/store.js?v=20260731-234-auditoria"></script><script src="js/analista/00-auth-login.js?v=20260909e-sem-timeout-artificial"></script><script src="js/analista/01-core-base-storage.js?v=20260731-234-auditoria"></script><script src="js/analista/services/inventarioService.js?v=20260731-234-auditoria"></script><script src="js/analista/services/auditoriaService.js?v=20260731-234-auditoria"></script><script src="js/analista/services/divergenciaService.js?v=20260731-234-auditoria"></script><script src="js/analista/firebaseService.js?v=20260731-234-auditoria"></script><script src="js/analista/02-core-state-bootstrap.js?v=20260731-234-auditoria"></script><script src="js/analista/03-core-navigation.js?v=20260909c-sem-timeout-artificial"></script><script src="js/analista/router-historico.js?v=20260901-paletes"></script><script src="js/analista/04-compat-pages.js?v=20260731-234-auditoria"></script><script src="js/analista/09-fs-publicar.js?v=20260809-v325-tipo-endereco-fix"></script><script src="js/analista/10-inventarios-negocio.js?v=20260809-v323-diag-inativos"></script><script src="js/analista/11-importacao-base-oficial.js?v=20260809-v306-fixes"></script><script src="js/analista/12-validacao-operacional.js?v=20260809-v307-perf-pendencias"></script><script src="js/analista/13-enderecos-importacao-selecao.js?v=20260806-v296-4"></script><script src="js/analista/20-sync-contagens.js?v=20260731-234-auditoria"></script><script src="js/analista/services/rodadaFisicaService.js?v=20260731-234-auditoria"></script><script src="js/analista/21-divergencias-recontagens.js?v=20260819-vendedor-targetado-por-nota"></script><script src="js/analista/22-dashboard-render-sync.js?v=20260805-dashboard-v282"></script><script src="js/analista/30-render-inventarios-acompanhamento.js?v=20260809-v304-delegacao-cliques"></script><script src="js/analista/31-render-contagens-pendencias.js?v=20260809-v307-perf-pendencias"></script><script src="js/analista/32-render-divergencias-recontagens.js?v=20260805-recontagem-v258"></script><script src="js/analista/33-render-enderecos.js?v=20260806-v296-4"></script><script src="js/analista/34-coletores-modelo-dispositivo.js?v=20260904-codigo-aprovacao"></script><script src="js/analista/35-coletores-render.js?v=20260904-codigo-aprovacao"></script><script src="js/analista/38-auditoria-operacional-v22.js?v=20260909-sem-timeout-artificial"></script><script src="js/analista/39-base-produtos.js?v=20260809-v317-export-dun"></script><script src="js/analista/40-relatorios-produtividade.js?v=20260731-234-auditoria"></script><script src="js/analista/41-inventario-actions-v52.js?v=20260809-v306-fixes"></script>
 <div class="modal-bg" id="modal-loja-cadastro"><div class="modal" style="max-width:480px">
   <div class="modal-title">🏪 <span id="ml-title">Cadastrar loja</span></div>
   <input type="hidden" id="ml-id"/>
@@ -3066,7 +3123,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260809-v297-bluesoft"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260821-modulo-cadastros-retornos"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260805-auditoria-v282"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260818-fix-catalogo-estagnado"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260809-v297-bluesoft"></script><script src="js/analista/app-controller.js?v=20260804-v257-trava-clique-recontagem"></script>
+<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260809-v297-bluesoft"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260908b-troca-senha-primeiro-acesso"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260805-auditoria-v282"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260823-fix-classificacao-tipo"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260809-v297-bluesoft"></script><script src="js/analista/app-controller.js?v=20260804-v257-trava-clique-recontagem"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}
@@ -3123,7 +3180,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 (function(){
   if('serviceWorker' in navigator){
     window.addEventListener('load',function(){
-      navigator.serviceWorker.register('/sw.js?v=20260821-filtra-cancelada-rejeitada').then(function(reg){
+      navigator.serviceWorker.register('/sw.js?v=20260909-perf-cache-versionado').then(function(reg){
         reg.update();
       }).catch(function(e){
         if(window.console) console.warn('[PWA]',e);
@@ -3156,58 +3213,65 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
   window.addEventListener('DOMContentLoaded',function(){obs.observe(document.body,{childList:true,subtree:true});obs.takeRecords();['cont-table-wrap','rec-table-wrap','div-table-wrap'].forEach(function(id){var el=document.getElementById(id);if(el) ativar(el);});});
 })();
 </script>
-<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v450</div>
+<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v567</div>
 
 <script src="js/analista/45-ui-centro-operacoes-v250.js?v=20260804-v250"></script>
 <script src="js/analista/47-dashboard-acomp-v252.js?v=20260805-v274"></script>
 <script src="js/analista/48-usuarios-lojas-v253.js?v=20260805-0030"></script>
 <script src="js/analista/49-quatro-telas-v254.js?v=20260805-dashboard-v282"></script>
-<script src="js/analista/50-inventario-classificacoes-v275.js?v=20260805-v275"></script>
+<script src="js/analista/50-inventario-classificacoes-v275.js?v=20260823-motivo-tipo"></script>
 <script src="js/analista/51-inventario-por-produto-v286.js?v=20260805-v286"></script>
 <script src="js/analista/52-cadastros-v287.js?v=20260810-v326-fix-dispatch-enderecos"></script>
-<script src="js/analista/59-producao-ui-completa.js?v=20260822d-config-tela-cheia"></script>
-<script src="js/analista/60-producao-ficha-tecnica.js?v=20260823-separa-produtos-ficha-tecnica"></script>
-<script src="js/analista/63-producao-agenda.js?v=20260811-producao-full-1"></script>
-<script src="js/analista/61-producao-maquinas.js?v=20260823c-grid-lista-medidas"></script>
-<script src="js/analista/62-producao-programacao.js?v=20260823-toolbar-numeracao-original"></script>
-<script src="js/analista/64-producao-gantt.js?v=20260823-sem-titulo-resumo-por-maquina"></script>
-<script src="js/analista/65-producao-insumos.js?v=20260823-remove-toggle-redundante"></script>
-<script src="js/analista/66-producao-projecao.js?v=20260822-stats-horizonte-fator"></script>
-<script src="js/analista/67-producao-prog-automatica.js?v=20260823-remove-titulo-grande"></script>
+<!-- Compatibilidade de auditoria: 59-producao-ui-completa.js?v=20260822d-config-tela-cheia -->
+<script src="js/analista/59-producao-ui-completa.js?v=20260828-relatorios-bi-extras"></script>
+<script src="js/analista/60-producao-ficha-tecnica.js?v=20260903-corrigir-categoria-insumos"></script>
+<script src="js/analista/63-producao-agenda.js?v=20260907-setup-nome-normalizado"></script>
+<script src="js/analista/61-producao-maquinas.js?v=20260823i-maquina-modal-abas-original"></script>
+<script src="js/analista/62-producao-programacao.js?v=20260902-preview-insumo-modal"></script>
+<script src="js/analista/64-producao-gantt.js?v=20260831f-ellipsis-flex-fix"></script>
+<script src="js/analista/65-producao-insumos.js?v=20260904b-canon-tolerante-separador"></script>
+<script src="js/analista/66-producao-projecao.js?v=20260907b-mes1-mes2-futuro"></script>
+<script src="js/analista/67-producao-prog-automatica.js?v=20260907l-desconta-comprometido"></script>
 <script src="js/analista/68-producao-funcionarios.js?v=20260822b-embed-container"></script>
-<script src="js/analista/69-producao-relatorios.js?v=20260823-filtros-globais-original"></script>
+<script src="js/analista/69-producao-relatorios.js?v=20260823d-graficos-altura-fixa"></script>
 <script src="js/analista/70-producao-setup.js?v=20260822b-embed-container"></script>
-<script src="js/analista/71-producao-excel.js?v=20260822-fix-parser-cabecalho-original"></script>
+<script src="js/analista/71-producao-excel.js?v=20260902-empresa-produtora-loja-ativa"></script>
 <script src="js/analista/72-producao-mapa-fabrica.js?v=20260816-producao-integrada-final"></script>
-<script src="js/analista/73-producao-realizado.js?v=20260822d-hora-a-hora-total-semana"></script>
-<script src="js/analista/74-producao-dashboard.js?v=20260822-label-em-andamento"></script>
+<script src="js/analista/73-producao-realizado.js?v=20260831-total-semana-modal"></script>
+<script src="js/analista/74-producao-dashboard.js?v=20260823b-dashboard-cache-atualizado"></script>
 <script src="js/analista/75-producao-estoque.js?v=20260822-embed-container"></script>
-<script src="js/analista/76-producao-importacao.js?v=20260823-separa-bluesoft"></script>
-<script src="js/analista/77-producao-config.js?v=20260823d-processos-crud"></script>
-<script src="js/analista/120-pcp-demand-engine.js?v=20260822-profissional-1"></script>
-<script src="js/analista/78-pcp-central.js?v=20260822-demanda-cobertura-1"></script>
-<script src="js/analista/79-compras-central.js?v=20260812-bluesoft-fase12e-cachefix"></script>
-<script src="js/analista/80-pcp-auditoria.js?v=20260811-pcp-fase7-1"></script>
-<script src="js/analista/81-pcp-parametros.js?v=20260811-pcp-fase7-1"></script>
-<script src="js/analista/82-pcp-dashboard.js?v=20260811-pcp-fase8-1"></script>
-<script src="js/analista/83-pcp-timeline.js?v=20260811-pcp-fase8-1"></script>
-<script src="js/analista/84-pcp-compras-acompanhamento.js?v=20260811-pcp-fase9-1"></script>
-<script src="js/analista/85-pcp-producao-insumos.js?v=20260811-pcp-fase9-1"></script>
-<script src="js/analista/86-pcp-produto-360.js?v=20260811-pcp-fase9-1"></script>
-<script src="js/analista/87-pcp-alertas.js?v=20260811-pcp-fase10-1"></script>
-<script src="js/analista/88-pcp-relatorios.js?v=20260811-pcp-fase10-1"></script>
-<script src="js/analista/89-compras-dashboard.js?v=20260811-pcp-fase10-1"></script>
-<script src="js/analista/90-bluesoft-service.js?v=20260821b-filtra-cancelada-rejeitada"></script>
-<script src="js/analista/121-compras-profissional.js?v=20260822-profissional-1"></script>
-<script src="js/analista/122-pcp-compras-bluesoft-sync.js?v=20260823-corrige-sync-real-1"></script>
-<script src="js/analista/91-logistica-recebimento.js?v=20260817-performance-frota-v1"></script>
+<script src="js/analista/76-producao-importacao.js?v=20260909-cache-historico"></script>
+<script src="js/analista/77-producao-config.js?v=20260828-relatorios-bi-extras"></script>
+<script src="js/analista/95-producao-importzip.js?v=20260823f-16-cenarios-testados"></script>
+<script src="js/analista/120-pcp-demand-engine.js?v=20260907-peso-50-50"></script>
+<script src="js/analista/78-pcp-central.js?v=20260907c-consumo-e-previsao-mensal"></script>
+<script src="js/analista/79-compras-central.js?v=20260909-cache-recarga"></script>
+<script src="js/analista/80-pcp-auditoria.js?v=20260829-fase1a-auditoria-global"></script>
+<script src="js/analista/81-pcp-parametros.js?v=20260906b-filtro-loja"></script>
+<script src="js/analista/82-pcp-dashboard.js?v=20260909-cache-snapshots"></script>
+<script src="js/analista/83-pcp-timeline.js?v=20260907-proximas-datas-compra"></script>
+<script src="js/analista/84-pcp-compras-acompanhamento.js?v=20260902-estoquebi"></script>
+<script src="js/analista/pcp-cortes.js?v=20260828-pcp-cortes-1"></script>
+<script src="js/analista/85-pcp-producao-insumos.js?v=20260904b-sem-dado-bi-e-unidade"></script>
+<script src="js/analista/86-pcp-produto-360.js?v=20260909-cache-ficha-tecnica"></script>
+<script src="js/analista/87-pcp-alertas.js?v=20260902-estoquebi"></script>
+<script src="js/analista/88-pcp-relatorios.js?v=20260907-3-datas-compra-futuras"></script>
+<script src="js/analista/89-compras-dashboard.js?v=20260906-forcar-sync-bi"></script>
+<script src="js/analista/bi-pasta-local.js?v=20260827-so-via-api-graph"></script>
+<script src="js/analista/90-bluesoft-service.js?v=20260826-import-bi-compras-a-receber"></script>
+<script src="js/analista/compras-fornecedores-service.js?v=20260829-fase1a-fornecedor-mestre"></script>
+<script src="js/analista/121-compras-profissional.js?v=20260906-aviso-sem-permissao-fornecedores"></script>
+<script src="js/analista/91-logistica-recebimento.js?v=20260909e-sem-timeout-artificial"></script>
 <script src="js/analista/92-recebimento-config.js?v=20260814-fase15f4h-rotas-globais"></script>
-<script src="js/analista/93-recebimento-operacao.js?v=20260819-rebt-editar-completo"></script>
-<script src="js/analista/94-recebimento-relatorios.js?v=20260814-fase15f5-historico-etapas"></script>
-<script src="js/analista/95-recebimento-transbordo.js?v=20260821-editar-motorista"></script>
+<script src="js/analista/93-recebimento-operacao.js?v=20260909d-sem-timeout-artificial"></script>
+<script src="js/analista/94-recebimento-relatorios.js?v=20260827-so-buscar-auto-refresh"></script>
+<script src="js/analista/95-recebimento-transbordo.js?v=20260908c-codigo-segue-motorista"></script>
 <script src="js/analista/96-recebimento-performance.js?v=20260821-filtro-periodo-livre"></script>
-<script src="js/analista/97-recebimento-recusas.js?v=20260821c-tela-cadastros-separada"></script>
-<script src="js/analista/98-recebimento-retornos-indicadores.js?v=20260821d-painel-plano-powerbi"></script>
-<script src="js/analista/99-recebimento-retornos-status.js?v=20260821-fase12-corrigido-aguardfiscal"></script>
+<script src="js/analista/97-recebimento-recusas.js?v=20260909-cache-carregarDados"></script>
+<script src="js/analista/100-consulta-notas-fiscais.js?v=20260902b-gtin-ean-dun-separados"></script>
+<script src="js/analista/101-relatorios-bi.js?v=20260909c-sem-timeout-artificial"></script>
+<script src="js/analista/98-recebimento-retornos-indicadores.js?v=20260909-cache-carregarDados"></script>
+<script src="js/analista/102-devolucoes-bi-indicadores.js?v=20260903-controle-retorno-fisico"></script>
+<script src="js/analista/99-recebimento-retornos-status.js?v=20260909f-cache-carregarDados"></script><script src="js/analista/103-recusas-indicadores.js?v=20260909-cache-carregarDados"></script><script src="js/coletor/28-recebimento-paletes-ledger.js?v=20260906-tambem-no-analista"></script><script src="js/analista/recebimento-paletes-monitoramento.js?v=20260908b-split-transbordo-entrega"></script><script src="js/analista/104-recebimento-cargas-cards.js?v=20260908i-ledger-transito-no-destino"></script>
 </body>
 </html>

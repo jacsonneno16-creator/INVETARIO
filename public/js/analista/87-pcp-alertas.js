@@ -11,7 +11,7 @@
   async function _calcularAlertas() {
     const internos = global._pcpInternals;
     await internos.carregar();
-    const visao = internos.construirVisao();
+    const visao = internos.construirVisao({ estoqueBi: internos.getEstoqueBi?.() });
     const reqs = internos.getReqs?.() || [];
     const agend = internos.getAgend?.() || [];
     const hojeStr = new Date().toISOString().slice(0, 10);
@@ -58,22 +58,6 @@
         });
       }
     } catch (e) { console.warn('[pcp-alertas] insumos:', e); }
-
-    const porProduto = new Map();
-    reqs.filter(r => n(r.precoUnitario) > 0).forEach(r => {
-      const key = internos.keyOf(r);
-      const arr = porProduto.get(key) || []; arr.push(r); porProduto.set(key, arr);
-    });
-    porProduto.forEach(lista => {
-      if (lista.length < 2) return;
-      const ordenada = lista.slice().sort((a, b) => String(a.compradoEm || '').localeCompare(String(b.compradoEm || '')));
-      const ultimo = ordenada[ordenada.length - 1];
-      const anteriores = ordenada.slice(0, -1);
-      const media = anteriores.reduce((s, r) => s + n(r.precoUnitario), 0) / anteriores.length;
-      if (media > 0 && (n(ultimo.precoUnitario) - media) / media > 0.15) {
-        alertas.push({ tipo: 'preco_subiu', cor: 'orange', icone: '🟠', titulo: 'Preço subiu: ' + ultimo.produto, detalhe: 'Último ' + n(ultimo.precoUnitario).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) + ' vs. média ' + media.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }) + '.', aba: 'compras-acompanhamento' });
-      }
-    });
 
     const limite24h = Date.now() - 24 * 60 * 60 * 1000;
     agend.filter(a => a.recebidoEm && new Date(a.recebidoEm).getTime() > limite24h).forEach(a => {
