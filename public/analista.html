@@ -3123,7 +3123,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/36-lojas.js?v=20260809-v297-bluesoft"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260908b-troca-senha-primeiro-acesso"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260805-auditoria-v282"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260823-fix-classificacao-tipo"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260809-v297-bluesoft"></script><script src="js/analista/app-controller.js?v=20260804-v257-trava-clique-recontagem"></script>
+<script src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script src="js/analista/00-lazy-areas.js?v=20260910a-carregamento-por-setor"></script><script src="js/analista/36-lojas.js?v=20260809-v297-bluesoft"></script><script src="js/analista/37-usuarios-permissoes.js?v=20260908b-troca-senha-primeiro-acesso"></script><script src="js/analista/41-dashboard-acomp-v37.js?v=20260805-auditoria-v282"></script><script src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script src="js/analista/43-importar-exportar-api.js?v=20260823-fix-classificacao-tipo"></script><script src="js/analista/44-auditoria-remediacoes.js?v=20260809-v297-bluesoft"></script><script src="js/analista/app-controller.js?v=20260804-v257-trava-clique-recontagem"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}
@@ -3223,55 +3223,45 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 <script src="js/analista/51-inventario-por-produto-v286.js?v=20260805-v286"></script>
 <script src="js/analista/52-cadastros-v287.js?v=20260810-v326-fix-dispatch-enderecos"></script>
 <!-- Compatibilidade de auditoria: 59-producao-ui-completa.js?v=20260822d-config-tela-cheia -->
-<script src="js/analista/59-producao-ui-completa.js?v=20260828-relatorios-bi-extras"></script>
+
 <script src="js/analista/60-producao-ficha-tecnica.js?v=20260903-corrigir-categoria-insumos"></script>
-<script src="js/analista/63-producao-agenda.js?v=20260907-setup-nome-normalizado"></script>
-<script src="js/analista/61-producao-maquinas.js?v=20260823i-maquina-modal-abas-original"></script>
-<script src="js/analista/62-producao-programacao.js?v=20260902-preview-insumo-modal"></script>
-<script src="js/analista/64-producao-gantt.js?v=20260831f-ellipsis-flex-fix"></script>
+
+
+
+
 <script src="js/analista/65-producao-insumos.js?v=20260904b-canon-tolerante-separador"></script>
 <script src="js/analista/66-producao-projecao.js?v=20260907b-mes1-mes2-futuro"></script>
-<script src="js/analista/67-producao-prog-automatica.js?v=20260907l-desconta-comprometido"></script>
-<script src="js/analista/68-producao-funcionarios.js?v=20260822b-embed-container"></script>
-<script src="js/analista/69-producao-relatorios.js?v=20260823d-graficos-altura-fixa"></script>
-<script src="js/analista/70-producao-setup.js?v=20260822b-embed-container"></script>
-<script src="js/analista/71-producao-excel.js?v=20260902-empresa-produtora-loja-ativa"></script>
-<script src="js/analista/72-producao-mapa-fabrica.js?v=20260816-producao-integrada-final"></script>
-<script src="js/analista/73-producao-realizado.js?v=20260831-total-semana-modal"></script>
-<script src="js/analista/74-producao-dashboard.js?v=20260823b-dashboard-cache-atualizado"></script>
-<script src="js/analista/75-producao-estoque.js?v=20260822-embed-container"></script>
+
+
+
+
+
+
+
+
+
 <script src="js/analista/76-producao-importacao.js?v=20260909-cache-historico"></script>
-<script src="js/analista/77-producao-config.js?v=20260828-relatorios-bi-extras"></script>
-<script src="js/analista/95-producao-importzip.js?v=20260823f-16-cenarios-testados"></script>
-<script src="js/analista/120-pcp-demand-engine.js?v=20260907-peso-50-50"></script>
-<script src="js/analista/78-pcp-central.js?v=20260907c-consumo-e-previsao-mensal"></script>
-<script src="js/analista/79-compras-central.js?v=20260909-cache-recarga"></script>
+
+
+
+
+
 <script src="js/analista/80-pcp-auditoria.js?v=20260829-fase1a-auditoria-global"></script>
-<script src="js/analista/81-pcp-parametros.js?v=20260906b-filtro-loja"></script>
-<script src="js/analista/82-pcp-dashboard.js?v=20260909-cache-snapshots"></script>
-<script src="js/analista/83-pcp-timeline.js?v=20260907-proximas-datas-compra"></script>
-<script src="js/analista/84-pcp-compras-acompanhamento.js?v=20260902-estoquebi"></script>
-<script src="js/analista/pcp-cortes.js?v=20260828-pcp-cortes-1"></script>
-<script src="js/analista/85-pcp-producao-insumos.js?v=20260904b-sem-dado-bi-e-unidade"></script>
-<script src="js/analista/86-pcp-produto-360.js?v=20260909-cache-ficha-tecnica"></script>
-<script src="js/analista/87-pcp-alertas.js?v=20260902-estoquebi"></script>
-<script src="js/analista/88-pcp-relatorios.js?v=20260907-3-datas-compra-futuras"></script>
-<script src="js/analista/89-compras-dashboard.js?v=20260906-forcar-sync-bi"></script>
-<script src="js/analista/bi-pasta-local.js?v=20260827-so-via-api-graph"></script>
+
+
+
+
+
+
+
+
+
+
+
 <script src="js/analista/90-bluesoft-service.js?v=20260826-import-bi-compras-a-receber"></script>
-<script src="js/analista/compras-fornecedores-service.js?v=20260829-fase1a-fornecedor-mestre"></script>
-<script src="js/analista/121-compras-profissional.js?v=20260910-fix-bypass-permissao-navegacao"></script>
-<script src="js/analista/91-logistica-recebimento.js?v=20260909e-sem-timeout-artificial"></script>
-<script src="js/analista/92-recebimento-config.js?v=20260814-fase15f4h-rotas-globais"></script>
-<script src="js/analista/93-recebimento-operacao.js?v=20260909d-sem-timeout-artificial"></script>
-<script src="js/analista/94-recebimento-relatorios.js?v=20260827-so-buscar-auto-refresh"></script>
-<script src="js/analista/95-recebimento-transbordo.js?v=20260908c-codigo-segue-motorista"></script>
-<script src="js/analista/96-recebimento-performance.js?v=20260821-filtro-periodo-livre"></script>
-<script src="js/analista/97-recebimento-recusas.js?v=20260909-cache-carregarDados"></script>
-<script src="js/analista/100-consulta-notas-fiscais.js?v=20260902b-gtin-ean-dun-separados"></script>
 <script src="js/analista/101-relatorios-bi.js?v=20260909c-sem-timeout-artificial"></script>
-<script src="js/analista/98-recebimento-retornos-indicadores.js?v=20260909-cache-carregarDados"></script>
-<script src="js/analista/102-devolucoes-bi-indicadores.js?v=20260903-controle-retorno-fisico"></script>
-<script src="js/analista/99-recebimento-retornos-status.js?v=20260909f-cache-carregarDados"></script><script src="js/analista/103-recusas-indicadores.js?v=20260909-cache-carregarDados"></script><script src="js/coletor/28-recebimento-paletes-ledger.js?v=20260906-tambem-no-analista"></script><script src="js/analista/recebimento-paletes-monitoramento.js?v=20260908b-split-transbordo-entrega"></script><script src="js/analista/104-recebimento-cargas-cards.js?v=20260908i-ledger-transito-no-destino"></script>
+
+
+
 </body>
 </html>

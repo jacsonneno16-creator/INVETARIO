@@ -92,6 +92,11 @@ function montarAmbiente(hashInicial, acesso) {
   win.firebase = { auth: () => ({ currentUser: { uid: 'u1' } }) };
   win.DT_USUARIO_ACESSO_ATUAL = acesso || { admin_mestre: true, permissoes: {} };
   win.scrollTo = () => {}; // jsdom não implementa; goPage() chama isso sempre
+  // Carregamento por setor (front 3): este teste já carrega os arquivos de
+  // Produção/PCP/Compras/Recebimento que precisa direto via vm.runInContext
+  // (lista abaixo), então não precisa do carregamento real por <script> —
+  // só um stub que resolve na hora, sem no-op.
+  win.carregarScriptsDeArea = async () => {};
   // Trabalho em paralelo em 73-producao-realizado.js (outra frente, não
   // deste roteador) adicionou uma trava: um dia sem jornada configurada
   // (global.PRODUCAO_JORNADA[0..6], index 0=Dom) ou fora da semana atual
@@ -123,30 +128,41 @@ function trocarHash(win, hash) {
   win.location.hash = hash;
   win.dispatchEvent(new win.Event('hashchange'));
 }
+// Carregamento por setor (front 3): irParaSetor/AnalistaRouter agora podem
+// esperar carregarScriptsDeArea (aqui, um stub que resolve no próximo
+// microtask) antes de terminar de aplicar uma rota — um setTimeout(0) real
+// garante que toda a cadeia de awaits internos (aplicarEntrada → irParaSetor
+// → carregarScriptsDeArea → rewrapNavegacao → normalizarUrl) já drenou antes
+// da próxima asserção síncrona do teste.
+function flush(win) {
+  return new Promise(r => win.setTimeout(r, 0));
+}
 
 // ---------------------------------------------------------------------
 // 1. Abrir sem hash / 2. rota válida / 3. rota inexistente / 4. sem permissão
 // ---------------------------------------------------------------------
-test('1) Abrir sem hash: AnalistaRouter.init() não trava, cai na primeira página permitida e normaliza a URL (replaceState, não pushState)', () => {
+test('1) Abrir sem hash: AnalistaRouter.init() não trava, cai na primeira página permitida e normaliza a URL (replaceState, não pushState)', async () => {
   const { win } = montarAmbiente('', { admin_mestre: true, permissoes: {}, setores_permitidos: { logistica: true } });
   win.aplicarPermissoesAnalista = () => {};
   win.irParaPrimeiraPaginaPermitida();
   win.aplicarSetoresPermitidos();
   win.AnalistaRouter.init();
+  await flush(win);
   assert.ok(win.AnalistaRouter.rotaAtual(), 'alguma rota deveria estar ativa depois do boot');
 });
 
-test('2) Abrir com rota válida na URL: restaura exatamente essa página, não a padrão', () => {
+test('2) Abrir com rota válida na URL: restaura exatamente essa página, não a padrão', async () => {
   const { win } = montarAmbiente('#/producao/programacao', { admin_mestre: true, permissoes: {} });
   win.aplicarPermissoesAnalista = () => {};
   win.irParaPrimeiraPaginaPermitida();
   win.aplicarSetoresPermitidos();
   win.AnalistaRouter.init();
+  await flush(win);
   assert.ok(win.document.getElementById('page-producao-programacao').classList.contains('on'));
   assert.equal(win.AnalistaRouter.rotaAtual().path, 'producao/programacao');
 });
 
-test('3) Rota inexistente: cai na primeira página permitida via replaceState, sem loop e sem ficar em branco', () => {
+test('3) Rota inexistente: cai na primeira página permitida via replaceState, sem loop e sem ficar em branco', async () => {
   const { win } = montarAmbiente('#/isso/nao/existe', { admin_mestre: true, permissoes: {} });
   win.aplicarPermissoesAnalista = () => {};
   win.irParaPrimeiraPaginaPermitida();
@@ -154,41 +170,46 @@ test('3) Rota inexistente: cai na primeira página permitida via replaceState, s
   const original = win.history.pushState.bind(win.history);
   let push = 0; win.history.pushState = (...a) => { push++; original(...a); };
   win.AnalistaRouter.init();
+  await flush(win);
   assert.ok(win.document.querySelector('.page.on'), 'alguma página real precisa estar ativa');
   assert.equal(push, 0, 'normalizar rota inválida não pode empurrar uma nova entrada de histórico');
 });
 
-test('4) Rota sem permissão: nunca mostra a página protegida, cai no fallback permitido', () => {
+test('4) Rota sem permissão: nunca mostra a página protegida, cai no fallback permitido', async () => {
   const acesso = { admin_mestre: false, setores_permitidos: { producao: true }, permissoes: { 'producao-dashboard': { visualizar: true } } };
   const { win } = montarAmbiente('#/producao/relatorios', acesso);
   win.aplicarPermissoesAnalista = () => {};
   win.irParaPrimeiraPaginaPermitida();
   win.aplicarSetoresPermitidos();
   win.AnalistaRouter.init();
+  await flush(win);
   assert.ok(!win.document.getElementById('page-producao-relatorios').classList.contains('on'), 'página sem permissão não pode ficar ativa');
 });
 
 // ---------------------------------------------------------------------
 // 5/6. Trocar entre setores
 // ---------------------------------------------------------------------
-test('5) Trocar Logística → Produção → PCP → Compras: cada troca mostra o shell certo e esconde os outros 3', () => {
+test('5) Trocar Logística → Produção → PCP → Compras: cada troca mostra o shell certo e esconde os outros 3', async () => {
   const { win } = montarAmbiente('#/logistica/inventario/dashboard');
   win.AnalistaRouter.init();
+  await flush(win);
   const shells = ['app-main-logistica', 'setor-producao-shell', 'setor-pcp-shell', 'setor-compras-shell'];
   function ativo() { return shells.filter(s => win.document.getElementById(s).style.display !== 'none'); }
   assert.deepEqual(ativo(), ['app-main-logistica']);
-  win.AnalistaRouter.navigate('producao/dashboard'); win.dispatchEvent(new win.Event('hashchange'));
+  win.AnalistaRouter.navigate('producao/dashboard'); win.dispatchEvent(new win.Event('hashchange')); await flush(win);
   assert.deepEqual(ativo(), ['setor-producao-shell']);
-  win.AnalistaRouter.navigate('pcp/dashboard'); win.dispatchEvent(new win.Event('hashchange'));
+  win.AnalistaRouter.navigate('pcp/dashboard'); win.dispatchEvent(new win.Event('hashchange')); await flush(win);
   assert.deepEqual(ativo(), ['setor-pcp-shell']);
-  win.AnalistaRouter.navigate('compras/dashboard'); win.dispatchEvent(new win.Event('hashchange'));
+  win.AnalistaRouter.navigate('compras/dashboard'); win.dispatchEvent(new win.Event('hashchange')); await flush(win);
   assert.deepEqual(ativo(), ['setor-compras-shell']);
 });
 
-test('6) Trocar Inventário → Recebimento: dentro do MESMO setor "logistica", troca de view sem mexer nos outros 3 shells', () => {
+test('6) Trocar Inventário → Recebimento: dentro do MESMO setor "logistica", troca de view sem mexer nos outros 3 shells', async () => {
   const { win } = montarAmbiente('#/logistica/inventario/dashboard');
   win.AnalistaRouter.init();
+  await flush(win);
   win.AnalistaRouter.navigate('logistica/recebimento/dashboard'); win.dispatchEvent(new win.Event('hashchange'));
+  await flush(win);
   assert.equal(win.document.getElementById('setor-logistica-recebimento-shell').style.display, 'flex');
   assert.equal(win.document.getElementById('app-main-logistica').style.display, 'none');
   assert.ok(win.document.getElementById('page-recebimento-dashboard').classList.contains('on'));
@@ -200,18 +221,20 @@ test('6) Trocar Inventário → Recebimento: dentro do MESMO setor "logistica", 
 // verificada contra o DOM real).
 // ---------------------------------------------------------------------
 function testarTodasAsRotas(nomeSuite, filtro) {
-  test(nomeSuite, () => {
+  test(nomeSuite, async () => {
     const { win } = montarAmbiente('#/logistica/inventario/dashboard');
     win.AnalistaRouter.init();
+    await flush(win);
     const rotas = win.AnalistaRouter.routes.filter(filtro);
     assert.ok(rotas.length > 0, 'a tabela de rotas precisa ter entradas pra esse setor');
-    rotas.forEach(r => {
+    for (const r of rotas) {
       win.AnalistaRouter.navigate(r.path);
       win.dispatchEvent(new win.Event('hashchange'));
+      await flush(win);
       const atual = win.AnalistaRouter.rotaAtual();
       assert.ok(atual, 'rota ' + r.path + ' deveria ter ativado alguma página real');
       assert.equal(atual.path, r.path, 'rota ' + r.path + ' não bateu com o que ficou ativo no DOM (' + (atual && atual.path) + ')');
-    });
+    }
   });
 }
 testarTodasAsRotas('7) Navegar por todas as páginas de Produção (tabela completa)', r => r.setor === 'producao');
@@ -222,9 +245,10 @@ testarTodasAsRotas('10) Navegar por todas as páginas de Recebimento', r => r.se
 // ---------------------------------------------------------------------
 // 11/12. Voltar / Avançar
 // ---------------------------------------------------------------------
-test('11/12) Voltar entre duas telas e Avançar de novo: histórico real do navegador, não só a variável interna', () => {
+test('11/12) Voltar entre duas telas e Avançar de novo: histórico real do navegador, não só a variável interna', async () => {
   const { win } = montarAmbiente('#/producao/dashboard');
   win.AnalistaRouter.init();
+  await flush(win);
   disparar(win, 'nav-producao-programacao');
   assert.ok(win.document.getElementById('page-producao-programacao').classList.contains('on'));
   disparar(win, 'nav-producao-maquinas');
@@ -232,21 +256,24 @@ test('11/12) Voltar entre duas telas e Avançar de novo: histórico real do nave
   // "Voltar" real: o navegador muda location.hash sozinho e dispara hashchange — simulado aqui.
   win.location.hash = '#/producao/programacao';
   win.dispatchEvent(new win.Event('hashchange'));
+  await flush(win);
   assert.ok(win.document.getElementById('page-producao-programacao').classList.contains('on'), 'Voltar deveria restaurar a tela anterior');
   win.location.hash = '#/producao/maquinas';
   win.dispatchEvent(new win.Event('hashchange'));
+  await flush(win);
   assert.ok(win.document.getElementById('page-producao-maquinas').classList.contains('on'), 'Avançar deveria reabrir a tela seguinte');
 });
 
 // ---------------------------------------------------------------------
 // 13. Atualizar mantém a tela
 // ---------------------------------------------------------------------
-test('13) Atualizar (nova sessão de jsdom com a mesma URL) mantém a tela correspondente', () => {
+test('13) Atualizar (nova sessão de jsdom com a mesma URL) mantém a tela correspondente', async () => {
   const { win } = montarAmbiente('#/producao/insumos?modo=geral', { admin_mestre: true, permissoes: {} });
   win.aplicarPermissoesAnalista = () => {};
   win.irParaPrimeiraPaginaPermitida();
   win.aplicarSetoresPermitidos();
   win.AnalistaRouter.init();
+  await flush(win);
   assert.ok(win.document.getElementById('page-producao-insumos').classList.contains('on'));
   assert.equal(win.pinsGetModo(), 'geral');
 });
@@ -254,9 +281,10 @@ test('13) Atualizar (nova sessão de jsdom com a mesma URL) mantém a tela corre
 // ---------------------------------------------------------------------
 // 14. Sem duplicação de histórico
 // ---------------------------------------------------------------------
-test('14) Clicar duas vezes seguidas na mesma página não empurra duas entradas de histórico', () => {
+test('14) Clicar duas vezes seguidas na mesma página não empurra duas entradas de histórico', async () => {
   const { win } = montarAmbiente('#/producao/dashboard');
   win.AnalistaRouter.init();
+  await flush(win);
   const original = win.history.pushState.bind(win.history);
   let pushes = 0; win.history.pushState = (...a) => { pushes++; original(...a); };
   disparar(win, 'nav-producao-programacao');
@@ -271,7 +299,7 @@ test('14) Clicar duas vezes seguidas na mesma página não empurra duas entradas
 // ---------------------------------------------------------------------
 // 15/16/17/18/19. Restaurar sub-abas
 // ---------------------------------------------------------------------
-test('15) Restaura sub-aba de Realizado (aba=processos&dia=hoje) de forma comportamental (classe .ativo real no botão, não texto)', () => {
+test('15) Restaura sub-aba de Realizado (aba=processos&dia=hoje) de forma comportamental (classe .ativo real no botão, não texto)', async () => {
   // 73-producao-realizado.js só aceita um dia dentro da semana corrente
   // (weekStart = domingo da semana de "agora") — "hoje" é o único valor
   // que está garantido dentro dessa janela em qualquer data que o teste
@@ -279,6 +307,7 @@ test('15) Restaura sub-aba de Realizado (aba=processos&dia=hoje) de forma compor
   const hoje = new Date().toISOString().slice(0, 10);
   const { win } = montarAmbiente('#/producao/realizado?aba=processos&dia=' + hoje);
   win.AnalistaRouter.init();
+  await flush(win);
   assert.ok(win.document.getElementById('page-producao-realizado').classList.contains('on'));
   const btn = win.document.querySelector('[data-preal-aba="processos"]');
   assert.ok(btn, 'botão da aba Processos deveria existir depois do desenhar()');
@@ -290,10 +319,11 @@ test('15) Restaura sub-aba de Realizado (aba=processos&dia=hoje) de forma compor
 // deixando na tela grande") — "Total da Semana" deixou de trocar o
 // conteúdo inteiro da página (diaAtivo='__total__') e virou um modal por
 // cima do dia que já estava aberto, sem navegar pra lugar nenhum.
-test('15b) "Total da Semana" (Realizado) abre um MODAL por cima do dia atual — não troca a página nem o dia selecionado', () => {
+test('15b) "Total da Semana" (Realizado) abre um MODAL por cima do dia atual — não troca a página nem o dia selecionado', async () => {
   const hoje = new Date().toISOString().slice(0, 10);
   const { win } = montarAmbiente('#/producao/realizado?dia=' + hoje);
   win.AnalistaRouter.init();
+  await flush(win);
   assert.equal(win.prealGetDia(), hoje, 'antes de abrir o modal, o dia ativo é o de hoje');
 
   const btnTotal = win.document.querySelector('[data-preal-dia="__total__"]');
@@ -310,35 +340,41 @@ test('15b) "Total da Semana" (Realizado) abre um MODAL por cima do dia atual —
   assert.equal(win.document.getElementById('preal-modal-host').innerHTML, '');
 });
 
-test('16) Restaura aba de Relatórios (aba=insumos)', () => {
+test('16) Restaura aba de Relatórios (aba=insumos)', async () => {
   const { win } = montarAmbiente('#/producao/relatorios?aba=insumos');
   win.AnalistaRouter.init();
+  await flush(win);
   assert.ok(win.document.getElementById('page-producao-relatorios').classList.contains('on'));
   assert.equal(win.prelGetAba(), 'insumos');
 });
 
-test('17) Restaura Insumos Máquina/Geral (modo=maquina e modo=geral, cada um numa restauração)', () => {
+test('17) Restaura Insumos Máquina/Geral (modo=maquina e modo=geral, cada um numa restauração)', async () => {
   const { win: winMaq } = montarAmbiente('#/producao/insumos?modo=maquina');
   winMaq.AnalistaRouter.init();
+  await flush(winMaq);
   assert.equal(winMaq.pinsGetModo(), 'maquina');
   const { win: winGeral } = montarAmbiente('#/producao/insumos?modo=geral');
   winGeral.AnalistaRouter.init();
+  await flush(winGeral);
   assert.equal(winGeral.pinsGetModo(), 'geral');
 });
 
-test('18) Restaura Gantt semanal/mensal + resumo aberto', () => {
+test('18) Restaura Gantt semanal/mensal + resumo aberto', async () => {
   const { win } = montarAmbiente('#/producao/programacao-visual?modo=mensal');
   win.AnalistaRouter.init();
+  await flush(win);
   assert.equal(win.pganttGetModo(), 'mensal');
   const { win: win2 } = montarAmbiente('#/producao/programacao-visual?modo=semanal&resumo=1');
   win2.AnalistaRouter.init();
+  await flush(win2);
   assert.equal(win2.pganttGetModo(), 'semanal');
   assert.equal(win2.pganttGetResumoAberto(), true);
 });
 
-test('19) Restaura Configuração da Produção (seção "produtos" = cadastro-produtos)', () => {
+test('19) Restaura Configuração da Produção (seção "produtos" = cadastro-produtos)', async () => {
   const { win } = montarAmbiente('#/producao/configuracoes/produtos');
   win.AnalistaRouter.init();
+  await flush(win);
   assert.ok(win.document.getElementById('page-producao-config').classList.contains('on'));
   assert.equal(win.pcfgGetSecao(), 'cadastro-produtos');
 });
@@ -346,32 +382,35 @@ test('19) Restaura Configuração da Produção (seção "produtos" = cadastro-p
 // ---------------------------------------------------------------------
 // 21. Sem permissão pra rota específica
 // ---------------------------------------------------------------------
-test('21) Usuário sem permissão pra rota específica: goPage recusa e a página protegida não fica .on', () => {
+test('21) Usuário sem permissão pra rota específica: goPage recusa e a página protegida não fica .on', async () => {
   const acesso = { admin_mestre: false, setores_permitidos: { producao: true }, permissoes: { 'producao-dashboard': { visualizar: true }, 'producao-maquinas': {} } };
   const { win } = montarAmbiente('#/producao/dashboard', acesso);
   win.aplicarPermissoesAnalista = () => {};
   win.irParaPrimeiraPaginaPermitida();
   win.aplicarSetoresPermitidos();
   win.AnalistaRouter.init();
+  await flush(win);
   win.AnalistaRouter.navigate('producao/maquinas');
   win.dispatchEvent(new win.Event('hashchange'));
+  await flush(win);
   assert.ok(!win.document.getElementById('page-producao-maquinas').classList.contains('on'));
 });
 
 // ---------------------------------------------------------------------
 // 22. Rota direta após autenticação (sequência completa de login simulada)
 // ---------------------------------------------------------------------
-test('22) Rota direta pós-login: hash presente ANTES do init() é a tela restaurada, não o Dashboard padrão', () => {
+test('22) Rota direta pós-login: hash presente ANTES do init() é a tela restaurada, não o Dashboard padrão', async () => {
   const { win } = montarAmbiente('#/pcp/estoque', { admin_mestre: true, permissoes: {} });
   // Simula a sequência real de 00-auth-login.js: permissões → primeira página → setores → router.init()
   win.aplicarPermissoesAnalista = () => {};
   win.irParaPrimeiraPaginaPermitida();   // escolheria Inventário/Dashboard por padrão
   win.aplicarSetoresPermitidos();         // reforça o padrão
   win.AnalistaRouter.init();              // deve SOBRESCREVER com a rota da URL
+  await flush(win);
   assert.equal(win.AnalistaRouter.rotaAtual().path, 'pcp/estoque', 'a rota da URL não pode ser sobrescrita pelo Dashboard padrão do boot');
 });
 
-test('REGRESSÃO: init() não chama irParaPrimeiraPaginaPermitida/aplicarSetoresPermitidos de novo quando a rota da URL já é válida (evita 2ª leitura/render no boot)', () => {
+test('REGRESSÃO: init() não chama irParaPrimeiraPaginaPermitida/aplicarSetoresPermitidos de novo quando a rota da URL já é válida (evita 2ª leitura/render no boot)', async () => {
   const { win } = montarAmbiente('#/pcp/estoque', { admin_mestre: true, permissoes: {} });
   let chamadasPrimeira = 0, chamadasSetores = 0;
   const origPrimeira = win.irParaPrimeiraPaginaPermitida, origSetores = win.aplicarSetoresPermitidos;
@@ -381,6 +420,7 @@ test('REGRESSÃO: init() não chama irParaPrimeiraPaginaPermitida/aplicarSetores
   win.irParaPrimeiraPaginaPermitida();
   win.aplicarSetoresPermitidos();
   win.AnalistaRouter.init();
+  await flush(win);
   assert.equal(chamadasPrimeira, 1, 'irParaPrimeiraPaginaPermitida só deveria ter rodado pelo fluxo de login, não de novo dentro do router');
   assert.equal(chamadasSetores, 1, 'aplicarSetoresPermitidos só deveria ter rodado pelo fluxo de login, não de novo dentro do router');
 });

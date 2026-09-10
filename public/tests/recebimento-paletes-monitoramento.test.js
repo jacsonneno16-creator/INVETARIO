@@ -32,6 +32,12 @@ function mockColecaoSimples(docsIniciais) {
       get: async () => { const data = registro.get(id); return { exists: data !== undefined, id, data: () => data }; },
       delete: async () => { registro.delete(id); },
     }),
+    where: (campo, op, valor) => ({
+      get: async () => {
+        const filtrados = [...registro.entries()].filter(([, data]) => op === 'in' ? (valor || []).includes(data[campo]) : data[campo] === valor);
+        return { docs: filtrados.map(([id, data]) => ({ id, data: () => data })) };
+      },
+    }),
     _registro: registro,
   };
 }

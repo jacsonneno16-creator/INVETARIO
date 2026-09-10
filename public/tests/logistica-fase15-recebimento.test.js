@@ -4,7 +4,7 @@ const servicoCode=fs.readFileSync(path.join(base,'90-bluesoft-service.js'),'utf8
 const navCode=fs.readFileSync(path.join(base,'03-core-navigation.js'),'utf8');
 const permCode=fs.readFileSync(path.join(base,'37-usuarios-permissoes.js'),'utf8');
 const dashCode=fs.readFileSync(path.join(base,'91-logistica-recebimento.js'),'utf8');
-const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8');
+const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8')+fs.readFileSync(path.join(__dirname,'../js/analista/00-lazy-areas.js'),'utf8');
 
 function mockRawFirestore(loja){
   return {

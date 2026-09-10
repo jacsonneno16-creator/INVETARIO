@@ -23,7 +23,7 @@ const { JSDOM } = require('jsdom');
 const codeCentral = fs.readFileSync(path.join(__dirname, '..', 'js', 'analista', '78-pcp-central.js'), 'utf8');
 const codeDashboard = fs.readFileSync(path.join(__dirname, '..', 'js', 'analista', '82-pcp-dashboard.js'), 'utf8');
 
-function colecaoVazia() { return { get: async () => ({ docs: [] }), where: () => ({ get: async () => ({ docs: [] }) }) }; }
+function colecaoVazia() { return { get: async () => ({ docs: [] }), where: () => ({ get: async () => ({ docs: [] }) }), orderBy: () => ({ limit: () => ({ get: async () => ({ docs: [] }) }), get: async () => ({ docs: [] }) }) }; }
 
 async function montarAmbiente(opts) {
   opts = opts || {};

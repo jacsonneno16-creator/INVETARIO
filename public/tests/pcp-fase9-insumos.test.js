@@ -2,7 +2,7 @@ const test=require('node:test');const assert=require('node:assert/strict');const
 const base=path.join(__dirname,'../js/analista');
 const insumosCode=fs.readFileSync(path.join(base,'65-producao-insumos.js'),'utf8');
 const pageCode=fs.readFileSync(path.join(base,'85-pcp-producao-insumos.js'),'utf8');
-const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8');
+const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8')+fs.readFileSync(path.join(__dirname,'../js/analista/00-lazy-areas.js'),'utf8');
 
 function load(){
   const document={addEventListener:()=>{}};

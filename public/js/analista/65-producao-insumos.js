@@ -110,7 +110,7 @@
   function acharEstoque(nome,em,aliases){const exato=em.get('nome:'+norm(nome));if(exato)return exato;const canon=canonInsumo(nome),cod=aliases.get(canon);return (cod&&em.get('cod:'+cod))||em.get('canon:'+canon);}
   function linhasGerais(geral){const em=estoqueMap(),aliases=aliasesFichaPorNome(),out=[];Object.keys(geral).forEach(cat=>Object.keys(geral[cat]).forEach(ins=>{const est=acharEstoque(ins,em,aliases);const item=geral[cat][ins];const consumo=item.total,saldo=n(est?.quantidade)-consumo;out.push({categoria:cat,insumo:ins,consumo,porDia:item.porDia,estoque:n(est?.quantidade),unidade:est?.unidade||'',saldo});}));return out;}
 
-  async function renderProducaoInsumos(){const p=document.getElementById('page-producao-insumos');if(!p)return;p.innerHTML='<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';try{await carregarProducaoInsumos();}catch(e){p.innerHTML='<div class="empty">⚠️ '+esc(e.message||e)+'</div>';return;}_desenhar();}
+  async function renderProducaoInsumos(){const p=document.getElementById('page-producao-insumos');if(!p)return;_desenhar();try{await carregarProducaoInsumos();}catch(e){p.innerHTML='<div class="empty">⚠️ '+esc(e.message||e)+'</div>';return;}_desenhar();}
   function _desenhar(){
     const p=document.getElementById('page-producao-insumos');if(!p)return;const {porMaquina,geral}=calcularConsumoInsumosSemana(_weekStart);const fim=new Date(_weekStart);fim.setDate(fim.getDate()+6);
     const busca=String(document.getElementById('pins-busca')?.value||'').toLowerCase(),catSel=document.getElementById('pins-cat')?.value||'';

@@ -301,7 +301,20 @@
   }
   function reportsPage() { const bought=cache.requests.filter(x=>n(x.quantidadeComprada)>0),total=bought.reduce((s,x)=>s+n(x.valorTotal),0);return header('📈 Relatórios de compras','Indicadores por período, comprador, produto e fornecedor.')+`<div class="kpi-grid"><div class="kpi blue"><div class="kpi-val">${bought.length}</div><div class="kpi-lbl">Compras registradas</div></div><div class="kpi teal"><div class="kpi-val">${money(total)}</div><div class="kpi-lbl">Valor comprado</div></div><div class="kpi green"><div class="kpi-val">${new Set(bought.map(x=>x.fornecedor).filter(Boolean)).size}</div><div class="kpi-lbl">Fornecedores</div></div><div class="kpi orange"><div class="kpi-val">${new Set(bought.map(key)).size}</div><div class="kpi-lbl">Produtos</div></div></div><div class="tc" style="padding:14px;margin-top:14px"><b>Próximas integrações BlueSoft</b><p style="color:var(--muted);font-size:.78rem">Pedidos, entregas, notas fiscais, ficha de estoque, negociações e sortimento serão conciliados pelo código externo, sempre com trilha de sincronização.</p></div>`; }
   function adminPage() { return header('⚙️ Administração de Compras','Regras, alçadas, integrações e qualidade cadastral.')+`<div class="tc" style="padding:14px"><h3 style="margin-top:0">Controles recomendados</h3><ul><li>Regra de comprador por produto, categoria e fornecedor.</li><li>Alçada de aprovação por valor e exceção.</li><li>Bloqueio de pedido sem cotação/aprovação quando exigido.</li><li>Conciliação BlueSoft com log, data e resultado da sincronização.</li><li>Credenciais exclusivamente no servidor; nunca no navegador.</li></ul><button class="btn btn-primary btn-sm" data-cp-open-central>Abrir regras atuais</button></div>`; }
-  async function render(name) { const page=document.getElementById('page-compras-'+name);if(!page)return;page.innerHTML='<div class="empty">Carregando...</div>';await load();const html=name==='solicitacoes'?requestsPage():name==='cotacoes'?quotationsPage():name==='pedidos'?ordersPage():name==='produtos'?(selectedProduct?await product360():productsPage()):name==='fornecedores'?await suppliersPage():name==='recebimentos'?receiptsPage():name==='relatorios'?reportsPage():adminPage();page.innerHTML=html; }
+  // Shell-first: desenha com o cache atual (vazio no 1º load, já quente
+  // numa troca de aba normal — load() só busca de novo se cache.requests
+  // estiver vazio) ANTES do fetch, e de novo depois. Numa troca de aba já
+  // carregada nesta sessão, isso deixa a navegação instantânea (sem piscar
+  // "Carregando..." nenhuma vez); no 1º load, mostra a estrutura da página
+  // na hora e preenche quando os dados chegarem.
+  async function render(name) {
+    const page=document.getElementById('page-compras-'+name);
+    if(!page)return;
+    const desenhar=async()=>{const html=name==='solicitacoes'?requestsPage():name==='cotacoes'?quotationsPage():name==='pedidos'?ordersPage():name==='produtos'?(selectedProduct?await product360():productsPage()):name==='fornecedores'?await suppliersPage():name==='recebimentos'?receiptsPage():name==='relatorios'?reportsPage():adminPage();page.innerHTML=html;};
+    await desenhar();
+    await load();
+    await desenhar();
+  }
   // Roteador (correção de bug real confirmada nesta sessão): selectedProduct
   // nunca era limpo — reabrir "Produtos" pela barra lateral enquanto um
   // produto estava selecionado ficava preso no 360° do último produto. Uma

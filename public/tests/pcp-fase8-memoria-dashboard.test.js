@@ -4,7 +4,7 @@ const code=fs.readFileSync(path.join(base,'78-pcp-central.js'),'utf8');
 const dashboardCode=fs.readFileSync(path.join(base,'82-pcp-dashboard.js'),'utf8');
 const timelineCode=fs.readFileSync(path.join(base,'83-pcp-timeline.js'),'utf8');
 const rules=fs.readFileSync(path.join(__dirname,'../../firestore.rules'),'utf8');
-const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8');
+const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8')+fs.readFileSync(path.join(__dirname,'../js/analista/00-lazy-areas.js'),'utf8');
 
 function load(calc=[]){const document={addEventListener:()=>{},getElementById:()=>null};const window={calcularProjecaoComRisco:()=>calc,getParametrosProducaoProjecao:()=>({}),temPermissao:()=>true};vm.runInNewContext(code,{window,document,console,Date,Math,Number,String,Array,Object,Set,Map,confirm:()=>true,prompt:()=>null});return window._pcpInternals;}
 

@@ -66,7 +66,7 @@
   async function renderComprasDashboard(forcar) {
     const pagina = document.getElementById('page-compras-dashboard');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando dashboard...</div></div>';
+    _desenhar();
     try {
       await Promise.all([global._comprasInternals.carregar(), _carregarHistoricoRealBi(forcar)]);
       _desenhar();
