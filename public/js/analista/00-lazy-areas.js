@@ -53,9 +53,9 @@
     recebimento: [
       "js/analista/91-logistica-recebimento.js?v=20260909e-sem-timeout-artificial",
       "js/analista/92-recebimento-config.js?v=20260814-fase15f4h-rotas-globais",
-      "js/analista/93-recebimento-operacao.js?v=20260909d-sem-timeout-artificial",
+      "js/analista/93-recebimento-operacao.js?v=20260910-respeita-cache-na-reentrada",
       "js/analista/94-recebimento-relatorios.js?v=20260827-so-buscar-auto-refresh",
-      "js/analista/95-recebimento-transbordo.js?v=20260908c-codigo-segue-motorista",
+      "js/analista/95-recebimento-transbordo.js?v=20260910-respeita-cache-na-reentrada",
       "js/analista/96-recebimento-performance.js?v=20260821-filtro-periodo-livre",
       "js/analista/97-recebimento-recusas.js?v=20260909-cache-carregarDados",
       "js/analista/100-consulta-notas-fiscais.js?v=20260902b-gtin-ean-dun-separados",

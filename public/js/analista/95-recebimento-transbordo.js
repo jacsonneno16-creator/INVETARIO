@@ -142,22 +142,28 @@
   async function renderRecebimentoTransbordo() {
     const pagina = document.getElementById('page-recebimento-transbordo');
     if (!pagina) return;
-    pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     // Pedido ao vivo do usuário: a tela de Transbordo passa a mostrar SÓ os
     // transbordos gerados pelo nosso próprio sistema (Coletor) — nada de
     // importação/cruzamento com a Bluesoft aqui. O Coletor já registra
     // motorista, nota, e cada horário da linha do tempo sozinho.
-    // force=true — mesmo motivo do renderRecebimentoOperacao() (93): o
-    // canal de tempo real do Firestore (onSnapshot) caindo na rede do
-    // usuário (confirmado no console dele: ERR_CONNECTION_CLOSED/504/erro
-    // de transporte no stream 'Listen') deixava a tela congelada na
-    // última leitura bem-sucedida, sem nenhum jeito de se recuperar sozinha
-    // — nem F5 ajudava, porque a mesma instabilidade se repetia na hora. Um
-    // `.get()` único aqui garante dado fresco toda vez que a tela abre,
-    // independente da saúde da conexão em tempo real.
-    try { await Promise.all([opInternals()?.carregar?.(true), _carregarIdentificadores(), _carregarObservacoesTransbordo()]); }
-    catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
+    //
+    // BUG AO VIVO REAL (2026-09-10): "trocar de tela dentro do Recebimento
+    // continua lento" — essa tela forçava `carregar(true)` (recarga
+    // completa) TODA VEZ que era aberta, mesmo já tendo os dados em cache
+    // desta sessão (motivo original: canal onSnapshot instável deixava a
+    // tela congelada sem recuperação — ver histórico). Isso ficou
+    // inconsistente com o resto do sistema (Notas Retornadas, Compras, PCP
+    // já respeitam cache na reentrada) e virou a causa real da lentidão
+    // reportada. Agora: shell-first (desenha com o que já tem, mesmo que
+    // vazio, ANTES de esperar rede) + respeita o cache já existente em
+    // carregarRecebimentoOperacao() — só busca de novo se ainda não tinha
+    // buscado nesta sessão. O botão "↻ Atualizar" continua forçando
+    // `carregar(true)` pra quem precisar de dado fresco na hora (mesmo
+    // papel que cumpria pra recuperar de uma conexão instável).
     if (!_ouvinteRegistrado) { opInternals()?.onMudanca?.(() => _desenharTransbordo()); _ouvinteRegistrado = true; }
+    _desenharTransbordo();
+    try { await Promise.all([opInternals()?.carregar?.(), _carregarIdentificadores(), _carregarObservacoesTransbordo()]); }
+    catch (e) { if (!transbordos().length) pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
     _desenharTransbordo();
   }
 

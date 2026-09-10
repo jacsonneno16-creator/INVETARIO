@@ -302,24 +302,20 @@
   // retorno numa Promise própria). Sem `async`/`await` nenhum aqui dentro,
   // não muda nada retornar `atualizacao` direto — e aí a marcação chega
   // intacta em quem chama (_callPage).
-  function renderRecebimentoOperacao() {
+  function renderRecebimentoOperacao(forcar) {
     const pagina = document.getElementById('page-recebimento-operacao');
     if (!pagina) return;
     // PEDIDO AO VIVO (2026-09-09): a estrutura aparece imediatamente (com o
     // que já estiver em memória); a rede atualiza os dados em segundo
     // plano. Uma consulta lenta nunca mais produz página branca.
     _desenharRecebimentoOperacao();
-    // force=true (bug ao vivo real, confirmado no console do usuário: canal
-    // de tempo real do Firestore — onSnapshot — caindo repetidamente na
-    // rede dele: ERR_CONNECTION_CLOSED/504/erro de transporte no stream
-    // 'Listen'). Sem forçar aqui, quando esse canal cai a tela CONGELA na
-    // última leitura bem-sucedida e nunca mais atualiza sozinha — nem F5
-    // ajuda, porque a mesma instabilidade de rede se repete na hora. Um
-    // `.get()` único (não uma conexão que fica presa) sempre busca fresco
-    // ao reabrir a tela, funcionando como um fallback confiável quando o
-    // tempo real falha — e continua sendo complementado por ele quando a
-    // rede permite.
-    const atualizacao = carregarRecebimentoOperacao(true);
+    // BUG AO VIVO REAL (2026-09-10): "trocar de tela continua lento" — esta
+    // tela forçava `forcar=true` em TODA reentrada (motivo original: canal
+    // onSnapshot instável, ver histórico), diferente do resto do sistema
+    // que já respeita cache. Agora só força quando pedido explicitamente
+    // (botão "↻ Atualizar", ou "Tentar novamente" depois de uma falha) —
+    // carregarRecebimentoOperacao() já tem seu próprio cache por sessão.
+    const atualizacao = carregarRecebimentoOperacao(forcar);
     // Marca pro timeout genérico de navegação (03-core-navigation.js,
     // _callPage) não cobrir esta tela com o aviso dele por cima — esta tela
     // já cuida do próprio carregamento/erro em segundo plano, granular por
@@ -355,7 +351,10 @@
       ${_erroCarregamento ? '<div style="font-size:.76rem;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;margin-bottom:10px">⚠️ ' + esc(_erroCarregamento) + ' <button type="button" class="btn btn-ghost btn-sm" data-recop-recarregar="1">Tentar novamente</button></div>' : ''}
       <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">
         <div><div class="page-title" style="font-size:1.15rem">🚚 Recebimentos</div><div style="font-size:.74rem;color:var(--muted)">${_recebimentos.length.toLocaleString('pt-BR')} carga(s) registrada(s)</div></div>
-        <button type="button" class="btn btn-primary btn-sm" data-recop-novo="1">+ Novo Recebimento</button>
+        <div style="display:flex;gap:8px">
+          <button type="button" class="btn btn-ghost btn-sm" data-recop-atualizar="1" title="Buscar os dados mais recentes">↻ Atualizar</button>
+          <button type="button" class="btn btn-primary btn-sm" data-recop-novo="1">+ Novo Recebimento</button>
+        </div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
         ${Object.keys(ABA_INFO).map(aba => `<button type="button" class="btn ${aba === _abaRecebimento ? 'btn-primary' : 'btn-ghost'} btn-sm" data-recop-aba="${aba}">${ABA_INFO[aba].label} (${contagemAba[aba]})</button>`).join('')}
@@ -696,7 +695,8 @@
   global.recopVoltarEtapa = recopVoltarEtapa;
 
   document.addEventListener('click', function (event) {
-    if (event.target.closest('[data-recop-recarregar]')) { renderRecebimentoOperacao(); return; }
+    if (event.target.closest('[data-recop-recarregar]')) { renderRecebimentoOperacao(true); return; }
+    if (event.target.closest('[data-recop-atualizar]')) { renderRecebimentoOperacao(true); return; }
     if (event.target.closest('[data-recop-novo]')) { recopNovo(); return; }
     const pg = event.target.closest('[data-recop-pg]'); if (pg) { _pagina += Number(pg.dataset.recopPg); _desenharRecebimentoOperacao(); return; }
     if (event.target.closest('[data-recop-nota-adicionar]')) { recopNotaAdicionar(); return; }

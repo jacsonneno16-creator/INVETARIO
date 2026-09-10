@@ -238,11 +238,28 @@ test('95: o gráfico de tempos por dia e o de status são desenhados com Chart.j
   const instancias = [];
   window.Chart = function (ctx, cfg) { this.destroy = () => { instancias.push('destruído'); }; this._cfg = cfg; instancias.push('criado:' + cfg.type); };
 
+  // Shell-first (2026-09-10): cada render agora desenha 2x (estrutura
+  // imediata com o que já tem em cache + de novo quando o fetch resolve),
+  // então uma única chamada já gera mais de um ciclo criar/destruir — a
+  // sequência exata de eventos deixou de ser previsível. O que realmente
+  // importa pra não vazar instância: em qualquer momento, o saldo
+  // (criações vivas − destruições) nunca fica negativo, e termina em
+  // exatamente 2 (bar + doughnut) depois de cada chamada — nunca sobra
+  // nem falta instância.
+  function saldoNaoNegativoETerminaEm2(lista) {
+    let saldo = 0;
+    for (const evento of lista) {
+      saldo += evento.startsWith('criado') ? 1 : -1;
+      assert.ok(saldo >= 0, 'destruiu mais do que criou em algum momento — instância inexistente sendo destruída');
+    }
+    assert.equal(saldo, 2, 'tem que sobrar exatamente os 2 gráficos do desenho mais recente, nem mais nem menos');
+  }
+
   await window.renderRecebimentoTransbordo();
-  assert.deepEqual(instancias, ['criado:bar', 'criado:doughnut']);
+  saldoNaoNegativoETerminaEm2(instancias);
 
   await window.renderRecebimentoTransbordo(); // redesenha
-  assert.deepEqual(instancias, ['criado:bar', 'criado:doughnut', 'destruído', 'destruído', 'criado:bar', 'criado:doughnut']);
+  saldoNaoNegativoETerminaEm2(instancias);
 });
 
 // PEDIDOS AO VIVO DO USUÁRIO (tela "+ Novo Transbordo" do Analista): (1)
