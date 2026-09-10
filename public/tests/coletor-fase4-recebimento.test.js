@@ -431,6 +431,23 @@ test('FASE 4b: bipar o código do motorista DE NOVO enquanto já tem viagem em a
   assert.match(els['rec-nf-subtitulo'].textContent,/NF-999/);
 });
 
+test('BUG AO VIVO REAL (2026-09-10): motorista com DUAS viagens ativas ao mesmo tempo (esqueceu de finalizar uma e já tem outra em andamento) não trava mais na mais antiga — abre a tela de escolha, e nenhuma das duas é tocada sozinha',async()=>{
+  const motoristas=mockColecao([{id:'mo1',data:{nome:'Carlos Silva',codigo:'MOT-ABC123'}}]);
+  const recebimentos=mockColecao([
+    {id:'rAntiga',data:{tipo:'TRANSBORDO',status:'EM_DESCARGA',motoristaId:'mo1',motoristaNome:'Carlos Silva',origem:'Loja Matriz',destino:'Filial Centro',notaFiscalTransferencia:'NF-100'}},
+    {id:'rNova',data:{tipo:'TRANSBORDO',status:'EM_TRANSITO',motoristaId:'mo1',motoristaNome:'Carlos Silva',origem:'Loja Matriz',destino:'Filial Centro',notaFiscalTransferencia:'NF-200'}},
+  ]);
+  const { ctx, els, telas }=loadRecebimento({ recebimento_motoristas:motoristas, recebimento_veiculos:mockColecao([]), recebimento_config_geral:mockColecao([]), recebimentos, recebimento_identificadores:mockColecao([]) });
+  await ctx.carregarRecebimentoColetor();
+
+  els['rec-scan-input'].value='MOT-ABC123';
+  await ctx.confirmarCodigoRecebimento();
+
+  assert.equal(recebimentos._registro.size,2,'não pode ter criado uma 3ª carga nem duplicado nenhuma');
+  assert.ok(!telas.includes('recebimento-nf'),'não pode ter entrado direto em nenhuma das duas — precisa perguntar qual primeiro');
+  assert.ok(telas.includes('recebimento-carga-ativa'),'abre a tela de escolha entre as viagens ativas');
+});
+
 test('REGRESSÃO/FASE 4e: motorista cadastrado DEPOIS que o Coletor já tinha carregado a tela (cache desatualizado) ainda é reconhecido — busca ao vivo no Firestore como backstop, sem depender de reabrir o app (bug ao vivo: "código não encontrado" logo após cadastrar)',async()=>{
   const motoristas=mockColecao([]); // Coletor carrega ANTES do motorista existir
   const rotas=mockColecao([{id:'rt1',data:{origemLojaId:'loja1',origemNome:'Loja Matriz',destinoLojaId:'loja_filial',destinoNome:'Filial Centro'}}]);
