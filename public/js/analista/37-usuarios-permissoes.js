@@ -161,7 +161,15 @@
   async function coletarUsuariosExistentes(){
     await carregarLojas();const mapa=new Map(),snap=await raw().collection(ACCESS).get().catch(()=>({docs:[]}));
     snap.docs.forEach(d=>{const x={id:d.id,...d.data()};if(x.conta_secundaria===true)return;mapa.set(x.uid||x.email||d.id,x);});
-    for(const loja of lojasCache){try{const s=await raw().collection('lojas').doc(loja.id).collection('dt_operadores').limit(500).get();s.docs.forEach(d=>{const o={id:d.id,...d.data()};if(o.conta_secundaria===true)return;const k=o.uid||o.email||d.id,a=mapa.get(k)||{};mapa.set(k,{...o,...a,uid:a.uid||o.uid||d.id,email:a.email||o.email||'',nome:a.nome||o.nome||o.name||'',_lojasEncontradas:[...new Set([...(a._lojasEncontradas||[]),loja.id])]});});}catch(e){console.warn('[Usuários]',e.message);}}
+    // PEDIDO AO VIVO (2026-09-10, "até os usuários demora pra carregar"):
+    // era um for/await SEQUENCIAL — uma leitura de dt_operadores por loja,
+    // esperando terminar uma pra só então começar a próxima. Com N lojas
+    // isso sozinho já custava N idas e voltas ao servidor em série antes da
+    // lista aparecer. Promise.all troca por "todas ao mesmo tempo" sem
+    // mudar o que é buscado nem a ordem de mescla (resultadosPorLoja mantém
+    // a ordem de lojasCache, processado abaixo na mesma sequência de antes).
+    const resultadosPorLoja=await Promise.all(lojasCache.map(loja=>raw().collection('lojas').doc(loja.id).collection('dt_operadores').limit(500).get().then(s=>({loja,docs:s.docs})).catch(e=>{console.warn('[Usuários]',e.message);return{loja,docs:[]};})));
+    resultadosPorLoja.forEach(({loja,docs})=>{docs.forEach(d=>{const o={id:d.id,...d.data()};if(o.conta_secundaria===true)return;const k=o.uid||o.email||d.id,a=mapa.get(k)||{};mapa.set(k,{...o,...a,uid:a.uid||o.uid||d.id,email:a.email||o.email||'',nome:a.nome||o.nome||o.name||'',_lojasEncontradas:[...new Set([...(a._lojasEncontradas||[]),loja.id])]});});});
     const atual=global._currentAnalistaUser;if(atual){const k=atual.uid||atual.email;if(!mapa.has(k))mapa.set(k,{uid:atual.uid,email:atual.email,nome:atual.displayName||atual.email?.split('@')[0],perfil:'analista',acesso_todas_lojas:true,lojas_permitidas:[],canais_acesso:{coletor:true,analista:true},permissoes:todos()});}
     usuarios=[...mapa.values()].sort((a,b)=>String(a.nome||a.email).localeCompare(String(b.nome||b.email),'pt-BR'));return usuarios;
   }

@@ -34,15 +34,45 @@ window.DT_FCOL = {
 // o Coletor num app Firebase com nome próprio — chave de persistência
 // diferente da do Analista — sem exigir nenhuma mudança nos outros pontos
 // que já chamam getDTFirebaseApp()/getDTAuth()/getDTFirestore() sem args.
+// PEDIDO AO VIVO (2026-09-10): "abri em outro computador e não apareceu as
+// informações... até os usuários demora pra carregar" — investigado de
+// ponta a ponta: NENHUM arquivo de Recebimento (nem Usuários) tem cache
+// local nenhum (confirmado varrendo os 16 arquivos), diferente da Base de
+// Produtos (produtos-service.js), que mostra o cache do IndexedDB na hora e
+// só busca de novo se a versão mudou — por isso ela "atualiza rápido" e o
+// resto não. Correção estrutural (não é gambiarra por tela): ativa o cache
+// nativo do próprio SDK do Firestore (enablePersistence) pro app do
+// Analista — toda leitura já feita antes fica em IndexedDB e responde na
+// hora numa reabertura, mesmo com internet ruim, sincronizando por trás.
+// Ativado SÓ pro Analista por enquanto: o Coletor já tem uma fila offline
+// própria pros bips (23-recebimento-offline.js, IndexedDB manual com
+// revalidação de conflito) — ligar os dois ao mesmo tempo sem testar
+// primeiro poderia duplicar gravação em vez de só acelerar leitura.
+// synchronizeTabs:true evita o erro comum de abrir 2 abas do Analista ao
+// mesmo tempo (Dashboard + outra aba) — sem isso, a 2ª aba falharia ao
+// ativar o cache. Precisa ser chamado ANTES de qualquer outra leitura no
+// app — por isso fica logo após o initializeApp, nunca depois.
+function _ativarCacheOffline(app, nome) {
+  if (nome !== '[DEFAULT]') return; // só Analista por enquanto
+  try {
+    app.firestore().enablePersistence({ synchronizeTabs: true }).catch(function (e) {
+      console.warn('[Firestore] Cache local não pôde ser ativado (' + (e && e.code || e) + ') — segue funcionando sem cache.');
+    });
+  } catch (e) {
+    console.warn('[Firestore] Cache local indisponível:', e);
+  }
+}
 window.getDTFirebaseApp = function () {
   if (!window.firebase) throw new Error('Firebase SDK não carregado.');
   var nome = window.DT_FIREBASE_APP_NOME || '[DEFAULT]';
   try {
     return firebase.app(nome);
   } catch (e) {
-    return nome === '[DEFAULT]' ?
+    var app = nome === '[DEFAULT]' ?
       firebase.initializeApp(window.DT_FIREBASE_CFG) :
       firebase.initializeApp(window.DT_FIREBASE_CFG, nome);
+    _ativarCacheOffline(app, nome);
+    return app;
   }
 };
 window.getDTRawFirestore = function () {
