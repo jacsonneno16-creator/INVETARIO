@@ -16,7 +16,7 @@ const rules = fs.readFileSync(path.join(__dirname, '../../firestore.rules'), 'ut
 function mockColecao(docsIniciais) {
   const registro = new Map((docsIniciais || []).map(d => [d.id, d.data]));
   let seq = 0;
-  return {
+  const base = {
     get: async () => ({ size: registro.size, docs: [...registro.entries()].map(([id, data]) => ({ id, data: () => data })) }),
     doc: id => { const docId = id || ('novo' + (seq++)); return {
       id: docId,
@@ -26,6 +26,26 @@ function mockColecao(docsIniciais) {
     }; },
     add: async payload => { const docId = 'novo' + (seq++); registro.set(docId, payload); return { id: docId }; },
     _registro: registro,
+  };
+  // _carregarTodosTransbordos() (95-recebimento-transbordo.js) faz
+  // `.where('tipo','==','TRANSBORDO')` por loja.
+  base.where = (campo, op, valor) => ({
+    get: async () => ({ docs: [...registro.entries()].filter(([, data]) => !data || data[campo] === valor).map(([id, data]) => ({ id, data: () => data })) }),
+  });
+  return base;
+}
+// Mock mínimo de `getDTRawFirestore().collection('lojas')` — usado por
+// _carregarTodosTransbordos() pra listar as lojas ativas e buscar
+// `recebimentos` (tipo TRANSBORDO) de cada uma.
+function mockRawLojasSimples(recebimentosColecao) {
+  return {
+    collection: nome => {
+      if (nome !== 'lojas') return mockColecao([]);
+      return {
+        doc: () => ({ collection: sub => (sub === 'recebimentos' ? recebimentosColecao : mockColecao([])) }),
+        get: async () => ({ docs: [{ id: 'loja_matriz', data: () => ({ id: 'loja_matriz', nome: 'Matriz', ativa: true }) }] }),
+      };
+    },
   };
 }
 
@@ -40,6 +60,7 @@ function loadTransbordo(colecoes, domValores) {
   const document = { addEventListener: () => {}, getElementById: dom.getElementById };
   const window = {
     getDTFirestore: () => ({ collection: nome => colecoes?.[nome] || mockColecao([]) }),
+    getDTRawFirestore: () => mockRawLojasSimples(colecoes?.recebimentos || mockColecao([])),
     openModal: () => {}, closeModal: () => {}, showToast: () => {}, showConfirm: (msg, exec) => exec(),
     qrcode: () => ({ addData() {}, make() {}, createDataURL: () => 'data:image/gif;base64,AAAA' }),
     _currentAnalistaUser: { email: 'analista@daterrinha.com' },
@@ -83,6 +104,7 @@ test('REGRESSÃO: "+ Novo Transbordo" grava null explícito em todos os campos d
   const identificadores = mockColecao([]);
   const { window, document } = loadTransbordoRealDom({ recebimentos, recebimento_identificadores: identificadores, recebimento_auditoria: mockColecao([]) });
   await window._recebimentoOperacaoInternals.carregar(true);
+  if (window._recebimentoTransbordoInternals) await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   // Destino passou a ser uma loja de verdade (select populado por
   // recbtNovo, não texto livre) — correção estrutural pra que
@@ -106,6 +128,7 @@ test('93: recopRegistrarSaida/registrarChegadaTransbordo mesclam campos extras (
   const auditoria = mockColecao([]);
   const { window } = loadTransbordo({ recebimentos, recebimento_auditoria: auditoria });
   await window._recebimentoOperacaoInternals.carregar(true);
+  if (window._recebimentoTransbordoInternals) await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   await window._recebimentoOperacaoInternals.registrarSaida('r1', { notaFiscalTransferencia: '555000' });
   let r = recebimentos._registro.get('r1');
@@ -129,6 +152,7 @@ test('95: modal de NF na saída (Matriz) — exige número não vazio, depois gr
     'rebt-nf-saida-id': 'r1', 'rebt-nf-saida-numero': '',
   });
   await window._recebimentoOperacaoInternals.carregar(true);
+  if (window._recebimentoTransbordoInternals) await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   let avisos = [];
   window.showToast = msg => avisos.push(msg);
@@ -147,6 +171,7 @@ test('PEDIDO AO VIVO: modal de NF do Transbordo (Analista) aceita mais de uma no
   const recebimentos = mockColecao([{ id: 'r1', data: { tipo: 'TRANSBORDO', status: 'PREVISTO' } }]);
   const { window, dom } = loadTransbordo({ recebimentos, recebimento_auditoria: mockColecao([]) }, { 'rebt-nf-saida-id': 'r1', 'rebt-nf-saida-numero': '', 'rebt-nf-chegada-id': '', 'rebt-nf-chegada-numero': '' });
   await window._recebimentoOperacaoInternals.carregar(true);
+  if (window._recebimentoTransbordoInternals) await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   dom['rebt-nf-saida-numero'].value = 'NF-1';
   window.adicionarNotaFiscalTransbordo('saida');
@@ -177,6 +202,7 @@ test('PEDIDO AO VIVO: uma NF errada na chegada do Transbordo (Analista) não fic
   const recebimentos = mockColecao([{ id: 'r1', data: { tipo: 'TRANSBORDO', status: 'EM_TRANSITO', notaFiscalTransferencia: 'NF-1, NF-2' } }]);
   const { window, dom } = loadTransbordo({ recebimentos, recebimento_auditoria: mockColecao([]) }, { 'rebt-nf-chegada-id': 'r1', 'rebt-nf-chegada-numero': '' });
   await window._recebimentoOperacaoInternals.carregar(true);
+  if (window._recebimentoTransbordoInternals) await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   dom['rebt-nf-chegada-numero'].value = 'NF-1';
   window.adicionarNotaFiscalTransbordo('chegada');
@@ -200,6 +226,7 @@ test('95: modal de NF na chegada (Filial, registrada manualmente pelo Analista) 
     'rebt-nf-chegada-id': '', 'rebt-nf-chegada-registrada': '', 'rebt-nf-chegada-numero': '', 'rebt-nf-chegada-erro': '',
   });
   await window._recebimentoOperacaoInternals.carregar(true);
+  if (window._recebimentoTransbordoInternals) await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   window._recebimentoTransbordoInternals.abrirNfChegada('r1');
   assert.equal(dom['rebt-nf-chegada-registrada'].textContent, '777888');
@@ -230,6 +257,7 @@ test('94: Histórico mostra a Nota Fiscal na tabela e no CSV exportado (antes fi
   vm.runInContext(relCode, ctx, { filename: '94-recebimento-relatorios.js' });
 
   await window._recebimentoOperacaoInternals.carregar(true);
+  if (window._recebimentoTransbordoInternals) await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
   await window.renderRecebimentoHistorico();
 
   assert.match(document.getElementById('page-recebimento-historico').innerHTML, /Nota Fiscal/);

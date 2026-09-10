@@ -18,7 +18,7 @@ const htmlCode = fs.readFileSync(path.join(__dirname, '../analista.html'), 'utf8
 function mockColecao(docsIniciais) {
   const registro = new Map((docsIniciais || []).map(d => [d.id, d.data]));
   let seq = 0;
-  return {
+  const base = {
     get: async () => ({ size: registro.size, docs: [...registro.entries()].map(([id, data]) => ({ id, data: () => data })) }),
     doc: id => { const docId = id || ('novo' + (seq++)); return {
       id: docId,
@@ -30,15 +30,39 @@ function mockColecao(docsIniciais) {
     add: async payload => { const docId = 'novo' + (seq++); registro.set(docId, payload); return { id: docId }; },
     _registro: registro,
   };
+  // Usado por _carregarTodosTransbordos() (95-recebimento-transbordo.js) —
+  // `.where('tipo','==','TRANSBORDO')` por loja, mesmo padrão de mock
+  // encadeável já usado nos testes de Recebimento desta sessão.
+  base.where = (campo, op, valor) => {
+    const construir = condicoesAtuais => ({
+      where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+      get: async () => {
+        const bate = data => condicoesAtuais.every(c => {
+          const v = data ? data[c.campo] : undefined;
+          if (c.op === '==') return v === c.valor;
+          return true;
+        });
+        return { docs: [...registro.entries()].filter(([, data]) => bate(data)).map(([id, data]) => ({ id, data: () => data })) };
+      },
+    });
+    return construir([{ campo, op, valor }]);
+  };
+  return base;
 }
-// Mock de `getDTRawFirestore().collection('lojas').doc(lojaId).collection('recebimentos')`
-// — usado por recbtSalvar()/recbtSalvarEdicaoCompleta() (escrita crua,
-// mesmo padrão de recbtSalvarRota() já existente no arquivo real).
-function mockRawLojas(porLoja) {
+// Mock de `getDTRawFirestore().collection('lojas')` — `.doc(lojaId).collection(sub)`
+// usado por recbtSalvar()/recbtSalvarEdicaoCompleta() (escrita crua, mesmo
+// padrão de recbtSalvarRota() já existente no arquivo real); `.get()` na
+// raiz usado por _carregarTodosTransbordos() pra listar as lojas ativas
+// (mesmo padrão de 104-recebimento-cargas-cards.js).
+function mockRawLojas(porLoja, lojasMeta) {
+  const metas = lojasMeta || Object.keys(porLoja).map(id => ({ id, nome: id }));
   return {
     collection: nome => {
       if (nome !== 'lojas') return mockColecao([]);
-      return { doc: lojaId => ({ collection: sub => (porLoja[lojaId] && porLoja[lojaId][sub]) || mockColecao([]) }) };
+      return {
+        doc: lojaId => ({ collection: sub => (porLoja[lojaId] && porLoja[lojaId][sub]) || mockColecao([]) }),
+        get: async () => ({ docs: metas.map(m => ({ id: m.id, data: () => m })) }),
+      };
     },
   };
 }
@@ -54,6 +78,24 @@ function loadTransbordo(colecoes) {
   const document = win.document;
   const els = new Proxy({}, { get: (_, id) => document.getElementById(id) });
   win.getDTFirestore = () => ({ collection: nome => colecoes?.[nome] || mockColecao([]) });
+  // Mesma loja nos dois lados por padrão (93 tagueia _lojaId pela loja
+  // ATIVA; _carregarTodosTransbordos tagueia pelo id de cada loja
+  // percorrida) — sem isso os dois "achavam" o mesmo registro com
+  // _lojaId diferente ('' vs 'loja_matriz') e o dedup de transbordos()
+  // não os via como duplicata, contando o mesmo registro 2x.
+  win.getDTLojaAtiva = () => 'loja_matriz';
+  // _carregarTodosTransbordos() (95-recebimento-transbordo.js) sempre busca
+  // TODAS as lojas — padrão default aqui é 1 loja só ('loja_matriz'),
+  // reaproveitando o MESMO mock de `recebimentos` que os testes já passam
+  // em `colecoes` (assim os testes simples de 1 loja continuam vendo os
+  // registros deles na listagem sem precisar saber desse detalhe). Testes
+  // que precisam mesmo de multi-loja de verdade sobrescrevem
+  // `win.getDTRawFirestore` depois de chamar loadTransbordo(), como já
+  // faziam pra testar escrita cross-loja.
+  win.getDTRawFirestore = () => mockRawLojas(
+    { loja_matriz: { recebimentos: colecoes?.recebimentos || mockColecao([]) } },
+    [{ id: 'loja_matriz', nome: 'Matriz', ativa: true }]
+  );
   win.openModal = () => {}; win.closeModal = () => {}; win.showToast = () => {};
   win.showConfirm = (msg, exec) => exec();
   win.qrcode = () => ({ addData() {}, make() {}, createDataURL: () => 'data:image/gif;base64,AAAA' });
@@ -106,6 +148,7 @@ test('REGRESSÃO (bug ao vivo real, relatado direto pelo usuário no painel): v�
   ]);
   const { window } = loadTransbordo({ recebimentos });
   await window._recebimentoOperacaoInternals.carregar(true);
+  await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   await window.renderRecebimentoTransbordo();
   const html = window.document.getElementById('page-recebimento-transbordo').innerHTML;
@@ -334,6 +377,7 @@ test('PEDIDO AO VIVO: "Editar" abre uma carga JÁ FINALIZADA pelo Coletor preenc
   window.getDTLojaAtiva = () => 'loja_matriz';
   window.getDTRawFirestore = () => mockRawLojas({ loja_matriz: { recebimentos, recebimento_auditoria: mockColecao([]) } });
   await window._recebimentoOperacaoInternals.carregar(true);
+  await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   await window.recbtAbrirEdicaoCompleta('r1');
 
@@ -401,6 +445,7 @@ test('BUG AO VIVO REAL: motorista desativado no cadastro continua aparecendo pr�
   window.getDTLojaAtiva = () => 'loja_matriz';
   window.getDTRawFirestore = () => mockRawLojas({ loja_matriz: { recebimentos, recebimento_auditoria: mockColecao([]) } });
   await window._recebimentoOperacaoInternals.carregar(true);
+  await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   await window.recbtAbrirEdicaoCompleta('r1');
   assert.equal(document.getElementById('rebtedit-motorista').value, 'm-carlos', 'motorista desativado precisa continuar pré-selecionado, não em branco');
@@ -431,6 +476,7 @@ test('mesmo com o motorista antigo desativado, ainda dá pra trocar pra um motor
   window.getDTLojaAtiva = () => 'loja_matriz';
   window.getDTRawFirestore = () => mockRawLojas({ loja_matriz: { recebimentos, recebimento_auditoria: mockColecao([]) } });
   await window._recebimentoOperacaoInternals.carregar(true);
+  await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   await window.recbtAbrirEdicaoCompleta('r1');
   document.getElementById('rebtedit-motorista').value = 'm-joao';
@@ -462,6 +508,7 @@ test('BUG AO VIVO REAL: carga antiga com motoristaNome mas SEM motoristaId conti
   window.getDTLojaAtiva = () => 'loja_matriz';
   window.getDTRawFirestore = () => mockRawLojas({ loja_matriz: { recebimentos, recebimento_auditoria: mockColecao([]) } });
   await window._recebimentoOperacaoInternals.carregar(true);
+  await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   await window.recbtAbrirEdicaoCompleta('r1');
   assert.equal(document.getElementById('rebtedit-motorista').value, '__atual__', 'sem motoristaId pra casar, a opção precisa preservar o nome já salvo');
@@ -497,6 +544,7 @@ test('trocar o motorista na edição atualiza identificadorCodigo pro código do
   window.getDTLojaAtiva = () => 'loja_matriz';
   window.getDTRawFirestore = () => mockRawLojas({ loja_matriz: { recebimentos, recebimento_auditoria: mockColecao([]) } });
   await window._recebimentoOperacaoInternals.carregar(true);
+  await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   await window.recbtAbrirEdicaoCompleta('r1');
   document.getElementById('rebtedit-motorista').value = 'm-joao';
@@ -520,6 +568,7 @@ test('editar SEM trocar o motorista preserva identificadorCodigo original — n�
   window.getDTLojaAtiva = () => 'loja_matriz';
   window.getDTRawFirestore = () => mockRawLojas({ loja_matriz: { recebimentos, recebimento_auditoria: mockColecao([]) } });
   await window._recebimentoOperacaoInternals.carregar(true);
+  await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
 
   await window.recbtAbrirEdicaoCompleta('r1');
   // Não mexe no <select> — edita só o volume.

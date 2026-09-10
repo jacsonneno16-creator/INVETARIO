@@ -21,6 +21,7 @@
   const COL_OBSERVACOES_TRANSBORDO = 'recebimento_observacoes_transbordo';
 
   function fs() { return global.getDTFirestore(); }
+  function raw() { return global.getDTRawFirestore(); }
   function opInternals() { return global._recebimentoOperacaoInternals; }
   // BUG AO VIVO REAL (achado pelo usuário direto no painel, não suposição):
   // esta função tinha sua PRÓPRIA cópia do mesmo erro já corrigido em
@@ -31,12 +32,32 @@
   // diferentes) colidiam na mesma chave, e só a mais recente sobrevivia —
   // a mais antiga (mesmo ainda EM_TRANSITO) sumia da tela de Transbordo
   // inteira. A identidade real de uma carga é sempre loja+documento, nunca
-  // o código do motorista — corrigir aqui TAMBÉM era necessário porque
-  // esta função roda DEPOIS da de 93, então repetia o mesmo erro mesmo com
-  // a lista de 93 já correta.
+  // o código do motorista.
+  //
+  // PEDIDO AO VIVO (2026-09-10): "na tela de transbordo tem que mostrar
+  // todas, lá sim você pode colocar um filtro de loja" — antes disso, esta
+  // função só enxergava o que 93-recebimento-operacao.js já tinha
+  // carregado (a loja ativa + só as origens com uma ROTA cadastrada
+  // apontando pra ela, ver _origensParaCruzar em 93). Um transbordo entre
+  // duas lojas sem rota cadastrada nunca aparecia na loja de destino — não
+  // era bug, mas não é o que o usuário quer aqui: esta tela passa a buscar
+  // TODAS as lojas incondicionalmente (_carregarTodosTransbordos, mesmo
+  // padrão multi-loja de 104-recebimento-cargas-cards.js), com um filtro
+  // de loja manual pra quem quiser restringir a visão.
+  //
+  // Combina com o array que 93 JÁ mantém sincronizado ao vivo (onSnapshot +
+  // toda ação de escrita atualiza `_recebimentos` no próprio lugar) em vez
+  // de trocar por ele: 93 vem PRIMEIRO na lista, então o dedup abaixo
+  // (mesma chave loja+documento) sempre prefere a versão de 93 quando as
+  // duas existem — sem isso, confirmar a saída e depois a chegada em
+  // seguida (sem sair da tela) mostraria a versão desatualizada vinda só
+  // de `_todosTransbordos`, que só se atualiza de novo num refresh manual.
+  // `_todosTransbordos` só preenche o que 93 NUNCA veria sozinho (lojas
+  // sem rota cadastrada apontando pra loja ativa).
   function transbordos() {
     const vistos = new Set();
-    return (opInternals()?.recebimentos?.() || []).filter(r => r.tipo === 'TRANSBORDO').filter(r => {
+    const combinados = [...(opInternals()?.recebimentos?.() || []).filter(r => r.tipo === 'TRANSBORDO'), ..._todosTransbordos];
+    return combinados.filter(r => {
       const chave = String(r._lojaId || '') + ':' + String(r._id || '');
       if (vistos.has(chave)) return false;
       vistos.add(chave);
@@ -91,6 +112,40 @@
   let _filtroDataInicio = '';
   let _filtroDataFim = '';
   let _timerFiltroData = null;
+
+  // Busca independente, multi-loja (ver comentário de transbordos() acima)
+  // — não depende mais do que 93-recebimento-operacao.js decidiu carregar
+  // pra própria tela dele.
+  let _todosTransbordos = [];
+  let _lojasTransbordo = [];
+  let _filtroLoja = '';
+  let _transbordosCarregado = false;
+  let _transbordosCarregando = false;
+  let _transbordosErro = '';
+  async function _carregarTodosTransbordos(forcar) {
+    if (_transbordosCarregado && !forcar) return;
+    _transbordosCarregando = true;
+    _transbordosErro = '';
+    try {
+      const lojasSnap = await raw().collection('lojas').get();
+      _lojasTransbordo = lojasSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => l.ativa !== false);
+      const porLoja = await Promise.all(_lojasTransbordo.map(loja =>
+        raw().collection('lojas').doc(loja.id).collection('recebimentos').where('tipo', '==', 'TRANSBORDO').get()
+          .catch(() => ({ docs: [] }))
+      ));
+      const todos = [];
+      porLoja.forEach((snap, i) => {
+        const loja = _lojasTransbordo[i];
+        snap.docs.forEach(d => todos.push({ _id: d.id, _lojaId: loja.id, ...d.data() }));
+      });
+      _todosTransbordos = todos;
+      _transbordosCarregado = true;
+    } catch (e) {
+      _transbordosErro = e.message || String(e);
+    } finally {
+      _transbordosCarregando = false;
+    }
+  }
 
   async function _carregarIdentificadores(forcar) {
     if (_carregado && !forcar) return;
@@ -162,7 +217,10 @@
     // papel que cumpria pra recuperar de uma conexão instável).
     if (!_ouvinteRegistrado) { opInternals()?.onMudanca?.(() => _desenharTransbordo()); _ouvinteRegistrado = true; }
     _desenharTransbordo();
-    try { await Promise.all([opInternals()?.carregar?.(), _carregarIdentificadores(), _carregarObservacoesTransbordo()]); }
+    // opInternals()?.carregar?.() continua rodando (motoristas/veículos/
+    // docas pro formulário de "+ Novo Transbordo"); a LISTAGEM em si vem de
+    // _carregarTodosTransbordos(), independente, todas as lojas.
+    try { await Promise.all([opInternals()?.carregar?.(), _carregarIdentificadores(), _carregarObservacoesTransbordo(), _carregarTodosTransbordos()]); }
     catch (e) { if (!transbordos().length) pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
     _desenharTransbordo();
   }
@@ -174,6 +232,7 @@
   // aquele dia).
   function _transbordosFiltrados() {
     return transbordos()
+      .filter(r => !_filtroLoja || String(r._lojaId || '') === _filtroLoja)
       .filter(r => {
         const dia = dataLocalChave(r.horaSaida || r.criadoEm);
         return (!_filtroDataInicio || dia >= _filtroDataInicio) && (!_filtroDataFim || dia <= _filtroDataFim);
@@ -234,6 +293,11 @@
       <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">
         <div><div class="page-title" style="font-size:1.15rem">🚛 Transbordo</div><div style="font-size:.74rem;color:var(--muted)">${linhas.length.toLocaleString('pt-BR')} transbordo(s) — remetente → destino (Coletor ou Analista)</div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <span style="font-size:.72rem;color:var(--muted)">Loja</span>
+          <select class="field" id="rebt-f-loja" style="max-width:180px" title="Mostra todas as lojas por padrão — filtra pra uma só se escolher aqui">
+            <option value="">Todas as lojas</option>
+            ${_lojasTransbordo.slice().sort((a, b) => String(a.nome || a.codigo || a.id).localeCompare(String(b.nome || b.codigo || b.id), 'pt-BR')).map(l => `<option value="${esc(l.id)}" ${_filtroLoja === l.id ? 'selected' : ''}>${esc(l.nome || l.codigo || l.id)}</option>`).join('')}
+          </select>
           <span style="font-size:.72rem;color:var(--muted)">De</span>
           <input type="date" class="field" id="rebt-f-data-inicio" value="${esc(_filtroDataInicio)}" style="max-width:150px" title="Data de início (dia da saída) — deixe em branco pra não limitar">
           <span style="font-size:.72rem;color:var(--muted)">até</span>
@@ -246,6 +310,8 @@
           <button type="button" class="btn btn-primary btn-sm" data-rebt-novo="1">+ Novo Transbordo</button>
         </div>
       </div>
+      ${_transbordosCarregando ? '<div style="font-size:.76rem;color:var(--muted);margin-bottom:8px">⏳ Buscando em todas as lojas...</div>' : ''}
+      ${_transbordosErro ? '<div style="font-size:.76rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin-bottom:10px">⚠️ Não foi possível buscar todas as lojas: ' + esc(_transbordosErro) + '</div>' : ''}
       <div class="kpi-grid" style="margin-bottom:14px">
         <div class="kpi blue"><div class="kpi-val">${hojeArr.length}</div><div class="kpi-lbl">Transbordos hoje</div></div>
         <div class="kpi yellow"><div class="kpi-val">${emTransito.length}</div><div class="kpi-lbl">Em trânsito</div></div>
@@ -1248,7 +1314,7 @@
   global.recbtAbrirEdicaoCompleta = recbtAbrirEdicaoCompleta;
   global.recbtSalvarEdicaoCompleta = recbtSalvarEdicaoCompleta;
   global.adicionarNotaFiscalTransbordo = adicionarNotaFiscalTransbordo;
-  global._recebimentoTransbordoInternals = { carregarIdentificadores: _carregarIdentificadores, identificadores: () => _identificadores, gerarCodigo: _gerarCodigo, gerarQrDataUrl: _gerarQrDataUrl, abrirNfSaida: recbtAbrirNfSaida, abrirNfChegada: recbtAbrirNfChegada, abrirNovo: recbtNovo };
+  global._recebimentoTransbordoInternals = { carregarIdentificadores: _carregarIdentificadores, identificadores: () => _identificadores, gerarCodigo: _gerarCodigo, gerarQrDataUrl: _gerarQrDataUrl, abrirNfSaida: recbtAbrirNfSaida, abrirNfChegada: recbtAbrirNfChegada, abrirNovo: recbtNovo, carregarTodosTransbordos: _carregarTodosTransbordos, transbordos };
   // Reusado por 92-recebimento-config.js pro botão "Ver QR" do código fixo
   // do motorista — mesmo modal (#modal-rebt-qr), sem duplicar UI de QR.
   global.recbtMostrarQr = _mostrarQr;
@@ -1257,7 +1323,7 @@
     if (event.target.closest('[data-rebt-atualizar]')) {
       const btn = event.target.closest('[data-rebt-atualizar]');
       const original = btn.innerHTML; btn.disabled = true; btn.innerHTML = '⏳ Atualizando...';
-      Promise.resolve(opInternals()?.carregar?.(true)).then(() => { _desenharTransbordo(); global.showToast?.('Transbordos atualizados.', 'success'); }).catch(e => global.showToast?.('Falha ao atualizar: ' + (e?.message || e), 'error')).finally(() => { btn.disabled = false; btn.innerHTML = original; });
+      Promise.all([opInternals()?.carregar?.(true), _carregarTodosTransbordos(true)]).then(() => { _desenharTransbordo(); global.showToast?.('Transbordos atualizados.', 'success'); }).catch(e => global.showToast?.('Falha ao atualizar: ' + (e?.message || e), 'error')).finally(() => { btn.disabled = false; btn.innerHTML = original; });
       return;
     }
     if (event.target.closest('[data-rebt-obs-cadastrar]')) { recbtCadastrarObservacao(); return; }
@@ -1352,5 +1418,6 @@
     // tempo do navegador aceitar o ano inteiro sem a gente interromper.
     if (event.target.id === 'rebt-f-data-inicio') { _filtroDataInicio = event.target.value || ''; clearTimeout(_timerFiltroData); _timerFiltroData = setTimeout(_desenharTransbordo, 600); }
     if (event.target.id === 'rebt-f-data-fim') { _filtroDataFim = event.target.value || ''; clearTimeout(_timerFiltroData); _timerFiltroData = setTimeout(_desenharTransbordo, 600); }
+    if (event.target.id === 'rebt-f-loja') { _filtroLoja = event.target.value || ''; _desenharTransbordo(); }
   });
 })(window);
