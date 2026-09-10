@@ -78,6 +78,7 @@
     {id:'recebimento-agendamentos',nome:'Recebimento · Agenda / Cargas',setor:'logistica',canais:['analista'],acoes:['visualizar','criar','editar','excluir']},
     {id:'recebimento-transbordo',nome:'Recebimento · Transbordo',setor:'logistica',canais:['analista','coletor'],acoes:['visualizar','criar','editar','cancelar','finalizar','corrigir-horario','gerar-qrcode','excluir']},
     {id:'recebimento-paletes',nome:'Recebimento · Paletes',setor:'logistica',canais:['analista','coletor'],acoes:['visualizar','criar','editar','excluir']},
+    {id:'recebimento-patio-tempo-real',nome:'Recebimento · Pátio em Tempo Real',setor:'logistica',canais:['analista'],acoes:['visualizar']},
     {id:'recebimento-recusas',nome:'Recebimento · Notas Retornadas',setor:'logistica',canais:['analista'],acoes:['visualizar','criar','editar','excluir','importar','exportar']},
     {id:'recebimento-retornos-indicadores',nome:'Recebimento · Indicadores de Retornos',setor:'logistica',canais:['analista'],acoes:['visualizar']},
     // Só "visualizar" — quem PODE avançar uma etapa é governado pela MESMA
@@ -102,7 +103,7 @@
     {id:'recebimento-config',nome:'Recebimento · Configurações',setor:'logistica',canais:['analista'],acoes:['visualizar','criar','editar','excluir']}
   ];
   const ROTULOS={visualizar:'Visualizar',criar:'Criar',editar:'Editar',excluir:'Excluir',importar:'Importar',exportar:'Exportar',publicar:'Liberar/Publicar',finalizar:'Finalizar',cancelar:'Cancelar',atualizar:'Atualizar',aprovar:'Aprovar',bloquear:'Bloquear',configurar:'Configurar',executar:'Executar/Enviar',reordenar:'Reordenar','corrigir-horario':'Corrigir horário','gerar-qrcode':'Gerar QR Code'};
-  const MODULO_ICONES={dashboard:'📊',inventarios:'📦',acompanhamento:'📈',auditoria:'🕵️',contagens:'🔢',pendencias:'⏳',recontagens:'🔁','rel-divergencias':'⚠️','capas-duplicadas':'🧾',produtividade:'🏆',enderecos:'📍',produtos:'🏷️',coletores:'📱',operadores:'👤',lojas:'🏪',rastreabilidade:'🔍','importar-exportar':'🔄','producao-dashboard':'📊','producao-ficha-tecnica':'🏭','producao-maquinas':'⚙️','producao-programacao':'📋','producao-gantt':'📅','producao-realizado':'✅','producao-insumos':'🧪','producao-projecao':'📈','producao-prog-automatica':'🤖','producao-funcionarios':'👷','producao-relatorios':'📊','producao-setup':'🔧','producao-mapa-fabrica':'🗺️','producao-config':'⚙️','producao-importacao':'🔄','producao-estoque':'📦','recebimento-dashboard':'📊','recebimento-operacao':'🚚','recebimento-notas':'📄','recebimento-fornecedores':'🏢','recebimento-agendamentos':'📅','recebimento-transbordo':'🚛','recebimento-recusas':'↩️','recebimento-retornos-indicadores':'📊','recebimento-recusas-indicadores':'📊','recebimento-config':'⚙️'};
+  const MODULO_ICONES={dashboard:'📊',inventarios:'📦',acompanhamento:'📈',auditoria:'🕵️',contagens:'🔢',pendencias:'⏳',recontagens:'🔁','rel-divergencias':'⚠️','capas-duplicadas':'🧾',produtividade:'🏆',enderecos:'📍',produtos:'🏷️',coletores:'📱',operadores:'👤',lojas:'🏪',rastreabilidade:'🔍','importar-exportar':'🔄','producao-dashboard':'📊','producao-ficha-tecnica':'🏭','producao-maquinas':'⚙️','producao-programacao':'📋','producao-gantt':'📅','producao-realizado':'✅','producao-insumos':'🧪','producao-projecao':'📈','producao-prog-automatica':'🤖','producao-funcionarios':'👷','producao-relatorios':'📊','producao-setup':'🔧','producao-mapa-fabrica':'🗺️','producao-config':'⚙️','producao-importacao':'🔄','producao-estoque':'📦','recebimento-dashboard':'📊','recebimento-operacao':'🚚','recebimento-notas':'📄','recebimento-fornecedores':'🏢','recebimento-agendamentos':'📅','recebimento-transbordo':'🚛','recebimento-patio-tempo-real':'📦','recebimento-recusas':'↩️','recebimento-retornos-indicadores':'📊','recebimento-recusas-indicadores':'📊','recebimento-config':'⚙️'};
   const todos=()=>Object.fromEntries(MODULOS.map(m=>[m.id,Object.fromEntries(m.acoes.map(a=>[a,true]))]));
   const normalizar=(p,legadoTotal)=>{
     if(!p||typeof p!=='object')return legadoTotal?todos():{};
@@ -795,7 +796,7 @@
       }
     }
   }
-  var RECEBIMENTO_MODULOS=['recebimento-dashboard','recebimento-operacao','recebimento-notas','recebimento-fornecedores','recebimento-agendamentos','recebimento-transbordo','recebimento-paletes','recebimento-recusas','recebimento-config'];
+  var RECEBIMENTO_MODULOS=['recebimento-dashboard','recebimento-operacao','recebimento-notas','recebimento-fornecedores','recebimento-agendamentos','recebimento-transbordo','recebimento-paletes','recebimento-patio-tempo-real','recebimento-recusas','recebimento-config'];
   // Engrenagem de Configurações (pedido ao vivo do usuário) — Usuários/
   // Coletores/Lojas/API são cross-loja, não fazem sentido enterrados dentro
   // só do setor Inventário; ficam na mesma linha dos setores, sempre

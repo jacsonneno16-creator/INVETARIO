@@ -61,7 +61,7 @@ function carregarPagina(colecoes,opts){
 }
 
 test('PEDIDO AO VIVO ("nem toda vez para em CTE, às vezes fica parado com fiscal"): status é seleção LIVRE — dá pra pular direto pra Endereçando sem passar por CTE',async()=>{
-  const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A',numeroNota:'1'}],criadoEm:'2026-08-01T08:00:00.000Z'}}]);
+  const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A',numeroNota:'1',tratamento:'RECUSA'}],origem:'COLETOR',criadoEm:'2026-08-01T08:00:00.000Z'}}]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosStatus();
   document.getElementById('status-buscar-periodo').click();
@@ -79,6 +79,28 @@ test('PEDIDO AO VIVO ("nem toda vez para em CTE, às vezes fica parado com fisca
   const doc=recusas._registro.get('r1');
   assert.equal(doc.notas[0].statusRetorno,'ENDERECANDO','pulou CTE de propósito — tem que ser aceito sem exigir passar por ele antes');
   assert.equal(doc.notas[0].statusRetornoHistorico.length,1);
+  assert.equal(doc.statusFisico,'NO_PATIO','Endereçando ainda não é Finalizado — a nota continua fisicamente no pátio');
+});
+
+test('PEDIDO AO VIVO (Pátio em Tempo Real): status FINALIZADO tira a nota do saldo físico (statusFisico vira SAIU)',async()=>{
+  // tratamento:'RECUSA' é o que faz estaNoPatio() olhar pro statusRetorno —
+  // sem classificação, a nota conta como "sem evento de saída ainda" e
+  // ficaria NO_PATIO mesmo depois de FINALIZADO (comportamento correto pra
+  // nota não classificada, mas não é o que este teste quer verificar).
+  const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A',numeroNota:'1',tratamento:'RECUSA'}],origem:'COLETOR',criadoEm:'2026-08-01T08:00:00.000Z'}}]);
+  const { win, document }=carregarPagina({ recebimento_recusas:recusas });
+  await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const select=document.querySelector('[data-status-mudar]');
+  select.value='FINALIZADO';
+  select.dispatchEvent(new win.Event('change',{bubbles:true}));
+  await new Promise(r=>setTimeout(r,0));
+
+  const doc=recusas._registro.get('r1');
+  assert.equal(doc.notas[0].statusRetorno,'FINALIZADO');
+  assert.equal(doc.statusFisico,'SAIU','única nota do documento foi finalizada — não sobra ninguém no pátio');
 });
 
 test('as 4 datas nomeadas (liberadoParaRecusarEm/dataSolicitacaoFiscalEm/dataDaRecusaEm/dataDoEnderecamentoEm) são gravadas na 1ª vez que o status entra nesse valor, e NUNCA sobrescritas depois — mesmo voltando pra trás',async()=>{
@@ -160,7 +182,7 @@ test('diasParadoFiscalCte e diasOperacao são calculados a partir das datas nome
 });
 
 test('PEDIDO AO VIVO (planilha real: "Reentrega é diferente"): nota de Reentrega mostra Data Programada/Data de Saída em vez do status de fiscal/CTE, com "dias parado" próprio',async()=>{
-  const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A',numeroNota:'1'}],tratamento:'REENTREGA',criadoEm:'2026-08-01T08:00:00.000Z'}}]);
+  const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A',numeroNota:'1'}],tratamento:'REENTREGA',origem:'COLETOR',criadoEm:'2026-08-01T08:00:00.000Z'}}]);
   const { win, document }=carregarPagina({ recebimento_recusas:recusas });
   await win.renderRecebimentoRetornosStatus();
   document.getElementById('status-buscar-periodo').click();
@@ -177,6 +199,7 @@ test('PEDIDO AO VIVO (planilha real: "Reentrega é diferente"): nota de Reentreg
 
   const doc=recusas._registro.get('r1');
   assert.ok(doc.notas[0].dataSaidaEm,'data de saída da reentrega foi salva');
+  assert.equal(doc.statusFisico,'SAIU','única nota do documento (Reentrega) recebeu Data de Saída — saldo físico zera');
   const internals=win._recebimentoRetornosStatusInternals;
   assert.equal(Math.round(internals.diasParadoReentrega({ criadoEm: doc.criadoEm, dataSaidaEm: doc.notas[0].dataSaidaEm })),2,'01/08 até 03/08 = 2 dias parado (reentrega)');
 });

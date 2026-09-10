@@ -112,6 +112,29 @@
     if (c.length !== 44) return '';
     return String(Number(c.slice(25, 34)) || '').trim();
   }
+  // Saldo do "Pátio em Tempo Real" (105-recebimento-patio-tempo-real.js,
+  // Analista) — duplicado aqui de propósito (bundle separado do Coletor,
+  // mesma convenção de TRATAMENTO_LABELS_SAIDA logo abaixo). `estaNoPatio`
+  // é a MESMA regra usada nos 3 lugares que escrevem esses eventos
+  // (finalizar/confirmarSaida aqui, alterarTratamento em 97, mudarStatusRetorno
+  // em 99) — nunca decidir "saiu do pátio" de um jeito diferente em cada um.
+  function estaNoPatio(doc, nota) {
+    if (doc.origem !== 'COLETOR' && doc.origem !== 'INVENTARIO_INICIAL') return false;
+    const tratamento = nota.tratamento != null ? nota.tratamento : (doc.tratamento || '');
+    if (tratamento === 'REENTREGA') {
+      const saida = nota.dataSaidaEm != null ? nota.dataSaidaEm : doc.dataSaidaEm;
+      return !saida;
+    }
+    if (tratamento === 'RECUSA') {
+      const status = nota.statusRetorno != null ? nota.statusRetorno : (doc.statusRetorno || '');
+      return status !== 'FINALIZADO';
+    }
+    return true; // '', PENDENTE, DEVOLUCAO, SUBSTITUICAO, OUTRO — sem evento de saída ainda
+  }
+  function recalcularStatusFisico(doc) {
+    const notas = Array.isArray(doc.notas) && doc.notas.length ? doc.notas : [{}];
+    return notas.some(n => estaNoPatio(doc, n)) ? 'NO_PATIO' : 'SAIU';
+  }
   // BUG AO VIVO REAL (2026-09-09): "No Firebase App '[DEFAULT]' has been
   // created" de novo, agora nesta função — `global.firebase.auth()` (SDK
   // cru, sem nome de app) sempre tenta o app '[DEFAULT]', que o Coletor
@@ -397,9 +420,11 @@
     if (btn) btn.disabled = true;
     const agora = new Date().toISOString();
     const notasAtualizadas = notasAtuais.map((n, i) => i === idx ? Object.assign({}, n, { dataSaidaEm: agora }) : n);
+    const docAtualizado = Object.assign({}, doc, { notas: notasAtualizadas });
+    const statusFisico = recalcularStatusFisico(docAtualizado);
     try {
-      await fs().collection(COL_RECUSAS).doc(doc._id).update({ notas: notasAtualizadas });
-      S.saidaRecusaEncontrada = Object.assign({}, doc, { notas: notasAtualizadas });
+      await fs().collection(COL_RECUSAS).doc(doc._id).update({ notas: notasAtualizadas, statusFisico });
+      S.saidaRecusaEncontrada = Object.assign({}, docAtualizado, { statusFisico });
       S.saidaNotaEncontrada = notasAtualizadas[idx];
       render();
       toast('Saída confirmada.', 'success');
@@ -1243,11 +1268,17 @@
       // só pra permitir `.where('numerosNotas','array-contains',...)`,
       // sem baixar a coleção inteira pra filtrar no cliente).
       numerosNotas: S.notas.map(n => n.numeroNota),
+      // Box por nota (Pátio em Tempo Real, 105-recebimento-patio-tempo-
+      // real.js) — mesmo valor pra todas aqui (é o mesmo evento de
+      // conferência, chegam juntas no mesmo Box); `payload.box` abaixo
+      // continua gravado por compatibilidade com telas antigas que só
+      // leem o campo do documento.
       notas: S.notas.map(n => ({
         chave: n.chave,
         numeroNota: n.numeroNota,
         volumeEsperado: volumeEsperadoNota(n),
-        destinatario: n.destinatario || ''
+        destinatario: n.destinatario || '',
+        box: S.box
       })),
       motoristaId: mot._id,
       motoristaNome: mot.nome || '',
@@ -1266,7 +1297,10 @@
       criadoEm: new Date().toISOString(),
       criadoPorUid: u.uid,
       criadoPorEmail: u.email,
-      origem: 'COLETOR'
+      origem: 'COLETOR',
+      // Pátio em Tempo Real (105-recebimento-patio-tempo-real.js) — toda
+      // entrada nova começa fisicamente presente.
+      statusFisico: 'NO_PATIO'
     };
     try {
       const btn = document.getElementById('recusa-continuar-4');

@@ -97,17 +97,25 @@ test('REGRESSÃO (FASE 3): payload gravado por finalizar() em recebimento_recusa
   // mesma ideia (permitir `.where('numerosNotas','array-contains',...)`),
   // pra tela de "Saída" (Coletor) achar o registro de entrada pelo NÚMERO
   // impresso da nota, sem baixar a coleção inteira.
+  // PEDIDO AO VIVO (2026-09-10): `statusFisico` — novo campo, "Pátio em
+  // Tempo Real" (105-recebimento-patio-tempo-real.js). Toda entrada nova
+  // começa 'NO_PATIO' (recalculado depois em confirmarSaida/
+  // alterarTratamento/mudarStatusRetorno conforme a nota sai de verdade).
   assert.deepEqual(Object.keys(payload).sort(),[
     'box','chaves','conferenciaStatus','conferenteId','conferenteNome','criadoEm','criadoPorEmail','criadoPorUid',
     'diferencaVolumes','itensConferidos','motivoId','motivoNome','motoristaId','motoristaNome',
-    'notas','numerosNotas','origem','pallets','statusConferenciaOperacional','volumeEsperado','volumeInformado',
+    'notas','numerosNotas','origem','pallets','statusConferenciaOperacional','statusFisico','volumeEsperado','volumeInformado',
   ].sort());
+  assert.equal(payload.statusFisico, 'NO_PATIO');
   // `payload` vem de win.eval (outro realm) — deepStrictEqual falha por
   // Array.prototype diferente mesmo com o mesmo conteúdo; compara via JSON
   // (mesma convenção já usada noutros testes cross-realm desta sessão).
   assert.equal(JSON.stringify(payload.numerosNotas), JSON.stringify([payload.notas[0].numeroNota]));
   assert.equal(payload.conferenteId,'','conferente é opcional — não selecionado nesse teste, fica vazio');
-  assert.deepEqual(Object.keys(payload.notas[0]).sort(),['chave','destinatario','numeroNota','volumeEsperado'].sort());
+  // `box` — Pátio em Tempo Real: promovido pra dentro de cada nota (mesmo
+  // valor do Box do documento, já que todas chegam juntas no mesmo evento).
+  assert.deepEqual(Object.keys(payload.notas[0]).sort(),['box','chave','destinatario','numeroNota','volumeEsperado'].sort());
+  assert.equal(payload.notas[0].box, payload.box);
 
   assert.equal(payload.chaves.length,1);
   assert.equal(payload.chaves[0],CHAVE_VALIDA);

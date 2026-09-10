@@ -106,7 +106,7 @@ function mudarTratamento(document, win, recusaId, notaChave, valor){
 }
 
 test('marcar Tratamento = Recusa carimba liberadoParaRecusarEm na 1ª vez', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1',numeroNota:'1'}],criadoEm:'2026-09-01T10:00:00.000Z'}}]);
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',origem:'COLETOR',notas:[{chave:'CH1',numeroNota:'1'}],criadoEm:'2026-09-01T10:00:00.000Z'}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));
   await win.renderRecebimentoRecusas();
   win.document.getElementById('recusas-buscar-periodo').click();
@@ -115,6 +115,7 @@ test('marcar Tratamento = Recusa carimba liberadoParaRecusarEm na 1ª vez', asyn
   const salvo=recusas._registro.get('r1');
   assert.equal(salvo.notas[0].tratamento,'RECUSA');
   assert.ok(salvo.notas[0].liberadoParaRecusarEm,'liberadoParaRecusarEm precisa ser gravado ao classificar como Recusa');
+  assert.equal(salvo.statusFisico,'NO_PATIO','recém classificada como Recusa, ainda sem FINALIZADO — continua no pátio');
 });
 
 test('trocar o tratamento de novo (Recusa -> outro -> Recusa) NÃO sobrescreve liberadoParaRecusarEm já existente', async()=>{
@@ -158,7 +159,7 @@ test('registro antigo sem `notas` real (array vazio) ainda consegue classificar 
 // MESMO evento (mesmo motorista/box/data), cada uma com um Tratamento
 // diferente, sem uma pisar na outra.
 test('2 notas do mesmo evento: uma vira Recusa e a outra Reentrega, cada linha grava só na sua própria nota', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',motoristaNome:'João',notas:[
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',motoristaNome:'João',origem:'COLETOR',notas:[
     {chave:'CH1',numeroNota:'601'},
     {chave:'CH2',numeroNota:'602'},
   ]}}]);
@@ -181,6 +182,7 @@ test('2 notas do mesmo evento: uma vira Recusa e a outra Reentrega, cada linha g
   assert.ok(n1.liberadoParaRecusarEm);
   assert.equal(n2.tratamento,'REENTREGA');
   assert.equal(n2.liberadoParaRecusarEm,undefined,'nota que virou Reentrega nunca deveria ganhar liberadoParaRecusarEm');
+  assert.equal(salvo.statusFisico,'NO_PATIO','Recusa não finalizada e Reentrega sem saída — as duas continuam fisicamente no pátio');
 });
 
 test('registro antigo (1 nota só) com tratamento/liberadoParaRecusarEm gravados no DOCUMENTO — a tela mostra e edita através da nota, herdando o valor antigo', async()=>{

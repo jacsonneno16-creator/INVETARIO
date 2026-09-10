@@ -114,6 +114,28 @@
   // "Conferência de produtos" (statusConferenciaOperacional). Só o
   // Analista classifica — o Coletor nunca grava este campo.
   const TRATAMENTO_LABELS = { '': '— Não classificado —', RECUSA: 'Recusa', DEVOLUCAO: 'Devolução', REENTREGA: 'Reentrega', SUBSTITUICAO: 'Substituição', PENDENTE: 'Pendente', OUTRO: 'Outro' };
+  // Saldo do "Pátio em Tempo Real" (105-recebimento-patio-tempo-real.js) —
+  // duplicado de propósito (mesma convenção de TRATAMENTO_LABELS acima,
+  // bundle separado) — MESMA regra usada nos 3 lugares que escrevem esses
+  // eventos (aqui, 99-recebimento-retornos-status.js/mudarStatusRetorno, e
+  // 24-recebimento-recusas.js do Coletor).
+  function _estaNoPatio(doc, nota) {
+    if (doc.origem !== 'COLETOR' && doc.origem !== 'INVENTARIO_INICIAL') return false;
+    const tratamento = nota.tratamento != null ? nota.tratamento : (doc.tratamento || '');
+    if (tratamento === 'REENTREGA') {
+      const saida = nota.dataSaidaEm != null ? nota.dataSaidaEm : doc.dataSaidaEm;
+      return !saida;
+    }
+    if (tratamento === 'RECUSA') {
+      const status = nota.statusRetorno != null ? nota.statusRetorno : (doc.statusRetorno || '');
+      return status !== 'FINALIZADO';
+    }
+    return true; // '', PENDENTE, DEVOLUCAO, SUBSTITUICAO, OUTRO — sem evento de saída ainda
+  }
+  function _recalcularStatusFisico(doc) {
+    const notas = Array.isArray(doc.notas) && doc.notas.length ? doc.notas : [{}];
+    return notas.some(n => _estaNoPatio(doc, n)) ? 'NO_PATIO' : 'SAIU';
+  }
   // PEDIDO AO VIVO (2026-09-08): "ter as opções só de Reentrega ou
   // Recusa" — o dropdown de classificação (por linha) só oferece as 2
   // opções reais de agora em diante + o placeholder vazio. Registros
@@ -1558,9 +1580,11 @@
     // data histórica verdadeira.
     if (valor === 'RECUSA' && !nota.liberadoParaRecusarEm) patchNota.liberadoParaRecusarEm = nota.liberadoParaRecusarEm || r.liberadoParaRecusarEm || agora;
     const notasAtualizadas = notas.map((n, i) => i === idx ? Object.assign({}, n, patchNota) : n);
+    const statusFisico = _recalcularStatusFisico(Object.assign({}, r, { notas: notasAtualizadas }));
     try {
-      await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas });
+      await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas, statusFisico });
       r.notas = notasAtualizadas;
+      r.statusFisico = statusFisico;
       // PEDIDO AO VIVO (2026-09-08): a coluna "Status do retorno" depende
       // do Tratamento (Recusa mostra o select de status, Reentrega mostra
       // as datas, em branco não mostra nada) — precisa redesenhar pra essa

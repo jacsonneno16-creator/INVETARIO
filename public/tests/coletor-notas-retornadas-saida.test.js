@@ -104,6 +104,7 @@ test('Saída: busca por número acha o registro, mostra Box/Motorista/notas do m
 test('Saída: nota classificada como Reentrega mostra "Confirmar Saída", e confirmar grava dataSaidaEm SÓ naquela nota', async () => {
   const recusas = mockRecusas([{ id: 'r1', data: {
     box: 'BOX 9', motoristaNome: 'Carlos', criadoEm: '2026-09-01T10:00:00.000Z',
+    origem: 'COLETOR', statusFisico: 'NO_PATIO',
     numerosNotas: ['601', '602'],
     notas: [
       { chave: 'CH1', numeroNota: '601', tratamento: 'REENTREGA' },
@@ -127,9 +128,34 @@ test('Saída: nota classificada como Reentrega mostra "Confirmar Saída", e conf
   const n2 = salvo.notas.find(n => n.chave === 'CH2');
   assert.ok(n1.dataSaidaEm, 'a nota bipada (601, Reentrega) ganhou dataSaidaEm');
   assert.equal(n2.dataSaidaEm, undefined, 'a outra nota do mesmo evento (602, Recusa) NUNCA deveria ser tocada');
+  assert.equal(salvo.statusFisico, 'NO_PATIO', 'a outra nota (602, Recusa, ainda sem FINALIZADO) continua no pátio — o documento não pode fechar por causa de só uma nota ter saído');
 
   const html = document.getElementById('recusa-fluxo-host').innerHTML;
   assert.match(html, /já saiu em/i);
+});
+
+test('Saída: quando a nota bipada é a ÚLTIMA ainda presente no documento, statusFisico vira SAIU', async () => {
+  const recusas = mockRecusas([{ id: 'r1', data: {
+    box: 'BOX 9', motoristaNome: 'Carlos', criadoEm: '2026-09-01T10:00:00.000Z',
+    origem: 'COLETOR', statusFisico: 'NO_PATIO',
+    numerosNotas: ['601', '602'],
+    notas: [
+      { chave: 'CH1', numeroNota: '601', tratamento: 'REENTREGA' },
+      { chave: 'CH2', numeroNota: '602', tratamento: 'RECUSA', statusRetorno: 'FINALIZADO' },
+    ],
+  } }]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="saida"]').click();
+  document.getElementById('saida-numero-input').value = '601';
+  document.getElementById('saida-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  document.getElementById('saida-confirmar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const salvo = recusas._registro.get('r1');
+  assert.equal(salvo.statusFisico, 'SAIU', '602 já estava FINALIZADO e 601 acabou de sair — as duas notas do documento já saíram');
 });
 
 test('Saída: nota NÃO classificada como Reentrega não mostra botão de confirmar — mostra aviso', async () => {

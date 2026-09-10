@@ -45,6 +45,27 @@
 
   const COL_RECUSAS = 'recebimento_recusas';
 
+  // Saldo do "Pátio em Tempo Real" (105-recebimento-patio-tempo-real.js) —
+  // duplicado de propósito (bundle separado), MESMA regra usada nos 3
+  // lugares que escrevem esses eventos (aqui, 97-recebimento-recusas.js/
+  // alterarTratamento, e 24-recebimento-recusas.js do Coletor).
+  function _estaNoPatio(doc, nota) {
+    if (doc.origem !== 'COLETOR' && doc.origem !== 'INVENTARIO_INICIAL') return false;
+    const tratamento = nota.tratamento != null ? nota.tratamento : (doc.tratamento || '');
+    if (tratamento === 'REENTREGA') {
+      const saida = nota.dataSaidaEm != null ? nota.dataSaidaEm : doc.dataSaidaEm;
+      return !saida;
+    }
+    if (tratamento === 'RECUSA') {
+      const status = nota.statusRetorno != null ? nota.statusRetorno : (doc.statusRetorno || '');
+      return status !== 'FINALIZADO';
+    }
+    return true; // '', PENDENTE, DEVOLUCAO, SUBSTITUICAO, OUTRO — sem evento de saída ainda
+  }
+  function _recalcularStatusFisico(doc) {
+    const notas = Array.isArray(doc.notas) && doc.notas.length ? doc.notas : [{}];
+    return notas.some(n => _estaNoPatio(doc, n)) ? 'NO_PATIO' : 'SAIU';
+  }
   const STATUS_RETORNO_LABELS = {
     '': 'Aguard. Monitoramento',
     AGUARD_FISCAL: 'Aguard. Fiscal',
@@ -288,8 +309,10 @@
     if (select) select.disabled = true;
     try {
       const notasAtualizadas = notas.map((n, i) => i === idx ? Object.assign({}, n, patchNota) : n);
-      await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas });
+      const statusFisico = _recalcularStatusFisico(Object.assign({}, r, { notas: notasAtualizadas }));
+      await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas, statusFisico });
       r.notas = notasAtualizadas;
+      r.statusFisico = statusFisico;
       desenhar();
       global.showToast?.('Status atualizado: ' + STATUS_RETORNO_LABELS[novoStatus], 'success');
     } catch (e) {
@@ -309,8 +332,10 @@
     const iso = valorData ? new Date(valorData + 'T00:00:00').toISOString() : null;
     try {
       const notasAtualizadas = notas.map((n, i) => i === idx ? Object.assign({}, n, { [campo]: iso }) : n);
-      await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas });
+      const statusFisico = _recalcularStatusFisico(Object.assign({}, r, { notas: notasAtualizadas }));
+      await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas, statusFisico });
       r.notas = notasAtualizadas;
+      r.statusFisico = statusFisico;
       desenhar();
     } catch (e) { global.showToast?.('Erro ao salvar data: ' + (e.message || e), 'error'); }
   }

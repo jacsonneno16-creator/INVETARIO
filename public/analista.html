@@ -425,6 +425,9 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <span class="nav-icon">🎯</span>Controle de Paletes
 </div>
 <div class="sb-sec">Notas Retornadas</div>
+<div class="nav-item" id="nav-recebimento-patio-tempo-real" onclick="goPage('recebimento-patio-tempo-real',this)">
+<span class="nav-icon">📦</span>Pátio em Tempo Real
+</div>
 <div class="nav-item" id="nav-recebimento-recusas" onclick="goPage('recebimento-recusas',this)">
 <span class="nav-icon">↩️</span>Notas Retornadas
 </div>
@@ -456,6 +459,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="page" id="page-recebimento-transbordo"></div>
 <div class="page" id="page-recebimento-cargas"></div>
 <div class="page" id="page-recebimento-paletes"></div>
+<div class="page" id="page-recebimento-patio-tempo-real"></div>
 <div class="page" id="page-recebimento-recusas"></div>
 <div class="page" id="page-recebimento-retornos-indicadores"></div>
 <div class="page" id="page-recebimento-retornos-status"></div>
@@ -3213,7 +3217,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
   window.addEventListener('DOMContentLoaded',function(){obs.observe(document.body,{childList:true,subtree:true});obs.takeRecords();['cont-table-wrap','rec-table-wrap','div-table-wrap'].forEach(function(id){var el=document.getElementById(id);if(el) ativar(el);});});
 })();
 </script>
-<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v562</div>
+<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v563</div>
 
 <script src="js/analista/45-ui-centro-operacoes-v250.js?v=20260804-v250"></script>
 <script src="js/analista/47-dashboard-acomp-v252.js?v=20260805-v274"></script>
@@ -3267,11 +3271,11 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 <script src="js/analista/94-recebimento-relatorios.js?v=20260827-so-buscar-auto-refresh"></script>
 <script src="js/analista/95-recebimento-transbordo.js?v=20260910c-mostra-todas-lojas-filtro"></script>
 <script src="js/analista/96-recebimento-performance.js?v=20260821-filtro-periodo-livre"></script>
-<script src="js/analista/97-recebimento-recusas.js?v=20260910d-reverte-onsnapshot-mantem-auto-2meses"></script>
+<script src="js/analista/97-recebimento-recusas.js?v=20260910e-patio-tempo-real-statusfisico"></script>
 <script src="js/analista/100-consulta-notas-fiscais.js?v=20260902b-gtin-ean-dun-separados"></script>
 <script src="js/analista/101-relatorios-bi.js?v=20260909-timeout-compras-bi"></script>
 <script src="js/analista/98-recebimento-retornos-indicadores.js?v=20260910-busca-manual-periodo-2-anos"></script>
 <script src="js/analista/102-devolucoes-bi-indicadores.js?v=20260910-busca-manual-periodo-2-anos"></script>
-<script src="js/analista/99-recebimento-retornos-status.js?v=20260910-busca-manual-periodo-3-meses"></script><script src="js/analista/103-recusas-indicadores.js?v=20260910-busca-manual-periodo-3-meses"></script><script src="js/coletor/28-recebimento-paletes-ledger.js?v=20260906-tambem-no-analista"></script><script src="js/analista/recebimento-paletes-monitoramento.js?v=20260908b-split-transbordo-entrega"></script><script src="js/analista/104-recebimento-cargas-cards.js?v=20260910-so-ativas-por-padrao"></script>
+<script src="js/analista/99-recebimento-retornos-status.js?v=20260910b-patio-tempo-real-statusfisico"></script><script src="js/analista/103-recusas-indicadores.js?v=20260910-busca-manual-periodo-3-meses"></script><script src="js/coletor/28-recebimento-paletes-ledger.js?v=20260906-tambem-no-analista"></script><script src="js/analista/recebimento-paletes-monitoramento.js?v=20260908b-split-transbordo-entrega"></script><script src="js/analista/104-recebimento-cargas-cards.js?v=20260910-so-ativas-por-padrao"></script><script src="js/analista/105-recebimento-patio-tempo-real.js?v=20260910-lancamento"></script>
 </body>
 </html>

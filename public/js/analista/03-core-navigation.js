@@ -43,6 +43,7 @@ const PAGE_NAMES = {
   'recebimento-transbordo': 'Recebimento · Transbordo',
   'recebimento-cargas':     'Recebimento · Cargas (Montagem/Expedição)',
   'recebimento-paletes':    'Recebimento · Paletes',
+  'recebimento-patio-tempo-real': 'Recebimento · Pátio em Tempo Real',
   'recebimento-recusas': 'Recebimento · Recusas',
   'recebimento-recusas-cadastros': 'Recebimento · Notas Retornadas · Cadastros',
   'recebimento-tempos': 'Recebimento · Tempos / Performance',
@@ -153,6 +154,7 @@ function renderPage(id) {
       case 'recebimento-transbordo':     return _callPage('renderRecebimentoTransbordo');
       case 'recebimento-cargas':         return _callPage('renderRecebimentoCargas');
       case 'recebimento-paletes':        return _callPage('renderRecebimentoPaletes');
+      case 'recebimento-patio-tempo-real': return _callPage('renderPatioTempoReal');
       case 'recebimento-recusas':        return _callPage('renderRecebimentoRecusas');
       case 'recebimento-recusas-cadastros': return _callPage('renderRecebimentoRecusasCadastros');
       case 'recebimento-retornos-indicadores': return _callPage('renderRecebimentoRetornosIndicadores');
