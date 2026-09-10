@@ -34,17 +34,33 @@
   const STATUS_LABEL = { PENDENTE: 'Em montagem', EM_TRANSITO: 'Expedida', RECEBIDA: 'Recebida', CANCELADA: 'Cancelada' };
   const STATUS_CLASSE = { PENDENTE: 'b-yellow', EM_TRANSITO: 'b-blue', RECEBIDA: 'b-green', CANCELADA: 'b-red' };
 
-  async function carregarCargasAnalista(forcar) {
-    if (_cargas.length && !forcar) return;
+  // PEDIDO AO VIVO (2026-09-10): "tela de carga montagem demorando" — essa
+  // tela sempre buscou a coleção COL_CARGAS INTEIRA (todo o histórico, pra
+  // sempre) de TODAS as lojas (hoje 8 cadastradas), mesmo consolidar
+  // multi-loja sendo intencional (comentário original no topo do arquivo).
+  // Cargas RECEBIDA/CANCELADA são histórico fechado que só cresce; por
+  // padrão a busca passa a trazer só as ATIVAS (PENDENTE/EM_TRANSITO, o que
+  // realmente importa no dia a dia operacional) — bem menor e mais rápido.
+  // O histórico completo (RECEBIDA/CANCELADA/"Todos os status") só é
+  // buscado quando o próprio filtro de status pede explicitamente (ver
+  // listener de 'cargas-f-status' abaixo), nunca sozinho.
+  let _cargasComFinalizadas = false;
+  async function carregarCargasAnalista(forcar, incluirFinalizadas) {
+    if (_cargas.length && !forcar && (!incluirFinalizadas || _cargasComFinalizadas)) return;
     const vazio = { docs: [] };
     const lojasSnap = await raw().collection('lojas').get().catch(() => vazio);
     _lojas = lojasSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.ativa !== false);
-    const porLoja = await Promise.all(_lojas.map(loja => raw().collection('lojas').doc(loja.id).collection(COL_CARGAS).get().catch(() => vazio)));
+    const porLoja = await Promise.all(_lojas.map(loja => {
+      const colecao = raw().collection('lojas').doc(loja.id).collection(COL_CARGAS);
+      const query = incluirFinalizadas ? colecao : colecao.where('status', 'in', ['PENDENTE', 'EM_TRANSITO']);
+      return query.get().catch(() => vazio);
+    }));
     _cargas = [];
     porLoja.forEach((snap, i) => {
       const loja = _lojas[i];
       snap.docs.forEach(d => _cargas.push({ _id: d.id, lojaId: loja.id, ...d.data() }));
     });
+    _cargasComFinalizadas = !!incluirFinalizadas;
   }
 
   async function _carregarItensDaCarga(carga) {
@@ -626,7 +642,7 @@
     if (event.target.closest('[data-cargas-atualizar]')) {
       (async () => {
         try {
-          await carregarCargasAnalista(true);
+          await carregarCargasAnalista(true, _cargasComFinalizadas);
           // PEDIDO AO VIVO (2026-09-08): "esse palete depois da correção a
           // linha dele também tem que ficar em amarela" — o Coletor corrige
           // a capa em outro aparelho, mas _itensPorCarga nunca era
@@ -668,9 +684,21 @@
   document.addEventListener('input', function (event) {
     if (event.target.id === 'cargas-f-busca') { _filtroBusca = event.target.value || ''; _desenharCargas(); }
   });
-  document.addEventListener('change', function (event) {
+  document.addEventListener('change', async function (event) {
     if (event.target.id === 'cargas-f-loja') { _filtroLoja = event.target.value || ''; _desenharCargas(); }
-    if (event.target.id === 'cargas-f-status') { _filtroStatus = event.target.value || ''; _desenharCargas(); }
+    if (event.target.id === 'cargas-f-status') {
+      _filtroStatus = event.target.value || '';
+      // "Recebida"/"Cancelada"/"Todos os status" precisam do histórico
+      // completo, que não veio na busca padrão (só ativas) — busca sob
+      // demanda, só na 1ª vez que o filtro pedir isso nesta sessão.
+      const precisaHistorico = !_filtroStatus || _filtroStatus === 'RECEBIDA' || _filtroStatus === 'CANCELADA';
+      if (precisaHistorico && !_cargasComFinalizadas) {
+        _cargasCarregando = true; _desenharCargas();
+        try { await carregarCargasAnalista(true, true); } catch (e) { _cargasErro = e.message || String(e); }
+        _cargasCarregando = false;
+      }
+      _desenharCargas();
+    }
     const marcarCapa = event.target.matches && event.target.matches('[data-item-bluesoft-pendente]');
     if (marcarCapa) {
       const partes = event.target.getAttribute('data-item-bluesoft-pendente').split('|');
@@ -684,6 +712,7 @@
   global._recebimentoCargasCardsInternals = {
     carregarCargasAnalista,
     getCargas: () => _cargas,
+    getCargasComFinalizadas: () => _cargasComFinalizadas,
     getLojas: () => _lojas,
     setFiltroLoja: v => { _filtroLoja = v || ''; },
     setFiltroStatus: v => { _filtroStatus = v || ''; },

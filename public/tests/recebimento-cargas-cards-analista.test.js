@@ -58,6 +58,23 @@ function mockRawFirestore(lojas, cargasPorLoja, itensPorCargaChave) {
             const registro = registroDaLoja(lojaId);
             return {
               get: async () => ({ docs: [...registro.entries()].map(([id, data]) => ({ id, data: () => data })) }),
+              where(campo, op, valor) {
+                const construir = (condicoesAtuais) => ({
+                  where: (c2, o2, v2) => construir([...condicoesAtuais, { campo: c2, op: o2, valor: v2 }]),
+                  get: async () => {
+                    const bate = (data) => condicoesAtuais.every(c => {
+                      const v = data ? data[c.campo] : undefined;
+                      if (c.op === '>=') return v >= c.valor;
+                      if (c.op === '<=') return v <= c.valor;
+                      if (c.op === '==') return v === c.valor;
+                      if (c.op === 'in') return Array.isArray(c.valor) && c.valor.includes(v);
+                      return true;
+                    });
+                    return { docs: [...registro.entries()].filter(([, data]) => bate(data)).map(([id, data]) => ({ id, data: () => data })) };
+                  },
+                });
+                return construir([{ campo, op, valor }]);
+              },
               doc: cargaId => ({
                 get: async () => { const data = registro.get(cargaId); return { exists: data !== undefined, id: cargaId, data: () => data }; },
                 update: async payload => {
@@ -133,6 +150,52 @@ test('carregarCargasAnalista: consolida cargas de TODAS as lojas ativas numa lis
   assert.equal(cargas.length, 2);
   assert.ok(cargas.some(c => c._id === 'c1' && c.lojaId === 'loja1'));
   assert.ok(cargas.some(c => c._id === 'c2' && c.lojaId === 'loja2'));
+});
+
+// PEDIDO AO VIVO (2026-09-10): "tela de carga montagem demorando" — a busca
+// padrão passou a trazer só cargas ATIVAS (PENDENTE/EM_TRANSITO); RECEBIDA/
+// CANCELADA (histórico que só cresce) só entram quando pedido de verdade.
+test('carregarCargasAnalista: por padrão (sem incluirFinalizadas) só traz cargas ATIVAS — RECEBIDA/CANCELADA ficam de fora', async () => {
+  const { win } = carregarPagina(LOJAS, {
+    loja1: [
+      { id: 'c1', data: { nomeCarga: 'Ativa', status: 'EM_TRANSITO' } },
+      { id: 'c2', data: { nomeCarga: 'Já recebida', status: 'RECEBIDA' } },
+      { id: 'c3', data: { nomeCarga: 'Cancelada', status: 'CANCELADA' } },
+    ],
+  });
+  await win._recebimentoCargasCardsInternals.carregarCargasAnalista();
+  const cargas = win._recebimentoCargasCardsInternals.getCargas();
+  assert.equal(cargas.length, 1);
+  assert.equal(cargas[0]._id, 'c1');
+  assert.equal(win._recebimentoCargasCardsInternals.getCargasComFinalizadas(), false);
+});
+test('carregarCargasAnalista(forcar, incluirFinalizadas=true): traz TODAS, inclusive RECEBIDA/CANCELADA', async () => {
+  const { win } = carregarPagina(LOJAS, {
+    loja1: [
+      { id: 'c1', data: { nomeCarga: 'Ativa', status: 'EM_TRANSITO' } },
+      { id: 'c2', data: { nomeCarga: 'Já recebida', status: 'RECEBIDA' } },
+    ],
+  });
+  await win._recebimentoCargasCardsInternals.carregarCargasAnalista(true, true);
+  const cargas = win._recebimentoCargasCardsInternals.getCargas();
+  assert.equal(cargas.length, 2);
+  assert.equal(win._recebimentoCargasCardsInternals.getCargasComFinalizadas(), true);
+});
+test('PEDIDO AO VIVO: escolher "Recebida" no filtro de status busca o histórico completo sozinho, sem precisar clicar em Atualizar', async () => {
+  const { win, document } = carregarPagina(LOJAS, {
+    loja1: [
+      { id: 'c1', data: { nomeCarga: 'Ativa', status: 'EM_TRANSITO' } },
+      { id: 'c2', data: { nomeCarga: 'Já recebida', status: 'RECEBIDA' } },
+    ],
+  });
+  await win.renderRecebimentoCargas();
+  assert.doesNotMatch(document.getElementById('cargas-lista').innerHTML, /Já recebida/, 'busca padrão não trouxe a recebida');
+
+  document.getElementById('cargas-f-status').value = 'RECEBIDA';
+  document.getElementById('cargas-f-status').dispatchEvent(new win.Event('change', { bubbles: true }));
+  await new Promise(r => setTimeout(r, 0));
+
+  assert.match(document.getElementById('cargas-lista').innerHTML, /Já recebida/, 'ao filtrar por Recebida, busca o histórico sozinho');
 });
 
 test('carregarCargasAnalista: loja inativa é excluída, e falha numa loja não derruba as outras', async () => {

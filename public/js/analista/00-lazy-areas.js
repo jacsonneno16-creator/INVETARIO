@@ -65,7 +65,7 @@
       "js/analista/103-recusas-indicadores.js?v=20260909-cache-carregarDados",
       "js/coletor/28-recebimento-paletes-ledger.js?v=20260906-tambem-no-analista",
       "js/analista/recebimento-paletes-monitoramento.js?v=20260908b-split-transbordo-entrega",
-      "js/analista/104-recebimento-cargas-cards.js?v=20260908i-ledger-transito-no-destino"
+      "js/analista/104-recebimento-cargas-cards.js?v=20260910-so-ativas-por-padrao"
     ]
   };
 
