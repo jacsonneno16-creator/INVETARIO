@@ -2,4 +2,8 @@ node_modules
 functions/.env
 functions/.env.*
 *.env
+# Config declarativo de extensões do Firebase (sem segredo nenhum — segredo
+# de verdade vai por param:*:secret/Secret Manager, nunca aqui) precisa
+# ficar versionado pra "firebase deploy --only extensions" ser reproduzível.
+!extensions/*.env
 .scratch-*

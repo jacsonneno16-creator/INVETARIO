@@ -2,6 +2,9 @@
   "functions": {
     "source": "functions"
   },
+  "extensions": {
+    "bq-recebimento-recusas": "firebase/firestore-bigquery-export@0.3.3"
+  },
   "firestore": {
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"

@@ -625,6 +625,67 @@ test('_sincronizarNotasRetornadasVendaBiLoja: busca vazia NUNCA reconcilia/remov
 // notas lixo se acumulavam pra sempre, e o próximo chunk também ficava
 // mais perto do limite de novo — o motivo real de os consertos anteriores
 // (só no tamanho do chunk) não resolverem de vez.
+// PEDIDO AO VIVO (2026-09-11): "vou sair de férias... se ninguém entrar no
+// site vai atualizar?" — Devoluções (BI) (100-consulta-notas-fiscais.js) só
+// atualizava com alguém com aquela aba aberta (setInterval de 30min,
+// cliente). _sincronizarDevolucoesBiLoja duplica a mesma lógica de
+// classificação/gravação já validada em produção do lado do cliente
+// (_importarDevolucoesBiRegistros/classificarMotivoTexto/
+// _construirRecebimentoAutomatico), agora rodando dentro do sync agendado
+// do servidor — mesmo padrão que Notas Retornadas (venda) já ganhou acima.
+test('_sincronizarDevolucoesBiLoja: motivo que DISPENSA o Coletor (ex.: "Desacordo com pedido") grava recebimento_recusas automático já conferido, filtrando por loja e só tipo_movimento DEVOLUCAO', async () => {
+  const { fakeDb, internals } = carregarComFirestoreFake();
+  const registros = [
+    { loja_key: 14, chave: 'NFD1', nf_numero: '900', cliente: 'Mercado Z', data_emissao: '2026-08-20', valor_nota: 40, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'Tapioca', quantidade_faturada: 2, mensagem: 'DESACORDO COM PEDIDO' },
+    { loja_key: 99, chave: 'NFD2', nf_numero: '901', cliente: 'Outra loja', data_emissao: '2026-08-20', valor_nota: 10, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'X', quantidade_faturada: 1, mensagem: 'DESACORDO COM PEDIDO' },
+    { loja_key: 14, chave: 'NFD3', nf_numero: '902', cliente: 'Mercado Z', data_emissao: '2026-08-20', valor_nota: 5, tipo_movimento: 'VENDA', produto_key: 1, produto: 'X', quantidade_faturada: 1 },
+  ];
+  const resultado = await internals._sincronizarDevolucoesBiLoja('loja1', 14, registros);
+  assert.equal(resultado.total, 1, 'só NFD1 é devolução desta loja — NFD2 é de outra loja, NFD3 é venda');
+  assert.equal(resultado.autoSalvas, 1);
+
+  let doc = null;
+  fakeDb._dump().forEach(v => { if (Array.isArray(v.chaves) && v.chaves[0] === 'NFD1') doc = v; });
+  assert.ok(doc, 'deve gravar um recebimento_recusas automático');
+  assert.equal(doc.origem, 'AUTOMATICO');
+  assert.equal(doc.motivoNome, 'Desacordo com pedido');
+  assert.equal(doc.conferenciaStatus, 'CONFERIDO');
+  assert.equal(doc.valorTotal, 40);
+});
+
+test('_sincronizarDevolucoesBiLoja: motivo que PRECISA do Coletor (Troca/Avaria/Vencido/Impróprio/sem motivo) é descartado — nunca grava nem aguarda', async () => {
+  const { fakeDb, internals } = carregarComFirestoreFake();
+  const registros = [
+    { loja_key: 14, chave: 'NFD-TROCA', nf_numero: '1', cliente: 'X', data_emissao: '2026-08-20', valor_nota: 1, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'Y', quantidade_faturada: 1, mensagem: 'TROCA DE PRODUTO' },
+    { loja_key: 14, chave: 'NFD-SEM-MOTIVO', nf_numero: '2', cliente: 'X', data_emissao: '2026-08-20', valor_nota: 1, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'Y', quantidade_faturada: 1, mensagem: 'ALGO SEM CATEGORIA' },
+  ];
+  const resultado = await internals._sincronizarDevolucoesBiLoja('loja1', 14, registros);
+  assert.equal(resultado.total, 2);
+  assert.equal(resultado.autoSalvas, 0);
+  assert.equal(resultado.descartadas, 2);
+  assert.equal([...fakeDb._dump().values()].filter(v => Array.isArray(v.chaves)).length, 0, 'nenhum recebimento_recusas deve ter sido criado');
+});
+
+test('_sincronizarDevolucoesBiLoja: chave que já virou recebimento_recusas antes NÃO duplica — só completa dataEmissao/destinatario que estava em branco', async () => {
+  const { fakeDb, internals } = carregarComFirestoreFake();
+  fakeDb._dump().set('lojas/loja1/recebimento_recusas/rExistente', { chaves: ['NFD1'], dataEmissao: '', destinatario: '' });
+  const registros = [{ loja_key: 14, chave: 'NFD1', nf_numero: '900', cliente: 'Mercado Z - 278', data_emissao: '2026-08-20', valor_nota: 40, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'X', quantidade_faturada: 1, mensagem: 'DESACORDO COM PEDIDO' }];
+  const resultado = await internals._sincronizarDevolucoesBiLoja('loja1', 14, registros);
+  assert.equal(resultado.autoSalvas, 0, 'já existe recebimento pra essa chave — não cria outro');
+  assert.equal(resultado.corrigidas, 1);
+  const depois = fakeDb._dump().get('lojas/loja1/recebimento_recusas/rExistente');
+  assert.equal(depois.dataEmissao, '2026-08-20');
+  assert.equal(depois.destinatario, 'Mercado Z - 278');
+  assert.equal(depois.rede, 'Mercado Z');
+});
+
+test('_sincronizarDevolucoesBiLoja: sem registros, não grava nada e não quebra', async () => {
+  const { internals } = carregarComFirestoreFake();
+  const resultado = await internals._sincronizarDevolucoesBiLoja('loja1', 14, []);
+  assert.equal(resultado.total, 0);
+  assert.equal(resultado.autoSalvas, 0);
+});
+
 test('_sincronizarNotasRetornadasVendaBiLoja: erro ao GRAVAR notas novas NÃO pode impedir a LIMPEZA de rodar — nota que saiu de "em aberto" precisa ser removida mesmo com falha', async () => {
   const { fakeDb, internals } = carregarComFirestoreFake();
   fakeDb._dump().set('lojas/loja1/recebimento_recusas_notas_chunks/chunk_0', { notas: { LIXO: { chave: 'LIXO', numeroNota: '1', origemImportacao: 'BI', naturezaLabel: 'Venda' } } });

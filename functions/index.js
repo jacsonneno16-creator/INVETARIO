@@ -1458,6 +1458,127 @@ async function _sincronizarNotasRetornadasVendaBiLoja(lojaId, lojaKey, registros
   return {total: notas.length, novas: notasNovasQtd, removidas};
 }
 
+// PEDIDO AO VIVO (2026-09-11): "vou sair de férias... se ninguém entrar no
+// site vai atualizar?" — Devoluções (BI) (100-consulta-notas-fiscais.js) só
+// girava com alguém com AQUELA aba aberta (setInterval de 30min, cliente).
+// Duplica aqui de propósito a mesma lógica já validada em produção do lado
+// do cliente (_importarDevolucoesBiRegistros/_agruparDevolucoesBiPorChave/
+// classificarMotivoTexto/_construirRecebimentoAutomatico em 100-consulta-
+// notas-fiscais.js) — se a lógica de classificação de motivo mudar de um
+// lado, replicar a mudança no outro. Mesmo padrão já usado acima pra Notas
+// Retornadas (venda): passa a rodar dentro do sync agendado de 30min do
+// servidor, sem depender de navegador nenhum aberto — o botão "Buscar"
+// manual da tela continua existindo, só deixa de ser a única forma de a
+// devolução se manter em dia.
+const CATEGORIAS_MOTIVO_DEVOLUCAO_BI = [
+  ['Troca', /\bTROCA/],
+  ['Impróprio para consumo/venda', /IMPROPRI/],
+  ['Avaria', /AVARI/],
+  ['Falta na carga/entrega', /FALTA|FALTOU/],
+  ['Produto errado/divergente', /ERRAD|DIVERGEN/],
+  ['Vencido/vencimento', /VENCID|VENC:/],
+  ['Desacordo com pedido', /DESACORDO/],
+];
+const SEM_MOTIVO_NO_TEXTO_BI = '(sem motivo no texto)';
+const CATEGORIAS_MOTIVO_PRECISAM_COLETOR_BI = new Set(['Troca', 'Avaria', 'Vencido/vencimento', 'Impróprio para consumo/venda', SEM_MOTIVO_NO_TEXTO_BI]);
+function _classificarMotivoTextoBi(texto) {
+  const t = String(texto || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  for (const [nome, regex] of CATEGORIAS_MOTIVO_DEVOLUCAO_BI) if (regex.test(t)) return nome;
+  return SEM_MOTIVO_NO_TEXTO_BI;
+}
+function _motivoDispensaColetorBi(informacoesComplementares) {
+  if (!informacoesComplementares) return false;
+  return !CATEGORIAS_MOTIVO_PRECISAM_COLETOR_BI.has(_classificarMotivoTextoBi(informacoesComplementares));
+}
+function _extrairRedeBi(destinatario) {
+  const s = String(destinatario || '').trim();
+  const idx = s.indexOf(' - ');
+  return (idx > -1 ? s.slice(0, idx) : s).trim();
+}
+function _agruparDevolucoesBiPorChaveServidor(itens) {
+  const porChave = new Map();
+  itens.forEach(it => {
+    const chave = String(it.chave || '').trim();
+    if (!chave) return;
+    if (!porChave.has(chave)) {
+      porChave.set(chave, {
+        chave, numeroNota: it.nf_numero != null ? String(it.nf_numero) : '', serie: it.nf_serie != null ? String(it.nf_serie) : '',
+        destinatario: it.cliente || '', dataEmissao: String(it.data_emissao || '').slice(0, 10), cfop: it.cfop || '',
+        valorTotal: 0, informacoesComplementares: '', itens: [],
+      });
+    }
+    const nota = porChave.get(chave);
+    if (!nota.numeroNota && it.nf_numero != null) nota.numeroNota = String(it.nf_numero);
+    if (!nota.serie && it.nf_serie != null) nota.serie = String(it.nf_serie);
+    if (!nota.destinatario && it.cliente) nota.destinatario = it.cliente;
+    if (!nota.dataEmissao && it.data_emissao) nota.dataEmissao = String(it.data_emissao).slice(0, 10);
+    if (!nota.cfop && it.cfop) nota.cfop = it.cfop;
+    nota.valorTotal += Number(it.valor_nota) || 0;
+    const gtinItem = it.ean != null ? String(it.ean) : '';
+    const dunItem = it.dum != null ? String(it.dum) : '';
+    nota.itens.push({produtoKey: it.produto_key ?? null, descricao: it.produto || '', quantidade: Number(it.quantidade_faturada) || 0, gtin: gtinItem, dun: dunItem, ncm: ''});
+    if (!nota.informacoesComplementares && it.mensagem) nota.informacoesComplementares = String(it.mensagem);
+  });
+  return [...porChave.values()];
+}
+function _construirRecebimentoAutomaticoBi(nota) {
+  if (!_motivoDispensaColetorBi(nota.informacoesComplementares)) return null;
+  const categoria = _classificarMotivoTextoBi(nota.informacoesComplementares);
+  const agora = new Date().toISOString();
+  return {
+    chaves: [nota.chave],
+    notas: [{chave: nota.chave, numeroNota: nota.numeroNota, dataEmissao: nota.dataEmissao || '', volumeEsperado: 0, destinatario: nota.destinatario || '', valorTotal: Number(nota.valorTotal) || 0, itens: nota.itens || []}],
+    motoristaId: '', motoristaNome: '', motivoId: '', motivoNome: categoria,
+    conferenteId: '', conferenteNome: '',
+    volumeEsperado: 0, volumeInformado: 0, diferencaVolumes: 0, conferenciaStatus: 'CONFERIDO',
+    box: '', pallets: null, statusConferenciaOperacional: 'CONFERIDA', itensConferidos: [],
+    criadoEm: agora, criadoPorUid: '', criadoPorEmail: 'sincronizarBiAgendado',
+    origem: 'AUTOMATICO', motivoAutomaticoTexto: nota.informacoesComplementares || '',
+    dataEmissao: nota.dataEmissao || '', destinatario: nota.destinatario || '', rede: _extrairRedeBi(nota.destinatario), valorTotal: Number(nota.valorTotal) || 0,
+  };
+}
+async function _sincronizarDevolucoesBiLoja(lojaId, lojaKey, registrosNotas) {
+  const relevantes = (registrosNotas || []).filter(it => lojaKey != null && String(it.loja_key) === String(lojaKey) && String(it.tipo_movimento || '').toUpperCase() === 'DEVOLUCAO');
+  const notas = _agruparDevolucoesBiPorChaveServidor(relevantes);
+  const colRecusas = db.collection('lojas').doc(lojaId).collection('recebimento_recusas');
+  const recusasSnap = await colRecusas.get();
+  const chavesJaComRecebimento = new Map();
+  recusasSnap.docs.forEach(d => {
+    const data = d.data() || {};
+    (data.chaves || []).forEach(c => chavesJaComRecebimento.set(c, {docId: d.id, dataEmissao: data.dataEmissao || '', destinatario: data.destinatario || ''}));
+  });
+  let autoSalvas = 0, descartadas = 0, corrigidas = 0;
+  const patches = [];
+  for (const nota of notas) {
+    if (chavesJaComRecebimento.has(nota.chave)) {
+      const existente = chavesJaComRecebimento.get(nota.chave);
+      const patch = {};
+      if (!existente.dataEmissao && nota.dataEmissao) patch.dataEmissao = nota.dataEmissao;
+      if (!existente.destinatario && nota.destinatario) { patch.destinatario = nota.destinatario; patch.rede = _extrairRedeBi(nota.destinatario); }
+      if (Object.keys(patch).length) { patches.push({docId: existente.docId, patch}); corrigidas++; }
+    } else {
+      const payloadAuto = _construirRecebimentoAutomaticoBi(nota);
+      if (payloadAuto) {
+        const ref = colRecusas.doc();
+        const batchNovo = db.batch();
+        batchNovo.set(ref, payloadAuto);
+        await batchNovo.commit();
+        chavesJaComRecebimento.set(nota.chave, {docId: ref.id, dataEmissao: nota.dataEmissao, destinatario: nota.destinatario});
+        autoSalvas++;
+      } else {
+        descartadas++;
+      }
+    }
+  }
+  for (let i = 0; i < patches.length; i += 300) {
+    const lote = patches.slice(i, i + 300);
+    const batch = db.batch();
+    lote.forEach(p => batch.set(colRecusas.doc(p.docId), p.patch, {merge: true}));
+    await batch.commit();
+  }
+  return {total: notas.length, autoSalvas, descartadas, corrigidas};
+}
+
 async function _sincronizarBiTodasLojas() {
   const token = await _obterTokenGraphApi(process.env.GRAPH_CLIENT_SECRET);
   const driveId = await _resolverDriveGraphApi(token);
@@ -1483,7 +1604,8 @@ async function _sincronizarBiTodasLojas() {
       const estoqueProdutos = await _sincronizarEstoqueProdutoAcabadoBiLoja(loja.id, loja.bluesoft_loja_key, registrosProdutos);
       const historicoVendas = await _sincronizarHistoricoVendasBiLoja(loja.id, loja.bluesoft_loja_key, registrosNotas);
       const notasRetornadas = await _sincronizarNotasRetornadasVendaBiLoja(loja.id, loja.bluesoft_loja_key, registrosNotas);
-      resultados.push({loja: loja.nome || loja.id, ficha, agenda, estoqueInsumos, estoqueProdutos, historicoVendas, notasRetornadas});
+      const devolucoesBi = await _sincronizarDevolucoesBiLoja(loja.id, loja.bluesoft_loja_key, registrosNotas);
+      resultados.push({loja: loja.nome || loja.id, ficha, agenda, estoqueInsumos, estoqueProdutos, historicoVendas, notasRetornadas, devolucoesBi});
     } catch (e) {
       resultados.push({loja: loja.nome || loja.id, erro: e.message || String(e)});
       console.error('[SincronizacaoBiAgendado] Falha na loja', loja.id, e);
@@ -1987,6 +2109,7 @@ exports._graphBiInternals = {
   _sincronizarFichaTecnicaBiLoja, _sincronizarAgendaBiLoja, _sincronizarBiTodasLojas,
   _sincronizarEstoqueInsumosBiLoja, _sincronizarEstoqueProdutoAcabadoBiLoja, _sincronizarHistoricoVendasBiLoja,
   _sincronizarNotasRetornadasVendaBiLoja, _dividirChunksNotasRetornadasGrandesDemaisSeNecessario, _notasRetornadasDoDocumentoChunk,
+  _sincronizarDevolucoesBiLoja, _classificarMotivoTextoBi, _construirRecebimentoAutomaticoBi,
   _limparEstoqueBiContaminadoLoja, _limparEstoqueBiContaminadoTodasLojas,
   _limparDadosAntigosBluesoftLoja, _limparDadosAntigosBluesoftTodasLojas,
   _sincronizarRelatorioBiChunkeadoGlobal, _sincronizarComprasHistoricoBi,

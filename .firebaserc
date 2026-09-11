@@ -1,5 +1,13 @@
 {
   "projects": {
     "default": "daterrinha-inventario"
+  },
+  "targets": {},
+  "etags": {
+    "daterrinha-inventario": {
+      "extensionInstances": {
+        "bq-recebimento-recusas": "d0101846b0cf8a510a0cc15684dd97b44f891b670be2b1010c26bb415fc6382a"
+      }
+    }
   }
 }
