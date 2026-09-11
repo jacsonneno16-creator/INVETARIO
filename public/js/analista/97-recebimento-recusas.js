@@ -822,17 +822,26 @@
   function _normalizarNumeroNota(v) {
     return String(v == null ? '' : v).trim().split('-')[0].trim();
   }
-  async function _lerWorkbook(file) {
+  // BUG AO VIVO REAL (2026-09-11): "o site travou" — ler o arquivo inteiro
+  // (todas as abas) de uma planilha de controle com 142 mil linhas na aba
+  // "BASE GERAL" (mais 6 outras abas) travava a aba do navegador por mais
+  // de 15s. Corrigido em 2 passos: 1º passe só pega os NOMES das abas
+  // (bookSheets:true — não lê célula nenhuma, é quase instantâneo), decide
+  // qual aba interessa, e SÓ ENTÃO faz o 2º passe restrito a essa aba
+  // (sheets:[aba]) — as outras 6 abas nunca são parseadas.
+  async function _lerWorkbook(file, escolherAba) {
     if (!global.XLSX) throw new Error('Biblioteca do Excel não carregada.');
     const buf = await file.arrayBuffer();
-    return global.XLSX.read(buf, { type: 'array' });
+    const nomes = global.XLSX.read(buf, { type: 'array', bookSheets: true }).SheetNames;
+    const aba = (escolherAba ? escolherAba(nomes) : nomes[0]) || nomes[0];
+    const wb = global.XLSX.read(buf, { type: 'array', sheets: [aba] });
+    return { wb, aba };
   }
   // Relatório de Viagens da transportadora: N° NF/CF (com sufixo "-N"),
   // Destinatário, Valor NF/CF. Em nota duplicada na planilha, a ÚLTIMA
   // linha manda (mesma convenção usada pra chave duplicada na Base Geral).
   async function lerPlanilhaMercadoValor(file) {
-    const wb = await _lerWorkbook(file);
-    const aba = wb.SheetNames[0];
+    const { wb, aba } = await _lerWorkbook(file);
     const linhas = global.XLSX.utils.sheet_to_json(wb.Sheets[aba], { defval: '' });
     const mapa = new Map();
     linhas.forEach(l => {
@@ -851,8 +860,7 @@
   // aqui). Só RECUSA/REENTREGA entram — são os 2 únicos valores que a
   // tela de Notas Retornadas realmente aceita (TRATAMENTO_OPCOES_SELECT).
   async function lerPlanilhaTratamentoMotivo(file) {
-    const wb = await _lerWorkbook(file);
-    const aba = wb.SheetNames.find(n => /base\s*geral/i.test(n)) || wb.SheetNames[0];
+    const { wb, aba } = await _lerWorkbook(file, nomes => nomes.find(n => /base\s*geral/i.test(n)));
     const linhas = global.XLSX.utils.sheet_to_json(wb.Sheets[aba], { defval: '' });
     const mapa = new Map();
     linhas.forEach(l => {

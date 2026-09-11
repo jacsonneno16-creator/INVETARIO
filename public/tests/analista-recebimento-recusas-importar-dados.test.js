@@ -75,8 +75,9 @@ function carregarPagina(colecoes, linhasPlanilha){
   win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }) };
   win.showToast=()=>{};
   win.aplicarPermissoesAnalista=()=>{};
+  win._xlsxReadChamadas=[];
   win.XLSX={
-    read:()=>({ SheetNames:['LOG BRUTO','BASE GERAL'], Sheets:{ 'LOG BRUTO':{}, 'BASE GERAL':{} } }),
+    read:(buf,opts)=>{ win._xlsxReadChamadas.push(opts); return { SheetNames:['LOG BRUTO','BASE GERAL'], Sheets:{ 'LOG BRUTO':{}, 'BASE GERAL':{} } }; },
     utils:{ sheet_to_json:()=>linhasPlanilha },
   };
   win.eval(recusasCode);
@@ -208,4 +209,23 @@ test('sem arquivo selecionado, avisa e não tenta ler nada',async()=>{
   document.querySelector('[data-recusa-ler-import-dados="tratamento"]').click();
   await new Promise(r=>setTimeout(r,0));
   assert.ok(toasts.some(t=>/Selecione uma planilha/.test(t.m)));
+});
+
+// BUG AO VIVO REAL (2026-09-11): "o site travou" — a planilha CONTROLE DE
+// REENTREGAS E RECUSAS tem 7 abas (a "BASE GERAL" sozinha já tem 142 mil
+// linhas); ler o arquivo inteiro (XLSX.read sem restrição de aba) travava
+// a aba do navegador por mais de 15s. Corrigido pra 1º descobrir os nomes
+// das abas (bookSheets:true, não lê célula nenhuma) e SÓ DEPOIS parsear a
+// aba certa (sheets:[aba]) — nunca mais um XLSX.read sem alguma dessas 2
+// restrições.
+test('nunca lê o workbook inteiro (todas as abas) — sempre 1º só os nomes (bookSheets), depois só a aba escolhida (sheets)',async()=>{
+  const linhas=[ { 'NOTA FISCAL':'500', ACAO:'Recusa', MOTIVO:'x' } ];
+  const recusas=mockColecao([]);
+  const { win, document }=carregarPagina(colecoesBase(recusas), linhas);
+  await win.renderRecebimentoRecusasCadastros();
+  await lerEClicar(document, 'tratamento');
+
+  assert.equal(win._xlsxReadChamadas.length, 2, 'exatamente 2 leituras: nomes das abas, depois a aba escolhida');
+  assert.equal(win._xlsxReadChamadas[0].bookSheets, true, '1ª leitura só pega os nomes das abas, sem parsear célula nenhuma');
+  assert.deepEqual(Array.from(win._xlsxReadChamadas[1].sheets), ['BASE GERAL'], '2ª leitura é restrita só à aba BASE GERAL — as outras 6 abas nunca são parseadas');
 });
