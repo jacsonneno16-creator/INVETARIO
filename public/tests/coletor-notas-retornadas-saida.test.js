@@ -293,3 +293,145 @@ test('Saída: quando a via rápida (numerosNotas) já acha o registro, não prec
   assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /BOX 7/);
   assert.equal(chamouGetSemFiltro, false, 'achou pela via rápida — nunca precisou baixar a coleção inteira');
 });
+
+// PEDIDO AO VIVO (2026-09-11): "colocar mais duas opções, uma Rastrear e
+// outra Identificar — a rastrear vai funcionar somente para saber onde
+// está e a quantidade de paletes".
+test('tela de escolha mostra Rastrear e Identificar; Rastrear leva pra tela de buscar por número', async () => {
+  const { win, document } = carregarColetorReal(baseColecoes(mockRecusas([])));
+  await win.abrirRecusasRecebimento();
+  const html = document.getElementById('recusa-fluxo-host').innerHTML;
+  assert.match(html, /🔎 Rastrear/);
+  assert.match(html, /🆕 Identificar/);
+
+  document.querySelector('[data-recusa-modo="rastrear"]').click();
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /Número da nota/);
+});
+
+test('Rastrear: busca por número mostra Box e quantidade de Paletes, sem nenhum botão de ação (só leitura)', async () => {
+  const recusas = mockRecusas([{ id: 'r1', data: {
+    box: 'BOX 9', pallets: 4, criadoEm: '2026-09-01T10:00:00.000Z',
+    numerosNotas: ['701'],
+    notas: [{ chave: 'CHX', numeroNota: '701', tratamento: 'RECUSA', statusRetorno: 'EM_TRATATIVA' }],
+    origem: 'COLETOR',
+  } }]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="rastrear"]').click();
+  document.getElementById('rastrear-numero-input').value = '701';
+  document.getElementById('rastrear-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const html = document.getElementById('recusa-fluxo-host').innerHTML;
+  assert.match(html, /BOX 9/);
+  assert.match(html, />4</, 'quantidade de paletes aparece');
+  assert.match(html, /Ainda no pátio/);
+  assert.doesNotMatch(html, /<input(?![^>]*rastrear-numero-input)/, 'tela de resultado não tem campo pra editar nada (só leitura)');
+});
+
+test('Rastrear: nota já finalizada (Recusa) mostra "Já saiu"', async () => {
+  const recusas = mockRecusas([{ id: 'r1', data: {
+    box: 'BOX 3', criadoEm: '2026-09-01T10:00:00.000Z',
+    numerosNotas: ['702'],
+    notas: [{ chave: 'CHY', numeroNota: '702', tratamento: 'RECUSA', statusRetorno: 'FINALIZADO' }],
+    origem: 'COLETOR',
+  } }]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="rastrear"]').click();
+  document.getElementById('rastrear-numero-input').value = '702';
+  document.getElementById('rastrear-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /Já saiu/);
+});
+
+test('Rastrear: número que não existe mostra aviso, não trava', async () => {
+  const { win, document } = carregarColetorReal(baseColecoes(mockRecusas([])));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="rastrear"]').click();
+  document.getElementById('rastrear-numero-input').value = '999999';
+  document.getElementById('rastrear-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /não encontrada/);
+});
+
+// PEDIDO AO VIVO (2026-09-11): "Identificar" — nota, box, paletes,
+// motorista (opcional), motivo (opcional), salvar — já aparece em Notas
+// Retornadas depois (mesmo formato que Entrada grava, origem:'COLETOR').
+test('Identificar: preencher nota+box e salvar grava doc com origem COLETOR, statusFisico NO_PATIO, motorista/motivo vazios (opcionais)', async () => {
+  const recusas = mockRecusas([]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="identificar"]').click();
+
+  document.getElementById('ident-numero-input').value = '555';
+  document.getElementById('ident-box-input').value = 'box 4';
+  document.getElementById('ident-salvar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const salvo = [...recusas._registro.values()][0];
+  assert.equal(salvo.numerosNotas[0], '555');
+  assert.equal(salvo.box, 'BOX 4', 'box salvo em maiúsculas, igual ao resto do app');
+  assert.equal(salvo.origem, 'COLETOR');
+  assert.equal(salvo.statusFisico, 'NO_PATIO');
+  assert.equal(salvo.motoristaNome, '');
+  assert.equal(salvo.motivoNome, '');
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /555.*BOX 4|BOX 4.*555/s);
+});
+
+test('Identificar: motorista e motivo preenchidos são salvos quando informados', async () => {
+  const recusas = mockRecusas([]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="identificar"]').click();
+
+  document.getElementById('ident-numero-input').value = '556';
+  document.getElementById('ident-box-input').value = 'BOX 5';
+  document.getElementById('ident-pallets-input').value = '3';
+  document.getElementById('ident-motorista-input').value = 'José';
+  document.getElementById('ident-motivo-input').value = 'Avaria';
+  document.getElementById('ident-salvar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const salvo = [...recusas._registro.values()][0];
+  assert.equal(salvo.pallets, 3);
+  assert.equal(salvo.motoristaNome, 'José');
+  assert.equal(salvo.motivoNome, 'Avaria');
+});
+
+test('Identificar: sem número da nota ou sem Box, bloqueia e não grava nada', async () => {
+  const recusas = mockRecusas([]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="identificar"]').click();
+
+  document.getElementById('ident-salvar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(recusas._registro.size, 0, 'sem número — não grava');
+
+  document.getElementById('ident-numero-input').value = '557';
+  document.getElementById('ident-salvar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(recusas._registro.size, 0, 'sem Box — não grava');
+});
+
+test('Identificar: nota salva aparece pro Coletor rastrear em seguida (mesma coleção, mesmo formato de Entrada)', async () => {
+  const recusas = mockRecusas([]);
+  const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="identificar"]').click();
+  document.getElementById('ident-numero-input').value = '558';
+  document.getElementById('ident-box-input').value = 'BOX 6';
+  document.getElementById('ident-salvar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  document.querySelector('[data-recusa-modo="voltar"]').click();
+  document.querySelector('[data-recusa-modo="rastrear"]').click();
+  document.getElementById('rastrear-numero-input').value = '558';
+  document.getElementById('rastrear-buscar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /BOX 6/);
+});

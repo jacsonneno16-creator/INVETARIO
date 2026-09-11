@@ -22,6 +22,24 @@
     saidaNotaEncontrada: null, // qual item de `notas[]` daquele doc bate com o número digitado
     saidaConfirmada: false
   };
+  // PEDIDO AO VIVO (2026-09-11): "Rastrear" (só consulta — onde está e
+  // quantos paletes) e "Identificar" (a nota voltou fisicamente mas
+  // ninguém recebeu ela no sistema na hora — registra agora, direto pro
+  // pátio) — mesmo agrupamento de estado feito acima pra Saída.
+  const _ESTADO_RASTREAR_INICIAL = {
+    rastrearNumeroBusca: '',
+    rastrearBuscaErro: '',
+    rastrearRecusaEncontrada: null,
+    rastrearNotaEncontrada: null
+  };
+  const _ESTADO_IDENTIFICAR_INICIAL = {
+    identNumero: '',
+    identBox: '',
+    identPallets: '',
+    identMotorista: '',
+    identMotivo: '',
+    identSalva: ''
+  };
   let S = {
     etapa: 'modo',
     notas: [],
@@ -50,7 +68,9 @@
     // pendente aqui até o operador confirmar/corrigir o número da nota.
     pendenteChaveManual: '',
     pendenteNumeroManual: '',
-    ..._ESTADO_SAIDA_INICIAL
+    ..._ESTADO_SAIDA_INICIAL,
+    ..._ESTADO_RASTREAR_INICIAL,
+    ..._ESTADO_IDENTIFICAR_INICIAL
   };
   // BUG AO VIVO REAL (2026-08-29): "não mostra o produto, mostra só
   // escrito produto" + bipagem nunca funcionava — o BI (notas_fiscais_
@@ -196,7 +216,9 @@
       carregando: false,
       pendenteChaveManual: '',
       pendenteNumeroManual: '',
-      ..._ESTADO_SAIDA_INICIAL
+      ..._ESTADO_SAIDA_INICIAL,
+      ..._ESTADO_RASTREAR_INICIAL,
+      ..._ESTADO_IDENTIFICAR_INICIAL
     };
   }
   // Config genérica dos combos com busca (motorista/motivo/conferente) —
@@ -358,6 +380,18 @@
       if (el) el.focus();
     }, 80);
   }
+  function focarRastrearInput() {
+    setTimeout(() => {
+      const el = document.getElementById('rastrear-numero-input');
+      if (el) el.focus();
+    }, 80);
+  }
+  function focarIdentificarInput() {
+    setTimeout(() => {
+      const el = document.getElementById('ident-numero-input');
+      if (el) el.focus();
+    }, 80);
+  }
   function _maisRecenteDaLista(docs) {
     return docs.slice().sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')))[0];
   }
@@ -373,6 +407,25 @@
   // toda) e filtra no cliente por `notas[].numeroNota` — o dado sempre
   // esteve lá, só não estava numa forma indexável antes; agora nenhuma
   // nota fica de fora, só o caminho comum continua barato.
+  // Extraída pra ser reaproveitada também por "Rastrear" (PEDIDO AO VIVO
+  // 2026-09-11) — mesma busca em 2 passos (numerosNotas indexado, senão
+  // escaneia por notas[].numeroNota), devolve { doc, nota } ou null.
+  async function _buscarRecusaPorNumero(numero) {
+    let doc = null;
+    const snapRapido = await fs().collection(COL_RECUSAS).where('numerosNotas', 'array-contains', numero).get();
+    if (!snapRapido.empty) {
+      doc = _maisRecenteDaLista(snapRapido.docs.map(d => Object.assign({ _id: d.id }, d.data())));
+    } else {
+      const snapTudo = await fs().collection(COL_RECUSAS).get();
+      const achados = snapTudo.docs.map(d => Object.assign({ _id: d.id }, d.data()))
+        .filter(r => (r.notas || []).some(n => String(n.numeroNota || '').trim() === numero));
+      if (achados.length) doc = _maisRecenteDaLista(achados);
+    }
+    if (!doc) return null;
+    const nota = (doc.notas || []).find(n => String(n.numeroNota || '').trim() === numero);
+    if (!nota) return null;
+    return { doc, nota };
+  }
   async function buscarSaida() {
     const input = document.getElementById('saida-numero-input');
     const numero = String((input && input.value) || '').trim();
@@ -382,30 +435,94 @@
     const btn = document.getElementById('saida-buscar-btn');
     if (btn) btn.disabled = true;
     try {
-      let doc = null;
-      const snapRapido = await fs().collection(COL_RECUSAS).where('numerosNotas', 'array-contains', numero).get();
-      if (!snapRapido.empty) {
-        doc = _maisRecenteDaLista(snapRapido.docs.map(d => Object.assign({ _id: d.id }, d.data())));
-      } else {
-        const snapTudo = await fs().collection(COL_RECUSAS).get();
-        const achados = snapTudo.docs.map(d => Object.assign({ _id: d.id }, d.data()))
-          .filter(r => (r.notas || []).some(n => String(n.numeroNota || '').trim() === numero));
-        if (achados.length) doc = _maisRecenteDaLista(achados);
-      }
-      if (!doc) {
+      const achado = await _buscarRecusaPorNumero(numero);
+      if (!achado) {
         S.saidaBuscaErro = 'Nota não encontrada. Confira se o número está certo.';
         render();
         return;
       }
-      const nota = (doc.notas || []).find(n => String(n.numeroNota || '').trim() === numero);
-      if (!nota) { S.saidaBuscaErro = 'Nota não encontrada.'; render(); return; }
-      S.saidaRecusaEncontrada = doc;
-      S.saidaNotaEncontrada = nota;
+      S.saidaRecusaEncontrada = achado.doc;
+      S.saidaNotaEncontrada = achado.nota;
       S.etapa = 'saida-resultado';
       render();
     } catch (e) {
       S.saidaBuscaErro = 'Erro ao buscar: ' + (e.message || e);
       render();
+    }
+  }
+  // PEDIDO AO VIVO (2026-09-11): "Rastrear" — só consulta onde a nota está
+  // (Box) e quantidade de paletes do evento, nunca grava nada.
+  async function buscarRastreio() {
+    const input = document.getElementById('rastrear-numero-input');
+    const numero = String((input && input.value) || '').trim();
+    if (!numero) { S.rastrearBuscaErro = 'Informe o número da nota.'; render(); focarRastrearInput(); return; }
+    S.rastrearNumeroBusca = numero;
+    S.rastrearBuscaErro = '';
+    const btn = document.getElementById('rastrear-buscar-btn');
+    if (btn) btn.disabled = true;
+    try {
+      const achado = await _buscarRecusaPorNumero(numero);
+      if (!achado) {
+        S.rastrearBuscaErro = 'Nota não encontrada. Confira se o número está certo.';
+        render();
+        return;
+      }
+      S.rastrearRecusaEncontrada = achado.doc;
+      S.rastrearNotaEncontrada = achado.nota;
+      S.etapa = 'rastrear-resultado';
+      render();
+    } catch (e) {
+      S.rastrearBuscaErro = 'Erro ao buscar: ' + (e.message || e);
+      render();
+    }
+  }
+  // PEDIDO AO VIVO (2026-09-11): "Identificar" — a nota voltou fisicamente
+  // mas ninguém recebeu ela no sistema na hora; registra agora, igual uma
+  // Entrada normal (mesmo `origem:'COLETOR'`, mesmas regras de pátio/
+  // statusFisico), só sem passar pela bipagem de chave/conferência —
+  // motorista e motivo ficam OPCIONAIS de propósito, já que muitas vezes
+  // não dá mais pra saber quem trouxe.
+  async function identificarSalvar() {
+    const numeroInput = document.getElementById('ident-numero-input');
+    const numero = String((numeroInput && numeroInput.value) || '').trim();
+    if (!numero) { toast('Informe o número da nota.', 'error'); if (numeroInput) numeroInput.focus(); return; }
+    const boxInput = document.getElementById('ident-box-input');
+    const box = String((boxInput && boxInput.value) || '').trim().toUpperCase();
+    if (!box) { toast('Informe o Box onde a nota está.', 'error'); if (boxInput) boxInput.focus(); return; }
+    const palletsInput = document.getElementById('ident-pallets-input');
+    const pallets = String((palletsInput && palletsInput.value) || '').trim();
+    const motoristaInput = document.getElementById('ident-motorista-input');
+    const motorista = String((motoristaInput && motoristaInput.value) || '').trim();
+    const motivoInput = document.getElementById('ident-motivo-input');
+    const motivo = String((motivoInput && motivoInput.value) || '').trim();
+    const u = usuario();
+    const agora = new Date().toISOString();
+    const payload = {
+      chaves: [],
+      numerosNotas: [numero],
+      notas: [{ numeroNota: numero, box, volumeEsperado: 0 }],
+      motoristaNome: motorista,
+      motivoNome: motivo,
+      box,
+      pallets: pallets !== '' ? Number(pallets) : null,
+      origem: 'COLETOR',
+      statusFisico: 'NO_PATIO',
+      criadoEm: agora,
+      criadoPorUid: u.uid,
+      criadoPorEmail: u.email
+    };
+    const btn = document.getElementById('ident-salvar-btn');
+    if (btn) btn.disabled = true;
+    try {
+      await fs().collection(COL_RECUSAS).add(payload);
+      S.identSalva = numero + ' — Box ' + box;
+      toast('Nota identificada e registrada no pátio.', 'success');
+      S = Object.assign({}, S, _ESTADO_IDENTIFICAR_INICIAL, { identSalva: numero + ' — Box ' + box });
+      render();
+      focarIdentificarInput();
+    } catch (e) {
+      toast('Erro ao registrar: ' + (e.message || e), 'error');
+      if (btn) btn.disabled = false;
     }
   }
   // Confirma a saída SÓ da nota bipada (não do grupo inteiro que veio
@@ -549,7 +666,57 @@
     ${tarefasPendentesHtml()}
     <div><div class="screen-title">↩️ Notas Retornadas</div><div class="screen-sub">Entrada é pra registrar uma nota que voltou. Saída é pra confirmar que uma nota já registrada foi embora de novo (reentrega).</div></div>
     <button class="btn btn-primary" data-recusa-modo="entrada" style="padding:18px;font-size:1.05rem">📥 Entrada</button>
-    <button class="btn btn-ghost" data-recusa-modo="saida" style="padding:18px;font-size:1.05rem">📤 Saída</button>`;
+    <button class="btn btn-ghost" data-recusa-modo="saida" style="padding:18px;font-size:1.05rem">📤 Saída</button>
+    <button class="btn btn-ghost" data-recusa-modo="rastrear" style="padding:18px;font-size:1.05rem">🔎 Rastrear</button>
+    <button class="btn btn-ghost" data-recusa-modo="identificar" style="padding:18px;font-size:1.05rem">🆕 Identificar</button>`;
+  }
+  // PEDIDO AO VIVO (2026-09-11): "Rastrear" — mesma linguagem visual de
+  // Saída (buscar → resultado), mas SÓ leitura: mostra onde a nota está
+  // (Box) e quantos paletes tem no evento, nenhum botão de ação.
+  function etapaRastrearBuscar() {
+    return `
+    <div><div class="screen-title">🔎 Rastrear — buscar nota</div><div class="screen-sub">Digite ou bipe o NÚMERO da nota (não a chave de 44 dígitos) pra ver onde ela está.</div></div>
+    <input id="rastrear-numero-input" class="field" inputmode="numeric" autocomplete="off" placeholder="Número da nota" value="${esc(S.rastrearNumeroBusca)}" style="font-size:1.1rem;padding:16px;text-align:center;font-weight:700">
+    <button class="btn btn-primary" id="rastrear-buscar-btn" style="padding:15px">Buscar</button>
+    ${S.rastrearBuscaErro ? `<div style="padding:12px;border-radius:10px;background:#4a1f1f;border:1px solid #7a2b2b;font-size:.82rem;color:#ffb3b3">${esc(S.rastrearBuscaErro)}</div>` : ''}
+    <button class="btn btn-ghost" data-recusa-modo="voltar" style="padding:12px">← Voltar</button>`;
+  }
+  function etapaRastrearResultado() {
+    const r = S.rastrearRecusaEncontrada;
+    const n = S.rastrearNotaEncontrada;
+    if (!r || !n) return etapaRastrearBuscar();
+    const tratamento = n.tratamento || '';
+    const noPatio = estaNoPatio(r, n);
+    return `
+    <div><div class="screen-title">🔎 Rastrear — NF ${esc(n.numeroNota || '—')}</div></div>
+    <div class="card" style="padding:13px">
+      <div style="font-size:.72rem;color:#6f89a6">BOX</div><div style="font-weight:800;margin-bottom:8px">${esc(n.box || r.box || '—')}</div>
+      <div style="font-size:.72rem;color:#6f89a6">PALETES DO EVENTO</div><div style="font-weight:800;margin-bottom:8px">${esc(r.pallets != null ? r.pallets : '—')}</div>
+      <div style="font-size:.72rem;color:#6f89a6">TRATAMENTO</div><div style="font-weight:800;margin-bottom:8px">${esc(TRATAMENTO_LABELS_SAIDA[tratamento] || tratamento || '—')}</div>
+      <div style="font-size:.72rem;color:#6f89a6">SITUAÇÃO</div><div style="font-weight:800">${noPatio ? '📦 Ainda no pátio' : '✅ Já saiu'}</div>
+    </div>
+    <button class="btn btn-ghost" id="rastrear-buscar-outra-btn" style="padding:12px">← Buscar outra nota</button>
+    <button class="btn btn-ghost" data-recusa-modo="voltar" style="padding:12px">Concluir</button>`;
+  }
+  // PEDIDO AO VIVO (2026-09-11): "Identificar" — nota que voltou fisicamente
+  // sem passar pela Entrada normal. Formulário direto, sem etapa de busca
+  // (já mostra tudo pra preencher de uma vez); motorista/motivo OPCIONAIS.
+  function etapaIdentificar() {
+    return `
+    <div><div class="screen-title">🆕 Identificar</div><div class="screen-sub">A nota voltou mas ninguém recebeu ela no sistema na hora? Registre aqui — ela já aparece em Notas Retornadas pro Analista classificar.</div></div>
+    ${S.identSalva ? `<div style="padding:12px;border-radius:10px;background:#132a1d;border:1px solid #1e6f4e;font-size:.85rem;color:#8fd9a8">✅ Última identificada: ${esc(S.identSalva)}</div>` : ''}
+    <div style="font-size:.72rem;color:#6f89a6">NÚMERO DA NOTA</div>
+    <input id="ident-numero-input" class="field" inputmode="numeric" autocomplete="off" value="${esc(S.identNumero)}" style="font-size:1.05rem;padding:14px;text-align:center;font-weight:800">
+    <div style="font-size:.72rem;color:#6f89a6">BOX</div>
+    <input id="ident-box-input" class="field" autocomplete="off" placeholder="Ex.: BOX 12" value="${esc(S.identBox)}" style="font-size:1.05rem;padding:14px;text-align:center;font-weight:800;text-transform:uppercase">
+    <div style="font-size:.72rem;color:#6f89a6">PALETES (opcional)</div>
+    <input id="ident-pallets-input" class="field" type="number" min="0" step="1" inputmode="numeric" value="${esc(S.identPallets)}" style="font-size:1.05rem;padding:14px;text-align:center">
+    <div style="font-size:.72rem;color:#6f89a6">MOTORISTA (opcional — pode não saber quem foi)</div>
+    <input id="ident-motorista-input" class="field" autocomplete="off" value="${esc(S.identMotorista)}" style="padding:13px">
+    <div style="font-size:.72rem;color:#6f89a6">MOTIVO (opcional)</div>
+    <input id="ident-motivo-input" class="field" autocomplete="off" value="${esc(S.identMotivo)}" style="padding:13px">
+    <button class="btn btn-primary" id="ident-salvar-btn" style="padding:15px">Salvar</button>
+    <button class="btn btn-ghost" data-recusa-modo="voltar" style="padding:12px">← Voltar</button>`;
   }
   // Rótulo local de Tratamento — este arquivo (Coletor) não carrega
   // TRATAMENTO_LABELS do Analista (97-recebimento-recusas.js, bundle
@@ -766,6 +933,9 @@
     modo: etapaModo,
     'saida-buscar': etapaSaidaBuscar,
     'saida-resultado': etapaSaidaResultado,
+    'rastrear-buscar': etapaRastrearBuscar,
+    'rastrear-resultado': etapaRastrearResultado,
+    identificar: etapaIdentificar,
     chave: etapaChave,
     motorista: etapaMotorista,
     volume: etapaVolume,
@@ -829,12 +999,18 @@
       const modo = btn.getAttribute('data-recusa-modo');
       if (modo === 'entrada') { S.etapa = 'chave'; render(); focarScan(); return; }
       if (modo === 'saida') { S.etapa = 'saida-buscar'; render(); focarSaidaInput(); return; }
+      if (modo === 'rastrear') { S.etapa = 'rastrear-buscar'; render(); focarRastrearInput(); return; }
+      if (modo === 'identificar') { S.etapa = 'identificar'; render(); focarIdentificarInput(); return; }
       if (modo === 'voltar') {
         S.etapa = 'modo';
         S.saidaNumeroBusca = '';
         S.saidaBuscaErro = '';
         S.saidaRecusaEncontrada = null;
         S.saidaNotaEncontrada = null;
+        S.rastrearNumeroBusca = '';
+        S.rastrearBuscaErro = '';
+        S.rastrearRecusaEncontrada = null;
+        S.rastrearNotaEncontrada = null;
         render();
       }
     }));
@@ -853,6 +1029,21 @@
       render();
       focarSaidaInput();
     });
+    const rastrearInput = document.getElementById('rastrear-numero-input');
+    if (rastrearInput) rastrearInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); buscarRastreio(); } });
+    const rastrearBuscarBtn = document.getElementById('rastrear-buscar-btn');
+    if (rastrearBuscarBtn) rastrearBuscarBtn.addEventListener('click', buscarRastreio);
+    const rastrearBuscarOutraBtn = document.getElementById('rastrear-buscar-outra-btn');
+    if (rastrearBuscarOutraBtn) rastrearBuscarOutraBtn.addEventListener('click', () => {
+      S.etapa = 'rastrear-buscar';
+      S.rastrearBuscaErro = '';
+      S.rastrearRecusaEncontrada = null;
+      S.rastrearNotaEncontrada = null;
+      render();
+      focarRastrearInput();
+    });
+    const identSalvarBtn = document.getElementById('ident-salvar-btn');
+    if (identSalvarBtn) identSalvarBtn.addEventListener('click', identificarSalvar);
     const input = document.getElementById('recusa-chave-input');
     input === null || input === void 0 || input.addEventListener('keydown', e => {
       if (e.key === 'Enter') {
