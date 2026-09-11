@@ -376,6 +376,54 @@ test('filtros: tipo/mercado/status/box/vendedor/supervisor filtram sem refazer b
   assert.equal(I(win).filtradas()[0].numeroNota, '2');
 });
 
+// PEDIDO AO VIVO (2026-09-11): "quando eu clicar em algum dos cards
+// filtrar todas as informações que condiz com o card" — os 4 cards do
+// topo (Total/Recusas/Reentregas/Notas em tratamento) viram atalhos
+// clicáveis pro mesmo filtro. "Notas em tratamento" é RECUSA com
+// QUALQUER status ativo (fora vazio/FINALIZADO) — não um status único —
+// por isso é um interruptor à parte (_filtroEmTratamento), não o dropdown
+// de status.
+test('clicar nos cards do topo filtra a tabela pelo que o card representa, e clicar de novo desliga o filtro', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'A', numeroNota: '1', tratamento: 'RECUSA', statusRetorno: 'AGUARD_FISCAL' }] } },
+    { id: 'r2', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'B', numeroNota: '2', tratamento: 'RECUSA' }] } }, // Recusa sem status ainda — NÃO é "em tratamento"
+    { id: 'r3', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'C', numeroNota: '3', tratamento: 'REENTREGA' }] } },
+  ]);
+  const { win } = carregarPagina({ recebimento_recusas: recusas, recebimento_recusas_notas: mockColecao([]) });
+  await I(win).carregarPatio(true);
+
+  I(win).clicarCard('recusa');
+  assert.deepEqual(Array.from(I(win).filtradas().map(l => l.numeroNota)).sort(), ['1', '2']);
+  I(win).clicarCard('recusa'); // clicar de novo desliga
+  assert.equal(I(win).filtradas().length, 3, 'sem filtro nenhum — volta a mostrar tudo (Total no Pátio)');
+
+  I(win).clicarCard('reentrega');
+  assert.deepEqual(Array.from(I(win).filtradas().map(l => l.numeroNota)), ['3']);
+
+  I(win).clicarCard('tratamento');
+  assert.deepEqual(Array.from(I(win).filtradas().map(l => l.numeroNota)), ['1'], 'só a Recusa com status ATIVO (não vazio, não FINALIZADO) — a nota 2 (Recusa sem status ainda) fica de fora');
+  assert.equal(I(win).getFiltroEmTratamento(), true);
+
+  I(win).clicarCard('total');
+  assert.equal(I(win).filtradas().length, 3);
+  assert.equal(I(win).getFiltroTipo(), '');
+  assert.equal(I(win).getFiltroEmTratamento(), false);
+});
+test('renderPatioTempoReal: os cards aparecem clicáveis (data-patio-card) e o card ativo fica destacado', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'A', numeroNota: '1', tratamento: 'RECUSA' }] } },
+  ]);
+  const { win, document } = carregarPagina({ recebimento_recusas: recusas, recebimento_recusas_notas: mockColecao([]) });
+  await win.renderPatioTempoReal();
+  const cards = document.querySelectorAll('[data-patio-card]');
+  assert.equal(cards.length, 4, 'os 4 cards (total/recusa/reentrega/tratamento) têm o atributo clicável');
+
+  document.querySelector('[data-patio-card="recusa"]').click();
+  const html = document.getElementById('page-recebimento-patio-tempo-real').innerHTML;
+  assert.match(html, /FILTRANDO/, 'algum indicador visual mostra qual card está ativo');
+  assert.equal(I(win).getFiltroTipo(), 'RECUSA', 'o clique real (via DOM) chamou o mesmo filtro');
+});
+
 // ── formatação de tempo parado ───────────────────────────────────────────
 test('fmtTempoParado: formata em dias/horas/minutos, nunca inventa valor sem data', () => {
   const { win } = carregarPagina({});

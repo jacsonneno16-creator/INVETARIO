@@ -93,6 +93,12 @@
   let _erro = '';
   let _intervalId = null;
   let _filtroTipo = '';
+  // PEDIDO AO VIVO (2026-09-11): clicar num dos 4 cards de cima filtra a
+  // tabela pelo que aquele card representa. "Notas em tratamento" não é um
+  // valor único de status (é RECUSA com QUALQUER status ativo, não
+  // finalizado — mesma regra de kpis().emTratamento) — por isso é um
+  // interruptor à parte, não dá pra reaproveitar _filtroStatus.
+  let _filtroEmTratamento = false;
   let _filtroMercado = '';
   let _filtroStatus = '';
   let _filtroBox = '';
@@ -292,6 +298,7 @@
       if (_filtroTipo === 'RECUSA' && l.tratamento !== 'RECUSA') return false;
       if (_filtroTipo === 'REENTREGA' && l.tratamento !== 'REENTREGA') return false;
       if (_filtroTipo === 'OUTROS' && (l.tratamento === 'RECUSA' || l.tratamento === 'REENTREGA')) return false;
+      if (_filtroEmTratamento && !(l.tratamento === 'RECUSA' && l.statusRetorno && l.statusRetorno !== 'FINALIZADO')) return false;
       if (_filtroMercado && (l.destinatario || '') !== _filtroMercado) return false;
       if (_filtroStatus && (l.statusRetorno || '') !== _filtroStatus) return false;
       if (_filtroBox && !String(l.box || '').toUpperCase().includes(_filtroBox.toUpperCase())) return false;
@@ -318,13 +325,42 @@
     };
   }
 
+  // PEDIDO AO VIVO (2026-09-11): "quando eu clicar em algum dos cards
+  // filtrar todas as informações que condiz com o card" — cada card é um
+  // atalho pro mesmo filtro que já existe no dropdown TIPO (mais o
+  // interruptor _filtroEmTratamento pro 4º card, que não é um tipo, é uma
+  // combinação tipo+status). Clicar de novo no card já ativo desliga o
+  // filtro (volta pra "Total no Pátio").
+  const _CARD_ATIVO_TOTAL = () => !_filtroTipo && !_filtroEmTratamento;
+  const _CARD_ATIVO_RECUSA = () => _filtroTipo === 'RECUSA' && !_filtroEmTratamento;
+  const _CARD_ATIVO_REENTREGA = () => _filtroTipo === 'REENTREGA';
+  const _CARD_ATIVO_TRATAMENTO = () => _filtroEmTratamento;
+  function _clicarCard(card) {
+    if (card === 'total') { _filtroTipo = ''; _filtroEmTratamento = false; }
+    else if (card === 'recusa') { _filtroEmTratamento = false; _filtroTipo = _CARD_ATIVO_RECUSA() ? '' : 'RECUSA'; }
+    else if (card === 'reentrega') { _filtroEmTratamento = false; _filtroTipo = _CARD_ATIVO_REENTREGA() ? '' : 'REENTREGA'; }
+    else if (card === 'tratamento') {
+      if (_CARD_ATIVO_TRATAMENTO()) { _filtroEmTratamento = false; _filtroTipo = ''; }
+      else { _filtroEmTratamento = true; _filtroTipo = 'RECUSA'; }
+    }
+    desenhar();
+  }
+  function _cardHtml(opts) {
+    const ativo = opts.ativo;
+    const borda = ativo ? `border:2px solid var(--accent);box-shadow:0 0 0 1px var(--accent)` : '';
+    return `<div class="tc" data-patio-card="${opts.card}" style="padding:14px;cursor:pointer;${borda}" title="Clique para filtrar a tabela por ${opts.titulo}">
+      <div style="font-size:.72rem;color:var(--muted)">${opts.rotulo}${ativo ? ' · FILTRANDO' : ''}</div>
+      <div style="font-size:1.55rem;font-weight:850">${opts.numero}</div>
+      <div style="font-size:.78rem;color:var(--muted)">${opts.rodape}</div>
+    </div>`;
+  }
   function _cardsHtml() {
     const k = kpis();
     return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:12px 0 16px">
-      <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">TOTAL NO PÁTIO</div><div style="font-size:1.55rem;font-weight:850">${k.total.toLocaleString('pt-BR')}</div><div style="font-size:.78rem;color:var(--muted)">${fmtBRL(k.valorTotal)}</div></div>
-      <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">RECUSAS</div><div style="font-size:1.55rem;font-weight:850">${k.recusas.toLocaleString('pt-BR')}</div><div style="font-size:.78rem;color:var(--muted)">${fmtBRL(k.valorRecusas)}</div></div>
-      <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">REENTREGAS</div><div style="font-size:1.55rem;font-weight:850">${k.reentregas.toLocaleString('pt-BR')}</div><div style="font-size:.78rem;color:var(--muted)">${fmtBRL(k.valorReentregas)}</div></div>
-      <div class="tc" style="padding:14px"><div style="font-size:.72rem;color:var(--muted)">NOTAS EM TRATAMENTO</div><div style="font-size:1.55rem;font-weight:850">${k.emTratamento.toLocaleString('pt-BR')}</div><div style="font-size:.78rem;color:var(--muted)">Aguard. Fiscal/CTE/Endereçando</div></div>
+      ${_cardHtml({ card: 'total', ativo: _CARD_ATIVO_TOTAL(), titulo: 'todas as notas', rotulo: 'TOTAL NO PÁTIO', numero: k.total.toLocaleString('pt-BR'), rodape: fmtBRL(k.valorTotal) })}
+      ${_cardHtml({ card: 'recusa', ativo: _CARD_ATIVO_RECUSA(), titulo: 'Recusas', rotulo: 'RECUSAS', numero: k.recusas.toLocaleString('pt-BR'), rodape: fmtBRL(k.valorRecusas) })}
+      ${_cardHtml({ card: 'reentrega', ativo: _CARD_ATIVO_REENTREGA(), titulo: 'Reentregas', rotulo: 'REENTREGAS', numero: k.reentregas.toLocaleString('pt-BR'), rodape: fmtBRL(k.valorReentregas) })}
+      ${_cardHtml({ card: 'tratamento', ativo: _CARD_ATIVO_TRATAMENTO(), titulo: 'notas em tratamento', rotulo: 'NOTAS EM TRATAMENTO', numero: k.emTratamento.toLocaleString('pt-BR'), rodape: 'Aguard. Fiscal/CTE/Endereçando' })}
     </div>`;
   }
 
@@ -434,6 +470,7 @@
   }
 
   function _ligarEventos() {
+    document.querySelectorAll('[data-patio-card]').forEach(el => el.addEventListener('click', () => _clicarCard(el.dataset.patioCard)));
     document.querySelector('[data-patio-atualizar]')?.addEventListener('click', async () => { await carregarPatio(true); desenhar(); });
     document.getElementById('patio-migrar-btn')?.addEventListener('click', migrarStatusFisico);
     document.getElementById('patio-mercado-btn')?.addEventListener('click', buscarMercadoFaltante);
@@ -482,6 +519,7 @@
     rankingMercados: _rankingMercados, fmtTempoParado, migrarStatusFisico, buscarMercadoFaltante,
     getLinhas: () => _linhas,
     setFiltroTipo: v => { _filtroTipo = v || ''; }, getFiltroTipo: () => _filtroTipo,
+    clicarCard: card => _clicarCard(card), getFiltroEmTratamento: () => _filtroEmTratamento,
     setFiltroMercado: v => { _filtroMercado = v || ''; },
     setFiltroStatus: v => { _filtroStatus = v || ''; },
     setFiltroBox: v => { _filtroBox = v || ''; },
