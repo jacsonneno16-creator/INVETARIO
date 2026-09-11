@@ -2182,12 +2182,7 @@ exports.buscarIndicadoresRetornosBigQuery = functions
 // não por período — filtro diferente do de Indicadores/Notas Retornadas/
 // Status, por isso é uma função separada (mesma view "_raw_latest",
 // mesmo formato de retorno {_id, ...dados}).
-async function _buscarPatioTempoRealBigQueryInterno(data, acesso, bigqueryClient) {
-  const lojaId = textoSeguro(data?.lojaId, 120);
-  if (!lojaId) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
-  if (!_lojaPermitidaParaAcesso(acesso, lojaId)) {
-    throw new functions.https.HttpsError('permission-denied', 'Seu login não tem acesso a esta loja.');
-  }
+async function _consultarPatioTempoRealBigQuery(lojaId, bigqueryClient) {
   const query = `
     SELECT document_id, data
     FROM \`daterrinha-inventario.dt_relatorios.recebimento_recusas_raw_latest\`
@@ -2198,6 +2193,120 @@ async function _buscarPatioTempoRealBigQueryInterno(data, acesso, bigqueryClient
   const [rows] = await bigqueryClient.query({query, params: {lojaId}});
   return rows.map(r => Object.assign({_id: r.document_id}, JSON.parse(r.data)));
 }
+async function _buscarPatioTempoRealBigQueryInterno(data, acesso, bigqueryClient) {
+  const lojaId = textoSeguro(data?.lojaId, 120);
+  if (!lojaId) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
+  if (!_lojaPermitidaParaAcesso(acesso, lojaId)) {
+    throw new functions.https.HttpsError('permission-denied', 'Seu login não tem acesso a esta loja.');
+  }
+  return _consultarPatioTempoRealBigQuery(lojaId, bigqueryClient);
+}
+// PEDIDO AO VIVO (2026-09-11): "clico demora muito para carregar" — mesmo
+// com minInstances:1 (sem cold start), o próprio BigQuery tem um piso de
+// 1-3s por consulta que não dá pra encolher mais. Confirmado direto no log
+// do servidor (Function execution took ~1200-1600ms) — não era bug de
+// código, era o pedágio inerente de "consultar o BigQuery na hora do
+// clique". Em vez de cada clique de cada Analista disparar sua própria
+// consulta, um job agendado (a cada 2 minutos) já deixa o resultado PRONTO
+// — flatten por nota + enriquecido (mercado/vendedor/valor) — guardado em
+// `lojas/{lojaId}/recebimento_patio_cache/atual`. A tela passa a fazer só
+// uma LEITURA de Firestore desse documento (bem abaixo de 1s), igual toda
+// outra tela do app — sem chamar Cloud Function nem BigQuery no clique.
+// Mesma tolerância de atraso (1-5min) que o usuário já aceitou pra essa
+// tela; o job roda bem mais rápido que isso (2min), então na prática fica
+// sempre bem mais fresco que o mínimo aceito.
+function _estaNoPatioParaCache(doc, nota) {
+  if (doc.origem !== 'COLETOR' && doc.origem !== 'INVENTARIO_INICIAL') return false;
+  const tratamento = nota.tratamento != null ? nota.tratamento : (doc.tratamento || '');
+  if (tratamento === 'REENTREGA') {
+    const saida = nota.dataSaidaEm != null ? nota.dataSaidaEm : doc.dataSaidaEm;
+    return !saida;
+  }
+  if (tratamento === 'RECUSA') {
+    const status = nota.statusRetorno != null ? nota.statusRetorno : (doc.statusRetorno || '');
+    return status !== 'FINALIZADO';
+  }
+  return true;
+}
+const _CAMPOS_POR_NOTA_PATIO_CACHE = ['tratamento', 'statusRetorno', 'dataSaidaEm', 'dataProgramadaEm', 'box', 'numeroNota', 'chave', 'destinatario', 'volumeEsperado'];
+function _linhasPorNotaParaCache(recusas) {
+  const linhas = [];
+  recusas.forEach(r => {
+    const notas = Array.isArray(r.notas) && r.notas.length ? r.notas : [{}];
+    notas.forEach(nota => {
+      const linha = Object.assign({}, r, {notas: [nota], _recusaId: r._id, _notaChave: nota.chave || ''});
+      _CAMPOS_POR_NOTA_PATIO_CACHE.forEach(c => { linha[c] = nota[c] != null ? nota[c] : r[c]; });
+      if (linha.tratamento == null) linha.tratamento = '';
+      if (linha.statusRetorno == null) linha.statusRetorno = '';
+      linhas.push(linha);
+    });
+  });
+  return linhas;
+}
+async function _montarCachePatioTempoRealLoja(lojaId, bigqueryClient) {
+  const docs = await _consultarPatioTempoRealBigQuery(lojaId, bigqueryClient);
+  const linhas = _linhasPorNotaParaCache(docs).filter(l => _estaNoPatioParaCache(l, l));
+  const chaves = [...new Set(linhas.map(l => l.chave).filter(Boolean))];
+  const porChave = new Map();
+  if (chaves.length) {
+    const colNotas = db.collection('lojas').doc(lojaId).collection('recebimento_recusas_notas');
+    const snaps = await Promise.all(chaves.map(c => colNotas.doc(c).get()));
+    snaps.forEach(s => { if (s.exists) porChave.set(s.id, s.data()); });
+  }
+  const linhasEnriquecidas = linhas.map(l => {
+    const n = porChave.get(l.chave) || {};
+    return Object.assign({}, l, {
+      destinatario: l.destinatario || n.destinatario || '',
+      vendedorNome: n.vendedorNome || '',
+      supervisorNome: n.supervisorNome || '',
+      valorTotal: Number(l.valorTotal != null ? l.valorTotal : n.valorTotal) || 0,
+    });
+  });
+  const batch = db.batch();
+  batch.set(db.collection('lojas').doc(lojaId).collection('recebimento_patio_cache').doc('atual'), {
+    linhas: linhasEnriquecidas,
+    atualizadoEm: new Date().toISOString(),
+  });
+  await batch.commit();
+  return linhasEnriquecidas.length;
+}
+async function _atualizarCachePatioTempoRealTodasLojas(bigqueryClient) {
+  const lojasSnap = await db.collection('lojas').get();
+  if (!bigqueryClient) bigqueryClient = _obterBigQueryCliente();
+  const resultados = [];
+  for (const doc of lojasSnap.docs) {
+    try {
+      const total = await _montarCachePatioTempoRealLoja(doc.id, bigqueryClient);
+      resultados.push({loja: doc.id, ok: true, total});
+    } catch (e) {
+      resultados.push({loja: doc.id, ok: false, erro: e.message || String(e)});
+    }
+  }
+  return resultados;
+}
+exports.atualizarCachePatioTempoRealAgendado = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 120, memory: '256MB'})
+  .pubsub.schedule('every 2 minutes')
+  .onRun(async () => { await _atualizarCachePatioTempoRealTodasLojas(); return null; });
+// Gatilho manual — pra testar sem esperar o próximo ciclo de 2min, mesma
+// checagem de administrador de sincronizarBiAgendadoAgora.
+exports.atualizarCachePatioTempoRealAgora = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 120, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const solicitante = await acessoSolicitante(context);
+    if (!administrador(solicitante)) {
+      throw new functions.https.HttpsError('permission-denied', 'Seu login não pode rodar essa atualização.');
+    }
+    const resultados = await _atualizarCachePatioTempoRealTodasLojas();
+    return {ok: true, resultados};
+  });
+// Callable ao vivo — mantida como FALLBACK: se o cache ainda não existir
+// (loja nova, ou os 2 primeiros minutos depois do 1º deploy do job
+// agendado) ou estiver visivelmente parado (job quebrado), a tela cai pra
+// esta consulta direta em vez de mostrar dado vazio/velho demais.
 exports.buscarPatioTempoRealBigQuery = functions
   .region('southamerica-east1')
   .runWith({timeoutSeconds: 30, memory: '256MB', minInstances: 1})
@@ -2296,7 +2405,8 @@ exports._graphBiInternals = {
   _construirConsumoInsumosResumoBi, _gravarConsumoInsumosResumoBi,
   _construirCortesResumoMensalBi, _gravarCortesResumoMensalBi,
   _buscarIndicadoresRetornosBigQueryInterno, _lojaPermitidaParaAcesso,
-  _buscarPatioTempoRealBigQueryInterno,
+  _buscarPatioTempoRealBigQueryInterno, _consultarPatioTempoRealBigQuery,
+  _estaNoPatioParaCache, _linhasPorNotaParaCache, _montarCachePatioTempoRealLoja, _atualizarCachePatioTempoRealTodasLojas,
   _buscarTransbordoTodasLojasBigQueryInterno, _buscarCargasTodasLojasBigQueryInterno, _clausulaLojasPermitidas,
 };
 

@@ -1426,6 +1426,16 @@ service cloud.firestore {
         allow delete: if canAccessStore(lojaId) && hasPermissionRecusas('excluir');
       }
 
+      // PEDIDO AO VIVO (2026-09-11): "clico demora muito para carregar" —
+      // resultado pronto do Pátio em Tempo Real (105-recebimento-patio-
+      // tempo-real.js), montado por um job agendado a cada 2min
+      // (atualizarCachePatioTempoRealAgendado, functions/index.js) — só
+      // LEITURA pro Analista; quem escreve é sempre a Cloud Function (SDK
+      // admin, ignora estas regras), nunca o cliente direto.
+      match /recebimento_patio_cache/{docId} {
+        allow read: if canAccessStore(lojaId) && canUseAnalista();
+      }
+
       match /recebimento_agendamentos/{docId} {
         allow read: if canAccessStore(lojaId);
         allow write: if canAccessStore(lojaId) && (

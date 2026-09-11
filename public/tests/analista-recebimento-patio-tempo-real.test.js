@@ -230,6 +230,57 @@ test('carregarPatio: com o cache compartilhado (DT_NOTAS_VENDA_CACHE) já comple
   assert.equal(chamouWhere, false, 'zero leituras no Firestore — o cache já tinha tudo');
 });
 
+// PEDIDO AO VIVO (2026-09-11): "clico demora muito para carregar" — leitura
+// direta de lojas/{lojaId}/recebimento_patio_cache/atual (montado por um
+// job agendado no servidor) em vez de chamar a Cloud Function/BigQuery no
+// clique.
+test('carregarPatio: com cache válido (recente) no Firestore, usa ele direto — NUNCA chama a Cloud Function', async () => {
+  let chamouFuncao = false;
+  const cache = mockColecao([{ id: 'atual', data: {
+    atualizadoEm: new Date().toISOString(),
+    linhas: [{ origem: 'COLETOR', criadoEm: '2026-09-01T10:00:00.000Z', numeroNota: '700', destinatario: 'Mercado Cache', tratamento: 'RECUSA', chave: 'CHZ' }],
+  } }]);
+  const { win } = carregarPagina({ recebimento_patio_cache: cache });
+  win.firebase.app = () => ({ functions: () => ({ httpsCallable: () => async () => { chamouFuncao = true; return { data: { recusas: [] } }; } }) });
+
+  await I(win).carregarPatio(true);
+  const linhas = I(win).getLinhas();
+
+  assert.equal(chamouFuncao, false, 'cache válido — não precisa chamar a Cloud Function');
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].destinatario, 'Mercado Cache');
+});
+
+test('carregarPatio: cache PARADO há mais de 10min (job quebrado) cai pro caminho ao vivo (Cloud Function), não mostra dado velho demais', async () => {
+  let chamouFuncao = false;
+  const cache = mockColecao([{ id: 'atual', data: {
+    atualizadoEm: new Date(Date.now() - 15 * 60000).toISOString(), // 15min atrás
+    linhas: [{ origem: 'COLETOR', criadoEm: '2026-09-01T10:00:00.000Z', numeroNota: '700', destinatario: 'Mercado Velho', tratamento: 'RECUSA' }],
+  } }]);
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-09-01T10:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'A', numeroNota: '800', tratamento: 'RECUSA' }] } },
+  ]);
+  const { win } = carregarPagina({ recebimento_patio_cache: cache, recebimento_recusas: recusas, recebimento_recusas_notas: mockColecao([]) });
+  const funcaoOriginal = win.firebase.app().functions().httpsCallable;
+  win.firebase.app = () => ({ functions: () => ({ httpsCallable: nome => async payload => { chamouFuncao = true; return funcaoOriginal(nome)(payload); } }) });
+
+  await I(win).carregarPatio(true);
+  const linhas = I(win).getLinhas();
+
+  assert.equal(chamouFuncao, true, 'cache velho demais — precisa ir pro caminho ao vivo');
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].numeroNota, '800', 'veio da busca ao vivo, não do cache velho');
+});
+
+test('carregarPatio: sem documento de cache ainda (loja nova / antes do 1º ciclo do job) cai pro caminho ao vivo sem quebrar', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-09-01T10:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'A', numeroNota: '801', tratamento: 'RECUSA' }] } },
+  ]);
+  const { win } = carregarPagina({ recebimento_patio_cache: mockColecao([]), recebimento_recusas: recusas, recebimento_recusas_notas: mockColecao([]) });
+  await I(win).carregarPatio(true);
+  assert.equal(I(win).getLinhas()[0].numeroNota, '801');
+});
+
 // ── kpis / ranking ───────────────────────────────────────────────────────
 test('kpis: soma total/recusas/reentregas (qtd+valor) e conta notas em tratamento (status fora de vazio/FINALIZADO)', async () => {
   const recusas = mockColecao([

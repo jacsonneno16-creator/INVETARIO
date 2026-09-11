@@ -145,15 +145,38 @@
     });
   }
 
-  // PEDIDO AO VIVO (2026-09-11): "a parte do Analista pode puxar do
-  // BigQuery, 1 a 5 minutos de atraso não tem problema" — troca a busca
-  // direta no Firestore pela Cloud Function buscarPatioTempoRealBigQuery
-  // (mesma view "_raw_latest", filtro por statusFisico=NO_PATIO em vez de
-  // período). O polling de 45s e o enriquecimento por nota (via
-  // recebimento_recusas_notas) continuam iguais — só a origem da lista
-  // principal muda. migrarStatusFisico() continua lendo o Firestore
-  // direto de propósito (precisa ver TODOS os documentos, inclusive os
-  // sem statusFisico ainda, pra fazer o backfill).
+  // PEDIDO AO VIVO (2026-09-11): "clico demora muito para carregar" —
+  // confirmado no log do servidor que a Cloud Function em si já é rápida
+  // (~1.2-1.6s, minInstances:1 sem cold start), então o que sobrava era o
+  // pedágio inerente do próprio BigQuery, que não encolhe mais por código.
+  // Um job agendado (functions/index.js, a cada 2min) já deixa o
+  // resultado PRONTO — flatten por nota + enriquecido — guardado em
+  // lojas/{lojaId}/recebimento_patio_cache/atual; ler esse documento é
+  // uma leitura comum de Firestore (bem abaixo de 1s), sem chamar Cloud
+  // Function nem BigQuery no clique. Se o cache ainda não existir (loja
+  // nova / logo após o 1º deploy) ou estiver visivelmente parado (job
+  // quebrado — mais de 10min sem atualizar), cai pro caminho ao vivo de
+  // antes (Cloud Function + enriquecimento no cliente), nunca mostra tela
+  // vazia por causa disso.
+  const LIMITE_IDADE_CACHE_MIN = 10;
+  async function _tentarCarregarDoCache(lojaId) {
+    try {
+      const snap = await fs().collection('recebimento_patio_cache').doc('atual').get();
+      if (!snap.exists) return false;
+      const dados = snap.data() || {};
+      if (!Array.isArray(dados.linhas)) return false;
+      const atualizadoEm = dados.atualizadoEm ? new Date(dados.atualizadoEm) : null;
+      const idadeMin = atualizadoEm && !isNaN(atualizadoEm) ? (Date.now() - atualizadoEm.getTime()) / 60000 : Infinity;
+      if (idadeMin > LIMITE_IDADE_CACHE_MIN) return false;
+      _linhas = dados.linhas.filter(l => estaNoPatio(l, l));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  // migrarStatusFisico() continua lendo o Firestore direto de propósito
+  // (precisa ver TODOS os documentos, inclusive os sem statusFisico
+  // ainda, pra fazer o backfill — não tem como isso vir do cache).
   async function carregarPatio(forcar) {
     if (_carregado && !forcar) return;
     if (_carregando) return;
@@ -162,11 +185,14 @@
     try {
       const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
       if (!lojaId) throw new Error('Nenhuma loja selecionada.');
-      const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarPatioTempoRealBigQuery');
-      const resposta = await callable({ lojaId });
-      const docs = (resposta && resposta.data && resposta.data.recusas) || [];
-      const todasLinhas = linhasPorNota(docs).filter(l => estaNoPatio(l, l));
-      _linhas = await _enriquecerComNotas(todasLinhas);
+      const veioDoCache = await _tentarCarregarDoCache(lojaId);
+      if (!veioDoCache) {
+        const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarPatioTempoRealBigQuery');
+        const resposta = await callable({ lojaId });
+        const docs = (resposta && resposta.data && resposta.data.recusas) || [];
+        const todasLinhas = linhasPorNota(docs).filter(l => estaNoPatio(l, l));
+        _linhas = await _enriquecerComNotas(todasLinhas);
+      }
       _carregado = true;
     } catch (e) {
       _erro = e.message || String(e);
