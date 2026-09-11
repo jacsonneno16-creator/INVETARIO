@@ -177,65 +177,16 @@
   // Mesmo mapeamento de 99-recebimento-retornos-status.js (duplicado de
   // propósito) — data nomeada que só é carimbada na 1ª vez que o status
   // ENTRA nesse valor.
-  const DATA_POR_STATUS = { '': 'liberadoParaRecusarEm', AGUARD_FISCAL: 'dataSolicitacaoFiscalEm', CTE: 'dataDaRecusaEm', ENDERECANDO: 'dataDoEnderecamentoEm' };
-  function statusRetornoLabels() {
-    return (global._recebimentoRetornosStatusInternals && global._recebimentoRetornosStatusInternals.STATUS_RETORNO_LABELS) || { '': 'Aguard. Monitoramento' };
-  }
-  // PEDIDO AO VIVO (2026-09-08): "colocar mais uma coluna de status, onde
-  // eu consiga adiantar quais vao ser os status" — dá pra classificar
-  // Tratamento E já adiantar o Status (Aguard. Fiscal/CTE/Endereçando/
-  // Finalizado, ou Data Programada/Saída se for Reentrega) sem sair desta
-  // tela. Mesma escrita por nota de mudarStatusRetorno/salvarDataReentrega
-  // (99-recebimento-retornos-status.js), duplicada aqui de propósito —
-  // "Status de Retornos" continua existindo do jeito que está, esta tela
-  // só ganha um atalho pro mesmo campo.
-  function _acharOuCriarNota(r, notaChave) {
-    const notas = Array.isArray(r.notas) ? r.notas.slice() : [];
-    let idx = notas.findIndex(n => (n.chave || '') === notaChave);
-    if (idx === -1) { if (notas.length) return null; idx = 0; notas.push({}); }
-    return { notas, idx };
-  }
-  async function mudarStatusRetorno(recusaId, notaChave, novoStatus) {
-    const r = _recusas.find(x => x._id === recusaId);
-    if (!r) return;
-    const achado = _acharOuCriarNota(r, notaChave);
-    if (!achado) return;
-    const { notas, idx } = achado;
-    const nota = notas[idx];
-    const statusAtual = nota.statusRetorno != null ? nota.statusRetorno : (r.statusRetorno || '');
-    if (statusAtual === novoStatus) return;
-    const u = usuarioAtual();
-    const evento = { status: novoStatus, em: new Date().toISOString(), por: u.email || u.uid || '' };
-    const historicoBase = Array.isArray(nota.statusRetornoHistorico) ? nota.statusRetornoHistorico
-      : (Array.isArray(r.statusRetornoHistorico) ? r.statusRetornoHistorico : []);
-    const patchNota = { statusRetorno: novoStatus, statusRetornoHistorico: [...historicoBase, evento] };
-    const campoData = DATA_POR_STATUS[novoStatus];
-    if (campoData && !nota[campoData]) patchNota[campoData] = r[campoData] || evento.em;
-    try {
-      const notasAtualizadas = notas.map((n, i) => i === idx ? Object.assign({}, n, patchNota) : n);
-      await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas });
-      r.notas = notasAtualizadas;
-      redesenharTabela();
-    } catch (e) { global.showToast?.('Erro ao atualizar status: ' + (e.message || e), 'error'); }
-  }
-  async function salvarDataReentrega(recusaId, notaChave, campo, valorData) {
-    const r = _recusas.find(x => x._id === recusaId);
-    if (!r) return;
-    const achado = _acharOuCriarNota(r, notaChave);
-    if (!achado) return;
-    const { notas, idx } = achado;
-    const iso = valorData ? new Date(valorData + 'T00:00:00').toISOString() : null;
-    try {
-      const notasAtualizadas = notas.map((n, i) => i === idx ? Object.assign({}, n, { [campo]: iso }) : n);
-      await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas });
-      r.notas = notasAtualizadas;
-    } catch (e) { global.showToast?.('Erro ao salvar data: ' + (e.message || e), 'error'); }
-  }
-  function isoParaInputDate(iso) {
-    if (!iso) return '';
-    const d = new Date(iso);
-    return isNaN(d) ? '' : d.toISOString().slice(0, 10);
-  }
+  // PEDIDO AO VIVO (2026-09-10): a coluna "Status do retorno" (atalho pedido
+  // em 08/09 pra editar sem sair desta tela) foi REMOVIDA — o usuário
+  // confirmou que o campo deve viver só em "Status de Retornos"
+  // (99-recebimento-retornos-status.js), pra não ter dois lugares editando
+  // o mesmo dado. Esta tela volta a mostrar só o Tratamento (classificação);
+  // quem quiser mudar o status/datas de uma nota já classificada como
+  // Recusa/Reentrega faz isso em Status de Retornos. mudarStatusRetorno/
+  // salvarDataReentrega/isoParaInputDate/statusRetornoCelulaHtml (a cópia
+  // local que existia só pra esse atalho) foram removidas junto — não têm
+  // mais nenhum outro chamador neste arquivo.
   // Valor legado (Devolução/Substituição/Pendente/Outro) que não está mais
   // na lista de opções (TRATAMENTO_OPCOES_SELECT) precisa aparecer mesmo
   // assim — nunca mostrar em branco um valor que já foi classificado de
@@ -245,18 +196,6 @@
     const opcoes = TRATAMENTO_OPCOES_SELECT.includes(valor) ? TRATAMENTO_OPCOES_SELECT : [...TRATAMENTO_OPCOES_SELECT, valor];
     return `<select class="field" style="padding:6px;font-size:.75rem" data-recusa-tratamento="${esc(r._recusaId)}|${esc(r._notaChave)}">${opcoes.map(k => `<option value="${k}" ${k === valor ? 'selected' : ''}>${esc(TRATAMENTO_LABELS[k] || k)}</option>`).join('')}</select>`;
   }
-  function statusRetornoCelulaHtml(r) {
-    if (r.tratamento === 'REENTREGA') {
-      return `<div style="display:flex;flex-direction:column;gap:3px;font-size:.68rem">
-        <label>Prog.: <input type="date" data-recusa-reentrega-data="${esc(r._recusaId)}|${esc(r._notaChave)}:dataProgramadaEm" value="${isoParaInputDate(r.dataProgramadaEm)}" style="padding:2px"></label>
-        <label>Saída: <input type="date" data-recusa-reentrega-data="${esc(r._recusaId)}|${esc(r._notaChave)}:dataSaidaEm" value="${isoParaInputDate(r.dataSaidaEm)}" style="padding:2px"></label>
-      </div>`;
-    }
-    if (r.tratamento !== 'RECUSA') return '—';
-    const labels = statusRetornoLabels();
-    return `<select class="field" style="padding:6px;font-size:.72rem" data-recusa-status="${esc(r._recusaId)}|${esc(r._notaChave)}">${Object.keys(labels).map(k => `<option value="${k}" ${k === (r.statusRetorno || '') ? 'selected' : ''}>${esc(labels[k])}</option>`).join('')}</select>`;
-  }
-
   function fs() {
     if (typeof global.getDTFirestore === 'function') return global.getDTFirestore();
     if (global.firebase && typeof global.firebase.firestore === 'function') return global.firebase.firestore();
@@ -732,11 +671,11 @@
       return '<div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">Escolha o período e clique em Buscar</div></div>';
     }
     const lista = filtrarRecusas();
-    return `<div style="overflow:auto"><table class="dt-table"><thead><tr><th>Data/Hora</th><th>Notas</th><th>Origem</th><th>Motorista</th><th>Conferente</th><th>Motivo</th><th>Box</th><th>Esperado</th><th>Contado</th><th>Dif.</th><th>Status</th><th>Conferência de produtos</th><th>Tratamento</th><th>Status do retorno</th><th></th></tr></thead><tbody>${lista.length ? lista.map(r => {
+    return `<div style="overflow:auto"><table class="dt-table"><thead><tr><th>Data/Hora</th><th>Notas</th><th>Origem</th><th>Motorista</th><th>Conferente</th><th>Motivo</th><th>Box</th><th>Esperado</th><th>Contado</th><th>Dif.</th><th>Status</th><th>Conferência de produtos</th><th>Tratamento</th><th></th></tr></thead><tbody>${lista.length ? lista.map(r => {
       const dif = Number(r.diferencaVolumes || 0);
       const opcoesMotivo=_motivos.filter(m=>m.ativo!==false||m._id===r.motivoId).map(m=>`<option value="${esc(m._id)}" ${m._id===r.motivoId?'selected':''}>${esc(m.nome)}</option>`).join('');
-      return `<tr><td>${fmtDataHora(r.criadoEm)}</td><td><b>${esc((r.notas || []).map(n => n.numeroNota).filter(Boolean).join(', ') || '—')}</b></td><td>${r.origem==='AUTOMATICO'?'<span class="badge" style="background:#4a3114;color:#ffd18a;font-size:.65rem">⚡ automático</span>':(r.origem==='COLETOR'?'<span class="badge b-blue" style="font-size:.65rem">📱 coletor</span>':'—')}</td><td>${esc(r.motoristaNome || '—')}</td><td>${esc(r.conferenteNome || '—')}</td><td><select class="field" style="min-width:150px;padding:6px;font-size:.72rem" data-recusa-motivo="${esc(r._id)}"><option value="">— Sem motivo —</option>${opcoesMotivo}${r.motivoId&&!_motivos.some(m=>m._id===r.motivoId)?`<option value="${esc(r.motivoId)}" selected>${esc(r.motivoNome||'Motivo antigo')}</option>`:''}</select></td><td><b>${esc(r.box || '—')}</b></td><td>${Number(r.volumeEsperado || 0)}</td><td>${Number(r.volumeInformado || 0)}</td><td style="font-weight:800;color:${dif ? '#dc2626':'#15803d'}">${dif > 0 ? '+' : ''}${dif}</td><td>${dif ? '<span class="badge red">Divergente</span>' : '<span class="badge green">Conferido</span>'}</td><td>${statusConferenciaHtml(r)}</td><td>${tratamentoSelectHtml(r)}</td><td>${statusRetornoCelulaHtml(r)}</td><td><button class="btn btn-ghost btn-sm" data-recusa-detalhe="${esc(r._id)}">🔍</button> <button class="btn btn-ghost btn-sm" data-recusa-excluir="${esc(r._id)}" title="Excluir esta nota retornada registrada">🗑️</button></td></tr>`;
-    }).join('') : '<tr><td colspan="15"><div class="empty"><div class="empty-icon">↩️</div><div class="empty-title">Nenhuma nota retornada com esses filtros</div></div></td></tr>'}</tbody></table></div>`;
+      return `<tr><td>${fmtDataHora(r.criadoEm)}</td><td><b>${esc((r.notas || []).map(n => n.numeroNota).filter(Boolean).join(', ') || '—')}</b></td><td>${r.origem==='AUTOMATICO'?'<span class="badge" style="background:#4a3114;color:#ffd18a;font-size:.65rem">⚡ automático</span>':(r.origem==='COLETOR'?'<span class="badge b-blue" style="font-size:.65rem">📱 coletor</span>':'—')}</td><td>${esc(r.motoristaNome || '—')}</td><td>${esc(r.conferenteNome || '—')}</td><td><select class="field" style="min-width:150px;padding:6px;font-size:.72rem" data-recusa-motivo="${esc(r._id)}"><option value="">— Sem motivo —</option>${opcoesMotivo}${r.motivoId&&!_motivos.some(m=>m._id===r.motivoId)?`<option value="${esc(r.motivoId)}" selected>${esc(r.motivoNome||'Motivo antigo')}</option>`:''}</select></td><td><b>${esc(r.box || '—')}</b></td><td>${Number(r.volumeEsperado || 0)}</td><td>${Number(r.volumeInformado || 0)}</td><td style="font-weight:800;color:${dif ? '#dc2626':'#15803d'}">${dif > 0 ? '+' : ''}${dif}</td><td>${dif ? '<span class="badge red">Divergente</span>' : '<span class="badge green">Conferido</span>'}</td><td>${statusConferenciaHtml(r)}</td><td>${tratamentoSelectHtml(r)}</td><td><button class="btn btn-ghost btn-sm" data-recusa-detalhe="${esc(r._id)}">🔍</button> <button class="btn btn-ghost btn-sm" data-recusa-excluir="${esc(r._id)}" title="Excluir esta nota retornada registrada">🗑️</button></td></tr>`;
+    }).join('') : '<tr><td colspan="14"><div class="empty"><div class="empty-icon">↩️</div><div class="empty-title">Nenhuma nota retornada com esses filtros</div></div></td></tr>'}</tbody></table></div>`;
   }
 
   // FASE 8 — "Conferência de produtos" é um status PRÓPRIO e separado
@@ -1537,15 +1476,6 @@
       alterarTratamento(recusaId, notaChave, sel.value);
     }));
     document.querySelectorAll('[data-recusa-motivo]').forEach(sel => sel.addEventListener('change', () => alterarMotivo(sel.dataset.recusaMotivo, sel.value)));
-    document.querySelectorAll('[data-recusa-status]').forEach(sel => sel.addEventListener('change', () => {
-      const [recusaId, notaChave] = String(sel.dataset.recusaStatus).split('|');
-      mudarStatusRetorno(recusaId, notaChave, sel.value);
-    }));
-    document.querySelectorAll('[data-recusa-reentrega-data]').forEach(inp => inp.addEventListener('change', () => {
-      const [idNota, campo] = String(inp.dataset.recusaReentregaData).split(':');
-      const [recusaId, notaChave] = idNota.split('|');
-      salvarDataReentrega(recusaId, notaChave, campo, inp.value);
-    }));
   }
   function redesenharTabela() {
     const host = document.getElementById('recusas-tabela');
@@ -1606,11 +1536,6 @@
       await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas, statusFisico });
       r.notas = notasAtualizadas;
       r.statusFisico = statusFisico;
-      // PEDIDO AO VIVO (2026-09-08): a coluna "Status do retorno" depende
-      // do Tratamento (Recusa mostra o select de status, Reentrega mostra
-      // as datas, em branco não mostra nada) — precisa redesenhar pra essa
-      // célula aparecer assim que a nota é classificada, sem esperar outro
-      // redesenho acontecer por acaso (ex.: mexer num filtro).
       redesenharTabela();
       global.showToast?.('Tratamento atualizado.', 'success');
     } catch (e) { global.showToast?.('Erro ao salvar tratamento: ' + (e.message || e), 'error'); }

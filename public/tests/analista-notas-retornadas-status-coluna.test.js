@@ -1,13 +1,16 @@
-// PEDIDO AO VIVO (2026-09-08): "e colocar mais uma coluna de status, onde
-// eu consiga adiantar quais vao ser os status que vai aparecer lá, tipo o
-// tratamento é recusa, o status aguard. fiscal" — Notas Retornadas ganha
-// uma coluna "Status do retorno" pra classificar Tratamento E já adiantar
-// o Status sem sair da tela (mesmo campo por nota que "Status de
-// Retornos"/99-recebimento-retornos-status.js já usa — aquela tela
-// continua existindo do jeito que está, esta é só um atalho a mais pro
-// mesmo dado). Também trava o dropdown de Tratamento em só Recusa/
-// Reentrega (as opções antigas continuam sendo EXIBIDAS certas em
-// registros já classificados assim, só não dá mais pra ESCOLHER de novo).
+// PEDIDO AO VIVO (2026-09-08): Notas Retornadas ganhou uma coluna "Status do
+// retorno" — atalho pra classificar Tratamento E já adiantar o Status sem
+// sair da tela (mesmo campo por nota que "Status de Retornos"/
+// 99-recebimento-retornos-status.js já usa).
+//
+// REVERTIDO (2026-09-10, pedido ao vivo, confirmado explicitamente): "aqui na
+// base geral não vai ficar, vai esse status de retorno vai aparecer lá na
+// recusa" — dois lugares editando o mesmo campo (aqui e em Status de
+// Retornos) foi considerado confuso demais. A coluna/atalho foi removida
+// desta tela; o Status de retorno (e as datas de Reentrega) só se editam em
+// Status de Retornos (99) a partir de agora. Esta suíte passou a confirmar a
+// AUSÊNCIA do atalho, e que o Tratamento (que continua aqui, é a
+// classificação em si) segue funcionando normalmente sem ele.
 const test=require('node:test');const assert=require('node:assert/strict');const fs=require('fs');const path=require('path');
 const { JSDOM } = require('jsdom');
 const base=path.join(__dirname,'../js/analista');
@@ -50,42 +53,23 @@ function mockColecao(docsIniciais){
   };
 }
 let _janelasAbertas = [];
-test.afterEach(() => { _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} }); _janelasAbertas = []; });
-function _comColecaoNoDoc(colecao, nome){
-  const docOriginal = colecao.doc;
-  colecao.doc = (id) => ({ ...docOriginal(id), _colecao: nome });
-  return colecao;
-}
-function mockRawFirestore(colecoes){
-  return { batch:()=>{
-    const ops=[];
-    return {
-      set:(ref,payload,opts)=>ops.push({ref,payload,merge:!!opts?.merge}),
-      delete:(ref)=>ops.push({ref,excluir:true}),
-      commit: async()=>{ ops.forEach(op=>{
-        const col=colecoes[op.ref._colecao];
-        if(!col)return;
-        if(op.excluir){ col._registro.delete(op.ref.id); return; }
-        const atual=col._registro.get(op.ref.id)||{};
-        col._registro.set(op.ref.id, op.merge?{...atual,...op.payload}:op.payload);
-      }); },
-    };
-  } };
-}
+test.afterEach(async () => {
+  await new Promise(r => setTimeout(r, 0));
+  _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} });
+  _janelasAbertas = [];
+});
 function carregarPagina(colecoesEntrada){
   const dom=new JSDOM('<!doctype html><html><body><div id="page-recebimento-recusas"></div></body></html>',{ url:'http://localhost/', runScripts:'outside-only' });
   const win=dom.window; const document=win.document;
   const colecoes={...(colecoesEntrada||{})};
   if(!colecoes.recebimento_recusas_notas_chunks) colecoes.recebimento_recusas_notas_chunks=mockColecao([]);
-  Object.keys(colecoes).forEach(nome=>_comColecaoNoDoc(colecoes[nome],nome));
-  win.getDTFirestore=()=>({ collection:(nome)=>{ if(!colecoes[nome]) colecoes[nome]=_comColecaoNoDoc(mockColecao([]),nome); return colecoes[nome]; } });
-  win.getDTRawFirestore=()=>mockRawFirestore(colecoes);
+  win.getDTFirestore=()=>({ collection:(nome)=>{ if(!colecoes[nome]) colecoes[nome]=mockColecao([]); return colecoes[nome]; } });
   win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }) };
   win.showToast=()=>{};
   win.aplicarPermissoesAnalista=()=>{};
   win.openModal=()=>{};
   win.closeModal=()=>{};
-  win.eval(statusCode); // dono de STATUS_RETORNO_LABELS, que 97 reaproveita
+  win.eval(statusCode); // dono de STATUS_RETORNO_LABELS, que 97 ainda referencia via TRATAMENTO_LABELS de outros pontos
   win.eval(recusasCode);
   _janelasAbertas.push(win);
   return { win, document };
@@ -97,87 +81,7 @@ function baseColecoes(recusas,notas){
   };
 }
 
-test('dropdown de Tratamento só oferece Recusa e Reentrega (mais o vazio) — não Devolução/Substituição/Pendente/Outro', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1'}]}}]);
-  const { win, document }=carregarPagina(baseColecoes(recusas));
-  await win.renderRecebimentoRecusas();
-  win.document.getElementById('recusas-buscar-periodo').click();
-  await new Promise(r => setTimeout(r, 0));
-  const select=document.querySelector('[data-recusa-tratamento="r1|CH1"]');
-  const valores=[...select.options].map(o=>o.value);
-  assert.deepEqual(valores,['','RECUSA','REENTREGA']);
-});
-
-test('registro antigo classificado como Devolução continua mostrando "Devolução" no select (não fica em branco), mesmo sem poder escolher de novo', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1',tratamento:'DEVOLUCAO'}]}}]);
-  const { win, document }=carregarPagina(baseColecoes(recusas));
-  await win.renderRecebimentoRecusas();
-  win.document.getElementById('recusas-buscar-periodo').click();
-  await new Promise(r => setTimeout(r, 0));
-  const select=document.querySelector('[data-recusa-tratamento="r1|CH1"]');
-  assert.equal(select.value,'DEVOLUCAO');
-  assert.match(select.outerHTML,/Devolução/);
-});
-
-test('nota ainda não classificada não mostra select nem input de status — só um traço', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1'}]}}]);
-  const { win, document }=carregarPagina(baseColecoes(recusas));
-  await win.renderRecebimentoRecusas();
-  win.document.getElementById('recusas-buscar-periodo').click();
-  await new Promise(r => setTimeout(r, 0));
-  assert.equal(document.querySelector('[data-recusa-status]'),null);
-  assert.equal(document.querySelector('[data-recusa-reentrega-data]'),null);
-});
-
-test('classificar como Recusa faz aparecer o select de Status (Aguard. Fiscal/CTE/Endereçando/Finalizado) na mesma linha, e mudar o status grava na nota', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1'}]}}]);
-  const { win, document }=carregarPagina(baseColecoes(recusas));
-  await win.renderRecebimentoRecusas();
-  win.document.getElementById('recusas-buscar-periodo').click();
-  await new Promise(r => setTimeout(r, 0));
-
-  document.querySelector('[data-recusa-tratamento="r1|CH1"]').value='RECUSA';
-  document.querySelector('[data-recusa-tratamento="r1|CH1"]').dispatchEvent(new win.Event('change'));
-  await new Promise(r=>setTimeout(r,0));
-
-  const selectStatus=document.querySelector('[data-recusa-status="r1|CH1"]');
-  assert.ok(selectStatus,'select de status precisa aparecer assim que Tratamento vira Recusa');
-  const rotulos=[...selectStatus.options].map(o=>o.textContent);
-  assert.ok(rotulos.includes('Aguard. Fiscal') && rotulos.includes('CTE') && rotulos.includes('Endereçando') && rotulos.includes('Finalizado'));
-
-  selectStatus.value='AGUARD_FISCAL';
-  selectStatus.dispatchEvent(new win.Event('change'));
-  await new Promise(r=>setTimeout(r,0));
-
-  const salvo=recusas._registro.get('r1');
-  assert.equal(salvo.notas[0].statusRetorno,'AGUARD_FISCAL');
-  assert.ok(salvo.notas[0].dataSolicitacaoFiscalEm,'data nomeada carimbada, mesma regra de Status de Retornos');
-});
-
-test('classificar como Reentrega mostra Data Programada/Saída em vez do select de status', async()=>{
-  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1'}]}}]);
-  const { win, document }=carregarPagina(baseColecoes(recusas));
-  await win.renderRecebimentoRecusas();
-  win.document.getElementById('recusas-buscar-periodo').click();
-  await new Promise(r => setTimeout(r, 0));
-
-  document.querySelector('[data-recusa-tratamento="r1|CH1"]').value='REENTREGA';
-  document.querySelector('[data-recusa-tratamento="r1|CH1"]').dispatchEvent(new win.Event('change'));
-  await new Promise(r=>setTimeout(r,0));
-
-  assert.equal(document.querySelector('[data-recusa-status="r1|CH1"]'),null,'reentrega não usa o funil de status fiscal/CTE');
-  const inputSaida=document.querySelector('[data-recusa-reentrega-data="r1|CH1:dataSaidaEm"]');
-  assert.ok(inputSaida);
-
-  inputSaida.value='2026-09-10';
-  inputSaida.dispatchEvent(new win.Event('change'));
-  await new Promise(r=>setTimeout(r,0));
-
-  const salvo=recusas._registro.get('r1');
-  assert.ok(salvo.notas[0].dataSaidaEm);
-});
-
-test('2 notas do mesmo evento: uma Recusa (mostra select de status) e outra Reentrega (mostra datas) — cada linha com o controle certo', async()=>{
+test('coluna/atalho "Status do retorno" NÃO existe mais em Notas Retornadas — nem para Recusa (select) nem para Reentrega (datas)', async()=>{
   const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[
     {chave:'CH1',numeroNota:'601',tratamento:'RECUSA'},
     {chave:'CH2',numeroNota:'602',tratamento:'REENTREGA'},
@@ -187,7 +91,29 @@ test('2 notas do mesmo evento: uma Recusa (mostra select de status) e outra Reen
   win.document.getElementById('recusas-buscar-periodo').click();
   await new Promise(r => setTimeout(r, 0));
 
-  assert.ok(document.querySelector('[data-recusa-status="r1|CH1"]'),'nota Recusa mostra select de status');
-  assert.ok(document.querySelector('[data-recusa-reentrega-data="r1|CH2:dataSaidaEm"]'),'nota Reentrega mostra as datas');
-  assert.equal(document.querySelector('[data-recusa-status="r1|CH2"]'),null,'a nota de Reentrega não pode ter o select de status');
+  assert.equal(document.querySelector('[data-recusa-status]'), null, 'não existe mais nenhum select de status nesta tela');
+  assert.equal(document.querySelector('[data-recusa-reentrega-data]'), null, 'não existem mais os campos de data de reentrega nesta tela');
+  assert.doesNotMatch(document.getElementById('recusas-tabela').innerHTML, /Status do retorno/, 'cabeçalho da coluna removido');
+});
+
+test('Tratamento continua funcionando normalmente (é a classificação, ficou nesta tela) — só o atalho de status/data é que saiu', async()=>{
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',origem:'COLETOR',notas:[{chave:'CH1',numeroNota:'601'}]}}]);
+  const { win, document }=carregarPagina(baseColecoes(recusas));
+  await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const selectTratamento = document.querySelector('[data-recusa-tratamento="r1|CH1"]');
+  assert.ok(selectTratamento, 'select de Tratamento continua existindo');
+
+  selectTratamento.value = 'RECUSA';
+  selectTratamento.dispatchEvent(new win.Event('change'));
+  await new Promise(r => setTimeout(r, 0));
+
+  const salvo = recusas._registro.get('r1');
+  assert.equal(salvo.notas[0].tratamento, 'RECUSA');
+  // mesmo sem o atalho, classificar já recalcula o statusFisico do Pátio em
+  // Tempo Real normalmente (alterarTratamento não mudou nesta remoção).
+  assert.equal(salvo.statusFisico, 'NO_PATIO');
+  assert.doesNotMatch(document.getElementById('recusas-tabela').innerHTML, /data-recusa-status/, 'classificar como Recusa não faz reaparecer o atalho removido');
 });
