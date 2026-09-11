@@ -784,7 +784,7 @@ function _criarModal({
   if (old) old.remove();
   const modal = document.createElement('div');
   modal.id = '_modal_end_bloq';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
   const botoesHtml = botoes.map((b, i) => {
     const bg = b.estilo === 'primary' ? 'background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-weight:800' : b.estilo === 'warn' ? 'background:rgba(255,71,87,.15);border:1px solid rgba(255,71,87,.4);color:#ff4757;font-weight:700' : 'background:transparent;border:1px solid var(--border);color:var(--muted)';
     return `<button id="_mbtn_${i}" style="flex:1;padding:11px 8px;border-radius:10px;font-size:.82rem;font-family:var(--sans);cursor:pointer;border:none;${bg}">${b.label}</button>`;
@@ -1495,7 +1495,7 @@ function confirmarVazio() {
 
   // ── Modal de confirmação ──
   const modal = document.createElement('div');
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.78);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
   modal.innerHTML = `
     <div style="background:var(--surface);border:1.5px solid rgba(245,158,11,.5);border-radius:18px;padding:24px 20px;max-width:320px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
       <div style="font-size:1.8rem;text-align:center;margin-bottom:10px">📭</div>

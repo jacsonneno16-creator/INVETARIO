@@ -87,7 +87,7 @@
     if (!overlay) {
       overlay = document.createElement('div');
       overlay.id = 'dt-diag-overlay';
-      overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:20px';
+      overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:2147483647;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;padding:20px';
       overlay.innerHTML =
         '<div style="background:#1a1a2e;color:#f1f5f9;border-radius:14px;max-width:480px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.5)">' +
           '<div style="padding:16px 18px;border-bottom:1px solid rgba(255,255,255,.1);font-weight:800;font-size:.95rem">🩺 Diagnóstico do coletor</div>' +

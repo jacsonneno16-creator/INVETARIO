@@ -125,6 +125,27 @@ test('nota já registrada MAS já saiu do pátio (Recusa finalizada): NÃO bloqu
   assert.match(html, /patio-box-input/);
 });
 
+// PEDIDO AO VIVO (2026-09-11): "na hora de fazer o inventário inicial e já
+// ter recebido, ele vai falar que já foi recebida" — mesmo não bloqueando
+// (o teste acima já cobre o "voltou fisicamente de novo"), tem que avisar
+// que já passou pelo sistema antes.
+test('nota já registrada MAS já saiu do pátio: mostra aviso "já foi recebida antes", com o Box do lançamento anterior', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', statusFisico: 'SAIU', box: 'BOX 3', chaves: [CHAVE_VALIDA], notas: [{ chave: CHAVE_VALIDA, numeroNota: '999', tratamento: 'RECUSA', statusRetorno: 'FINALIZADO' }] } },
+  ]);
+  const notas = mockColecao([{ id: CHAVE_VALIDA, data: { numeroNota: '999', destinatario: 'Mercado Y' } }]);
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas, recebimento_recusas_notas: notas });
+
+  await win.abrirInventarioPatio();
+  document.getElementById('patio-chave-input').value = CHAVE_VALIDA;
+  document.getElementById('patio-consultar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const html = document.getElementById('patio-inventario-host').innerHTML;
+  assert.match(html, /já foi recebida antes/);
+  assert.match(html, /BOX 3/);
+});
+
 test('nota SEM banco (não achada em recebimento_recusas_notas): cai no fluxo manual, pré-preenche número extraído da chave, e ainda lança normalmente', async () => {
   const { win, document } = carregarColetor({ recebimento_recusas_notas: mockColecao([]), recebimento_recusas: mockColecao([]) });
 

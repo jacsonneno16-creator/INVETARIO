@@ -39,7 +39,7 @@ html{overscroll-behavior-y:contain}
     #screen-login{align-items:center;justify-content:center;padding:32px 24px;
       background:linear-gradient(160deg,#1E6F4E 0%,#155d3f 55%,#0f4530 100%);
       position:relative;overflow:hidden}
-    .login-watermark{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:0}
+    .login-watermark{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:0}
     .login-watermark img{width:320px;height:320px;object-fit:contain;opacity:.07;filter:grayscale(1)}
     .login-deco1{position:absolute;top:-80px;right:-80px;width:300px;height:300px;border-radius:50%;background:rgba(245,158,11,.08);pointer-events:none;z-index:0}
     .login-deco2{position:absolute;bottom:-60px;left:-60px;width:200px;height:200px;border-radius:50%;background:rgba(245,158,11,.05);pointer-events:none;z-index:0}
@@ -282,7 +282,7 @@ html{overscroll-behavior-y:contain}
     /* Cursor piscando visível nos campos */
     input:focus { caret-color: var(--accent) !important; }
 
-    .scan-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
+    .scan-overlay{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;pointer-events:none}
     .scan-frame{width:260px;height:150px;border:2px solid var(--accent);border-radius:12px;box-shadow:0 0 0 4000px rgba(0,0,0,.55),var(--glow);position:relative}
     .scan-line{position:absolute;left:0;right:0;height:2px;background:var(--accent);box-shadow:0 0 8px var(--accent);animation:scanline 2s ease-in-out infinite}
     @keyframes scanline{0%{top:10px}50%{top:calc(100% - 12px)}100%{top:10px}}
@@ -323,7 +323,7 @@ html{overscroll-behavior-y:contain}
     body::before {
       content: '';
       position: fixed;
-      inset: 0;
+      top: 0; left: 0; right: 0; bottom: 0;
       background: radial-gradient(ellipse 80% 50% at 50% -10%, rgba(232,117,26,.08) 0%, transparent 60%),
                   radial-gradient(ellipse 60% 40% at 0% 100%, rgba(196,94,14,.05) 0%, transparent 55%);
       pointer-events: none;
@@ -459,7 +459,7 @@ html{overscroll-behavior-y:contain}
 
     /* ─── MODAL DE ATUALIZAÇÃO ───────────────────────────── */
     .update-overlay {
-      position: fixed; inset: 0; z-index: 200;
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 200;
       background: rgba(0,0,0,.65); backdrop-filter: blur(4px);
       display: flex; align-items: center; justify-content: center;
       padding: 24px; animation: fadeIn .2s ease;
@@ -501,7 +501,7 @@ html{overscroll-behavior-y:contain}
       padding: 24px; position: relative; overflow: hidden;
     }
     #screen-download::before {
-      content:''; position:absolute; inset:0; pointer-events:none;
+      content:''; position:absolute; top:0; left:0; right:0; bottom:0; pointer-events:none;
       background: radial-gradient(ellipse 80% 50% at 50% 20%, rgba(232,117,26,.06) 0%, transparent 70%);
     }
     .dl-outer { position:relative; z-index:1; display:flex; align-items:center;
@@ -514,10 +514,10 @@ html{overscroll-behavior-y:contain}
     }
     .dl-hero { position:relative; width:84px; height:84px;
                display:flex; align-items:center; justify-content:center; }
-    .dl-ring { position:absolute; inset:0; border-radius:50%; border:2px solid transparent; }
+    .dl-ring { position:absolute; top:0; left:0; right:0; bottom:0; border-radius:50%; border:2px solid transparent; }
     .dl-ring-1 { border-top-color:var(--accent); border-right-color:rgba(232,117,26,.2);
                  animation:dlSpin 1.1s linear infinite; }
-    .dl-ring-2 { inset:8px; border-bottom-color:var(--accent2);
+    .dl-ring-2 { top:8px; left:8px; right:8px; bottom:8px; border-bottom-color:var(--accent2);
                  animation:dlSpin 1.9s linear infinite reverse; }
     @keyframes dlSpin { to { transform:rotate(360deg); } }
     .dl-icon { font-size:2.2rem; animation:dlPulse 2s ease-in-out infinite; }
@@ -560,7 +560,7 @@ html{overscroll-behavior-y:contain}
     /* ── Marca d'água nas telas de login / inventários ── */
     .screen-watermark {
       position: absolute;
-      inset: 0;
+      top: 0; left: 0; right: 0; bottom: 0;
       pointer-events: none;
       z-index: 0;
       overflow: hidden;

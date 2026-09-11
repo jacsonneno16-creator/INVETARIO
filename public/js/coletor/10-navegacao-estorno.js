@@ -217,7 +217,7 @@ function _confirmarEstorno(docId) {
     const modal = document.createElement('div');
     modal.id = 'modal-estorno';
     modal.style.cssText = `
-      position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.7);
+      position:fixed;top:0;left:0;right:0;bottom:0;z-index:9999;background:rgba(0,0,0,.7);
       display:flex;align-items:center;justify-content:center;padding:20px;
     `;
     modal.innerHTML = `

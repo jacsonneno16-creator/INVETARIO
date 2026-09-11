@@ -28,6 +28,7 @@
     pendenteChaveManual: '',
     pendenteNumeroManual: '',
     jaNoPatio: null, // { box } quando a nota já está registrada — bloqueia
+    avisoJaRecebida: null, // { box } quando já foi recebida antes mas já saiu — SÓ avisa, não bloqueia
     carregando: false,
     ultimaConfirmada: '',
   };
@@ -78,7 +79,7 @@
   }
 
   function reset() {
-    S = { etapa: 'bipar', chave: '', numeroNota: '', destinatario: '', box: '', pendenteChaveManual: '', pendenteNumeroManual: '', jaNoPatio: null, carregando: false, ultimaConfirmada: S.ultimaConfirmada };
+    S = { etapa: 'bipar', chave: '', numeroNota: '', destinatario: '', box: '', pendenteChaveManual: '', pendenteNumeroManual: '', jaNoPatio: null, avisoJaRecebida: null, carregando: false, ultimaConfirmada: S.ultimaConfirmada };
   }
 
   async function abrirInventarioPatio() {
@@ -107,23 +108,36 @@
     S.carregando = true; render();
     try {
       const hist = await fs().collection(COL_RECUSAS).where('chaves', 'array-contains', chave).get();
-      const registroNoPatio = hist.docs.find(d => {
-        const data = d.data() || {};
-        const nota = (data.notas || []).find(n => n.chave === chave) || {};
-        return estaNoPatio(data, nota);
+      const achados = hist.docs.map(d => ({ data: d.data() || {} }));
+      const comEstaNoPatio = achados.find(a => {
+        const nota = (a.data.notas || []).find(n => n.chave === chave) || {};
+        return estaNoPatio(a.data, nota);
       });
-      if (registroNoPatio) {
-        const data = registroNoPatio.data() || {};
-        const nota = (data.notas || []).find(n => n.chave === chave) || {};
-        S.jaNoPatio = { box: nota.box || data.box || '—' };
+      if (comEstaNoPatio) {
+        const nota = (comEstaNoPatio.data.notas || []).find(n => n.chave === chave) || {};
+        S.jaNoPatio = { box: nota.box || comEstaNoPatio.data.box || '—' };
         S.chave = chave;
         S.etapa = 'confirmar';
         render();
         return;
       }
+      // PEDIDO AO VIVO (2026-09-11): "na hora de fazer o inventário inicial
+      // e já ter recebido, ele vai falar que já foi recebida" — chave que
+      // JÁ passou pelo sistema antes, mas já saiu do pátio (Recusa
+      // finalizada ou Reentrega concluída), NÃO bloqueia — ela pode ter
+      // voltado fisicamente de novo, de verdade (cenário real já coberto
+      // antes) — só AVISA, deixando o operador seguir com o lançamento
+      // normal se confirmar que é isso mesmo.
+      let avisoJaRecebida = null;
+      if (achados.length) {
+        const maisRecente = achados.slice().sort((a, b) => String((b.data.criadoEm || '')).localeCompare(String(a.data.criadoEm || '')))[0];
+        const nota = (maisRecente.data.notas || []).find(n => n.chave === chave) || {};
+        avisoJaRecebida = { box: nota.box || maisRecente.data.box || '—' };
+      }
       const doc = await fs().collection(COL_NOTAS).doc(chave).get();
       S.chave = chave;
       S.jaNoPatio = null;
+      S.avisoJaRecebida = avisoJaRecebida;
       if (doc.exists) {
         const d = doc.data() || {};
         S.numeroNota = d.numeroNota || '';
@@ -204,6 +218,7 @@
     return `
     <div><div class="screen-title">📦 Confirmar lançamento</div><div class="screen-sub">Confira os dados e informe o Box onde a nota está fisicamente.</div></div>
     ${S.pendenteChaveManual ? '<div class="card" style="padding:12px;border:1px solid #7a4a1f;background:#2a1c0c"><div style="font-size:.74rem;color:#ffd18a">⚠️ Nota ainda não está no sistema — confirme ou corrija o número abaixo.</div></div>' : ''}
+    ${S.avisoJaRecebida ? `<div class="card" style="padding:12px;border:1px solid #1e6f4e;background:#132a1d"><div style="font-size:.74rem;color:#8fd9a8">✅ Esta nota já foi recebida antes (último Box: ${esc(S.avisoJaRecebida.box)}) e já saiu do pátio. Se ela voltou fisicamente de novo, pode lançar normalmente abaixo.</div></div>` : ''}
     <div class="card" style="padding:13px">
       <div style="font-size:.72rem;color:#6f89a6">NÚMERO DA NOTA</div>
       <input id="patio-numero-input" class="field" inputmode="numeric" autocomplete="off" value="${esc(S.numeroNota)}" style="font-size:1.05rem;padding:12px;text-align:center;font-weight:850;margin-bottom:8px">
