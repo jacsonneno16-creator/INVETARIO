@@ -514,10 +514,29 @@
     const motivo = String((motivoInput && motivoInput.value) || '').trim();
     const u = usuario();
     const agora = new Date().toISOString();
+    // PEDIDO AO VIVO (2026-09-11): "tem 11 falando que tá sem mercado" —
+    // Identificar só pede o NÚMERO (sem bipar chave), então até aqui não
+    // tinha como o Pátio em Tempo Real (que enriquece por CHAVE) achar o
+    // mercado dessa nota. Tenta achar pelo número no ledger de venda
+    // (mesma coleção que a Entrada normal usa pra autopreencher
+    // destinatário) — se achar, a chave real também entra no payload, e
+    // a nota passa a se beneficiar do enriquecimento normal daqui pra
+    // frente. Se não achar (nota realmente não está no ledger), segue
+    // sem mercado mesmo — nunca inventa dado.
+    let chave = '', destinatario = '';
+    try {
+      const achada = await fs().collection(COL_NOTAS).where('numeroNota', '==', numero).limit(1).get();
+      if (!achada.empty) {
+        chave = achada.docs[0].id;
+        destinatario = achada.docs[0].data().destinatario || '';
+      }
+    } catch (e) { /* falha na busca não pode travar o lançamento — segue sem mercado */ }
+    const notaPayload = { numeroNota: numero, destinatario, box, volumeEsperado: 0 };
+    if (chave) notaPayload.chave = chave;
     const payload = {
-      chaves: [],
+      chaves: chave ? [chave] : [],
       numerosNotas: [numero],
-      notas: [{ numeroNota: numero, box, volumeEsperado: 0 }],
+      notas: [notaPayload],
       motoristaNome: motorista,
       motivoNome: motivo,
       box,

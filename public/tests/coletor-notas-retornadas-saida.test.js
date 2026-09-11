@@ -41,8 +41,28 @@ function mockRecusas(docsIniciais){
     _registro: registro,
   };
 }
+// PEDIDO AO VIVO (2026-09-11): "Identificar" passou a tentar achar o
+// mercado pelo NÚMERO em recebimento_recusas_notas — mock com
+// `.where('numeroNota','==',valor).limit(n).get()` de verdade.
+function mockNotasVenda(docsIniciais){
+  const registro=new Map((docsIniciais||[]).map(d=>[d.id,d.data]));
+  const snapshot=(entradas)=>({ empty: entradas.length===0, size: entradas.length, docs: entradas.map(([id,data])=>({id,data:()=>data,exists:true})) });
+  return {
+    get: async()=>snapshot([...registro.entries()]),
+    where:(campo,op,valor)=>({
+      limit:(n)=>({
+        get: async()=>{
+          if(campo!=='numeroNota'||op!=='==') return snapshot([]);
+          const achados=[...registro.entries()].filter(([,data])=>data.numeroNota===valor).slice(0,n);
+          return snapshot(achados);
+        },
+      }),
+    }),
+    _registro: registro,
+  };
+}
 function mockVazia(){
-  return { get: async()=>({ empty:true, size:0, docs:[] }), where:()=>({ get: async()=>({ empty:true, size:0, docs:[] }) }) };
+  return { get: async()=>({ empty:true, size:0, docs:[] }), where:()=>({ get: async()=>({ empty:true, size:0, docs:[] }), limit:()=>({ get: async()=>({ empty:true, size:0, docs:[] }) }) }) };
 }
 
 function carregarColetorReal(colecoes){
@@ -436,4 +456,46 @@ test('Identificar: nota salva aparece pro Coletor rastrear em seguida (mesma col
   await new Promise(r => setTimeout(r, 0));
 
   assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /BOX 6/);
+});
+
+// PEDIDO AO VIVO (2026-09-11): "tem 11 falando que tá sem mercado, mas em
+// notas retornadas tá mostrando o volume esperado" — Identificar só pede
+// o NÚMERO (sem bipar chave), então antes o Pátio em Tempo Real (que
+// enriquece por chave) nunca achava o mercado dessas notas. Agora tenta
+// achar a nota pelo número no ledger de venda e já grava chave+mercado.
+test('Identificar: acha a nota pelo NÚMERO no ledger de venda e já grava chave+mercado (Pátio consegue enriquecer depois)', async () => {
+  const recusas = mockRecusas([]);
+  const notasVenda = mockNotasVenda([{ id: 'CHAVE-REAL-44-DIGITOS', data: { numeroNota: '900', destinatario: 'Mercado Real' } }]);
+  const { win, document } = carregarColetorReal({ ...baseColecoes(recusas), recebimento_recusas_notas: notasVenda });
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="identificar"]').click();
+
+  document.getElementById('ident-numero-input').value = '900';
+  document.getElementById('ident-box-input').value = 'BOX 8';
+  document.getElementById('ident-salvar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const salvo = [...recusas._registro.values()][0];
+  assert.deepEqual(Array.from(salvo.chaves), ['CHAVE-REAL-44-DIGITOS'], 'achou a chave pelo número e gravou');
+  assert.equal(salvo.notas[0].destinatario, 'Mercado Real');
+  assert.equal(salvo.notas[0].chave, 'CHAVE-REAL-44-DIGITOS');
+});
+
+test('Identificar: número que NÃO existe no ledger de venda segue sem mercado, sem travar o lançamento', async () => {
+  const recusas = mockRecusas([]);
+  const notasVenda = mockNotasVenda([]);
+  const { win, document } = carregarColetorReal({ ...baseColecoes(recusas), recebimento_recusas_notas: notasVenda });
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="identificar"]').click();
+
+  document.getElementById('ident-numero-input').value = '901';
+  document.getElementById('ident-box-input').value = 'BOX 9';
+  document.getElementById('ident-salvar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const salvo = [...recusas._registro.values()][0];
+  assert.deepEqual(Array.from(salvo.chaves), []);
+  assert.equal(salvo.notas[0].destinatario, '');
+  assert.equal(salvo.notas[0].chave, undefined, 'sem chave achada, nunca grava undefined nem chave inventada');
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /Última identificada: 901/, 'não trava o lançamento mesmo sem achar mercado');
 });
