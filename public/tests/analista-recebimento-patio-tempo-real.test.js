@@ -423,6 +423,43 @@ test('renderPatioTempoReal: os cards aparecem clicáveis (data-patio-card) e o c
   assert.match(html, /FILTRANDO/, 'algum indicador visual mostra qual card está ativo');
   assert.equal(I(win).getFiltroTipo(), 'RECUSA', 'o clique real (via DOM) chamou o mesmo filtro');
 });
+test('renderPatioTempoReal: o card "Total no Pátio" nunca mostra "· FILTRANDO" (ele representa "sem filtro nenhum")', async () => {
+  const recusas = mockColecao([{ id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'A', numeroNota: '1', tratamento: 'RECUSA' }] } }]);
+  const { win, document } = carregarPagina({ recebimento_recusas: recusas, recebimento_recusas_notas: mockColecao([]) });
+  await win.renderPatioTempoReal();
+  const totalCard = document.querySelector('[data-patio-card="total"]').innerHTML;
+  assert.doesNotMatch(totalCard, /FILTRANDO/, '"Total" é o estado neutro (mostra tudo), não uma classificação escolhida');
+});
+
+// BUG AO VIVO REAL (2026-09-11): "clicou já traz as informações" (Notas
+// Retornadas) "aqui será que não é por causa do botão buscar que demora
+// tanto" — a causa real não era o backend (cache confirmado fresco,
+// <1min) — era a TELA: na 1ª entrada, antes do 1º carregarPatio
+// terminar, `_linhas` ainda está vazio; clicar em QUALQUER coisa que
+// redesenha nesse instante (ex.: um dos cards novos) mostrava "0"/
+// "R$ 0,00"/"Sem dados para exibir" por um instante — parecendo tela
+// travada/mais lenta que as outras, quando é só o mesmo tempo de rede
+// que toda tela paga (só que aqui é automático, e um clique no meio do
+// caminho revelava o estado transitório de forma enganosa).
+test('BUG AO VIVO REAL: clicar num card ENQUANTO a 1ª busca ainda está em voo mostra "Carregando...", nunca "0"/"R$ 0,00"/"Sem dados"', async () => {
+  const { win, document } = carregarPagina({ recebimento_recusas: mockColecao([]), recebimento_recusas_notas: mockColecao([]) });
+  let resolverCallable;
+  const pendente = new Promise(r => { resolverCallable = r; });
+  win.firebase.app = () => ({ functions: () => ({ httpsCallable: () => () => pendente }) });
+
+  const promessaRender = win.renderPatioTempoReal(); // dispara carregarPatio — a Cloud Function ainda não respondeu
+  await Promise.resolve(); await Promise.resolve(); // deixa o _tentarCarregarDoCache (cache inexistente) resolver e cair pro caminho ao vivo, que fica pendurado em `pendente`
+
+  I(win).clicarCard('total'); // usuário clica ENQUANTO ainda está carregando
+  const html = document.getElementById('page-recebimento-patio-tempo-real').innerHTML;
+  assert.doesNotMatch(html, /R\$ 0,00/, 'nunca finge saber o total (R$ 0,00) antes da 1ª busca terminar');
+  assert.doesNotMatch(html, /Sem dados para exibir/);
+  assert.doesNotMatch(html, /Nenhuma nota parada com esses filtros/);
+  assert.match(html, /Carregando/);
+
+  resolverCallable({ data: { recusas: [] } });
+  await promessaRender;
+});
 
 // ── formatação de tempo parado ───────────────────────────────────────────
 test('fmtTempoParado: formata em dias/horas/minutos, nunca inventa valor sem data', () => {

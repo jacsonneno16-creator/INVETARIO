@@ -345,19 +345,30 @@
     }
     desenhar();
   }
+  // BUG AO VIVO REAL (2026-09-11): "clicou já traz as informações" (em
+  // contraste com Pátio) — na 1ª entrada na tela (antes do 1º carregarPatio
+  // terminar, cache ou não), `_linhas` ainda está vazio; clicar em
+  // QUALQUER coisa que chame desenhar() nesse instante (um card, um filtro)
+  // mostrava "0"/"R$ 0,00"/"Sem dados" por um instante — parecendo que a
+  // tela travou/está mais lenta que as outras, quando na real é só o
+  // mesmo tempo de rede que Notas Retornadas também paga (só que lá o
+  // clique em Buscar é manual, nunca mostra número falso de 0 antes).
+  // Distingue "carregando pela 1ª vez" (sem dado nenhum ainda) de
+  // "atualizando em 2º plano" (já tem dado, só está refrescando).
+  function _aindaCarregando() { return _carregando && !_carregado; }
   function _cardHtml(opts) {
     const ativo = opts.ativo;
     const borda = ativo ? `border:2px solid var(--accent);box-shadow:0 0 0 1px var(--accent)` : '';
     return `<div class="tc" data-patio-card="${opts.card}" style="padding:14px;cursor:pointer;${borda}" title="Clique para filtrar a tabela por ${opts.titulo}">
-      <div style="font-size:.72rem;color:var(--muted)">${opts.rotulo}${ativo ? ' · FILTRANDO' : ''}</div>
-      <div style="font-size:1.55rem;font-weight:850">${opts.numero}</div>
-      <div style="font-size:.78rem;color:var(--muted)">${opts.rodape}</div>
+      <div style="font-size:.72rem;color:var(--muted)">${opts.rotulo}${ativo && opts.mostrarFiltrando !== false ? ' · FILTRANDO' : ''}</div>
+      <div style="font-size:1.55rem;font-weight:850">${_aindaCarregando() ? '⏳' : opts.numero}</div>
+      <div style="font-size:.78rem;color:var(--muted)">${_aindaCarregando() ? 'Carregando...' : opts.rodape}</div>
     </div>`;
   }
   function _cardsHtml() {
     const k = kpis();
     return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:12px 0 16px">
-      ${_cardHtml({ card: 'total', ativo: _CARD_ATIVO_TOTAL(), titulo: 'todas as notas', rotulo: 'TOTAL NO PÁTIO', numero: k.total.toLocaleString('pt-BR'), rodape: fmtBRL(k.valorTotal) })}
+      ${_cardHtml({ card: 'total', ativo: _CARD_ATIVO_TOTAL(), mostrarFiltrando: false, titulo: 'todas as notas', rotulo: 'TOTAL NO PÁTIO', numero: k.total.toLocaleString('pt-BR'), rodape: fmtBRL(k.valorTotal) })}
       ${_cardHtml({ card: 'recusa', ativo: _CARD_ATIVO_RECUSA(), titulo: 'Recusas', rotulo: 'RECUSAS', numero: k.recusas.toLocaleString('pt-BR'), rodape: fmtBRL(k.valorRecusas) })}
       ${_cardHtml({ card: 'reentrega', ativo: _CARD_ATIVO_REENTREGA(), titulo: 'Reentregas', rotulo: 'REENTREGAS', numero: k.reentregas.toLocaleString('pt-BR'), rodape: fmtBRL(k.valorReentregas) })}
       ${_cardHtml({ card: 'tratamento', ativo: _CARD_ATIVO_TRATAMENTO(), titulo: 'notas em tratamento', rotulo: 'NOTAS EM TRATAMENTO', numero: k.emTratamento.toLocaleString('pt-BR'), rodape: 'Aguard. Fiscal/CTE/Endereçando' })}
@@ -378,6 +389,7 @@
   }
 
   function _rankingHtml() {
+    if (_aindaCarregando()) return '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     const ranking = _rankingMercados().slice(0, 15);
     if (!ranking.length) return '<div class="empty"><div class="empty-title">Sem dados para exibir</div></div>';
     return `<div style="overflow-x:auto"><table class="dt-table"><thead><tr><th>#</th><th>Mercado</th><th>Qtd.</th><th>Valor</th><th>Recusas</th><th>Reentregas</th></tr></thead><tbody>
@@ -414,6 +426,7 @@
   }
 
   function _tabelaHtml() {
+    if (_aindaCarregando()) return '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     const linhas = _filtradas().sort((a, b) => String(a.criadoEm || '').localeCompare(String(b.criadoEm || '')));
     if (!linhas.length) return '<div class="empty"><div class="empty-icon">📦</div><div class="empty-title">Nenhuma nota parada com esses filtros</div></div>';
     return `<div style="overflow-x:auto"><table class="dt-table"><thead><tr>
