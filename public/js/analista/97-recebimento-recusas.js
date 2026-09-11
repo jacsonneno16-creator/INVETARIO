@@ -125,6 +125,16 @@
   // uma planilha (Veículo/Motorista, Placa, Motivo) de uma vez só, sem
   // repetir os que já existem. Preview antes de salvar.
   let _previewImportacaoCadastros = null;
+  // PEDIDO AO VIVO (2026-09-11): "baixar um arquivo com todas as notas...
+  // cadastra em cada uma o mercado e o valor que faltam" / "outro arquivo
+  // pra colocar o tratamento... e os motivos" — 2 planilhas reais da
+  // operação (Relatório de Viagens da transportadora; CONTROLE DE
+  // REENTREGAS E RECUSAS, aba "BASE GERAL", confirmada com o usuário como
+  // a fonte confiável). NUNCA sobrescreve o que já está preenchido — só
+  // completa o que está vazio, mesmo princípio já usado em
+  // _corrigirVolumeEsperadoRecusas/buscarMercadoFaltante (105). Preview
+  // antes de aplicar, mesmo padrão de lerImportacaoCadastros acima.
+  let _previewImportDadosNotas = null;
 
   // FASE 9 — "Tratamento do retorno" é SEMPRE separado da "Natureza da NF"
   // (pedido explícito do usuário: nunca sobrescreve o dado da nota) e da
@@ -806,6 +816,143 @@
     </div>`;
   }
 
+  // ── Completar mercado/valor e tratamento/motivo por planilha ───────────
+  // "193044-1" na planilha de viagens vira "193044" — mesmo número que o
+  // app já guarda em numeroNota (sem o sufixo de item da viagem).
+  function _normalizarNumeroNota(v) {
+    return String(v == null ? '' : v).trim().split('-')[0].trim();
+  }
+  async function _lerWorkbook(file) {
+    if (!global.XLSX) throw new Error('Biblioteca do Excel não carregada.');
+    const buf = await file.arrayBuffer();
+    return global.XLSX.read(buf, { type: 'array' });
+  }
+  // Relatório de Viagens da transportadora: N° NF/CF (com sufixo "-N"),
+  // Destinatário, Valor NF/CF. Em nota duplicada na planilha, a ÚLTIMA
+  // linha manda (mesma convenção usada pra chave duplicada na Base Geral).
+  async function lerPlanilhaMercadoValor(file) {
+    const wb = await _lerWorkbook(file);
+    const aba = wb.SheetNames[0];
+    const linhas = global.XLSX.utils.sheet_to_json(wb.Sheets[aba], { defval: '' });
+    const mapa = new Map();
+    linhas.forEach(l => {
+      const nf = _normalizarNumeroNota(l['N° NF/CF']);
+      if (!nf) return;
+      const destinatario = String(l['Destinatário'] || '').trim();
+      const valorTotal = Number(String(l['Valor NF/CF'] || '').replace(',', '.')) || 0;
+      if (!destinatario && !valorTotal) return;
+      mapa.set(nf, { destinatario, valorTotal });
+    });
+    return { totalLinhas: linhas.length, mapa };
+  }
+  // CONTROLE DE REENTREGAS E RECUSAS, aba "BASE GERAL" (confirmado com o
+  // usuário como fonte confiável — 142 mil linhas, mas só ~4 mil têm ACAO
+  // preenchida de verdade; o resto é log sem classificação e é ignorado
+  // aqui). Só RECUSA/REENTREGA entram — são os 2 únicos valores que a
+  // tela de Notas Retornadas realmente aceita (TRATAMENTO_OPCOES_SELECT).
+  async function lerPlanilhaTratamentoMotivo(file) {
+    const wb = await _lerWorkbook(file);
+    const aba = wb.SheetNames.find(n => /base\s*geral/i.test(n)) || wb.SheetNames[0];
+    const linhas = global.XLSX.utils.sheet_to_json(wb.Sheets[aba], { defval: '' });
+    const mapa = new Map();
+    linhas.forEach(l => {
+      const acao = normUpper(l.ACAO);
+      if (acao !== 'RECUSA' && acao !== 'REENTREGA') return;
+      const nf = _normalizarNumeroNota(l['NOTA FISCAL']);
+      if (!nf) return;
+      mapa.set(nf, { tratamento: acao, motivo: String(l.MOTIVO || '').trim() });
+    });
+    return { totalLinhas: linhas.length, mapa };
+  }
+  // Monta o preview (nunca escreve ainda) — escaneia recebimento_recusas
+  // INTEIRA (loja ativa, é operação rara/1x, mesmo padrão já aceito em
+  // migrarStatusFisico/buscarMercadoFaltante), casa por número, e só marca
+  // como "afetada" a nota que está genuinamente vazia no campo em questão
+  // — nunca sobrescreve o que o Analista já classificou/preencheu.
+  async function prepararImportDadosNotas(tipo, file) {
+    try {
+      const { totalLinhas, mapa } = tipo === 'mercado'
+        ? await lerPlanilhaMercadoValor(file)
+        : await lerPlanilhaTratamentoMotivo(file);
+      const snap = await fs().collection(COL_RECUSAS).get();
+      const docs = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+      const docsParaAtualizar = [];
+      let totalNotasAfetadas = 0;
+      docs.forEach(doc => {
+        const notas = Array.isArray(doc.notas) && doc.notas.length ? doc.notas : [{}];
+        let mudouDoc = false;
+        let motivoNovoDoDoc = '';
+        const notasAtualizadas = notas.map(nota => {
+          const numero = _normalizarNumeroNota(nota.numeroNota != null ? nota.numeroNota : doc.numeroNota);
+          if (!numero) return nota;
+          const achado = mapa.get(numero);
+          if (!achado) return nota;
+          if (tipo === 'mercado') {
+            const destAtual = nota.destinatario != null ? nota.destinatario : doc.destinatario;
+            const valorAtual = nota.valorTotal != null ? nota.valorTotal : doc.valorTotal;
+            const patch = {};
+            if (!destAtual && achado.destinatario) patch.destinatario = achado.destinatario;
+            if (!valorAtual && achado.valorTotal) patch.valorTotal = achado.valorTotal;
+            if (!Object.keys(patch).length) return nota;
+            mudouDoc = true; totalNotasAfetadas++;
+            return Object.assign({}, nota, patch);
+          }
+          const tratAtual = nota.tratamento != null ? nota.tratamento : doc.tratamento;
+          if (tratAtual) return nota; // já classificada — nunca sobrescreve
+          mudouDoc = true; totalNotasAfetadas++;
+          const agora = agoraIso();
+          const patch = { tratamento: achado.tratamento, tratamentoDefinidoEm: agora, tratamentoDefinidoPor: 'Importação de planilha' };
+          if (achado.tratamento === 'RECUSA' && !nota.liberadoParaRecusarEm && !doc.liberadoParaRecusarEm) patch.liberadoParaRecusarEm = agora;
+          if (achado.motivo && !motivoNovoDoDoc) motivoNovoDoDoc = achado.motivo;
+          return Object.assign({}, nota, patch);
+        });
+        if (!mudouDoc) return;
+        const docPatch = { notas: notasAtualizadas };
+        if (tipo === 'tratamento') {
+          docPatch.statusFisico = _recalcularStatusFisico(Object.assign({}, doc, { notas: notasAtualizadas }));
+          if (motivoNovoDoDoc && !doc.motivoNome) docPatch.motivoNome = motivoNovoDoDoc;
+        }
+        docsParaAtualizar.push({ _id: doc._id, patch: docPatch });
+      });
+      _previewImportDadosNotas = { tipo, totalLinhas, notasNaPlanilha: mapa.size, docsParaAtualizar, totalNotasAfetadas };
+      desenharCadastros();
+    } catch (e) {
+      global.showToast?.('Erro ao ler a planilha: ' + (e.message || e), 'error');
+    }
+  }
+  async function salvarImportDadosNotas() {
+    const p = _previewImportDadosNotas;
+    if (!p || !p.docsParaAtualizar.length) return;
+    try {
+      const rawFs = raw();
+      for (let i = 0; i < p.docsParaAtualizar.length; i += 300) {
+        const lote = p.docsParaAtualizar.slice(i, i + 300);
+        const batch = rawFs.batch();
+        lote.forEach(item => batch.update(fs().collection(COL_RECUSAS).doc(item._id), item.patch));
+        await batch.commit();
+      }
+      const resumo = `${p.totalNotasAfetadas} nota(s) completada(s) em ${p.docsParaAtualizar.length} registro(s).`;
+      _previewImportDadosNotas = null;
+      await carregarDados(true);
+      desenharCadastros();
+      global.showToast?.(resumo, 'success');
+    } catch (e) {
+      global.showToast?.('Erro ao aplicar a importação: ' + (e.message || e), 'error');
+    }
+  }
+  function renderPreviewImportDadosNotas() {
+    const p = _previewImportDadosNotas;
+    if (!p) return '';
+    const rotulo = p.tipo === 'mercado' ? 'mercado/valor' : 'tratamento/motivo';
+    if (!p.docsParaAtualizar.length) {
+      return `<div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;font-size:.78rem;color:var(--muted)">${p.totalLinhas} linha(s) lida(s), ${p.notasNaPlanilha} nota(s) reconhecida(s) na planilha — nenhuma nota do sistema está faltando ${rotulo} que essa planilha resolva.</div>`;
+    }
+    return `<div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
+      <div style="font-size:.78rem;margin-bottom:8px">${p.totalLinhas} linha(s) lida(s) · <b>${p.notasNaPlanilha}</b> nota(s) reconhecida(s) na planilha · <b>${p.totalNotasAfetadas}</b> nota(s) do sistema vão ganhar ${rotulo} em <b>${p.docsParaAtualizar.length}</b> registro(s) — nunca sobrescreve o que já está preenchido</div>
+      <button class="btn btn-primary" data-recusa-salvar-import-dados="1">Confirmar e completar</button>
+    </div>`;
+  }
+
   function desenharCadastros() {
     const pagina = document.getElementById('page-recebimento-recusas-cadastros');
     if (!pagina) return;
@@ -817,6 +964,14 @@
       <div class="tc" style="padding:14px;margin:14px 0">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px"><div><b>📥 Importar Motoristas + Motivos (planilha)</b><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Colunas: Veículo/Motorista, Placa, Motivo. Cadastra o que ainda não existe — nunca duplica.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><input id="recusas-import-cadastros-arquivo" type="file" accept=".xlsx,.xls,.csv" style="max-width:280px"><button class="btn btn-ghost" data-recusa-ler-import-cadastros="1">Ler planilha</button></div></div>
         ${renderPreviewImportacaoCadastros()}
+      </div>
+      <div class="tc" style="padding:14px;margin:14px 0">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px"><div><b>🏪 Completar mercado/valor (Relatório de Viagens)</b><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Colunas: N° NF/CF, Destinatário, Valor NF/CF. Só preenche nota que está sem mercado ou sem valor — nunca sobrescreve.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><input id="recusas-import-mercado-arquivo" type="file" accept=".xlsx,.xls,.csv" style="max-width:280px"><button class="btn btn-ghost" data-recusa-ler-import-dados="mercado">Ler planilha</button></div></div>
+        ${_previewImportDadosNotas && _previewImportDadosNotas.tipo === 'mercado' ? renderPreviewImportDadosNotas() : ''}
+      </div>
+      <div class="tc" style="padding:14px;margin:14px 0">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px"><div><b>🗂️ Completar tratamento/motivo (Controle de Reentregas e Recusas)</b><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Aba "BASE GERAL" — só RECUSA/REENTREGA entram. Só classifica nota que ainda está sem tratamento — nunca reclassifica o que o Analista já definiu.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><input id="recusas-import-tratamento-arquivo" type="file" accept=".xlsx,.xls,.csv" style="max-width:280px"><button class="btn btn-ghost" data-recusa-ler-import-dados="tratamento">Ler planilha</button></div></div>
+        ${_previewImportDadosNotas && _previewImportDadosNotas.tipo === 'tratamento' ? renderPreviewImportDadosNotas() : ''}
       </div>
       <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);gap:14px">${cadastroLista('motorista')}${cadastroLista('motivo')}${cadastroLista('conferente')}</div>
       ${renderVendedoresMercado()}`;
@@ -1666,6 +1821,14 @@
     document.querySelector('[data-recusa-cad-atualizar]')?.addEventListener('click', async()=>{ await carregarDados(true); desenharCadastros(); });
     document.querySelector('[data-recusa-ler-import-cadastros]')?.addEventListener('click', lerImportacaoCadastros);
     document.querySelector('[data-recusa-salvar-import-cadastros]')?.addEventListener('click', salvarImportacaoCadastros);
+    document.querySelectorAll('[data-recusa-ler-import-dados]').forEach(b => b.addEventListener('click', () => {
+      const tipo = b.dataset.recusaLerImportDados;
+      const input = document.getElementById(tipo === 'mercado' ? 'recusas-import-mercado-arquivo' : 'recusas-import-tratamento-arquivo');
+      const file = input?.files?.[0];
+      if (!file) { global.showToast?.('Selecione uma planilha.', 'error'); return; }
+      prepararImportDadosNotas(tipo, file);
+    }));
+    document.querySelector('[data-recusa-salvar-import-dados]')?.addEventListener('click', salvarImportDadosNotas);
     document.querySelectorAll('[data-recusa-add]').forEach(b => b.addEventListener('click', () => adicionarCadastro(b.dataset.recusaAdd)));
     document.querySelectorAll('[data-recusa-editar-email]').forEach(b => b.addEventListener('click', () => editarEmailConferente(b.dataset.recusaEditarEmail)));
     document.querySelectorAll('[data-recusa-toggle]').forEach(b => b.addEventListener('click', () => { const [t,id]=b.dataset.recusaToggle.split(':'); toggleCadastro(t,id); }));
