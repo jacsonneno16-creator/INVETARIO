@@ -16,9 +16,19 @@ function mockColecao(docsIniciais) {
     doc: id => ({ id, get: async () => ({ exists: registro.has(id), data: () => registro.get(id) }) }),
   };
 }
+// PEDIDO AO VIVO (2026-09-11): 93-recebimento-operacao.js passou a usar
+// setInterval (polling de 45s em vez de onSnapshot — ver comentário
+// "2026-09-11" no arquivo), disparado no fim de carregarRecebimentoOperacao()
+// — chamado por esta tela via global._recebimentoOperacaoInternals.carregar().
+// Sem fechar a janela, cada teste deixava pra trás um timer de verdade
+// rodando (nunca se limpa sozinho).
+let _janelasAbertas = [];
+test.afterEach(() => { _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} }); _janelasAbertas = []; });
+
 function loadPerformance(colecoes) {
   const dom = new JSDOM('<!doctype html><html><body><div id="page-recebimento-tempos"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window; const document = win.document;
+  _janelasAbertas.push(win);
   const els = new Proxy({}, { get: (_, id) => document.getElementById(id) });
   win.getDTFirestore = () => ({ collection: nome => colecoes?.[nome] || mockColecao([]) });
   win.getDTRawFirestore = () => ({ collection: () => ({ doc: () => ({ collection: () => mockColecao([]) }) }) });

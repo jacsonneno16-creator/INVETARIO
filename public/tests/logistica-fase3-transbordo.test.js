@@ -43,7 +43,11 @@ function loadOperacao(colecoes,opts){
     openModal:()=>{}, closeModal:()=>{}, showToast:()=>{}, showConfirm:(msg,exec)=>exec(),
     _currentAnalistaUser:{email:'teste@daterrinha.com'},
   };
-  vm.runInNewContext(opCode,{window,document,console,Date,Math,Number,String,Array,Object,Set,Map,Promise,isNaN},{filename:'93-recebimento-operacao.js'});
+  // setInterval/clearInterval fakes (não-op): 93-recebimento-operacao.js
+  // passou a usar setInterval pra atualização periódica (ver comentário
+  // "2026-09-11" no arquivo) — nenhum teste aqui exercita esse polling em
+  // si, só precisa não quebrar ao chamar carregarRecebimentoOperacao().
+  vm.runInNewContext(opCode,{window,document,console,Date,Math,Number,String,Array,Object,Set,Map,Promise,isNaN,setInterval:()=>0,clearInterval:()=>{}},{filename:'93-recebimento-operacao.js'});
   return window;
 }
 

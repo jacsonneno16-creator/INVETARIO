@@ -23,8 +23,6 @@
   let _erroCarregamento = '';
   let _lojaCarregada = '';
   let _assinaturaTempoReal = '';
-  let _unsubsTempoReal = [];
-  const _fontesTempoReal = new Map();
   let _pagina = 1;
   let _filtroHoje = false;
   let _notasEditando = [];
@@ -102,52 +100,43 @@
     });
   }
 
+  // BUG AO VIVO REAL (2026-09-11): "carreguei o site e já tá a 2 minutos
+  // sem trazer as informações" (sintoma visto no Pátio em Tempo Real, mas
+  // a causa nem era lá) — este onSnapshot cruzando a loja própria + CADA
+  // loja parceira de transbordo mantinha várias conexões permanentes
+  // abertas ao mesmo tempo. Numa conexão instável, o WebChannel do
+  // Firestore caía e reconectava sozinho — cada reconexão baixava o
+  // snapshot INTEIRO de novo (visto na aba Network: pacotes de 18,8MB e
+  // 8,5MB), lotando as conexões do navegador e travando QUALQUER outra
+  // tela aberta, mesmo sem relação nenhuma com Recebimento. Mesmo ajuste
+  // já feito em Produtos/Notas Retornadas/Recusas/Status nesta sessão:
+  // busca periódica (45s, mesmo intervalo já usado no Pátio em Tempo
+  // Real) em vez de conexão permanente — só continua rodando enquanto
+  // Operação OU Transbordo (que reaproveita estes mesmos dados) estiver
+  // com a página aberta; para sozinho quando nenhuma das duas está ativa.
+  let _intervalTempoReal = null;
   function _pararTempoRealRecebimento() {
-    _unsubsTempoReal.forEach(fn => { try { fn(); } catch (_e) {} });
-    _unsubsTempoReal = [];
-    _fontesTempoReal.clear();
+    if (_intervalTempoReal) { clearInterval(_intervalTempoReal); _intervalTempoReal = null; }
     _assinaturaTempoReal = '';
   }
-
-  function _aplicarFontesTempoReal() {
-    const combinados = [];
-    _fontesTempoReal.forEach(lista => combinados.push(...lista));
-    _recebimentos = _deduplicarRecebimentos(combinados);
-    _carregado = true;
-    const paginaOp = document.getElementById('page-recebimento-operacao');
-    if (paginaOp) _desenharRecebimentoOperacao();
-    _notificarMudanca();
+  function _algumaTelaUsandoRecebimentosEstaAberta() {
+    const op = document.getElementById('page-recebimento-operacao');
+    const tr = document.getElementById('page-recebimento-transbordo');
+    return !!((op && op.classList.contains('on')) || (tr && tr.classList.contains('on')));
   }
-
   function _ativarTempoRealRecebimento() {
     const ativa = _lojaAtivaOp();
     const origens = _origensParaCruzar();
-    const assinatura = [ativa, ...origens.map(o => o.id).sort()].join('|');
-    if (_assinaturaTempoReal === assinatura && _unsubsTempoReal.length) {
-      _fontesTempoReal.set('local:' + ativa, _recebimentos.filter(r => String(r._lojaId || '') === String(ativa)));
-      origens.forEach(o => _fontesTempoReal.set('origem:' + o.id, _recebimentos.filter(r => String(r._lojaId || '') === String(o.id) && r.tipo === 'TRANSBORDO')));
-      return;
-    }
-    _pararTempoRealRecebimento();
-    _assinaturaTempoReal = assinatura;
-    _fontesTempoReal.set('local:' + ativa, _recebimentos.filter(r => String(r._lojaId || '') === String(ativa)));
-    origens.forEach(o => _fontesTempoReal.set('origem:' + o.id, _recebimentos.filter(r => String(r._lojaId || '') === String(o.id) && r.tipo === 'TRANSBORDO')));
-
-    const ouvir = (chave, query, lojaId) => {
-      try {
-        const unsub = query.onSnapshot(snap => {
-          _fontesTempoReal.set(chave, snap.docs.map(d => ({ _id: d.id, _lojaId: lojaId, ...d.data() })));
-          _aplicarFontesTempoReal();
-        }, err => console.warn('[Recebimento] Tempo real indisponível em ' + chave + ':', err?.message || err));
-        _unsubsTempoReal.push(unsub);
-      } catch (e) { console.warn('[Recebimento] Não foi possível ativar tempo real em ' + chave + ':', e?.message || e); }
-    };
-
-    ouvir('local:' + ativa, fs().collection(COL_RECEBIMENTOS), ativa);
-    origens.forEach(o => {
-      const q = global.getDTRawFirestore().collection('lojas').doc(o.id).collection(COL_RECEBIMENTOS).where('tipo', '==', 'TRANSBORDO');
-      ouvir('origem:' + o.id, q, o.id);
-    });
+    _assinaturaTempoReal = [ativa, ...origens.map(o => o.id).sort()].join('|');
+    if (_intervalTempoReal) return; // já está rodando o poll — próximo tick já usa a assinatura atual
+    _intervalTempoReal = setInterval(() => {
+      if (!_algumaTelaUsandoRecebimentosEstaAberta()) { _pararTempoRealRecebimento(); return; }
+      carregarRecebimentoOperacao(true).then(() => {
+        const paginaOp = document.getElementById('page-recebimento-operacao');
+        if (paginaOp && paginaOp.classList.contains('on')) _desenharRecebimentoOperacao();
+        _notificarMudanca();
+      });
+    }, 45000);
   }
 
   // Dona operacional ATUAL de uma carga (correção estrutural — mesma regra

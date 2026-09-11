@@ -50,7 +50,11 @@ function loadAnalista(colecoes) {
     qrcode: () => ({ addData() {}, make() {}, createDataURL: () => 'data:image/gif;base64,AAAA' }),
     _currentAnalistaUser: { email: 'analista@daterrinha.com' },
   };
-  const ctx = { window, document, console, Date, Math, Number, String, Array, Object, Set, Map, Promise, isNaN };
+  // setInterval/clearInterval fakes (não-op): 93-recebimento-operacao.js
+  // passou a usar setInterval pra atualização periódica (ver comentário
+  // "2026-09-11" no arquivo) — nenhum teste aqui exercita esse polling em
+  // si, só precisa não quebrar ao chamar carregarRecebimentoOperacao().
+  const ctx = { window, document, console, Date, Math, Number, String, Array, Object, Set, Map, Promise, isNaN, setInterval: () => 0, clearInterval: () => {} };
   vm.createContext(ctx);
   vm.runInContext(opCode, ctx, { filename: '93-recebimento-operacao.js' });
   vm.runInContext(dashCode, ctx, { filename: '91-logistica-recebimento.js' });

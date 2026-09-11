@@ -72,9 +72,20 @@ function mockRawLojas(porLoja, lojasMeta) {
 // (sessão seguinte: liga "+ Novo Transbordo"/"⇄ Inverter lojas" direto no
 // elemento via querySelector, não mais só por delegação), que essa suíte
 // não sustentava. Mesma lição já aplicada nos testes do Coletor.
+// PEDIDO AO VIVO (2026-09-11): 93-recebimento-operacao.js passou a usar
+// setInterval (polling de 45s em vez de onSnapshot — ver comentário
+// "2026-09-11" no arquivo), disparado no fim de carregarRecebimentoOperacao()
+// — que esta suíte chama em quase todo teste. Sem fechar a janela, cada
+// teste deixava pra trás um timer de verdade rodando (nunca se limpa
+// sozinho), acumulando um por teste. Mesmo cuidado já usado em outras
+// suítes com timer real (ex.: analista-recebimento-patio-tempo-real.test.js).
+let _janelasAbertas = [];
+test.afterEach(() => { _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} }); _janelasAbertas = []; });
+
 function loadTransbordo(colecoes) {
   const dom = new JSDOM('<!doctype html><html><body><div id="page-recebimento-transbordo"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
+  _janelasAbertas.push(win);
   const document = win.document;
   const els = new Proxy({}, { get: (_, id) => document.getElementById(id) });
   win.getDTFirestore = () => ({ collection: nome => colecoes?.[nome] || mockColecao([]) });

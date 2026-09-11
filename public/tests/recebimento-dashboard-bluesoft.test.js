@@ -50,7 +50,11 @@ function loadAmbiente(colecoes) {
     fetch: async () => ({ ok: true, text: async () => JSON.stringify({ currentPage: 0, pageSize: 200, data: [] }) }),
     showToast: () => {}, _currentAnalistaUser: { email: 'analista@daterrinha.com' },
   };
-  const ctx = { window, document, console, Date, Math, Number, String, Array, Object, Set, Map, Promise, isNaN, setTimeout, clearTimeout, URLSearchParams, JSON, AbortController };
+  // setInterval/clearInterval fakes (não-op): 93-recebimento-operacao.js
+  // passou a usar setInterval pra atualização periódica (ver comentário
+  // "2026-09-11" no arquivo) — nenhum teste aqui exercita esse polling em
+  // si, só precisa não quebrar ao chamar carregarRecebimentoOperacao().
+  const ctx = { window, document, console, Date, Math, Number, String, Array, Object, Set, Map, Promise, isNaN, setTimeout, clearTimeout, URLSearchParams, JSON, AbortController, setInterval: () => 0, clearInterval: () => {} };
   vm.createContext(ctx);
   vm.runInContext(svcCode, ctx, { filename: '90-bluesoft-service.js' });
   vm.runInContext(opCode, ctx, { filename: '93-recebimento-operacao.js' });

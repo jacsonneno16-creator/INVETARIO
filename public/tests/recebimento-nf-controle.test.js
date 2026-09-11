@@ -67,7 +67,7 @@ function loadTransbordo(colecoes, domValores) {
     getDTLojaAtiva: () => 'loja_matriz',
     DTLoja: { listar: async () => ([{ id: 'loja_matriz', nome: 'Matriz' }, { id: 'loja_filial2', nome: 'Filial 2' }]) },
   };
-  const ctx = { window, document, console, Date, Math, Number, String, Array, Object, Set, Map, Promise, isNaN, setTimeout };
+  const ctx = { window, document, console, Date, Math, Number, String, Array, Object, Set, Map, Promise, isNaN, setTimeout, setInterval: () => 0, clearInterval: () => {} };
   vm.createContext(ctx);
   vm.runInContext(opCode, ctx, { filename: '93-recebimento-operacao.js' });
   vm.runInContext(trbCode, ctx, { filename: '95-recebimento-transbordo.js' });
@@ -83,9 +83,21 @@ function loadTransbordo(colecoes, domValores) {
 // createElement reais) não sustenta isso — precisa de jsdom de verdade,
 // mesma lição já aplicada nos testes do Coletor nesta sessão.
 const { JSDOM } = require('jsdom');
+// PEDIDO AO VIVO (2026-09-11): 93-recebimento-operacao.js passou a usar
+// setInterval (polling de 45s em vez de onSnapshot — ver comentário
+// "2026-09-11" no arquivo), disparado no fim de carregarRecebimentoOperacao()
+// — chamado explicitamente pelos testes abaixo. Diferente do resto deste
+// arquivo (que roda em `vm` com setInterval fake), esta janela é jsdom de
+// verdade — sem fechá-la, cada teste deixava pra trás um timer real de
+// verdade rodando (nunca se limpa sozinho), travando a suíte inteira por
+// ~45s esperando o event loop esvaziar.
+let _janelasAbertas = [];
+test.afterEach(() => { _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} }); _janelasAbertas = []; });
+
 function loadTransbordoRealDom(colecoes) {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
+  _janelasAbertas.push(win);
   const document = win.document;
   win.getDTFirestore = () => ({ collection: nome => colecoes?.[nome] || mockColecao([]) });
   win.getDTRawFirestore = () => ({ collection: nome => nome === 'lojas' ? { doc: () => ({ collection: sub => colecoes?.[sub] || mockColecao([]) }) } : mockColecao([]) });
@@ -251,7 +263,7 @@ test('94: Histórico mostra a Nota Fiscal na tabela e no CSV exportado (antes fi
   const dom = elMap({});
   const document = { addEventListener: () => {}, getElementById: dom.getElementById };
   const window = { getDTFirestore: () => ({ collection: nome => (nome === 'recebimentos' ? recebimentos : mockColecao([])) }) };
-  const ctx = { window, document, console, Date, Math, Number, String, Array, Object, Set, Map, Promise, isNaN };
+  const ctx = { window, document, console, Date, Math, Number, String, Array, Object, Set, Map, Promise, isNaN, setInterval: () => 0, clearInterval: () => {} };
   vm.createContext(ctx);
   vm.runInContext(opCode, ctx, { filename: '93-recebimento-operacao.js' });
   vm.runInContext(relCode, ctx, { filename: '94-recebimento-relatorios.js' });
