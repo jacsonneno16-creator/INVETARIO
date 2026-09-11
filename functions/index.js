@@ -2158,9 +2158,16 @@ async function _buscarIndicadoresRetornosBigQueryInterno(data, acesso, bigqueryC
   });
   return rows.map(r => Object.assign({_id: r.document_id}, JSON.parse(r.data)));
 }
+// PEDIDO AO VIVO (2026-09-11): "1 a 3 segundos pra mim tá perfeito" —
+// minInstances:1 mantém 1 instância desta função sempre de prontidão,
+// eliminando o "cold start" (2-5s extras de carregar a biblioteca pesada
+// do BigQuery do zero) — sobra só o pedágio inerente do próprio BigQuery
+// (job de consulta, não encolhe mesmo com pouco dado). Custo fixo pequeno
+// e contínuo no Google (a instância fica de pé mesmo sem uso), aceito
+// explicitamente pelo usuário em troca de latência previsível.
 exports.buscarIndicadoresRetornosBigQuery = functions
   .region('southamerica-east1')
-  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .runWith({timeoutSeconds: 30, memory: '256MB', minInstances: 1})
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
     const acesso = await acessoSolicitante(context);
@@ -2193,7 +2200,7 @@ async function _buscarPatioTempoRealBigQueryInterno(data, acesso, bigqueryClient
 }
 exports.buscarPatioTempoRealBigQuery = functions
   .region('southamerica-east1')
-  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .runWith({timeoutSeconds: 30, memory: '256MB', minInstances: 1})
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
     const acesso = await acessoSolicitante(context);
@@ -2234,7 +2241,7 @@ async function _buscarTransbordoTodasLojasBigQueryInterno(acesso, bigqueryClient
 }
 exports.buscarTransbordoTodasLojasBigQuery = functions
   .region('southamerica-east1')
-  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .runWith({timeoutSeconds: 30, memory: '256MB', minInstances: 1})
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
     const acesso = await acessoSolicitante(context);
@@ -2264,7 +2271,7 @@ async function _buscarCargasTodasLojasBigQueryInterno(data, acesso, bigqueryClie
 }
 exports.buscarCargasTodasLojasBigQuery = functions
   .region('southamerica-east1')
-  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .runWith({timeoutSeconds: 30, memory: '256MB', minInstances: 1})
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
     const acesso = await acessoSolicitante(context);
