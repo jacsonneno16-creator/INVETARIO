@@ -144,7 +144,11 @@
   // igual: usar o helper com escopo de app certo (getDTAuth(), o mesmo que
   // 01-core-firebase-cache.js e o resto do Coletor já usam).
   function usuario() {
-    const u = global.getDTAuth?.()?.currentUser;
+    // NUNCA usar ?./?? neste arquivo (ver 25-recebimento-paletes.js) —
+    // coletores industriais antigos (Memor K, WebView Chromium 66/2018)
+    // travam com SyntaxError nessa sintaxe e derrubam o arquivo inteiro.
+    const authObj = global.getDTAuth && global.getDTAuth();
+    const u = authObj && authObj.currentUser;
     return u ? {
       uid: u.uid || '',
       email: u.email || ''

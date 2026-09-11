@@ -7,6 +7,12 @@
 // Coletor, duplicado de propósito). Não classifica Recusa/Reentrega aqui
 // — igual toda nota nova hoje, quem classifica é o Analista depois
 // (97-recebimento-recusas.js/alterarTratamento).
+// IMPORTANTE (ver 25-recebimento-paletes.js): NUNCA usar ?./?? neste
+// arquivo — coletores industriais antigos (Memor K, WebView Chromium
+// 66/2018) travam com SyntaxError nessa sintaxe e derrubam o arquivo
+// inteiro (nenhuma função dele fica definida — o botão de menu que chama
+// abrirInventarioPatio() simplesmente não responde ao toque). Sempre
+// `x && x.y` / ternário em vez disso.
 (function (global) {
   'use strict';
 
@@ -35,7 +41,8 @@
   }
   function toast(m, t) { if (typeof global.toast === 'function') global.toast(m, t); else alert(m); }
   function usuario() {
-    const u = global.getDTAuth?.()?.currentUser;
+    const authObj = global.getDTAuth && global.getDTAuth();
+    const u = authObj && authObj.currentUser;
     return u ? { uid: u.uid || '', email: u.email || '' } : { uid: '', email: '' };
   }
   // Mesma validação de dígito verificador de 24-recebimento-recusas.js
@@ -76,12 +83,12 @@
 
   async function abrirInventarioPatio() {
     reset();
-    global.goScreen?.('recebimento-patio-inventario');
+    if (global.goScreen) global.goScreen('recebimento-patio-inventario');
     render();
     focarChave();
   }
   function focarChave() {
-    setTimeout(() => document.getElementById('patio-chave-input')?.focus(), 80);
+    setTimeout(() => { const el = document.getElementById('patio-chave-input'); if (el) el.focus(); }, 80);
   }
 
   // Mesmo padrão de consulta de adicionarChave() (24-recebimento-
@@ -91,10 +98,10 @@
   // coleção inteira.
   async function consultarChave() {
     const input = document.getElementById('patio-chave-input');
-    const chave = String(input?.value || '').replace(/\D/g, '');
+    const chave = String((input && input.value) || '').replace(/\D/g, '');
     if (chave.length !== 44 || !chaveValida(chave)) {
       toast('Chave de acesso inválida. Bipe os 44 dígitos da NF-e.', 'error');
-      input?.select();
+      if (input) input.select();
       return;
     }
     S.carregando = true; render();
@@ -144,11 +151,11 @@
 
   async function confirmarLancamento() {
     const boxInput = document.getElementById('patio-box-input');
-    const box = String(boxInput?.value || '').trim().toUpperCase();
-    if (!box) { toast('Informe o Box onde a nota está.', 'error'); boxInput?.focus(); return; }
+    const box = String((boxInput && boxInput.value) || '').trim().toUpperCase();
+    if (!box) { toast('Informe o Box onde a nota está.', 'error'); if (boxInput) boxInput.focus(); return; }
     const numeroInput = document.getElementById('patio-numero-input');
-    const numero = String(numeroInput?.value || S.numeroNota || '').trim();
-    if (!numero) { toast('Informe o número da nota.', 'error'); numeroInput?.focus(); return; }
+    const numero = String((numeroInput && numeroInput.value) || S.numeroNota || '').trim();
+    if (!numero) { toast('Informe o número da nota.', 'error'); if (numeroInput) numeroInput.focus(); return; }
     const u = usuario();
     const agora = new Date().toISOString();
     const payload = {
@@ -220,13 +227,16 @@
   }
   function ligar() {
     const chaveInput = document.getElementById('patio-chave-input');
-    chaveInput?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); consultarChave(); } });
-    document.getElementById('patio-consultar-btn')?.addEventListener('click', consultarChave);
-    document.getElementById('patio-confirmar-btn')?.addEventListener('click', confirmarLancamento);
-    document.getElementById('patio-nova-btn')?.addEventListener('click', () => { reset(); render(); focarChave(); });
+    if (chaveInput) chaveInput.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); consultarChave(); } });
+    const btnConsultar = document.getElementById('patio-consultar-btn');
+    if (btnConsultar) btnConsultar.addEventListener('click', consultarChave);
+    const btnConfirmar = document.getElementById('patio-confirmar-btn');
+    if (btnConfirmar) btnConfirmar.addEventListener('click', confirmarLancamento);
+    const btnNova = document.getElementById('patio-nova-btn');
+    if (btnNova) btnNova.addEventListener('click', () => { reset(); render(); focarChave(); });
     document.querySelectorAll('[data-patio-nova]').forEach(b => b.addEventListener('click', () => { reset(); render(); focarChave(); }));
     document.querySelectorAll('[data-patio-cancelar]').forEach(b => b.addEventListener('click', () => { reset(); render(); focarChave(); }));
-    document.querySelectorAll('[data-patio-voltar]').forEach(b => b.addEventListener('click', () => global.goScreen?.('recebimento-modo')));
+    document.querySelectorAll('[data-patio-voltar]').forEach(b => b.addEventListener('click', () => { if (global.goScreen) global.goScreen('recebimento-modo'); }));
   }
 
   global.abrirInventarioPatio = abrirInventarioPatio;
