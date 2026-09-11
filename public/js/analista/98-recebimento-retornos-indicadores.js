@@ -147,7 +147,16 @@
   async function carregarDadosIndicadores(ini, fim, forcar) {
     if (!_periodoValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
     const chave = ini + '|' + fim;
-    await _carregarNotasVenda(forcar);
+    // PEDIDO AO VIVO (2026-09-11): "Indicadores demora pra atualizar" —
+    // `forcar` aqui é pra BUSCAR DE NOVO NO BIGQUERY (período mudou,
+    // clicou Atualizar, ou outra tela mexeu no dado); NUNCA deve forçar
+    // baixar a coleção `recebimento_recusas_notas` INTEIRA de novo — essa
+    // busca é só enriquecimento (vendedor/valor) e, como o comentário de
+    // _carregarNotasVenda já dizia, só precisa rodar 1x por sessão. Passar
+    // `forcar` direto aqui (bug real, não intencional) fazia toda
+    // atualização — inclusive a automática entre telas — rebaixar a
+    // coleção inteira à toa, o gargalo de verdade que deixava a tela lenta.
+    await _carregarNotasVenda(false);
     if (_periodoBuscado !== chave || forcar) {
       if (!_indicadoresCarregandoPromise) {
         _indicadoresCarregandoPromise = (async () => {

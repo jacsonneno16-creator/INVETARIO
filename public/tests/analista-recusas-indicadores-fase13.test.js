@@ -44,6 +44,20 @@ function carregarPagina(recusasIniciais) {
   const win = dom.window; const document = win.document;
   const col = mockColecao(recusasIniciais || []);
   win.getDTFirestore = () => ({ collection: () => col });
+  win.getDTLojaAtiva = () => 'loja_matriz';
+  // PEDIDO AO VIVO (2026-09-11): carregarDados() passou a buscar via
+  // Cloud Function (buscarIndicadoresRetornosBigQuery, a mesma que 97/98/
+  // 99 já usam) em vez de Firestore direto — o mock abaixo reaproveita o
+  // MESMO `col.where()` de sempre, preservando as asserções de filtro por
+  // período já escritas nos testes existentes.
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nomeFuncao => async payload => {
+    if (nomeFuncao !== 'buscarIndicadoresRetornosBigQuery') throw new Error('função não mockada: ' + nomeFuncao);
+    const snap = await col
+      .where('criadoEm', '>=', payload.ini + 'T00:00:00.000Z')
+      .where('criadoEm', '<=', payload.fim + 'T23:59:59.999Z')
+      .get();
+    return { data: { recusas: snap.docs.map(d => ({ _id: d.id, ...d.data() })) } };
+  } }) }) };
   win.aplicarPermissoesAnalista = () => {};
   // 99-recebimento-recusas-status.js precisa carregar primeiro (mesma
   // ordem do analista.html) — é de lá que vem STATUS_RETORNO_LABELS que
@@ -251,4 +265,22 @@ test('registro antigo (1 nota só) com tratamento RECUSA gravado no DOCUMENTO �
   const recusas = win._recusasIndicadoresInternals.getRecusas();
   assert.equal(recusas.length, 1);
   assert.equal(recusas[0].liberadoParaRecusarEm, diasAtras(3));
+});
+
+// PEDIDO AO VIVO (2026-09-11): mesma trava de concorrência já aplicada em
+// 97/98/99/104 (BUG AO VIVO REAL achado no log do servidor: navegação
+// disparando o render mais de uma vez cria consultas duplicadas).
+test('chamadas concorrentes de carregarDados pro MESMO período compartilham a mesma consulta (nunca duplica)', async () => {
+  const { win, col } = carregarPagina([{ id: 'r1', data: { tratamento: 'RECUSA', criadoEm: diasAtras(5) } }]);
+  let chamadas = 0;
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nomeFuncao => async payload => {
+    chamadas++;
+    const snap = await col.where('criadoEm', '>=', payload.ini + 'T00:00:00.000Z').where('criadoEm', '<=', payload.fim + 'T23:59:59.999Z').get();
+    return { data: { recusas: snap.docs.map(d => ({ _id: d.id, ...d.data() })) } };
+  } }) }) };
+  await win.renderRecusasIndicadores();
+  const btn = win.document.getElementById('recind-buscar-periodo');
+  btn.click(); btn.click(); btn.click();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(chamadas, 1, '3 cliques quase simultâneos no mesmo período disparam só 1 consulta');
 });

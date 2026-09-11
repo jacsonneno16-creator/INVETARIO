@@ -24,6 +24,12 @@ function mockColecao(docsIniciais) {
   };
   base.where = (campo, op, valor) => ({
     get: async () => {
+      // PEDIDO AO VIVO (2026-09-11): _enriquecerComNotas passou a buscar
+      // por lote via FieldPath.documentId() 'in' — mock replica isso pra
+      // não quebrar quando `campo` é o sentinel de documentId.
+      if (campo && campo.__isDocumentIdSentinel && op === 'in') {
+        return { docs: [...registro.entries()].filter(([id]) => valor.includes(id)).map(([id, data]) => ({ id, data: () => data })) };
+      }
       const bate = data => { const v = data ? data[campo] : undefined; return op === '==' ? v === valor : true; };
       return { docs: [...registro.entries()].filter(([, data]) => bate(data)).map(([id, data]) => ({ id, data: () => data })) };
     },
@@ -66,7 +72,7 @@ function carregarPagina(colecoes) {
     const snap = await col.get();
     const recusas = snap.docs.filter(d => (d.data() || {}).statusFisico === 'NO_PATIO').map(d => ({ _id: d.id, ...d.data() }));
     return { data: { recusas } };
-  } }) }) };
+  } }) }), firestore: { FieldPath: { documentId: () => ({ __isDocumentIdSentinel: true }) } } };
   win.showToast = () => {};
   win.aplicarPermissoesAnalista = () => {};
   win.eval(patioCode);
@@ -145,6 +151,42 @@ test('carregarPatio: filtro fino por nota — documento com statusFisico NO_PATI
   const linhas = I(win).getLinhas();
   assert.equal(linhas.length, 1, 'só a nota B (Reentrega ainda sem saída) fica — a A (Recusa finalizada) é filtrada mesmo o doc estando NO_PATIO');
   assert.equal(linhas[0].numeroNota, '200');
+});
+
+// PEDIDO AO VIVO (2026-09-11): "Pátio em Tempo Real demora pra atualizar"
+// — o enriquecimento por nota (mercado/vendedor/valor) fazia 1 leitura
+// POR NOTA; com o pátio crescendo (Identificar/Inventário Inicial geram
+// mais notas), isso ficava cada vez mais pesado, inclusive a cada tick do
+// polling de 45s. Agora agrupa em lotes de até 30 chaves por consulta
+// `in` — prova aqui: 33 notas viram 2 consultas em lote, nunca 33
+// leituras individuais via .doc().get().
+test('carregarPatio: enriquecimento busca em LOTES (in, até 30 chaves), não 1 leitura por nota', async () => {
+  const notasRecusa = [];
+  const notasDocs = [];
+  for (let i = 1; i <= 33; i++) {
+    const chave = 'CH' + i;
+    notasRecusa.push({ chave, numeroNota: String(1000 + i), tratamento: 'RECUSA', statusRetorno: 'AGUARD_FISCAL' });
+    notasDocs.push({ id: chave, data: { destinatario: 'Mercado ' + i, valorTotal: i } });
+  }
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: notasRecusa } },
+  ]);
+  const notas = mockColecao(notasDocs);
+  let chamadasDoc = 0;
+  const docOriginal = notas.doc;
+  notas.doc = id => { chamadasDoc++; return docOriginal(id); };
+  let chamadasWhereIn = 0;
+  const whereOriginal = notas.where;
+  notas.where = (campo, op, valor) => { if (op === 'in') chamadasWhereIn++; return whereOriginal(campo, op, valor); };
+
+  const { win } = carregarPagina({ recebimento_recusas: recusas, recebimento_recusas_notas: notas });
+  await I(win).carregarPatio(true);
+  const linhas = I(win).getLinhas();
+
+  assert.equal(linhas.length, 33);
+  assert.equal(linhas.find(l => l.numeroNota === '1005').destinatario, 'Mercado 5', 'enriquecimento em lote traz o dado certo pra cada nota');
+  assert.equal(chamadasDoc, 0, 'nunca usa .doc() individual pra buscar nota');
+  assert.equal(chamadasWhereIn, 2, '33 chaves em lotes de 30 = 2 consultas em lote (30 + 3)');
 });
 
 // ── kpis / ranking ───────────────────────────────────────────────────────

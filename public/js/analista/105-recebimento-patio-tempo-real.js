@@ -96,12 +96,25 @@
   // iniciarConferenciaDelegada do Coletor), nunca a coleção
   // recebimento_recusas_notas inteira (fica pra outra rodada o mesmo
   // ajuste em 98-recebimento-retornos-indicadores.js, documentado lá).
+  // PEDIDO AO VIVO (2026-09-11): "Pátio em Tempo Real demora pra
+  // atualizar" — 1 leitura POR NOTA (Promise.all de N `.doc().get()`)
+  // fica cada vez mais pesado conforme o pátio cresce (com Identificar/
+  // Inventário Inicial, cresce mais rápido ainda) — a cada carregamento E
+  // a cada tick do polling de 45s. Agrupa em lotes de 30 chaves por
+  // consulta (limite do operador `in` do Firestore) em vez de 1 leitura
+  // por nota — pátio com 100 notas vira 4 consultas, não 100.
   async function _enriquecerComNotas(linhas) {
     const chaves = [...new Set(linhas.map(l => l.chave).filter(Boolean))];
     if (!chaves.length) return linhas;
-    const docs = await Promise.all(chaves.map(c => fs().collection(COL_NOTAS).doc(c).get().catch(() => null)));
     const porChave = new Map();
-    docs.forEach(d => { if (d && d.exists) porChave.set(d.id, d.data()); });
+    const LOTE = 30;
+    const lotes = [];
+    for (let i = 0; i < chaves.length; i += LOTE) lotes.push(chaves.slice(i, i + LOTE));
+    await Promise.all(lotes.map(lote =>
+      fs().collection(COL_NOTAS).where(global.firebase.firestore.FieldPath.documentId(), 'in', lote).get()
+        .then(snap => snap.docs.forEach(d => porChave.set(d.id, d.data())))
+        .catch(() => {})
+    ));
     return linhas.map(l => {
       const n = porChave.get(l.chave) || {};
       return Object.assign({}, l, {

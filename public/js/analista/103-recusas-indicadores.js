@@ -29,8 +29,6 @@
   // Ver mesmo bloco/comentário em 97-recebimento-recusas.js.
   global.DT_RETORNOS_DIRTY = global.DT_RETORNOS_DIRTY || { patio: false, indicadores: false, status: false, recusas: false };
 
-  const COL_RECUSAS = 'recebimento_recusas';
-
   // PEDIDO AO VIVO (2026-09-08): "cada nota tem que gerar uma linha... se
   // ela tiver junta e uma for reentrega e a outra for recusa" — um
   // documento de recebimento_recusas é 1 EVENTO de conferência (motorista
@@ -90,30 +88,42 @@
     if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime()) || dIni > dFim) return false;
     return (dFim - dIni) / 86400000 <= DIAS_MAX_PERIODO;
   }
-  // PEDIDO AO VIVO (2026-09-10): "os indicadores que tá demorando" — busca
-  // manual por período (máx. 3 meses), filtrada no servidor por criadoEm
-  // (não traz mais a coleção inteira toda vez que a tela abre).
+  // PEDIDO AO VIVO (2026-09-11): "Recusas demora pra atualizar" — trocada
+  // a busca direta no Firestore (que ainda escaneava a coleção por
+  // criadoEm, sem se beneficiar do espelho no BigQuery que 97/98/99 já
+  // usam) pela MESMA Cloud Function já aquecida (minInstances:1) que essas
+  // 3 telas chamam — mesma coleção-fonte (recebimento_recusas), mesmo
+  // filtro de período/loja/exclusão de AUTOMATICO já feito no servidor.
+  let _recusasCarregandoPromise = null;
   async function carregarDados(ini, fim, forcar) {
     if (!_periodoValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
     const chave = ini + '|' + fim;
     if (_periodoBuscado === chave && !forcar) return;
-    const snap = await fs().collection(COL_RECUSAS)
-      .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
-      .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
-      .get();
-    // Mesma exclusão de devolução automática que as outras telas de
-    // indicadores (origem:'AUTOMATICO' nunca é uma recusa de verdade —
-    // ver 98/99/102) — e aqui SÓ o tratamento explicitamente marcado como
-    // Recusa entra ("trata só pra recusa").
-    const docsBrutos = snap.docs.map(d => ({ _id: d.id, ...d.data() }))
-      .filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
-    // PEDIDO AO VIVO (2026-09-08): achata por NOTA antes de filtrar — cada
-    // nota decide por si se é Recusa, não mais o documento (evento)
-    // inteiro. Um evento com 1 nota Recusa e outra Reentrega agora só
-    // traz a nota Recusa pra cá.
-    _recusas = linhasPorNota(docsBrutos).filter(x => (x.tratamento || '') === 'RECUSA');
-    _filtroStatusSet = new Set();
-    _periodoBuscado = chave;
+    if (!_recusasCarregandoPromise) {
+      _recusasCarregandoPromise = (async () => {
+        const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
+        if (!lojaId) throw new Error('Nenhuma loja selecionada.');
+        const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarIndicadoresRetornosBigQuery');
+        const resposta = await callable({ lojaId, ini, fim });
+        // Mesmo filtro redundante de origem:'AUTOMATICO' mantido em
+        // 97/98/99 (a função já filtra no servidor, mas é barato manter
+        // como defesa redundante, mesmo padrão do resto do projeto).
+        const docsBrutos = ((resposta && resposta.data && resposta.data.recusas) || [])
+          .filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
+        // PEDIDO AO VIVO (2026-09-08): achata por NOTA antes de filtrar —
+        // cada nota decide por si se é Recusa, não mais o documento
+        // (evento) inteiro. Um evento com 1 nota Recusa e outra Reentrega
+        // agora só traz a nota Recusa pra cá.
+        _recusas = linhasPorNota(docsBrutos).filter(x => (x.tratamento || '') === 'RECUSA');
+        _filtroStatusSet = new Set();
+        _periodoBuscado = chave;
+      })();
+    }
+    try {
+      await _recusasCarregandoPromise;
+    } finally {
+      _recusasCarregandoPromise = null;
+    }
   }
 
   function statusLabels() {
