@@ -3127,7 +3127,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script defer src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script defer src="js/analista/36-lojas.js?v=20260809-v297-bluesoft"></script><script defer src="js/analista/37-usuarios-permissoes.js?v=20260911-fallback-patio-tempo-real"></script><script defer src="js/analista/41-dashboard-acomp-v37.js?v=20260805-auditoria-v282"></script><script defer src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script defer src="js/analista/43-importar-exportar-api.js?v=20260823-fix-classificacao-tipo"></script><script defer src="js/analista/44-auditoria-remediacoes.js?v=20260809-v297-bluesoft"></script><script defer src="js/analista/app-controller.js?v=20260804-v257-trava-clique-recontagem"></script>
+<script defer src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script defer src="js/analista/36-lojas.js?v=20260809-v297-bluesoft"></script><script defer src="js/analista/37-usuarios-permissoes.js?v=20260911b-fix-escopo-scan-recebimento"></script><script defer src="js/analista/41-dashboard-acomp-v37.js?v=20260805-auditoria-v282"></script><script defer src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script defer src="js/analista/43-importar-exportar-api.js?v=20260823-fix-classificacao-tipo"></script><script defer src="js/analista/44-auditoria-remediacoes.js?v=20260809-v297-bluesoft"></script><script defer src="js/analista/app-controller.js?v=20260804-v257-trava-clique-recontagem"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}
@@ -3232,7 +3232,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
   window.addEventListener('DOMContentLoaded',function(){obs.observe(document.body,{childList:true,subtree:true});obs.takeRecords();['cont-table-wrap','rec-table-wrap','div-table-wrap'].forEach(function(id){var el=document.getElementById(id);if(el) ativar(el);});});
 })();
 </script>
-<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v588</div>
+<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v589</div>
 
 <script defer src="js/analista/45-ui-centro-operacoes-v250.js?v=20260804-v250"></script>
 <script defer src="js/analista/47-dashboard-acomp-v252.js?v=20260805-v274"></script>
@@ -3240,7 +3240,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 <script defer src="js/analista/49-quatro-telas-v254.js?v=20260805-dashboard-v282"></script>
 <script defer src="js/analista/50-inventario-classificacoes-v275.js?v=20260823-motivo-tipo"></script>
 <script defer src="js/analista/51-inventario-por-produto-v286.js?v=20260805-v286"></script>
-<script defer src="js/analista/52-cadastros-v287.js?v=20260810-v326-fix-dispatch-enderecos"></script>
+<script defer src="js/analista/52-cadastros-v287.js?v=20260911-busca-unica-sem-onsnapshot"></script>
 <!-- Compatibilidade de auditoria: 59-producao-ui-completa.js?v=20260822d-config-tela-cheia -->
 
 

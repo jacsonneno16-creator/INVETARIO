@@ -708,7 +708,16 @@
       'recusa-atualizar':'visualizar','recusa-exportar':'exportar','recusa-solicitar-conf':'criar','recusa-tratamento':'editar',
     };
     const RECEBIMENTO_SELETOR=Object.keys(RECEBIMENTO_ACAO_POR_ATRIBUTO).map(k=>'[data-'+k+']').join(',');
-    document.querySelectorAll(RECEBIMENTO_SELETOR).forEach(el=>{
+    // BUG AO VIVO REAL (2026-09-11): "busca rápido, mas pra mostrar tá
+    // demorando" — este scan ficou de fora da correção de escopo acima
+    // (2026-09-03) e continuava varrendo `document` inteiro, incluindo
+    // TODAS as páginas de Recebimento já visitadas na sessão (ficam no DOM,
+    // só escondidas — cada uma pode ter centenas de linhas com esses
+    // atributos, ex.: Notas Retornadas/Recusas). Rodava a cada mutação em
+    // QUALQUER lugar do app (MutationObserver em document.body), inclusive
+    // disparado pelo próprio innerHTML que acabou de desenhar a tela nova —
+    // por isso o efeito era só depois da busca já ter voltado rápido.
+    escopo.querySelectorAll(RECEBIMENTO_SELETOR).forEach(el=>{
       const page=el.closest('.page')?.id?.replace(/^page-/,'');
       if(!page||!MODULOS.some(m=>m.id===page))return;
       const attr=Object.keys(RECEBIMENTO_ACAO_POR_ATRIBUTO).find(k=>el.hasAttribute('data-'+k));

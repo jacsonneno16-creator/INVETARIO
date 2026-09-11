@@ -162,6 +162,36 @@ test('conta legada sem campo permissoes: aplicarPermissoesAnalista não mexe em 
   assert.notEqual(win.document.querySelector('[data-recop-cancelar]').style.display, 'none');
 });
 
+// BUG AO VIVO REAL (2026-09-11): "busca rápido, mas pra mostrar tá
+// demorando" — o scan de RECEBIMENTO_SELETOR (data-recusa-*, data-recop-*
+// etc.) ficou de fora da correção de escopo de 2026-09-03 (que já limitou
+// o scan de [onclick]/[onchange] só à página ATIVA) e continuava varrendo
+// `document` inteiro — inclusive páginas de Recebimento já visitadas e
+// escondidas (ficam no DOM pra sempre, só com CSS escondendo). Rodava a
+// cada mutação em QUALQUER lugar do app (MutationObserver em
+// document.body), então quanto mais telas visitadas na sessão, mais lento
+// esse passo ficava — mesmo pra telas sem nenhuma relação (ex.: Pátio em
+// Tempo Real). Corrigido pra também respeitar `escopo` (só a página
+// .page.on) — uma página escondida não é escaneada de novo.
+test('BUG AO VIVO REAL: o scan de data-recusa-*/data-recop-* etc. só varre a página ATIVA — página escondida (já visitada antes) não é rechecada a cada mutação', () => {
+  const win = novoAmbiente(`
+    <div class="page on" id="page-recebimento-recusas">
+      <select data-recusa-tratamento="ativa"></select>
+    </div>
+    <div class="page" id="page-recebimento-notas">
+      <select data-recusa-tratamento="escondida"></select>
+    </div>`);
+  win.DT_USUARIO_ACESSO_ATUAL = {
+    permissoes: {
+      'recebimento-recusas': { visualizar: true, editar: false },
+      'recebimento-notas': { visualizar: true, editar: false },
+    },
+  };
+  win.aplicarPermissoesAnalista();
+  assert.equal(win.document.querySelector('[data-recusa-tratamento="ativa"]').style.display, 'none', 'botão da página ATIVA continua sendo escondido normalmente, sem permissão de editar');
+  assert.notEqual(win.document.querySelector('[data-recusa-tratamento="escondida"]').style.display, 'none', 'página escondida (já visitada antes, fora da tela agora) não é escaneada de novo — ninguém interage com ela mesmo, era custo puro sem função nenhuma');
+});
+
 test('firestore.rules: recebimento_agendamentos aceita excluir como alternativa própria de escrita (antes só criar/editar valiam)', () => {
   const trecho = rules.slice(rules.indexOf('match /recebimento_agendamentos/'));
   assert.match(trecho.slice(0, 400), /hasPermission\('recebimento-agendamentos', 'excluir'\)/);

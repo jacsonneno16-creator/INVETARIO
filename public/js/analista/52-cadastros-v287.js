@@ -1,36 +1,43 @@
 (function(w){'use strict';
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const txt=v=>String(v==null?'':v).trim(); const norm=v=>txt(v).toUpperCase();
-const P={all:[],filtered:[],page:1,size:20,status:'',type:'',family:'',q:'',unsub:null};
+const P={all:[],filtered:[],page:1,size:20,status:'',type:'',family:'',q:'',carregado:false,carregando:false};
 const E={page:1,size:20,type:'',count:'',status:'',local:'',q:''};
 function raw(){return w.getDTRawFirestore()} function pcol(){return raw().collection(w.DT_FCOL?.produtos||'dt_produtos')}
 function toast(m,t='success'){if(w.showToast)w.showToast(m,t);else alert(m)}
 function pages(total,page,size,on){const n=Math.max(1,Math.ceil(total/size));page=Math.min(page,n);let a=[];for(let i=Math.max(1,page-2);i<=Math.min(n,page+2);i++)a.push(`<button class="${i===page?'on':''}" data-pg="${i}">${i}</button>`);return `<div class="v287-pagination"><span>Mostrando ${total?((page-1)*size+1):0}–${Math.min(page*size,total)} de ${total.toLocaleString('pt-BR')}</span><div class="v287-pages"><button data-pg="1" ${page===1?'disabled':''}>«</button><button data-pg="${page-1}" ${page===1?'disabled':''}>‹</button>${a.join('')}<button data-pg="${page+1}" ${page===n?'disabled':''}>›</button><button data-pg="${n}" ${page===n?'disabled':''}>»</button></div><label>Itens por página <select data-size>${[20,50,100,200].map(x=>`<option ${x===size?'selected':''}>${x}</option>`).join('')}</select></label></div>`}
 function initProducts(){const p=document.getElementById('page-produtos');if(!p)return;if(p.dataset.v290==='1'&&p.querySelector('#v287-p-table'))return;p.dataset.v290='1';p.classList.add('v287-ready');p.innerHTML=`<div class="v287-head"><div><div class="v287-title">📦 Base de Produtos</div><div class="v287-sub">Cadastro central de produtos, classificações e fatores de embalagem.</div></div><div class="v287-actions"><button class="btn btn-ghost btn-sm" id="v287-p-model">⬇ Modelo</button><label class="btn btn-primary btn-sm">⬆ Importar CSV/XLSX<input id="v287-p-file" type="file" accept=".csv,.xlsx,.xls" hidden></label><button class="btn btn-ghost btn-sm" id="v287-p-new">＋ Novo produto</button><button class="btn btn-ghost btn-sm" id="v287-p-refresh">🔄 Atualizar</button><button class="btn btn-export btn-sm" id="v287-p-export">⬇ Exportar</button><button class="btn btn-danger btn-sm" id="v287-p-delete-all" title="Excluir todos os produtos cadastrados">🗑 Excluir Todos</button></div></div><div class="v287-cards"><div class="v287-card"><strong id="v287-p-total">0</strong><span>Total de produtos</span></div><div class="v287-card"><strong id="v287-p-active">0</strong><span>Produtos ativos</span></div><div class="v287-card"><strong id="v287-p-inactive">0</strong><span>Produtos inativos</span></div><div class="v287-card"><strong id="v287-p-types">0</strong><span>Tipos cadastrados</span></div><div class="v287-card"><strong id="v287-p-nogtin">0</strong><span>Sem GTIN</span></div></div><div class="v287-panel"><div class="v287-toolbar"><input class="search" id="v287-p-q" placeholder="🔍 Buscar código, produto, GTIN ou DUN"><select class="filter-sel" id="v287-p-status"><option value="">Todos os status</option><option value="ATIVO">Ativos</option><option value="INATIVO">Inativos</option></select><select class="filter-sel" id="v287-p-type"><option value="">Todos os tipos</option></select><select class="filter-sel" id="v287-p-family"><option value="">Todas as famílias</option></select></div><div id="v287-p-table" class="v287-table"></div><div id="v287-p-pager"></div></div>`;
  p.querySelector('#v287-p-q').oninput=e=>{P.q=e.target.value;P.page=1;renderProducts()};['status','type','family'].forEach(k=>p.querySelector('#v287-p-'+k).onchange=e=>{P[k]=e.target.value;P.page=1;renderProducts()});p.querySelector('#v287-p-new').onclick=()=>productModal();p.querySelector('#v287-p-refresh').onclick=()=>loadProducts();p.querySelector('#v287-p-export').onclick=exportProducts;p.querySelector('#v287-p-delete-all').onclick=()=>{if(typeof w.produtoExcluirTodos==='function'){w.produtoExcluirTodos();}else toast('Função de exclusão em massa não carregada — atualize a página.','error')};p.querySelector('#v287-p-model').onclick=()=>w.produtoBaixarModelo?.();p.querySelector('#v287-p-file').onchange=e=>{w.produtoImportar?.(e.target.files[0]);e.target.value='';setTimeout(loadProducts,1800)};loadProducts();}
+// BUG AO VIVO REAL (2026-09-11): "carreguei o site e já tá a 2 minutos sem
+// trazer as informações" (no Pátio em Tempo Real, mas o problema não era
+// lá) — esta tela mantinha uma conexão em tempo real (onSnapshot) aberta
+// pra sempre na coleção INTEIRA de produtos (~19-21MB, visto no Network).
+// Numa conexão instável, o WebChannel caía e reconectava sozinho (SDK do
+// Firestore, automático) — cada reconexão baixava os ~20MB de novo do
+// zero (5 reconexões em ~70s, 7 a 58s cada, gsessionid diferente a cada
+// vez), lotando as conexões do navegador e travando QUALQUER outra tela
+// aberta, mesmo sem nenhuma relação com Produtos. Mesmo ajuste já feito
+// em Notas Retornadas/Recusas/Status nesta sessão: busca única (.get())
+// + o botão "🔄 Atualizar" que já existia — nunca fica com uma conexão
+// grande pendurada.
 async function loadProducts(){
- if(P.unsub){P.unsub();P.unsub=null}
- // Esta tela é ativada assim que o script carrega (boot()), o que pode ser
- // ANTES do login/autenticação terminar. Se a primeira tentativa falhar
- // (ex.: permissão negada porque o Firebase Auth ainda não resolveu), o
- // código antigo deixava P.unsub "preenchido" para sempre — e como
- // activateProducts() só chama loadProducts() de novo quando P.unsub está
- // vazio, a tela ficava travada mostrando 0 produtos até o F5. Por isso,
- // em caso de erro, P.unsub volta para null: a próxima vez que a tela for
- // ativada (ex.: quando o login termina e o app chama renderAll()), ela
- // tenta assinar de novo em vez de desistir silenciosamente.
- P.unsub=pcol().onSnapshot(s=>{
+ if(P.carregando)return;
+ P.carregando=true;
+ try{
+  const s=await pcol().get();
   P.all=s.docs.map(d=>({id:d.id,...d.data()}));
+  P.carregado=true;
   renderProducts();
- },e=>{
-  console.warn('[Produtos] onSnapshot falhou (provável tela de login ainda aberta):',e.code||e.message);
-  P.unsub=null;
+ }catch(e){
+  console.warn('[Produtos] busca falhou (provável tela de login ainda aberta):',e.code||e.message);
   // "permission-denied" aqui é o caso esperado de rodar antes do login
   // terminar — não é um erro real para o usuário ver, só ruído. Qualquer
   // outro tipo de erro (rede, cota, etc.) continua avisando na tela.
   if(e.code!=='permission-denied')toast('Erro ao carregar produtos: '+e.message,'error');
   renderProducts();
- });
+ }finally{
+  P.carregando=false;
+ }
 }
 function productType(p){return norm(p.tipoProduto||p.tipo_produto||p.categoriaInventario||p.categoria_inventario||'NAO CLASSIFICADO')}
 function family(p){return txt(p.categoriaFamilia||p.familiaNome||p.familia||'SEM FAMÍLIA')}
@@ -87,7 +94,7 @@ function ligarAcoesCadastro(){
     if(ev.target.id==='v287-modal')document.getElementById('v287-modal')?.remove();
   },false);
 }
-function activateProducts(){initProducts();if(!P.unsub)loadProducts();else renderProducts();}
+function activateProducts(){initProducts();if(!P.carregado)loadProducts();else renderProducts();}
 function activateAddresses(){initAddresses();renderAddresses();}
 // Substitui os renderizadores legados. A navegação chama estes nomes globais.
 w.renderBaseProdutos=activateProducts;
