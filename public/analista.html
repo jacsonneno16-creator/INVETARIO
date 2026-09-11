@@ -3182,14 +3182,29 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </style>
 <script>
 (function(){
+  // REVERT EMERGENCIAL (2026-09-11): "Pátio em Tempo Real travando em
+  // Atualizando..." — aba Network mostrou o Service Worker (sw.js) como
+  // Initiator de requisições `channel?gsessionid=...` (canal "Listen" de
+  // tempo real do Firestore, usado por onSnapshot noutras telas — não
+  // pela busca do Pátio, que só faz .get()/httpsCallable) PENDENTES por
+  // 17-22s. MESMA classe de instabilidade já documentada 2x antes nesta
+  // sessão (enablePersistence quebrou o canal Listen; a tentativa de
+  // cache-first pra .js/.css em 2026-09-09 já tinha sido revertida por
+  // "atropelar conexões de tempo real do Firestore já abertas"). O
+  // Analista roda em navegador desktop, sem a mesma necessidade de PWA
+  // offline que o Coletor tem em campo — nunca deveria ter Service
+  // Worker aqui. Desregistra ativamente qualquer SW já instalado (não
+  // basta parar de registrar — quem já tinha instalado continuaria
+  // preso) e limpa os caches dele.
   if('serviceWorker' in navigator){
-    window.addEventListener('load',function(){
-      navigator.serviceWorker.register('/sw.js?v=20260909-perf-cache-versionado').then(function(reg){
-        reg.update();
-      }).catch(function(e){
-        if(window.console) console.warn('[PWA]',e);
-      });
-    });
+    navigator.serviceWorker.getRegistrations().then(function(regs){
+      regs.forEach(function(reg){ reg.unregister().catch(function(){}); });
+    }).catch(function(e){ if(window.console) console.warn('[SW] Falha ao desregistrar:',e); });
+  }
+  if(window.caches && caches.keys){
+    caches.keys().then(function(nomes){
+      nomes.forEach(function(nome){ caches.delete(nome).catch(function(){}); });
+    }).catch(function(e){ if(window.console) console.warn('[SW] Falha ao limpar cache:',e); });
   }
 })();
 </script>
@@ -3217,7 +3232,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
   window.addEventListener('DOMContentLoaded',function(){obs.observe(document.body,{childList:true,subtree:true});obs.takeRecords();['cont-table-wrap','rec-table-wrap','div-table-wrap'].forEach(function(id){var el=document.getElementById(id);if(el) ativar(el);});});
 })();
 </script>
-<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v580</div>
+<div class="dt-build-version" title="Versão da aplicação" style="position:fixed;right:8px;bottom:6px;z-index:9999;font:600 10px system-ui;color:#777;background:rgba(255,255,255,.85);padding:3px 6px;border-radius:5px">v581</div>
 
 <script defer src="js/analista/45-ui-centro-operacoes-v250.js?v=20260804-v250"></script>
 <script defer src="js/analista/47-dashboard-acomp-v252.js?v=20260805-v274"></script>
