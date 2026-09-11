@@ -40,6 +40,14 @@
 
   // Ver mesmo bloco/comentário em 97-recebimento-recusas.js.
   global.DT_RETORNOS_DIRTY = global.DT_RETORNOS_DIRTY || { patio: false, indicadores: false, status: false, recusas: false };
+  // PEDIDO AO VIVO (2026-09-11): "olha se não tem como os dados se
+  // conversarem entre as telas" — cache compartilhado de
+  // recebimento_recusas_notas (mercado/vendedor/valor por chave), pra
+  // Pátio em Tempo Real (105) não precisar buscar de novo o que esta tela
+  // já carregou por inteiro na mesma sessão. `completa:true` significa
+  // "a coleção inteira já está aqui" — uma chave ausente nesse caso
+  // REALMENTE não existe, não precisa nem tentar buscar.
+  global.DT_NOTAS_VENDA_CACHE = global.DT_NOTAS_VENDA_CACHE || { porChave: new Map(), completa: false };
 
   const COL_NOTAS = 'recebimento_recusas_notas';
   const COL_RECUSAS = 'recebimento_recusas';
@@ -122,6 +130,10 @@
     _notas = n.docs.map(d => ({ _id: d.id, ...d.data() }));
     _notasPorChave = new Map(_notas.map(x => [x.chave, x]));
     _notasCarregadas = true;
+    // Alimenta o cache compartilhado (ver DT_NOTAS_VENDA_CACHE acima) —
+    // Pátio em Tempo Real aproveita isso pra não buscar de novo.
+    _notas.forEach(x => global.DT_NOTAS_VENDA_CACHE.porChave.set(x._id, x));
+    global.DT_NOTAS_VENDA_CACHE.completa = true;
   }
   // PEDIDO AO VIVO (2026-09-11, Fase 2 do espelho BigQuery): "por que a
   // Bluesoft não demora com 1 ano de dados e aqui demora?" — a resposta

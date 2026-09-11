@@ -189,6 +189,43 @@ test('carregarPatio: enriquecimento busca em LOTES (in, até 30 chaves), não 1 
   assert.equal(chamadasWhereIn, 2, '33 chaves em lotes de 30 = 2 consultas em lote (30 + 3)');
 });
 
+// PEDIDO AO VIVO (2026-09-11): "olha se não tem como os dados se
+// conversarem entre as telas" — quando Indicadores de Retornos (98) já
+// carregou a coleção inteira nesta sessão (DT_NOTAS_VENDA_CACHE.completa
+// = true), Pátio em Tempo Real reaproveita 100% — zero leituras no
+// Firestore pro enriquecimento.
+test('carregarPatio: com o cache compartilhado (DT_NOTAS_VENDA_CACHE) já completo, não busca NADA no Firestore pro enriquecimento', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [
+      { chave: 'CHX', numeroNota: '999', tratamento: 'RECUSA', statusRetorno: 'AGUARD_FISCAL' },
+    ] } },
+  ]);
+  let chamouWhere = false;
+  const notas = mockColecao([]);
+  const whereOriginal = notas.where;
+  notas.where = (...args) => { chamouWhere = true; return whereOriginal(...args); };
+
+  const dom = new JSDOM('<!doctype html><html><body><div id="page-recebimento-patio-tempo-real"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const win = dom.window;
+  _janelasAbertas.push(win);
+  win.getDTFirestore = () => ({ collection: nome => ({ recebimento_recusas: recusas, recebimento_recusas_notas: notas })[nome] || mockColecao([]) });
+  win.getDTLojaAtiva = () => 'loja_matriz';
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: () => async () => ({ data: { recusas: recusas._registro ? [...recusas._registro.entries()].map(([id, data]) => ({ _id: id, ...data })) : [] } }) }) }), firestore: { FieldPath: { documentId: () => ({ __isDocumentIdSentinel: true }) } } };
+  win.showToast = () => {};
+  win.aplicarPermissoesAnalista = () => {};
+  // Simula Indicadores de Retornos já tendo carregado a coleção inteira
+  // nesta sessão, ANTES de 105-recebimento-patio-tempo-real.js rodar.
+  win.DT_NOTAS_VENDA_CACHE = { porChave: new Map([['CHX', { destinatario: 'Mercado Pré-carregado', valorTotal: 42 }]]), completa: true };
+  win.eval(patioCode);
+
+  await win._recebimentoPatioTempoRealInternals.carregarPatio(true);
+  const linhas = win._recebimentoPatioTempoRealInternals.getLinhas();
+
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].destinatario, 'Mercado Pré-carregado', 'veio do cache compartilhado, não de uma busca nova');
+  assert.equal(chamouWhere, false, 'zero leituras no Firestore — o cache já tinha tudo');
+});
+
 // ── kpis / ranking ───────────────────────────────────────────────────────
 test('kpis: soma total/recusas/reentregas (qtd+valor) e conta notas em tratamento (status fora de vazio/FINALIZADO)', async () => {
   const recusas = mockColecao([

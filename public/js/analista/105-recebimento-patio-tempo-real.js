@@ -9,6 +9,11 @@
   'use strict';
   // Ver mesmo bloco/comentário em 97-recebimento-recusas.js.
   global.DT_RETORNOS_DIRTY = global.DT_RETORNOS_DIRTY || { patio: false, indicadores: false, status: false, recusas: false };
+  // Ver mesmo bloco/comentário em 98-recebimento-retornos-indicadores.js —
+  // cache compartilhado de recebimento_recusas_notas. Se o Analista já
+  // abriu Indicadores de Retornos nesta sessão, `completa===true` e o
+  // enriquecimento abaixo nem precisa buscar nada no Firestore.
+  global.DT_NOTAS_VENDA_CACHE = global.DT_NOTAS_VENDA_CACHE || { porChave: new Map(), completa: false };
   const COL_RECUSAS = 'recebimento_recusas';
   const COL_NOTAS = 'recebimento_recusas_notas';
 
@@ -103,18 +108,32 @@
   // a cada tick do polling de 45s. Agrupa em lotes de 30 chaves por
   // consulta (limite do operador `in` do Firestore) em vez de 1 leitura
   // por nota — pátio com 100 notas vira 4 consultas, não 100.
+  // PEDIDO AO VIVO (2026-09-11): "os dados se conversarem entre as telas"
+  // — antes de buscar QUALQUER coisa no Firestore, aproveita o cache
+  // compartilhado com Indicadores de Retornos (98). Se essa tela já foi
+  // aberta nesta sessão, `completa===true` e ZERO leituras acontecem
+  // aqui; senão, busca só o que falta e ALIMENTA o cache compartilhado
+  // também, pra próxima vez (aqui ou em qualquer outra tela) ser de graça.
   async function _enriquecerComNotas(linhas) {
     const chaves = [...new Set(linhas.map(l => l.chave).filter(Boolean))];
     if (!chaves.length) return linhas;
+    const cache = global.DT_NOTAS_VENDA_CACHE;
     const porChave = new Map();
-    const LOTE = 30;
-    const lotes = [];
-    for (let i = 0; i < chaves.length; i += LOTE) lotes.push(chaves.slice(i, i + LOTE));
-    await Promise.all(lotes.map(lote =>
-      fs().collection(COL_NOTAS).where(global.firebase.firestore.FieldPath.documentId(), 'in', lote).get()
-        .then(snap => snap.docs.forEach(d => porChave.set(d.id, d.data())))
-        .catch(() => {})
-    ));
+    const faltando = [];
+    chaves.forEach(c => {
+      if (cache.porChave.has(c)) porChave.set(c, cache.porChave.get(c));
+      else if (!cache.completa) faltando.push(c);
+    });
+    if (faltando.length) {
+      const LOTE = 30;
+      const lotes = [];
+      for (let i = 0; i < faltando.length; i += LOTE) lotes.push(faltando.slice(i, i + LOTE));
+      await Promise.all(lotes.map(lote =>
+        fs().collection(COL_NOTAS).where(global.firebase.firestore.FieldPath.documentId(), 'in', lote).get()
+          .then(snap => snap.docs.forEach(d => { porChave.set(d.id, d.data()); cache.porChave.set(d.id, d.data()); }))
+          .catch(() => {})
+      ));
+    }
     return linhas.map(l => {
       const n = porChave.get(l.chave) || {};
       return Object.assign({}, l, {
