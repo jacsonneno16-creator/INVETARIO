@@ -22,8 +22,8 @@ function mockColecao(docsIniciais) {
     }),
     _registro: registro,
   };
-  base.where = (campo, op, valor) => ({
-    get: async () => {
+  base.where = (campo, op, valor) => {
+    const get = async () => {
       // PEDIDO AO VIVO (2026-09-11): _enriquecerComNotas passou a buscar
       // por lote via FieldPath.documentId() 'in' — mock replica isso pra
       // não quebrar quando `campo` é o sentinel de documentId.
@@ -32,8 +32,12 @@ function mockColecao(docsIniciais) {
       }
       const bate = data => { const v = data ? data[campo] : undefined; return op === '==' ? v === valor : true; };
       return { docs: [...registro.entries()].filter(([, data]) => bate(data)).map(([id, data]) => ({ id, data: () => data })) };
-    },
-  });
+    };
+    // PEDIDO AO VIVO (2026-09-11): buscarMercadoFaltante() usa
+    // .where('numeroNota','==',n).limit(1).get() — encadeia igual ao
+    // Firestore de verdade, cortando o resultado de `get`.
+    return { get, limit: n => ({ get: async () => { const r = await get(); return { empty: r.docs.length === 0, docs: r.docs.slice(0, n) }; } }) };
+  };
   return base;
 }
 function mockRawFirestore(colecoes) {
@@ -337,6 +341,40 @@ test('migrarStatusFisico: preenche statusFisico só nos documentos que ainda nã
   // Rodar de novo não deve dar erro nem mudar nada (idempotente).
   await win._recebimentoPatioTempoRealInternals.migrarStatusFisico();
   assert.equal(recusas._registro.get('r1').statusFisico, 'SAIU');
+});
+
+// PEDIDO AO VIVO (2026-09-11): "puxando e preenchendo pelo número da
+// nota" — backfill pras notas que já estão no pátio sem mercado (a
+// maioria vinda de Identificar, que só pedia número, sem chave).
+test('buscarMercadoFaltante: acha pelo número no ledger de venda e corrige o documento original (chave + mercado)', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ numeroNota: '900', box: 'BOX 1', tratamento: 'RECUSA' }] } }, // sem chave — veio de Identificar
+  ]);
+  const notasVenda = mockColecao([{ id: 'CHAVE-REAL', data: { numeroNota: '900', destinatario: 'Mercado Achado' } }]);
+  const { win } = carregarPagina({ recebimento_recusas: recusas, recebimento_recusas_notas: notasVenda });
+  await I(win).carregarPatio(true);
+  assert.ok(!I(win).getLinhas()[0].destinatario, 'antes da correção, sem mercado (sem chave pra enriquecer)');
+
+  await I(win).buscarMercadoFaltante();
+
+  const salvo = recusas._registro.get('r1');
+  assert.equal(salvo.notas[0].chave, 'CHAVE-REAL');
+  assert.equal(salvo.notas[0].destinatario, 'Mercado Achado');
+  assert.equal(I(win).getLinhas()[0].destinatario, 'Mercado Achado', 'tela já recarrega sozinha depois da correção');
+});
+
+test('buscarMercadoFaltante: número que não existe no ledger não altera nada, não trava', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ numeroNota: '901', box: 'BOX 2', tratamento: 'RECUSA' }] } },
+  ]);
+  const { win } = carregarPagina({ recebimento_recusas: recusas, recebimento_recusas_notas: mockColecao([]) });
+  await I(win).carregarPatio(true);
+
+  await I(win).buscarMercadoFaltante();
+
+  const salvo = recusas._registro.get('r1');
+  assert.equal(salvo.notas[0].chave, undefined);
+  assert.equal(salvo.notas[0].destinatario, undefined);
 });
 
 // ── render da tela ───────────────────────────────────────────────────────

@@ -205,6 +205,56 @@
     }
   }
 
+  // PEDIDO AO VIVO (2026-09-11): "puxando e preenchendo pelo número da
+  // nota" — backfill pras notas SEM mercado que já estão no pátio hoje
+  // (a maioria vinda de "Identificar", que só pedia número, sem chave, e
+  // por isso nunca conseguia enriquecer). Tenta achar cada uma pelo
+  // NÚMERO no ledger de venda e corrige o documento original — igual ao
+  // que 24-recebimento-recusas.js/identificarSalvar() já faz sozinho pras
+  // notas NOVAS a partir de agora. Idempotente: só mexe nas que ainda
+  // estão sem chave/mercado; rodar de novo não faz mal.
+  async function buscarMercadoFaltante() {
+    const btn = document.getElementById('patio-mercado-btn');
+    const original = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Buscando...'; }
+    try {
+      const semMercado = _linhas.filter(l => !l.destinatario && l.numeroNota && !l.chave);
+      const porDoc = new Map();
+      semMercado.forEach(l => {
+        if (!porDoc.has(l._recusaId)) porDoc.set(l._recusaId, new Set());
+        porDoc.get(l._recusaId).add(l.numeroNota);
+      });
+      let corrigidas = 0;
+      for (const [recusaId, numerosSet] of porDoc) {
+        const docSnap = await fs().collection(COL_RECUSAS).doc(recusaId).get();
+        if (!docSnap.exists) continue;
+        const dados = docSnap.data() || {};
+        const notas = Array.isArray(dados.notas) ? dados.notas.slice() : [];
+        let mudou = false;
+        for (const numero of numerosSet) {
+          const idx = notas.findIndex(n => (n.numeroNota || '') === numero && !n.chave);
+          if (idx === -1) continue;
+          const achada = await fs().collection(COL_NOTAS).where('numeroNota', '==', numero).limit(1).get();
+          if (achada.empty) continue;
+          const chave = achada.docs[0].id;
+          const destinatario = achada.docs[0].data().destinatario || '';
+          if (!chave) continue;
+          notas[idx] = Object.assign({}, notas[idx], { chave, destinatario });
+          mudou = true;
+          corrigidas++;
+        }
+        if (mudou) await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas });
+      }
+      global.showToast?.(corrigidas ? `${corrigidas} nota(s) corrigida(s) com o mercado achado.` : 'Nenhuma nota sem mercado foi encontrada no ledger de venda.', 'success');
+      await carregarPatio(true);
+      desenhar();
+    } catch (e) {
+      global.showToast?.('Erro ao buscar mercado: ' + (e.message || e), 'error');
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+  }
+
   function _filtradas() {
     return _linhas.filter(l => {
       if (_filtroTipo === 'RECUSA' && l.tratamento !== 'RECUSA') return false;
@@ -334,6 +384,7 @@
         <div><h2 style="margin:0">📦 Pátio em Tempo Real</h2><div style="color:var(--muted);font-size:.78rem;margin-top:4px">Saldo físico atual de Recusas/Reentregas paradas — atualiza sozinho a cada 45s. Não é histórico: uma nota sai daqui quando é finalizada (Recusa) ou tem a saída confirmada (Reentrega).</div></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button type="button" class="btn btn-ghost btn-sm" id="patio-migrar-btn" title="Roda 1x — organiza registros antigos que ainda não têm o campo novo desta tela">🔧 Preparar dados antigos</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="patio-mercado-btn" title="Tenta achar o mercado pelo número das notas que estão sem (ex.: lançadas por Identificar)">🏪 Buscar mercado que falta</button>
           <button class="btn btn-ghost" data-patio-atualizar="1">↻ Atualizar</button>
         </div>
       </div>
@@ -353,6 +404,7 @@
   function _ligarEventos() {
     document.querySelector('[data-patio-atualizar]')?.addEventListener('click', async () => { await carregarPatio(true); desenhar(); });
     document.getElementById('patio-migrar-btn')?.addEventListener('click', migrarStatusFisico);
+    document.getElementById('patio-mercado-btn')?.addEventListener('click', buscarMercadoFaltante);
     document.getElementById('patio-f-data-ini')?.addEventListener('change', e => { _filtroDataInicio = e.target.value || ''; desenhar(); });
     document.getElementById('patio-f-data-fim')?.addEventListener('change', e => { _filtroDataFim = e.target.value || ''; desenhar(); });
     document.getElementById('patio-f-tipo')?.addEventListener('change', e => { _filtroTipo = e.target.value || ''; desenhar(); });
@@ -395,7 +447,7 @@
   global.renderPatioTempoReal = renderPatioTempoReal;
   global._recebimentoPatioTempoRealInternals = {
     estaNoPatio, recalcularStatusFisico, linhasPorNota, carregarPatio, kpis,
-    rankingMercados: _rankingMercados, fmtTempoParado, migrarStatusFisico,
+    rankingMercados: _rankingMercados, fmtTempoParado, migrarStatusFisico, buscarMercadoFaltante,
     getLinhas: () => _linhas,
     setFiltroTipo: v => { _filtroTipo = v || ''; }, getFiltroTipo: () => _filtroTipo,
     setFiltroMercado: v => { _filtroMercado = v || ''; },
