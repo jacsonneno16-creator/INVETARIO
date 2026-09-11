@@ -655,6 +655,20 @@
         .some(m=>a.permissoes?.[m]?.visualizar===true);
       if(ehAnalista && tinhaRecebimento) return true;
     }
+    // Mesma compatibilidade acima, agora pro Pátio em Tempo Real (criado
+    // 2026-09-11): sem este fallback, todo usuário com permissões salvas
+    // ANTES de hoje simplesmente não vê a aba nova, mesmo tendo acesso
+    // normal a Recebimento (foi o que aconteceu ao vivo com um colega
+    // testando em outro PC/anônimo — não era bug de rede, era a chave
+    // `recebimento-patio-tempo-real` não existir ainda no documento dele).
+    if(modulo==='recebimento-patio-tempo-real'){
+      const explicita=a.permissoes?.['recebimento-patio-tempo-real'];
+      if(explicita && typeof explicita==='object') return explicita?.[acao]===true;
+      const ehAnalista=(a.perfil==='analista') || a.canais_acesso?.analista===true;
+      const tinhaRecebimento=['recebimento-operacao','recebimento-transbordo','recebimento-notas','recebimento-dashboard','recebimento-recusas']
+        .some(m=>a.permissoes?.[m]?.visualizar===true);
+      if(ehAnalista && tinhaRecebimento) return true;
+    }
     return a.permissoes?.[modulo]?.[acao]===true;
   }
   function aplicarPermissoesAnalista(){
