@@ -178,26 +178,41 @@
 
   function notaCompletaDe(n) { return _notasPorChave.get(n.chave) || n; }
 
-  // Cada dimensão sabe extrair, de UMA recusa (carga), os valores distintos
-  // que ela contribui — usado tanto pra agregar (contar) quanto pra
-  // filtrar (uma recusa passa no filtro se um desses valores bate).
-  function valoresUnicosDeNotas(r, campo) {
-    const vistos = new Set();
-    (r.notas || []).forEach(n => {
+  // Cada dimensão sabe extrair, de UMA recusa (evento), os valores que ela
+  // contribui — usado tanto pra agregar (contar) quanto pra filtrar (uma
+  // recusa passa no filtro se um desses valores bate).
+  // PEDIDO AO VIVO (2026-09-11): "ele veio e devolveu uma única vez, mas
+  // trouxe 10 notas, vai somar 10 ocorrências — ali tudo é por notas
+  // retornadas" — SEM deduplicar dentro do mesmo evento: se as 10 notas são
+  // do mesmo mercado/vendedor/motorista, conta as 10, não 1. Renomeada de
+  // `valoresUnicosDeNotas` (nome antigo já não descrevia o comportamento).
+  function valoresPorNota(r, campo) {
+    const valores = [];
+    (r.notas && r.notas.length ? r.notas : [{}]).forEach(n => {
       const v = String(notaCompletaDe(n)[campo] || '').trim();
-      if (v) vistos.add(v);
+      if (v) valores.push(v);
     });
-    return [...vistos];
+    return valores;
+  }
+  // Dimensões do EVENTO (motivo/transportadora/mês não variam nota a nota
+  // hoje — são campo do documento inteiro), repetido 1x por nota física
+  // pra contar do mesmo jeito ("ocorrência por transportadora" = quantas
+  // notas aquele motorista trouxe, não quantas vezes ele veio).
+  function valorDoEventoPorNota(r, valor) {
+    const v = String(valor || '').trim();
+    if (!v) return [];
+    const qtdNotas = (r.notas && r.notas.length) ? r.notas.length : 1;
+    return new Array(qtdNotas).fill(v);
   }
   const DIMENSOES = {
-    motivo: { titulo: 'Motivos da Volta', icone: '↩️', valoresDaRecusa: r => [String(r.motivoNome || '').trim()].filter(Boolean) },
+    motivo: { titulo: 'Motivos da Volta', icone: '↩️', valoresDaRecusa: r => valorDoEventoPorNota(r, r.motivoNome) },
     // "Transportadora" (pedido ao vivo, combinado com o usuário): usa
     // Motorista — mais próximo dado real disponível hoje.
-    transportadora: { titulo: 'Ocorrências por Transportadora', icone: '🚚', valoresDaRecusa: r => [String(r.motoristaNome || '').trim()].filter(Boolean) },
-    mercado: { titulo: 'Notas por Cliente/Mercado', icone: '🏪', valoresDaRecusa: r => valoresUnicosDeNotas(r, 'destinatario') },
-    vendedor: { titulo: 'Notas por Vendedor', icone: '🧑‍💼', valoresDaRecusa: r => valoresUnicosDeNotas(r, 'vendedorNome') },
-    supervisor: { titulo: 'Notas por Supervisor', icone: '👔', valoresDaRecusa: r => valoresUnicosDeNotas(r, 'supervisorNome') },
-    mes: { titulo: 'Retornos por Mês', icone: '📅', valoresDaRecusa: r => [mesAnoDe(r.criadoEm)].filter(Boolean) },
+    transportadora: { titulo: 'Ocorrências por Transportadora', icone: '🚚', valoresDaRecusa: r => valorDoEventoPorNota(r, r.motoristaNome) },
+    mercado: { titulo: 'Notas por Cliente/Mercado', icone: '🏪', valoresDaRecusa: r => valoresPorNota(r, 'destinatario') },
+    vendedor: { titulo: 'Notas por Vendedor', icone: '🧑‍💼', valoresDaRecusa: r => valoresPorNota(r, 'vendedorNome') },
+    supervisor: { titulo: 'Notas por Supervisor', icone: '👔', valoresDaRecusa: r => valoresPorNota(r, 'supervisorNome') },
+    mes: { titulo: 'Retornos por Mês', icone: '📅', valoresDaRecusa: r => valorDoEventoPorNota(r, mesAnoDe(r.criadoEm)) },
     // Ação (Tratamento) e Status NÃO viram gráfico (ver comentário no topo
     // do arquivo) — ficam aqui só como fonte de dado pros PAINÉIS DE
     // CHECKBOX (painelFiltroHtml), reaproveitando a mesma extração
@@ -293,7 +308,7 @@
   // Retrocompatível: nome antigo usado por quem já dependia dele (mercado).
   function agregarPorCampoDaNota(campo) {
     const contagem = new Map();
-    recusasFiltradas().forEach(r => valoresUnicosDeNotas(r, campo).forEach(v => contagem.set(v, (contagem.get(v) || 0) + 1)));
+    recusasFiltradas().forEach(r => valoresPorNota(r, campo).forEach(v => contagem.set(v, (contagem.get(v) || 0) + 1)));
     return [...contagem.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
   }
 

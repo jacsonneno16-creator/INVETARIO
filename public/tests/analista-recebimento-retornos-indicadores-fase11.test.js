@@ -116,14 +116,14 @@ test('cardChart usa barra horizontal pros rankings (transportadora/motivo/mercad
   assert.match(blocoMes,/dash-column-chart/);
 });
 
-test('agregarPorCampoDaNota conta um nome só 1x por RECUSA, mesmo repetido em duas notas da mesma carga',async()=>{
+test('PEDIDO AO VIVO (2026-09-11): agregarPorCampoDaNota soma por NOTA, não por evento — 2 notas do mesmo mercado na mesma carga contam 2',async()=>{
   const notas=mockColecao([
     {id:'A',data:{chave:'A',destinatario:'Mercado Atacadão'}},
     {id:'B',data:{chave:'B',destinatario:'Mercado Atacadão'}}, // mesma loja, nota diferente, mesma carga
     {id:'C',data:{chave:'C',destinatario:'Mercado Central'}},
   ]);
   const recusas=mockColecao([
-    {id:'r1',data:{notas:[{chave:'A'},{chave:'B'}],criadoEm:'2026-06-01T00:00:00.000Z'}}, // 1 carga com 2 notas do MESMO mercado — conta 1
+    {id:'r1',data:{notas:[{chave:'A'},{chave:'B'}],criadoEm:'2026-06-01T00:00:00.000Z'}}, // 1 carga com 2 notas do MESMO mercado — conta 2
     {id:'r2',data:{notas:[{chave:'C'}],criadoEm:'2026-06-01T00:00:00.000Z'}},
   ]);
   const { win }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas });
@@ -131,8 +131,24 @@ test('agregarPorCampoDaNota conta um nome só 1x por RECUSA, mesmo repetido em d
   win.document.getElementById('indic-buscar-periodo').click();
   await new Promise(r => setTimeout(r, 0));
   const ranking=win._recebimentoRetornosIndicadoresInternals.agregarPorCampoDaNota('destinatario');
-  assert.equal(ranking.find(x=>x.label==='Mercado Atacadão').value,1);
+  assert.equal(ranking.find(x=>x.label==='Mercado Atacadão').value,2);
   assert.equal(ranking.find(x=>x.label==='Mercado Central').value,1);
+});
+
+test('PEDIDO AO VIVO (2026-09-11): "Ocorrências por Transportadora" soma por NOTA — motorista trouxe 1 vez mas com 2 notas conta 2',async()=>{
+  const notas=mockColecao([
+    {id:'A',data:{chave:'A',destinatario:'Mercado A'}},
+    {id:'B',data:{chave:'B',destinatario:'Mercado B'}},
+  ]);
+  const recusas=mockColecao([
+    {id:'r1',data:{notas:[{chave:'A'},{chave:'B'}],motoristaNome:'João',criadoEm:'2026-06-01T00:00:00.000Z'}},
+  ]);
+  const { win }=carregarPagina({ recebimento_recusas_notas:notas, recebimento_recusas:recusas });
+  await win.renderRecebimentoRetornosIndicadores();
+  win.document.getElementById('indic-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
+  const ranking=win._recebimentoRetornosIndicadoresInternals.agregarPorDimensao('transportadora');
+  assert.equal(ranking.find(x=>x.label==='João').value,2);
 });
 
 test('página mostra os blocos do PRINT de referência: transportadora (via motorista), motivo, mercado, vendedor, supervisor e mês',async()=>{

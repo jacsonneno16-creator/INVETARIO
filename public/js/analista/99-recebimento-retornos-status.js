@@ -102,6 +102,21 @@
   // planilha linha a linha). OK e EM_TRATATIVA nunca carimbam nada — são
   // atalhos sem burocracia/sem data associada na planilha real.
   const DATA_POR_STATUS = { '': 'liberadoParaRecusarEm', AGUARD_FISCAL: 'dataSolicitacaoFiscalEm', CTE: 'dataDaRecusaEm', ENDERECANDO: 'dataDoEnderecamentoEm' };
+  // PEDIDO AO VIVO (2026-09-11): "quando for uma recusa mudar para Em
+  // Tratativa, o detalhe mudar para aguard. volta para estoque, depois de
+  // finalizado mudar para nota guardada" — texto FIXO da coluna Detalhe
+  // pros status que têm um significado direto (sem depender de conta de
+  // dias). Os demais status (Aguard. Fiscal/CTE/Endereçando/Aguard.
+  // Monitoramento) continuam com o texto calculado em celulaDetalheHtml.
+  const DETALHE_POR_STATUS = { EM_TRATATIVA: 'Aguard. volta para estoque', FINALIZADO: 'Nota guardada' };
+  // Reentrega não usa `statusRetorno` de verdade (fluxo próprio por data,
+  // ver ehReentrega) — estes 2 rótulos são só de EXIBIÇÃO, calculados a
+  // partir de dataSaidaEm, nunca gravados no campo statusRetorno (que fica
+  // reservado pro fluxo de Recusa) — por isso ficam FORA de
+  // STATUS_RETORNO_LABELS (não podem aparecer no <select> manual nem no
+  // filtro, que são só pra Recusa).
+  const STATUS_REENTREGA_LABELS = { AGUARD_SAIDA: 'Aguard. Saída', FINALIZADO: 'Finalizado' };
+  const STATUS_REENTREGA_CORES = { AGUARD_SAIDA: 'background:#3a2f52;color:#c9a8f5', FINALIZADO: 'background:#15803d;color:#fff' };
 
   // PEDIDO AO VIVO (2026-09-08): "cada nota tem que gerar uma linha... se
   // ela tiver junta e uma for reentrega e a outra for recusa" — um
@@ -372,6 +387,12 @@
   function badgeStatusHtml(status) {
     return `<span class="badge" style="${STATUS_CORES[status] || ''}">${esc(STATUS_RETORNO_LABELS[status] || status)}</span>`;
   }
+  // Status de exibição da Reentrega (não é um valor real de statusRetorno —
+  // ver comentário de STATUS_REENTREGA_LABELS acima).
+  function statusReentregaHtml(r) {
+    const chave = r.dataSaidaEm ? 'FINALIZADO' : 'AGUARD_SAIDA';
+    return `<span class="badge" style="${STATUS_REENTREGA_CORES[chave]}">${esc(STATUS_REENTREGA_LABELS[chave])}</span>`;
+  }
 
   function resumoHtml() {
     const k = kpis();
@@ -420,15 +441,38 @@
 
   function celulaDetalheHtml(r, podeEditarFlag) {
     if (ehReentrega(r)) {
+      // PEDIDO AO VIVO (2026-09-11): "tratamento reentrega... o detalhe
+      // ficar como Não saiu e depois que confirmar a saída... o detalhe
+      // mudar para Nota saiu" — texto principal segue dataSaidaEm; dias
+      // parado continua como informação extra, não substitui o texto.
       const dias = diasParadoReentrega(r);
+      const saiu = !!r.dataSaidaEm;
       return `<div style="display:flex;flex-direction:column;gap:4px;font-size:.72rem">
         <label>Programada: <input type="date" data-reentrega-data="${esc(r._recusaId)}|${esc(r._notaChave)}:dataProgramadaEm" value="${isoParaInputDate(r.dataProgramadaEm)}" ${podeEditarFlag ? '' : 'disabled'} style="padding:3px"></label>
         <label>Saída: <input type="date" data-reentrega-data="${esc(r._recusaId)}|${esc(r._notaChave)}:dataSaidaEm" value="${isoParaInputDate(r.dataSaidaEm)}" ${podeEditarFlag ? '' : 'disabled'} style="padding:3px"></label>
-        <span style="color:var(--muted)">${dias == null ? '—' : Math.round(dias) + ' dia(s) parado'}</span>
+        <span style="color:var(--muted)">${saiu ? 'Nota saiu' : 'Não saiu'}${dias == null ? '' : ' — ' + Math.round(dias) + ' dia(s)'}</span>
       </div>`;
     }
-    const parado = diasParadoFiscalCte(r);
-    const operacao = diasOperacao(r);
+    // PEDIDO AO VIVO (2026-09-11), correção de BUG AO VIVO: "mudei para
+    // aguardando fiscal, o detalhe mudou pra parado fiscal, depois voltei
+    // pra aguardando monitoramento e ele não voltou pro detalhe certo" —
+    // a causa era calcular o texto só a partir da PRESENÇA da data
+    // (dataSolicitacaoFiscalEm/dataDoEnderecamentoEm), que nunca é apagada
+    // (fica gravada de propósito, histórico real, ver DATA_POR_STATUS) —
+    // então voltar pra um status anterior não limpava o texto. Agora o
+    // texto depende do status ATUAL: alguns status têm texto fixo
+    // (DETALHE_POR_STATUS); os outros (Aguard. Fiscal/CTE/Endereçando/
+    // Aguard. Monitoramento) usam a conta de dias, mas só quando o status
+    // atual já alcançou aquela etapa — nunca mostra um texto de etapa que
+    // não é a atual.
+    const status = r.statusRetorno || '';
+    if (DETALHE_POR_STATUS[status]) {
+      return `<div style="font-size:.72rem;color:var(--muted)">${esc(DETALHE_POR_STATUS[status])}</div>`;
+    }
+    const alcancouFiscal = status === 'AGUARD_FISCAL' || status === 'CTE' || status === 'ENDERECANDO';
+    const alcancouEnderecamento = status === 'ENDERECANDO';
+    const parado = alcancouFiscal ? diasParadoFiscalCte(r) : null;
+    const operacao = alcancouEnderecamento ? diasOperacao(r) : null;
     return `<div style="font-size:.72rem;color:var(--muted)">
       ${parado == null ? 'Ainda não solicitado ao fiscal' : Math.round(parado) + 'd parado fiscal/CTE'}<br>
       ${operacao == null ? 'Ainda não endereçado' : Math.round(operacao) + 'd de operação'}
@@ -442,11 +486,13 @@
     const podeEditarFlag = podeEditar();
     return `<div style="overflow:auto"><table class="dt-table"><thead><tr><th>Data/Hora</th><th>Notas</th><th>Motorista</th><th>Conferente</th><th>Tratamento</th><th>Status</th><th>Detalhe</th></tr></thead><tbody>${lista.map(r => {
       const status = r.statusRetorno || '';
-      // Reentrega não usa esse status (fluxo próprio, ver celulaDetalheHtml)
-      // — pedido ao vivo do usuário, validado contra a planilha real: a
-      // aba REENTREGA nem tem as colunas de fiscal/CTE.
+      // Reentrega não grava statusRetorno de verdade (fluxo próprio por
+      // data, ver celulaDetalheHtml) — mas PEDIDO AO VIVO (2026-09-11)
+      // mostra um status de EXIBIÇÃO (Aguard. Saída/Finalizado) calculado
+      // de dataSaidaEm, sem virar campo editável/selecionável (continua
+      // sendo a data de Saída que manda, não um dropdown).
       const statusSelect = ehReentrega(r)
-        ? '<span style="color:var(--muted);font-size:.72rem">— (reentrega)</span>'
+        ? statusReentregaHtml(r)
         : podeEditarFlag
           ? `<select class="field" style="padding:5px;font-size:.75rem" data-status-mudar="${esc(r._recusaId)}|${esc(r._notaChave)}">${Object.keys(STATUS_RETORNO_LABELS).map(k => `<option value="${k}" ${k===status?'selected':''}>${esc(STATUS_RETORNO_LABELS[k])}</option>`).join('')}</select>`
           : badgeStatusHtml(status);
@@ -559,7 +605,8 @@
 
   global.renderRecebimentoRetornosStatus = renderRecebimentoRetornosStatus;
   global._recebimentoRetornosStatusInternals = {
-    STATUS_RETORNO_LABELS, DATA_POR_STATUS, diasParadoFiscalCte, diasOperacao, diasParadoReentrega, kpis, ehReentrega,
+    STATUS_RETORNO_LABELS, DATA_POR_STATUS, DETALHE_POR_STATUS, STATUS_REENTREGA_LABELS, diasParadoFiscalCte, diasOperacao, diasParadoReentrega, kpis, ehReentrega,
+    celulaDetalheHtml,
     setFiltroStatus(v) { _filtroStatus = v || ''; }, setFiltroTratamento(v) { _filtroTratamento = v || ''; },
     setPeriodo(ini, fim) { _periodoInicio = ini || ''; _periodoFim = fim || ''; },
   };

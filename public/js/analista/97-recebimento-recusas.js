@@ -665,7 +665,7 @@
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input class="field" id="recusas-filtro-periodo-fim" type="date" value="${esc(_filtroPeriodoFim)}" style="padding:8px"></div>
       <button class="btn btn-primary btn-sm" id="recusas-buscar-periodo" style="padding:8px 14px">🔍 Buscar</button>
       <div style="font-size:.68rem;color:var(--muted);align-self:center">Período máximo de 2 meses — pode levar alguns minutos pra refletir uma nota nova</div>
-      <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">TRATAMENTO</div><select class="field" id="recusas-filtro-tratamento" style="padding:8px">${Object.keys(TRATAMENTO_LABELS).map(k=>`<option value="${k}" ${k===_filtroTratamento?'selected':''}>${esc(TRATAMENTO_LABELS[k])}</option>`).join('')}</select></div>
+      <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">TRATAMENTO</div><select class="field" id="recusas-filtro-tratamento" style="padding:8px">${TRATAMENTO_OPCOES_SELECT.map(k=>`<option value="${k}" ${k===_filtroTratamento?'selected':''}>${esc(TRATAMENTO_LABELS[k])}</option>`).join('')}</select></div>
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">CONFERÊNCIA</div><select class="field" id="recusas-filtro-conferencia" style="padding:8px"><option value="" ${!_filtroConferencia?'selected':''}>Todas</option><option value="NAO_REALIZADA" ${_filtroConferencia==='NAO_REALIZADA'?'selected':''}>Não realizada</option><option value="CONFERIDA" ${_filtroConferencia==='CONFERIDA'?'selected':''}>Conferida</option><option value="CONFERIDA_COM_DIVERGENCIA" ${_filtroConferencia==='CONFERIDA_COM_DIVERGENCIA'?'selected':''}>Conferida c/ divergência</option></select></div>
       <input class="field" id="recusas-filtro" value="${esc(_filtro)}" placeholder="Pesquisar NF, motorista, motivo, box..." style="max-width:280px;padding:8px">
     </div>`;
@@ -1538,6 +1538,14 @@
     // vez de carimbar "agora" na 1ª edição pós-migração, senão perderia a
     // data histórica verdadeira.
     if (valor === 'RECUSA' && !nota.liberadoParaRecusarEm) patchNota.liberadoParaRecusarEm = nota.liberadoParaRecusarEm || r.liberadoParaRecusarEm || agora;
+    // PEDIDO AO VIVO (2026-09-11): "o status depois que ter o tratamento já
+    // definido, tipo... quando for uma recusa mudar para Em Tratativa" —
+    // status inicial automático, só na 1ª vez (nota ainda sem
+    // statusRetorno nenhum) pra não apagar progresso manual já feito numa
+    // reclassificação. Ver 99-recebimento-retornos-status.js pro mapeamento
+    // completo de status→detalhe.
+    const statusAtualDaNota = nota.statusRetorno != null ? nota.statusRetorno : (r.statusRetorno || '');
+    if (valor === 'RECUSA' && !statusAtualDaNota) patchNota.statusRetorno = 'EM_TRATATIVA';
     const notasAtualizadas = notas.map((n, i) => i === idx ? Object.assign({}, n, patchNota) : n);
     const statusFisico = _recalcularStatusFisico(Object.assign({}, r, { notas: notasAtualizadas }));
     try {

@@ -381,44 +381,100 @@
     return manual.concat(vinculo);
   }
 
+  // PEDIDO AO VIVO (2026-09-11): "juntar as linhas quando for os mesmo
+  // produtos, colocar uma linha de referência quando trocar de um produto
+  // pra outro" — agrupa os itens (por capa) na mesma ordem do Resumo por
+  // produto (código crescente), com UMA linha de referência (código +
+  // produto + total) antes de cada grupo, em vez de repetir código/produto
+  // em toda linha de capa — a repetição é o que o pedido chamou de "juntar".
+  function _itensAgrupadosPorProdutoParaPdf(itens) {
+    const porChave = new Map();
+    itens.forEach(it => {
+      const chave = (it.codigoProduto || '—') + '|' + (it.nomeProduto || '—');
+      if (!porChave.has(chave)) porChave.set(chave, { codigoProduto: it.codigoProduto || '', nomeProduto: it.nomeProduto || '—', capas: [] });
+      porChave.get(chave).capas.push(it);
+    });
+    return [...porChave.values()]
+      .sort((a, b) => String(a.codigoProduto || '').localeCompare(String(b.codigoProduto || ''), 'pt-BR', { numeric: true }))
+      .map(g => ({ ...g, capas: g.capas.slice().sort((a, b) => String(a.capa).localeCompare(String(b.capa), 'pt-BR', { numeric: true })) }));
+  }
+
+  // PEDIDO AO VIVO (2026-09-11): "colocar o nome da pessoa que gerou a
+  // carga e o nome do login da pessoa que tá imprimindo — você já tem essa
+  // informação" — quem GEROU é `carga.criadoPor` (e-mail do operador do
+  // Coletor, já gravado em 26-recebimento-cargas.js/criarCarga); quem
+  // IMPRIME é o login do Analista atual (mesmo padrão de usuarioAtual() já
+  // usado em 97/99/100) — nenhum dos dois pede pra digitar nada.
+  function _usuarioAtualEmail() {
+    const u = global.firebase?.auth?.().currentUser;
+    return (u && u.email) || '';
+  }
+
+  // Layout inspirado no modelo "Paletes / Volumes" (Bluesoft) que o usuário
+  // enviou como referência: título grande + caixa azul clara com os totais
+  // no canto superior direito, seções com cabeçalho de tabela azul claro.
+  // Portrait (folha vertical) — ver _baixarPdfCarga: a exportação escala a
+  // imagem inteira pra caber em 1 página só, então "diminuir a letra se
+  // ficar muito grande" já acontece sozinho nesse encolhe-pra-caber.
   function _pdfCargaHtml(carga, itens) {
-    const resumo = _resumoPorProduto(itens);
     const notaPorChave = _notaPorChaveProduto(carga);
     const notas = _notasParaPdf(carga, itens);
-    const th = 'padding:6px 8px;text-align:left;border-bottom:1.5px solid #333;font-size:11px;text-transform:uppercase';
-    const td = 'padding:6px 8px;border-bottom:1px solid #ddd;font-size:12px';
+    const grupos = _itensAgrupadosPorProdutoParaPdf(itens);
+    const azul = '#dbeafe', azulTexto = '#1e2a5c', cinza = '#5a6472';
+    const th = `padding:5px 7px;text-align:left;font-size:9.5px;text-transform:uppercase;color:${azulTexto};background:${azul}`;
+    const td = 'padding:5px 7px;border-bottom:1px solid #e2e5ea;font-size:10.5px';
+    const secaoTitulo = t => `<div style="display:flex;align-items:center;gap:6px;margin:14px 0 6px;font-size:13px;font-weight:700;color:${azulTexto}">${t}</div>`;
+
     const linhasNotas = notas.map(n => `<tr><td style="${td}">${esc(n.numero)}</td><td style="${td}">${esc(n.volumes)}</td></tr>`).join('')
       || `<tr><td style="${td}" colspan="2">Nenhuma nota fiscal registrada.</td></tr>`;
-    const linhasResumo = resumo.map(r => {
-      const chave = (r.codigoProduto || '—') + '|' + (r.nomeProduto || '—');
-      return `<tr><td style="${td}">${esc(r.nomeProduto)}</td><td style="${td}">${esc(r.codigoProduto || '—')}</td><td style="${td}">${esc(r.quantidade)}</td><td style="${td}">${esc(notaPorChave.get(chave) || '—')}</td></tr>`;
+
+    const linhasResumo = grupos.map(g => {
+      const chave = (g.codigoProduto || '—') + '|' + (g.nomeProduto || '—');
+      const total = g.capas.reduce((s, it) => s + (Number(it.quantidade) || 0), 0);
+      return `<tr><td style="${td}">${esc(g.codigoProduto || '—')}</td><td style="${td}">${esc(g.nomeProduto)}</td><td style="${td}">${esc(total)}</td><td style="${td}">${esc(notaPorChave.get(chave) || '—')}</td></tr>`;
     }).join('') || `<tr><td style="${td}" colspan="4">Nenhum item bipado ainda.</td></tr>`;
-    const linhasItens = itens.slice().sort((a, b) => String(a.capa).localeCompare(String(b.capa))).map(it => {
-      const statusCapa = it.bluesoftPendente ? 'Pendente (capa não existe no Bluesoft)' : it.bluesoftCorrigido ? 'Corrigida' : '—';
-      return `<tr><td style="${td}">${esc(it.capa)}</td><td style="${td}">${esc(it.codigoProduto || '—')}</td><td style="${td}">${esc(it.nomeProduto || '—')}</td><td style="${td}">${esc(it.quantidade)}</td><td style="${td}">${esc(statusCapa)}</td></tr>`;
-    }).join('') || `<tr><td style="${td}" colspan="5">Nenhum item bipado ainda.</td></tr>`;
-    return `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;width:760px;padding:10px">
-      <div style="font-size:18px;font-weight:700;margin-bottom:2px">${esc(carga.nomeCarga || '(sem nome)')}</div>
-      <div style="font-size:13px;color:#555;margin-bottom:10px">${esc(carga.origemNome || '—')} → ${esc(carga.destinoNome || '—')}</div>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:14px"><tbody>
-        <tr><td style="${td};width:160px;font-weight:700">Status</td><td style="${td}">${esc(STATUS_LABEL[carga.status] || carga.status)}</td></tr>
+
+    const linhasItens = grupos.map(g => {
+      const total = g.capas.reduce((s, it) => s + (Number(it.quantidade) || 0), 0);
+      const linhaReferencia = `<tr style="background:#f0f5fc"><td style="${td};font-weight:700" colspan="3">${esc(g.codigoProduto || '—')} — ${esc(g.nomeProduto)} <span style="font-weight:400;color:${cinza}">(${esc(total)} un.)</span></td></tr>`;
+      const linhasCapa = g.capas.map(it => {
+        const statusCapa = it.bluesoftPendente ? 'Pendente' : it.bluesoftCorrigido ? 'Corrigida' : '—';
+        return `<tr><td style="${td};padding-left:16px">${esc(it.capa)}</td><td style="${td}">${esc(it.quantidade)}</td><td style="${td}">${esc(statusCapa)}</td></tr>`;
+      }).join('');
+      return linhaReferencia + linhasCapa;
+    }).join('') || `<tr><td style="${td}" colspan="3">Nenhum item bipado ainda.</td></tr>`;
+
+    return `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;width:560px;padding:14px">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px">
+        <div>
+          <div style="font-size:17px;font-weight:800;color:${azulTexto};margin-bottom:2px">${esc(carga.nomeCarga || '(sem nome)')}</div>
+          <div style="font-size:11px;color:${cinza}">${esc(carga.origemNome || '—')} → ${esc(carga.destinoNome || '—')}</div>
+          <div style="font-size:10px;color:${cinza};margin-top:4px">Expedido em: ${carga.expedidoEm ? esc(fmtData(carga.expedidoEm)) : '—'}</div>
+        </div>
+        <div style="background:${azul};border-radius:8px;padding:8px 14px;text-align:right;white-space:nowrap">
+          <div style="font-size:15px;font-weight:800;color:${azulTexto}">${esc(carga.totalPaletesFisico != null ? carga.totalPaletesFisico : '—')} palete(s)</div>
+          <div style="font-size:15px;font-weight:800;color:${azulTexto}">${esc(carga.totalVolumes || 0)} volume(s)</div>
+        </div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;margin-top:10px"><tbody>
+        <tr><td style="${td};width:120px;font-weight:700">Status</td><td style="${td}">${esc(STATUS_LABEL[carga.status] || carga.status)}</td></tr>
         <tr><td style="${td};font-weight:700">Motorista</td><td style="${td}">${esc(carga.motoristaNome || '—')}${carga.placa ? ' · ' + esc(carga.placa) : ''}</td></tr>
-        <tr><td style="${td};font-weight:700">Paletes / Volumes</td><td style="${td}">${esc(carga.totalPaletesFisico != null ? carga.totalPaletesFisico : '—')} palete(s) · ${esc(carga.totalVolumes || 0)} volume(s)</td></tr>
-        <tr><td style="${td};font-weight:700">Expedido em</td><td style="${td}">${carga.expedidoEm ? esc(fmtData(carga.expedidoEm)) : '—'}</td></tr>
+        <tr><td style="${td};font-weight:700">Gerado por</td><td style="${td}">${esc(carga.criadoPor || '—')}</td></tr>
+        <tr><td style="${td};font-weight:700">Impresso por</td><td style="${td}">${esc(_usuarioAtualEmail() || '—')} em ${esc(fmtData(new Date().toISOString()))}</td></tr>
       </tbody></table>
-      <div style="font-size:13px;font-weight:700;margin-bottom:4px">📄 Notas Fiscais</div>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:14px">
+      ${secaoTitulo('📄 Notas Fiscais')}
+      <table style="width:100%;border-collapse:collapse">
         <thead><tr><th style="${th}">Número</th><th style="${th}">Volumes</th></tr></thead>
         <tbody>${linhasNotas}</tbody>
       </table>
-      <div style="font-size:13px;font-weight:700;margin-bottom:4px">📊 Resumo por produto</div>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:14px">
-        <thead><tr><th style="${th}">Produto</th><th style="${th}">Código</th><th style="${th}">Quantidade</th><th style="${th}">Nota</th></tr></thead>
+      ${secaoTitulo('📊 Resumo por produto')}
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr><th style="${th}">Código</th><th style="${th}">Produto</th><th style="${th}">Quantidade</th><th style="${th}">Nota</th></tr></thead>
         <tbody>${linhasResumo}</tbody>
       </table>
-      <div style="font-size:13px;font-weight:700;margin-bottom:4px">📦 Itens (por capa)</div>
+      ${secaoTitulo('📦 Itens (por capa)')}
       <table style="width:100%;border-collapse:collapse">
-        <thead><tr><th style="${th}">Capa</th><th style="${th}">Código</th><th style="${th}">Produto</th><th style="${th}">Quantidade</th><th style="${th}">Bluesoft</th></tr></thead>
+        <thead><tr><th style="${th}">Capa</th><th style="${th}">Quantidade</th><th style="${th}">Bluesoft</th></tr></thead>
         <tbody>${linhasItens}</tbody>
       </table>
     </div>`;
@@ -439,7 +495,7 @@
     document.body.appendChild(container);
     try {
       const nomeArquivo = 'carga_' + String(carga.nomeCarga || cargaId).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') + '.pdf';
-      await global.exportarElementoProducaoPDF(container.id, nomeArquivo);
+      await global.exportarElementoProducaoPDF(container.id, nomeArquivo, { orientation: 'portrait' });
     } finally {
       container.remove();
     }
@@ -745,6 +801,7 @@
     desvincularProdutoDaNota: _desvincularProdutoDaNota,
     marcarCapaBluesoftPendente: _marcarCapaBluesoftPendente,
     baixarPdfCarga: _baixarPdfCarga,
-    pdfCargaHtml: _pdfCargaHtml
+    pdfCargaHtml: _pdfCargaHtml,
+    itensAgrupadosPorProdutoParaPdf: _itensAgrupadosPorProdutoParaPdf
   };
 })(window);

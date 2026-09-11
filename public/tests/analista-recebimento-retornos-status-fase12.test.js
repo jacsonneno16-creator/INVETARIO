@@ -149,6 +149,62 @@ test('as 4 datas nomeadas (liberadoParaRecusarEm/dataSolicitacaoFiscalEm/dataDaR
   assert.equal(doc5.notas[0].statusRetornoHistorico.length,5,'todo clique conta no histórico, inclusive o "voltar pra trás"');
 });
 
+// BUG AO VIVO CORRIGIDO 2026-09-11: "mudei pra Aguardando Fiscal, o detalhe
+// mudou pra parado fiscal, depois voltei pra Aguardando Monitoramento e ele
+// não voltou pro detalhe correto" — a causa era o texto vir só da PRESENÇA
+// da data (dataSolicitacaoFiscalEm), que nunca é apagada de propósito
+// (histórico real) — então voltar de status não limpava o texto exibido.
+test('BUG AO VIVO CORRIGIDO: detalhe volta pro texto certo quando o status volta pra Aguard. Monitoramento, mesmo já tendo passado por Aguard. Fiscal antes',async()=>{
+  const recusas=mockColecao([{id:'r1',data:{notas:[],criadoEm:'2026-08-01T08:00:00.000Z'}}]);
+  const { win, document }=carregarPagina({ recebimento_recusas:recusas });
+  await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
+  const mudar=async(valor)=>{
+    const select=document.querySelector('[data-status-mudar]');
+    select.value=valor; select.dispatchEvent(new win.Event('change',{bubbles:true}));
+    await new Promise(r=>setTimeout(r,0));
+  };
+  await mudar('AGUARD_FISCAL');
+  assert.match(document.body.innerHTML,/d parado fiscal\/CTE/);
+  await mudar('');
+  assert.doesNotMatch(document.body.innerHTML,/d parado fiscal\/CTE/,'voltou pra Aguard. Monitoramento — não pode mais mostrar o texto de Aguard. Fiscal');
+  assert.match(document.body.innerHTML,/Ainda não solicitado ao fiscal/);
+});
+
+// PEDIDO AO VIVO (2026-09-11): status/detalhe automáticos a partir do
+// tratamento — Recusa entra direto em "Em Tratativa" com detalhe "Aguard.
+// volta para estoque"; ao finalizar, o detalhe vira "Nota guardada".
+test('PEDIDO AO VIVO: Recusa mostra "Em Tratativa"/"Aguard. volta para estoque" e, finalizada, "Nota guardada"',async()=>{
+  const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A',tratamento:'RECUSA',statusRetorno:'EM_TRATATIVA'}],criadoEm:'2026-08-01T08:00:00.000Z'}}]);
+  const { win, document }=carregarPagina({ recebimento_recusas:recusas });
+  await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
+  assert.match(document.body.innerHTML,/Aguard\. volta para estoque/);
+  const select=document.querySelector('[data-status-mudar]');
+  select.value='FINALIZADO'; select.dispatchEvent(new win.Event('change',{bubbles:true}));
+  await new Promise(r=>setTimeout(r,0));
+  assert.match(document.body.innerHTML,/Nota guardada/);
+});
+
+// PEDIDO AO VIVO (2026-09-11): Reentrega mostra status de exibição (não é
+// campo editável) — Aguard. Saída/Não saiu antes da saída confirmada,
+// Finalizado/Nota saiu depois.
+test('PEDIDO AO VIVO: Reentrega mostra "Aguard. Saída"/"Não saiu" antes da saída e "Finalizado"/"Nota saiu" depois',async()=>{
+  const recusas=mockColecao([{id:'r1',data:{notas:[{chave:'A',tratamento:'REENTREGA'}],criadoEm:'2026-08-01T08:00:00.000Z'}}]);
+  const { win, document }=carregarPagina({ recebimento_recusas:recusas });
+  await win.renderRecebimentoRetornosStatus();
+  document.getElementById('status-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
+  assert.match(document.body.innerHTML,/Aguard\. Saída/);
+  assert.match(document.body.innerHTML,/Não saiu/);
+  const inputSaida=document.querySelector('[data-reentrega-data$=":dataSaidaEm"]');
+  inputSaida.value='2026-08-05'; inputSaida.dispatchEvent(new win.Event('change',{bubbles:true}));
+  await new Promise(r=>setTimeout(r,0));
+  assert.match(document.body.innerHTML,/Nota saiu/);
+});
+
 // BUG AO VIVO CORRIGIDO 2026-08-21: a 1ª versão carimbava liberadoParaRecusarEm
 // quando o status entrava em OK — errado. Confirmado com o usuário: OK é um
 // atalho SEM burocracia (a nota nem passa pelo fiscal/CTE), 18 casos reais

@@ -148,9 +148,9 @@ function carregarPagina(lojas, cargasPorLoja, itensPorCargaChave, opts) {
   // remover o container do DOM) — mesma convenção de mock usada pro resto
   // da suíte pra funções globais que a página chama e assume existir.
   const chamadasPdf = [];
-  win.exportarElementoProducaoPDF = async (elementId, nomeArquivo) => {
+  win.exportarElementoProducaoPDF = async (elementId, nomeArquivo, opts) => {
     const el = win.document.getElementById(elementId);
-    chamadasPdf.push({ elementId, nomeArquivo, html: el ? el.innerHTML : null });
+    chamadasPdf.push({ elementId, nomeArquivo, html: el ? el.innerHTML : null, opts });
   };
   win.eval(code);
   return { win, document: win.document, raw, toasts, chamadasLedger, chamadasPdf };
@@ -901,6 +901,72 @@ test('baixarPdfCarga: chama exportarElementoProducaoPDF com um nome de arquivo b
   assert.equal(chamadasPdf[0].nomeArquivo, 'carga_carga_matriz_filial.pdf');
 });
 
+// PEDIDO AO VIVO (2026-09-11): "ajustando pra uma folha vertical".
+test('baixarPdfCarga: exporta em orientação portrait (folha vertical)', async () => {
+  const { win, chamadasPdf } = carregarPagina(LOJAS, {
+    loja1: [{ id: 'c1', data: { nomeCarga: 'Carga 1', status: 'EM_TRANSITO' } }],
+  }, ITENS_2_PRODUTOS);
+  await win.renderRecebimentoCargas();
+  await win._recebimentoCargasCardsInternals.baixarPdfCarga('c1');
+  assert.equal(chamadasPdf[0].opts && chamadasPdf[0].opts.orientation, 'portrait');
+});
+
+// PEDIDO AO VIVO (2026-09-11): "colocar os produtos em sequência, tipo
+// juntar as linhas quando for os mesmo produtos, colocar uma linha de
+// referência quando trocar de um produto para o outro" — Itens (por capa)
+// agrupa por produto (ordem de código crescente), 1 linha de referência
+// (código+produto+total) por grupo, sem repetir código/produto em cada
+// linha de capa.
+test('pdfCargaHtml: Itens (por capa) agrupa por produto, em ordem de código, com 1 linha de referência por grupo', async () => {
+  const { win } = carregarPagina(LOJAS, {
+    loja1: [{ id: 'c1', data: { nomeCarga: 'Carga 1', status: 'EM_TRANSITO' } }],
+  }, {});
+  await win.renderRecebimentoCargas();
+  const carga = win._recebimentoCargasCardsInternals.getCargas().find(c => c._id === 'c1');
+  // Fora de ordem de propósito e com 2 capas do MESMO produto (1002).
+  const itens = [
+    { id: 'i1', capa: 'CAPA-010', codigoProduto: '1002', nomeProduto: 'Produto B', quantidade: 10 },
+    { id: 'i2', capa: 'CAPA-001', codigoProduto: '1001', nomeProduto: 'Tapioca 1kg Fardo', quantidade: 20 },
+    { id: 'i3', capa: 'CAPA-011', codigoProduto: '1002', nomeProduto: 'Produto B', quantidade: 5 },
+  ];
+
+  const grupos = win._recebimentoCargasCardsInternals.itensAgrupadosPorProdutoParaPdf(itens);
+  assert.equal(grupos.length, 2);
+  assert.equal(grupos[0].codigoProduto, '1001', 'sequência por código crescente — 1001 antes de 1002');
+  assert.equal(grupos[1].codigoProduto, '1002');
+  assert.equal(grupos[1].capas.length, 2, 'as 2 capas do mesmo produto 1002 ficam juntas no mesmo grupo');
+
+  const html = win._recebimentoCargasCardsInternals.pdfCargaHtml(carga, itens);
+  const posicao1001 = html.indexOf('1001 — Tapioca 1kg Fardo');
+  const posicao1002 = html.indexOf('1002 — Produto B');
+  assert.ok(posicao1001 > -1 && posicao1002 > -1 && posicao1001 < posicao1002, 'linha de referência de cada produto aparece, na ordem certa');
+  assert.match(html, /\(15 un\.\)/, 'linha de referência do 1002 soma as 2 capas (10+5)');
+  // Dentro da seção "Itens (por capa)" o nome do produto não pode se
+  // repetir em cada linha de capa — só na linha de referência do grupo
+  // (o Resumo por produto, seção separada, legitimamente também mostra o
+  // nome 1x — por isso o recorte abaixo, em vez de contar no HTML inteiro).
+  const secaoItens = html.split('📦 Itens (por capa)')[1];
+  const ocorrenciasProdutoB = (secaoItens.match(/Produto B/g) || []).length;
+  assert.equal(ocorrenciasProdutoB, 1, 'nome do produto aparece 1x só (na linha de referência), não repetido por capa');
+});
+
+// PEDIDO AO VIVO (2026-09-11): "colocar o nome da pessoa que gerou a carga
+// e o nome do login da pessoa que tá imprimindo... você já tem essa
+// informação" — sem campo pra digitar, pega de criadoPor (Coletor) e do
+// login atual do Analista.
+test('pdfCargaHtml: mostra quem gerou a carga (criadoPor) e quem está imprimindo (login atual)', async () => {
+  const { win } = carregarPagina(LOJAS, {
+    loja1: [{ id: 'c1', data: { nomeCarga: 'Carga 1', status: 'EM_TRANSITO', criadoPor: 'operador@empresa.com' } }],
+  }, {});
+  win.firebase.auth = () => ({ currentUser: { email: 'analista@empresa.com' } });
+  await win.renderRecebimentoCargas();
+  const carga = win._recebimentoCargasCardsInternals.getCargas().find(c => c._id === 'c1');
+
+  const html = win._recebimentoCargasCardsInternals.pdfCargaHtml(carga, []);
+  assert.match(html, /Gerado por[\s\S]*operador@empresa\.com/);
+  assert.match(html, /Impresso por[\s\S]*analista@empresa\.com/);
+});
+
 test('baixarPdfCarga: o elemento exportado é removido do DOM depois (não fica lixo na página)', async () => {
   const { win, document } = carregarPagina(LOJAS, {
     loja1: [{ id: 'c1', data: { nomeCarga: 'Carga 1', status: 'EM_TRANSITO' } }],
@@ -954,7 +1020,7 @@ test('pdfCargaHtml: traz nome/origem-destino, resumo por produto com a coluna No
   assert.match(html, /123456/, 'nota vinculada aparece na lista de notas fiscais');
   assert.match(html, /Tapioca 1kg Fardo/);
   assert.match(html, /CAPA-002/);
-  assert.match(html, /Pendente \(capa não existe no Bluesoft\)/);
+  assert.match(html, /Pendente/);
   assert.doesNotMatch(html, /<input/, 'bloco do PDF é só leitura — sem input');
   assert.doesNotMatch(html, /type="checkbox"/, 'bloco do PDF é só leitura — sem checkbox');
 });

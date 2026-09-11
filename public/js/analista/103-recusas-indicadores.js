@@ -222,12 +222,19 @@
       return db - da;
     });
     if (!lista.length) return '<div class="empty"><div class="empty-icon">🧾</div><div class="empty-title">Nenhuma recusa com esses filtros</div></div>';
-    return `<div style="overflow:auto"><table class="dt-table"><thead><tr><th>Notas</th><th>Mercado</th><th>Liberada em</th><th>Status</th><th>Dias parado</th></tr></thead><tbody>${lista.map(r => {
+    // PEDIDO AO VIVO (2026-09-11): "colocar mais duas colunas que vai
+    // mostrar o box que tá e quantidade de paletes" — Box é por NOTA
+    // (mesmo valor pras notas do mesmo evento, ver finalizar() no Coletor);
+    // Paletes é do EVENTO inteiro (não é gravado por nota hoje), repete o
+    // mesmo total nas notas que vieram juntas na mesma conferência.
+    return `<div style="overflow:auto"><table class="dt-table"><thead><tr><th>Notas</th><th>Mercado</th><th>Box</th><th>Paletes</th><th>Liberada em</th><th>Status</th><th>Dias parado</th></tr></thead><tbody>${lista.map(r => {
       const dias = diasParadoDaRecusa(r);
       const finalizada = (r.statusRetorno || '') === 'FINALIZADO';
       return `<tr>
         <td><b>${esc((r.notas || []).map(n => n.numeroNota).filter(Boolean).join(', ') || '—')}</b></td>
         <td>${esc(r.destinatario || (r.notas && r.notas[0] && r.notas[0].destinatario) || '—')}</td>
+        <td>${esc(r.box || '—')}</td>
+        <td>${r.pallets == null ? '—' : esc(String(r.pallets))}</td>
         <td>${r.liberadoParaRecusarEm ? fmtDataHora(r.liberadoParaRecusarEm) : '<span style="color:#ffd18a">— sem data</span>'}</td>
         <td>${esc(labelStatusDe(r))}</td>
         <td style="font-weight:800;${!finalizada && dias != null && dias > 7 ? 'color:#dc2626' : ''}">${dias == null ? '—' : Math.round(dias) + 'd'}</td>

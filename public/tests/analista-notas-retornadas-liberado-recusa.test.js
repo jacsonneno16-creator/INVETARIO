@@ -145,6 +145,32 @@ test('trocar o tratamento de novo (Recusa -> outro -> Recusa) NÃO sobrescreve l
   assert.equal(salvo.notas[0].liberadoParaRecusarEm,'2026-09-01T08:00:00.000Z','data original da liberação precisa continuar intacta');
 });
 
+// PEDIDO AO VIVO (2026-09-11): "o status depois que ter o tratamento já
+// definido, quando for uma recusa mudar para Em Tratativa" — status
+// inicial automático, só na 1ª vez (nunca sobrescreve progresso manual já
+// feito numa reclassificação).
+test('marcar Tratamento = Recusa também carimba statusRetorno=EM_TRATATIVA na 1ª vez (só quando ainda não tinha status)', async()=>{
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1'}]}}]);
+  const { win, document }=carregarPagina(baseColecoes(recusas));
+  await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
+  await mudarTratamento(document, win, 'r1', 'CH1', 'RECUSA');
+  const salvo=recusas._registro.get('r1');
+  assert.equal(salvo.notas[0].statusRetorno,'EM_TRATATIVA');
+});
+
+test('reclassificar como Recusa NÃO sobrescreve um statusRetorno que já estava mais avançado', async()=>{
+  const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1',tratamento:'RECUSA',statusRetorno:'CTE'}]}}]);
+  const { win, document }=carregarPagina(baseColecoes(recusas));
+  await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
+  await mudarTratamento(document, win, 'r1', 'CH1', 'RECUSA');
+  const salvo=recusas._registro.get('r1');
+  assert.equal(salvo.notas[0].statusRetorno,'CTE','já estava em CTE — reclassificar não pode regredir pra Em Tratativa');
+});
+
 test('classificar como qualquer outro tratamento (não Recusa) nunca grava liberadoParaRecusarEm', async()=>{
   const recusas=mockColecao([{id:'r1',data:{criadoEm:'2026-09-01T00:00:00.000Z',box:'BOX 1',notas:[{chave:'CH1'}]}}]);
   const { win, document }=carregarPagina(baseColecoes(recusas));

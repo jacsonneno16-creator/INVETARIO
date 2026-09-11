@@ -158,6 +158,25 @@ test('tela: mostra só recusas, título/descrição deixam claro que é separado
   assert.match(html, /Dias parado/);
 });
 
+// PEDIDO AO VIVO (2026-09-11): "colocar mais duas colunas que vai mostrar
+// o box que tá e quantidade de paletes".
+test('PEDIDO AO VIVO: tabela mostra as colunas Box e Paletes', async () => {
+  const { win, document } = carregarPagina([
+    { id: 'r1', data: { tratamento: 'RECUSA', criadoEm: diasAtras(5), liberadoParaRecusarEm: diasAtras(3), box: 'BOX 7', pallets: 3, notas: [{ numeroNota: '999', destinatario: 'Mercado X' }] } },
+    { id: 'r2', data: { tratamento: 'RECUSA', criadoEm: diasAtras(4), liberadoParaRecusarEm: diasAtras(2), notas: [{ numeroNota: '888' }] } },
+  ]);
+  await win.renderRecusasIndicadores();
+  win.document.getElementById('recind-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
+  const html = document.getElementById('page-recebimento-recusas-indicadores').innerHTML;
+  assert.match(html, /<th>Box<\/th>/);
+  assert.match(html, /<th>Paletes<\/th>/);
+  assert.match(html, /BOX 7/);
+  assert.match(html, />3</); // quantidade de paletes do r1
+  const linhaSemBoxPallets = html.split('888')[1];
+  assert.match(linhaSemBoxPallets, /<td>—<\/td>\s*<td>—<\/td>/); // sem box/pallets nunca quebra, mostra —
+});
+
 test('tela: recusa sem liberadoParaRecusarEm mostra aviso "sem data" na tabela e no KPI, sem travar a renderização', async () => {
   const { win, document } = carregarPagina([
     { id: 'r1', data: { tratamento: 'RECUSA', criadoEm: diasAtras(5), notas: [{ numeroNota: '111' }] } },
