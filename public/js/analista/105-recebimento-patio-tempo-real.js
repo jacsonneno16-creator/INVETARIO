@@ -64,7 +64,13 @@
 
   // Mesmo padrão de "1 linha por nota" já usado em 97/99/103 — campos que
   // podem morar na nota OU herdar do documento (nota vence quando existe).
-  const CAMPOS_POR_NOTA = ['tratamento', 'statusRetorno', 'dataSaidaEm', 'dataProgramadaEm', 'box', 'numeroNota', 'chave', 'destinatario', 'volumeEsperado'];
+  // BUG AO VIVO REAL (2026-09-11): "tem um monte sem valor" — faltava
+  // 'valorTotal' aqui. Nota que só tem o valor gravado nela mesma (não no
+  // documento) caía pro fallback do documento (sempre ausente nesse caso)
+  // e virava R$0,00 mesmo com o valor certo dentro da própria nota. Mesmo
+  // bug duplicado em functions/index.js (_CAMPOS_POR_NOTA_PATIO_CACHE) —
+  // corrigido junto.
+  const CAMPOS_POR_NOTA = ['tratamento', 'statusRetorno', 'dataSaidaEm', 'dataProgramadaEm', 'box', 'numeroNota', 'chave', 'destinatario', 'volumeEsperado', 'valorTotal'];
   function _linhaDaNota(r, nota) {
     const linha = Object.assign({}, r, { notas: [nota], _recusaId: r._id, _notaChave: nota.chave || '' });
     CAMPOS_POR_NOTA.forEach(c => { linha[c] = nota[c] != null ? nota[c] : r[c]; });

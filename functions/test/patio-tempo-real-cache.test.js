@@ -113,6 +113,23 @@ test('_montarCachePatioTempoRealLoja: nota sem chave (ex.: veio de Identificar) 
   assert.equal(cache.linhas[0].destinatario, '');
 });
 
+// BUG AO VIVO REAL (2026-09-11): "tem um monte sem valor" — notas
+// gravadas com valorTotal só NELA MESMA (não no documento, ex.:
+// completadas pela importação de planilha) e sem chave (sem como
+// enriquecer via recebimento_recusas_notas) viravam R$0,00 no cache —
+// faltava 'valorTotal' em _CAMPOS_POR_NOTA_PATIO_CACHE, então a linha
+// copiava o campo do documento (sempre ausente) em vez da nota.
+test('_montarCachePatioTempoRealLoja: valorTotal gravado na PRÓPRIA nota (sem chave) aparece certo no cache, não R$0,00', async () => {
+  const { fakeDb, internals } = carregarComFirestoreFake();
+  const bq = bigqueryFake([
+    { document_id: 'r1', data: JSON.stringify({ origem: 'COLETOR', criadoEm: '2026-09-11T16:11:22.000Z', box: 'BOX 2', notas: [{ numeroNota: '194238', destinatario: 'WMS SUPERMERCADOS DO BRASIL LTDA', valorTotal: 1814.4 }] }) },
+  ]);
+  const total = await internals._montarCachePatioTempoRealLoja('loja1', bq);
+  assert.equal(total, 1);
+  const cache = fakeDb._dump().get('lojas/loja1/recebimento_patio_cache/atual');
+  assert.equal(cache.linhas[0].valorTotal, 1814.4, 'valor já estava na própria nota — nunca devia virar 0');
+});
+
 // BUG AO VIVO REAL (2026-09-11): "Pátio em Tempo Real ainda tá demorando
 // muito" — o job agendado rodava "com sucesso" (onRun nunca relançava o
 // erro) mas o cache da loja de verdade (192 notas) NUNCA se formava: uma

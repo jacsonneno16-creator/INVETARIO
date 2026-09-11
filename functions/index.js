@@ -2228,7 +2228,14 @@ function _estaNoPatioParaCache(doc, nota) {
   }
   return true;
 }
-const _CAMPOS_POR_NOTA_PATIO_CACHE = ['tratamento', 'statusRetorno', 'dataSaidaEm', 'dataProgramadaEm', 'box', 'numeroNota', 'chave', 'destinatario', 'volumeEsperado'];
+// BUG AO VIVO REAL (2026-09-11): "tem um monte sem valor" — faltava
+// 'valorTotal' nesta lista. Nota que só tem o valor gravado nela mesma
+// (não no documento) caía pro fallback `r.valorTotal` (doc, sempre
+// ausente nesse caso) e virava R$0,00 — mesmo com o valor certinho
+// dentro da própria nota (confirmado direto no BigQuery). Mesmo bug
+// duplicado em public/js/analista/105-recebimento-patio-tempo-real.js
+// (CAMPOS_POR_NOTA) — corrigido junto.
+const _CAMPOS_POR_NOTA_PATIO_CACHE = ['tratamento', 'statusRetorno', 'dataSaidaEm', 'dataProgramadaEm', 'box', 'numeroNota', 'chave', 'destinatario', 'volumeEsperado', 'valorTotal'];
 function _linhasPorNotaParaCache(recusas) {
   const linhas = [];
   recusas.forEach(r => {

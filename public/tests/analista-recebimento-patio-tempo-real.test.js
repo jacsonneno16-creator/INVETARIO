@@ -142,6 +142,23 @@ test('carregarPatio: busca só statusFisico=NO_PATIO, expande em 1 linha por not
   assert.equal(linhas[0].valorTotal, 500);
   assert.equal(linhas[0].box, 'BOX 1');
 });
+// BUG AO VIVO REAL (2026-09-11): "tem um monte sem valor" — nota sem
+// `chave` (ex.: registrada direto pelo Coletor, sem casar com o ledger de
+// venda) que já tem `valorTotal` gravado NELA MESMA sumia pra R$0,00: a
+// linha copiava o campo do DOCUMENTO (sempre ausente nesse caso) em vez
+// da nota, e como não tem chave o enriquecimento também não tinha como
+// corrigir depois. 'valorTotal' precisa estar em CAMPOS_POR_NOTA igual
+// 'destinatario' já está.
+test('carregarPatio: valorTotal gravado na PRÓPRIA nota (sem chave, sem enriquecimento possível) aparece certo, não R$0,00', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', box: 'BOX 2', criadoEm: '2026-09-11T16:11:22.000Z', statusFisico: 'NO_PATIO', notas: [{ numeroNota: '194238', destinatario: 'WMS SUPERMERCADOS DO BRASIL LTDA', valorTotal: 1814.4 }] } },
+  ]);
+  const { win } = carregarPagina({ recebimento_recusas: recusas, recebimento_recusas_notas: mockColecao([]) });
+  await I(win).carregarPatio(true);
+  const linhas = I(win).getLinhas();
+  assert.equal(linhas.length, 1);
+  assert.equal(linhas[0].valorTotal, 1814.4, 'valor já estava na própria nota — nunca devia virar 0');
+});
 test('carregarPatio: filtro fino por nota — documento com statusFisico NO_PATIO mas ESSA nota específica já finalizada não aparece', async () => {
   // Simula um doc com 2 notas: uma ainda no pátio (mantém statusFisico=NO_PATIO no doc), outra já finalizada.
   const recusas = mockColecao([
