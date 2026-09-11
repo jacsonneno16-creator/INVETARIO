@@ -120,28 +120,36 @@
     _notasPorChave = new Map(_notas.map(x => [x.chave, x]));
     _notasCarregadas = true;
   }
-  // PEDIDO AO VIVO (2026-09-10): busca manual por período (máx. 3 meses),
-  // filtrada no servidor por criadoEm — recebimento_recusas não traz mais a
-  // coleção inteira toda vez que a tela abre.
+  // PEDIDO AO VIVO (2026-09-11, Fase 2 do espelho BigQuery): "por que a
+  // Bluesoft não demora com 1 ano de dados e aqui demora?" — a resposta
+  // real era arquitetural: o Firestore não agrega no servidor, então quem
+  // somava/filtrava era sempre o NAVEGADOR. Esta busca agora passa por uma
+  // Cloud Function (buscarIndicadoresRetornosBigQuery) que consulta o
+  // espelho no BigQuery (view "_raw_latest" da extensão firestore-
+  // bigquery-export, que já resolve create/update/delete pro estado mais
+  // recente de cada documento) em vez do Firestore direto — devolve os
+  // MESMOS documentos crus, no mesmo formato {_id, ...dados}; todo o
+  // agrupamento/filtro cruzado/checkboxes abaixo continua exatamente
+  // igual, só a ORIGEM da busca mudou. Mantém o filtro de origem:
+  // AUTOMATICO/motivoAutomaticoTexto no cliente também (a função já filtra
+  // no servidor, mas é barato manter como defesa redundante, mesmo padrão
+  // do resto do projeto).
   async function carregarDadosIndicadores(ini, fim, forcar) {
     if (!_periodoValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
     const chave = ini + '|' + fim;
     await _carregarNotasVenda(forcar);
     if (_periodoBuscado !== chave || forcar) {
-      const r = await fs().collection(COL_RECUSAS)
-        .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
-        .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
-        .get();
+      const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
+      if (!lojaId) throw new Error('Nenhuma loja selecionada.');
+      const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarIndicadoresRetornosBigQuery');
+      const resposta = await callable({ lojaId, ini, fim });
+      const docs = (resposta && resposta.data && resposta.data.recusas) || [];
       // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
       // 'AUTOMATICO') tem indicador próprio e separado — ver
       // 102-devolucoes-bi-indicadores.js. Excluída daqui pra não misturar
       // motorista/transportadora/box (que ela não tem) com os retornos
       // físicos de verdade processados pelo Coletor.
-      // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a ser
-      // gravado numa rodada posterior — registros auto-salvos antes disso
-      // não têm esse campo, mas sempre tiveram `motivoAutomaticoTexto`
-      // (exclusivo desse fluxo), que serve de marcador retroativo.
-      _recusas = r.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
+      _recusas = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
       _periodoBuscado = chave;
     }
     _filtro = null; // dado novo — um filtro antigo poderia apontar pra um valor que não existe mais

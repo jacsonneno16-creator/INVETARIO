@@ -49,11 +49,27 @@ function mockColecao(docsIniciais){
 // `comLabels` carrega junto o mapa de status (99) — só usado nos testes que
 // precisam do rótulo humano; os demais testam sem ele de propósito, pra
 // travar o fallback pro valor cru quando o mapa ainda não carregou.
+//
+// PEDIDO AO VIVO (2026-09-11, Fase 2 do espelho BigQuery): a busca de
+// recebimento_recusas por período passou a ir por uma Cloud Function
+// (buscarIndicadoresRetornosBigQuery) em vez do Firestore direto — o mock
+// de firebase.app().functions().httpsCallable() abaixo lê da MESMA
+// coleção recebimento_recusas já usada nos testes (via o `.where()` que
+// mockColecao já suporta), devolvendo no mesmo formato {data:{recusas}}
+// que a função real devolve — os ~30 testes deste arquivo continuam
+// passando sem precisar mudar cada um.
 function carregarPagina(colecoes,opts){
   opts=opts||{};
   const dom=new JSDOM('<!doctype html><html><body><div id="page-recebimento-retornos-indicadores"></div></body></html>',{ url:'http://localhost/', runScripts:'outside-only' });
   const win=dom.window;
+  const colRecusas=colecoes?.recebimento_recusas||mockColecao([]);
   win.getDTFirestore=()=>({ collection:(nome)=>colecoes?.[nome]||mockColecao([]) });
+  win.getDTLojaAtiva=()=>'loja_matriz';
+  win.firebase={ app:()=>({ functions:()=>({ httpsCallable:(nomeFuncao)=>async(payload)=>{
+    if(nomeFuncao!=='buscarIndicadoresRetornosBigQuery') throw new Error('função não mockada: '+nomeFuncao);
+    const r=await colRecusas.where('criadoEm','>=',payload.ini+'T00:00:00.000Z').where('criadoEm','<=',payload.fim+'T23:59:59.999Z').get();
+    return { data: { recusas: r.docs.map(d=>({ _id:d.id, ...d.data() })) } };
+  } }) }) };
   win.TRATAMENTO_LABELS=opts.tratamentoLabels;
   win.eval(indicCode);
   if (opts.comStatusLabels) win.eval(statusCode);

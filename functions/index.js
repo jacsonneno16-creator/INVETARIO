@@ -3,6 +3,7 @@
 const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
 const cors = require('cors')({origin: true});
+const {BigQuery} = require('@google-cloud/bigquery');
 
 admin.initializeApp();
 
@@ -2102,6 +2103,72 @@ exports.sincronizarCortesMensalBiAgora = functions
     return {ok: true, resultado};
   });
 
+// PEDIDO AO VIVO (2026-09-11, Fase 2 do espelho BigQuery — ver
+// bq-recebimento-recusas em extensions/): Indicadores de Retornos
+// (98-recebimento-retornos-indicadores.js) baixava recebimento_recusas
+// inteiro do período pro NAVEGADOR calcular tudo (rankings, filtro
+// cruzado, checkboxes) — funciona bem hoje com poucos documentos, mas é
+// exatamente o padrão que fica lento conforme a coleção cresce (mesma
+// causa raiz investigada com o usuário: "por que a Bluesoft não demora e
+// aqui demora" — lá quem agrega é o SERVIDOR, aqui era sempre o
+// navegador). Esta função devolve os MESMOS documentos crus (mesmo
+// formato de {_id, ...dados}) que o Firestore já devolvia — o
+// agrupamento/filtro cruzado/checkboxes do lado cliente continuam
+// EXATAMENTE iguais, só a origem da busca muda. Lê da view
+// "_raw_latest" da extensão (já resolve create/update/delete pro estado
+// mais recente por documento) — nunca a coleção Firestore direto, que é
+// justamente o gargalo que se quer evitar pra período grande.
+function _lojaPermitidaParaAcesso(acesso, lojaId) {
+  if (adminMestre(acesso) || acesso?.acesso_todas_lojas === true) return true;
+  return lojasPermitidas(acesso).has(String(lojaId));
+}
+let _bigQueryClienteSingleton = null;
+function _obterBigQueryCliente() {
+  if (!_bigQueryClienteSingleton) _bigQueryClienteSingleton = new BigQuery({projectId: 'daterrinha-inventario'});
+  return _bigQueryClienteSingleton;
+}
+async function _buscarIndicadoresRetornosBigQueryInterno(data, acesso, bigqueryClient) {
+  const lojaId = textoSeguro(data?.lojaId, 120);
+  const ini = textoSeguro(data?.ini, 10);
+  const fim = textoSeguro(data?.fim, 10);
+  if (!lojaId) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(ini) || !/^\d{4}-\d{2}-\d{2}$/.test(fim)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Período inválido — use o formato AAAA-MM-DD.');
+  }
+  const dIni = new Date(ini + 'T00:00:00'), dFim = new Date(fim + 'T23:59:59');
+  if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime()) || dIni > dFim || (dFim - dIni) / 86400000 > 731) {
+    throw new functions.https.HttpsError('invalid-argument', 'Escolha um período válido de até 2 anos.');
+  }
+  if (!_lojaPermitidaParaAcesso(acesso, lojaId)) {
+    throw new functions.https.HttpsError('permission-denied', 'Seu login não tem acesso a esta loja.');
+  }
+  const query = `
+    SELECT document_id, data
+    FROM \`daterrinha-inventario.dt_relatorios.recebimento_recusas_raw_latest\`
+    WHERE operation != 'DELETE'
+      AND JSON_EXTRACT_SCALAR(path_params, '$.lojaId') = @lojaId
+      AND JSON_EXTRACT_SCALAR(data, '$.criadoEm') >= @inicioIso
+      AND JSON_EXTRACT_SCALAR(data, '$.criadoEm') <= @fimIso
+      AND IFNULL(JSON_EXTRACT_SCALAR(data, '$.origem'), '') != 'AUTOMATICO'
+      AND JSON_EXTRACT_SCALAR(data, '$.motivoAutomaticoTexto') IS NULL
+  `;
+  const [rows] = await bigqueryClient.query({
+    query,
+    params: {lojaId, inicioIso: ini + 'T00:00:00.000Z', fimIso: fim + 'T23:59:59.999Z'},
+  });
+  return rows.map(r => Object.assign({_id: r.document_id}, JSON.parse(r.data)));
+}
+exports.buscarIndicadoresRetornosBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const recusas = await _buscarIndicadoresRetornosBigQueryInterno(data, acesso, _obterBigQueryCliente());
+    return {ok: true, recusas};
+  });
+
 // Exportado só pra teste local contra o emulador do Firestore (nunca
 // chamado em produção) — mesmo padrão de `_XInternals` já usado nos
 // arquivos do front-end.
@@ -2117,5 +2184,6 @@ exports._graphBiInternals = {
   _sincronizarFornecedoresAgregadoBi,
   _construirConsumoInsumosResumoBi, _gravarConsumoInsumosResumoBi,
   _construirCortesResumoMensalBi, _gravarCortesResumoMensalBi,
+  _buscarIndicadoresRetornosBigQueryInterno, _lojaPermitidaParaAcesso,
 };
 
