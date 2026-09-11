@@ -2262,9 +2262,21 @@ async function _montarCachePatioTempoRealLoja(lojaId, bigqueryClient) {
       valorTotal: Number(l.valorTotal != null ? l.valorTotal : n.valorTotal) || 0,
     });
   });
+  // BUG AO VIVO REAL (2026-09-11): "Pátio em Tempo Real ainda tá demorando
+  // muito" — o job rodava sem erro NENHUM lugar visível (o erro por loja
+  // fica só no array `resultados`, nunca logado), mas o cache nunca se
+  // formava pra loja_matriz de verdade: campos como dataSaidaEm/
+  // dataProgramadaEm ficam `undefined` quando a nota nunca teve esse
+  // evento (nem na nota, nem no documento) — o SDK Admin do Firestore
+  // REJEITA `undefined` num write (diferente do SDK do navegador, que
+  // aceita numa leitura vinda de BigQuery). O round-trip por JSON
+  // converte campo com undefined em ausente — mesmo efeito de nunca ter
+  // existido, sem exigir tocar em `settings({ignoreUndefinedProperties})`
+  // (que mudaria o comportamento pro projeto INTEIRO, não só aqui).
+  const linhasSeguras = JSON.parse(JSON.stringify(linhasEnriquecidas));
   const batch = db.batch();
   batch.set(db.collection('lojas').doc(lojaId).collection('recebimento_patio_cache').doc('atual'), {
-    linhas: linhasEnriquecidas,
+    linhas: linhasSeguras,
     atualizadoEm: new Date().toISOString(),
   });
   await batch.commit();
@@ -2279,6 +2291,12 @@ async function _atualizarCachePatioTempoRealTodasLojas(bigqueryClient) {
       const total = await _montarCachePatioTempoRealLoja(doc.id, bigqueryClient);
       resultados.push({loja: doc.id, ok: true, total});
     } catch (e) {
+      // BUG AO VIVO REAL (2026-09-11): erro por loja ficava só neste
+      // array, nunca aparecia em log nenhum — o job "terminava com
+      // sucesso" (onRun não relança) mesmo com TODA loja falhando por
+      // baixo. Sempre logar, pra um problema futuro aparecer de verdade
+      // em `firebase functions:log`.
+      console.error('[atualizarCachePatioTempoReal] Falha na loja ' + doc.id + ':', e.message || e);
       resultados.push({loja: doc.id, ok: false, erro: e.message || String(e)});
     }
   }

@@ -113,6 +113,34 @@ test('_montarCachePatioTempoRealLoja: nota sem chave (ex.: veio de Identificar) 
   assert.equal(cache.linhas[0].destinatario, '');
 });
 
+// BUG AO VIVO REAL (2026-09-11): "Pátio em Tempo Real ainda tá demorando
+// muito" — o job agendado rodava "com sucesso" (onRun nunca relançava o
+// erro) mas o cache da loja de verdade (192 notas) NUNCA se formava: uma
+// nota sem dataSaidaEm/dataProgramadaEm (nem na nota, nem no documento —
+// caso comum, é opcional) vira `undefined` explícito no campo, e o SDK
+// Admin do Firestore REJEITA `undefined` num write (diferente do SDK do
+// navegador). O Firestore-fake deste teste não valida isso (só o real
+// rejeita), então a asserção aqui é sobre o round-trip JSON aplicado —
+// confirma que nenhum campo problemático sobrevive até o payload gravado.
+test('_montarCachePatioTempoRealLoja: nota sem dataSaidaEm/dataProgramadaEm (campo ausente em ambos) nunca grava "undefined" — vira ausente/null, não quebra o write real', async () => {
+  const { fakeDb, internals } = carregarComFirestoreFake();
+  const bq = bigqueryFake([
+    { document_id: 'r1', data: JSON.stringify({ origem: 'COLETOR', criadoEm: '2026-09-01T10:00:00.000Z', box: 'BOX 3', notas: [{ chave: 'CHU', numeroNota: '950', tratamento: 'REENTREGA' }] }) },
+  ]);
+  const total = await internals._montarCachePatioTempoRealLoja('loja1', bq);
+  assert.equal(total, 1);
+  const cache = fakeDb._dump().get('lojas/loja1/recebimento_patio_cache/atual');
+  // dataSaidaEm nunca foi setado em lugar nenhum — a CHAVE não pode nem
+  // existir no objeto gravado (diferente de "existir com valor
+  // undefined", que `===undefined` não distingue de chave ausente).
+  assert.equal(Object.prototype.hasOwnProperty.call(cache.linhas[0], 'dataSaidaEm'), false, 'campo undefined explícito nunca pode ir pro payload gravado — nem como chave presente');
+  // Prova mais forte: simula exatamente o que aconteceria com o SDK real —
+  // se sobrasse um `undefined` de verdade em QUALQUER campo, o round-trip
+  // abaixo mudaria o resultado (uma chave a menos), destravando esta
+  // asserção.
+  assert.deepEqual(JSON.parse(JSON.stringify(cache.linhas)), cache.linhas);
+});
+
 test('_atualizarCachePatioTempoRealTodasLojas: roda pra cada loja cadastrada, isolando erro de uma loja das outras', async () => {
   const { fakeDb, internals } = carregarComFirestoreFake();
   fakeDb._dump().set('lojas/loja1', { nome: 'Loja 1' });
