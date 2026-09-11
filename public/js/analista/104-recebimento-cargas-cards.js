@@ -44,22 +44,23 @@
   // O histórico completo (RECEBIDA/CANCELADA/"Todos os status") só é
   // buscado quando o próprio filtro de status pede explicitamente (ver
   // listener de 'cargas-f-status' abaixo), nunca sozinho.
+  // PEDIDO AO VIVO (2026-09-11): "a parte do Analista pode puxar do
+  // BigQuery, 1 a 5 minutos de atraso não tem problema" — a busca de TODAS
+  // as lojas trocou de N leituras (uma por loja) por 1 chamada de Cloud
+  // Function (buscarCargasTodasLojasBigQuery), que já filtra por status
+  // (PENDENTE/EM_TRANSITO por padrão, ou tudo quando incluirFinalizadas) e
+  // pelas lojas que o login atual pode ver. `_carregarItensDaCarga`
+  // continua lendo o Firestore direto — é sob demanda, só quando o
+  // Analista abre um card específico, nunca foi o gargalo.
   let _cargasComFinalizadas = false;
   async function carregarCargasAnalista(forcar, incluirFinalizadas) {
     if (_cargas.length && !forcar && (!incluirFinalizadas || _cargasComFinalizadas)) return;
     const vazio = { docs: [] };
     const lojasSnap = await raw().collection('lojas').get().catch(() => vazio);
     _lojas = lojasSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.ativa !== false);
-    const porLoja = await Promise.all(_lojas.map(loja => {
-      const colecao = raw().collection('lojas').doc(loja.id).collection(COL_CARGAS);
-      const query = incluirFinalizadas ? colecao : colecao.where('status', 'in', ['PENDENTE', 'EM_TRANSITO']);
-      return query.get().catch(() => vazio);
-    }));
-    _cargas = [];
-    porLoja.forEach((snap, i) => {
-      const loja = _lojas[i];
-      snap.docs.forEach(d => _cargas.push({ _id: d.id, lojaId: loja.id, ...d.data() }));
-    });
+    const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarCargasTodasLojasBigQuery');
+    const resposta = await callable({ incluirFinalizadas: !!incluirFinalizadas });
+    _cargas = (resposta && resposta.data && resposta.data.cargas) || [];
     _cargasComFinalizadas = !!incluirFinalizadas;
   }
 

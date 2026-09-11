@@ -98,6 +98,24 @@ function loadTransbordo(colecoes) {
   );
   win.openModal = () => {}; win.closeModal = () => {}; win.showToast = () => {};
   win.showConfirm = (msg, exec) => exec();
+  // PEDIDO AO VIVO (2026-09-11): _carregarTodosTransbordos() passou a
+  // buscar via Cloud Function (buscarTransbordoTodasLojasBigQuery) em vez
+  // de 1 leitura por loja direto no Firestore — o mock abaixo reaproveita
+  // o MESMO win.getDTRawFirestore() já configurado acima (lojas + suas
+  // subcoleções `recebimentos`), filtrando por tipo=TRANSBORDO igual à
+  // função real, devolvendo {_id, _lojaId, ...dados}.
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nomeFuncao => async () => {
+    if (nomeFuncao !== 'buscarTransbordoTodasLojasBigQuery') throw new Error('função não mockada: ' + nomeFuncao);
+    const rawFs = win.getDTRawFirestore();
+    const lojasSnap = await rawFs.collection('lojas').get();
+    const ativas = lojasSnap.docs.map(d => d.data()).filter(l => l.ativa !== false);
+    const porLoja = await Promise.all(ativas.map(loja =>
+      rawFs.collection('lojas').doc(loja.id).collection('recebimentos').where('tipo', '==', 'TRANSBORDO').get().catch(() => ({ docs: [] }))
+    ));
+    const transbordos = [];
+    porLoja.forEach((snap, i) => snap.docs.forEach(d => transbordos.push({ _id: d.id, _lojaId: ativas[i].id, ...d.data() })));
+    return { data: { transbordos } };
+  } }) }) };
   win.qrcode = () => ({ addData() {}, make() {}, createDataURL: () => 'data:image/gif;base64,AAAA' });
   win._currentAnalistaUser = { email: 'analista@daterrinha.com' };
   win.eval(opCode + '\n' + svcCode + '\n' + dashCode + '\n' + trbCode);

@@ -6,7 +6,9 @@
   "etags": {
     "daterrinha-inventario": {
       "extensionInstances": {
-        "bq-recebimento-recusas": "d0101846b0cf8a510a0cc15684dd97b44f891b670be2b1010c26bb415fc6382a"
+        "bq-recebimento-recusas": "d0101846b0cf8a510a0cc15684dd97b44f891b670be2b1010c26bb415fc6382a",
+        "bq-recebimento-transbordo-cargas": "31f31c803098455095d2aa255b0e50b5ff7822af39036d23cb4f3e1ee5091239",
+        "bq-recebimentos": "13434b9e609222ba2e367854c68706a1968b2ef4abe1a70cf652e85b64fcd615"
       }
     }
   }

@@ -2202,6 +2202,77 @@ exports.buscarPatioTempoRealBigQuery = functions
     return {ok: true, recusas};
   });
 
+// PEDIDO AO VIVO (2026-09-11): Transbordo (95-recebimento-transbordo.js) e
+// Cargas/Montagem (104-recebimento-cargas-cards.js) mostram TODAS as
+// lojas de uma vez (não uma loja ativa só) — diferente das funções acima.
+// IMPORTANTE (achado revisando firestore.rules): hoje, um login restrito
+// a certas lojas simplesmente recebe permission-denied nas lojas que não
+// pode ver quando o cliente lê `recebimentos`/`recebimento_transbordo_
+// cargas` direto (código cliente trata isso como silêncio, `.catch(()=>
+// vazio)`) — a Cloud Function roda com uma conta de serviço (bypassa as
+// regras do Firestore), então PRECISA repetir esse filtro na consulta,
+// senão um login restrito passaria a ver loja que não devia só por essa
+// tela ter mudado de fonte.
+function _clausulaLojasPermitidas(acesso) {
+  if (adminMestre(acesso) || acesso?.acesso_todas_lojas === true) return {clausula: '', params: {}};
+  const permitidas = [...lojasPermitidas(acesso)];
+  if (!permitidas.length) return {semAcessoNenhum: true};
+  return {clausula: "AND JSON_EXTRACT_SCALAR(path_params, '$.lojaId') IN UNNEST(@lojasPermitidas)", params: {lojasPermitidas: permitidas}};
+}
+async function _buscarTransbordoTodasLojasBigQueryInterno(acesso, bigqueryClient) {
+  const restricao = _clausulaLojasPermitidas(acesso);
+  if (restricao.semAcessoNenhum) return [];
+  const query = `
+    SELECT document_id, data, path_params
+    FROM \`daterrinha-inventario.dt_relatorios.recebimentos_raw_latest\`
+    WHERE operation != 'DELETE'
+      AND JSON_EXTRACT_SCALAR(data, '$.tipo') = 'TRANSBORDO'
+      ${restricao.clausula}
+  `;
+  const [rows] = await bigqueryClient.query({query, params: restricao.params});
+  return rows.map(r => Object.assign({_id: r.document_id, _lojaId: JSON.parse(r.path_params).lojaId}, JSON.parse(r.data)));
+}
+exports.buscarTransbordoTodasLojasBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const transbordos = await _buscarTransbordoTodasLojasBigQueryInterno(acesso, _obterBigQueryCliente());
+    return {ok: true, transbordos};
+  });
+
+async function _buscarCargasTodasLojasBigQueryInterno(data, acesso, bigqueryClient) {
+  const restricao = _clausulaLojasPermitidas(acesso);
+  if (restricao.semAcessoNenhum) return [];
+  // PEDIDO AO VIVO (2026-09-10, já aplicado no cliente antes de existir
+  // BigQuery): por padrão só cargas ATIVAS (PENDENTE/EM_TRANSITO) — o
+  // histórico fechado (RECEBIDA/CANCELADA) só entra quando o filtro de
+  // status da tela pede explicitamente (incluirFinalizadas).
+  const incluirFinalizadas = data?.incluirFinalizadas === true;
+  const filtroStatus = incluirFinalizadas ? '' : "AND JSON_EXTRACT_SCALAR(data, '$.status') IN ('PENDENTE', 'EM_TRANSITO')";
+  const query = `
+    SELECT document_id, data, path_params
+    FROM \`daterrinha-inventario.dt_relatorios.recebimento_transbordo_cargas_raw_latest\`
+    WHERE operation != 'DELETE'
+      ${filtroStatus}
+      ${restricao.clausula}
+  `;
+  const [rows] = await bigqueryClient.query({query, params: restricao.params});
+  return rows.map(r => Object.assign({_id: r.document_id, lojaId: JSON.parse(r.path_params).lojaId}, JSON.parse(r.data)));
+}
+exports.buscarCargasTodasLojasBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const cargas = await _buscarCargasTodasLojasBigQueryInterno(data, acesso, _obterBigQueryCliente());
+    return {ok: true, cargas};
+  });
+
 // Exportado só pra teste local contra o emulador do Firestore (nunca
 // chamado em produção) — mesmo padrão de `_XInternals` já usado nos
 // arquivos do front-end.
@@ -2219,5 +2290,6 @@ exports._graphBiInternals = {
   _construirCortesResumoMensalBi, _gravarCortesResumoMensalBi,
   _buscarIndicadoresRetornosBigQueryInterno, _lojaPermitidaParaAcesso,
   _buscarPatioTempoRealBigQueryInterno,
+  _buscarTransbordoTodasLojasBigQueryInterno, _buscarCargasTodasLojasBigQueryInterno, _clausulaLojasPermitidas,
 };
 

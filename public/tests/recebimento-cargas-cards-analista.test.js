@@ -121,6 +121,24 @@ function carregarPagina(lojas, cargasPorLoja, itensPorCargaChave, opts) {
   const win = dom.window;
   const raw = mockRawFirestore(lojas || [], cargasPorLoja || {}, itensPorCargaChave || {});
   win.getDTRawFirestore = () => raw;
+  // PEDIDO AO VIVO (2026-09-11): carregarCargasAnalista() passou a buscar
+  // via Cloud Function (buscarCargasTodasLojasBigQuery) em vez de 1
+  // leitura por loja direto no Firestore — o mock abaixo replica a MESMA
+  // lógica (status PENDENTE/EM_TRANSITO por padrão, tudo quando
+  // incluirFinalizadas) sobre os mesmos registros por loja de sempre.
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nomeFuncao => async payload => {
+    if (nomeFuncao !== 'buscarCargasTodasLojasBigQuery') throw new Error('função não mockada: ' + nomeFuncao);
+    const ativas = new Set((lojas || []).filter(l => l.ativa !== false).map(l => l.id));
+    const cargas = [];
+    Object.keys(raw._registrosPorLoja).forEach(lojaId => {
+      if (!ativas.has(lojaId)) return;
+      raw._registrosPorLoja[lojaId].forEach((data, id) => {
+        if (!payload?.incluirFinalizadas && !['PENDENTE', 'EM_TRANSITO'].includes(data.status)) return;
+        cargas.push(Object.assign({ _id: id, lojaId }, data));
+      });
+    });
+    return { data: { cargas } };
+  } }) }) };
   const toasts = [];
   win.showToast = (msg, tipo) => toasts.push({ msg, tipo });
   win.confirm = () => (opts ? opts.confirmar !== false : true);

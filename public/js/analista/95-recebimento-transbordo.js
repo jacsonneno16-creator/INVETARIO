@@ -122,6 +122,13 @@
   let _transbordosCarregado = false;
   let _transbordosCarregando = false;
   let _transbordosErro = '';
+  // PEDIDO AO VIVO (2026-09-11): "a parte do Analista pode puxar do
+  // BigQuery, 1 a 5 minutos de atraso não tem problema" — a busca de
+  // TODAS as lojas trocou de N leituras (uma por loja em recebimentos) por
+  // 1 chamada de Cloud Function (buscarTransbordoTodasLojasBigQuery), que
+  // já devolve tudo filtrado por tipo=TRANSBORDO e pelas lojas que o login
+  // atual pode ver. A lista de lojas (pro filtro/dropdown da tela)
+  // continua vindo do Firestore direto — é pequena, nunca foi o gargalo.
   async function _carregarTodosTransbordos(forcar) {
     if (_transbordosCarregado && !forcar) return;
     _transbordosCarregando = true;
@@ -129,16 +136,9 @@
     try {
       const lojasSnap = await raw().collection('lojas').get();
       _lojasTransbordo = lojasSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => l.ativa !== false);
-      const porLoja = await Promise.all(_lojasTransbordo.map(loja =>
-        raw().collection('lojas').doc(loja.id).collection('recebimentos').where('tipo', '==', 'TRANSBORDO').get()
-          .catch(() => ({ docs: [] }))
-      ));
-      const todos = [];
-      porLoja.forEach((snap, i) => {
-        const loja = _lojasTransbordo[i];
-        snap.docs.forEach(d => todos.push({ _id: d.id, _lojaId: loja.id, ...d.data() }));
-      });
-      _todosTransbordos = todos;
+      const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarTransbordoTodasLojasBigQuery');
+      const resposta = await callable({});
+      _todosTransbordos = (resposta && resposta.data && resposta.data.transbordos) || [];
       _transbordosCarregado = true;
     } catch (e) {
       _transbordosErro = e.message || String(e);

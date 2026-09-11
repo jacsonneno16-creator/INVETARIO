@@ -3,7 +3,9 @@
     "source": "functions"
   },
   "extensions": {
-    "bq-recebimento-recusas": "firebase/firestore-bigquery-export@0.3.3"
+    "bq-recebimento-recusas": "firebase/firestore-bigquery-export@0.3.3",
+    "bq-recebimentos": "firebase/firestore-bigquery-export@0.3.3",
+    "bq-recebimento-transbordo-cargas": "firebase/firestore-bigquery-export@0.3.3"
   },
   "firestore": {
     "rules": "firestore.rules",
