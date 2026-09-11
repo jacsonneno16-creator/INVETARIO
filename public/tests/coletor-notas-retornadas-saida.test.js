@@ -363,6 +363,7 @@ test('Rastrear: número que não existe mostra aviso, não trava', async () => {
 test('Identificar: preencher nota+box e salvar grava doc com origem COLETOR, statusFisico NO_PATIO, motorista/motivo vazios (opcionais)', async () => {
   const recusas = mockRecusas([]);
   const { win, document } = carregarColetorReal(baseColecoes(recusas));
+  win.APP = { operador: { name: 'Pedro Operador' } };
   await win.abrirRecusasRecebimento();
   document.querySelector('[data-recusa-modo="identificar"]').click();
 
@@ -378,6 +379,7 @@ test('Identificar: preencher nota+box e salvar grava doc com origem COLETOR, sta
   assert.equal(salvo.statusFisico, 'NO_PATIO');
   assert.equal(salvo.motoristaNome, '');
   assert.equal(salvo.motivoNome, '');
+  assert.equal(salvo.conferenteNome, 'Pedro Operador', 'PEDIDO AO VIVO 2026-09-11: usa o nome do login como conferente');
   assert.match(document.getElementById('recusa-fluxo-host').innerHTML, /555.*BOX 4|BOX 4.*555/s);
 });
 

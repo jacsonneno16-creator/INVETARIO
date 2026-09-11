@@ -59,6 +59,7 @@ test('consultarChave + confirmarLancamento: nota nova (achada em recebimento_rec
   const notas = mockColecao([{ id: CHAVE_VALIDA, data: { numeroNota: '12345', destinatario: 'Mercado Atacadão' } }]);
   const recusas = mockColecao([]);
   const { win, document } = carregarColetor({ recebimento_recusas_notas: notas, recebimento_recusas: recusas });
+  win.APP = { operador: { name: 'Maria Operadora' } };
 
   await win.abrirInventarioPatio();
   document.getElementById('patio-chave-input').value = CHAVE_VALIDA;
@@ -88,6 +89,9 @@ test('consultarChave + confirmarLancamento: nota nova (achada em recebimento_rec
   assert.equal(doc.notas[0].box, 'BOX 7');
   assert.equal(doc.notas[0].tratamento, undefined, 'tratamento não é definido aqui — o Analista classifica depois, igual toda nota nova');
   assert.match(document.getElementById('patio-inventario-host').innerHTML, /Nota lançada no pátio/);
+  // PEDIDO AO VIVO (2026-09-11): "por que não tá trazendo a pessoa na
+  // coluna de conferente? Na hora de criar o login já coloco o nome".
+  assert.equal(doc.conferenteNome, 'Maria Operadora');
 });
 
 test('nota já registrada e ainda no pátio: bloqueia com a mensagem certa, não cria duplicata', async () => {

@@ -46,6 +46,14 @@
     const u = authObj && authObj.currentUser;
     return u ? { uid: u.uid || '', email: u.email || '' } : { uid: '', email: '' };
   }
+  // PEDIDO AO VIVO (2026-09-11): "por que não tá trazendo a pessoa na
+  // coluna de conferente? Na hora de criar o login já coloco o nome" —
+  // mesmo raciocínio aplicado em 24-recebimento-recusas.js: usa direto o
+  // nome já gravado no login (APP.operador.name), sem exigir nenhum
+  // cadastro extra.
+  function _nomeLoginAtual() {
+    return (typeof APP !== 'undefined' && APP.operador && APP.operador.name) || '';
+  }
   // Mesma validação de dígito verificador de 24-recebimento-recusas.js
   // (duplicada de propósito, bundle separado).
   function chaveValida(chave) {
@@ -177,6 +185,7 @@
       numerosNotas: [numero],
       notas: [{ chave: S.chave, numeroNota: numero, destinatario: S.destinatario || '', volumeEsperado: 0, box }],
       box,
+      conferenteNome: _nomeLoginAtual(),
       origem: 'INVENTARIO_INICIAL',
       statusFisico: 'NO_PATIO',
       criadoEm: agora,

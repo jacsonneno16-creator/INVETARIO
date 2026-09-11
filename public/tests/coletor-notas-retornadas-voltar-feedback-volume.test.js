@@ -231,6 +231,27 @@ test('login sem conferente cadastrado com esse e-mail mostra aviso, não trava o
   assert.ok(document.getElementById('recusa-volume'),'sem conferente identificado o fluxo continua normalmente');
 });
 
+// PEDIDO AO VIVO (2026-09-11): "quando um operador tá logado pelo login
+// dele... por que não tá trazendo a pessoa na coluna de conferente? Na
+// hora de criar o login já coloco o nome da pessoa" — sem cadastro em
+// Cadastros › Conferentes casando o e-mail, cai pro nome que já está no
+// login (APP.operador.name), em vez de ficar em branco/exigir cadastro.
+test('sem cadastro de conferente, mas com nome no login (APP.operador.name): usa o nome do login como conferente',async()=>{
+  const notas=mockColecao([{id:CHAVE_VALIDA,data:{numeroNota:'12345',destinatario:'Cliente X',volumes:8}}]);
+  const { win, document }=carregarColetorReal(colecoesPadrao(notas));
+  win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'sem-cadastro@daterrinha.com' } }) };
+  win.getDTAuth=win.firebase.auth;
+  win.APP={ operador:{ name:'João Operador', email:'sem-cadastro@daterrinha.com' } };
+  await win.abrirRecusasRecebimento();
+  document.querySelector('[data-recusa-modo="entrada"]').click();
+  document.getElementById('recusa-chave-input').value=CHAVE_VALIDA;
+  document.getElementById('recusa-add-chave').click();
+  await new Promise(r=>setTimeout(r,0));
+  document.getElementById('recusa-continuar-1').click();
+  assert.match(document.getElementById('recusa-fluxo-host').innerHTML,/Conferente:.*João Operador/s);
+  assert.doesNotMatch(document.getElementById('recusa-fluxo-host').innerHTML,/Não foi possível identificar o conferente/);
+});
+
 // FASE 11 (2026-09-03): Box+Pallets virou o ÚLTIMO passo do fluxo, depois
 // da conferência dos produtos — este teste passou a cobrir "voltar da
 // escolha de conferência pro volume", não mais "voltar do Box pro volume".

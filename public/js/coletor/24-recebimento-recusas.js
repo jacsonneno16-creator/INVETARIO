@@ -243,10 +243,27 @@
   // com o cadastro de conferentes (campo `email`, preenchido pelo Analista
   // em Cadastros › Conferentes). Roda assim que os cadastros terminam de
   // carregar, pra já aparecer resolvido na etapa de motorista.
+  // PEDIDO AO VIVO (2026-09-11): "quando um operador tá logado pelo login
+  // dele... por que não tá trazendo a pessoa na coluna de conferente? Na
+  // hora de criar o login já coloco o nome da pessoa" — o cadastro
+  // separado em Cadastros › Conferentes continua valendo quando existe
+  // (pode ter um nome mais formal/diferente), mas deixou de ser
+  // OBRIGATÓRIO: sem cadastro casando o e-mail, cai pro nome que já está
+  // no login (APP.operador.name, definido na criação da conta) — nunca
+  // mais fica em branco só por falta desse cadastro extra.
+  function _nomeLoginAtual() {
+    return (typeof APP !== 'undefined' && APP.operador && APP.operador.name) || '';
+  }
   function resolverConferenteAutomatico() {
     const email = String(usuario().email || '').trim().toLowerCase();
     const achado = email ? S.conferentes.find(c => String(c.email || '').trim().toLowerCase() === email) : null;
     S.conferenteId = achado ? achado._id : '';
+  }
+  // Nome a gravar/exibir como conferente: cadastro (quando casado pelo
+  // e-mail) manda; senão, nome do próprio login.
+  function _conferenteNomeResolvido() {
+    const c = S.conferenteId ? S.conferentes.find(x => x._id === S.conferenteId) : null;
+    return (c && c.nome) || _nomeLoginAtual();
   }
   // PEDIDO AO VIVO (usuário: "quando clico em cima [motorista/motivo], tem
   // que deixar a pessoa digitar também para não ficar procurando durante
@@ -505,6 +522,8 @@
       motivoNome: motivo,
       box,
       pallets: pallets !== '' ? Number(pallets) : null,
+      conferenteId: S.conferenteId || '',
+      conferenteNome: _conferenteNomeResolvido(),
       origem: 'COLETOR',
       statusFisico: 'NO_PATIO',
       criadoEm: agora,
@@ -776,11 +795,11 @@
   // combo manual igual motorista/motivo; agora é só um aviso, resolvido em
   // resolverConferenteAutomatico() pelo e-mail de quem está logado.
   function conferenteAutoHtml() {
-    if (S.conferenteId) {
-      const c = S.conferentes.find(x => x._id === S.conferenteId);
-      return `<div style="padding:10px 12px;border-radius:9px;background:#15263f;border:1px solid #29486d;font-size:.8rem;color:#9eb4cb">🧑‍🔧 Conferente: <b style="color:#e8f1fb">${esc((c && c.nome) || '—')}</b> <span style="color:#6f89a6">(pelo seu login)</span></div>`;
+    const nome = _conferenteNomeResolvido();
+    if (nome) {
+      return `<div style="padding:10px 12px;border-radius:9px;background:#15263f;border:1px solid #29486d;font-size:.8rem;color:#9eb4cb">🧑‍🔧 Conferente: <b style="color:#e8f1fb">${esc(nome)}</b> <span style="color:#6f89a6">(pelo seu login)</span></div>`;
     }
-    return `<div style="padding:10px 12px;border-radius:9px;background:#4a3114;color:#ffd18a;font-size:.78rem">⚠️ Não foi possível identificar o conferente pelo seu login. Peça ao Analista para cadastrar seu e-mail em Cadastros › Conferentes.</div>`;
+    return `<div style="padding:10px 12px;border-radius:9px;background:#4a3114;color:#ffd18a;font-size:.78rem">⚠️ Não foi possível identificar o conferente pelo seu login.</div>`;
   }
   function etapaMotorista() {
     return `
@@ -880,7 +899,7 @@
     <div><div class="screen-title">Box e pallets</div><div class="screen-sub">Última etapa: informe onde a carga retornada ficará armazenada.</div></div>
     <input id="recusa-box" class="field" autocomplete="off" placeholder="Ex.: BOX 12" value="${esc(S.box)}" style="font-size:1.1rem;padding:17px;text-align:center;font-weight:850;text-transform:uppercase">
     <input id="recusa-pallets" class="field" type="number" min="0" step="1" inputmode="numeric" placeholder="Quantidade de pallets (opcional)" value="${esc(S.pallets)}" style="font-size:1.05rem;padding:15px;text-align:center">
-    <div class="card" style="padding:13px"><div style="font-size:.72rem;color:#6f89a6">RESUMO</div><div style="margin-top:5px;font-weight:800">${S.notas.map(n => 'NF ' + esc(n.numeroNota)).join(' • ')}</div><div style="margin-top:5px;font-size:.78rem;color:#9eb4cb">Motorista: ${esc(((_S$motoristas$find = S.motoristas.find(x => x._id === S.motoristaId)) === null || _S$motoristas$find === void 0 ? void 0 : _S$motoristas$find.nome) || '—')}<br>Motivo: ${esc(((_S$motivos$find = S.motivos.find(x => x._id === S.motivoId)) === null || _S$motivos$find === void 0 ? void 0 : _S$motivos$find.nome) || '—')}${S.conferenteId ? '<br>Conferente: ' + esc(((_S$conferentes$find = S.conferentes.find(x => x._id === S.conferenteId)) === null || _S$conferentes$find === void 0 ? void 0 : _S$conferentes$find.nome) || '—') : ''}<br>Volumes contados: ${esc(S.volume)}</div></div>
+    <div class="card" style="padding:13px"><div style="font-size:.72rem;color:#6f89a6">RESUMO</div><div style="margin-top:5px;font-weight:800">${S.notas.map(n => 'NF ' + esc(n.numeroNota)).join(' • ')}</div><div style="margin-top:5px;font-size:.78rem;color:#9eb4cb">Motorista: ${esc(((_S$motoristas$find = S.motoristas.find(x => x._id === S.motoristaId)) === null || _S$motoristas$find === void 0 ? void 0 : _S$motoristas$find.nome) || '—')}<br>Motivo: ${esc(((_S$motivos$find = S.motivos.find(x => x._id === S.motivoId)) === null || _S$motivos$find === void 0 ? void 0 : _S$motivos$find.nome) || '—')}${_conferenteNomeResolvido() ? '<br>Conferente: ' + esc(_conferenteNomeResolvido()) : ''}<br>Volumes contados: ${esc(S.volume)}</div></div>
     <button class="btn btn-ghost" id="recusa-voltar-4" style="padding:12px">← Voltar</button>
     <button class="btn btn-primary" id="recusa-continuar-4" style="padding:15px">Concluir →</button>`;
   }
@@ -1455,6 +1474,7 @@
       statusConferenciaOperacional = temDivergenciaItens ? 'CONFERIDA_COM_DIVERGENCIA' : 'CONFERIDA';
     }
     const conferente = S.conferentes.find(x => x._id === S.conferenteId);
+    const conferenteNomeFinal = (conferente && conferente.nome) || _nomeLoginAtual();
     const payload = {
       chaves: S.notas.map(n => n.chave),
       // PEDIDO AO VIVO (2026-09-08): "Saída" (ver mais abaixo) busca a nota
@@ -1480,7 +1500,7 @@
       motivoId: motivo._id,
       motivoNome: motivo.nome || '',
       conferenteId: (conferente === null || conferente === void 0 ? void 0 : conferente._id) || '',
-      conferenteNome: (conferente === null || conferente === void 0 ? void 0 : conferente.nome) || '',
+      conferenteNome: conferenteNomeFinal,
       volumeEsperado: esperado,
       volumeInformado: informado,
       diferencaVolumes: dif,
