@@ -172,6 +172,21 @@
   // opções de novo daqui pra frente. O filtro "TRATAMENTO" continua com a
   // lista cheia, pra dar pra achar esses registros antigos.
   const TRATAMENTO_OPCOES_SELECT = ['', 'RECUSA', 'REENTREGA'];
+  // PEDIDO AO VIVO (2026-09-11): "o filtro do tratamento tem que ter a
+  // opção todos, pq o não classificado também é para filtrar" —
+  // TRATAMENTO_OPCOES_SELECT é compartilhado com o <select> de classificar
+  // CADA nota, onde '' já é um valor real e válido ("não classificado
+  // ainda"). No filtro, '' também era usado como "nenhum filtro
+  // selecionado" (mostra tudo) — os dois sentidos colidiam, e escolher
+  // "— Não classificado —" no filtro na prática não filtrava nada. Lista
+  // própria pro filtro, com um sentinel dedicado pra separar os dois.
+  const TRATAMENTO_FILTRO_NAO_CLASSIFICADO = '__NAO_CLASSIFICADO__';
+  const TRATAMENTO_OPCOES_FILTRO = [
+    { valor: '', rotulo: 'Todos' },
+    { valor: TRATAMENTO_FILTRO_NAO_CLASSIFICADO, rotulo: TRATAMENTO_LABELS[''] },
+    { valor: 'RECUSA', rotulo: TRATAMENTO_LABELS.RECUSA },
+    { valor: 'REENTREGA', rotulo: TRATAMENTO_LABELS.REENTREGA },
+  ];
 
   // PEDIDO AO VIVO (2026-09-08): "cada nota tem que gerar uma linha... se
   // ela tiver junta e uma for reentrega e a outra for recusa" — um
@@ -661,7 +676,10 @@
     const f = _filtro.trim().toLowerCase();
     return linhasPorNota(_recusas).filter(r => {
       if (f && !([r.motoristaNome,r.motivoNome,r.conferenteNome,r.box,(r.notas || []).map(n=>n.numeroNota).join(' '),(r.chaves || []).join(' ')].join(' ').toLowerCase().includes(f))) return false;
-      if (_filtroTratamento && (r.tratamento || '') !== _filtroTratamento) return false;
+      if (_filtroTratamento) {
+        const alvo = _filtroTratamento === TRATAMENTO_FILTRO_NAO_CLASSIFICADO ? '' : _filtroTratamento;
+        if ((r.tratamento || '') !== alvo) return false;
+      }
       if (_filtroConferencia && (r.statusConferenciaOperacional || 'NAO_REALIZADA') !== _filtroConferencia) return false;
       const data = String(r.criadoEm || '').slice(0,10);
       if (_filtroPeriodoInicio && data && data < _filtroPeriodoInicio) return false;
@@ -675,7 +693,7 @@
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input class="field" id="recusas-filtro-periodo-fim" type="date" value="${esc(_filtroPeriodoFim)}" style="padding:8px"></div>
       <button class="btn btn-primary btn-sm" id="recusas-buscar-periodo" style="padding:8px 14px">🔍 Buscar</button>
       <div style="font-size:.68rem;color:var(--muted);align-self:center">Período máximo de 2 meses — pode levar alguns minutos pra refletir uma nota nova</div>
-      <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">TRATAMENTO</div><select class="field" id="recusas-filtro-tratamento" style="padding:8px">${TRATAMENTO_OPCOES_SELECT.map(k=>`<option value="${k}" ${k===_filtroTratamento?'selected':''}>${esc(TRATAMENTO_LABELS[k])}</option>`).join('')}</select></div>
+      <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">TRATAMENTO</div><select class="field" id="recusas-filtro-tratamento" style="padding:8px">${TRATAMENTO_OPCOES_FILTRO.map(o=>`<option value="${o.valor}" ${o.valor===_filtroTratamento?'selected':''}>${esc(o.rotulo)}</option>`).join('')}</select></div>
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">CONFERÊNCIA</div><select class="field" id="recusas-filtro-conferencia" style="padding:8px"><option value="" ${!_filtroConferencia?'selected':''}>Todas</option><option value="NAO_REALIZADA" ${_filtroConferencia==='NAO_REALIZADA'?'selected':''}>Não realizada</option><option value="CONFERIDA" ${_filtroConferencia==='CONFERIDA'?'selected':''}>Conferida</option><option value="CONFERIDA_COM_DIVERGENCIA" ${_filtroConferencia==='CONFERIDA_COM_DIVERGENCIA'?'selected':''}>Conferida c/ divergência</option></select></div>
       <input class="field" id="recusas-filtro" value="${esc(_filtro)}" placeholder="Pesquisar NF, motorista, motivo, box..." style="max-width:280px;padding:8px">
     </div>`;

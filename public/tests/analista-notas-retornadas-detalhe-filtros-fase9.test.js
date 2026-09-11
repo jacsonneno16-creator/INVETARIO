@@ -128,6 +128,42 @@ test('filtro de Tratamento esconde recusas com tratamento diferente do seleciona
   assert.doesNotMatch(document.getElementById('recusas-tabela').innerHTML,/BOX 2/);
 });
 
+// PEDIDO AO VIVO (2026-09-11): "o filtro do tratamento tem que ter a
+// opção todos, pq o não classificado também é para filtrar" — antes,
+// '' era usado tanto pra "nenhum filtro" quanto pro rótulo "— Não
+// classificado —", então escolher essa opção na prática não filtrava
+// nada (mostrava tudo, igual "Todos"). Agora "Todos" e "— Não
+// classificado —" são opções distintas.
+test('filtro de Tratamento: "Todos" mostra tudo; "— Não classificado —" mostra só quem não tem tratamento definido',async()=>{
+  const recusas=mockColecao([
+    {id:'r1',data:{box:'BOX 1',tratamento:'RECUSA',notas:[{numeroNota:'1'}],criadoEm:'2026-08-19T10:00:00.000Z'}},
+    {id:'r2',data:{box:'BOX 2',tratamento:'',notas:[{numeroNota:'2'}],criadoEm:'2026-08-19T11:00:00.000Z'}},
+    {id:'r3',data:{box:'BOX 3',notas:[{numeroNota:'3'}],criadoEm:'2026-08-19T12:00:00.000Z'}}, // sem campo tratamento nenhum — também "não classificado"
+  ]);
+  const { win, document }=carregarPagina(baseColecoes(recusas));
+  await win.renderRecebimentoRecusas();
+  win.document.getElementById('recusas-buscar-periodo').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  const select=document.getElementById('recusas-filtro-tratamento');
+  const rotulos=[...select.options].map(o=>o.textContent);
+  assert.deepEqual(rotulos,['Todos','— Não classificado —','Recusa','Reentrega']);
+
+  select.value='__NAO_CLASSIFICADO__';
+  select.dispatchEvent(new win.Event('change'));
+  const htmlNaoClassificado=document.getElementById('recusas-tabela').innerHTML;
+  assert.doesNotMatch(htmlNaoClassificado,/BOX 1/,'BOX 1 é Recusa — não entra em Não classificado');
+  assert.match(htmlNaoClassificado,/BOX 2/);
+  assert.match(htmlNaoClassificado,/BOX 3/);
+
+  select.value='';
+  select.dispatchEvent(new win.Event('change'));
+  const htmlTodos=document.getElementById('recusas-tabela').innerHTML;
+  assert.match(htmlTodos,/BOX 1/);
+  assert.match(htmlTodos,/BOX 2/);
+  assert.match(htmlTodos,/BOX 3/);
+});
+
 test('filtro de período (DE/ATÉ) usa a data de criadoEm',async()=>{
   const recusas=mockColecao([
     {id:'r1',data:{box:'BOX ANTIGA',notas:[],criadoEm:'2026-08-01T10:00:00.000Z'}},
