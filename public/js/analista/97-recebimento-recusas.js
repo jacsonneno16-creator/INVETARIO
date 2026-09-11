@@ -22,6 +22,23 @@
 (function (global) {
   'use strict';
 
+  // PEDIDO AO VIVO (2026-09-11): "quando eu atualizar notas retornadas ele
+  // não já pode ir atualizando depois pátio em tempo real, indicadores,
+  // status de retorno, recusas?" — Pátio/Indicadores/Status/Recusas
+  // continuam SEM buscar sozinhos ao entrar na tela (decisão de hoje mais
+  // cedo, pra não gastar consulta BigQuery à toa em toda navegação); em vez
+  // disso, sempre que uma edição aqui muda o documento em
+  // `recebimento_recusas`, marca as OUTRAS telas como desatualizadas. Só
+  // quando o usuário realmente entrar numa delas (e ela já tiver dados
+  // carregados de antes) é que a próxima renderização refaz a busca sozinha,
+  // uma vez, sem exigir clique em "Atualizar". Objeto único, declarado igual
+  // em cada arquivo (idempotente via `||`) pra não depender de ordem de
+  // carregamento dos scripts.
+  global.DT_RETORNOS_DIRTY = global.DT_RETORNOS_DIRTY || { patio: false, indicadores: false, status: false, recusas: false };
+  function _marcarRetornosDesatualizados(exceto) {
+    Object.keys(global.DT_RETORNOS_DIRTY).forEach(k => { if (k !== exceto) global.DT_RETORNOS_DIRTY[k] = true; });
+  }
+
   const COL_NOTAS = 'recebimento_recusas_notas';
   // PEDIDO AO VIVO (2026-08-27): "tem como colocar em chunks de 1000... pra
   // não gerar tanta leitura" — o Coletor faz `doc(chave).get()` direto em
@@ -1489,6 +1506,7 @@
       await fs().collection(COL_RECUSAS).doc(recusaId).delete();
       _recusas = _recusas.filter(x => x._id !== recusaId);
       desenhar();
+      _marcarRetornosDesatualizados();
       global.showToast?.('Nota retornada excluída.', 'success');
     } catch (e) { global.showToast?.('Erro ao excluir: ' + (e.message || e), 'error'); }
   }
@@ -1527,6 +1545,7 @@
       r.notas = notasAtualizadas;
       r.statusFisico = statusFisico;
       redesenharTabela();
+      _marcarRetornosDesatualizados();
       global.showToast?.('Tratamento atualizado.', 'success');
     } catch (e) { global.showToast?.('Erro ao salvar tratamento: ' + (e.message || e), 'error'); }
   }
@@ -1541,6 +1560,7 @@
     try {
       await fs().collection(COL_RECUSAS).doc(recusaId).update(payload);
       Object.assign(r,payload);
+      _marcarRetornosDesatualizados();
       global.showToast?.('Motivo atualizado.', 'success');
     } catch(e){ redesenharTabela(); global.showToast?.('Erro ao salvar motivo: '+(e.message||e),'error'); }
   }

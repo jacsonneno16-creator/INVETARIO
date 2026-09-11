@@ -38,6 +38,9 @@
 (function (global) {
   'use strict';
 
+  // Ver mesmo bloco/comentário em 97-recebimento-recusas.js.
+  global.DT_RETORNOS_DIRTY = global.DT_RETORNOS_DIRTY || { patio: false, indicadores: false, status: false, recusas: false };
+
   const COL_NOTAS = 'recebimento_recusas_notas';
   const COL_RECUSAS = 'recebimento_recusas';
 
@@ -585,6 +588,16 @@
       const p = _periodoPadrao();
       _periodoInicio = _periodoInicio || p.ini;
       _periodoFim = _periodoFim || p.fim;
+    }
+    // PEDIDO AO VIVO (2026-09-11): ver mesmo bloco em 99-recebimento-
+    // retornos-status.js — refaz a busca sozinha, uma vez, se algo mudou
+    // numa tela irmã desde a última vez que esta já tinha carregado dados.
+    if (global.DT_RETORNOS_DIRTY && global.DT_RETORNOS_DIRTY.indicadores && _periodoBuscado) {
+      global.DT_RETORNOS_DIRTY.indicadores = false;
+      const [ini, fim] = _periodoBuscado.split('|');
+      await carregarDadosIndicadores(ini, fim, true);
+      desenhar();
+      return;
     }
     desenhar();
   }

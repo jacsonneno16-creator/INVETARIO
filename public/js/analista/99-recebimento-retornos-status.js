@@ -43,6 +43,16 @@
 (function (global) {
   'use strict';
 
+  // Ver mesmo bloco/comentário em 97-recebimento-recusas.js — objeto
+  // compartilhado que marca as telas irmãs (Pátio/Indicadores/Status/
+  // Recusas) como desatualizadas depois de uma edição, pra próxima vez que
+  // o usuário entrar nelas já vir com dado fresco sem precisar clicar
+  // "Atualizar" (PEDIDO AO VIVO 2026-09-11).
+  global.DT_RETORNOS_DIRTY = global.DT_RETORNOS_DIRTY || { patio: false, indicadores: false, status: false, recusas: false };
+  function _marcarRetornosDesatualizados(exceto) {
+    Object.keys(global.DT_RETORNOS_DIRTY).forEach(k => { if (k !== exceto) global.DT_RETORNOS_DIRTY[k] = true; });
+  }
+
   const COL_RECUSAS = 'recebimento_recusas';
 
   // Saldo do "Pátio em Tempo Real" (105-recebimento-patio-tempo-real.js) —
@@ -331,6 +341,7 @@
       r.notas = notasAtualizadas;
       r.statusFisico = statusFisico;
       desenhar();
+      _marcarRetornosDesatualizados('status');
       global.showToast?.('Status atualizado: ' + STATUS_RETORNO_LABELS[novoStatus], 'success');
     } catch (e) {
       global.showToast?.('Erro ao atualizar status: ' + (e.message || e), 'error');
@@ -354,6 +365,7 @@
       r.notas = notasAtualizadas;
       r.statusFisico = statusFisico;
       desenhar();
+      _marcarRetornosDesatualizados('status');
     } catch (e) { global.showToast?.('Erro ao salvar data: ' + (e.message || e), 'error'); }
   }
 
@@ -531,6 +543,16 @@
       const p = _periodoPadrao();
       _periodoInicio = _periodoInicio || p.ini;
       _periodoFim = _periodoFim || p.fim;
+    }
+    // PEDIDO AO VIVO (2026-09-11): se algo mudou em Notas Retornadas (ou
+    // noutra tela irmã) desde a última vez que ESTA tela já carregou dados,
+    // refaz a busca sozinha uma vez ao entrar — sem exigir clique em
+    // "Atualizar". Só dispara quando já havia algo carregado antes (não
+    // força a 1ª busca, que continua manual por decisão de hoje mais cedo).
+    if (global.DT_RETORNOS_DIRTY && global.DT_RETORNOS_DIRTY.status && _periodoBuscado) {
+      global.DT_RETORNOS_DIRTY.status = false;
+      await _atualizarDadosNoPeriodo(true);
+      return;
     }
     desenhar();
   }

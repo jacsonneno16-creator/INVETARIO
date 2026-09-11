@@ -26,6 +26,9 @@
 (function (global) {
   'use strict';
 
+  // Ver mesmo bloco/comentário em 97-recebimento-recusas.js.
+  global.DT_RETORNOS_DIRTY = global.DT_RETORNOS_DIRTY || { patio: false, indicadores: false, status: false, recusas: false };
+
   const COL_RECUSAS = 'recebimento_recusas';
 
   // PEDIDO AO VIVO (2026-09-08): "cada nota tem que gerar uma linha... se
@@ -299,6 +302,15 @@
       const p = _periodoPadrao();
       _periodoInicio = _periodoInicio || p.ini;
       _periodoFim = _periodoFim || p.fim;
+    }
+    // PEDIDO AO VIVO (2026-09-11): ver mesmo bloco em 99-recebimento-
+    // retornos-status.js.
+    if (global.DT_RETORNOS_DIRTY && global.DT_RETORNOS_DIRTY.recusas && _periodoBuscado) {
+      global.DT_RETORNOS_DIRTY.recusas = false;
+      const [ini, fim] = _periodoBuscado.split('|');
+      await carregarDados(ini, fim, true);
+      desenhar();
+      return;
     }
     desenhar();
   }

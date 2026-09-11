@@ -7,6 +7,8 @@
 // structured-sprouting-hoare.md.
 (function (global) {
   'use strict';
+  // Ver mesmo bloco/comentário em 97-recebimento-recusas.js.
+  global.DT_RETORNOS_DIRTY = global.DT_RETORNOS_DIRTY || { patio: false, indicadores: false, status: false, recusas: false };
   const COL_RECUSAS = 'recebimento_recusas';
   const COL_NOTAS = 'recebimento_recusas_notas';
 
@@ -347,7 +349,13 @@
     const pagina = document.getElementById('page-recebimento-patio-tempo-real');
     if (!pagina) return;
     desenhar();
-    await carregarPatio();
+    // PEDIDO AO VIVO (2026-09-11): normalmente o polling de 45s já cobre a
+    // atualização; isso aqui só garante que, ao REENTRAR na tela logo após
+    // editar algo em Notas Retornadas, não fica esperando o próximo tick do
+    // polling pra mostrar o dado fresco.
+    const forcar = !!(global.DT_RETORNOS_DIRTY && global.DT_RETORNOS_DIRTY.patio && _carregado);
+    if (forcar) global.DT_RETORNOS_DIRTY.patio = false;
+    await carregarPatio(forcar);
     desenhar();
     _iniciarPolling();
   }
