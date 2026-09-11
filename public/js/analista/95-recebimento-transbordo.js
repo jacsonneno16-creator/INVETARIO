@@ -129,21 +129,34 @@
   // já devolve tudo filtrado por tipo=TRANSBORDO e pelas lojas que o login
   // atual pode ver. A lista de lojas (pro filtro/dropdown da tela)
   // continua vindo do Firestore direto — é pequena, nunca foi o gargalo.
+  // BUG AO VIVO REAL (2026-09-11, mesma causa raiz achada em 104): sem
+  // trava contra chamada concorrente, clicar de novo (ou a própria
+  // navegação disparando o render mais de uma vez) enquanto a 1ª busca
+  // ainda não voltou criava uma busca NOVA em cima da anterior —
+  // `_transbordosCarregandoPromise` garante que qualquer chamada que
+  // chegue nesse meio tempo espera a MESMA promessa em vez de disparar
+  // outra consulta ao BigQuery.
+  let _transbordosCarregandoPromise = null;
   async function _carregarTodosTransbordos(forcar) {
     if (_transbordosCarregado && !forcar) return;
+    if (_transbordosCarregandoPromise) return _transbordosCarregandoPromise;
     _transbordosCarregando = true;
     _transbordosErro = '';
-    try {
+    _transbordosCarregandoPromise = (async () => {
       const lojasSnap = await raw().collection('lojas').get();
       _lojasTransbordo = lojasSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => l.ativa !== false);
       const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarTransbordoTodasLojasBigQuery');
       const resposta = await callable({});
       _todosTransbordos = (resposta && resposta.data && resposta.data.transbordos) || [];
       _transbordosCarregado = true;
+    })();
+    try {
+      await _transbordosCarregandoPromise;
     } catch (e) {
       _transbordosErro = e.message || String(e);
     } finally {
       _transbordosCarregando = false;
+      _transbordosCarregandoPromise = null;
     }
   }
 

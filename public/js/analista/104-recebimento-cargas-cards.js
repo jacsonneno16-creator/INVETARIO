@@ -53,15 +53,32 @@
   // continua lendo o Firestore direto — é sob demanda, só quando o
   // Analista abre um card específico, nunca foi o gargalo.
   let _cargasComFinalizadas = false;
+  // BUG AO VIVO REAL (2026-09-11, achado no log do servidor): "ainda
+  // demora muito" — não havia NENHUMA trava contra chamada concorrente
+  // aqui. Clicar de novo (ou a própria navegação disparando o render mais
+  // de uma vez) enquanto a 1ª busca ainda não tinha voltado criava uma
+  // busca NOVA em cima da anterior — o log mostrou várias chamadas da
+  // mesma função quase simultâneas. `_cargasCarregandoPromise` garante que
+  // qualquer chamada que chegue enquanto uma já está em andamento espera
+  // pela MESMA promessa, em vez de disparar outra consulta ao BigQuery.
+  let _cargasCarregandoPromise = null;
   async function carregarCargasAnalista(forcar, incluirFinalizadas) {
     if (_cargas.length && !forcar && (!incluirFinalizadas || _cargasComFinalizadas)) return;
-    const vazio = { docs: [] };
-    const lojasSnap = await raw().collection('lojas').get().catch(() => vazio);
-    _lojas = lojasSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.ativa !== false);
-    const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarCargasTodasLojasBigQuery');
-    const resposta = await callable({ incluirFinalizadas: !!incluirFinalizadas });
-    _cargas = (resposta && resposta.data && resposta.data.cargas) || [];
-    _cargasComFinalizadas = !!incluirFinalizadas;
+    if (_cargasCarregandoPromise) return _cargasCarregandoPromise;
+    _cargasCarregandoPromise = (async () => {
+      const vazio = { docs: [] };
+      const lojasSnap = await raw().collection('lojas').get().catch(() => vazio);
+      _lojas = lojasSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.ativa !== false);
+      const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarCargasTodasLojasBigQuery');
+      const resposta = await callable({ incluirFinalizadas: !!incluirFinalizadas });
+      _cargas = (resposta && resposta.data && resposta.data.cargas) || [];
+      _cargasComFinalizadas = !!incluirFinalizadas;
+    })();
+    try {
+      await _cargasCarregandoPromise;
+    } finally {
+      _cargasCarregandoPromise = null;
+    }
   }
 
   async function _carregarItensDaCarga(carga) {

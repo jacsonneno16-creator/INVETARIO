@@ -569,12 +569,20 @@
   // ação de clique desta tela (alterarTratamento, etc.) muda — continuam
   // gravando direto no Firestore, só a LISTAGEM inicial passa a vir do
   // espelho.
+  // BUG AO VIVO REAL (2026-09-11, achado no log do servidor em Cargas/
+  // Transbordo): sem trava contra chamada concorrente, uma navegação
+  // disparando o render mais de uma vez (ou clique duplo) enquanto a
+  // busca ainda não voltou cria uma consulta NOVA em cima da anterior.
+  // `_recusasCarregandoPromise` garante que quem chegar nesse meio tempo
+  // espera a MESMA promessa.
+  let _recusasCarregandoPromise = null;
   async function _buscarRecusasPeriodo(ini, fim, forcar) {
     if (!_periodoRecusasValido(ini, fim)) throw new Error('Escolha um período válido de até 2 meses.');
     const chave = ini + '|' + fim;
     if (_recusasPeriodoBuscado === chave && !forcar) return;
+    if (_recusasCarregandoPromise) return _recusasCarregandoPromise;
     _recusasCarregandoPeriodo = true;
-    try {
+    _recusasCarregandoPromise = (async () => {
       const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
       if (!lojaId) throw new Error('Nenhuma loja selecionada.');
       const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarIndicadoresRetornosBigQuery');
@@ -582,7 +590,11 @@
       const docs = (resposta && resposta.data && resposta.data.recusas) || [];
       _recusas = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
       _recusasPeriodoBuscado = chave;
+    })();
+    try {
+      await _recusasCarregandoPromise;
     } finally {
+      _recusasCarregandoPromise = null;
       _recusasCarregandoPeriodo = false;
     }
   }

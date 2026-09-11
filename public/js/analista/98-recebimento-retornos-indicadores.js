@@ -134,23 +134,39 @@
   // AUTOMATICO/motivoAutomaticoTexto no cliente também (a função já filtra
   // no servidor, mas é barato manter como defesa redundante, mesmo padrão
   // do resto do projeto).
+  // BUG AO VIVO REAL (2026-09-11, achado no log do servidor em outra
+  // tela desta mesma leva): sem trava contra chamada concorrente, uma
+  // navegação disparando o render mais de uma vez (ou clique duplo)
+  // enquanto a busca ainda não voltou cria uma consulta NOVA em cima da
+  // anterior. `_indicadoresCarregandoPromise` garante que quem chegar
+  // nesse meio tempo espera a MESMA promessa.
+  let _indicadoresCarregandoPromise = null;
   async function carregarDadosIndicadores(ini, fim, forcar) {
     if (!_periodoValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
     const chave = ini + '|' + fim;
     await _carregarNotasVenda(forcar);
     if (_periodoBuscado !== chave || forcar) {
-      const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
-      if (!lojaId) throw new Error('Nenhuma loja selecionada.');
-      const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarIndicadoresRetornosBigQuery');
-      const resposta = await callable({ lojaId, ini, fim });
-      const docs = (resposta && resposta.data && resposta.data.recusas) || [];
-      // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
-      // 'AUTOMATICO') tem indicador próprio e separado — ver
-      // 102-devolucoes-bi-indicadores.js. Excluída daqui pra não misturar
-      // motorista/transportadora/box (que ela não tem) com os retornos
-      // físicos de verdade processados pelo Coletor.
-      _recusas = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
-      _periodoBuscado = chave;
+      if (!_indicadoresCarregandoPromise) {
+        _indicadoresCarregandoPromise = (async () => {
+          const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
+          if (!lojaId) throw new Error('Nenhuma loja selecionada.');
+          const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarIndicadoresRetornosBigQuery');
+          const resposta = await callable({ lojaId, ini, fim });
+          const docs = (resposta && resposta.data && resposta.data.recusas) || [];
+          // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
+          // 'AUTOMATICO') tem indicador próprio e separado — ver
+          // 102-devolucoes-bi-indicadores.js. Excluída daqui pra não
+          // misturar motorista/transportadora/box (que ela não tem) com
+          // os retornos físicos de verdade processados pelo Coletor.
+          _recusas = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
+          _periodoBuscado = chave;
+        })();
+      }
+      try {
+        await _indicadoresCarregandoPromise;
+      } finally {
+        _indicadoresCarregandoPromise = null;
+      }
     }
     _filtro = null; // dado novo — um filtro antigo poderia apontar pra um valor que não existe mais
     _filtroAcaoSet = new Set();

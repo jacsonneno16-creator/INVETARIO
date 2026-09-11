@@ -182,22 +182,37 @@
   // devolve os documentos crus no mesmo formato {_id, ...dados}. As ações
   // de clique desta tela (mudarStatusRetorno/salvarDataReentrega) não
   // mudam — continuam gravando direto no Firestore.
+  // BUG AO VIVO REAL (2026-09-11, achado no log do servidor em Cargas/
+  // Transbordo): sem trava contra chamada concorrente, uma navegação
+  // disparando o render mais de uma vez (ou clique duplo) enquanto a
+  // busca ainda não voltou cria uma consulta NOVA em cima da anterior.
+  // `_statusCarregandoPromise` garante que quem chegar nesse meio tempo
+  // espera a MESMA promessa.
+  let _statusCarregandoPromise = null;
   async function carregarDados(ini, fim, forcar) {
     if (!_periodoValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
     const chave = ini + '|' + fim;
     if (_periodoBuscado === chave && !forcar) return;
-    const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
-    if (!lojaId) throw new Error('Nenhuma loja selecionada.');
-    const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarIndicadoresRetornosBigQuery');
-    const resposta = await callable({ lojaId, ini, fim });
-    const docs = (resposta && resposta.data && resposta.data.recusas) || [];
-    // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
-    // 'AUTOMATICO') já nasce CONFERIDA — não tem sentido nenhum ela ficar
-    // "Aguard. Monitoramento"/fiscal/CTE, esse fluxo é só pra recebimento
-    // físico real processado pelo Coletor. Indicador próprio em
-    // 102-devolucoes-bi-indicadores.js.
-    _recusas = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
-    _periodoBuscado = chave;
+    if (_statusCarregandoPromise) return _statusCarregandoPromise;
+    _statusCarregandoPromise = (async () => {
+      const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
+      if (!lojaId) throw new Error('Nenhuma loja selecionada.');
+      const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarIndicadoresRetornosBigQuery');
+      const resposta = await callable({ lojaId, ini, fim });
+      const docs = (resposta && resposta.data && resposta.data.recusas) || [];
+      // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
+      // 'AUTOMATICO') já nasce CONFERIDA — não tem sentido nenhum ela
+      // ficar "Aguard. Monitoramento"/fiscal/CTE, esse fluxo é só pra
+      // recebimento físico real processado pelo Coletor. Indicador
+      // próprio em 102-devolucoes-bi-indicadores.js.
+      _recusas = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
+      _periodoBuscado = chave;
+    })();
+    try {
+      await _statusCarregandoPromise;
+    } finally {
+      _statusCarregandoPromise = null;
+    }
   }
 
   // PEDIDO AO VIVO (2026-09-08): roda sobre `linhasPorNota(_recusas)` (1
