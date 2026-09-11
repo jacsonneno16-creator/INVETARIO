@@ -2169,6 +2169,39 @@ exports.buscarIndicadoresRetornosBigQuery = functions
     return {ok: true, recusas};
   });
 
+// PEDIDO AO VIVO (2026-09-11): "a parte do Analista pode puxar do BigQuery,
+// 1 a 5 minutos de atraso não tem problema" — Pátio em Tempo Real
+// (105-recebimento-patio-tempo-real.js) busca por statusFisico=NO_PATIO,
+// não por período — filtro diferente do de Indicadores/Notas Retornadas/
+// Status, por isso é uma função separada (mesma view "_raw_latest",
+// mesmo formato de retorno {_id, ...dados}).
+async function _buscarPatioTempoRealBigQueryInterno(data, acesso, bigqueryClient) {
+  const lojaId = textoSeguro(data?.lojaId, 120);
+  if (!lojaId) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
+  if (!_lojaPermitidaParaAcesso(acesso, lojaId)) {
+    throw new functions.https.HttpsError('permission-denied', 'Seu login não tem acesso a esta loja.');
+  }
+  const query = `
+    SELECT document_id, data
+    FROM \`daterrinha-inventario.dt_relatorios.recebimento_recusas_raw_latest\`
+    WHERE operation != 'DELETE'
+      AND JSON_EXTRACT_SCALAR(path_params, '$.lojaId') = @lojaId
+      AND JSON_EXTRACT_SCALAR(data, '$.statusFisico') = 'NO_PATIO'
+  `;
+  const [rows] = await bigqueryClient.query({query, params: {lojaId}});
+  return rows.map(r => Object.assign({_id: r.document_id}, JSON.parse(r.data)));
+}
+exports.buscarPatioTempoRealBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const recusas = await _buscarPatioTempoRealBigQueryInterno(data, acesso, _obterBigQueryCliente());
+    return {ok: true, recusas};
+  });
+
 // Exportado só pra teste local contra o emulador do Firestore (nunca
 // chamado em produção) — mesmo padrão de `_XInternals` já usado nos
 // arquivos do front-end.
@@ -2185,5 +2218,6 @@ exports._graphBiInternals = {
   _construirConsumoInsumosResumoBi, _gravarConsumoInsumosResumoBi,
   _construirCortesResumoMensalBi, _gravarCortesResumoMensalBi,
   _buscarIndicadoresRetornosBigQueryInterno, _lojaPermitidaParaAcesso,
+  _buscarPatioTempoRealBigQueryInterno,
 };
 

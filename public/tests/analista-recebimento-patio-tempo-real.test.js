@@ -55,6 +55,18 @@ function carregarPagina(colecoes) {
   _janelasAbertas.push(win);
   win.getDTFirestore = () => ({ collection: nome => colecoes?.[nome] || mockColecao([]) });
   win.getDTRawFirestore = () => mockRawFirestore(colecoes || {});
+  win.getDTLojaAtiva = () => 'loja_matriz';
+  // PEDIDO AO VIVO (2026-09-11): carregarPatio() passou a buscar via Cloud
+  // Function (buscarPatioTempoRealBigQuery) em vez de recebimento_recusas.
+  // where('statusFisico','==','NO_PATIO') direto — o mock abaixo replica o
+  // mesmo filtro sobre a mesma coleção mock de sempre.
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nomeFuncao => async payload => {
+    if (nomeFuncao !== 'buscarPatioTempoRealBigQuery') throw new Error('função não mockada: ' + nomeFuncao);
+    const col = colecoes?.recebimento_recusas || mockColecao([]);
+    const snap = await col.get();
+    const recusas = snap.docs.filter(d => (d.data() || {}).statusFisico === 'NO_PATIO').map(d => ({ _id: d.id, ...d.data() }));
+    return { data: { recusas } };
+  } }) }) };
   win.showToast = () => {};
   win.aplicarPermissoesAnalista = () => {};
   win.eval(patioCode);

@@ -111,36 +111,28 @@
     });
   }
 
-  async function _processarSnapshotPatio(snap) {
-    const docs = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-    const todasLinhas = linhasPorNota(docs).filter(l => estaNoPatio(l, l));
-    _linhas = await _enriquecerComNotas(todasLinhas);
-  }
-
+  // PEDIDO AO VIVO (2026-09-11): "a parte do Analista pode puxar do
+  // BigQuery, 1 a 5 minutos de atraso não tem problema" — troca a busca
+  // direta no Firestore pela Cloud Function buscarPatioTempoRealBigQuery
+  // (mesma view "_raw_latest", filtro por statusFisico=NO_PATIO em vez de
+  // período). O polling de 45s e o enriquecimento por nota (via
+  // recebimento_recusas_notas) continuam iguais — só a origem da lista
+  // principal muda. migrarStatusFisico() continua lendo o Firestore
+  // direto de propósito (precisa ver TODOS os documentos, inclusive os
+  // sem statusFisico ainda, pra fazer o backfill).
   async function carregarPatio(forcar) {
     if (_carregado && !forcar) return;
     if (_carregando) return;
     _carregando = true;
     _erro = '';
-    const ref = fs().collection(COL_RECUSAS).where('statusFisico', '==', 'NO_PATIO');
-    // PEDIDO AO VIVO (2026-09-10, "não tem como atualizar mais rápido
-    // não"): mostra o que já tiver salvo localmente (cache do próprio
-    // Firestore, ativado em firebase-shared.js) NA HORA, igual a Base de
-    // Produtos faz com o IndexedDB dela — pode estar um pouco desatualizado
-    // por alguns segundos, mas aparece na tela imediatamente em vez de
-    // ficar em branco esperando a rede. A busca de verdade (linha de baixo)
-    // sempre roda depois e substitui pelo dado real. Só na 1ª carga da
-    // sessão (_carregado ainda false) — reentrar na tela ou apertar
-    // "Atualizar" já tem dado em memória, não precisa dessa prévia.
-    if (!forcar && !_carregado) {
-      try {
-        const cache = await ref.get({ source: 'cache' });
-        if (!cache.empty) { await _processarSnapshotPatio(cache); desenhar(); }
-      } catch (_e) { /* nada em cache ainda (1ª vez neste navegador) — segue normal */ }
-    }
     try {
-      const snap = await ref.get();
-      await _processarSnapshotPatio(snap);
+      const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
+      if (!lojaId) throw new Error('Nenhuma loja selecionada.');
+      const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarPatioTempoRealBigQuery');
+      const resposta = await callable({ lojaId });
+      const docs = (resposta && resposta.data && resposta.data.recusas) || [];
+      const todasLinhas = linhasPorNota(docs).filter(l => estaNoPatio(l, l));
+      _linhas = await _enriquecerComNotas(todasLinhas);
       _carregado = true;
     } catch (e) {
       _erro = e.message || String(e);
