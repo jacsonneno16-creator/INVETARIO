@@ -123,7 +123,7 @@ test('mercado/valor: completa só quem está sem destinatário/valor, nunca sobr
   await lerEClicar(document, 'mercado');
 
   const html=document.getElementById('page-recebimento-recusas-cadastros').innerHTML;
-  assert.match(html,/<b>2<\/b>\s*nota\(s\) do sistema vão ganhar mercado\/valor/,'só docA e docC estão faltando dado — docB já tem tudo preenchido');
+  assert.match(html,/<b>2<\/b>\s*nota\(s\) do sistema vão ganhar mercado\/valor\/reentrega/,'só docA e docC estão faltando dado — docB já tem tudo preenchido');
 
   document.querySelector('[data-recusa-salvar-import-dados]').click();
   await new Promise(r=>setTimeout(r,0));
@@ -139,6 +139,48 @@ test('mercado/valor: completa só quem está sem destinatário/valor, nunca sobr
   const c=recusas._registro.get('docC');
   assert.equal(c.notas[0].destinatario,'Mercado Y','NF "300-2" da planilha casou com a nota "300-2" normalizada');
   assert.equal(c.notas[0].valorTotal,700);
+});
+
+// BUG AO VIVO REAL (2026-09-11): "mesma nota mas não trouxe as
+// informações" — a NF 193977-1 estava na planilha de mercado/valor com
+// "Status da Entrega"="Reentrega", mas o app não classificava o
+// tratamento (só via BASE GERAL, arquivo separado, que ainda não tinha
+// essa nota recém-chegada). Só "Reentrega" é usado — os outros valores
+// da coluna ("Em aberto"/"Cancelado"/"Devolução") não mapeiam 1:1 pro
+// tratamento do sistema e são ignorados de propósito.
+test('mercado/valor: "Status da Entrega"=Reentrega também classifica o tratamento (nunca reclassifica quem já tem), e ignora os outros status',async()=>{
+  const linhas=[
+    { 'N° NF/CF':'193977-1', 'Destinatário':'SENDAS DISTRIBUIDORA S/A', 'Valor NF/CF':'160979,81', 'Status da Entrega':'Reentrega' },
+    { 'N° NF/CF':'400', 'Destinatário':'Mercado Z', 'Valor NF/CF':'50', 'Status da Entrega':'Em aberto' },
+    { 'N° NF/CF':'500', 'Destinatário':'Mercado W', 'Valor NF/CF':'80', 'Status da Entrega':'Devolução' },
+    { 'N° NF/CF':'600', 'Destinatário':'Mercado V', 'Valor NF/CF':'90', 'Status da Entrega':'Reentrega' }, // já classificada — não deve mexer
+  ];
+  const recusas=mockColecao([
+    { id:'docReentrega', data:{ origem:'COLETOR', destinatario:'', valorTotal:0, notas:[{numeroNota:'193977'}] } },
+    { id:'docEmAberto', data:{ destinatario:'', valorTotal:0, notas:[{numeroNota:'400'}] } },
+    { id:'docDevolucao', data:{ destinatario:'', valorTotal:0, notas:[{numeroNota:'500'}] } },
+    { id:'docJaClassificado', data:{ destinatario:'', valorTotal:0, notas:[{numeroNota:'600', tratamento:'RECUSA'}] } },
+  ]);
+  const { win, document }=carregarPagina(colecoesBase(recusas), linhas);
+  await win.renderRecebimentoRecusasCadastros();
+  await lerEClicar(document, 'mercado');
+  document.querySelector('[data-recusa-salvar-import-dados]').click();
+  await new Promise(r=>setTimeout(r,0));
+
+  const reentrega=recusas._registro.get('docReentrega');
+  assert.equal(reentrega.notas[0].destinatario,'SENDAS DISTRIBUIDORA S/A');
+  assert.equal(reentrega.notas[0].valorTotal,160979.81);
+  assert.equal(reentrega.notas[0].tratamento,'REENTREGA','Status da Entrega=Reentrega classifica o tratamento');
+  assert.equal(reentrega.statusFisico,'NO_PATIO','origem COLETOR + Reentrega sem saída ainda está no pátio');
+
+  const emAberto=recusas._registro.get('docEmAberto');
+  assert.equal(emAberto.notas[0].tratamento,undefined,'"Em aberto" não é um valor inequívoco — não classifica');
+
+  const devolucao=recusas._registro.get('docDevolucao');
+  assert.equal(devolucao.notas[0].tratamento,undefined,'"Devolução" não é um valor inequívoco — não classifica');
+
+  const jaClassificado=recusas._registro.get('docJaClassificado');
+  assert.equal(jaClassificado.notas[0].tratamento,'RECUSA','já estava classificada — a planilha nunca reclassifica');
 });
 
 // ── Tratamento/motivo (CONTROLE DE REENTREGAS E RECUSAS › BASE GERAL) ──
@@ -196,7 +238,7 @@ test('planilha sem nenhuma nota faltando o dado mostra mensagem clara em vez do 
   await win.renderRecebimentoRecusasCadastros();
   await lerEClicar(document, 'mercado');
 
-  assert.match(document.getElementById('page-recebimento-recusas-cadastros').innerHTML,/nenhuma nota do sistema está faltando mercado\/valor/);
+  assert.match(document.getElementById('page-recebimento-recusas-cadastros').innerHTML,/nenhuma nota do sistema está faltando mercado\/valor\/reentrega/);
   assert.equal(document.querySelector('[data-recusa-salvar-import-dados]'),null);
 });
 

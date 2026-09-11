@@ -840,6 +840,14 @@
   // Relatório de Viagens da transportadora: N° NF/CF (com sufixo "-N"),
   // Destinatário, Valor NF/CF. Em nota duplicada na planilha, a ÚLTIMA
   // linha manda (mesma convenção usada pra chave duplicada na Base Geral).
+  // BUG AO VIVO REAL (2026-09-11): "mesma nota mas não trouxe as
+  // informações" — esta planilha também tem "Status da Entrega", que já
+  // vem com "Reentrega" preenchido pra nota recém-chegada, antes até dela
+  // aparecer na Base Geral (arquivo separado, atualizado com menos
+  // frequência). Só o valor "Reentrega" é inequívoco — "Em aberto"/
+  // "Cancelado"/"Devolução" não mapeiam 1:1 pro tratamento do sistema, e
+  // por isso são ignorados aqui de propósito (ficam só pra Base Geral
+  // decidir, se um dia entrarem lá com ACAO=RECUSA).
   async function lerPlanilhaMercadoValor(file) {
     const { wb, aba } = await _lerWorkbook(file);
     const linhas = global.XLSX.utils.sheet_to_json(wb.Sheets[aba], { defval: '' });
@@ -849,8 +857,9 @@
       if (!nf) return;
       const destinatario = String(l['Destinatário'] || '').trim();
       const valorTotal = Number(String(l['Valor NF/CF'] || '').replace(',', '.')) || 0;
-      if (!destinatario && !valorTotal) return;
-      mapa.set(nf, { destinatario, valorTotal });
+      const tratamento = normUpper(l['Status da Entrega']) === 'REENTREGA' ? 'REENTREGA' : '';
+      if (!destinatario && !valorTotal && !tratamento) return;
+      mapa.set(nf, { destinatario, valorTotal, tratamento });
     });
     return { totalLinhas: linhas.length, mapa };
   }
@@ -889,34 +898,40 @@
       docs.forEach(doc => {
         const notas = Array.isArray(doc.notas) && doc.notas.length ? doc.notas : [{}];
         let mudouDoc = false;
+        let mudouTratamentoDoc = false;
         let motivoNovoDoDoc = '';
         const notasAtualizadas = notas.map(nota => {
           const numero = _normalizarNumeroNota(nota.numeroNota != null ? nota.numeroNota : doc.numeroNota);
           if (!numero) return nota;
           const achado = mapa.get(numero);
           if (!achado) return nota;
+          const patch = {};
           if (tipo === 'mercado') {
             const destAtual = nota.destinatario != null ? nota.destinatario : doc.destinatario;
             const valorAtual = nota.valorTotal != null ? nota.valorTotal : doc.valorTotal;
-            const patch = {};
             if (!destAtual && achado.destinatario) patch.destinatario = achado.destinatario;
             if (!valorAtual && achado.valorTotal) patch.valorTotal = achado.valorTotal;
-            if (!Object.keys(patch).length) return nota;
-            mudouDoc = true; totalNotasAfetadas++;
-            return Object.assign({}, nota, patch);
           }
+          // Vale pros 2 tipos de planilha — a de mercado/valor também traz
+          // "Status da Entrega"=Reentrega (ver lerPlanilhaMercadoValor) pra
+          // notas recém-chegadas que ainda nem apareceram na Base Geral.
           const tratAtual = nota.tratamento != null ? nota.tratamento : doc.tratamento;
-          if (tratAtual) return nota; // já classificada — nunca sobrescreve
+          if (!tratAtual && achado.tratamento) {
+            const agora = agoraIso();
+            patch.tratamento = achado.tratamento;
+            patch.tratamentoDefinidoEm = agora;
+            patch.tratamentoDefinidoPor = tipo === 'mercado' ? 'Importação de planilha (Relatório de Viagens)' : 'Importação de planilha';
+            if (achado.tratamento === 'RECUSA' && !nota.liberadoParaRecusarEm && !doc.liberadoParaRecusarEm) patch.liberadoParaRecusarEm = agora;
+            if (achado.motivo && !motivoNovoDoDoc) motivoNovoDoDoc = achado.motivo;
+            mudouTratamentoDoc = true;
+          }
+          if (!Object.keys(patch).length) return nota;
           mudouDoc = true; totalNotasAfetadas++;
-          const agora = agoraIso();
-          const patch = { tratamento: achado.tratamento, tratamentoDefinidoEm: agora, tratamentoDefinidoPor: 'Importação de planilha' };
-          if (achado.tratamento === 'RECUSA' && !nota.liberadoParaRecusarEm && !doc.liberadoParaRecusarEm) patch.liberadoParaRecusarEm = agora;
-          if (achado.motivo && !motivoNovoDoDoc) motivoNovoDoDoc = achado.motivo;
           return Object.assign({}, nota, patch);
         });
         if (!mudouDoc) return;
         const docPatch = { notas: notasAtualizadas };
-        if (tipo === 'tratamento') {
+        if (mudouTratamentoDoc) {
           docPatch.statusFisico = _recalcularStatusFisico(Object.assign({}, doc, { notas: notasAtualizadas }));
           if (motivoNovoDoDoc && !doc.motivoNome) docPatch.motivoNome = motivoNovoDoDoc;
         }
@@ -951,7 +966,7 @@
   function renderPreviewImportDadosNotas() {
     const p = _previewImportDadosNotas;
     if (!p) return '';
-    const rotulo = p.tipo === 'mercado' ? 'mercado/valor' : 'tratamento/motivo';
+    const rotulo = p.tipo === 'mercado' ? 'mercado/valor/reentrega' : 'tratamento/motivo';
     if (!p.docsParaAtualizar.length) {
       return `<div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;font-size:.78rem;color:var(--muted)">${p.totalLinhas} linha(s) lida(s), ${p.notasNaPlanilha} nota(s) reconhecida(s) na planilha — nenhuma nota do sistema está faltando ${rotulo} que essa planilha resolva.</div>`;
     }
@@ -974,7 +989,7 @@
         ${renderPreviewImportacaoCadastros()}
       </div>
       <div class="tc" style="padding:14px;margin:14px 0">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px"><div><b>🏪 Completar mercado/valor (Relatório de Viagens)</b><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Colunas: N° NF/CF, Destinatário, Valor NF/CF. Só preenche nota que está sem mercado ou sem valor — nunca sobrescreve.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><input id="recusas-import-mercado-arquivo" type="file" accept=".xlsx,.xls,.csv" style="max-width:280px"><button class="btn btn-ghost" data-recusa-ler-import-dados="mercado">Ler planilha</button></div></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px"><div><b>🏪 Completar mercado/valor/reentrega (Relatório de Viagens)</b><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Colunas: N° NF/CF, Destinatário, Valor NF/CF, Status da Entrega. Só preenche nota que está sem mercado, sem valor ou sem tratamento (quando o Status da Entrega diz "Reentrega") — nunca sobrescreve.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><input id="recusas-import-mercado-arquivo" type="file" accept=".xlsx,.xls,.csv" style="max-width:280px"><button class="btn btn-ghost" data-recusa-ler-import-dados="mercado">Ler planilha</button></div></div>
         ${_previewImportDadosNotas && _previewImportDadosNotas.tipo === 'mercado' ? renderPreviewImportDadosNotas() : ''}
       </div>
       <div class="tc" style="padding:14px;margin:14px 0">
