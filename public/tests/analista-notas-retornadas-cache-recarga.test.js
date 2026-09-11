@@ -93,7 +93,21 @@ function carregarPagina() {
   Object.keys(colecoes).forEach(nome => _comColecaoNoDoc(colecoes[nome], nome));
   win.getDTFirestore = () => ({ collection: nome => { if (!colecoes[nome]) colecoes[nome] = _comColecaoNoDoc(mockColecaoContada([], contador, nome), nome); return colecoes[nome]; } });
   win.getDTRawFirestore = () => mockRawFirestore(colecoes);
-  win.firebase = { auth: () => ({ currentUser: { uid: 'u1', email: 'analista@daterrinha.com' } }) };
+  win.getDTLojaAtiva = () => 'loja_matriz';
+  // PEDIDO AO VIVO (2026-09-11): _buscarRecusasPeriodo (97) e carregarDados
+  // (99) passaram a ir por uma Cloud Function em vez de
+  // recebimento_recusas.where(...).get() direto — a chamada mockada abaixo
+  // ainda usa o `.where().get()` real do mock de recusas por baixo (que já
+  // conta pra `contador`), então a contagem "não refaz a mesma busca de
+  // novo" continua válida sem precisar contar na mão duas vezes.
+  win.firebase = {
+    auth: () => ({ currentUser: { uid: 'u1', email: 'analista@daterrinha.com' } }),
+    app: () => ({ functions: () => ({ httpsCallable: nomeFuncao => async payload => {
+      if (nomeFuncao !== 'buscarIndicadoresRetornosBigQuery') throw new Error('função não mockada: ' + nomeFuncao);
+      const r = await colecoes.recebimento_recusas.where('criadoEm', '>=', payload.ini + 'T00:00:00.000Z').where('criadoEm', '<=', payload.fim + 'T23:59:59.999Z').get();
+      return { data: { recusas: r.docs.map(d => ({ _id: d.id, ...d.data() })) } };
+    } }) }),
+  };
   win.showToast = () => {};
   win.aplicarPermissoesAnalista = () => {};
   win.openModal = () => {};

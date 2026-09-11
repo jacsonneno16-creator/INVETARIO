@@ -560,49 +560,31 @@
   // mantém as duas melhorias que continuam boas: carrega sozinha ao entrar
   // (não espera clique) e período de 2 meses. "Ao vivo de verdade" fica
   // pra outra rodada, com mais investigação antes de subir pra produção.
+  // PEDIDO AO VIVO (2026-09-11): "a parte do Analista pode puxar do
+  // BigQuery, 1 a 5 minutos de atraso não tem problema" — troca a busca
+  // direta no Firestore pela mesma Cloud Function já criada pra
+  // Indicadores de Retornos (98-recebimento-retornos-indicadores.js) —
+  // MESMO filtro (loja + período + exclusão de origem:'AUTOMATICO'),
+  // devolve os documentos crus no mesmo formato {_id, ...dados}. Nenhuma
+  // ação de clique desta tela (alterarTratamento, etc.) muda — continuam
+  // gravando direto no Firestore, só a LISTAGEM inicial passa a vir do
+  // espelho.
   async function _buscarRecusasPeriodo(ini, fim, forcar) {
     if (!_periodoRecusasValido(ini, fim)) throw new Error('Escolha um período válido de até 2 meses.');
     const chave = ini + '|' + fim;
     if (_recusasPeriodoBuscado === chave && !forcar) return;
     _recusasCarregandoPeriodo = true;
-    const ref = fs().collection(COL_RECUSAS)
-      .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
-      .where('criadoEm', '<=', fim + 'T23:59:59.999Z');
-    // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada por
-    // 100-consulta-notas-fiscais.js (origem:'AUTOMATICO') não é um
-    // recebimento físico processado pelo Coletor — não deve aparecer
-    // na fila de Notas Retornadas (motorista/box/conferência não
-    // existem pra ela). Ela tem indicador próprio, separado (ver
-    // 102-devolucoes-bi-indicadores.js).
-    // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a
-    // ser gravado numa rodada posterior — registros auto-salvos
-    // antes disso não têm esse campo, mas sempre tiveram
-    // `motivoAutomaticoTexto` (exclusivo desse fluxo), que serve de
-    // marcador retroativo.
-    const processar = r => { _recusas = r.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || ''))); };
-    // PEDIDO AO VIVO (2026-09-10, "não tem como atualizar mais rápido
-    // não"): mesma ideia da Base de Produtos — mostra o que já tiver em
-    // cache do Firestore NA HORA (pode estar um pouco desatualizado),
-    // enquanto a busca de verdade roda por trás e substitui. Só quando
-    // este período ainda não tinha nada em memória nesta sessão.
-    if (!forcar && _recusasPeriodoBuscado !== chave) {
-      try {
-        const cache = await ref.get({ source: 'cache' });
-        // Marca o período como "já buscado" mesmo na prévia do cache —
-        // renderRecusasTabela() só troca o "Conectando..." pela tabela
-        // quando isso está preenchido (ver ajuste no gate logo abaixo,
-        // linha ~719); sem isso a tela ficaria presa no spinner mesmo já
-        // tendo dado pra mostrar.
-        if (!cache.empty) { processar(cache); _recusasPeriodoBuscado = chave; desenhar(); }
-      } catch (_e) { /* nada em cache ainda — segue normal */ }
+    try {
+      const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
+      if (!lojaId) throw new Error('Nenhuma loja selecionada.');
+      const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarIndicadoresRetornosBigQuery');
+      const resposta = await callable({ lojaId, ini, fim });
+      const docs = (resposta && resposta.data && resposta.data.recusas) || [];
+      _recusas = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
+      _recusasPeriodoBuscado = chave;
+    } finally {
+      _recusasCarregandoPeriodo = false;
     }
-    return ref.get()
-      .then(r => {
-        processar(r);
-        _recusasPeriodoBuscado = chave;
-        _recusasCarregandoPeriodo = false;
-      })
-      .catch(e => { _recusasCarregandoPeriodo = false; throw e; });
   }
   // Mantida pra compatibilidade com os call sites já existentes (depois de
   // criar/editar/excluir cadastro, atribuir conferência, etc.) — sempre
@@ -653,17 +635,13 @@
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">DE</div><input class="field" id="recusas-filtro-periodo-ini" type="date" value="${esc(_filtroPeriodoInicio)}" style="padding:8px"></div>
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input class="field" id="recusas-filtro-periodo-fim" type="date" value="${esc(_filtroPeriodoFim)}" style="padding:8px"></div>
       <button class="btn btn-primary btn-sm" id="recusas-buscar-periodo" style="padding:8px 14px">🔍 Buscar</button>
-      <div style="font-size:.68rem;color:var(--muted);align-self:center">Período máximo de 2 meses — atualiza ao vivo</div>
+      <div style="font-size:.68rem;color:var(--muted);align-self:center">Período máximo de 2 meses — pode levar alguns minutos pra refletir uma nota nova</div>
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">TRATAMENTO</div><select class="field" id="recusas-filtro-tratamento" style="padding:8px">${Object.keys(TRATAMENTO_LABELS).map(k=>`<option value="${k}" ${k===_filtroTratamento?'selected':''}>${esc(TRATAMENTO_LABELS[k])}</option>`).join('')}</select></div>
       <div><div style="font-size:.68rem;color:var(--muted);margin-bottom:3px">CONFERÊNCIA</div><select class="field" id="recusas-filtro-conferencia" style="padding:8px"><option value="" ${!_filtroConferencia?'selected':''}>Todas</option><option value="NAO_REALIZADA" ${_filtroConferencia==='NAO_REALIZADA'?'selected':''}>Não realizada</option><option value="CONFERIDA" ${_filtroConferencia==='CONFERIDA'?'selected':''}>Conferida</option><option value="CONFERIDA_COM_DIVERGENCIA" ${_filtroConferencia==='CONFERIDA_COM_DIVERGENCIA'?'selected':''}>Conferida c/ divergência</option></select></div>
       <input class="field" id="recusas-filtro" value="${esc(_filtro)}" placeholder="Pesquisar NF, motorista, motivo, box..." style="max-width:280px;padding:8px">
     </div>`;
   }
   function renderRecusasTabela() {
-    // "Conectando..." só quando AINDA não tem nada pra mostrar — se a
-    // prévia do cache local já preencheu _recusasPeriodoBuscado enquanto a
-    // busca de verdade roda por trás, mostra a tabela (com o que já tem)
-    // em vez de travar num spinner à toa.
     if (_recusasCarregandoPeriodo && !_recusasPeriodoBuscado) {
       return '<div class="empty"><div class="empty-icon">🔄</div><div class="empty-title">Conectando ao período...</div></div>';
     }

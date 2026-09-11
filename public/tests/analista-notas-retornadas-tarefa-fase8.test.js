@@ -50,7 +50,16 @@ function carregarPagina(colecoes){
   const win=dom.window; const document=win.document;
   _janelasAbertas.push(win);
   win.getDTFirestore=()=>({ collection:(nome)=>colecoes?.[nome]||mockColecao([]) });
-  win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }) };
+  win.getDTLojaAtiva=()=>'loja_matriz';
+  win.firebase={
+    auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }),
+    app:()=>({ functions:()=>({ httpsCallable:(nomeFuncao)=>async(payload)=>{
+      if(nomeFuncao!=='buscarIndicadoresRetornosBigQuery') throw new Error('função não mockada: '+nomeFuncao);
+      const col=colecoes?.recebimento_recusas||mockColecao([]);
+      const r=await col.where('criadoEm','>=',payload.ini+'T00:00:00.000Z').where('criadoEm','<=',payload.fim+'T23:59:59.999Z').get();
+      return { data: { recusas: r.docs.map(d=>({ _id:d.id, ...d.data() })) } };
+    } }) }),
+  };
   win.showToast=()=>{};
   win.aplicarPermissoesAnalista=()=>{};
   const modaisAbertos=[];

@@ -64,7 +64,16 @@ function carregarPagina(colecoesEntrada){
   const colecoes={...(colecoesEntrada||{})};
   if(!colecoes.recebimento_recusas_notas_chunks) colecoes.recebimento_recusas_notas_chunks=mockColecao([]);
   win.getDTFirestore=()=>({ collection:(nome)=>{ if(!colecoes[nome]) colecoes[nome]=mockColecao([]); return colecoes[nome]; } });
-  win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }) };
+  win.getDTLojaAtiva=()=>'loja_matriz';
+  win.firebase={
+    auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }),
+    app:()=>({ functions:()=>({ httpsCallable:(nomeFuncao)=>async(payload)=>{
+      if(nomeFuncao!=='buscarIndicadoresRetornosBigQuery') throw new Error('função não mockada: '+nomeFuncao);
+      const col=colecoes.recebimento_recusas||mockColecao([]);
+      const r=await col.where('criadoEm','>=',payload.ini+'T00:00:00.000Z').where('criadoEm','<=',payload.fim+'T23:59:59.999Z').get();
+      return { data: { recusas: r.docs.map(d=>({ _id:d.id, ...d.data() })) } };
+    } }) }),
+  };
   win.showToast=()=>{};
   win.aplicarPermissoesAnalista=()=>{};
   win.openModal=()=>{};

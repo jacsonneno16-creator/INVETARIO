@@ -83,7 +83,21 @@ function carregarPagina(colecoesEntrada){
   Object.keys(colecoes).forEach(nome=>_comColecaoNoDoc(colecoes[nome],nome));
   win.getDTFirestore=()=>({ collection:(nome)=>{ if(!colecoes[nome]) colecoes[nome]=_comColecaoNoDoc(mockColecao([]),nome); return colecoes[nome]; } });
   win.getDTRawFirestore=()=>mockRawFirestore(colecoes);
-  win.firebase={ auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }) };
+  win.getDTLojaAtiva=()=>'loja_matriz';
+  // PEDIDO AO VIVO (2026-09-11): a busca de recebimento_recusas por
+  // período passou a ir por uma Cloud Function (buscarIndicadoresRetornosBigQuery)
+  // em vez do Firestore direto — o mock abaixo lê da MESMA coleção
+  // recebimento_recusas já usada nos testes, devolvendo no mesmo formato
+  // {data:{recusas}} que a função real devolve.
+  win.firebase={
+    auth:()=>({ currentUser:{ uid:'u1', email:'analista@daterrinha.com' } }),
+    app:()=>({ functions:()=>({ httpsCallable:(nomeFuncao)=>async(payload)=>{
+      if(nomeFuncao!=='buscarIndicadoresRetornosBigQuery') throw new Error('função não mockada: '+nomeFuncao);
+      const col=colecoes.recebimento_recusas||mockColecao([]);
+      const r=await col.where('criadoEm','>=',payload.ini+'T00:00:00.000Z').where('criadoEm','<=',payload.fim+'T23:59:59.999Z').get();
+      return { data: { recusas: r.docs.map(d=>({ _id:d.id, ...d.data() })) } };
+    } }) }),
+  };
   win.showToast=()=>{};
   win.aplicarPermissoesAnalista=()=>{};
   win.openModal=()=>{};

@@ -175,26 +175,28 @@
     if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime()) || dIni > dFim) return false;
     return (dFim - dIni) / 86400000 <= DIAS_MAX_PERIODO;
   }
-  // PEDIDO AO VIVO (2026-09-10): busca manual por período (máx. 3 meses),
-  // filtrada no servidor por criadoEm — não traz mais a coleção inteira.
+  // PEDIDO AO VIVO (2026-09-11): "a parte do Analista pode puxar do
+  // BigQuery, 1 a 5 minutos de atraso não tem problema" — mesma Cloud
+  // Function já criada pra Indicadores de Retornos (98) e Notas Retornadas
+  // (97): mesmo filtro (loja + período + exclusão de origem:'AUTOMATICO'),
+  // devolve os documentos crus no mesmo formato {_id, ...dados}. As ações
+  // de clique desta tela (mudarStatusRetorno/salvarDataReentrega) não
+  // mudam — continuam gravando direto no Firestore.
   async function carregarDados(ini, fim, forcar) {
     if (!_periodoValido(ini, fim)) throw new Error('Escolha um período válido de até 3 meses.');
     const chave = ini + '|' + fim;
     if (_periodoBuscado === chave && !forcar) return;
-    const snap = await fs().collection(COL_RECUSAS)
-      .where('criadoEm', '>=', ini + 'T00:00:00.000Z')
-      .where('criadoEm', '<=', fim + 'T23:59:59.999Z')
-      .get();
+    const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
+    if (!lojaId) throw new Error('Nenhuma loja selecionada.');
+    const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarIndicadoresRetornosBigQuery');
+    const resposta = await callable({ lojaId, ini, fim });
+    const docs = (resposta && resposta.data && resposta.data.recusas) || [];
     // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
     // 'AUTOMATICO') já nasce CONFERIDA — não tem sentido nenhum ela ficar
     // "Aguard. Monitoramento"/fiscal/CTE, esse fluxo é só pra recebimento
     // físico real processado pelo Coletor. Indicador próprio em
     // 102-devolucoes-bi-indicadores.js.
-    // PEDIDO AO VIVO (2026-08-31, 3ª rodada): `origem` só passou a ser
-    // gravado numa rodada posterior — registros auto-salvos antes disso não
-    // têm esse campo, mas sempre tiveram `motivoAutomaticoTexto` (exclusivo
-    // desse fluxo), que serve de marcador retroativo.
-    _recusas = snap.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
+    _recusas = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
     _periodoBuscado = chave;
   }
 
