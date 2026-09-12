@@ -289,6 +289,26 @@ test('carregarPatio: cache PARADO há mais de 10min (job quebrado) cai pro camin
   assert.equal(linhas[0].numeroNota, '800', 'veio da busca ao vivo, não do cache velho');
 });
 
+// BUG AO VIVO REAL (2026-09-11): "demora mais de 5m" — numa conexão
+// realmente travada, a leitura do cache podia ficar pendurada pra sempre
+// (a Promise nunca resolve nem rejeita) e a tela ficava em
+// "Carregando..." indefinidamente, sem nenhum jeito de saber o que
+// aconteceu. Agora qualquer chamada de rede aqui tem um limite de tempo —
+// depois disso, desiste e mostra o erro (com o botão "Tentar de novo"
+// que já existia). Simula o limite de tempo disparando na hora (sem
+// esperar de verdade), só pra provar que a tela SAI do estado travado.
+test('BUG AO VIVO REAL: carregarPatio nunca fica pendurado pra sempre — desiste depois do limite de tempo e mostra erro com "Tentar de novo"', async () => {
+  const cachePendurado = { doc: () => ({ get: () => new Promise(() => {}) }) }; // nunca resolve nem rejeita
+  const { win, document } = carregarPagina({ recebimento_patio_cache: cachePendurado, recebimento_recusas: mockColecao([]), recebimento_recusas_notas: mockColecao([]) });
+  const setTimeoutOriginal = win.setTimeout;
+  win.setTimeout = (fn) => setTimeoutOriginal(fn, 0); // dispara o limite de tempo já, sem esperar 15s de verdade
+
+  await win.renderPatioTempoReal();
+  const html = document.getElementById('page-recebimento-patio-tempo-real').innerHTML;
+  assert.match(html, /Tempo esgotado/, 'mostra o erro em vez de ficar preso pra sempre em "Carregando..."');
+  assert.match(html, /Tentar de novo/);
+});
+
 test('carregarPatio: sem documento de cache ainda (loja nova / antes do 1º ciclo do job) cai pro caminho ao vivo sem quebrar', async () => {
   const recusas = mockColecao([
     { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-09-01T10:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'A', numeroNota: '801', tratamento: 'RECUSA' }] } },
@@ -334,6 +354,29 @@ test('ranking de mercados: agrupa por destinatario com qtd/valor/recusas/reentre
   assert.equal(ranking[0].valor, 30);
   assert.equal(ranking[0].recusas, 1);
   assert.equal(ranking[0].reentregas, 1);
+});
+
+// PEDIDO AO VIVO (2026-09-11): "essa parte maiores mercados parados tem
+// que atualizar clicando no card também" — o ranking usava `_linhas`
+// (sem filtro nenhum); agora usa a mesma lista filtrada da tabela de
+// baixo, então clicar num card (ou usar qualquer outro filtro) atualiza
+// os dois juntos.
+test('ranking de mercados: respeita os filtros ativos (inclusive o clique nos cards) — não mostra sempre tudo', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'A', numeroNota: '1', tratamento: 'RECUSA' }] } },
+    { id: 'r2', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'B', numeroNota: '2', tratamento: 'REENTREGA' }] } },
+  ]);
+  const notas = mockColecao([{ id: 'A', data: { destinatario: 'Mercado Recusas' } }, { id: 'B', data: { destinatario: 'Mercado Reentregas' } }]);
+  const { win } = carregarPagina({ recebimento_recusas: recusas, recebimento_recusas_notas: notas });
+  await I(win).carregarPatio(true);
+
+  I(win).clicarCard('recusa');
+  const rankingFiltrado = I(win).rankingMercados();
+  assert.equal(rankingFiltrado.length, 1, 'só o mercado da Recusa aparece — Reentregas ficou de fora do filtro');
+  assert.equal(rankingFiltrado[0].mercado, 'Mercado Recusas');
+
+  I(win).clicarCard('total');
+  assert.equal(I(win).rankingMercados().length, 2, 'sem filtro (Total), os 2 mercados voltam a aparecer');
 });
 
 // ── filtros client-side ──────────────────────────────────────────────────

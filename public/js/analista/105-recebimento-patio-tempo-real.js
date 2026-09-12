@@ -171,6 +171,21 @@
   // antes (Cloud Function + enriquecimento no cliente), nunca mostra tela
   // vazia por causa disso.
   const LIMITE_IDADE_CACHE_MIN = 10;
+  // BUG AO VIVO REAL (2026-09-11): "demora mais de 5m" — numa conexão
+  // realmente travada (não só lenta), a leitura do cache ou a Cloud
+  // Function podiam ficar penduradas pra sempre (a Promise nunca resolve
+  // NEM rejeita) — a tela ficava em "Carregando..." indefinidamente, sem
+  // nenhum jeito de saber o que aconteceu nem tentar de novo. Envolve
+  // qualquer chamada de rede aqui num limite de tempo — depois disso,
+  // desiste e mostra o erro (com o botão "Tentar de novo" que já existe),
+  // não importa a causa real da demora.
+  const LIMITE_TEMPO_REDE_MS = 15000;
+  function _comLimiteDeTempo(promessa, mensagemTimeout) {
+    return Promise.race([
+      promessa,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(mensagemTimeout)), LIMITE_TEMPO_REDE_MS)),
+    ]);
+  }
   async function _tentarCarregarDoCache(lojaId) {
     try {
       const snap = await fs().collection('recebimento_patio_cache').doc('atual').get();
@@ -197,10 +212,10 @@
     try {
       const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
       if (!lojaId) throw new Error('Nenhuma loja selecionada.');
-      const veioDoCache = await _tentarCarregarDoCache(lojaId);
+      const veioDoCache = await _comLimiteDeTempo(_tentarCarregarDoCache(lojaId), 'Tempo esgotado ao ler o cache — conexão lenta ou instável. Clique em Atualizar pra tentar de novo.');
       if (!veioDoCache) {
         const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarPatioTempoRealBigQuery');
-        const resposta = await callable({ lojaId });
+        const resposta = await _comLimiteDeTempo(callable({ lojaId }), 'Tempo esgotado ao buscar os dados — conexão lenta ou instável. Clique em Atualizar pra tentar de novo.');
         const docs = (resposta && resposta.data && resposta.data.recusas) || [];
         const todasLinhas = linhasPorNota(docs).filter(l => estaNoPatio(l, l));
         _linhas = await _enriquecerComNotas(todasLinhas);
@@ -375,9 +390,14 @@
     </div>`;
   }
 
+  // PEDIDO AO VIVO (2026-09-11): "essa parte maiores mercados parados tem
+  // que atualizar clicando no card também" — usava `_linhas` (tudo, sem
+  // filtro nenhum); agora usa `_filtradas()`, a mesma lista já filtrada
+  // que a tabela de baixo usa — clicar num card (ou mexer em qualquer
+  // outro filtro) atualiza os dois juntos.
   function _rankingMercados() {
     const mapa = new Map();
-    _linhas.forEach(l => {
+    _filtradas().forEach(l => {
       const m = l.destinatario || '— Sem mercado —';
       const acc = mapa.get(m) || { mercado: m, qtd: 0, valor: 0, recusas: 0, reentregas: 0 };
       acc.qtd++; acc.valor += Number(l.valorTotal || 0);
