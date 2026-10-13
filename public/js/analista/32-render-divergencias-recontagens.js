@@ -4,9 +4,14 @@ const _normRec = v => _FK.texto(v);
 const _inventarioCanonicoRec = obj => _FK.inventario(obj, state().inventarios);
 const _produtoCanonicoRec = obj => _FK.produto(obj);
 
+// 'SEM_PRODUTO' é só uma chave interna de agrupamento (usada quando uma linha
+// da base não tem nenhum identificador de produto) — nunca deve aparecer pro
+// usuário como se fosse um código real.
+const _semSentinela = v => (v === 'SEM_PRODUTO' ? '' : v);
+
 const _nomeProdutoRec = valor => {
-  const codigo = String(valor || '').trim();
-  if (!codigo) return 'Produto nao informado';
+  const codigo = String(_semSentinela(valor) || '').trim();
+  if (!codigo) return '';
   try {
     const ach = window.DTProdutos?.buscarSync?.(codigo);
     if (ach?.encontrado) {
@@ -182,7 +187,6 @@ async function _marcarDivResolvida(divId) {
     if(recPayload) window.AnalistaStore.dispatch(window.AnalistaActions.upsertEntity('recontagens', recPayload, {source:'resolverDivergenciaAnalista'}));
     saveAll();
     renderDivergencias();
-    renderRecontagens();
     if(typeof renderContagens==='function') renderContagens();
     atualizarBadgesNav();
     logSistema('DIVERGENCIA_RESOLVIDA', `Divergência ${divId} resolvida pelo analista`, {divId,endereco:div.endereco,inventario_id:div.inventario_id,rodadaFinal,qtdFinal});
@@ -433,7 +437,7 @@ let _divFiltroRapidoAtivo = '';
 function divFiltroRapido(tipo) {
   _divFiltroRapidoAtivo = _divFiltroRapidoAtivo === tipo ? '' : tipo;
   // Atualizar visual dos botões
-  ['nao_atribuidas','minhas','pendentes','aguardando_analista','concluidas'].forEach(t => {
+  ['aguardando_recontagem','em_recontagem','aguardando_analista','resolvidas','persistentes'].forEach(t => {
     const btn = document.getElementById('fq-' + t);
     if (btn) btn.style.background = _divFiltroRapidoAtivo === t ? 'var(--orange)' : '';
     if (btn) btn.style.color = _divFiltroRapidoAtivo === t ? '#fff' : '';
@@ -608,7 +612,6 @@ function confirmarAtribuicao() {
 
   saveAll();
   renderDivergencias();
-  renderRecontagens();
   closeModal('modal-atribuir-recontagem');
   _divSelecionadas.clear();
   divAtualizarBarraSel();
@@ -967,15 +970,18 @@ function renderDivergencias() {
     });
   }
 
-  // Filtros rápidos
-  if (_divFiltroRapidoAtivo === 'nao_atribuidas') dados = dados.filter(d => !d.atribuido_em && !d.operador_responsavel);
-  else if (_divFiltroRapidoAtivo === 'minhas') {
-    const eu = _currentAnalistaUser?.displayName || _currentAnalistaUser?.email || '';
-    dados = dados.filter(d => (d.atribuido_por||'') === eu);
-  }
-  else if (_divFiltroRapidoAtivo === 'pendentes')          dados = dados.filter(d => (d.status_recontagem||'') === 'pendente');
-  else if (_divFiltroRapidoAtivo === 'aguardando_analista') dados = dados.filter(d => (d.status_recontagem||'') === 'aguardando_analista');
-  else if (_divFiltroRapidoAtivo === 'concluidas')         dados = dados.filter(d => (d.status_recontagem||'') === 'concluida');
+  // Filtros rápidos orientados ao fluxo operacional da divergência.
+  if (_divFiltroRapidoAtivo === 'aguardando_recontagem') dados = dados.filter(d => {
+    const sr=String(d.status_recontagem||'').toLowerCase(), status=String(d.status||'').toUpperCase();
+    return status==='ABERTA' || ['nao_atribuida','pendente'].includes(sr);
+  });
+  else if (_divFiltroRapidoAtivo === 'em_recontagem') dados = dados.filter(d => {
+    const sr=String(d.status_recontagem||'').toLowerCase(), status=String(d.status||'').toUpperCase();
+    return status==='EM_RECONTAGEM' || sr==='em_andamento';
+  });
+  else if (_divFiltroRapidoAtivo === 'aguardando_analista') dados = dados.filter(d => String(d.status_recontagem||'').toLowerCase() === 'aguardando_analista');
+  else if (_divFiltroRapidoAtivo === 'resolvidas') dados = dados.filter(d => String(d.status||'').toUpperCase()==='RESOLVIDA' || ['concluida','sem_divergencia'].includes(String(d.status_recontagem||'').toLowerCase()));
+  else if (_divFiltroRapidoAtivo === 'persistentes') dados = dados.filter(d => String(d.status||'').toUpperCase()==='PERSISTENTE' || String(d.status_recontagem||'').toLowerCase()==='persistente');
 
   if (busca) dados = dados.filter(d =>
     (d.endereco||'').toLowerCase().includes(busca) ||
@@ -1063,7 +1069,7 @@ function renderDivergencias() {
             style="width:15px;height:15px;cursor:pointer;accent-color:var(--orange)"
             onchange="divToggleTodos(this.checked)">
         </th>
-        <th>Inventário</th><th>Rua</th><th>Endereço</th><th>Data</th>
+        <th>Endereço</th>
         <th>Produto esperado</th><th>Produto contado</th><th>Esperado no endereço</th><th>1ª Contagem</th>
         <th>2ª Contagem</th><th>3ª Contagem</th><th>Resultado</th>
         <th>Atribuído para</th><th>Executado por</th><th>Ações</th>
@@ -1075,8 +1081,6 @@ function renderDivergencias() {
           const rec = state().recontagens
             .filter(r => idsAgrupados.includes(r.divergencia_id))
             .sort((a,b) => (b.numero_recontagem||1) - (a.numero_recontagem||1))[0] || null;
-          const endInfo = getEnderecoInfo(d.endereco);
-          const rua = endInfo?.rua || '—';
           const cont = d._contagem_origem || _contagemOrigemExataRec(d);
           const operador = d.operador || cont?.operador || '—';
           const podeSelecionar = divPodeSelecionar(d);
@@ -1114,7 +1118,10 @@ function renderDivergencias() {
               item.saldo_erp ?? item.qtd_sistema ?? item.qtd_estoque ?? item.estoque_total ??
               item.estoque ?? item.quantidade ?? item.qtd ?? item.qtde;
             const numero = Number(String(bruto ?? '').replace(',', '.'));
-            return Number.isFinite(numero) ? numero : 0;
+            // Coletor conta em UN: base em CX/FD é convertida (× fator_caixa); UND traz fator 1.
+            const fator = Number(item.fator_caixa ?? item.fatorCaixa);
+            const f = Number.isFinite(fator) && fator > 0 ? fator : 1;
+            return Number.isFinite(numero) ? numero * f : 0;
           };
           const totalEsperadoEndereco = d._qtd_esperada_endereco != null
             ? d._qtd_esperada_endereco
@@ -1135,9 +1142,9 @@ function renderDivergencias() {
           // Produto esperado vem da base oficial do endereço; produto contado
           // usa o produto da rodada mais recente disponível e é convertido para
           // o nome cadastrado na Base de Produtos.
-          const _codigoProdutoItem = item => item?.codigo_produto || item?.codigoProduto ||
+          const _codigoProdutoItem = item => _semSentinela(item?.codigo_produto) || _semSentinela(item?.codigoProduto) ||
             item?.codigo_interno || item?.codigoInterno || item?.gtin || item?.ean ||
-            item?.dun || item?.produto || '';
+            item?.dun || _semSentinela(item?.produto) || '';
           const _nomeProdutoItem = item => item?.descricao_produto || item?.descricaoProduto ||
             item?.descricao || item?.nomeProduto || _nomeProdutoRec(_codigoProdutoItem(item)) ||
             _codigoProdutoItem(item) || '—';
@@ -1145,12 +1152,12 @@ function renderDivergencias() {
             .map(_nomeProdutoItem).map(v => String(v || '').trim()).filter(Boolean))];
           const produtoEsperadoNome = produtosEsperadosNomes.length
             ? produtosEsperadosNomes.join(' / ')
-            : (_nomeProdutoRec(d.produto) || d.descricao || d.produto || '—');
+            : (_nomeProdutoRec(d.produto) || d.descricao || _semSentinela(d.produto) || '—');
           const codigoContadoAtual = rec?.produto_terceira ?? d.produto_terceira ??
             rec?.produto_segunda ?? d.produto_segunda ?? d.produto_primeira ??
             d.produto_contado ?? d.gtin_bipado ?? d.produto ?? '';
           const produtoContadoNome = _nomeProdutoRec(codigoContadoAtual) ||
-            d.descricao_contada || d.descricao || codigoContadoAtual || '—';
+            d.descricao_contada || d.descricao || _semSentinela(codigoContadoAtual) || '—';
 
           // Status recontagem
           const statusRec = d.status_recontagem || (rec ? (rec.status==='CONCLUIDA' ? 'concluida' : 'pendente') : '');
@@ -1187,12 +1194,9 @@ function renderDivergencias() {
                 ${selecionado ? 'checked' : ''}
                 onchange="divToggleSel('${d.id}', this.checked)">` : ''}
             </td>
-            <td style="font-size:.75rem;color:var(--muted)">${d.inventario_nome || d.inventario_id}</td>
-            <td class="mono" style="font-weight:600">${rua}</td>
-            <td class="mono">${escHTML(d.endereco)}${d.endereco_correto ? `<br><span style="font-size:.65rem;color:var(--muted)">→ ${escHTML(d.endereco_correto)}</span>` : ''}</td>
-            <td class="mono" style="font-size:.72rem;color:var(--muted);white-space:nowrap">${fmtTs(d.criada_em)}</td>
-            <td><div style="font-weight:700;font-size:.78rem;min-width:170px" title="${escHTML(produtoEsperadoNome)}">${escHTML(produtoEsperadoNome)}</div></td>
-            <td><div style="font-weight:700;font-size:.78rem;min-width:170px" title="${escHTML(produtoContadoNome)}">${escHTML(produtoContadoNome)}</div></td>
+            <td class="mono" style="padding:6px 10px;white-space:nowrap;width:1%" title="${d.endereco_correto ? `Contado em ${escHTML(d.endereco)} · base espera em ${escHTML(d.endereco_correto)}` : escHTML(d.endereco)}">${escHTML(d.endereco)}</td>
+            <td style="padding:6px 10px;width:1%"><div style="font-weight:700;font-size:.78rem;white-space:nowrap" title="${escHTML(produtoEsperadoNome)}">${escHTML(produtoEsperadoNome)}</div></td>
+            <td style="padding:6px 10px;width:1%"><div style="font-weight:700;font-size:.78rem;white-space:nowrap" title="${escHTML(produtoContadoNome)}">${escHTML(produtoContadoNome)}</div></td>
             <td>${esperadoHtml}</td>
             ${(() => {
               const _qtdC1 = d.qtd_contada != null ? d.qtd_contada : null;
@@ -1231,19 +1235,20 @@ function renderDivergencias() {
                    ${rec?.recontagem_concluida_em ? `<div style="font-size:.65rem;color:var(--muted)">${fmtTs(rec.recontagem_concluida_em)}</div>` : ''}`
                 : `<span style="font-size:.72rem;color:var(--muted-2)">—</span>`}
             </td>
-            <td style="white-space:nowrap">
-              <div style="display:flex;gap:4px;flex-wrap:wrap">
+            <td style="padding:6px 10px;width:1%">
+              <div style="display:flex;gap:4px;flex-wrap:nowrap">
                 ${d.status === 'PERSISTENTE'
-                  ? `<span style="font-size:.68rem;color:var(--danger);font-weight:700;padding:3px 8px;background:rgba(217,32,32,.10);border-radius:6px;border:1px solid rgba(217,32,32,.25)">🔒 Encerrado</span>`
+                  ? `<span style="font-size:.68rem;color:var(--danger);font-weight:700;padding:3px 8px;background:rgba(217,32,32,.10);border-radius:6px;border:1px solid rgba(217,32,32,.25);white-space:nowrap">🔒 Encerrado</span>`
                   : d.status !== 'RESOLVIDA'
-                    ? `<button class="btn btn-success btn-sm" onclick="marcarDivergenciaResolvida('${d.id}')" title="Marcar como resolvida" style="font-size:.7rem">✓ Resolver</button>`
-                    : `<span style="font-size:.7rem;color:var(--muted)">${fmtTs(d.resolvida_em)}</span>`
+                    ? `<button class="btn btn-success btn-sm" type="button" data-rec-action="resolver" data-div-id="${escHTML(String(d.id || ''))}" title="Marcar como resolvida" style="font-size:.7rem;padding:4px 9px;white-space:nowrap">✓ Resolver</button>`
+                    : `<span style="font-size:.7rem;color:var(--muted);white-space:nowrap">${fmtTs(d.resolvida_em)}</span>`
                 }
                 ${(d.status !== 'RESOLVIDA' && d.status !== 'PERSISTENTE')
                   ? (atribPara
-                      ? `<button class="btn btn-ghost btn-sm" style="font-size:.7rem;color:var(--danger);border-color:var(--danger)" onclick="desvincularRecontagem('${d.id}')" title="Desvincular operador">🔓 Desvincular</button>`
-                      : (!_isFluxoEncerrado(d) ? `<button class="btn btn-ghost btn-sm" style="font-size:.7rem" type="button" data-rec-atribuir="${encodeURIComponent(String(d.id || ''))}" onclick="return divAtribuirRapido(decodeURIComponent(this.dataset.recAtribuir))" title="Atribuir recontagem">👤 Atribuir</button>` : ''))
+                      ? `<button class="btn btn-ghost btn-sm" type="button" data-rec-action="desvincular" data-div-id="${escHTML(String(d.id || ''))}" style="font-size:.7rem;padding:4px 9px;white-space:nowrap;color:var(--danger);border-color:var(--danger)" title="Desvincular operador">🔓 Desvincular</button>`
+                      : (!_isFluxoEncerrado(d) ? `<button class="btn btn-ghost btn-sm" style="font-size:.7rem;padding:4px 9px;white-space:nowrap" type="button" data-rec-action="atribuir-rapido" data-div-id="${escHTML(String(d.id || ''))}" title="Atribuir recontagem">👤 Atribuir</button>` : ''))
                   : ''}
+                <button class="btn btn-ghost btn-sm" style="font-size:.7rem;padding:4px 9px;white-space:nowrap" type="button" data-rec-action="historico" data-div-id="${escHTML(String(d.id || ''))}" title="Ver histórico das rodadas">🕘 Histórico</button>
               </div>
             </td>
           </tr>`;
@@ -1252,11 +1257,65 @@ function renderDivergencias() {
     </table></div>`;
 }
 
+
+// Histórico contextual das rodadas: substitui a antiga página oculta "Rodadas de Contagem".
+function abrirHistoricoDivergenciaV4(divId) {
+  const st = state();
+  const d = (st.divergencias || []).find(x => String(x.id) === String(divId));
+  if (!d) { showToast('Divergência não encontrada.', 'w'); return; }
+  const invId = String(d.inventario_id || d.inventarioId || '');
+  const end = _FK.endereco(d.endereco);
+  const relacionados = (st.divergencias || []).filter(x => String(x.inventario_id || x.inventarioId || '') === invId && _FK.endereco(x.endereco) === end);
+  const ids = new Set(relacionados.map(x => String(x.id)));
+  const recs = (st.recontagens || []).filter(r => ids.has(String(r.divergencia_id || '')) || (String(r.inventario_id || r.inventarioId || '') === invId && _FK.endereco(r.endereco) === end))
+    .sort((a,b) => Number(a.numero_recontagem || a.rodada || 1) - Number(b.numero_recontagem || b.rodada || 1));
+  const origem = _contagemOrigemExataRec(d);
+  const rodadas = [{
+    rodada:1,
+    quantidade: origem?.quantidade ?? origem?.qtd ?? d.qtd_contada ?? d.quantidade_contada,
+    produto: origem?.gtin_bipado || origem?.codigoLido || origem?.codigo_produto || d.produto_contado || d.produto || '',
+    operador: origem?.operador || origem?.operador_nome || d.operador || '',
+    data: origem?.timestamp || origem?.criado_em || d.criada_em || '',
+    status:'CONCLUÍDA'
+  }];
+  recs.forEach((r,i) => rodadas.push({
+    rodada:Number(r.numero_recontagem || r.rodada || (i+2)),
+    quantidade:r.qtd_recontagem ?? r.quantidade_recontagem ?? r.quantidade ?? r.qtd ?? r.qtd_segunda ?? r.qtd_terceira,
+    produto:r.produto_recontagem || r.produto_segunda || r.produto_terceira || r.produto || '',
+    operador:r.operador_recontagem || r.operador_responsavel || r.operador || '',
+    data:r.recontagem_concluida_em || r.concluida_em || r.iniciada_em || r.criada_em || '',
+    status:String(r.status || r.status_recontagem || 'PENDENTE').toUpperCase()
+  }));
+  document.getElementById('dt-historico-div-v4')?.remove();
+  const html = `<div id="dt-historico-div-v4" class="modal-overlay" style="display:flex;z-index:10050" role="dialog" aria-modal="true">
+    <div class="modal" style="max-width:760px;width:min(760px,94vw)">
+      <div class="modal-hdr"><div><div class="modal-title">🕘 Histórico da divergência</div><div class="sec-sub">${escHTML(d.endereco || '—')} · ${rodadas.length} rodada(s)</div></div><button class="modal-close" type="button" data-fechar-hist-v4>✕</button></div>
+      <div style="padding:16px;display:grid;gap:10px;max-height:68vh;overflow:auto">
+        ${rodadas.map(r=>`<div style="border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--surface)">
+          <div style="display:flex;justify-content:space-between;gap:12px"><strong>${r.rodada===1?'1ª Contagem':`${r.rodada}ª Contagem`}</strong><span class="badge">${escHTML(r.status)}</span></div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:8px;font-size:.78rem">
+            <div><span class="sec-sub">Quantidade</span><div style="font-size:1.1rem;font-weight:900">${r.quantidade==null?'—':escHTML(r.quantidade)}</div></div>
+            <div><span class="sec-sub">Produto</span><div>${escHTML(_nomeProdutoRec(r.produto) || r.produto || '—')}</div></div>
+            <div><span class="sec-sub">Operador</span><div>${escHTML(r.operador || '—')}</div></div>
+            <div><span class="sec-sub">Data</span><div>${r.data ? fmtTs(r.data) : '—'}</div></div>
+          </div>
+        </div>`).join('')}
+      </div>
+      <div class="modal-actions"><button class="btn btn-primary" type="button" data-fechar-hist-v4>Fechar</button></div>
+    </div></div>`;
+  document.body.insertAdjacentHTML('beforeend',html);
+  document.querySelectorAll('#dt-historico-div-v4 [data-fechar-hist-v4]').forEach(b=>b.onclick=()=>document.getElementById('dt-historico-div-v4')?.remove());
+}
+window.abrirHistoricoDivergenciaV4 = abrirHistoricoDivergenciaV4;
+
 // ───────────────────────────────────────────────────────────────────
 //  17. RENDERIZAÇÃO — RECONTAGENS
 // ───────────────────────────────────────────────────────────────────
 
 function renderRecontagens() {
+  // Compatibilidade V4: a antiga página de histórico de recontagens foi removida.
+  // Se algum chamador legado ainda invocar este renderer, não tente escrever em DOM inexistente.
+  if (!document.getElementById('rec-table-wrap')) return;
   // Recria automaticamente vínculos ausentes antes de montar a fila. O botão
   // "Processar Contagens" continua disponível, mas não é mais necessário para
   // uma primeira divergência aparecer e poder ser atribuída.
@@ -1308,6 +1367,22 @@ function renderRecontagens() {
     grupo[tipo].push(obj);
     _gruposRec.set(chave, grupo);
   };
+  // quantidade_unidades já vem do Coletor convertida pra unidade base (qty
+  // digitado × fator_caixa quando o código bipado foi um DUN de 14 dígitos
+  // — contagem por caixa; igual à quantidade digitada quando o bipado foi
+  // GTIN de unidade). Mesmo padrão de _qtdComparavel em
+  // 21-divergencias-recontagens.js: sem isso, bipar em caixas (produto
+  // "CX 20.0") mostrava a 1ª contagem crua (em caixas) comparada contra o
+  // esperado já convertido pra unidade, acusando divergência falsa.
+  const _qtdComparavelContagem = c => {
+    const un = parseFloat(c?.quantidade_unidades);
+    if (!isNaN(un)) return un;
+    const qtd = parseFloat(c?.quantidade);
+    if (!isNaN(qtd)) return qtd;
+    const qtdCx = parseFloat(c?.qtd_caixas);
+    return !isNaN(qtdCx) ? qtdCx : null;
+  };
+
   state().divergencias.forEach(d => _adicionarGrupo(d, 'divergencias'));
   state().recontagens.forEach(r => _adicionarGrupo(r, 'recontagens'));
   state().contagens.filter(c =>
@@ -1324,8 +1399,8 @@ function renderRecontagens() {
         produto:c.gtin || c.codigo_produto || c.codigoLido || '',
         descricao:c.descricao_produto || c.descricao || '',
         qtd_esperada:c.qtd_esperada ?? c.quantidade_esperada ?? c.qtd_sistema ?? null,
-        qtd_contada:c.quantidade ?? c.qtd_caixas ?? null,
-        qtd_primeira:c.quantidade ?? c.qtd_caixas ?? null,
+        qtd_contada:_qtdComparavelContagem(c),
+        qtd_primeira:_qtdComparavelContagem(c),
         produto_primeira:c.gtin || c.codigo_produto || c.codigoLido || '',
         operador_primeira:c.operador || c.operador_nome || '',
         data_primeira:c.timestamp || c.criado_em || c.dataHora || '',
@@ -1374,7 +1449,7 @@ function renderRecontagens() {
       descricao: divPrincipal.descricao || divPrincipal.descricao_produto || principal.descricao || contPrimeira?.descricao_produto || '',
       qtd_esperada: divPrincipal.qtd_esperada ?? principal.qtd_esperada,
       qtd_primeira: divPrincipal.qtd_primeira ?? divPrincipal.qtd_contada ?? principal.qtd_primeira ??
-        contPrimeira?.quantidade ?? contPrimeira?.qtd_caixas,
+        _qtdComparavelContagem(contPrimeira || {}),
       produto_primeira: divPrincipal.produto_primeira || divPrincipal.produto_contado ||
         principal.produto_primeira || contPrimeira?.gtin || contPrimeira?.codigo_produto || '',
       operador_primeira: divPrincipal.operador_primeira || divPrincipal.operador ||
@@ -1622,7 +1697,18 @@ function _instalarEventosRecontagem() {
       if (!id) return showToast('Registro da recontagem não identificado.', 'e');
       if (alvo.dataset.recKind === 'rec') divAtribuirPorRec(id);
       else divAtribuirRapido(id);
+      return;
     }
+    // Botões da coluna Ações da tabela de Divergências (renderDivergencias):
+    // usavam onclick="" inline, que o sanitizador global de segurança
+    // (instalarRenderizacaoSegura em shared/common-utils.js) remove de todo
+    // HTML atribuído via innerHTML — os cliques nunca chegavam a disparar.
+    const divId = String(alvo.dataset.divId || '');
+    if (!divId) return;
+    if (acao === 'resolver') return marcarDivergenciaResolvida(divId);
+    if (acao === 'desvincular') return desvincularRecontagem(divId);
+    if (acao === 'atribuir-rapido') return divAtribuirRapido(divId);
+    if (acao === 'historico') return abrirHistoricoDivergenciaV4(divId);
   }, true);
 }
 
@@ -1805,11 +1891,24 @@ function abrirDetalhePaletesEsperados(divId) {
       item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde;
     if (valor === null || valor === undefined || String(valor).trim() === '') return 0;
     const numero = Number(String(valor).replace(',', '.'));
-    return Number.isFinite(numero) ? numero : 0;
+    // Mesma regra do total da lista (ver _qtdEsperadaItem acima): o Coletor conta em
+    // UNIDADE, mas a base pode trazer a quantidade esperada em CX/FD — sem multiplicar
+    // pelo fator_caixa aqui, este modal mostrava um total 20x menor que a lista
+    // (ex.: lista "Total esperado: 960", modal "Total consolidado do endereço: 48").
+    const fator = Number(item?.fator_caixa ?? item?.fatorCaixa);
+    const f = Number.isFinite(fator) && fator > 0 ? fator : 1;
+    return Number.isFinite(numero) ? numero * f : 0;
   };
   const total = itens.reduce((soma, item) => soma + obterQtd(item), 0);
-  const linhas = itens.map((item, indice) => {
-    const codigo = item.codigo_produto || item.codigoProduto || item.codigo_interno || item.codigoInterno || item.gtin || item.ean || item.dun || item.produto || '—';
+  const _codigoItemEsperado = item => _semSentinela(item.codigo_produto) || _semSentinela(item.codigoProduto) || item.codigo_interno || item.codigoInterno || item.gtin || item.ean || item.dun || _semSentinela(item.produto) || '—';
+  // Base sem nenhum produto de verdade nesses paletes (linhas em branco/lixo
+  // de importação) — em vez de listar "Palete 1 — —", "Palete 2 — —" sem
+  // nenhuma informação útil, mostra só um aviso de endereço vazio.
+  const enderecoSemProduto = itens.every(item => _codigoItemEsperado(item) === '—' && obterQtd(item) === 0);
+  const linhas = enderecoSemProduto
+    ? `<div style="padding:22px 16px;text-align:center;color:var(--muted)"><div style="font-size:1.3rem">📭</div><div style="margin-top:6px;font-size:.8rem;font-weight:700">Endereço vazio</div><div style="font-size:.72rem;margin-top:2px">Nenhum produto constava na base para este endereço.</div></div>`
+    : itens.map((item, indice) => {
+    const codigo = _codigoItemEsperado(item);
     const nome = item.descricao_produto || item.descricaoProduto || item.descricao || item.nomeProduto || _nomeProdutoRec(codigo) || '';
     const identificador = item.palete || item.pallet || item.numero_palete || item.numeroPalete || item.sscc || item.lote || `Palete ${indice + 1}`;
     const qtd = obterQtd(item);
@@ -1820,7 +1919,17 @@ function abrirDetalhePaletesEsperados(divId) {
     </div>`;
   }).join('');
 
-  const divsEndereco = (state().divergencias || []).filter(mesmoEndereco);
+  // CORREÇÃO (2026-10-07): não considerar divergência CANCELADA/ESTORNADA ao
+  // escolher qual registro representa a "1ª contagem" deste endereço — senão
+  // uma contagem já estornada pelo Analista (produto errado, por exemplo)
+  // pode ser escolhida no lugar da divergência realmente ativa, mostrando o
+  // valor errado no modal mesmo com o total esperado já certo.
+  const divsEndereco = (state().divergencias || []).filter(obj => {
+    if (!mesmoEndereco(obj)) return false;
+    const status = String(obj?.status || '').toUpperCase();
+    const stRec = String(obj?.status_recontagem || '').toUpperCase();
+    return !['CANCELADA','EXCLUIDA'].includes(status) && !['CANCELADA','EXCLUIDA'].includes(stRec);
+  });
   const primeiraDiv = [...divsEndereco].sort((a,b) => String(a.criada_em || '').localeCompare(String(b.criada_em || '')))
     .find(x => x.qtd_contada != null || x.qtd_primeira != null) || bruto;
   const recs = (state().recontagens || []).filter(mesmoEndereco).filter(r =>
@@ -1873,10 +1982,12 @@ function abrirDetalhePaletesEsperados(divId) {
       consolidada.operador_segunda || segundaRec.operador_segunda || segundaRec.operador_recontagem || segundaRec.operador || '',
       consolidada.operador_terceira || terceiraRec.operador_terceira || terceiraRec.operador_recontagem || terceiraRec.operador || ''
     ][idx] || '';
+    const produtoRodada = qtd !== null ? (_nomeProdutoRec(r.produto) || _semSentinela(r.produto) || '') : '';
     return `<div style="border:1px solid ${ok ? 'rgba(34,197,94,.45)' : 'var(--border)'};background:${ok ? 'rgba(34,197,94,.11)' : 'var(--surface)'};border-radius:12px;padding:12px;min-width:0;box-shadow:${ok ? 'inset 0 0 0 1px rgba(34,197,94,.12)' : 'none'}">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:center"><strong>${r.titulo}</strong>${badge}</div>
       <div class="mono" style="font-size:1.45rem;font-weight:950;margin-top:14px;text-align:center;color:${ok ? 'var(--success)' : 'var(--text)'}">${qtd === null ? '—' : escHTML(qtd)}</div>
-      <div style="font-size:.72rem;color:var(--muted);margin-top:9px;text-align:center;min-height:1em">${operadorRodada ? `Contado por ${escHTML(operadorRodada)}` : ''}</div>
+      <div style="font-size:.68rem;color:var(--muted);margin-top:6px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${escHTML(produtoRodada)}">${produtoRodada ? escHTML(produtoRodada) : ''}</div>
+      <div style="font-size:.72rem;color:var(--muted);margin-top:3px;text-align:center;min-height:1em">${operadorRodada ? `Contado por ${escHTML(operadorRodada)}` : ''}</div>
     </div>`;
   }).join('');
 
@@ -1885,7 +1996,7 @@ function abrirDetalhePaletesEsperados(divId) {
   document.body.insertAdjacentHTML('beforeend', `<div id="modal-paletes-esperados-bg" class="modal-bg open" style="display:flex;z-index:99999" onclick="if(event.target===this) fecharDetalhePaletesEsperados()">
     <div class="modal" style="max-width:820px;width:min(820px,94vw);padding:0;overflow:hidden">
       <div class="modal-hdr" style="padding:18px 20px">
-        <div><div class="modal-title">📦 Esperado e comparação das contagens</div><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Endereço ${escHTML(bruto.endereco || '—')} · ${itens.length} ${itens.length === 1 ? 'palete' : 'paletes'}</div></div>
+        <div><div class="modal-title">📦 Esperado e comparação das contagens</div><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Endereço ${escHTML(bruto.endereco || '—')}${enderecoSemProduto ? '' : ` · ${itens.length} ${itens.length === 1 ? 'palete' : 'paletes'}`}</div></div>
         <button class="modal-close" onclick="fecharDetalhePaletesEsperados()">✕</button>
       </div>
       <div style="max-height:42vh;overflow:auto;border-top:1px solid var(--border);border-bottom:1px solid var(--border)">${linhas}</div>

@@ -141,7 +141,11 @@
       item?.estoque_total ?? item?.estoque ?? item?.quantidade ?? item?.qtd ?? item?.qtde;
     const texto=String(v??'').trim().replace(/\s/g,'');
     const n=Number(texto.includes(',')?texto.replace(/\./g,'').replace(',','.'):texto);
-    return Number.isFinite(n)?n:0;
+    // O Coletor conta em UNIDADE. Base em CX/FD é convertida pra UN (× fator_caixa).
+    // Base em UND traz fator 1, então nada muda.
+    const fator=Number(item?.fator_caixa ?? item?.fatorCaixa);
+    const f=Number.isFinite(fator)&&fator>0?fator:1;
+    return Number.isFinite(n)?n*f:0;
   }
 
   function _snapshotEsperadoEndereco(inv,endereco){
@@ -419,7 +423,21 @@
     const recContagens = contagensValidas.filter(c => String(c?.tipo_contagem || '').toUpperCase() === 'RECONTAGEM');
     const somaContagens = lista => lista.reduce((total, c) => total + numero(c?.quantidade_unidades ?? c?.quantidade ?? c?.qtd_caixas ?? c?.qtd), 0);
 
-    const divs = (state().divergencias || []).filter(mesmoEndereco);
+    // CORREÇÃO (2026-10-07): "recs" (recontagens) já excluía CANCELADA/EXCLUIDA
+    // abaixo, mas "divs" (divergências) não tinha o mesmo filtro — uma
+    // divergência estornada pelo Analista (status 'CANCELADA', ver
+    // 12-validacao-operacional.js) continuava entrando no consolidado do
+    // endereço: sua qtd_primeira acabava sendo sobrescrita pela de OUTRA
+    // divergência ativa no mesmo endereço (produto errado/não cadastrado), e
+    // o laço de consolidação em processarDivergencias (mais abaixo neste
+    // arquivo) a reabria pra 'ABERTA' de novo, fazendo o mesmo endereço
+    // aparecer duas vezes na lista com valores cruzados.
+    const divs = (state().divergencias || []).filter(obj => {
+      if (!mesmoEndereco(obj)) return false;
+      const status = String(obj?.status || '').toUpperCase();
+      const stRec = String(obj?.status_recontagem || '').toUpperCase();
+      return !['CANCELADA','EXCLUIDA'].includes(status) && !['CANCELADA','EXCLUIDA'].includes(stRec);
+    });
     const recs = (state().recontagens || []).filter(r => {
       if (!mesmoEndereco(r)) return false;
       const status = String(r.status || '').toUpperCase();
@@ -809,6 +827,19 @@
         operador_terceira: hist.operador_terceira || '', data_terceira: hist.data_terceira || ''
       };
       hist._divergencias.forEach(item => {
+        // CORREÇÃO (2026-10-07): não sobrescrever uma divergência que o
+        // Analista acabou de encerrar manualmente pelo botão "✓ Resolver"
+        // (resolucao_manual:true). Sem este desvio, este laço rodava logo
+        // depois do clique em Resolver (reage a qualquer dispatch) e, como a
+        // avaliação fresca deste endereço nem sempre fecha "final" (produto
+        // contado diferente do esperado, por exemplo), reescrevia a mesma
+        // divergência de volta pra 'ABERTA' — o clique parecia ter funcionado
+        // (toast de sucesso, gravação real) mas a tela voltava ao estado
+        // anterior e o inventário continuava bloqueado pra fechar.
+        if (item.resolucao_manual === true) {
+          atualizacoesPorId.set(item.id, item);
+          return;
+        }
         const atualizado = Object.assign({}, item, campos, final ? {
           status: avaliacao.estado,
           status_recontagem: avaliacao.estado === 'RESOLVIDA' ? 'sem_divergencia' : 'persistente',
@@ -854,6 +885,17 @@
     // Isso é indispensável para o caso: sistema=8, 1ª=2, 2ª=4. Duas rodadas
     // diferentes não formam consenso e devem aguardar a 3ª contagem.
     const divsRevalidadas = state().divergencias.map(div => {
+      // CORREÇÃO (2026-10-07): esta varredura reabre registros LEGADOS fechados
+      // incorretamente por uma avaliação antiga do sistema — mas não deve
+      // reabrir uma divergência que o Analista encerrou AGORA, de propósito,
+      // pelo botão "✓ Resolver" (marcarDivergenciaResolvida/_marcarDivResolvida
+      // gravam resolucao_manual:true exatamente pra isso). Sem essa checagem,
+      // o clique em "Resolver" aparecia como sucesso (toast + gravação real no
+      // Firestore) mas a tela não refletia a mudança e o inventário continuava
+      // bloqueado pra fechar "por divergência" — porque esta mesma varredura,
+      // rodando logo em seguida, reabria a divergência que acabara de ser
+      // resolvida manualmente.
+      if (div.resolucao_manual === true) return div;
       const hist = _historicoConsolidadoEndereco(div);
       const avaliacao = _avaliarHistoricoContagens(hist);
       if (avaliacao.estado !== 'AGUARDANDO_ANALISTA') return div;
@@ -1227,11 +1269,20 @@
       });
 
       // ── 1c. Produto cadastrado, porém fora do endereço correto ──
+      // BUG AO VIVO REAL (2026-09-29): a condição antiga (`!itemEmOutroEndereco
+      // && !info.geral`) deixava passar produtos que SÓ existem no catálogo
+      // geral mas não são esperados em NENHUM endereço deste inventário —
+      // isso não é "fora do endereço" (não existe um endereço correto pra
+      // apontar; endereco_correto/qtd_esperada saíam null) e gerava uma 2ª
+      // divergência duplicada/confusa ao lado da já correta (se houver)
+      // gerada em 1b/1a. Só faz sentido criar PRODUTO_FORA_ENDERECO quando
+      // realmente existe outro endereço, NESTE inventário, esperando o
+      // produto.
       contsUnicas.forEach(c => {
         const info = infoContagem.get(c) || {};
         if (info.itemBase) return;
         const itemEmOutroEndereco = localizarItemBase(c, false);
-        if (!itemEmOutroEndereco && !info.geral) return;
+        if (!itemEmOutroEndereco) return;
         const prodCod = _idPrincipalBase(itemEmOutroEndereco) || _idsProduto(c)[0] || '';
         if (_divExistente(inv.id, c.endereco, prodCod, 'PRODUTO_FORA_ENDERECO')) return;
         const qtdEsp = itemEmOutroEndereco ? (_qtdEsperadaItem(itemEmOutroEndereco)) : null;

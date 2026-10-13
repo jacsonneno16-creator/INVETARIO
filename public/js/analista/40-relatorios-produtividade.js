@@ -7,15 +7,30 @@
   const setText = function(id,v){ const el=document.getElementById(id); if(el) el.textContent=String(v == null ? 0 : v); };
   const val = function(id){ const el=document.getElementById(id); return el ? String(el.value||'') : ''; };
   const norm = function(v){ return String(v == null ? '' : v).trim(); };
+  // BUG AO VIVO REAL (2026-09-29): "quando_em" nunca batia com o campo real
+  // gravado nas divergências (`criada_em`, com "a" — este helper procurava
+  // "criado_em", com "o") — sempre caía no fallback `atualizado_em`, que é
+  // regravado do zero TODA VEZ que processarDivergencias() reprocessa a
+  // fila inteira (mesmo divergências antigas, intocadas), fazendo linhas de
+  // dias diferentes mostrarem o mesmo horário (o do último reprocessamento).
+  // `criada_em` só é escrito uma vez, na criação — usar ele primeiro resolve
+  // isso sem mexer no motor de reprocessamento.
   const when = function(x){
-    const raw=x && (x.criado_em || x.data_hora || x.timestamp || x.atualizado_em || x.finalizado_em || x.data);
+    const raw=x && (x.criada_em || x.criado_em || x.data_hora || x.timestamp || x.dataHora || x.finalizado_em || x.data || x.atualizado_em);
     if(!raw) return null;
     if(raw.toDate) return raw.toDate();
     const d=new Date(raw); return isNaN(d.getTime()) ? null : d;
   };
   const invName = function(id){ const i=(st().inventarios||[]).find(function(x){return x.id===id;}); return i ? (i.nome||i.titulo||i.id) : (id||'—'); };
   const operador = function(x){ return norm(x.operador_nome || x.operador || x.usuario_nome || x.usuario || x.email_operador || 'Não informado'); };
-  const produto = function(x){ return norm(x.produto_nome || x.produto || x.descricao || x.gtin || x.dun || x.codigo_produto || '—'); };
+  // BUG AO VIVO REAL (2026-09-29): esta coluna mostrava o código bipado
+  // (DUN/GTIN cru) em vez do nome do produto mesmo quando ele está
+  // cadastrado — `x.produto` (o código) vinha antes de `x.descricao` (o
+  // nome já resolvido) na cadeia de fallback. `descricao`/`descricao_produto`
+  // já trazem o nome real quando o produto é conhecido (e uma mensagem
+  // clara — "Produto não identificado" — quando genuinamente não é), então
+  // priorizar eles resolve os dois casos.
+  const produto = function(x){ return norm(x.produto_nome || x.descricao || x.descricao_produto || x.produto || x.gtin || x.dun || x.codigo_produto || '—'); };
   const normEnd = function(v){ return norm(v).replace(/\s+/g,'').toUpperCase(); };
   let _enderecosRefLocal=null, _enderecosMapLocal=null;
   const enderecoInfo = function(endereco){
@@ -129,9 +144,49 @@
     setText('cd-kpi-total',all.length); setText('cd-kpi-ocorrencias',all.reduce(function(a,g){return a+g.itens.length;},0)); setText('cd-kpi-multiinv',all.filter(function(g){return new Set(g.itens.map(function(x){return x.inventario_id;})).size>1;}).length);
     const wrap=document.getElementById('cd-table-wrap'); if(!wrap)return;
     if(!rows.length){wrap.innerHTML='<div class="empty"><div class="empty-icon">🪪</div><div class="empty-title">Nenhuma capa duplicada</div><div class="empty-sub">Não foram encontradas capas repetidas.</div></div>';return;}
-    wrap.innerHTML='<div style="overflow:auto"><table><thead><tr><th>Capa</th><th>Ocorrências</th><th>Inventários / Endereços</th><th>Operadores</th></tr></thead><tbody>'+rows.map(function(g){return '<tr><td><strong>'+esc(g.capa)+'</strong></td><td>'+g.itens.length+'</td><td>'+g.itens.map(function(x){return esc(invName(x.inventario_id)+' — '+(x.endereco||'—'));}).join('<br>')+'</td><td>'+Array.from(new Set(g.itens.map(operador))).map(esc).join('<br>')+'</td></tr>';}).join('')+'</tbody></table></div>';
+    wrap.innerHTML='<div style="overflow:auto"><table><thead><tr><th>Capa</th><th>Ocorrências</th><th>Inventários / Endereços</th><th>Operadores</th></tr></thead><tbody>'+rows.map(function(g){
+      const linhas=g.itens.map(function(x){
+        const docId=String(x.uuid||x.id||'');
+        return '<div style="display:flex;align-items:center;gap:8px;justify-content:space-between;padding:2px 0">'+
+          '<span>'+esc(invName(x.inventario_id)+' — '+(x.endereco||'—'))+'</span>'+
+          (docId ? '<button type="button" class="btn btn-ghost btn-sm" data-cd-renomear="'+esc(docId)+'" data-cd-capa-atual="'+esc(g.capa)+'" style="font-size:.68rem;padding:2px 8px;flex-shrink:0" title="Atribuir outro número de capa/palete pra esta ocorrência">✏️ Renomear aqui</button>' : '')+
+        '</div>';
+      }).join('');
+      return '<tr><td><strong>'+esc(g.capa)+'</strong></td><td>'+g.itens.length+'</td><td>'+linhas+'</td><td>'+Array.from(new Set(g.itens.map(operador))).map(esc).join('<br>')+'</td></tr>';
+    }).join('')+'</tbody></table></div>';
   };
   global.renderCausasDuplicadas = global.renderCapasDuplicadas;
+
+  // Resolve capa duplicada: pedido ao vivo 2026-09-29 — o relatório só
+  // mostrava a duplicidade (read-only) e bloqueava a exportação Bluesoft
+  // sem nenhum jeito de corrigir. Atribui um novo número de capa/palete só
+  // pra ESSA ocorrência específica (endereço), preservando as demais.
+  global.renomearCapaOcorrencia = function(docId, capaAtual){
+    if(!docId) return;
+    const nova = prompt('Novo número de capa/palete pra esta ocorrência (atual: '+capaAtual+'):','');
+    const valor = norm(nova);
+    if(!valor) return;
+    if(valor===norm(capaAtual)){ if(global.showToast) global.showToast('Informe um número diferente do atual.','w'); return; }
+    const s=st();
+    const c=(s.contagens||[]).find(function(x){return String(x.uuid||x.id||'')===String(docId);});
+    if(!c){ if(global.showToast) global.showToast('Contagem não encontrada — atualize a página e tente de novo.','e'); return; }
+    c.capa=valor;
+    saveAll();
+    if(navigator.onLine && global.FS_AN){
+      const col=String(c.tipo_contagem||'').toUpperCase()==='VAZIO' ? 'dt_vazios' : 'dt_contagens';
+      global.FS_AN.collection(col).doc(String(docId)).set({capa:valor},{merge:true}).catch(function(e){console.warn('[Capas Duplicadas] falha ao gravar nova capa',e);if(global.showToast) global.showToast('Salvo localmente, mas falhou ao sincronizar — tente de novo com internet.','w');});
+    }
+    if(global.showToast) global.showToast('✅ Capa atualizada para '+valor,'s');
+    global.renderCapasDuplicadas();
+  };
+  if(!global.__dtCapasDuplicadasDelegado){
+    global.__dtCapasDuplicadasDelegado=true;
+    document.addEventListener('click',function(e){
+      const btn=e.target.closest('[data-cd-renomear]');
+      if(!btn) return;
+      global.renomearCapaOcorrencia(btn.getAttribute('data-cd-renomear'),btn.getAttribute('data-cd-capa-atual'));
+    });
+  }
 
   function exportSimple(filename, headers, rows){
     const csv='\ufeff'+[headers].concat(rows).map(function(r){return r.map(function(v){return '"'+String(v==null?'':v).replace(/"/g,'""')+'"';}).join(';');}).join('\n');

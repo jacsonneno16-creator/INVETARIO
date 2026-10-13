@@ -267,9 +267,14 @@ function abrirFecharInventario(id) {
   const endsVaziosConf = new Set(contsAtivas.filter(c => _isVazio(c) && c.status !== 'ESTORNADA').map(c => c.endereco));
   const endsConferidos = new Set([...endsContados, ...endsVaziosConf]);
 
-  // Usar state().enderecosLista como base oficial
+  // O inventário possui um conjunto fechado de endereços. Nunca usar a
+  // base global para decidir pendência/fechamento de um inventário parcial.
+  const selecionadosFechamento = new Set((Array.isArray(inv.enderecos_selecionados) ? inv.enderecos_selecionados : []).map(x => String(x && typeof x === 'object' ? (x.endereco || '') : x)));
+  const enderecosDoInventario = selecionadosFechamento.size
+    ? (state().enderecosLista || []).filter(e => selecionadosFechamento.has(String(e.endereco || '')))
+    : (state().enderecosLista || []);
   let pendentes = [], inativos = [], limiteAtingido = [];
-  state().enderecosLista.forEach(e => {
+  enderecosDoInventario.forEach(e => {
     const cod = e.endereco;
     if (e.ativo === false) { inativos.push(cod); return; }
     const cap = e.capacidade_paletes ?? null;
@@ -305,7 +310,7 @@ function abrirFecharInventario(id) {
     bloqueioCritico = true;
   }
   if (coletoresPendentes.length > 0) {
-    alertas += `<div class="alert danger" style="margin-bottom:10px">🚫 <strong>${coletoresPendentes.length} coletor(es)</strong> ainda não encerraram o turno! Todos os coletores devem encerrar o turno antes de fechar o inventário.</div>`;
+    alertas += `<div class="alert danger" style="margin-bottom:10px">🚫 <strong>${coletoresPendentes.length} coletor(es) ainda podem ter dados pendentes de sincronização.</strong> O encerramento de turno confirma que todas as contagens offline daquele aparelho foram enviadas. Peça aos operadores para conectar o coletor, sincronizar e encerrar o turno antes de fechar o inventário.</div>`;
     bloqueioCritico = true;
   }
 

@@ -81,7 +81,15 @@ function renderDashboardInventario() {
 
   // Endereços cadastrados e endereços operacionais ativos.
   // O card 'End. cadastrados' deve mostrar a mesma quantidade da aba Endereços.
-  const endsBaseTodos = state().enderecosLista || [];
+  const endsGlobais = state().enderecosLista || [];
+  const invSelecionado = fInvId ? (state().inventarios || []).find(i => String(i.id || '') === String(fInvId)) : null;
+  // enderecos_selecionados guarda objetos {endereco}; String(objeto) virava "[object Object]".
+  const idsSelecionados = new Set((Array.isArray(invSelecionado?.enderecos_selecionados) ? invSelecionado.enderecos_selecionados : []).map(x => String(x && typeof x === 'object' ? (x.endereco || '') : x)));
+  // Geral: universo = cadastro de endereços da loja. Por produto: só os endereços dos produtos escolhidos.
+  const porProdutoSel = String(invSelecionado?.modo_abertura || '').toUpperCase() === 'PRODUTO';
+  const endsBaseTodos = invSelecionado && porProdutoSel && idsSelecionados.size
+    ? endsGlobais.filter(e => idsSelecionados.has(String(e.endereco || '')))
+    : endsGlobais;
   const endsBaseAtivos = endsBaseTodos.filter(e => e.ativo !== false);
 
   // Preencher selects de rua e local
@@ -109,7 +117,7 @@ function renderDashboardInventario() {
 
   const endsFilteredSet = new Set(endsFiltered.map(e => e.endereco));
 
-  const totalEnds  = state().enderecosLista.length;
+  const totalEnds  = endsBaseTodos.length;
   const contagensFisicas = _dashContagens();
   const totalConts = contagensFisicas.length;
 
@@ -142,7 +150,7 @@ function renderDashboardInventario() {
     if (c._excluida) return false;
     if (fInvId && c.inventario_id !== fInvId) return false;
     if (fRua || fLocal) {
-      const end = state().enderecosLista.find(e => e.endereco === c.endereco) || {};
+      const end = endsBaseTodos.find(e => e.endereco === c.endereco) || {};
       const rua = end.rua || extrairRua(c.endereco) || 'SEM RUA';
       const local = _dashLocalName(end);
       if (fRua && rua !== fRua) return false;
@@ -159,7 +167,7 @@ function renderDashboardInventario() {
     if (c._excluida) return false;
     if (fInvId && c.inventario_id !== fInvId) return false;
     if (fRua || fLocal) {
-      const end = state().enderecosLista.find(e => e.endereco === c.endereco) || {};
+      const end = endsBaseTodos.find(e => e.endereco === c.endereco) || {};
       const rua = end.rua || extrairRua(c.endereco) || 'SEM RUA';
       const local = _dashLocalName(end);
       if (fRua && rua !== fRua) return false;
@@ -207,21 +215,21 @@ function renderDashboardInventario() {
   const pausados = state().inventarios.filter(i => i.status === 'PAUSADO');
   let alertas = '';
   if (ativos.length === 0) {
-    alertas += `<div class="alert info" style="margin-bottom:8px">📦 Nenhum inventário ativo. <a href="#" onclick="abrirNovoInventario()" style="color:var(--accent)">Criar novo inventário</a></div>`;
+    alertas += `<div class="alert info" style="margin-bottom:8px">📦 Nenhum inventário ativo. <a href="#" data-abrir-novo-inventario style="color:var(--accent)">Criar novo inventário</a></div>`;
   }
   if (pausados.length > 0) {
     alertas += `<div class="alert warn" style="margin-bottom:8px">⏸️ ${pausados.length} inventário(s) <strong>PAUSADO(s)</strong>: ${pausados.map(i=>i.nome).join(', ')} — verifique se deve ser retomado.</div>`;
   }
   if (divAbertos > 5) {
-    alertas += `<div class="alert warn" style="margin-bottom:8px">⚠️ <strong>${divAbertos}</strong> contagens em conflito aguardando resolução. <a href="#" onclick="goPage('recontagens',document.getElementById('nav-recontagens'))" style="color:var(--accent)">Ver recontagens →</a></div>`;
+    alertas += `<div class="alert warn" style="margin-bottom:8px">⚠️ <strong>${divAbertos}</strong> contagens em conflito aguardando resolução. <a href="#" data-dashboard-go="recontagens|nav-recontagens" style="color:var(--accent)">Ver recontagens →</a></div>`;
   }
   if (recPend > 0) {
-    alertas += `<div class="alert warn" style="margin-bottom:8px">🔄 <strong>${recPend}</strong> rodada(s) pendente(s) aguardando execução. <a href="#" onclick="goPage('recontagens',document.getElementById('nav-recontagens'))" style="color:var(--accent)">Ver rodadas →</a></div>`;
+    alertas += `<div class="alert warn" style="margin-bottom:8px">🔄 <strong>${recPend}</strong> rodada(s) pendente(s) aguardando execução. <a href="#" data-dashboard-go="recontagens|nav-recontagens" style="color:var(--accent)">Ver rodadas →</a></div>`;
   }
   // Alerta: contagens com inventario_id='local' — coletor salvou sem inventário definido
   const contagensLocais = contagensFisicas.filter(c => c.inventario_id === 'local');
   if (contagensLocais.length > 0) {
-    alertas += `<div class="alert warn" style="margin-bottom:8px">⚠️ <strong>${contagensLocais.length} contagem(ns)</strong> chegaram sem vínculo de inventário (operador contou antes de selecionar o inventário corretamente). <a href="#" onclick="goPage('contagens',document.getElementById('nav-contagens'))" style="color:var(--accent)">Ver contagens →</a></div>`;
+    alertas += `<div class="alert warn" style="margin-bottom:8px">⚠️ <strong>${contagensLocais.length} contagem(ns)</strong> chegaram sem vínculo de inventário (operador contou antes de selecionar o inventário corretamente). <a href="#" data-dashboard-go="contagens|nav-contagens" style="color:var(--accent)">Ver contagens →</a></div>`;
   }
   if (pctGeral >= 100 && invsConsiderados.length > 0) {
     alertas += `<div class="alert info" style="margin-bottom:8px">🎉 Todos os endereços foram contados! Verifique as divergências e feche o inventário.</div>`;
@@ -278,8 +286,12 @@ function renderDashboardInventario() {
             const contadosSet3 = new Set(contsInv3.filter(c => !_isVazio(c)).map(c => c.endereco));
             const vaziosConfSet3 = new Set(contsInv3.filter(c => _isVazio(c) && c.status !== 'ESTORNADA').map(c => c.endereco));
             const conferidos3 = new Set([...contadosSet3, ...vaziosConfSet3]);
-            const endsAtivosTotal = state().enderecosLista.filter(e => e.ativo !== false).length;
-            const pct = endsAtivosTotal > 0 ? Math.round((conferidos3.size / endsAtivosTotal) * 100) : 0;
+            const selInv = new Set((Array.isArray(inv.enderecos_selecionados) ? inv.enderecos_selecionados : []).map(x => String(x && typeof x === 'object' ? (x.endereco || '') : x)));
+            const porProdutoInv = String(inv.modo_abertura || '').toUpperCase() === 'PRODUTO';
+            const baseInv = porProdutoInv && selInv.size ? (state().enderecosLista || []).filter(e => selInv.has(String(e.endereco || ''))) : (state().enderecosLista || []);
+            const endsAtivosTotal = baseInv.filter(e => e.ativo !== false).length;
+            const conferidosNoEscopo = [...conferidos3].filter(end => !selInv.size || selInv.has(String(end))).length;
+            const pct = endsAtivosTotal > 0 ? Math.round((conferidosNoEscopo / endsAtivosTotal) * 100) : 0;
             return `<tr>
               <td class="mono">${inv.codigo}</td>
               <td style="font-weight:600">${escHTML(inv.nome)}</td>
@@ -484,7 +496,7 @@ function _dashDataRegistro(registro) {
 
 function _dashRecontagensConsideradas(dc, ignorarFiltroHora) {
   const filtros = dc?.filtros || {};
-  const enderecos = state().enderecosLista || [];
+  const enderecos = (dc && dc.endsBase) ? dc.endsBase : (state().enderecosLista || []);
   const aceitoNoFiltro = r => {
     if (r?._excluida) return false;
     if (filtros.inventarioId && String(r?.inventario_id || '') !== String(filtros.inventarioId)) return false;
@@ -600,7 +612,7 @@ function _dashDivergenciasProduto(dc) {
   const invId = dc?.filtros?.inventarioId || '';
   const ruaFiltro = dc?.filtros?.rua || '';
   const localFiltro = dc?.filtros?.local || '';
-  const ends = state().enderecosLista || [];
+  const ends = (dc && dc.endsBase) ? dc.endsBase : (state().enderecosLista || []);
   const endMap = new Map(ends.map(e => [String(e.endereco || ''), e]));
   const lista = (state().divergencias || []).filter(d => {
     const status = String(d.status || '').toUpperCase();
@@ -687,7 +699,7 @@ function _renderDashboardCharts() {
   const totalHoraMax = Math.max(...serieHoras.map(x => x.total), 1);
   const totalHoraRecMax = Math.max(...serieHorasRecontagem.map(x => x.total), 1);
   const totalHoraGeralMax = Math.max(...serieHorasTotal.map(x => x.total), 1);
-  const enderecos = state().enderecosLista || [];
+  const enderecos = dc.endsBase || [];
   const recUsuarios = _dashAgruparRecontagens(recontagens, r =>
     r.operador_recontagem || r.operador_nome || r.operador || r.usuario || 'SEM OPERADOR'
   );
@@ -930,8 +942,6 @@ function _dashAtualizarRotulosModo(modo){
 function alterarModoDashboard(modo){
   document.querySelectorAll('.dash-inv-filter').forEach(e=>e.style.display=modo==='inventario'?'':'none');
   document.querySelectorAll('.dash-aud-filter').forEach(e=>e.style.display=modo==='auditoria'?'':'none');
-  const novo=document.querySelector('#page-dashboard button[onclick="abrirNovoInventario()"]');
-  if(novo) novo.style.display=modo==='inventario'?'':'none';
   _dashAtualizarRotulosModo(modo);
   renderDashboard();
 }
@@ -944,6 +954,26 @@ function renderDashboard(){
   const title=document.getElementById('dash-recentes-title'); if(title)title.textContent='📦 Inventários Recentes';
   return renderDashboardInventario();
 }
+
+// Links inseridos via innerHTML passam pelo sanitizador global, que remove onclick.
+// Use data-* + delegação para manter a ação funcional após sanitização.
+if (!window.__dtNovoInventarioDelegado) {
+  window.__dtNovoInventarioDelegado = true;
+  document.addEventListener('click', function(e){
+    var el = e.target && e.target.closest ? e.target.closest('[data-abrir-novo-inventario]') : null;
+    if (!el) return;
+    e.preventDefault();
+    if (typeof window.abrirNovoInventario === 'function') window.abrirNovoInventario();
+  });
+  document.addEventListener('click', function(e){
+    var el = e.target && e.target.closest ? e.target.closest('[data-dashboard-go]') : null;
+    if (!el) return;
+    e.preventDefault();
+    var partes=String(el.getAttribute('data-dashboard-go')||'').split('|');
+    if (typeof window.goPage === 'function') window.goPage(partes[0], document.getElementById(partes[1]||''));
+  });
+}
+
 window.atualizarDashboardAuditoriaManual=function(){ return carregarDashboardAuditoria(true); };
 function limparFiltrosDash(){
   if(_dashModoAtual()==='auditoria'){

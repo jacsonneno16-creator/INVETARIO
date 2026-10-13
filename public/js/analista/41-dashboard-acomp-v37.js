@@ -353,8 +353,7 @@
         window.renderContagens?.();
         window.renderPendencias?.();
         window.renderDivergencias?.();
-        window.renderRecontagens?.();
-        window.showToast?.('As quatro bases do Inventário foram atualizadas.','s');
+        window.showToast?.('As telas do Inventário foram atualizadas.','s');
       }
     }).catch(e=>{
       console.error('[ATUALIZAÇÃO MANUAL AUDITORIA]',e);

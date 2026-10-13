@@ -67,6 +67,7 @@ function renderInvTable() {
               </td>
               <td>
                 <div style="display:flex;gap:4px;flex-wrap:wrap">
+                  <button class="btn btn-ghost btn-sm" data-inv-acao="acompanharInventarioV4" data-inv-id="${escapeHTML(inv.id)}" title="Abrir este inventário no Acompanhamento">📊 Acompanhar</button>
                   <button class="btn btn-ghost btn-sm" data-inv-acao="verBase" data-inv-id="${escapeHTML(inv.id)}">📂 Base</button>
                   <button class="btn btn-ghost btn-sm" data-inv-acao="toggleInvVisibilidade" data-inv-id="${escapeHTML(inv.id)}" title="${inv.oculto_coletor ? 'Inventário oculto no coletor — clique para mostrar' : 'Inventário visível no coletor — clique para ocultar'}" style="${inv.oculto_coletor ? 'color:var(--danger);border-color:rgba(217,32,32,.3)' : ''}">
                     ${inv.oculto_coletor ? '🙈 Oculto' : '👁 Visível'}

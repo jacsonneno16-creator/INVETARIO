@@ -154,8 +154,24 @@
   // ── Listener de coletores (sem filtro por inventario_id) ─────────────────────
   let _coletoresFingerprint = '';
 
+  // PEDIDO AO VIVO (2026-10-02): "Invalid Date" na coluna Últ. Atividade e
+  // o logout automático por inatividade nunca disparando de verdade tinham
+  // a MESMA causa raiz — `ultimo_ping` é gravado com
+  // firebase.firestore.FieldValue.serverTimestamp() (02-sync-dispositivo.js)
+  // e chega aqui como um objeto Timestamp do Firestore, não string/Date.
+  // `new Date(timestampObj)` (usado tanto na exibição em
+  // 35-coletores-render.js quanto no cálculo de inatividade em
+  // 34-coletores-modelo-dispositivo.js) sempre virava NaN/Invalid Date —
+  // qualquer comparação `(agora - NaN) > limite` dá sempre false, então o
+  // dispositivo NUNCA era marcado como inativo, não importa há quanto
+  // tempo estivesse parado. Converter pra ISO string aqui, uma vez só, na
+  // entrada dos dados, corrige os dois sintomas de uma vez.
+  function _isoDeTimestamp(valor){
+    if (valor && typeof valor.toDate === 'function') return valor.toDate().toISOString();
+    return valor || '';
+  }
   function _normalizarColetores(snapshot){
-    return snapshot.docs.map(d => ({ id: d.id, ...d.data() })).filter(d => d.excluido !== true && d.aprovado !== 'revogado');
+    return snapshot.docs.map(d => ({ id: d.id, ...d.data(), ultimo_ping: _isoDeTimestamp(d.data().ultimo_ping) })).filter(d => d.excluido !== true && d.aprovado !== 'revogado');
   }
 
   function _fingerprintColetores(docs){
@@ -237,9 +253,26 @@
     });
   }
 
+  function _versaoBaseInventario(inv){
+    return String((inv&&(
+      inv.base_atualizada_em ?? inv.baseAtualizadaEm ?? inv.base_versao ?? inv.baseVersao ?? inv.atualizado_em ?? inv.updated_at
+    ))||'');
+  }
+
   async function _carregarBaseInventario(inv, force=false){
     if (!inv || !inv.id) return inv;
-    if (!force && Array.isArray(inv.base) && inv.base.length) return inv;
+    const versaoServidor=_versaoBaseInventario(inv);
+    const totalServidor=Number(inv.base_total ?? inv.baseTotal ?? 0);
+    const baseAtual=Array.isArray(inv.base)?inv.base:[];
+    const versaoCache=String(inv._base_cache_versao||'');
+    const cacheCompleto=baseAtual.length>0 && (!totalServidor || baseAtual.length===totalServidor);
+
+    // Mesmo em uma atualização manual, não relê todos os chunks se o documento
+    // do inventário informa que a base continua exatamente na mesma versão.
+    // "force" continua forçando quando não há versão confiável para comparar.
+    if(cacheCompleto && (!force || (versaoServidor && versaoCache===versaoServidor))){
+      return inv;
+    }
     try{
       const snap = await global.FS_AN.collection('dt_inventarios').doc(String(inv.id))
         .collection('base_chunks').orderBy('parte').get();
@@ -249,7 +282,15 @@
         const itens=Array.isArray(x.itens)?x.itens:(Array.isArray(x.dados)?x.dados:[]);
         base=base.concat(itens.map(_normalizarItemBase));
       });
-      return Object.assign({},inv,{base,base_carregada_em:new Date().toISOString(),base_total:base.length});
+      if(totalServidor && base.length!==totalServidor){
+        throw new Error(`Base do inventário incompleta: esperado ${totalServidor}, recebido ${base.length}.`);
+      }
+      return Object.assign({},inv,{
+        base,
+        base_carregada_em:new Date().toISOString(),
+        base_total:base.length,
+        _base_cache_versao:versaoServidor||String(inv.base_carregada_em||Date.now())
+      });
     }catch(e){
       console.warn('[FirebaseService] Falha ao carregar base do inventário',inv.id,e.message);
       return inv;
@@ -311,7 +352,7 @@
 
   async function refreshBasesRelacionadas(){
     await _carregarInventariosSeNecessario();
-    try{ await global.DTProdutos?.carregar?.(true); }catch(e){ console.warn('[FirebaseService] Atualização de produtos:',e.message); }
+    try{ await global.DTProdutos?.carregar?.(false); }catch(e){ console.warn('[FirebaseService] Atualização de produtos:',e.message); }
     try{ global.AnalistaDivergenciaService?.processarDivergencias?.({criarRecontagens:false,source:'bases-refresh',force:true}); }catch(e){ console.warn('[FirebaseService] Reprocessamento de bases:',e.message); }
     return true;
   }
@@ -341,24 +382,54 @@
     return { ok: false, valor: null, nome, erro: ultimoErro, tentativas: total };
   }
 
-  async function _carregarBasesEssenciaisLogin(){
-    // Cada base é independente. Uma oscilação em produtos ou endereços não pode
-    // derrubar todo o painel nem gerar rejeição não tratada no console.
-    const resultados = await Promise.all([
-      _executarComRetry('inventários', () => _carregarInventariosSeNecessario(), 2),
-      _executarComRetry('endereços', () => _carregarEnderecosManual(), 2),
-      _executarComRetry('produtos', () => {
-        if (typeof global.DTProdutos?.carregar !== 'function') return [];
-        return global.DTProdutos.carregar(true, true);
-      }, 2)
-    ]);
+  async function _carregarMetadadosInventariosLogin(){
+    // No login precisamos apenas saber quais inventários existem. As bases em
+    // chunks de inventários ativos são pesadas e continuam reservadas ao fluxo
+    // manual de Atualizar, onde já eram necessárias para cruzamentos e relatórios.
+    const snap = await global.FS_AN.collection('dt_inventarios').get();
+    if (snap.empty) {
+      global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', [], { source: 'firebase-login-meta' }));
+      return [];
+    }
 
-    const falhas = resultados.filter(item => !item.ok).map(item => item.nome);
-    const enderecosResultado = resultados[1];
-    const enderecos = enderecosResultado.ok
-      ? (enderecosResultado.valor || []).length
-      : (global.AnalistaStore.getState().enderecosLista || []).length;
-    const inventarios = (global.AnalistaStore.getState().inventarios || []).length;
+    const atuais = global.AnalistaStore.getState().inventarios || [];
+    const atuaisPorId = new Map(atuais.map(item => [String(item.id), item]));
+    const docs = snap.docs.map(doc => {
+      const anterior = atuaisPorId.get(String(doc.id)) || {};
+      const item = Object.assign({}, anterior, doc.data(), { id: doc.id });
+      // Nunca perpetuar uma base pesada no snapshot salvo pelo login.
+      if (!Array.isArray(anterior.base)) delete item.base;
+      return item;
+    });
+
+    global.AnalistaStore.dispatch(Actions.replaceSlice('inventarios', docs, { source: 'firebase-login-meta' }));
+    const Storage = global.AnalistaStorage;
+    if (Storage?.storageSave && Storage?.KEYS?.inventarios) {
+      Storage.storageSave(Storage.KEYS.inventarios, docs.map(d => { const c = Object.assign({}, d); delete c.base; return c; }));
+    }
+    // Inventário ativo com base publicada precisa da base na tela ao abrir o app
+    // (Base, Acompanhamento e Pendências dependem dela). Sem isso, a base só
+    // aparecia depois de clicar em Atualizar.
+    const ativosComBase = docs.some(inv => ['ATIVO','ABERTO','PUBLICADO','LIBERADO','EM_ANDAMENTO','PAUSADO'].includes(String(inv.status||'').toUpperCase()) && Number(inv.base_chunks||0) > 0);
+    if (ativosComBase) await _carregarInventariosSeNecessario();
+    return docs;
+  }
+
+  async function _carregarBasesEssenciaisLogin(){
+    // Bootstrap leve: login não baixa endereços, produtos nem base_chunks de
+    // inventários. Essas bases só são consultadas quando o fluxo correspondente
+    // realmente precisar delas (Atualizar Inventário / tela de Auditoria etc.).
+    const inventariosResultado = await _executarComRetry(
+      'inventários',
+      () => _carregarMetadadosInventariosLogin(),
+      2
+    );
+
+    const falhas = inventariosResultado.ok ? [] : ['inventários'];
+    const inventarios = inventariosResultado.ok
+      ? (inventariosResultado.valor || []).length
+      : (global.AnalistaStore.getState().inventarios || []).length;
+    const enderecos = (global.AnalistaStore.getState().enderecosLista || []).length;
     const produtos = global.DTProdutos?.cache?.lista?.length || 0;
 
     global.AnalistaBootstrap?.saveAll?.();
@@ -366,11 +437,44 @@
     return { inventarios, enderecos, produtos, falhas };
   }
 
-  async function _carregarEnderecosManual(){
+  function _enderecosCacheMetaKey(){
+    const loja=(global.getDTLojaAtiva&&global.getDTLojaAtiva())||'sem_loja';
+    return `invcount_enderecos_meta__${loja}`;
+  }
+
+  function _lerEnderecosCacheMeta(){
+    try{return JSON.parse(localStorage.getItem(_enderecosCacheMetaKey())||'null')||{};}catch(_){return {};}
+  }
+
+  function _salvarEnderecosCacheMeta(meta){
+    try{localStorage.setItem(_enderecosCacheMetaKey(),JSON.stringify(meta||{}));}catch(_){/* cache opcional */}
+  }
+
+  async function _carregarEnderecosManual(force=false){
+    // Primeiro lê apenas o metadado (1 documento). Se a versão não mudou e o
+    // cache local contém a quantidade esperada, reutiliza a base já hidratada
+    // sem reler todos os chunks de endereços.
     const metaSnap=await global.FS_AN.collection('dt_locais_meta').doc('versao').get();
     if(!metaSnap.exists)return [];
-    const meta=metaSnap.data()||{},versao=String(meta.versao||'');
-    if(!versao||Number(meta.total||0)===0)return [];
+    const meta=metaSnap.data()||{},versao=String(meta.versao||''),total=Number(meta.total||0);
+    if(!versao||total===0)return [];
+
+    if(!force){
+      const cacheMeta=_lerEnderecosCacheMeta();
+      const atuais=global.AnalistaStore.getState().enderecosLista||[];
+      if(String(cacheMeta.versao||'')===versao && atuais.length===total){
+        return atuais;
+      }
+      const Storage=global.AnalistaStorage;
+      const salvos=Storage?.storageLoad&&Storage?.KEYS?.enderecos?Storage.storageLoad(Storage.KEYS.enderecos):null;
+      if(String(cacheMeta.versao||'')===versao && Array.isArray(salvos) && salvos.length===total){
+        global.AnalistaStore.dispatch(Actions.replaceSlice('enderecosLista',salvos,{source:'cache-versao'}));
+        const agrupadosCache=global.AnalistaBootstrap?.agruparEnderecosPorSetor?.(salvos)||{};
+        global.AnalistaStore.dispatch(Actions.setPath('enderecosPorSetor',agrupadosCache,{source:'cache-versao'}));
+        return salvos;
+      }
+    }
+
     const snapshot=await global.FS_AN.collection('dt_locais_chunks').where('versao','==',versao).get();
     const docs=[];
     (snapshot.docs||[]).slice().sort((a,b)=>Number((a.data()||{}).parte||0)-Number((b.data()||{}).parte||0)).forEach(doc=>{
@@ -378,11 +482,15 @@
       const itens=Array.isArray(data.dados)?data.dados:(Array.isArray(data.itens)?data.itens:[]);
       itens.forEach((item,index)=>docs.push({id:item.id||`${doc.id}_${index}`,...item}));
     });
+    if(total && docs.length!==total){
+      throw new Error(`Base de endereços incompleta: esperado ${total}, recebido ${docs.length}.`);
+    }
     global.AnalistaStore.dispatch(Actions.replaceSlice('enderecosLista',docs,{source:'firebase-manual'}));
     const agrupados=global.AnalistaBootstrap?.agruparEnderecosPorSetor?.(docs)||{};
     global.AnalistaStore.dispatch(Actions.setPath('enderecosPorSetor',agrupados,{source:'firebase-manual'}));
     const Storage=global.AnalistaStorage;
     if(Storage?.storageSave&&Storage?.KEYS?.enderecos)Storage.storageSave(Storage.KEYS.enderecos,docs);
+    _salvarEnderecosCacheMeta({versao,total,atualizadoEm:String(meta.atualizadoEm||'')});
     return docs;
   }
 
@@ -475,15 +583,13 @@
       }
 
       try {
-        // Carrega as bases estruturais também em computadores sem cache. O histórico
-        // operacional permanece no fluxo manual para controlar o volume de leituras.
-        _emitSync(true, 'Carregando dados da loja...', { started: false, source: 'firebase-bootstrap' });
+        // Bootstrap leve: carrega somente os metadados necessários para montar o
+        // painel. Bases grandes permanecem sob demanda para não travar o login.
+        _emitSync(true, 'Carregando dados essenciais da loja...', { started: false, source: 'firebase-bootstrap' });
         const essenciais = await _carregarBasesEssenciaisLogin();
 
-        // Coletores continuam com status próprio.
-        if (!state.unsubscribers.coletores) {
-          state.unsubscribers.coletores = _listenColetores();
-        }
+        // Coletores não mantêm mais um onSnapshot global desde o login.
+        // A escuta é aberta somente enquanto a página Coletores está ativa.
         state.started=false;
         state.currentInventoryIds=[];
 
@@ -492,7 +598,7 @@
           : ' Clique em Atualizar para consultar novas contagens.';
         _emitSync(
           essenciais.falhas.length === 0,
-          `${essenciais.enderecos} endereços, ${essenciais.produtos} produtos e ${essenciais.inventarios} inventários disponíveis.${complemento}`,
+          `${essenciais.inventarios} inventários disponíveis. Bases pesadas serão carregadas somente quando necessárias.${complemento}`,
           {started:false,source:essenciais.falhas.length ? 'cache-parcial' : 'firebase-bootstrap'}
         );
         return essenciais.falhas.length === 0;
@@ -528,5 +634,14 @@
     _emitSync(true, 'Cache local recarregado', { started: false, source: 'cache' });
   }
 
-  global.AnalistaFirebaseService = { start, stop, refreshFromCache, refreshColetores, refreshBasesRelacionadas, refreshInventarioManual, state };
+  function iniciarEscutaColetores(){
+    if (!navigator.onLine) return null;
+    if (!state.unsubscribers.coletores) state.unsubscribers.coletores = _listenColetores();
+    return state.unsubscribers.coletores;
+  }
+
+  function pararEscutaColetores(){ _pararColetores(); }
+
+  global.AnalistaFirebaseService = { start, stop, refreshFromCache, refreshColetores, iniciarEscutaColetores, pararEscutaColetores, refreshBasesRelacionadas, refreshInventarioManual, carregarEnderecosBase:_carregarEnderecosManual, state };
+  global._firebaseServiceInternals = { normalizarColetores: _normalizarColetores, isoDeTimestamp: _isoDeTimestamp };
 })(window);

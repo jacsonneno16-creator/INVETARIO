@@ -29,10 +29,10 @@ function mockColecao(docsIniciais) {
 }
 
 let _janelasAbertas = [];
-test.afterEach(() => { _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} }); _janelasAbertas = []; });
 
-function carregarPagina(colecaoProdutos) {
-  const dom = new JSDOM('<!doctype html><html><body><div id="page-produtos"></div><div id="page-enderecos"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+function carregarPagina(colecaoProdutos, opcoes = {}) {
+  const ativa = opcoes.produtosAtiva !== false;
+  const dom = new JSDOM('<!doctype html><html><body><button id="nav-produtos" data-page="produtos">Produtos</button><div id="page-produtos" class="' + (ativa ? 'on' : '') + '"></div><div id="page-enderecos"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window; const document = win.document;
   _janelasAbertas.push(win);
   win.getDTRawFirestore = () => ({ collection: () => colecaoProdutos });
@@ -40,6 +40,18 @@ function carregarPagina(colecaoProdutos) {
   win.eval(code); // boot() já roda aqui dentro (auto-executa no load do script)
   return { win, document };
 }
+
+test('login em outra página faz ZERO leituras de produtos; abrir Produtos inicia a primeira leitura', async () => {
+  const col = mockColecao([{ id: 'p1', data: { nomeProduto: 'Arroz', ativo: true } }]);
+  const { document } = carregarPagina(col, { produtosAtiva: false });
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(col._chamadasGet(), 0, 'o carregamento do script/login não consulta produtos');
+
+  document.getElementById('page-produtos').classList.add('on');
+  document.getElementById('nav-produtos').click();
+  await new Promise(r => setTimeout(r, 220));
+  assert.equal(col._chamadasGet(), 1, 'a primeira leitura só ocorre depois de abrir Produtos');
+});
 
 test('carrega os produtos com UMA busca (.get()), nunca abre conexão permanente (onSnapshot)', async () => {
   const col = mockColecao([{ id: 'p1', data: { nomeProduto: 'Arroz', ativo: true } }, { id: 'p2', data: { nomeProduto: 'Feijão', ativo: true } }]);
@@ -87,7 +99,7 @@ test('clicar em "Atualizar" 2x rápido (antes da 1ª busca terminar) não dispar
 test('erro "permission-denied" (login ainda não terminou) fica silencioso — outros erros mostram toast', async () => {
   const colFalhaPermissao = { get: async () => { const e = new Error('Missing or insufficient permissions.'); e.code = 'permission-denied'; throw e; } };
   const toasts = [];
-  const dom = new JSDOM('<!doctype html><html><body><div id="page-produtos"></div><div id="page-enderecos"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const dom = new JSDOM('<!doctype html><html><body><div id="page-produtos" class="on"></div><div id="page-enderecos"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
   _janelasAbertas.push(win);
   win.getDTRawFirestore = () => ({ collection: () => colFalhaPermissao });
@@ -97,7 +109,7 @@ test('erro "permission-denied" (login ainda não terminou) fica silencioso — o
   assert.equal(toasts.length, 0, 'permission-denied (login ainda carregando) não deve assustar o usuário com um toast');
 
   const colFalhaRede = { get: async () => { throw new Error('network error'); } };
-  const dom2 = new JSDOM('<!doctype html><html><body><div id="page-produtos"></div><div id="page-enderecos"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const dom2 = new JSDOM('<!doctype html><html><body><div id="page-produtos" class="on"></div><div id="page-enderecos"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
   const win2 = dom2.window;
   _janelasAbertas.push(win2);
   const toasts2 = [];

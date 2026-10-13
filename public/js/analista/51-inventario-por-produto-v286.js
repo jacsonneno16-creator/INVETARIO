@@ -20,8 +20,35 @@ function linhaCorresponde(r,p){
   for(const id of a) if(b.has(id)) return true;
   return false;
 }
+// A lista "Por produto" mostra só os produtos que vieram no arquivo importado
+// (não o cadastro geral inteiro). Se o produto do arquivo tiver cadastro, usa o
+// cadastro (nome/GTIN/DUN); se não tiver, monta o item a partir da própria linha.
 function produtosBase(){
-  return (global.DTProdutos?.cache?.lista||[]).filter(p=>p&&p.ativo!==false);
+  const cadastro=(global.DTProdutos?.cache?.lista||[]).filter(p=>p&&p.ativo!==false);
+  const st=global.AnalistaStore?.getState?.();
+  const base=st?.ui?.inventarioImportCtx?.base;
+  if(!Array.isArray(base)||!base.length) return cadastro;
+  const porId=new Map();
+  cadastro.forEach(p=>idsProduto(p).forEach(id=>{ if(!porId.has(id)) porId.set(id,p); }));
+  const vistos=new Set();
+  const out=[];
+  base.forEach(r=>{
+    const ids=[...idsLinha(r)];
+    if(!ids.length) return;
+    const achado=ids.map(id=>porId.get(id)).find(Boolean);
+    const chave=achado||ids[0];
+    if(vistos.has(chave)) return;
+    vistos.add(chave);
+    out.push(achado||{
+      produtoId:r.produto_id||r.codigo_produto||'',
+      codigoInterno:r.codigo_produto||r.produto_codigo||'',
+      nomeProduto:r.descricao_produto||r.descricao||'Produto',
+      gtin:r.gtin||'',
+      dun:r.dun||'',
+      ativo:true
+    });
+  });
+  return out;
 }
 function aplicar(base){
   if(modo!=='PRODUTO'||!selecionados.length)return [...(base||[])];
@@ -108,10 +135,5 @@ function onBaseReady(){
   global.DTProdutos?.carregar?.().then(()=>{renderLista();renderSelecionados();atualizarResumo();}).catch(()=>{renderLista();});
 }
 function reset(){modo='GERAL';selecionados=[];busca='';ensureUI();const wrap=document.getElementById('inv-modo-produto-wrap');if(wrap)wrap.style.display='none';setModo('GERAL');renderSelecionados();}
-const oldOpen=global.abrirNovoInventario;if(oldOpen)global.abrirNovoInventario=function(){reset();return oldOpen.apply(this,arguments);};
-const oldMap=global.confirmarMapeamentoInv;if(oldMap)global.confirmarMapeamentoInv=function(){const r=oldMap.apply(this,arguments);setTimeout(onBaseReady,0);return r;};
-const oldEnable=global.habilitarBtnCriar;if(oldEnable)global.habilitarBtnCriar=function(){oldEnable.apply(this,arguments);const btn=document.getElementById('btn-criar-inv');if(btn&&modo==='PRODUTO'&&!selecionados.length)btn.disabled=true;};
-let last=null;setInterval(()=>{const ctx=global.AnalistaStore?.getState?.()?.ui?.inventarioImportCtx;if(ctx&&ctx!==last){last=ctx;onBaseReady();}if(!ctx)last=null;},500);
-document.addEventListener('DOMContentLoaded',ensureUI);
-global.DTInventarioProdutoFiltro={aplicar,modo:()=>modo,selecionados:()=>selecionados.map(p=>({produto_id:p.produtoId||p.id,codigo_interno:p.codigoInterno||'',nome:p.nomeProduto||'',gtin:p.gtin||'',dun:p.dun||''})),resumo};
+global.DTInventarioProdutoFiltro={aplicar,modo:()=>modo,selecionados:()=>selecionados.map(p=>({produto_id:p.produtoId||p.id,codigo_interno:p.codigoInterno||'',nome:p.nomeProduto||'',gtin:p.gtin||'',dun:p.dun||''})),resumo,ensureUI,onBaseReady,reset,validarCriacao:()=>modo!=='PRODUTO'||selecionados.length>0};
 })(window);

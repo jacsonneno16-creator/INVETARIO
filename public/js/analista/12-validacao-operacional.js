@@ -441,7 +441,6 @@ async function confirmarEstorno() {
   closeModal('modal-estorno');
   _estornoContagemSelecionadaId = '';
   renderContagens();
-  if (typeof renderRecontagens === 'function') renderRecontagens();
   atualizarBadgesNav();
   logSistema('ESTORNO_ENDERECO', `Endereço ${cont.endereco} estornado pelo analista`, {
     inventario_id:invId, endereco:cont.endereco, registros:mesmas.length,

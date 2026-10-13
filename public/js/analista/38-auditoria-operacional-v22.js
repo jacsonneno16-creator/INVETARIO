@@ -70,6 +70,17 @@
   }
   async function enderecosGerais(){
     try{
+      // Reutiliza o carregador versionado do FirebaseService. Assim Inventário e
+      // Auditoria compartilham a mesma base/cache e a Auditoria não baixa outra
+      // cópia dos chunks quando a versão de endereços não mudou.
+      const compartilhado=window.AnalistaFirebaseService?.carregarEnderecosBase;
+      if(typeof compartilhado==='function'){
+        const lista=await compartilhado(false);
+        return (lista||[]).map(x=>typeof x==='string'?{endereco:x}:x);
+      }
+
+      // Fallback de compatibilidade para builds antigos em que o serviço ainda
+      // não expõe o carregador compartilhado.
       const metaSnap=await DB().collection('dt_locais_meta').doc('versao').get();
       if(!metaSnap.exists) return [];
       const meta=metaSnap.data()||{};

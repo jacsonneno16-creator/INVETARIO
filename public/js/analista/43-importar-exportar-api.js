@@ -559,7 +559,14 @@
         return h === 'quantidade' ? campo(decimalBR(row[h])) : campo(row[h]);
       }).join(';');
     });
-    var conteudo = '\uFEFF' + headers.join(';') + '\r\n' + linhas.join('\r\n');
+    // SEM marca BOM aqui: este arquivo \u00E9 consumido pela BlueSoft (upload direto
+    // no portal dela), n\u00E3o aberto no Excel. BUG AO VIVO REAL (2026-10-07): a
+    // BlueSoft recusava o arquivo com "coluna endere\u00E7o log\u00EDstico obrigat\u00F3ria"
+    // porque o parser dela n\u00E3o reconhece BOM \u2014 o nome da 1\u00AA coluna chegava como
+    // "\uFEFFendereco_logistico", diferente do esperado. Os dados deste arquivo
+    // (endere\u00E7o, GTIN, quantidade, lote, validade, palete) n\u00E3o t\u00EAm acento, ent\u00E3o
+    // o BOM n\u00E3o faz falta nenhuma aqui.
+    var conteudo = headers.join(';') + '\r\n' + linhas.join('\r\n');
     var extensao = formato === 'txt' ? 'txt' : 'csv';
     var mime = formato === 'txt' ? 'text/plain;charset=utf-8' : 'text/csv;charset=utf-8';
     downloadBlob(conteudo, 'bluesoft_enderecamento_' + invId + '_' + fileStamp() + '.' + extensao, mime);
@@ -601,6 +608,13 @@
   // Firestore responder.
   var CFG_DOC = 'integracao_api';
   async function carregarConfigRemota() {
+    // No ambiente local de testes a configuração da integração fica somente
+    // no cache local. Não tenta ler dt_config, evitando aviso de permissão e
+    // mantendo o teste totalmente isolado da configuração remota.
+    if (global.DT_AMBIENTE_LOCAL === true) {
+      loadConfig();
+      return;
+    }
     try {
       var snap = await global.getDTRawFirestore().collection('dt_config').doc(CFG_DOC).get();
       if (snap.exists) { writeJson(CFG_KEY, snap.data() || {}); loadConfig(); }

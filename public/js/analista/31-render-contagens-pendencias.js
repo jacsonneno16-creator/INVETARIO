@@ -1,5 +1,40 @@
 function state(){ return window.AnalistaStore.getState(); }
 
+// Botões Estornar/Restaurar são desenhados via innerHTML, e o sanitizador global
+// (common-utils.js) remove qualquer atributo que comece com "on" — inclusive
+// onclick — de todo HTML gravado assim. Por isso usam data-* com um único
+// escutador delegado, no mesmo padrão já usado em 22-dashboard-render-sync.js.
+if (!window.__dtContagensEstornoDelegado) {
+  window.__dtContagensEstornoDelegado = true;
+  document.addEventListener('click', function(e){
+    const btnEstornar = e.target && e.target.closest ? e.target.closest('[data-cont-estornar]') : null;
+    if (btnEstornar) { abrirEstorno(btnEstornar.getAttribute('data-cont-estornar')); return; }
+    const btnRestaurar = e.target && e.target.closest ? e.target.closest('[data-cont-restaurar]') : null;
+    if (btnRestaurar) { restaurarContagem(btnRestaurar.getAttribute('data-cont-restaurar')); return; }
+    const detalhe = e.target && e.target.closest ? e.target.closest('[data-pend-detalhe]') : null;
+    if (detalhe) {
+      let chave = detalhe.getAttribute('data-chave');
+      try { chave = JSON.parse(chave); } catch (err) { /* mantém como texto se não for JSON */ }
+      abrirDetalheProdutoPendencia(detalhe.getAttribute('data-inv'), detalhe.getAttribute('data-end'), chave);
+      return;
+    }
+    const desvincular = e.target && e.target.closest ? e.target.closest('[data-pend-desvincular]') : null;
+    if (desvincular) { desvincularPendencia(desvincular.getAttribute('data-pend-desvincular')); return; }
+    const atribuir = e.target && e.target.closest ? e.target.closest('[data-pend-atribuir]') : null;
+    if (atribuir) { abrirAtribuirPendencias(atribuir.getAttribute('data-pend-atribuir')); return; }
+    const atribuirSelecionados = e.target && e.target.closest ? e.target.closest('[data-pend-atribuir-selecionados]') : null;
+    if (atribuirSelecionados) { abrirAtribuirPendencias(); return; }
+    const registrar = e.target && e.target.closest ? e.target.closest('[data-rec-registrar]') : null;
+    if (registrar) { abrirRegistrarRecontagem(registrar.getAttribute('data-rec-registrar')); return; }
+  });
+  document.addEventListener('change', function(e){
+    const todos = e.target && e.target.closest ? e.target.closest('[data-pend-selecionar-todos]') : null;
+    if (todos) { pendToggleTodos(todos.checked); return; }
+    const chk = e.target && e.target.closest ? e.target.closest('.pend-row-check[data-endereco]') : null;
+    if (chk) pendToggleEndereco(chk.getAttribute('data-endereco'), chk.checked);
+  });
+}
+
 function _paleteContagem(c){
   const valor=c?.palete ?? c?.pallet ?? c?.numero_palete ?? c?.numeroPalete ??
     c?.palete_key ?? c?.capa_palete ?? c?.pallete_ou_capa ?? c?.capa ?? '';
@@ -384,9 +419,9 @@ function renderContagens() {
             </td>
             <td>
               ${excluida
-                ? `<button class="btn btn-ghost btn-sm" onclick="restaurarContagem('${c.id}')" title="Restaurar contagem">↩ Restaurar</button>`
+                ? `<button class="btn btn-ghost btn-sm" data-cont-restaurar="${c.id}" title="Restaurar contagem">↩ Restaurar</button>`
                 : `<div style="display:flex;gap:4px">
-                     <button class="btn btn-danger btn-sm" onclick="abrirEstorno('${c.id}')" title="Estornar — libera endereço com registro">↩ Estornar</button>
+                     <button class="btn btn-danger btn-sm" data-cont-estornar="${c.id}" title="Estornar — libera endereço com registro">↩ Estornar</button>
                    </div>`
               }
             </td>
@@ -659,7 +694,13 @@ let _pendBaseCacheArr = null;
 let _pendBaseCacheMapa = null;
 function _pendIndiceBase(inv) {
   const base = Array.isArray(inv?.base) ? inv.base : null;
-  if (base !== _pendBaseCacheArr) {
+  // BUG AO VIVO REAL (2026-10-03): "Cannot read properties of null (reading
+  // 'get')" — quando inv.base NÃO é array (ex.: inventário ainda sem base
+  // carregada), `base` vira null, que no 1º render é IGUAL ao valor
+  // inicial de _pendBaseCacheArr (também null) — o if nunca entrava e
+  // _pendBaseCacheMapa ficava null pra sempre. `!_pendBaseCacheMapa` força
+  // a inicialização de verdade na primeira chamada, mesmo com base null.
+  if (base !== _pendBaseCacheArr || !_pendBaseCacheMapa) {
     _pendBaseCacheArr = base;
     _pendBaseCacheMapa = new Map();
     (base || []).forEach(item => {
@@ -743,12 +784,17 @@ function renderPendencias() {
 
   const selecionados = Array.isArray(inv.enderecos_selecionados) ? inv.enderecos_selecionados : [];
   const selecionadosSet = new Set(selecionados.map(x => String(typeof x === 'string' ? x : (x.endereco || x.id || ''))).filter(Boolean));
-  const baseInventario = selecionadosSet.size
+  // Geral: a base de endereços é o cadastro de endereços da loja (todos os endereços).
+  // Por produto: só os endereços onde estão os produtos escolhidos.
+  const porProduto = String(inv.modo_abertura || '').toUpperCase() === 'PRODUTO';
+  const baseInventario = porProduto && selecionadosSet.size
     ? enderecosLista.filter(e => selecionadosSet.has(String(e.endereco || e.id || '')))
-    : (Array.isArray(inv.base) && inv.base.length ? inv.base : enderecosLista);
+    : (enderecosLista.length ? enderecosLista : (Array.isArray(inv.base) ? inv.base : []));
+  // Endereço inativo (ativo=false) não entra nas pendências.
+  const baseSemInativos = baseInventario.filter(e => e.ativo !== false);
 
   // Enriquecer a base do inventário com status de contagem
-  const lista = baseInventario.map(e => {
+  const lista = baseSemInativos.map(e => {
     const endInfo  = e; // já é o objeto completo do ENDDB
     const contado  = endsContadosSet.has(e.endereco);
     const vazioConf = endsVaziosConfSet.has(e.endereco);
@@ -841,9 +887,9 @@ function renderPendencias() {
   document.getElementById('pend-table-wrap').innerHTML = `
     ${inativos > 0 ? `<div class="alert warn" style="margin:12px 16px 0;border-radius:8px">⛔ ${inativos} endereço(s) inativo(s) não serão contabilizados no progresso.</div>` : ''}
     ${limiteAting > 0 ? `<div class="alert warn" style="margin:8px 16px 0;border-radius:8px">🔒 ${limiteAting} endereço(s) com limite de paletes atingido.</div>` : ''}
-    <div id="pend-selection-bar" style="display:${_pendSelecionados.size?'flex':'none'};align-items:center;justify-content:space-between;gap:12px;margin:12px 16px 0;padding:10px 12px;border:1px solid rgba(232,117,26,.28);background:rgba(232,117,26,.06);border-radius:10px"><strong id="pend-selection-count">${_pendSelecionados.size} endereço(s) selecionado(s)</strong><button class="btn btn-primary btn-sm" onclick="abrirAtribuirPendencias()">👥 Atribuir selecionados</button></div>
+    <div id="pend-selection-bar" style="display:${_pendSelecionados.size?'flex':'none'};align-items:center;justify-content:space-between;gap:12px;margin:12px 16px 0;padding:10px 12px;border:1px solid rgba(232,117,26,.28);background:rgba(232,117,26,.06);border-radius:10px"><strong id="pend-selection-count">${_pendSelecionados.size} endereço(s) selecionado(s)</strong><button class="btn btn-primary btn-sm" data-pend-atribuir-selecionados="1">👥 Atribuir selecionados</button></div>
     <div class="tbl-wrap"><table>
-      <thead><tr><th style="width:38px"><input type="checkbox" onchange="pendToggleTodos(this.checked)" title="Selecionar pendentes"></th><th>Endereço</th><th>Produto</th><th>Quantidade total</th><th>Paletes do produto</th><th>Local/Área</th><th>Operador atribuído</th><th>Status</th><th>Ação</th></tr></thead>
+      <thead><tr><th style="width:38px"><input type="checkbox" data-pend-selecionar-todos="1" title="Selecionar pendentes"></th><th>Endereço</th><th>Produto</th><th>Quantidade total</th><th>Paletes do produto</th><th>Local/Área</th><th>Operador atribuído</th><th>Status</th><th>Ação</th></tr></thead>
       <tbody>
         ${filtrado.flatMap(e => {
           const s = statusLabel[e.status_pend] || { cls:'b-gray', txt: e.status_pend };
@@ -853,15 +899,15 @@ function renderPendencias() {
           const opCurto = typeof _nomeCurtoOperador === 'function' ? _nomeCurtoOperador(op) : op;
           const produtos = e.produtos?.length ? e.produtos : [{chave:'SEM_PRODUTO',codigo:'—',descricao:'Nenhum produto cadastrado',quantidade_total:0,paletes:[]}];
           return produtos.map((produto, indiceProduto) => `<tr style="${e.inativo || e.limiteTingido ? 'opacity:.6' : ''}">
-            <td><input class="pend-row-check" data-endereco="${escHTML(e.endereco)}" type="checkbox" ${_pendSelecionados.has(e.endereco)?'checked':''} ${podeAtribuir?'':'disabled'} onchange="pendToggleEndereco('${escHTML(e.endereco)}',this.checked)"></td>
+            <td><input class="pend-row-check" data-endereco="${escHTML(e.endereco)}" type="checkbox" ${_pendSelecionados.has(e.endereco)?'checked':''} ${podeAtribuir?'':'disabled'}></td>
             <td class="mono">${escHTML(e.endereco)}</td>
-            <td><div style="text-align:left;white-space:normal;cursor:pointer" onclick="abrirDetalheProdutoPendencia('${escHTML(invId)}','${escHTML(e.endereco)}',${JSON.stringify(produto.chave)})"><span><span class="mono" style="font-weight:850">${escHTML(produto.codigo)}</span>${produto.descricao?`<span style="display:block;font-size:.69rem;color:var(--muted);margin-top:2px">${escHTML(produto.descricao)}</span>`:''}</span></div></td>
+            <td><div style="text-align:left;white-space:normal;cursor:pointer" data-pend-detalhe="1" data-inv="${escHTML(invId)}" data-end="${escHTML(e.endereco)}" data-chave="${escAttr(JSON.stringify(produto.chave))}"><span><span class="mono" style="font-weight:850">${escHTML(produto.codigo)}</span>${produto.descricao?`<span style="display:block;font-size:.69rem;color:var(--muted);margin-top:2px">${escHTML(produto.descricao)}</span>`:''}</span></div></td>
             <td class="mono" style="font-weight:900">${escHTML(produto.quantidade_total)}</td>
-            <td><div role="button" style="text-align:left;white-space:normal;justify-content:flex-start;padding:0;margin:0;cursor:pointer" onclick="abrirDetalheProdutoPendencia('${escHTML(invId)}','${escHTML(e.endereco)}',${JSON.stringify(produto.chave)})">📦 ${produto.paletes.length} — detalhar</div></td>
+            <td><div role="button" style="text-align:left;white-space:normal;justify-content:flex-start;padding:0;margin:0;cursor:pointer" data-pend-detalhe="1" data-inv="${escHTML(invId)}" data-end="${escHTML(e.endereco)}" data-chave="${escAttr(JSON.stringify(produto.chave))}">📦 ${produto.paletes.length} — detalhar</div></td>
             <td>${escHTML(e.setor || '—')}</td>
             <td>${op ? `<span class="badge b-purple">👤 ${escHTML(opCurto)}</span>` : '<span style="color:var(--muted)">—</span>'}</td>
             <td><span class="badge ${s.cls}">${s.txt}</span></td>
-            <td>${podeAtribuir ? (op ? `<button class="btn btn-ghost btn-sm" onclick="desvincularPendencia('${escHTML(e.endereco)}')">Desvincular</button>` : `<button class="btn btn-primary btn-sm" onclick="abrirAtribuirPendencias('${escHTML(e.endereco)}')">👥 Atribuir</button>`) : '—'}</td>
+            <td>${podeAtribuir ? (op ? `<button class="btn btn-ghost btn-sm" data-pend-desvincular="${escHTML(e.endereco)}">Desvincular</button>` : `<button class="btn btn-primary btn-sm" data-pend-atribuir="${escHTML(e.endereco)}">👥 Atribuir</button>`) : '—'}</td>
           </tr>`);
         }).join('')}
       </tbody>
@@ -895,7 +941,7 @@ function renderPendencias() {
                 <td class="mono" style="font-weight:800;color:${diff>0?'var(--warn)':'var(--danger)'}">
                   ${diff>0?'+':''}${diff}
                 </td>
-                <td><button class="btn btn-primary btn-sm" onclick="abrirRegistrarRecontagem('${r.id}')">📝 Registrar</button></td>
+                <td><button class="btn btn-primary btn-sm" data-rec-registrar="${r.id}">📝 Registrar</button></td>
               </tr>`;
             }).join('')}
           </tbody>
