@@ -721,57 +721,82 @@ test('_sincronizarNotasRetornadasVendaBiLoja: busca vazia NUNCA reconcilia/remov
 // (_importarDevolucoesBiRegistros/classificarMotivoTexto/
 // _construirRecebimentoAutomatico), agora rodando dentro do sync agendado
 // do servidor — mesmo padrão que Notas Retornadas (venda) já ganhou acima.
-test('_sincronizarDevolucoesBiLoja: motivo que DISPENSA o Coletor (ex.: "Desacordo com pedido") grava recebimento_recusas automático já conferido, filtrando por loja e só tipo_movimento DEVOLUCAO', async () => {
+// PEDIDO AO VIVO (2026-10-13, "Devoluções unificadas"): motivo deixou de
+// decidir se a nota é importada — TODO motivo de devolução vira
+// devolucoes_notas PENDENTE (nunca mais um recebimento_recusas AUTOMATICO
+// já "CONFERIDA" só por ter aparecido no BI). Chaves de teste abaixo usam
+// 44 dígitos de verdade (sem dígito verificador real) porque o
+// importador agora valida o formato antes de gravar.
+const NFD1 = '33333333333333333333333333333333333333333331';
+const NFD2 = '33333333333333333333333333333333333333333332';
+const NFD3 = '33333333333333333333333333333333333333333333';
+const NFD_TROCA = '33333333333333333333333333333333333333333334';
+const NFD_SEM_MOTIVO = '33333333333333333333333333333333333333333335';
+
+test('_sincronizarDevolucoesBiLoja: importa TODOS os motivos como devolucoes_notas PENDENTE (nenhum é descartado por motivo), filtrando por loja e só tipo_movimento DEVOLUCAO', async () => {
   const { fakeDb, internals } = carregarComFirestoreFake();
   const registros = [
-    { loja_key: 14, chave: 'NFD1', nf_numero: '900', cliente: 'Mercado Z', data_emissao: '2026-08-20', valor_nota: 40, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'Tapioca', quantidade_faturada: 2, mensagem: 'DESACORDO COM PEDIDO' },
-    { loja_key: 99, chave: 'NFD2', nf_numero: '901', cliente: 'Outra loja', data_emissao: '2026-08-20', valor_nota: 10, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'X', quantidade_faturada: 1, mensagem: 'DESACORDO COM PEDIDO' },
-    { loja_key: 14, chave: 'NFD3', nf_numero: '902', cliente: 'Mercado Z', data_emissao: '2026-08-20', valor_nota: 5, tipo_movimento: 'VENDA', produto_key: 1, produto: 'X', quantidade_faturada: 1 },
+    { loja_key: 14, chave: NFD1, nf_numero: '900', cliente: 'Mercado Z', data_emissao: '2026-08-20', valor_nota: 40, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'Tapioca', quantidade_faturada: 2, mensagem: 'DESACORDO COM PEDIDO' },
+    { loja_key: 99, chave: NFD2, nf_numero: '901', cliente: 'Outra loja', data_emissao: '2026-08-20', valor_nota: 10, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'X', quantidade_faturada: 1, mensagem: 'DESACORDO COM PEDIDO' },
+    { loja_key: 14, chave: NFD3, nf_numero: '902', cliente: 'Mercado Z', data_emissao: '2026-08-20', valor_nota: 5, tipo_movimento: 'VENDA', produto_key: 1, produto: 'X', quantidade_faturada: 1 },
+    { loja_key: 14, chave: NFD_TROCA, nf_numero: '1', cliente: 'X', data_emissao: '2026-08-20', valor_nota: 1, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'Y', quantidade_faturada: 1, mensagem: 'TROCA DE PRODUTO' },
+    { loja_key: 14, chave: NFD_SEM_MOTIVO, nf_numero: '2', cliente: 'X', data_emissao: '2026-08-20', valor_nota: 1, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'Y', quantidade_faturada: 1, mensagem: 'ALGO SEM CATEGORIA' },
   ];
   const resultado = await internals._sincronizarDevolucoesBiLoja('loja1', 14, registros);
-  assert.equal(resultado.total, 1, 'só NFD1 é devolução desta loja — NFD2 é de outra loja, NFD3 é venda');
-  assert.equal(resultado.autoSalvas, 1);
+  assert.equal(resultado.total, 3, 'NFD1/NFD_TROCA/NFD_SEM_MOTIVO são devolução desta loja — NFD2 é de outra loja, NFD3 é venda');
+  assert.equal(resultado.novas, 3, 'nenhuma é descartada por motivo — todas viram devolucoes_notas novas');
 
-  let doc = null;
-  fakeDb._dump().forEach(v => { if (Array.isArray(v.chaves) && v.chaves[0] === 'NFD1') doc = v; });
-  assert.ok(doc, 'deve gravar um recebimento_recusas automático');
-  assert.equal(doc.origem, 'AUTOMATICO');
-  assert.equal(doc.motivoNome, 'DESACORDO COM PEDIDO');
-  assert.equal(doc.conferenciaStatus, 'CONFERIDO');
-  assert.equal(doc.valorTotal, 40);
+  const doc1 = fakeDb._dump().get('lojas/loja1/devolucoes_notas/' + NFD1);
+  assert.ok(doc1, 'deve gravar a nota no catálogo fiscal');
+  assert.equal(doc1.estado, 'PENDENTE', 'importar não significa receber — nunca CONFERIDA só por aparecer no BI');
+  assert.equal(doc1.motivoNormalizado, 'DESACORDO COM PEDIDO');
+  assert.equal(doc1.motivoTextoOriginal, 'DESACORDO COM PEDIDO');
+  assert.equal(doc1.valorTotal, 40);
+  assert.ok(!doc1.recebidoEm, 'nota só importada nunca tem recebidoEm');
+
+  const docTroca = fakeDb._dump().get('lojas/loja1/devolucoes_notas/' + NFD_TROCA);
+  assert.ok(docTroca, 'TROCA não é mais descartada — vira pendente igual as outras');
+  assert.equal(docTroca.estado, 'PENDENTE');
+  assert.equal(docTroca.motivoNormalizado, 'TROCA');
+
+  const docSemMotivo = fakeDb._dump().get('lojas/loja1/devolucoes_notas/' + NFD_SEM_MOTIVO);
+  assert.ok(docSemMotivo, 'motivo não reconhecido também não é descartado — fica pendente com o motivo original visível');
+  assert.equal(docSemMotivo.motivoNormalizado, '(SEM MOTIVO NO TEXTO)');
+  assert.equal(docSemMotivo.motivoTextoOriginal, 'ALGO SEM CATEGORIA', 'texto original continua acessível, nunca substituído pela categoria');
 });
 
-test('_sincronizarDevolucoesBiLoja: motivo que PRECISA do Coletor (Troca/Avaria/Vencido/Impróprio/sem motivo) é descartado — nunca grava nem aguarda', async () => {
+test('_sincronizarDevolucoesBiLoja: chave já RECEBIDA não é reaberta nem duplicada — reimportação só atualiza dados fiscais', async () => {
   const { fakeDb, internals } = carregarComFirestoreFake();
-  const registros = [
-    { loja_key: 14, chave: 'NFD-TROCA', nf_numero: '1', cliente: 'X', data_emissao: '2026-08-20', valor_nota: 1, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'Y', quantidade_faturada: 1, mensagem: 'TROCA DE PRODUTO' },
-    { loja_key: 14, chave: 'NFD-SEM-MOTIVO', nf_numero: '2', cliente: 'X', data_emissao: '2026-08-20', valor_nota: 1, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'Y', quantidade_faturada: 1, mensagem: 'ALGO SEM CATEGORIA' },
-  ];
+  fakeDb._dump().set('lojas/loja1/devolucoes_notas/' + NFD1, {
+    chave: NFD1, lojaId: 'loja1', estado: 'RECEBIDA', dataEmissao: '2026-08-20', destinatario: '',
+    recebidoEm: '2026-08-21T10:00:00.000Z', recebidoPor: 'analista@daterrinha.com', origemRecebimento: 'ANALISTA',
+  });
+  const registros = [{ loja_key: 14, chave: NFD1, nf_numero: '900', cliente: 'Mercado Z - 278', data_emissao: '2026-08-20', valor_nota: 40, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'X', quantidade_faturada: 1, mensagem: 'DESACORDO COM PEDIDO' }];
   const resultado = await internals._sincronizarDevolucoesBiLoja('loja1', 14, registros);
-  assert.equal(resultado.total, 2);
-  assert.equal(resultado.autoSalvas, 0);
-  assert.equal(resultado.descartadas, 2);
-  assert.equal([...fakeDb._dump().values()].filter(v => Array.isArray(v.chaves)).length, 0, 'nenhum recebimento_recusas deve ter sido criado');
-});
-
-test('_sincronizarDevolucoesBiLoja: chave que já virou recebimento_recusas antes NÃO duplica — só completa dataEmissao/destinatario que estava em branco', async () => {
-  const { fakeDb, internals } = carregarComFirestoreFake();
-  fakeDb._dump().set('lojas/loja1/recebimento_recusas/rExistente', { chaves: ['NFD1'], dataEmissao: '', destinatario: '' });
-  const registros = [{ loja_key: 14, chave: 'NFD1', nf_numero: '900', cliente: 'Mercado Z - 278', data_emissao: '2026-08-20', valor_nota: 40, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'X', quantidade_faturada: 1, mensagem: 'DESACORDO COM PEDIDO' }];
-  const resultado = await internals._sincronizarDevolucoesBiLoja('loja1', 14, registros);
-  assert.equal(resultado.autoSalvas, 0, 'já existe recebimento pra essa chave — não cria outro');
-  assert.equal(resultado.corrigidas, 1);
-  const depois = fakeDb._dump().get('lojas/loja1/recebimento_recusas/rExistente');
-  assert.equal(depois.dataEmissao, '2026-08-20');
-  assert.equal(depois.destinatario, 'Mercado Z - 278');
+  assert.equal(resultado.novas, 0, 'já existe — não conta como nova');
+  assert.equal(resultado.atualizadas, 1);
+  const depois = fakeDb._dump().get('lojas/loja1/devolucoes_notas/' + NFD1);
+  assert.equal(depois.destinatario, 'Mercado Z - 278', 'dados fiscais atualizam normalmente');
   assert.equal(depois.rede, 'Mercado Z');
+  assert.equal(depois.estado, 'RECEBIDA', 'reimportação NUNCA reabre uma nota já recebida');
+  assert.equal(depois.recebidoEm, '2026-08-21T10:00:00.000Z', 'recebidoEm/recebidoPor preservados — merge:true não inclui esses campos numa reimportação');
+  assert.equal(depois.recebidoPor, 'analista@daterrinha.com');
+});
+
+test('_sincronizarDevolucoesBiLoja: chave fora do formato de 44 dígitos é contada como inválida, nunca gravada', async () => {
+  const { fakeDb, internals } = carregarComFirestoreFake();
+  const registros = [{ loja_key: 14, chave: 'CHAVE-CURTA-INVALIDA', nf_numero: '1', cliente: 'X', data_emissao: '2026-08-20', valor_nota: 1, tipo_movimento: 'DEVOLUCAO', produto_key: 1, produto: 'Y', quantidade_faturada: 1, mensagem: 'TROCA' }];
+  const resultado = await internals._sincronizarDevolucoesBiLoja('loja1', 14, registros);
+  assert.equal(resultado.invalidas, 1);
+  assert.equal(resultado.novas, 0);
+  assert.ok(!fakeDb._dump().has('lojas/loja1/devolucoes_notas/CHAVE-CURTA-INVALIDA'));
 });
 
 test('_sincronizarDevolucoesBiLoja: sem registros, não grava nada e não quebra', async () => {
   const { internals } = carregarComFirestoreFake();
   const resultado = await internals._sincronizarDevolucoesBiLoja('loja1', 14, []);
   assert.equal(resultado.total, 0);
-  assert.equal(resultado.autoSalvas, 0);
+  assert.equal(resultado.novas, 0);
 });
 
 test('_sincronizarNotasRetornadasVendaBiLoja: erro ao GRAVAR notas novas NÃO pode impedir a LIMPEZA de rodar — nota que saiu de "em aberto" precisa ser removida mesmo com falha', async () => {

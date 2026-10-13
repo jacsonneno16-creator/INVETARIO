@@ -1654,15 +1654,10 @@ const CATEGORIAS_MOTIVO_DEVOLUCAO_BI = [
   ['DESACORDO COM PEDIDO', /DESACORDO/],
 ];
 const SEM_MOTIVO_NO_TEXTO_BI = '(SEM MOTIVO NO TEXTO)';
-const CATEGORIAS_MOTIVO_PRECISAM_COLETOR_BI = new Set(['TROCA', 'AVARIA', 'VENCIDO/VENCIMENTO', 'IMPRÓPRIO PARA CONSUMO/VENDA', SEM_MOTIVO_NO_TEXTO_BI]);
 function _classificarMotivoTextoBi(texto) {
   const t = String(texto || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   for (const [nome, regex] of CATEGORIAS_MOTIVO_DEVOLUCAO_BI) if (regex.test(t)) return nome;
   return SEM_MOTIVO_NO_TEXTO_BI;
-}
-function _motivoDispensaColetorBi(informacoesComplementares) {
-  if (!informacoesComplementares) return false;
-  return !CATEGORIAS_MOTIVO_PRECISAM_COLETOR_BI.has(_classificarMotivoTextoBi(informacoesComplementares));
 }
 function _extrairRedeBi(destinatario) {
   const s = String(destinatario || '').trim();
@@ -1695,62 +1690,71 @@ function _agruparDevolucoesBiPorChaveServidor(itens) {
   });
   return [...porChave.values()];
 }
-function _construirRecebimentoAutomaticoBi(nota) {
-  if (!_motivoDispensaColetorBi(nota.informacoesComplementares)) return null;
+// PEDIDO AO VIVO (2026-10-13, "Devoluções unificadas"): a versão anterior
+// descartava 5 categorias de motivo (TROCA/AVARIA/VENCIDO/IMPRÓPRIO/SEM
+// MOTIVO) e só gravava as outras — já como CONFERIDA, só por terem
+// aparecido no BI, nunca de verdade recebidas fisicamente. Substituído por
+// um catálogo fiscal único (`devolucoes_notas`, coleção nova, NÃO
+// `recebimento_recusas`) que recebe TODOS os motivos, sempre como
+// PENDENTE — "importar não significa receber". `_construirRecebimentoAutomaticoBi`/
+// `CATEGORIAS_MOTIVO_PRECISAM_COLETOR_BI`/`_motivoDispensaColetorBi` foram
+// removidas de propósito: motivo deixou de decidir se a nota é gravada.
+// `devolucoes_notas/{chave}` é espelhada pro BigQuery pela extensão
+// bq-devolucoes-notas (ver extensions/bq-devolucoes-notas.env) — assim o
+// catálogo fica consultável por chave mesmo ANTES do retorno físico, o
+// que `recebimento_recusas`/sua view `_raw_latest` nunca ofereceu (só
+// existe lá o que já foi confirmado).
+function _construirDevolucaoNotaBi(nota, lojaId, versaoImportacao) {
   const categoria = _classificarMotivoTextoBi(nota.informacoesComplementares);
-  const agora = new Date().toISOString();
   return {
-    chaves: [nota.chave],
-    notas: [{chave: nota.chave, numeroNota: nota.numeroNota, dataEmissao: nota.dataEmissao || '', volumeEsperado: 0, destinatario: nota.destinatario || '', valorTotal: Number(nota.valorTotal) || 0, itens: nota.itens || []}],
-    motoristaId: '', motoristaNome: '', motivoId: '', motivoNome: categoria,
-    conferenteId: '', conferenteNome: '',
-    volumeEsperado: 0, volumeInformado: 0, diferencaVolumes: 0, conferenciaStatus: 'CONFERIDO',
-    box: '', pallets: null, statusConferenciaOperacional: 'CONFERIDA', itensConferidos: [],
-    criadoEm: agora, criadoPorUid: '', criadoPorEmail: 'sincronizarBiAgendado',
-    origem: 'AUTOMATICO', motivoAutomaticoTexto: nota.informacoesComplementares || '',
-    dataEmissao: nota.dataEmissao || '', destinatario: nota.destinatario || '', rede: _extrairRedeBi(nota.destinatario), valorTotal: Number(nota.valorTotal) || 0,
+    chave: nota.chave, lojaId,
+    numeroNota: nota.numeroNota || '', serie: nota.serie || '', cfop: nota.cfop || '',
+    dataEmissao: nota.dataEmissao || '', destinatario: nota.destinatario || '',
+    rede: _extrairRedeBi(nota.destinatario), valorTotal: Number(nota.valorTotal) || 0,
+    itens: nota.itens || [],
+    motivoTextoOriginal: nota.informacoesComplementares || '', motivoNormalizado: categoria,
+    versaoImportacao, atualizadoEm: new Date().toISOString(),
   };
 }
+// Upsert idempotente por CHAVE (doc ID = chave, nunca `.doc()` aleatório —
+// diferente da versão antiga, que gerava ID aleatório e deduplicava só
+// com um pré-read em memória, uma race real entre o sync manual e o
+// agendado). `estado`/`recebidoEm`/`recebidoPor`/`origemRecebimento`/
+// `criadoEm` só entram no payload de uma chave NOVA (nunca vista antes) —
+// numa chave já existente, ficam de fora do `{merge:true}` e por isso
+// continuam intocados, preservando o estado de recebimento mesmo numa
+// reimportação só de dados fiscais.
 async function _sincronizarDevolucoesBiLoja(lojaId, lojaKey, registrosNotas) {
   const relevantes = (registrosNotas || []).filter(it => lojaKey != null && String(it.loja_key) === String(lojaKey) && String(it.tipo_movimento || '').toUpperCase() === 'DEVOLUCAO');
   const notas = _agruparDevolucoesBiPorChaveServidor(relevantes);
-  const colRecusas = db.collection('lojas').doc(lojaId).collection('recebimento_recusas');
-  const recusasSnap = await colRecusas.get();
-  const chavesJaComRecebimento = new Map();
-  recusasSnap.docs.forEach(d => {
-    const data = d.data() || {};
-    (data.chaves || []).forEach(c => chavesJaComRecebimento.set(c, {docId: d.id, dataEmissao: data.dataEmissao || '', destinatario: data.destinatario || ''}));
-  });
-  let autoSalvas = 0, descartadas = 0, corrigidas = 0;
-  const patches = [];
+  const colNotas = db.collection('lojas').doc(lojaId).collection('devolucoes_notas');
+  const existentesSnap = await colNotas.get();
+  const chavesExistentes = new Set(existentesSnap.docs.map(d => d.id));
+  const versaoImportacao = new Date().toISOString();
+  let novas = 0, atualizadas = 0, invalidas = 0;
+  const validas = [];
   for (const nota of notas) {
-    if (chavesJaComRecebimento.has(nota.chave)) {
-      const existente = chavesJaComRecebimento.get(nota.chave);
-      const patch = {};
-      if (!existente.dataEmissao && nota.dataEmissao) patch.dataEmissao = nota.dataEmissao;
-      if (!existente.destinatario && nota.destinatario) { patch.destinatario = nota.destinatario; patch.rede = _extrairRedeBi(nota.destinatario); }
-      if (Object.keys(patch).length) { patches.push({docId: existente.docId, patch}); corrigidas++; }
-    } else {
-      const payloadAuto = _construirRecebimentoAutomaticoBi(nota);
-      if (payloadAuto) {
-        const ref = colRecusas.doc();
-        const batchNovo = db.batch();
-        batchNovo.set(ref, payloadAuto);
-        await batchNovo.commit();
-        chavesJaComRecebimento.set(nota.chave, {docId: ref.id, dataEmissao: nota.dataEmissao, destinatario: nota.destinatario});
-        autoSalvas++;
-      } else {
-        descartadas++;
-      }
-    }
+    if (!/^\d{44}$/.test(nota.chave)) { invalidas++; continue; }
+    validas.push(nota);
   }
-  for (let i = 0; i < patches.length; i += 300) {
-    const lote = patches.slice(i, i + 300);
+  for (let i = 0; i < validas.length; i += 450) {
+    const lote = validas.slice(i, i + 450);
     const batch = db.batch();
-    lote.forEach(p => batch.set(colRecusas.doc(p.docId), p.patch, {merge: true}));
+    lote.forEach(nota => {
+      const ref = colNotas.doc(nota.chave);
+      const payload = _construirDevolucaoNotaBi(nota, lojaId, versaoImportacao);
+      if (!chavesExistentes.has(nota.chave)) {
+        payload.estado = 'PENDENTE';
+        payload.criadoEm = payload.atualizadoEm;
+        novas++;
+      } else {
+        atualizadas++;
+      }
+      batch.set(ref, payload, {merge: true});
+    });
     await batch.commit();
   }
-  return {total: notas.length, autoSalvas, descartadas, corrigidas};
+  return {total: notas.length, novas, atualizadas, semAlteracao: 0, invalidas, falhas: 0};
 }
 
 async function _sincronizarBiTodasLojas() {
@@ -3395,6 +3399,155 @@ exports.buscarIndicadoresRetornosBigQuery = functions
     return {ok: true, recusas, notasResumo};
   });
 
+// PEDIDO AO VIVO (2026-10-13, "Devoluções unificadas"): catálogo fiscal
+// novo (`devolucoes_notas`), espelhado pro BigQuery pela extensão
+// bq-devolucoes-notas — diferente de `recebimento_recusas_raw_latest`
+// (só o que já foi confirmado), essa view também tem notas PENDENTES,
+// então dá pra consultar por chave mesmo antes do retorno físico.
+function _bigQueryClienteOuNulo() {
+  try { return _obterBigQueryCliente(); } catch (e) { return null; }
+}
+async function _consultarDevolucaoPorChaveInterno(data, acesso, bigqueryClient, firestoreDb) {
+  const lojaId = textoSeguro(data?.lojaId, 120);
+  const chave = textoSeguro(data?.chave, 44);
+  if (!lojaId) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
+  if (!/^\d{44}$/.test(chave)) throw new functions.https.HttpsError('invalid-argument', 'Chave de acesso inválida — precisa ter 44 dígitos.');
+  if (!_lojaPermitidaParaAcesso(acesso, lojaId)) throw new functions.https.HttpsError('permission-denied', 'Seu login não tem acesso a esta loja.');
+  if (bigqueryClient) {
+    try {
+      const query = `
+        SELECT data
+        FROM \`daterrinha-inventario.dt_relatorios.devolucoes_notas_raw_latest\`
+        WHERE operation != 'DELETE'
+          AND JSON_EXTRACT_SCALAR(path_params, '$.lojaId') = @lojaId
+          AND JSON_EXTRACT_SCALAR(data, '$.chave') = @chave
+        LIMIT 1
+      `;
+      const [rows] = await bigqueryClient.query({query, params: {lojaId, chave}});
+      if (rows.length) return JSON.parse(rows[0].data);
+    } catch (e) {
+      // Extensão ainda não instalada, propagação atrasada, ou ambiente
+      // local sem BigQuery — segue pro fallback Firestore abaixo.
+      console.warn('[Devoluções] consultarDevolucaoPorChave: BigQuery indisponível, usando Firestore direto:', e.message || e);
+    }
+  }
+  const snap = await (firestoreDb || db).collection('lojas').doc(lojaId).collection('devolucoes_notas').doc(chave).get();
+  return snap.exists ? snap.data() : null;
+}
+exports.consultarDevolucaoPorChave = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const nota = await _consultarDevolucaoPorChaveInterno(data, acesso, _bigQueryClienteOuNulo(), db);
+    return {ok: true, nota};
+  });
+
+// Confirmação atômica de recebimento — o MESMO mecanismo (transação com
+// tx.create em devolucoes_recebimentos/{chave}, que só pode suceder uma
+// vez por chave) é usado tanto pelo Analista (bipagem no "Montar
+// relatório") quanto pelo Coletor (via confirmarRecebimentoDevolucaoClient,
+// public/js/shared/devolucoes-confirmar.js, rodando a mesma transação
+// pelo SDK client-side direto em vez de chamar esta Function). Quem
+// chegar primeiro grava; o segundo lê o doc já existente e recebe
+// jaRecebida:true, sem erro — nunca dois "primeiros recebimentos" pra
+// mesma chave, mesmo com Coletor e Analista confirmando ao mesmo tempo.
+async function _confirmarRecebimentoDevolucaoInterno(data, acesso, firestoreDb) {
+  const lojaId = textoSeguro(data?.lojaId, 120);
+  const chave = textoSeguro(data?.chave, 44);
+  const relatorioId = data?.relatorioId ? textoSeguro(data.relatorioId, 120) : null;
+  const origem = textoSeguro(data?.origem || 'ANALISTA', 20);
+  if (!lojaId) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
+  if (!/^\d{44}$/.test(chave)) throw new functions.https.HttpsError('invalid-argument', 'Chave de acesso inválida — precisa ter 44 dígitos.');
+  if (!['ANALISTA', 'COLETOR'].includes(origem)) throw new functions.https.HttpsError('invalid-argument', 'Origem inválida.');
+  if (!_lojaPermitidaParaAcesso(acesso, lojaId)) throw new functions.https.HttpsError('permission-denied', 'Seu login não tem acesso a esta loja.');
+  const fdb = firestoreDb || db;
+  const notaRef = fdb.collection('lojas').doc(lojaId).collection('devolucoes_notas').doc(chave);
+  const recRef = fdb.collection('lojas').doc(lojaId).collection('devolucoes_recebimentos').doc(chave);
+  const confirmadoPor = acesso.email || acesso.nome || '';
+  const agora = new Date().toISOString();
+  return fdb.runTransaction(async tx => {
+    const [notaSnap, recSnap] = await Promise.all([tx.get(notaRef), tx.get(recRef)]);
+    if (!notaSnap.exists) throw new functions.https.HttpsError('not-found', 'Nota de devolução não encontrada no catálogo fiscal — atualize do BI e tente de novo.');
+    const notaDados = notaSnap.data() || {};
+    if (String(notaDados.lojaId || lojaId) !== String(lojaId)) throw new functions.https.HttpsError('permission-denied', 'Esta nota pertence a outra loja.');
+    if (recSnap.exists) return {jaRecebida: true, recebimento: recSnap.data()};
+    const recebimento = {chave, lojaId, confirmadoEm: agora, confirmadoPor, origem, relatorioId: relatorioId || null};
+    tx.create(recRef, recebimento);
+    tx.set(notaRef, {estado: 'RECEBIDA', recebidoEm: agora, recebidoPor: confirmadoPor, origemRecebimento: origem}, {merge: true});
+    return {jaRecebida: false, recebimento};
+  });
+}
+exports.confirmarRecebimentoDevolucao = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const resultado = await _confirmarRecebimentoDevolucaoInterno(data, acesso, db);
+    return Object.assign({ok: true}, resultado);
+  });
+
+// Consulta paginada/filtrada do catálogo fiscal pra aba Controle — sempre
+// via BigQuery (nunca lista o arquivo BI inteiro), com LIMIT fixo (igual
+// espírito do resto do projeto: filtros reais, não "trazer tudo e filtrar
+// no cliente").
+async function _listarDevolucoesBigQueryInterno(data, acesso, bigqueryClient) {
+  const lojaId = textoSeguro(data?.lojaId, 120);
+  if (!lojaId) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
+  if (!_lojaPermitidaParaAcesso(acesso, lojaId)) throw new functions.https.HttpsError('permission-denied', 'Seu login não tem acesso a esta loja.');
+  const estado = textoSeguro(data?.estado, 20);
+  if (estado && !['PENDENTE', 'RECEBIDA'].includes(estado)) throw new functions.https.HttpsError('invalid-argument', 'Estado inválido.');
+  const motivo = textoSeguro(data?.motivo, 60);
+  const numeroNota = textoSeguro(data?.numeroNota, 30);
+  const chaveExata = textoSeguro(data?.chave, 44);
+  const mercado = textoSeguro(data?.mercado, 120);
+  const ini = textoSeguro(data?.ini, 10);
+  const fim = textoSeguro(data?.fim, 10);
+  if (ini && !/^\d{4}-\d{2}-\d{2}$/.test(ini)) throw new functions.https.HttpsError('invalid-argument', 'Data inicial inválida — use AAAA-MM-DD.');
+  if (fim && !/^\d{4}-\d{2}-\d{2}$/.test(fim)) throw new functions.https.HttpsError('invalid-argument', 'Data final inválida — use AAAA-MM-DD.');
+  const campoData = data?.campoData === 'recebimento' ? 'recebidoEm' : 'dataEmissao';
+
+  const condicoes = [`operation != 'DELETE'`, `JSON_EXTRACT_SCALAR(path_params, '$.lojaId') = @lojaId`];
+  const params = {lojaId};
+  if (estado) { condicoes.push(`JSON_EXTRACT_SCALAR(data, '$.estado') = @estado`); params.estado = estado; }
+  if (motivo) { condicoes.push(`JSON_EXTRACT_SCALAR(data, '$.motivoNormalizado') = @motivo`); params.motivo = motivo; }
+  if (numeroNota) { condicoes.push(`JSON_EXTRACT_SCALAR(data, '$.numeroNota') = @numeroNota`); params.numeroNota = numeroNota; }
+  if (chaveExata) { condicoes.push(`JSON_EXTRACT_SCALAR(data, '$.chave') = @chaveExata`); params.chaveExata = chaveExata; }
+  if (mercado) { condicoes.push(`LOWER(JSON_EXTRACT_SCALAR(data, '$.destinatario')) LIKE @mercado`); params.mercado = '%' + mercado.toLowerCase() + '%'; }
+  if (ini) { condicoes.push(`JSON_EXTRACT_SCALAR(data, '$.${campoData}') >= @ini`); params.ini = ini; }
+  if (fim) { condicoes.push(`JSON_EXTRACT_SCALAR(data, '$.${campoData}') <= @fim`); params.fim = fim; }
+  // PEDIDO (aba Indicadores, 2026-10-13): o padrão (500) é o bastante pra
+  // busca pontual da aba Controle; Indicadores agrega o período inteiro
+  // (até 2 anos) e precisa de um teto maior pra não subcontar os KPIs —
+  // ainda assim um teto, nunca "lista o arquivo BI inteiro".
+  const limite = Math.min(5000, Math.max(1, Number(data?.limite) || 500));
+  params.limite = limite;
+
+  const query = `
+    SELECT data
+    FROM \`daterrinha-inventario.dt_relatorios.devolucoes_notas_raw_latest\`
+    WHERE ${condicoes.join(' AND ')}
+    ORDER BY JSON_EXTRACT_SCALAR(data, '$.dataEmissao') DESC
+    LIMIT @limite
+  `;
+  const [rows] = await bigqueryClient.query({query, params, types: {limite: 'INT64'}});
+  return rows.map(r => JSON.parse(r.data));
+}
+exports.listarDevolucoesBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const notas = await _listarDevolucoesBigQueryInterno(data, acesso, _obterBigQueryCliente());
+    return {ok: true, notas};
+  });
+
 // PEDIDO AO VIVO (2026-09-11): "a parte do Analista pode puxar do BigQuery,
 // 1 a 5 minutos de atraso não tem problema" — Pátio em Tempo Real
 // (105-recebimento-patio-tempo-real.js) busca por statusFisico=NO_PATIO,
@@ -4854,7 +5007,8 @@ exports._graphBiInternals = {
   _sincronizarFichaTecnicaBiLoja, _sincronizarAgendaBiLoja, _sincronizarRecebimentoAgendaNoPcp, _sincronizarRecebimentoFisicoNaAgenda, _sincronizarBiTodasLojas,
   _sincronizarEstoqueInsumosBiLoja, _sincronizarEstoqueProdutoAcabadoBiLoja, _sincronizarHistoricoVendasBiLoja,
   _sincronizarNotasRetornadasVendaBiLoja, _dividirChunksNotasRetornadasGrandesDemaisSeNecessario, _notasRetornadasDoDocumentoChunk,
-  _sincronizarDevolucoesBiLoja, _classificarMotivoTextoBi, _construirRecebimentoAutomaticoBi,
+  _sincronizarDevolucoesBiLoja, _classificarMotivoTextoBi, _construirDevolucaoNotaBi,
+  _consultarDevolucaoPorChaveInterno, _confirmarRecebimentoDevolucaoInterno, _listarDevolucoesBigQueryInterno,
   _limparEstoqueBiContaminadoLoja, _limparEstoqueBiContaminadoTodasLojas,
   _limparDadosAntigosBluesoftLoja, _limparDadosAntigosBluesoftTodasLojas,
   _sincronizarRelatorioBiChunkeadoGlobal, _sincronizarComprasHistoricoBi, _sincronizarComprasHistoricoBigQuery, _slimCompraHistoricoBi,

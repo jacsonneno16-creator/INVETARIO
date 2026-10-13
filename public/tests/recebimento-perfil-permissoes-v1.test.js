@@ -10,11 +10,18 @@ const read=(p)=>fs.readFileSync(path.join(ROOT,p),'utf8');
 // rolagem antes, corrigida em configuracoes-globais-v1.test.js). Este
 // arquivo cobre só as mudanças de catálogo de permissões e do Meu Perfil.
 
-test('Devolucoes e Indicadores de Devolucoes fazem parte do catalogo de permissoes',()=>{
+test('Devolucoes e Indicadores de Devolucoes (antigos) continuam no catalogo de permissoes, inertes',()=>{
   const s=read('js/analista/37-usuarios-permissoes.js');
-  assert.match(s,/id:'recebimento-consulta-notas',nome:'Recebimento · Devoluções \(BI\)'/);
-  assert.match(s,/id:'recebimento-devolucoes-indicadores',nome:'Recebimento · Indicadores de Devoluções'/);
+  assert.match(s,/id:'recebimento-consulta-notas',nome:'Recebimento · Devoluções \(BI\) \[antigo\]'/);
+  assert.match(s,/id:'recebimento-devolucoes-indicadores',nome:'Recebimento · Indicadores de Devoluções \[antigo\]'/);
   assert.match(s,/RECEBIMENTO_MODULOS=MODULOS\.filter\(function\(m\)\{return m\.id\.indexOf\('recebimento-'\)===0;\}\)/);
+});
+
+// Devoluções unificadas (2026-10-13): substitui as 2 telas acima por uma só.
+test('Devolucoes unificadas tem modulo proprio no catalogo de permissoes',()=>{
+  const s=read('js/analista/37-usuarios-permissoes.js');
+  assert.match(s,/id:'recebimento-devolucoes',nome:'Recebimento · Devoluções'/);
+  assert.match(s,/acoes:\['visualizar','importar','confirmar','relatorio_criar','relatorio_finalizar','exportar','estornar','excluir'\]/);
 });
 
 test('Indicadores de Devolucoes usam permissao propria na janela Permissoes desta tela',()=>{

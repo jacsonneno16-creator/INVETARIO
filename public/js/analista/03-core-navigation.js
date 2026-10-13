@@ -46,6 +46,7 @@ const PAGE_NAMES = {
   'recebimento-patio-tempo-real': 'Recebimento · Pátio em Tempo Real',
   'recebimento-patio-inventarios': 'Recebimento · Inventários do Pátio',
   'recebimento-recusas': 'Recebimento · Recusas',
+  'recebimento-devolucoes': 'Recebimento · Devoluções',
   'recebimento-recusas-cadastros': 'Recebimento · Notas Retornadas · Cadastros',
   'recebimento-tempos': 'Recebimento · Tempos / Performance',
   'recebimento-historico': 'Recebimento · Histórico',
@@ -230,8 +231,7 @@ function renderPage(id) {
       case 'recebimento-retornos-indicadores': return _callPage('renderRecebimentoRetornosIndicadores');
       case 'recebimento-retornos-status': return _callPage('renderRecebimentoRetornosStatus');
       case 'recebimento-recusas-indicadores': return _callPage('renderRecusasIndicadores');
-      case 'recebimento-consulta-notas': return _callPage('renderConsultaNotasFiscais');
-      case 'recebimento-devolucoes-indicadores': return _callPage('renderDevolucoesBiIndicadores');
+      case 'recebimento-devolucoes': return _callPage('renderRecebimentoDevolucoes');
       case 'recebimento-tempos':         return _callPage('renderRecebimentoTempos');
       case 'recebimento-historico':      return _callPage('renderRecebimentoHistorico');
       case 'recebimento-config':         return _callPage('renderRecebimentoConfig');

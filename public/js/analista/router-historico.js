@@ -222,7 +222,7 @@
     paginaSimples('logistica/recebimento/retornos-status', 'recebimento-retornos-status', { setor: 'logistica', view: 'recebimento' }),
     paginaSimples('logistica/recebimento/recusas-indicadores', 'recebimento-recusas-indicadores', { setor: 'logistica', view: 'recebimento' }),
     paginaSimples('logistica/recebimento/recusas-cadastros', 'recebimento-recusas-cadastros', { setor: 'logistica', view: 'recebimento' }),
-    paginaSimples('logistica/recebimento/consulta-notas', 'recebimento-consulta-notas', { setor: 'logistica', view: 'recebimento' }),
+    paginaSimples('logistica/recebimento/devolucoes', 'recebimento-devolucoes', { setor: 'logistica', view: 'recebimento' }),
 
     // ---- Logística — Estoque (Relatórios, BigQuery) ----
     paginaSimples('logistica/estoque/relatorios/inventario', 'estoque-rel-inventario', { setor: 'logistica', view: 'estoque' }),

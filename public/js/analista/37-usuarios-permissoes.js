@@ -103,8 +103,19 @@
     // registro. Checado manualmente em 99-recebimento-retornos-status.js.
     {id:'recebimento-retornos-status',nome:'Recebimento · Status de Retornos',setor:'logistica',canais:['analista'],acoes:['visualizar']},
     {id:'recebimento-recusas-indicadores',nome:'Recebimento · Recusas',setor:'logistica',canais:['analista'],acoes:['visualizar']},
-    {id:'recebimento-consulta-notas',nome:'Recebimento · Devoluções (BI)',setor:'logistica',canais:['analista'],acoes:['visualizar','importar','exportar']},
-    {id:'recebimento-devolucoes-indicadores',nome:'Recebimento · Indicadores de Devoluções',setor:'logistica',canais:['analista'],acoes:['visualizar']},
+    // Módulos antigos (telas separadas de Devoluções) — ficam inertes no
+    // catálogo, sem mais nenhuma tela que os referencie; a migração de
+    // permissões (script único, não runtime) copia visualizar/importar/
+    // exportar daqui pro módulo novo abaixo. Não apagar: contas que já
+    // tinham permissão aqui continuam existindo até a migração rodar.
+    {id:'recebimento-consulta-notas',nome:'Recebimento · Devoluções (BI) [antigo]',setor:'logistica',canais:['analista'],acoes:['visualizar','importar','exportar']},
+    {id:'recebimento-devolucoes-indicadores',nome:'Recebimento · Indicadores de Devoluções [antigo]',setor:'logistica',canais:['analista'],acoes:['visualizar']},
+    // Devoluções unificadas (2026-10-13): substitui as 2 telas acima por uma
+    // única (Controle/Relatórios/Indicadores) — ver 106-devolucoes.js e
+    // firestore.rules (hasPermissionDevolucoes). confirmar/relatorio_*/
+    // estornar nascem SEMPRE false pra todo mundo (ninguém tinha essa
+    // capacidade antes — nunca inferir de importar).
+    {id:'recebimento-devolucoes',nome:'Recebimento · Devoluções',setor:'logistica',canais:['analista'],acoes:['visualizar','importar','confirmar','relatorio_criar','relatorio_finalizar','exportar','estornar','excluir']},
     // Pedido ao vivo do usuário: "as partes de cadastro da parte de
     // recebimento fazer em um menu só... deixar bem separado e organizado"
     // — Motorista/Motivo/Conferente (que viviam misturados dentro da
@@ -145,7 +156,7 @@
     {id:'atendimento-conversas',nome:'Atendimento · Conversas WhatsApp',setor:'atendimento',canais:['analista'],acoes:['visualizar','responder','assumir','transferir','finalizar','notas','supervisionar']},
     {id:'atendimento-config',nome:'Atendimento · Configuração WhatsApp',setor:'atendimento',canais:['analista'],acoes:['visualizar','configurar']}
   ];
-  const ROTULOS={iniciar:'Registrar início',reabrir:'Reabrir carga','registrar-erro':'Registrar erro no Coletor','tratar-erro':'Tratar ocorrências',visualizar:'Visualizar',criar:'Criar',editar:'Editar',excluir:'Excluir',importar:'Importar',exportar:'Exportar',publicar:'Liberar/Publicar',finalizar:'Finalizar',cancelar:'Cancelar',atualizar:'Atualizar',aprovar:'Aprovar',bloquear:'Bloquear',configurar:'Configurar',executar:'Executar/Enviar',reordenar:'Reordenar','corrigir-horario':'Corrigir horário','gerar-qrcode':'Gerar QR Code',entrada:'Entrada',saida:'Saída',rastrear:'Rastrear',identificar:'Identificar',estoque:'Pallets em estoque',transferir:'Transferir pallets',contar:'Contar no Coletor',conferir:'Conferir no Coletor',liberar:'Liberar sequência/quantidade',resetar:'Resetar liberação',responder:'Responder',assumir:'Assumir atendimento',notas:'Notas internas',supervisionar:'Supervisionar',reprocessar:'Reprocessar integração'};
+  const ROTULOS={iniciar:'Registrar início',reabrir:'Reabrir carga','registrar-erro':'Registrar erro no Coletor','tratar-erro':'Tratar ocorrências',visualizar:'Visualizar',criar:'Criar',editar:'Editar',excluir:'Excluir',importar:'Importar',exportar:'Exportar',publicar:'Liberar/Publicar',finalizar:'Finalizar',cancelar:'Cancelar',atualizar:'Atualizar',aprovar:'Aprovar',bloquear:'Bloquear',configurar:'Configurar',executar:'Executar/Enviar',reordenar:'Reordenar','corrigir-horario':'Corrigir horário','gerar-qrcode':'Gerar QR Code',entrada:'Entrada',saida:'Saída',rastrear:'Rastrear',identificar:'Identificar',estoque:'Pallets em estoque',transferir:'Transferir pallets',contar:'Contar no Coletor',conferir:'Conferir no Coletor',liberar:'Liberar sequência/quantidade',resetar:'Resetar liberação',responder:'Responder',assumir:'Assumir atendimento',notas:'Notas internas',supervisionar:'Supervisionar',reprocessar:'Reprocessar integração',confirmar:'Confirmar recebimento',relatorio_criar:'Criar relatório (bipagem)',relatorio_finalizar:'Finalizar relatório',estornar:'Estornar confirmação'};
 
   // Catálogo numérico de permissões — inspirado em ERPs onde o suporte/TI
   // identifica cada ação por "número + nome". O código é derivado da chave
@@ -169,7 +180,7 @@
     var a=global.DT_USUARIO_ACESSO_ATUAL||{};
     return a.admin_mestre===true||a.administrador_mestre===true||a.perfil==='administrador';
   }
-  const MODULO_ICONES={dashboard:'📊',inventarios:'📦',acompanhamento:'📈',auditoria:'🕵️',contagens:'🔢',pendencias:'⏳',recontagens:'🔁','rel-divergencias':'⚠️','capas-duplicadas':'🧾',produtividade:'🏆',enderecos:'📍',produtos:'🏷️',coletores:'📱',operadores:'👤',lojas:'🏪',rastreabilidade:'🔍','importar-exportar':'🔄','producao-dashboard':'📊','producao-ficha-tecnica':'🏭','producao-maquinas':'⚙️','producao-programacao':'📋','producao-gantt':'📅','producao-realizado':'✅','producao-insumos':'🧪','producao-projecao':'📈','producao-prog-automatica':'🤖','producao-funcionarios':'👷','producao-relatorios':'📊','producao-setup':'🔧','producao-mapa-fabrica':'🗺️','producao-config':'⚙️','producao-importacao':'🔄','producao-estoque':'📦','recebimento-dashboard':'📊','recebimento-operacao':'🚚','recebimento-notas':'📄','recebimento-fornecedores':'🏢','recebimento-agendamentos':'📅','recebimento-transbordo':'🚛','recebimento-patio-tempo-real':'📦','recebimento-recusas':'↩️','recebimento-retornos-indicadores':'📊','recebimento-recusas-indicadores':'📊','recebimento-consulta-notas':'📥','recebimento-devolucoes-indicadores':'📊','recebimento-config':'⚙️','atendimento-dashboard':'📊','atendimento-conversas':'💬','atendimento-config':'⚙️'};
+  const MODULO_ICONES={dashboard:'📊',inventarios:'📦',acompanhamento:'📈',auditoria:'🕵️',contagens:'🔢',pendencias:'⏳',recontagens:'🔁','rel-divergencias':'⚠️','capas-duplicadas':'🧾',produtividade:'🏆',enderecos:'📍',produtos:'🏷️',coletores:'📱',operadores:'👤',lojas:'🏪',rastreabilidade:'🔍','importar-exportar':'🔄','producao-dashboard':'📊','producao-ficha-tecnica':'🏭','producao-maquinas':'⚙️','producao-programacao':'📋','producao-gantt':'📅','producao-realizado':'✅','producao-insumos':'🧪','producao-projecao':'📈','producao-prog-automatica':'🤖','producao-funcionarios':'👷','producao-relatorios':'📊','producao-setup':'🔧','producao-mapa-fabrica':'🗺️','producao-config':'⚙️','producao-importacao':'🔄','producao-estoque':'📦','recebimento-dashboard':'📊','recebimento-operacao':'🚚','recebimento-notas':'📄','recebimento-fornecedores':'🏢','recebimento-agendamentos':'📅','recebimento-transbordo':'🚛','recebimento-patio-tempo-real':'📦','recebimento-recusas':'↩️','recebimento-retornos-indicadores':'📊','recebimento-recusas-indicadores':'📊','recebimento-consulta-notas':'📥','recebimento-devolucoes-indicadores':'📊','recebimento-devolucoes':'📥','recebimento-config':'⚙️','atendimento-dashboard':'📊','atendimento-conversas':'💬','atendimento-config':'⚙️'};
   const todos=()=>Object.fromEntries(MODULOS.map(m=>[m.id,Object.fromEntries(m.acoes.map(a=>[a,true]))]));
   const normalizar=(p,legadoTotal)=>{
     if(!p||typeof p!=='object')return legadoTotal?todos():{};

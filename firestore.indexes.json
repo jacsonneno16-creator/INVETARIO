@@ -1,5 +1,30 @@
 {
-  "indexes": [],
+  "indexes": [
+    {
+      "collectionGroup": "devolucoes_notas",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "estado", "order": "ASCENDING"},
+        {"fieldPath": "criadoEm", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "devolucoes_relatorios",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "status", "order": "ASCENDING"},
+        {"fieldPath": "criadoEm", "order": "DESCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "linhas",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        {"fieldPath": "chave", "order": "ASCENDING"},
+        {"fieldPath": "relatorioStatus", "order": "ASCENDING"}
+      ]
+    }
+  ],
   "fieldOverrides": [
     {
       "collectionGroup": "recebimento_recusas_notas_chunks",

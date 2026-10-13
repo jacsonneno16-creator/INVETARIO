@@ -11,6 +11,7 @@
   // mesmo molde de Motorista/Motivo.
   const COL_CONFERENTES = 'recebimento_recusas_conferentes';
   const COL_TAREFAS = 'recebimento_recusas_tarefas_conferencia';
+  const COL_DEVOLUCOES_NOTAS = 'devolucoes_notas';
   const COL_PRODUTOS = 'producao_produtos';
   // PEDIDO AO VIVO (2026-09-08): "vai aparecer a opção de saída e entrada"
   // — campos novos de S ficam agrupados aqui, reaproveitados nos dois
@@ -1436,20 +1437,47 @@
           itens: Array.isArray(notaAuto.itens) ? notaAuto.itens : []
         });
       } else {
-        // PEDIDO AO VIVO (2026-09-03, pt. 2): "o banco de dados não está
-        // atualizado... deixar prosseguir, e ele vai bipar normal a chave
-        // de acesso, e aí caso não ache a pessoa vai colocar manualmente o
-        // número da nota" — em vez de travar aqui, fica pendente até o
-        // operador confirmar (ou corrigir) o número, pré-preenchido a
-        // partir da própria chave (numeroNotaDaChave).
-        S.pendenteChaveManual = chave;
-        S.pendenteNumeroManual = numeroNotaDaChave(chave);
-        render();
-        setTimeout(() => {
-          var _document$getElementBw;
-          return (_document$getElementBw = document.getElementById('recusa-chave-manual-numero')) === null || _document$getElementBw === void 0 ? void 0 : _document$getElementBw.focus();
-        }, 80);
-        return;
+        // Devoluções unificadas (2026-10-13): catálogo fiscal novo
+        // (devolucoes_notas, chave = a própria chave da NF de devolução) —
+        // TODOS os motivos desde a importação, não só o subconjunto que o
+        // esquema antigo "dispensava Coletor" (registroAutomatico acima,
+        // mantido só pra devolução já importada ANTES desta mudança e
+        // ainda não migrada). Uma nota aqui confirmada em finalizar()
+        // também grava devolucoes_recebimentos (ver confirmarRecebimentoDevolucaoClient,
+        // js/shared/devolucoes-confirmar.js) — dado fiscal separado do
+        // pátio/conferência que este fluxo já grava em recebimento_recusas.
+        const devNotaSnap = await fs().collection(COL_DEVOLUCOES_NOTAS).doc(chave).get();
+        const devNota = devNotaSnap.exists ? devNotaSnap.data() || {} : null;
+        if (devNota && devNota.estado === 'RECEBIDA') {
+          toast('Esta nota de devolução já foi recebida anteriormente. Procure o Analista antes de lançar novamente.', 'error');
+          return;
+        } else if (devNota) {
+          S.notas.push({
+            chave,
+            numeroNota: devNota.numeroNota || '',
+            destinatario: devNota.destinatario || '',
+            volumes: 0,
+            pareceDevolucao: true,
+            tipoOperacao: 'DEVOLUCAO_BI',
+            origemImportacao: 'DEVOLUCAO_BI',
+            itens: Array.isArray(devNota.itens) ? devNota.itens : []
+          });
+        } else {
+          // PEDIDO AO VIVO (2026-09-03, pt. 2): "o banco de dados não está
+          // atualizado... deixar prosseguir, e ele vai bipar normal a chave
+          // de acesso, e aí caso não ache a pessoa vai colocar manualmente o
+          // número da nota" — em vez de travar aqui, fica pendente até o
+          // operador confirmar (ou corrigir) o número, pré-preenchido a
+          // partir da própria chave (numeroNotaDaChave).
+          S.pendenteChaveManual = chave;
+          S.pendenteNumeroManual = numeroNotaDaChave(chave);
+          render();
+          setTimeout(() => {
+            var _document$getElementBw;
+            return (_document$getElementBw = document.getElementById('recusa-chave-manual-numero')) === null || _document$getElementBw === void 0 ? void 0 : _document$getElementBw.focus();
+          }, 80);
+          return;
+        }
       }
       input.value = '';
       render();
@@ -1561,6 +1589,23 @@
         btn.disabled = true;
       }
       await fs().collection(COL_RECUSAS).add(payload);
+      // Devoluções unificadas (2026-10-13): confirmação fiscal separada do
+      // pátio/conferência acima — uma por chave, em paralelo
+      // (Promise.allSettled: uma chave já confirmada por outro caminho —
+      // ex. Analista bipou primeiro — nunca bloqueia nem derruba as
+      // outras do mesmo Box/retorno; o próprio payload de pátio/conferência
+      // já foi gravado de qualquer forma).
+      const chavesDevolucaoBi = S.notas.filter(n => n.origemImportacao === 'DEVOLUCAO_BI').map(n => n.chave);
+      if (chavesDevolucaoBi.length && typeof global.confirmarRecebimentoDevolucaoClient === 'function' && typeof getDTRawFirestore === 'function' && typeof getDTLojaAtiva === 'function') {
+        const lojaIdAtiva = getDTLojaAtiva();
+        const uConf = usuario();
+        Promise.allSettled(chavesDevolucaoBi.map(chave => global.confirmarRecebimentoDevolucaoClient(getDTRawFirestore(), lojaIdAtiva, chave, { origem: 'COLETOR', confirmadoPor: uConf.email || uConf.uid || '' }))).then(resultados => {
+          resultados.forEach((r, i) => {
+            if (r.status === 'rejected') toast('NF ' + chavesDevolucaoBi[i].slice(-9) + ': não foi possível confirmar o recebimento fiscal (' + (r.reason && r.reason.message || r.reason) + ').', 'error');
+            else if (r.value && r.value.jaRecebida) toast('NF ' + chavesDevolucaoBi[i].slice(-9) + ': recebimento fiscal já tinha sido confirmado antes.', 'warning');
+          });
+        });
+      }
       S.etapa = 'sucesso';
       render();
     } catch (e) {

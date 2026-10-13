@@ -249,6 +249,97 @@ service cloud.firestore {
       return admin() || (ehAnalista && (permitidoExplicito || legadoRecebimento));
     }
 
+    // Devoluções unificadas (2026-10-13): mesmo molde de hasPermissionRecusas,
+    // SEM ramo de herança legada de propósito — a migração das permissões
+    // antigas (recebimento-consulta-notas/recebimento-devolucoes-indicadores)
+    // pro novo módulo recebimento-devolucoes é um script explícito, único,
+    // não um fallback silencioso em runtime (evita alargar acesso sem querer).
+    function hasPermissionDevolucoes(operation) {
+      let a = access();
+      let ehAnalista = active() && (
+        (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+        (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true)
+      );
+      let temMapa = a.keys().hasAny(['permissoes']) && a.permissoes is map;
+      let temDevolucoes = temMapa && a.permissoes.keys().hasAny(['recebimento-devolucoes']);
+      let permitidoExplicito = temDevolucoes &&
+        a.permissoes['recebimento-devolucoes'] is map &&
+        a.permissoes['recebimento-devolucoes'].keys().hasAny([operation]) &&
+        a.permissoes['recebimento-devolucoes'][operation] == true;
+      return admin() || (ehAnalista && permitidoExplicito);
+    }
+
+    // Devoluções unificadas — as duas funções abaixo (importar/confirmar)
+    // são TOTALMENTE achatadas de propósito: um único `let a = access()`,
+    // `admin`/`active`/`canAccessStore`/hasPermissionColetorRecebimento
+    // reescritos inline em vez de chamados como função separada. Combinar
+    // chamadas de função que cada uma já embute active()/admin()/access()
+    // (ex.: canAccessStore(lojaId) && (hasPermissionDevolucoes(...) ||
+    // hasPermissionColetorRecebimento(...))) estourou de verdade o limite
+    // de 1000 sub-expressões do motor de regras numa checagem real contra
+    // o emulador — mesmo defeito já documentado várias vezes neste
+    // arquivo. Igual a podeLerInventariosNaLoja, só que achatado por
+    // completo (nem admin()/active() chamados à parte).
+    function devolucoesPodeImportar(lojaId) {
+      let a = access();
+      let ativoOk = !a.keys().hasAny(['ativo']) || a.ativo != false;
+      let admOk = (a.keys().hasAny(['perfil']) && a.perfil is string && a.perfil.lower() == 'administrador') ||
+        (a.keys().hasAny(['admin_mestre']) && a.admin_mestre == true) ||
+        (a.keys().hasAny(['administrador_mestre']) && a.administrador_mestre == true);
+      let lojaOk = (a.keys().hasAny(['acesso_todas_lojas']) && a.acesso_todas_lojas == true) ||
+        (a.keys().hasAny(['lojas_permitidas']) && a.lojas_permitidas is list && lojaId in a.lojas_permitidas);
+      let ehAnalista = (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+        (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true);
+      let permitidoExplicito = a.keys().hasAny(['permissoes']) && a.permissoes is map &&
+        a.permissoes.keys().hasAny(['recebimento-devolucoes']) && a.permissoes['recebimento-devolucoes'] is map &&
+        a.permissoes['recebimento-devolucoes'].keys().hasAny(['importar']) && a.permissoes['recebimento-devolucoes']['importar'] == true;
+      return accessExists() && ativoOk && (admOk || (lojaOk && ehAnalista && permitidoExplicito));
+    }
+    function devolucoesPodeConfirmar(lojaId) {
+      let a = access();
+      let ativoOk = !a.keys().hasAny(['ativo']) || a.ativo != false;
+      let admOk = (a.keys().hasAny(['perfil']) && a.perfil is string && a.perfil.lower() == 'administrador') ||
+        (a.keys().hasAny(['admin_mestre']) && a.admin_mestre == true) ||
+        (a.keys().hasAny(['administrador_mestre']) && a.administrador_mestre == true);
+      let lojaOk = (a.keys().hasAny(['acesso_todas_lojas']) && a.acesso_todas_lojas == true) ||
+        (a.keys().hasAny(['lojas_permitidas']) && a.lojas_permitidas is list && lojaId in a.lojas_permitidas);
+      let temPermissoesMapa = a.keys().hasAny(['permissoes']) && a.permissoes is map;
+      let ehAnalista = (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+        (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true);
+      let analistaOk = temPermissoesMapa &&
+        a.permissoes.keys().hasAny(['recebimento-devolucoes']) && a.permissoes['recebimento-devolucoes'] is map &&
+        a.permissoes['recebimento-devolucoes'].keys().hasAny(['confirmar']) && a.permissoes['recebimento-devolucoes']['confirmar'] == true;
+      let ehColetor = (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.coletor == true) ||
+        (a.keys().hasAny(['perfil']) && a.perfil == 'operador');
+      let coletorOk = temPermissoesMapa && (
+        (a.permissoes.keys().hasAny(['recebimento-operacao']) && a.permissoes['recebimento-operacao'] is map &&
+          a.permissoes['recebimento-operacao'].keys().hasAny(['criar']) && a.permissoes['recebimento-operacao']['criar'] == true) ||
+        (a.permissoes.keys().hasAny(['recebimento-transbordo']) && a.permissoes['recebimento-transbordo'] is map &&
+          a.permissoes['recebimento-transbordo'].keys().hasAny(['criar']) && a.permissoes['recebimento-transbordo']['criar'] == true)
+      );
+      return accessExists() && ativoOk && lojaOk && (admOk || (ehAnalista && analistaOk) || (ehColetor && coletorOk));
+    }
+    // Genérica e achatada pro resto de Devoluções (relatório: criar,
+    // finalizar, excluir) — só Analista, sem ramo de Coletor. Mesmo
+    // motivo das duas de cima: combinar 2 chamadas de hasPermissionDevolucoes
+    // (uma por operação) num só allow update também estourou 1000
+    // sub-expressões numa checagem real.
+    function devolucoesPermissaoAnalista(lojaId, operation) {
+      let a = access();
+      let ativoOk = !a.keys().hasAny(['ativo']) || a.ativo != false;
+      let admOk = (a.keys().hasAny(['perfil']) && a.perfil is string && a.perfil.lower() == 'administrador') ||
+        (a.keys().hasAny(['admin_mestre']) && a.admin_mestre == true) ||
+        (a.keys().hasAny(['administrador_mestre']) && a.administrador_mestre == true);
+      let lojaOk = (a.keys().hasAny(['acesso_todas_lojas']) && a.acesso_todas_lojas == true) ||
+        (a.keys().hasAny(['lojas_permitidas']) && a.lojas_permitidas is list && lojaId in a.lojas_permitidas);
+      let ehAnalista = (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+        (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true);
+      let permitidoExplicito = a.keys().hasAny(['permissoes']) && a.permissoes is map &&
+        a.permissoes.keys().hasAny(['recebimento-devolucoes']) && a.permissoes['recebimento-devolucoes'] is map &&
+        a.permissoes['recebimento-devolucoes'].keys().hasAny([operation]) && a.permissoes['recebimento-devolucoes'][operation] == true;
+      return accessExists() && ativoOk && (admOk || (lojaOk && ehAnalista && permitidoExplicito));
+    }
+
     function hasPermissionColetorRecebimento(operation) {
       let a = access();
       return admin() || (
@@ -1636,6 +1727,53 @@ service cloud.firestore {
           hasPermissionColetorRecebimento('editar')
         );
         allow delete: if canAccessStore(lojaId) && hasPermissionRecusas('excluir');
+      }
+
+      // Devoluções unificadas (2026-10-13) — catálogo fiscal de TODAS as
+      // notas de devolução (independente de motivo), uma por chave.
+      // Confirmar recebimento é a MESMA dupla permissão de
+      // recebimento_recusas (Analista via recebimento-devolucoes.confirmar,
+      // Coletor via hasPermissionColetorRecebimento — ele grava aqui além de
+      // recebimento_recusas, são dados operacionais separados). `!exists(...)`
+      // abaixo é só autorização (quem pode tentar) — a garantia real de "só
+      // um vencedor" vem da transação do Firestore em
+      // confirmarRecebimentoDevolucao, não da regra.
+      match /devolucoes_notas/{chave} {
+        allow read: if canAccessStore(lojaId) && (canUseAnalista() || canUseColetor());
+        allow create: if devolucoesPodeImportar(lojaId);
+        allow update: if devolucoesPodeImportar(lojaId) ||
+          (devolucoesPodeConfirmar(lojaId) &&
+            resource.data.estado == 'PENDENTE' && request.resource.data.estado == 'RECEBIDA' &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estado', 'atualizadoEm', 'recebidoEm', 'recebidoPor', 'origemRecebimento']));
+        allow delete: if canAccessStore(lojaId) && hasPermissionDevolucoes('excluir');
+      }
+
+      match /devolucoes_recebimentos/{chave} {
+        allow read: if canAccessStore(lojaId) && (canUseAnalista() || canUseColetor());
+        allow create: if devolucoesPodeConfirmar(lojaId) &&
+          !exists(/databases/$(database)/documents/lojas/$(lojaId)/devolucoes_recebimentos/$(chave));
+        // Imutável depois de criado — estornar é ação administrativa à
+        // parte (campos próprios, nunca sobrescreve quem/quando recebeu
+        // primeiro).
+        allow update: if canAccessStore(lojaId) && hasPermissionDevolucoes('estornar') &&
+          !('estornadoEm' in resource.data) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['estornadoEm', 'estornadoPor', 'motivoEstorno']);
+        allow delete: if false;
+      }
+
+      match /devolucoes_relatorios/{relatorioId} {
+        allow read: if canAccessStore(lojaId) && canUseAnalista();
+        allow create: if devolucoesPermissaoAnalista(lojaId, 'relatorio_criar');
+        allow update: if (devolucoesPermissaoAnalista(lojaId, 'relatorio_criar') && resource.data.status == 'RASCUNHO' && request.resource.data.status == 'RASCUNHO') ||
+          (devolucoesPermissaoAnalista(lojaId, 'relatorio_finalizar') &&
+            resource.data.status == 'RASCUNHO' && request.resource.data.status == 'FINALIZADO' &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'finalizadoEm', 'finalizadoPor']));
+        allow delete: if devolucoesPermissaoAnalista(lojaId, 'excluir') && resource.data.status == 'RASCUNHO';
+
+        match /linhas/{chave} {
+          allow read: if canAccessStore(lojaId) && canUseAnalista();
+          allow create, update, delete: if devolucoesPermissaoAnalista(lojaId, 'relatorio_criar');
+        }
       }
 
       // PEDIDO AO VIVO (2026-09-11): "clico demora muito para carregar" —

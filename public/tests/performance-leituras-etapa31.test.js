@@ -20,12 +20,15 @@ test('boot do Analista não executa módulos de Recebimento antes de abrir o set
   assert.match(lazy, /105-recebimento-patio-tempo-real\.js/);
 });
 
-test('carregar os 18 scripts de Recebimento juntos executa ZERO acessos a dados', async () => {
+test('carregar os 17 scripts de Recebimento juntos executa ZERO acessos a dados', async () => {
   const lazy = read('js/analista/00-lazy-areas.js');
   const bloco = lazy.match(/recebimento:\s*(\[[\s\S]*?\n\s*\])/);
   assert.ok(bloco, 'lista lazy de Recebimento precisa existir');
   const arquivos = Function('return ' + bloco[1])().map(src => src.split('?')[0]);
-  assert.equal(arquivos.length, 18);
+  // Devoluções unificadas (2026-10-13): 100-consulta-notas-fiscais.js e
+  // 102-devolucoes-bi-indicadores.js (2 arquivos) viraram 1 só,
+  // 106-devolucoes.js — 18 vira 17.
+  assert.equal(arquivos.length, 17);
   const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>', { url: 'http://localhost', runScripts: 'outside-only' });
   const { window } = dom;
   const acessos = [];

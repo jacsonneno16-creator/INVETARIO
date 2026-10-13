@@ -7,7 +7,8 @@
     "bq-recebimentos": "firebase/firestore-bigquery-export@0.3.3",
     "bq-recebimento-transbordo-cargas": "firebase/firestore-bigquery-export@0.3.3",
     "bq-recebimento-notas": "firebase/firestore-bigquery-export@0.3.3",
-    "bq-recebimento-cargas": "firebase/firestore-bigquery-export@0.3.3"
+    "bq-recebimento-cargas": "firebase/firestore-bigquery-export@0.3.3",
+    "bq-devolucoes-notas": "firebase/firestore-bigquery-export@0.3.3"
   },
   "firestore": {
     "rules": "firestore.rules",
