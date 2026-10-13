@@ -1,11 +1,16 @@
 'use strict';
 /**
- * Engrenagem de Configurações (pedido ao vivo do usuário): Usuários/
- * Coletores/Lojas/Integração API são cross-loja e não fazem sentido só
- * dentro de um setor — ficam num ícone ⚙️ na mesma linha dos setores
- * (Logística/Compras/PCP/Produção), acessível de qualquer setor. As 4 abrem
- * como modal "por cima" de onde o usuário estava (não navegam pra outro
- * setor).
+ * Configurações (pedido ao vivo do usuário): Usuários/Coletores/Lojas/
+ * Integração API são cross-loja e não fazem sentido só dentro de um setor
+ * — abrem como modal "por cima" de onde o usuário estava (não navegam pra
+ * outro setor), acessível de qualquer setor. As 4 permissões decidem se o
+ * botão aparece.
+ *
+ * ATUALIZAÇÃO (2026-10-01, pedido ao vivo): a engrenagem ⚙️ que ficava na
+ * barra global (ao lado dos setores) saiu dali — o único jeito de abrir
+ * Configurações agora é pelo botão dentro do modal "Meu perfil"
+ * (abrirPerfilSistema, 123-configuracoes-sistema.js), com a mesma
+ * permissão de antes decidindo se aparece.
  *
  * PEDIDO AO VIVO (2ª rodada): a Configuração da API (URL/token da BlueSoft,
  * dt_config/integracao_api) ficava só dentro de Inventário → Importar/
@@ -35,6 +40,7 @@ const fs = require('node:fs');
 const { JSDOM } = require('jsdom');
 
 const permCode = fs.readFileSync(path.join(__dirname, '..', 'js', 'analista', '37-usuarios-permissoes.js'), 'utf8');
+const configGlobalCode = fs.readFileSync(path.join(__dirname, '..', 'js', 'analista', '123-configuracoes-sistema.js'), 'utf8');
 
 function montarAmbiente(acesso) {
   const dom = new JSDOM(`<!doctype html><html><body>
@@ -61,44 +67,43 @@ function montarAmbiente(acesso) {
   win.ieSetTab = tab => { ieSetTabChamadas.push(tab); };
   win.DT_USUARIO_ACESSO_ATUAL = acesso;
   win.eval(permCode);
+  win.eval(configGlobalCode);
   return { win, goPageChamadas, ieSetTabChamadas };
 }
 
 const ACESSO_ADMIN = { admin_mestre: true, permissoes: { operadores: { visualizar: true }, coletores: { visualizar: true }, lojas: { visualizar: true }, 'importar-exportar': { visualizar: true } } };
 
-test('aplicarSetoresPermitidos: engrenagem de Configurações aparece na barra de setores como botão único (sem flyout de 3 itens) e já abre direto em Usuários', () => {
+// PEDIDO AO VIVO (2026-10-01): "as configurações já estão ali em cima...
+// tirar de lá, deixar só aqui nesse menu do perfil" — a engrenagem
+// ⚙️ Configurações saiu da barra global (setor-btn-config não existe
+// mais); o único jeito de abrir é pelo botão dentro do modal "Meu perfil"
+// (abrirPerfilSistema), que replica a MESMA permissão (podeConfig) que
+// antes decidia se a engrenagem aparecia ali em cima.
+test('aplicarSetoresPermitidos: engrenagem de Configurações não existe mais na barra global — só o botão de perfil' , () => {
   const { win } = montarAmbiente(ACESSO_ADMIN);
   win.aplicarSetoresPermitidos();
   const html = win.document.getElementById('setor-bar').innerHTML;
-  assert.match(html, /id="setor-btn-config"/);
-  // data-config-abrir (não onclick inline) — o sanitizador global de
-  // common-utils.js remove qualquer atributo on* de HTML injetado via
-  // .innerHTML, então o clique tem que ser resolvido pelo listener
-  // delegado em document, via data-*.
-  assert.match(html, /id="setor-btn-config"[^>]*data-config-abrir="operadores"/);
-  // Não é mais um flyout com 3 sub-itens — só um data-config-abrir na
-  // própria engrenagem, sem um segundo nível de sub-botões.
-  const ocorrencias = (html.match(/data-config-abrir="/g) || []).length;
-  assert.equal(ocorrencias, 1);
+  assert.doesNotMatch(html, /id="setor-btn-config"/);
+  assert.match(html, /id="setor-btn-perfil"[^>]*data-system-profile="1"/);
 });
 
-test('aplicarSetoresPermitidos: sem permissão de Usuários mas com Coletores, a engrenagem abre direto em Coletores', () => {
+test('abrirPerfilSistema: com qualquer permissão de config (mesmo só Coletores), o botão Configurações aparece no menu do perfil' , () => {
   const acesso = { admin_mestre: false, setores_permitidos: { logistica: true }, permissoes: { operadores: {}, coletores: { visualizar: true }, lojas: {}, 'importar-exportar': {} } };
   const { win } = montarAmbiente(acesso);
-  win.aplicarSetoresPermitidos();
-  const html = win.document.getElementById('setor-bar').innerHTML;
-  assert.match(html, /id="setor-btn-config"[^>]*data-config-abrir="coletores"/);
+  win.abrirPerfilSistema();
+  const html = win.document.getElementById('dt-profile-shell').innerHTML;
+  assert.match(html, /data-dt-profile-settings/);
 });
 
-test('REGRESSÃO: clique real (não chamada direta de função) na engrenagem abre o modal — pega o caso do sanitizador global de common-utils.js removendo onclick inline silenciosamente', () => {
+test('REGRESSÃO: clique real no botão Configurações do menu do perfil abre a tela completa de Configurações, não depende de onclick inline' , () => {
   const commonUtilsCode = fs.readFileSync(path.join(__dirname, '..', 'js', 'shared', 'common-utils.js'), 'utf8');
   const { win } = montarAmbiente(ACESSO_ADMIN);
   win.eval(commonUtilsCode); // instala o sanitizador real de .innerHTML, igual em produção
-  win.aplicarSetoresPermitidos();
-  const btn = win.document.getElementById('setor-btn-config');
-  assert.ok(btn, 'engrenagem deveria existir no DOM');
+  win.abrirPerfilSistema();
+  const btn = win.document.querySelector('[data-dt-profile-settings]');
+  assert.ok(btn, 'botão Configurações deveria existir no menu do perfil');
   btn.dispatchEvent(new win.Event('click', { bubbles: true }));
-  assert.ok(win.document.getElementById('modal-configuracoes').classList.contains('open'), 'clique real na engrenagem tem que abrir o modal (onclick inline seria removido pelo sanitizador — só data-* + listener delegado funciona)');
+  assert.ok(win.document.getElementById('dt-settings-shell').classList.contains('open'), 'clique real no botão precisa abrir o hub de Configurações');
 });
 
 test('abrirModalConfiguracoes: esconde as abas internas (cfgm-tab-*) que o usuário não tem permissão de ver', () => {
@@ -110,12 +115,12 @@ test('abrirModalConfiguracoes: esconde as abas internas (cfgm-tab-*) que o usuá
   assert.equal(win.document.getElementById('cfgm-tab-lojas').style.display, 'none');
 });
 
-test('aplicarSetoresPermitidos: sem nenhuma permissão de config, a engrenagem nem aparece (evita abrir um painel vazio)', () => {
+test('abrirPerfilSistema: sem nenhuma permissão de config, o botão Configurações nem aparece no menu do perfil (evita abrir um painel vazio)', () => {
   const acessoSemConfig = { admin_mestre: false, setores_permitidos: { logistica: true, compras: true }, permissoes: { operadores: {}, coletores: {}, lojas: {}, 'importar-exportar': {} } };
   const { win } = montarAmbiente(acessoSemConfig);
-  win.aplicarSetoresPermitidos();
-  const html = win.document.getElementById('setor-bar').innerHTML;
-  assert.doesNotMatch(html, /id="setor-btn-config"/);
+  win.abrirPerfilSistema();
+  const html = win.document.getElementById('dt-profile-shell').innerHTML;
+  assert.doesNotMatch(html, /data-dt-profile-settings/);
 });
 
 test('abrirModalConfiguracoes: move a página real pro modal, marca a aba certa e chama goPage — sem apagar a página de fora que estava ativa', () => {
@@ -166,12 +171,12 @@ test('REGRESSÃO: aplicarSetoresPermitidos() já move page-integracao-api pro mo
   assert.equal(win.document.getElementById('page-integracao-api').parentNode.id, 'modal-config-conteudo');
 });
 
-test('Integração API: sem nenhuma das outras 3 permissões, a engrenagem cai direto na aba de Integração (não navega mais pra Inventário)', () => {
+test('Integração API: com apenas permissão de integração, o botão Configurações continua disponível no menu do perfil' , () => {
   const acesso = { admin_mestre: false, setores_permitidos: { pcp: true }, permissoes: { operadores: {}, coletores: {}, lojas: {}, 'importar-exportar': { visualizar: true } } };
   const { win } = montarAmbiente(acesso);
-  win.aplicarSetoresPermitidos();
-  const html = win.document.getElementById('setor-bar').innerHTML;
-  assert.match(html, /id="setor-btn-config"[^>]*data-config-abrir="integracao"/);
+  win.abrirPerfilSistema();
+  const html = win.document.getElementById('dt-profile-shell').innerHTML;
+  assert.match(html, /data-dt-profile-settings/);
 });
 
 test('Integração API: abrirModalConfiguracoes("integracao") mostra page-integracao-api, marca a aba certa e chama ieSetTab(\'api\') pra carregar a config salva — sem passar pelo goPage genérico', () => {
