@@ -317,16 +317,16 @@
       <div class="kpi-grid" style="margin-bottom:14px">
         <div class="kpi blue"><span class="kpi-icon">📈</span><div class="kpi-val">${todas.length}</div><div class="kpi-lbl">Produtos c/ Projeção</div></div>
         <div class="kpi ${criticos.length ? 'orange' : 'green'}"><span class="kpi-icon">⚠️</span><div class="kpi-val">${criticos.length}</div><div class="kpi-lbl">Ruptura Iminente</div></div>
-        <div class="kpi teal"><span class="kpi-icon">📦</span><div class="kpi-val">${coberturaMedia != null ? coberturaMedia.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'd' : '—'}</div><div class="kpi-lbl">Cobertura Média</div></div>
+        <div class="kpi teal"><span class="kpi-icon">📦</span><div class="kpi-val">${coberturaMedia != null ? coberturaMedia.toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'd' : '—'}</div><div class="kpi-lbl">Cobertura Operacional Média</div></div>
         <div class="kpi purple"><span class="kpi-icon">📊</span><div class="kpi-val">${demandaSemanalTotal.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</div><div class="kpi-lbl">Demanda Semanal Total</div></div>
         <div class="kpi yellow"><span class="kpi-icon">🗓️</span><div class="kpi-val">${meses}</div><div class="kpi-lbl">Período Base (meses)</div></div>
       </div>
-      ${criticos.length ? `<div class="tc" style="padding:10px 14px;margin-bottom:12px;border-left:4px solid var(--danger);background:rgba(217,32,32,.06)"><b style="color:var(--danger)">⚠️ ${criticos.length} produto(s) em risco crítico de ruptura</b> — cobertura ≤ 3 dias: ${criticos.slice(0, 6).map(p => esc(p.produto)).join(', ')}${criticos.length > 6 ? '…' : ''}</div>` : ''}
+      ${criticos.length ? `<div class="tc" style="padding:10px 14px;margin-bottom:12px;border-left:4px solid var(--danger);background:rgba(217,32,32,.06)"><b style="color:var(--danger)">⚠️ ${criticos.length} produto(s) em risco operacional crítico</b> — cobertura operacional ≤ 3 dias: ${criticos.slice(0, 6).map(p => esc(p.produto)).join(', ')}${criticos.length > 6 ? '…' : ''}</div>` : ''}
       <div class="tc">
         <div style="overflow-x:auto">
           <table class="dt-table" style="table-layout:fixed;min-width:1120px;width:100%">
             <colgroup><col style="width:90px"><col style="width:34%"><col style="width:88px"><col style="width:88px"><col style="width:88px"><col style="width:115px"><col style="width:105px"><col style="width:105px"><col style="width:95px"><col style="width:92px"></colgroup>
-            <thead><tr><th>Cód.</th><th>Produto cadastrado na Produção</th><th style="text-align:right" title="Vendas do mês mais recente (histórico real)">Último mês</th><th style="text-align:right" title="Projeção do próximo mês (a partir do plano/meta)">Mês +1</th><th style="text-align:right" title="Projeção do mês seguinte ao próximo (a partir do plano/meta)">Mês +2</th><th style="text-align:right">Projeção/sem.</th><th style="text-align:right">Estoque (CX)</th><th style="text-align:right">Cobertura</th><th>Risco</th><th></th></tr></thead>
+            <thead><tr><th>Cód.</th><th>Produto cadastrado na Produção</th><th style="text-align:right" title="Vendas do mês mais recente (histórico real)">Último mês</th><th style="text-align:right" title="Projeção do próximo mês (a partir do plano/meta)">Mês +1</th><th style="text-align:right" title="Projeção do mês seguinte ao próximo (a partir do plano/meta)">Mês +2</th><th style="text-align:right">Projeção/sem.</th><th style="text-align:right">Estoque (CX)</th><th style="text-align:right">Cobertura operacional</th><th>Risco operacional</th><th></th></tr></thead>
             <tbody>
               ${linhas.length ? linhas.map(p => {
                 const risco = RISCO_INFO[p.risco];

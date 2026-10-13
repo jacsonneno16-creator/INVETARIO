@@ -1,4 +1,4 @@
-// Setor Produção — Gantt semanal (fase 3c: grade somente-leitura; fase 3d:
+﻿// Setor Produção — Gantt semanal (fase 3c: grade somente-leitura; fase 3d:
 // arrastar-e-soltar). Usa o motor de agenda V341
 // (`buildProducaoSchedule`, 63-producao-agenda.js) pra distribuir as OPs de
 // `producao_registros` pelos dias da semana, respeitando os turnos de cada
@@ -230,7 +230,12 @@
           const chave = nomeMaquina + '||' + anterior + '||' + rec.produto;
           if (!vistos.has(chave)) {
             vistos.add(chave);
-            const temEspecifico = _setups.some(s => s.maquina === nomeMaquina && (s.produtoOrigem ?? s.produto_origem) === anterior && (s.produtoDestino ?? s.produto_destino) === rec.produto);
+            const mesmoProdutoSetup = typeof global.producaoMesmoProdutoSetup === 'function'
+              ? global.producaoMesmoProdutoSetup
+              : ((a, b) => String(a || '').trim().toUpperCase() === String(b || '').trim().toUpperCase());
+            const temEspecifico = _setups.some(s => s.maquina === nomeMaquina
+              && mesmoProdutoSetup(s.produtoOrigem ?? s.produto_origem, anterior)
+              && mesmoProdutoSetup(s.produtoDestino ?? s.produto_destino, rec.produto));
             if (!temEspecifico) {
               const maquina = maquinasPorNome[nomeMaquina];
               const padrao = Number(maquina?.setupPadraoMin ?? maquina?.tempoSetupPadrao) || 0;

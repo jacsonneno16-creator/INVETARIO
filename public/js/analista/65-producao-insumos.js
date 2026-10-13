@@ -46,10 +46,11 @@
 
   async function carregarProducaoInsumos(forcar){
     if(_carregado&&!forcar)return;
+    let estoqueBi=[];try{estoqueBi=await global.DTProducaoInsumosBI.carregar(!!forcar);}catch(e){console.warn('[Produção Insumos] BI indisponível; usando materialização legada.',e);}
     const [m,r,f,e,el]=await Promise.all([
-      fs().collection(COL_MAQUINAS).get(),fs().collection(COL_REGISTROS).get(),fs().collection(COL_FICHAS).get(),fs().collection(COL_ESTOQUE).get().catch(()=>({docs:[]})),fs().collection(COL_ESTOQUE_LEGACY).get().catch(()=>({docs:[]}))
+      fs().collection(COL_MAQUINAS).get(),fs().collection(COL_REGISTROS).get(),fs().collection(COL_FICHAS).get(),estoqueBi.length?Promise.resolve({docs:[]}):fs().collection(COL_ESTOQUE).get().catch(()=>({docs:[]})),estoqueBi.length?Promise.resolve({docs:[]}):fs().collection(COL_ESTOQUE_LEGACY).get().catch(()=>({docs:[]}))
     ]);
-    _maquinas=m.docs.map(d=>({_firestoreId:d.id,...d.data()}));_registros=r.docs.map(d=>({_firestoreId:d.id,...d.data(),data:d.data().data||d.data().dtDesejada||d.data().dtSolicitacao||'',qntCaixas:n(d.data().qntCaixas??d.data().quantidadeCaixas??d.data().quantidade),prodCod:d.data().prodCod??d.data().cod??d.data().produtoCod??''}));_fichas=f.docs.map(d=>({_firestoreId:d.id,...d.data()}));const atual=e.docs.map(d=>({_firestoreId:d.id,...d.data()}));const antigo=el.docs.map(d=>({_firestoreId:d.id,...d.data(),insumo:d.data().insumo||d.data().nome||'',quantidade:n(d.data().quantidade??d.data().estoqueAtual),unidade:d.data().unidade||'',categoria:d.data().categoria||'Outros'}));_estoque=atual.length?atual:antigo;_carregado=true;
+    _maquinas=m.docs.map(d=>({_firestoreId:d.id,...d.data()}));_registros=r.docs.map(d=>({_firestoreId:d.id,...d.data(),data:d.data().data||d.data().dtDesejada||d.data().dtSolicitacao||'',qntCaixas:n(d.data().qntCaixas??d.data().quantidadeCaixas??d.data().quantidade),prodCod:d.data().prodCod??d.data().cod??d.data().produtoCod??''}));_fichas=f.docs.map(d=>({_firestoreId:d.id,...d.data()}));const atual=e.docs.map(d=>({_firestoreId:d.id,...d.data()}));const antigo=el.docs.map(d=>({_firestoreId:d.id,...d.data(),insumo:d.data().insumo||d.data().nome||'',quantidade:n(d.data().quantidade??d.data().estoqueAtual),unidade:d.data().unidade||'',categoria:d.data().categoria||'Outros'}));_estoque=estoqueBi.length?estoqueBi:(atual.length?atual:antigo);_carregado=true;
   }
 
   // PEDIDO AO VIVO (comparação com o original achou isso faltando): o

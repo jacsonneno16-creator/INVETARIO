@@ -34,6 +34,13 @@ function carregarPagina(dtBiPastaLocalMock, opts) {
   // mesmo objeto `colecoes`, nomes não colidem com as coleções globais acima.
   win.getDTFirestore = () => ({ collection: (nome) => colecoes[nome] || mockColecaoSomenteLeitura([]) });
   if (opts.firebase) win.firebase = opts.firebase;
+  else win.firebase = { app:()=>({ functions:()=>({ httpsCallable:(nome)=>async(payload)=>{
+    if(nome!=='buscarHistoricoComprasBigQuery') throw new Error('função não mockada: '+nome);
+    const col=colecoes.relatorios_bi_compras_historico_chunks;
+    const snap=col?await col.get():{docs:[]};
+    const linhas=[]; snap.docs.forEach(d=>{const data=d.data()||{}; const regs=data.registros||{}; Object.values(regs).forEach(x=>linhas.push(x));});
+    return {data:{ok:true,linhas}};
+  } }) }) };
   win.eval(code);
   return { win, document, colecoes };
 }
@@ -262,42 +269,41 @@ test('compras-historico: transferência (matriz→filial) aparece rotulada "Em T
 // funciona" — obterHistoricoComprasRealBi é o cache COMPARTILHADO que o
 // Dashboard de Compras (89-compras-dashboard.js) passa a reaproveitar, em
 // vez de fazer sua própria busca (uma leitura a menos que pode falhar).
-test('obterHistoricoComprasRealBi: busca uma vez, cacheia, e reaproveita — não busca de novo sem forçar', async () => {
-  let chamadasGet = 0;
-  const colChunks = { get: async () => { chamadasGet++; return { docs: [{ data: () => ({ registros: { a: { nf_numero: 1 } } }) }] }; } };
-  const { win } = carregarPagina({ suportado: () => false }, { colecoes: { relatorios_bi_compras_historico_chunks: colChunks } });
-  const linhas1 = await win.obterHistoricoComprasRealBi();
-  assert.equal(linhas1.length, 1);
-  assert.equal(chamadasGet, 1);
-  const linhas2 = await win.obterHistoricoComprasRealBi();
-  assert.equal(chamadasGet, 1, 'segunda chamada sem forçar não deve buscar de novo — reaproveita o cache');
-  assert.deepEqual(linhas2, linhas1);
-  await win.obterHistoricoComprasRealBi(true);
-  assert.equal(chamadasGet, 2, 'com forçar=true, busca de novo');
+test('obterHistoricoComprasRealBi: busca uma vez, cacheia, e reaproveita por período', async () => {
+  let chamadasFn = 0;
+  const firebase={app:()=>({functions:()=>({httpsCallable:()=>async()=>{chamadasFn++;return{data:{linhas:[{nf_numero:1,data_emissao:'2026-09-01'}]}};}})})};
+  const { win } = carregarPagina({ suportado: () => false }, { firebase });
+  const filtro={inicio:'2026-09-01',fim:'2026-09-30'};
+  const linhas1 = await win.obterHistoricoComprasRealBi(false,filtro);
+  assert.equal(linhas1.length, 1); assert.equal(chamadasFn,1);
+  const linhas2 = await win.obterHistoricoComprasRealBi(false,filtro);
+  assert.equal(chamadasFn,1); assert.deepEqual(linhas2,linhas1);
+  await win.obterHistoricoComprasRealBi(true,filtro);
+  assert.equal(chamadasFn,2);
 });
 
-test('obterHistoricoComprasRealBi: se a aba Histórico de Compras já foi aberta (buscou e cacheou), reaproveita sem nova leitura', async () => {
-  let chamadasGet = 0;
-  const colChunks = { get: async () => { chamadasGet++; return { docs: [{ data: () => ({ registros: { a: { nf_numero: 1 } } }) }] }; } };
-  const { win, document } = carregarPagina({ suportado: () => false }, { colecoes: { relatorios_bi_compras_historico_chunks: colChunks } });
+test('obterHistoricoComprasRealBi: aba Histórico de Compras reaproveita o cache do mesmo período', async () => {
+  let chamadasFn=0;
+  const firebase={app:()=>({functions:()=>({httpsCallable:()=>async()=>{chamadasFn++;return{data:{linhas:[{nf_numero:1,data_emissao:new Date().toISOString().slice(0,10)}]}};}})})};
+  const { win, document } = carregarPagina({ suportado: () => false }, { firebase });
   await win.renderRelatoriosBi('page-producao-relatorios-bi');
   document.querySelector('[data-rbi-tab="compras-historico"]').click();
   document.querySelector('[data-rbi-buscar]').click();
-  await new Promise(r => setTimeout(r, 0));
-  assert.equal(chamadasGet, 1);
-  const linhas = await win.obterHistoricoComprasRealBi();
-  assert.equal(chamadasGet, 1, 'já tinha cache da aba — não busca de novo');
-  assert.equal(linhas.length, 1);
+  await new Promise(r=>setTimeout(r,0));
+  assert.equal(chamadasFn,1);
+  const ini=document.getElementById('rbi-filtro-ini').value, fim=document.getElementById('rbi-filtro-fim').value;
+  const linhas=await win.obterHistoricoComprasRealBi(false,{inicio:ini,fim});
+  assert.equal(chamadasFn,1); assert.equal(linhas.length,1);
 });
 
-test('"Forçar sincronização agora" chama a Cloud Function certa e depois relê os pacotes', async () => {
-  let funcaoChamada = '';
+test('"Forçar sincronização agora" chama a Cloud Function certa e depois relê o período', async () => {
+  const funcoesChamadas = [];
   const colChunks = mockColecaoSomenteLeitura([{ id: 'chunk_0', data: { registros: { a: { data_emissao: '2026-01-01' } } } }]);
   const { win, document } = carregarPagina(
     { suportado: () => false },
     {
       colecoes: { relatorios_bi_compras_historico_chunks: colChunks },
-      firebase: { app: () => ({ functions: () => ({ httpsCallable: (nome) => { funcaoChamada = nome; return async () => ({ data: { ok: true, resultado: { novos: 5 } } }); } }) }) },
+      firebase: { app: () => ({ functions: () => ({ httpsCallable: (nome) => { funcoesChamadas.push(nome); return async () => nome === 'buscarHistoricoComprasBigQuery' ? ({ data: { ok: true, linhas: [{ data_emissao: '2026-09-01' }] } }) : ({ data: { ok: true, resultado: { novos: 5 } } }); } }) }) },
     }
   );
   await win.renderRelatoriosBi('page-producao-relatorios-bi');
@@ -305,7 +311,8 @@ test('"Forçar sincronização agora" chama a Cloud Function certa e depois rel�
   document.querySelector('[data-rbi-forcar-sync]').click();
   await new Promise(r => setTimeout(r, 0));
   await new Promise(r => setTimeout(r, 0));
-  assert.equal(funcaoChamada, 'sincronizarComprasHistoricoBiAgora');
+  assert.ok(funcoesChamadas.includes('sincronizarComprasHistoricoBiAgora'));
+  assert.ok(funcoesChamadas.includes('buscarHistoricoComprasBigQuery'), 'depois do sync relê somente o período pelo BigQuery');
 });
 
 // PEDIDO AO VIVO (2026-08-28): "esse estoque versus pedidos tem que

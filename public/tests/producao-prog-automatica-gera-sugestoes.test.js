@@ -333,9 +333,9 @@ test('gerarSugestoes: produção de uma semana entra no estoque projetado da sem
   const { win } = carregarPagina({
     produtos: [{ id: 'p1', data: { cod: '304', nome: 'Tapioca', maquina: 'Extrusora 1', pc_min: 1000, ativo: true } }], // capacidade bem folgada — não é o gargalo aqui
     maquinas: [{ id: 'm1', data: { nome: 'Extrusora 1', ativo: true, pcMin: 1000 } }],
-    // diária=100cx, alvo(20d)=2000, estoque inicial=1700 -> necessidade da
-    // semana 1 = 300cx. Se a semana 1 realmente entregar as 300cx (estoque
-    // vira 2000), a semana 2 só precisa repor o consumo da semana (700cx),
+    // diária=100cx, alvo padrão corrigido=30d=3000, estoque inicial=1700 ->
+    // necessidade da semana 1 = 1300cx. Se a semana 1 entregar as 1300cx
+    // (estoque vira 3000), a semana 2 só precisa repor o consumo (700cx),
     // nunca mais que isso — se o bug estivesse de volta, a semana 2 pediria
     // bem mais (o motor "esqueceria" que já produziu 300 na semana 1).
     projecao: [{ cod: '304', produto: 'Tapioca', projSemanal: 700, estoqueAtual: 1700 }],
@@ -344,10 +344,10 @@ test('gerarSugestoes: produção de uma semana entra no estoque projetado da sem
   win.gerarProducaoAutomaticaAvancada(false);
   const s = win._DTProgAutomaticaInternals.getSugestoes().filter(x => !x.semMaquina)[0];
   assert.ok(s, 'produto entra na programação');
-  assert.equal(s.semanasArr[0], 300, 'semana 1: exatamente o necessário pra fechar a cobertura alvo (2000 - 1700)');
+  assert.equal(s.semanasArr[0], 1300, 'semana 1: exatamente o necessário pra fechar a cobertura alvo corrigida de 30 dias (3000 - 1700)');
   assert.equal(s.semanasArr[1], 700, 'semana 2: só repõe o consumo da semana (700) — nunca mais, prova que reconheceu os 300 já produzidos na semana 1');
   assert.equal(s.semanasArr[2], 700, 'semana 3: mesma reposição estável, sem escalar semana após semana');
-  assert.equal(s.cxAlocadasTotal, 300 + 700 + 700 + 700, 'total do mês é a soma exata das 4 semanas, sem inflar');
+  assert.equal(s.cxAlocadasTotal, 1300 + 700 + 700 + 700, 'total do mês é a soma exata das 4 semanas, sem inflar');
 });
 
 // PEDIDO AO VIVO (2026-09-07): "ficou um negócio estranho, produzindo o
@@ -631,14 +631,14 @@ function marcarModoSemana(document) {
 test('gerarSugestoes: pedidos pendentes (comprometido) descontam do estoque antes de calcular a necessidade', async () => {
   const produtos = [{ id: 'p1', data: { cod: '304', nome: 'Tapioca', maquina: 'Extrusora 1', pc_min: 1000, ativo: true } }];
   const maquinas = [{ id: 'm1', data: { nome: 'Extrusora 1', ativo: true, pcMin: 1000 } }];
-  const projecao = [{ cod: '304', produto: 'Tapioca', projSemanal: 700, estoqueAtual: 2000 }]; // sem pedido: já cobriria os 20d (alvo) sozinho
+  const projecao = [{ cod: '304', produto: 'Tapioca', projSemanal: 700, estoqueAtual: 3000 }]; // sem pedido: já cobre os 30d (alvo corrigido) sozinho
 
   const { win: semPedido, document: docSemPedido } = carregarPagina({ produtos, maquinas, projecao });
   await semPedido.renderProducaoProgAutomatica();
   marcarModoSemana(docSemPedido);
   semPedido.gerarProducaoAutomaticaAvancada(false);
   const sSemPedido = semPedido._DTProgAutomaticaInternals.getSugestoes().filter(x => !x.semMaquina)[0];
-  assert.equal(sSemPedido?.cxAlocadasTotal || 0, 0, 'sem pedido pendente, estoque=2000 já cobre o alvo (20d=2000) — nenhuma produção necessária nesta semana');
+  assert.equal(sSemPedido?.cxAlocadasTotal || 0, 0, 'sem pedido pendente, estoque=3000 já cobre o alvo (30d=3000) — nenhuma produção necessária nesta semana');
 
   const { win: comPedido, document: docComPedido } = carregarPagina({
     produtos, maquinas, projecao,
@@ -648,8 +648,8 @@ test('gerarSugestoes: pedidos pendentes (comprometido) descontam do estoque ante
   marcarModoSemana(docComPedido);
   comPedido.gerarProducaoAutomaticaAvancada(false);
   const sComPedido = comPedido._DTProgAutomaticaInternals.getSugestoes().filter(x => !x.semMaquina)[0];
-  assert.ok(sComPedido, 'com 1500cx comprometidas, estoque líquido (2000-1500=500) fica abaixo do alvo — precisa produzir');
-  // necessidade = alvo(2000) - estoqueLiquido(500) = 1500cx.
+  assert.ok(sComPedido, 'com 1500cx comprometidas, estoque líquido (3000-1500=1500) fica abaixo do alvo — precisa produzir');
+  // necessidade = alvo(3000) - estoqueLiquido(1500) = 1500cx.
   assert.equal(sComPedido.semanasArr[0], 1500, `deveria produzir exatamente os 1500cx que faltam pro alvo depois de descontar o pedido — veio ${sComPedido.semanasArr[0]}`);
 });
 
@@ -657,28 +657,28 @@ test('gerarSugestoes: pedido CANCELADO não desconta do estoque', async () => {
   const { win, document } = carregarPagina({
     produtos: [{ id: 'p1', data: { cod: '304', nome: 'Tapioca', maquina: 'Extrusora 1', pc_min: 1000, ativo: true } }],
     maquinas: [{ id: 'm1', data: { nome: 'Extrusora 1', ativo: true, pcMin: 1000 } }],
-    projecao: [{ cod: '304', produto: 'Tapioca', projSemanal: 700, estoqueAtual: 2000 }],
+    projecao: [{ cod: '304', produto: 'Tapioca', projSemanal: 700, estoqueAtual: 3000 }],
     pedidos: [{ id: 'ped1', data: { prodCod: '304', produto: 'Tapioca', quantidade: 1500, quantidadeAtendida: 0, status: 'cancelado' } }],
   });
   await win.renderProducaoProgAutomatica();
   marcarModoSemana(document);
   win.gerarProducaoAutomaticaAvancada(false);
   const s = win._DTProgAutomaticaInternals.getSugestoes().filter(x => !x.semMaquina)[0];
-  assert.equal(s?.cxAlocadasTotal || 0, 0, 'pedido cancelado não é comprometido de verdade — estoque=2000 continua cobrindo o alvo sozinho, nenhuma produção necessária nesta semana');
+  assert.equal(s?.cxAlocadasTotal || 0, 0, 'pedido cancelado não é comprometido de verdade — estoque=3000 continua cobrindo o alvo sozinho, nenhuma produção necessária nesta semana');
 });
 
 test('gerarSugestoes: pedido parcialmente atendido desconta só o que falta atender', async () => {
   const { win } = carregarPagina({
     produtos: [{ id: 'p1', data: { cod: '304', nome: 'Tapioca', maquina: 'Extrusora 1', pc_min: 1000, ativo: true } }],
     maquinas: [{ id: 'm1', data: { nome: 'Extrusora 1', ativo: true, pcMin: 1000 } }],
-    projecao: [{ cod: '304', produto: 'Tapioca', projSemanal: 700, estoqueAtual: 2000 }],
+    projecao: [{ cod: '304', produto: 'Tapioca', projSemanal: 700, estoqueAtual: 3000 }],
     // pedido de 1500, já atendeu 1400 -> falta atender só 100.
     pedidos: [{ id: 'ped1', data: { prodCod: '304', produto: 'Tapioca', quantidade: 1500, quantidadeAtendida: 1400, status: 'pendente' } }],
   });
   await win.renderProducaoProgAutomatica();
   win.gerarProducaoAutomaticaAvancada(false);
   const s = win._DTProgAutomaticaInternals.getSugestoes().filter(x => !x.semMaquina)[0];
-  assert.ok(s, 'estoque líquido (2000-100=1900) fica abaixo do alvo (2000) — entra na fila de produção');
-  // necessidade = alvo(2000) - estoqueLiquido(1900) = 100cx (só o que falta atender do pedido).
+  assert.ok(s, 'estoque líquido (3000-100=2900) fica abaixo do alvo (3000) — entra na fila de produção');
+  // necessidade = alvo(3000) - estoqueLiquido(2900) = 100cx (só o que falta atender do pedido).
   assert.equal(s.semanasArr[0], 100, `deveria descontar só os 100cx ainda não atendidos, não os 1500cx do pedido inteiro — veio ${s.semanasArr[0]}`);
 });

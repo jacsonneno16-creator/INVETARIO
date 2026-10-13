@@ -19,7 +19,11 @@ function mockColecao(docsIniciais) {
   return { get: async () => ({ docs: [...registro.entries()].map(([id, data]) => ({ id, data: () => data })) }) };
 }
 
-function iso(d) { return d.toISOString().slice(0, 10); }
+// Data local (não `.toISOString()`, que converte pra UTC): perto da meia-noite
+// no fuso de Brasília (UTC-3) o dia em UTC já vira amanhã, fazendo o fixture
+// cair fora da janela "semana atual"/"hoje" que o componente calcula em hora
+// local (mesmo bug de fuso já visto e corrigido em outro teste desta sessão).
+function iso(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
 
 function carregarPagina(registros) {
   const dom = new JSDOM('<!doctype html><html><body><div id="page-producao-relatorios"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });

@@ -27,10 +27,26 @@
   // diferentes que por acaso compartilham prefixo (ex: "Tapioca" e "Tapioca
   // Recheada") ficariam com 0min de setup entre si por engano.
   function _normNome(v) { return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim(); }
+
+  // O cadastro de setup costuma guardar somente a descricao do item, enquanto
+  // a programacao visual recebe o nome operacional completo: CODIGO + DESCRICAO
+  // + embalagem (ex.: "01786 OREGANO DA TERRINHA 200 G - FD 12").
+  // Para casar os dois lados com seguranca, removemos APENAS o codigo numerico
+  // inicial e o complemento de embalagem depois de " - ". A descricao-base
+  // continua sendo comparada inteira/prefixo, portanto produtos diferentes nao
+  // viram o mesmo item so por compartilhar uma palavra inicial.
+  function _normProdutoSetup(v) {
+    return _normNome(v)
+      .replace(/^\d{3,}\s*[-–—.:/]?\s*/, '')
+      .replace(/\s+-\s+.*$/, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   function _mesmoProdutoNome(a, b) {
-    const na = _normNome(a), nb = _normNome(b);
+    const na = _normProdutoSetup(a), nb = _normProdutoSetup(b);
     if (!na || !nb) return false;
-    return na === nb || na.startsWith(nb) || nb.startsWith(na);
+    return na === nb || na.startsWith(nb + ' ') || nb.startsWith(na + ' ');
   }
 
   function _parseFaixaMin(faixa) {
@@ -206,4 +222,5 @@
   global.buildProducaoSchedule = buildProducaoSchedule;
   global.getTurnoMinutosDoDia = getTurnoMinutosDoDia;
   global.getSetupMin = getSetupMin;
+  global.producaoMesmoProdutoSetup = _mesmoProdutoNome;
 })(window);

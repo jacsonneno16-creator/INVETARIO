@@ -47,10 +47,19 @@
   async function carregarProgAutomatica(forcar){
     if(_carregado && !forcar) return;
     await global.carregarProducaoProjecao?.(forcar);
+    // Carrega a fonte oficial de estoque de insumos diretamente nesta tela.
+    // Assim a Programação Automática não depende de PCP Central/Ins. Produção
+    // terem sido abertas antes. Firestore fica apenas como fallback técnico se
+    // o BI estiver indisponível.
+    let biInsumos=[];
+    try{ biInsumos=await global.DTProducaoInsumosBI?.carregar?.(forcar)||[]; }catch(_){ biInsumos=[]; }
+    const estoquePromise=biInsumos.length
+      ? Promise.resolve({docs:[]})
+      : fs().collection(COL_INSUMOS_ESTOQUE).get().catch(()=>({docs:[]}));
     const [p,m,r,s,f,i,ped]=await Promise.all([
       fs().collection(COL_PRODUTOS).get(), fs().collection(COL_MAQUINAS).get(),
       fs().collection(COL_REGISTROS).get(), fs().collection(COL_SETUP).get(),
-      fs().collection(COL_FICHAS).get(), fs().collection(COL_INSUMOS_ESTOQUE).get().catch(()=>({docs:[]})),
+      fs().collection(COL_FICHAS).get(), estoquePromise,
       // best-effort: sem permissão de PCP ou coleção vazia, o desconto de
       // comprometido simplesmente fica 0 pra todo mundo — nunca trava a
       // Programação Automática por causa disso.
@@ -157,9 +166,17 @@
   }
   function setupMin(maquina,orig,dest){ return global.getSetupMin?.(maquina,orig,dest,_setups)||0; }
 
+  function canonInsumo(v){return norm(v).replace(/^\s*\d+[^A-Z0-9]*/,'').replace(/^\s*(MP|MAT(?:ERIA)?\s*PRIMA|MATERIA\s*PRIMA|LOGISTICA)[^A-Z0-9]+/,'').replace(/[^A-Z0-9]+/g,' ').replace(/\s+/g,' ').trim();}
+  // Fonte única da Produção: dados-insumos.json via serviço compartilhado.
+  // Não depende de PCP Central estar aberto. Firestore existe só como
+  // compatibilidade quando a API do BI estiver realmente indisponível.
   function estoqueInsumosMap(){
-    const m=new Map();
-    _insumosEstoque.forEach(i=>m.set(norm(i.insumo||i.nome),n(i.quantidade)));
+    const m=new Map(),bi=global.DTProducaoInsumosBI?.get?.()||[];
+    if(bi.length){
+      bi.forEach(i=>{const nome=i.produto||i.insumo||i.nome||'';const saldo=n(i.estoque??i.quantidade);if(nome)m.set(canonInsumo(nome),saldo);});
+      return m;
+    }
+    _insumosEstoque.forEach(i=>{const nome=i.insumo||i.nome||i.produto||'';if(nome)m.set(canonInsumo(nome),n(i.quantidade??i.estoqueAtual??i.estoque));});
     return m;
   }
   function maxCaixasPorInsumos(prod,qtdDesejada,mapa){
@@ -167,7 +184,7 @@
     let max=qtdDesejada; const faltas=[];
     (ficha.insumos||[]).forEach(i=>{
       const porCx=n(i.qty); if(porCx<=0)return;
-      const saldo=n(mapa.get(norm(i.insumo)),0);
+      const saldo=n(mapa.get(canonInsumo(i.insumo)),0);
       const poss=Math.floor(saldo/porCx);
       max=Math.min(max,poss);
       if(poss<qtdDesejada) faltas.push({insumo:i.insumo,necessario:qtdDesejada*porCx,disponivel:saldo,possivelCx:poss});
@@ -176,14 +193,21 @@
   }
   function consumirInsumos(prod,cx,mapa){
     const ficha=fichaCad(prod); if(!ficha)return;
-    (ficha.insumos||[]).forEach(i=>{ const q=n(i.qty)*cx; const k=norm(i.insumo); mapa.set(k,Math.max(0,n(mapa.get(k))-q)); });
+    (ficha.insumos||[]).forEach(i=>{ const q=n(i.qty)*cx; const k=canonInsumo(i.insumo); mapa.set(k,Math.max(0,n(mapa.get(k))-q)); });
   }
 
   function parametros(){
+    const coberturaMin=Math.max(1,n(document.getElementById('ppa-cobertura-min')?.value,30));
+    // O alvo nunca pode ficar abaixo do próprio gatilho de reposição. Antes
+    // o padrão era mínimo=30 e alvo=20: o item entrava na fila por estar
+    // abaixo de 30d e a própria produção o deixava em apenas 20d, portanto
+    // continuava em falta na rodada seguinte. Mantém os mesmos campos e
+    // leituras; corrige somente a regra matemática.
+    const coberturaAlvo=Math.max(coberturaMin,Math.max(1,n(document.getElementById('ppa-cobertura-alvo')?.value,30)));
     return {
       modo:document.querySelector('input[name="ppa-modo"]:checked')?.value||'mes',
-      coberturaMin:Math.max(1,n(document.getElementById('ppa-cobertura-min')?.value,30)),
-      coberturaAlvo:Math.max(1,n(document.getElementById('ppa-cobertura-alvo')?.value,20)),
+      coberturaMin,
+      coberturaAlvo,
       riscoCritico:Math.max(1,n(document.getElementById('ppa-risco-critico')?.value,10)),
       maxPct:clamp(n(document.getElementById('ppa-max-pct')?.value,90)/100,.1,1),
       insumo:document.querySelector('input[name="ppa-insumo"]:checked')?.value||'total',
@@ -425,7 +449,7 @@
           // tela manda sempre — a meta por produto deixa de valer aqui
           // (continua existindo/configurável, só não participa mais deste
           // cálculo).
-          const diaria=e.demandaSem/7, alvoDias=Math.max(1,n(p.coberturaAlvo,20)), alvo=diaria*alvoDias;
+          const diaria=e.demandaSem/7, alvoDias=Math.max(p.coberturaMin,Math.max(1,n(p.coberturaAlvo,30))), alvo=diaria*alvoDias;
           let necessidade=Math.max(0,Math.ceil(alvo-e.estoque));
           const minimo=Math.max(0,n(e.prod.producaoMinima));
           const multiplo=Math.max(0,n(e.prod.multiploProducao));
@@ -582,7 +606,7 @@
         <div style="display:flex;align-items:center;gap:8px"><b style="font-size:.86rem">${esc(maquina)}</b>${criticos?`<span class="badge b-red">${criticos} crítico(s)</span>`:''}${semInsumo?`<span class="badge b-orange">${semInsumo} sem insumo</span>`:''}</div>
         <div style="font-size:.7rem;color:var(--muted)">${totalCxS1.toLocaleString('pt-BR')} cx S1${coxMesLabel} · ${totalHrs.toLocaleString('pt-BR',{maximumFractionDigits:1})}h${pctMedio!=null?` · ${pctMedio.toFixed(0)}% da semana`:''}</div>
       </div>
-      <div style="overflow:auto"><table class="dt-table"><thead><tr><th></th><th>Produto</th><th>Motivo / Risco</th><th>Estoque</th><th>Cob. Atual</th><th>Dem. Sem.</th><th>Semana 1</th><th>Total Mês</th><th>Tempo</th><th>%Máq.</th><th>Cob. Final</th><th>Insumos</th><th>Distribuição S1 + Plano 4 Sem.</th></tr></thead><tbody>${linhasHtml}</tbody></table></div>
+      <div style="overflow:auto"><table class="dt-table"><thead><tr><th></th><th>Produto</th><th>Motivo / Risco</th><th>Estoque</th><th>Cob. cenário atual</th><th>Dem. Sem.</th><th>Semana 1</th><th>Total Mês</th><th>Tempo</th><th>%Máq.</th><th>Cob. cenário final</th><th>Insumos</th><th>Distribuição S1 + Plano 4 Sem.</th></tr></thead><tbody>${linhasHtml}</tbody></table></div>
     </div>`;
   }
   function _desenharProgAutomatica(){
@@ -630,9 +654,9 @@
       <div class="tc" style="padding:14px;margin-bottom:16px">
         <div style="font-weight:700;font-size:.8rem;margin-bottom:10px">⚙️ Parâmetros da Programação Automática</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px">
-          <div class="form-group" style="margin:0"><label>Cobertura Mínima Desejada (dias)</label><input id="ppa-cobertura-min" class="field" type="number" min="1" value="${p.coberturaMin}"></div>
-          <div class="form-group" style="margin:0"><label>Cobertura Alvo Após Produção (dias)</label><input id="ppa-cobertura-alvo" class="field" type="number" min="1" value="${p.coberturaAlvo}"></div>
-          <div class="form-group" style="margin:0"><label>Risco Crítico Abaixo de (dias)</label><input id="ppa-risco-critico" class="field" type="number" min="1" value="${p.riscoCritico}"></div>
+          <div class="form-group" style="margin:0"><label>Cobertura mínima do cenário (dias)</label><input id="ppa-cobertura-min" class="field" type="number" min="1" value="${p.coberturaMin}"></div>
+          <div class="form-group" style="margin:0"><label>Cobertura alvo do cenário após produção (dias)</label><input id="ppa-cobertura-alvo" class="field" type="number" min="1" value="${p.coberturaAlvo}"></div>
+          <div class="form-group" style="margin:0"><label>Risco operacional do cenário abaixo de (dias)</label><input id="ppa-risco-critico" class="field" type="number" min="1" value="${p.riscoCritico}"></div>
           <div class="form-group" style="margin:0"><label>% Máx. da Máquina por Produto</label><input id="ppa-max-pct" class="field" type="number" min="10" max="100" value="${Math.round(p.maxPct*100)}"></div>
           <div class="form-group" style="margin:0"><label>Fechamento da Última Semana</label><select id="ppa-fechamento" class="field"><option value="mes-seguinte" ${p.fechamento==='mes-seguinte'?'selected':''}>↪ Pode cruzar para o mês seguinte</option><option value="este-mes" ${p.fechamento==='este-mes'?'selected':''}>🔒 Só dias deste mês (corta na virada)</option></select></div>
         </div>

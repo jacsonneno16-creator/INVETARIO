@@ -19,6 +19,10 @@
   let _modoModalPft = 'produto';
 
   function fs() { return global.getDTFirestore(); }
+  function raw() { return global.getDTRawFirestore(); }
+  function _lojaAtivaId(){return String(global.getDTLojaAtiva?.()||'');}
+  function _refProdutoCrossLoja(lojaId,docId){return raw().collection('lojas').doc(String(lojaId)).collection(COL_PRODUTOS).doc(docId);}
+  function _refFichaCrossLoja(lojaId,docId){return raw().collection('lojas').doc(String(lojaId)).collection(COL_FICHAS).doc(docId);}
 
   async function carregarProducaoDados(forcar) {
     if (_carregado && !forcar) return;
@@ -53,8 +57,8 @@
     _fichas.forEach(f => porCod.set(String(f.cod), f));
     return _produtos.map(p => {
       const ficha = porCod.get(String(p.cod));
-      if (ficha) return { ...p, ...ficha, desc: ficha.desc || p.nome || p.desc || '', categoria: ficha.categoria || p.categoria || '', classificacao: ficha.classificacao || p.classificacao || '', metaCoberturaDias: Number(ficha.metaCoberturaDias ?? p.metaCoberturaDias ?? p.coberturaDias) || 0, producaoMinima: Number(ficha.producaoMinima ?? p.producaoMinima) || 0, multiploProducao: Number(ficha.multiploProducao ?? p.multiploProducao) || 0, tipoMinimo: ficha.tipoMinimo || p.tipoMinimo || '', prioridadeProducao: Number(ficha.prioridadeProducao ?? p.prioridadeProducao) || 2, alergenico: ficha.alergenico === true || p.alergenico === true };
-      return { cod: p.cod, desc: p.nome || p.desc || '', unid: p.unid || 1, pc_min: p.pc_min || 0, maquina: p.maquina || '', categoria: p.categoria || '', classificacao: p.classificacao || '', metaCoberturaDias: Number(p.metaCoberturaDias ?? p.coberturaDias) || 0, producaoMinima: Number(p.producaoMinima) || 0, multiploProducao: Number(p.multiploProducao) || 0, tipoMinimo: p.tipoMinimo || '', prioridadeProducao: Number(p.prioridadeProducao) || 2, alergenico: p.alergenico === true, produtoAtivo: p.produtoAtivo !== false && p.ativo !== false, ativo: p.ativo !== false, empresaProdutoraId: p.empresaProdutoraId || '', empresaProdutoraNome: p.empresaProdutoraNome || '', insumos: [], _semFicha: true, _produtoId: p._firestoreId };
+      if (ficha) return { ...p, ...ficha, desc: ficha.desc || p.nome || p.desc || '', categoria: ficha.categoria || p.categoria || '', classificacao: ficha.classificacao || p.classificacao || '', metaCoberturaDias: Number(ficha.metaCoberturaDias ?? p.metaCoberturaDias ?? p.coberturaDias) || 0, producaoMinima: Number(ficha.producaoMinima ?? p.producaoMinima) || 0, multiploProducao: Number(ficha.multiploProducao ?? p.multiploProducao) || 0, tipoMinimo: ficha.tipoMinimo || p.tipoMinimo || '', prioridadeProducao: (ficha.prioridadeProducao ?? p.prioridadeProducao ?? '') === '' ? null : Number(ficha.prioridadeProducao ?? p.prioridadeProducao), alergenico: ficha.alergenico === true || p.alergenico === true };
+      return { cod: p.cod, desc: p.nome || p.desc || '', unid: p.unid || 1, pc_min: p.pc_min || 0, maquina: p.maquina || '', categoria: p.categoria || '', classificacao: p.classificacao || '', metaCoberturaDias: Number(p.metaCoberturaDias ?? p.coberturaDias) || 0, producaoMinima: Number(p.producaoMinima) || 0, multiploProducao: Number(p.multiploProducao) || 0, tipoMinimo: p.tipoMinimo || '', prioridadeProducao: (p.prioridadeProducao ?? '') === '' ? null : Number(p.prioridadeProducao), alergenico: p.alergenico === true, produtoAtivo: p.produtoAtivo !== false && p.ativo !== false, ativo: p.ativo !== false, empresaProdutoraId: p.empresaProdutoraId || '', empresaProdutoraNome: p.empresaProdutoraNome || '', insumos: [], _semFicha: true, _produtoId: p._firestoreId };
     });
   }
 
@@ -178,7 +182,7 @@
           <span class="pftcfg-auto">Gerada automaticamente ao importar produtos</span>
         </div>
         <div class="pftcfg-bi" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 4px;padding:10px 12px;border-radius:8px;background:#eef7f0;border:1px solid #cfe8d6">
-          <div style="font-size:.75rem;color:#1E6F4E"><b>📊 Buscar do BI:</b> ${global.DTBiPastaLocal?.suportado?.() ? 'busca direto do SharePoint (API) — clique em Buscar, ou espere, atualiza sozinho a cada 30 min enquanto a tela estiver aberta.' : 'serviço de busca do BI indisponível no momento (recarregue a página).'}</div>
+          <div style="font-size:.75rem;color:#1E6F4E"><b>📊 Buscar do BI:</b> ${global.DTBiPastaLocal?.suportado?.() ? 'busca direto do SharePoint (API). Clique em Buscar para atualizar agora; a sincronização automática geral ocorre no servidor.' : 'serviço de busca do BI indisponível no momento (recarregue a página).'}</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             ${global.DTBiPastaLocal?.suportado?.() ? '<button type="button" class="btn btn-primary btn-sm" data-pft-buscar-bi="1">📊 Buscar</button><button type="button" class="btn btn-ghost btn-sm" data-pft-corrigir-categoria="1" title="Preenche a categoria (Mat. Prima/Embalagem/etc) dos insumos que ainda estão sem, usando o dados-insumos.json do BI">🏷️ Corrigir categoria dos insumos</button>' : ''}
           </div>
@@ -230,9 +234,26 @@
   // insumo, só nome (descricao_insumo) — o cruzamento só pode ser por nome
   // normalizado, nunca por código.
   const ARQUIVO_BI_INSUMOS = 'dados-insumos.json';
-  const INTERVALO_AUTO_BUSCA_MS = 30 * 60 * 1000; // pedido ao vivo: a cada 30 minutos
   let _ultimaBuscaBiFichaTexto = '';
   function _normInsumoNome(v) { return String(v || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').trim(); }
+  // Id de doc do Firestore não aceita "/" e tem limite de 1500 bytes — a
+  // ficha técnica só tem NOME de insumo (sem código real, ver comentário
+  // acima), então o id da subcoleção produtos_mestre/{cod}/insumos/{id} é
+  // o nome normalizado nesse formato seguro, truncado por segurança.
+  function _idSeguroInsumo(nome) { return _normInsumoNome(nome).replace(/[^A-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 300); }
+  async function _sincronizarProdutoMestreFicha({cod,desc='',categoria='',classificacao='',pc_min=null,ativo=null,insumos=[],agora=null}={}) {
+    cod=String(cod||'').trim();if(!cod)return;
+    agora=agora||new Date().toISOString();
+    const patch={cod,fichaTecnicaAtualizadaEm:agora,fichaTecnicaAtualizadaPor:global._currentAnalistaUser?.email||'',insumosCount:(insumos||[]).length};
+    if(desc)patch.nome=desc;if(categoria)patch.categoria=categoria;if(classificacao)patch.classificacao=classificacao;
+    if(pc_min!==null&&pc_min!==undefined)patch.pc_min=Number(pc_min)||0;if(ativo!==null&&ativo!==undefined)patch.ativo=ativo!==false;
+    const doc=raw().collection('produtos_mestre').doc(cod);
+    await doc.set(patch,{merge:true});
+    const col=doc.collection('insumos'),snap=await col.get().catch(()=>({docs:[]}));
+    const desejados=new Map();(insumos||[]).forEach(i=>{const id=_idSeguroInsumo(i.insumo);if(id)desejados.set(id,{nome:i.insumo,quantidade:Number(i.qty)||0,categoria:i.categoria||''});});
+    const ops=[];snap.docs.forEach(d=>{if(!desejados.has(d.id))ops.push(col.doc(d.id).delete());});desejados.forEach((v,id)=>ops.push(col.doc(id).set(v,{merge:true})));
+    if(ops.length)await Promise.all(ops);
+  }
   // Classifica categoria de cada insumo: 1º preserva o que já estava
   // configurado em qualquer ficha existente (edição manual do usuário nunca
   // é sobrescrita — o array `insumos` é substituído por inteiro a cada
@@ -259,15 +280,7 @@
     return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   }
   function _iniciarAutoRefreshBiFicha() {
-    if (_autoRefreshBiFichaIniciado) return;
-    if (!global.DTBiPastaLocal?.suportado?.() || typeof global.setInterval !== 'function') return;
-    _autoRefreshBiFichaIniciado = true;
-    global.setInterval(async () => {
-      try {
-        const status = await global.DTBiPastaLocal.status();
-        if (status === 'conectado') await pftBuscarBiAutomatico();
-      } catch (e) { /* silencioso — só o clique manual mostra erro */ }
-    }, INTERVALO_AUTO_BUSCA_MS);
+    _autoRefreshBiFichaIniciado = true; // sincronização já ocorre no servidor a cada 4h
   }
 
   async function _obterLojaAtivaBluesoftKey() {
@@ -308,6 +321,10 @@
       const payload = { cod: f.cod, desc: f.desc, insumos: f.insumos, atualizadoEm: agora };
       if (fichaExistente) await fs().collection(COL_FICHAS).doc(fichaExistente._firestoreId).set(payload, { merge: true });
       else await fs().collection(COL_FICHAS).add({ ...payload, criadoEm: agora });
+      // Importações em massa também mantêm o cadastro único/ficha sincronizados.
+      // Só identidade global + receita entram no mestre; parâmetros produtivos
+      // continuam por loja em producao_produtos/producao_ficha_tecnica.
+      await _sincronizarProdutoMestreFicha({cod:f.cod,desc:f.desc,insumos:f.insumos,agora}).catch(e=>console.warn('[Ficha Técnica] mestre BI:',e));
     }
     return { total: fichasAgrupadas.length, semProduto };
   }
@@ -417,7 +434,7 @@
     document.getElementById('pft-prod-min').value = item.producaoMinima || '';
     document.getElementById('pft-multiplo').value = item.multiploProducao || '';
     document.getElementById('pft-tipo-min').value = item.tipoMinimo || '';
-    document.getElementById('pft-prioridade').value = item.prioridadeProducao || 2;
+    document.getElementById('pft-prioridade').value = item.prioridadeProducao ?? '';
     document.getElementById('pft-alergenico').value = item.alergenico === true ? 'true' : 'false';
     document.getElementById('pft-ativo').value = item.produtoAtivo === false || item.ativo === false ? 'false' : 'true';
     await _carregarLojasProdutoras();
@@ -481,7 +498,7 @@
   }
 
   function pftNovoProduto() {
-    _abrirModalPft({ _novo: true, cod: '', desc: '', unid: 1, pc_min: 0, maquina: '', categoria: '', classificacao: '', metaCoberturaDias: 0, producaoMinima: 0, multiploProducao: 0, tipoMinimo: '', prioridadeProducao: 2, alergenico: false, insumos: [] }, 'produto');
+    _abrirModalPft({ _novo: true, cod: '', desc: '', unid: 1, pc_min: 0, maquina: '', categoria: '', classificacao: '', metaCoberturaDias: 0, producaoMinima: 0, multiploProducao: 0, tipoMinimo: '', prioridadeProducao: null, alergenico: false, insumos: [] }, 'produto');
   }
 
   // PEDIDO AO VIVO (2026-09-02): "quando colocar para adicionar produto ele
@@ -631,7 +648,7 @@
       for (const p of paraGravar) {
         const payloadProduto = {
           cod: p.cod, nome: p.desc, descricao: p.desc, unid: p.unid || 1, pc_min: 0, maquina: '', maquinaPadrao: '', velocidadePadrao: 0,
-          categoria: '', classificacao: '', metaCoberturaDias: 0, producaoMinima: 0, multiploProducao: 0, tipoMinimo: '', prioridadeProducao: 2,
+          categoria: '', classificacao: '', metaCoberturaDias: 0, producaoMinima: 0, multiploProducao: 0, tipoMinimo: '', prioridadeProducao: null,
           alergenico: false, produtoAtivo: true, ativo: true, empresaProdutoraId, empresaProdutoraNome, atualizadoEm: agora,
         };
         await fs().collection(COL_PRODUTOS).add({ ...payloadProduto, criadoEm: agora });
@@ -688,7 +705,8 @@
     const producaoMinima = Math.max(0, Number(document.getElementById('pft-prod-min').value) || 0);
     const multiploProducao = Math.max(0, Number(document.getElementById('pft-multiplo').value) || 0);
     const tipoMinimo = String(document.getElementById('pft-tipo-min').value || '');
-    const prioridadeProducao = Math.min(99, Math.max(1, Number(document.getElementById('pft-prioridade').value) || 2));
+    const prioridadeRaw=String(document.getElementById('pft-prioridade').value||'').trim();
+    const prioridadeProducao = prioridadeRaw===''?null:Math.min(99,Math.max(1,Number(prioridadeRaw)||1));
     const alergenico = document.getElementById('pft-alergenico').value === 'true';
     const produtoAtivo = document.getElementById('pft-ativo').value !== 'false';
     const empresaProdutoraId = String(document.getElementById('pft-empresa-produtora')?.value || '');
@@ -703,6 +721,8 @@
       // Gantt/importadores antigos esperam (descricao/velocidadePadrao/maquinaPadrao).
       // A Produção original permite o mesmo código em máquinas diferentes, então
       // a identidade do produto é código + máquina, e não apenas o código.
+      const lojaEdicao=_lojaAtivaId();
+      const antesAuditoria=_produtos.find(p=>String(p.cod)===cod)||{};
       const payloadProdutoBase = {
         cod, nome: desc, descricao: desc, unid,
         categoria, classificacao,
@@ -716,12 +736,12 @@
         const existente = _produtos.find(p => String(p.cod) === cod && String(p.maquina || p.maquinaPadrao || '') === String(variante.nome || ''));
         const velocidade = Number(variante.velocidade) || pc_min;
         const payloadProduto = { ...payloadProdutoBase, pc_min:velocidade, velocidadePadrao:velocidade, maquina:variante.nome||'', maquinaPadrao:variante.nome||'' };
-        if (existente) { idsMantidos.add(existente._firestoreId); await fs().collection(COL_PRODUTOS).doc(existente._firestoreId).set(payloadProduto,{merge:true}); }
-        else { const ref=await fs().collection(COL_PRODUTOS).add({...payloadProduto,criadoEm:agora}); if(ref?.id)idsMantidos.add(ref.id); }
+        if (existente) { idsMantidos.add(existente._firestoreId); await _refProdutoCrossLoja(lojaEdicao,existente._firestoreId).set(payloadProduto,{merge:true}); }
+        else { const ref=await raw().collection('lojas').doc(lojaEdicao).collection(COL_PRODUTOS).add({...payloadProduto,criadoEm:agora}); if(ref?.id)idsMantidos.add(ref.id); }
         await _pftSincronizarProdutoNaMaquina(variante.nome, desc, velocidade);
       }
       const variantesAntigas = _produtos.filter(p => String(p.cod) === cod && !idsMantidos.has(p._firestoreId));
-      await Promise.all(variantesAntigas.map(p => fs().collection(COL_PRODUTOS).doc(p._firestoreId).delete()));
+      await Promise.all(variantesAntigas.map(p => _refProdutoCrossLoja(lojaEdicao,p._firestoreId).delete()));
       // Mantém o vínculo bidirecional Produto <-> Máquina existente no projeto
       // de Produção de referência. Sem isso a máquina pode ser cadastrada, mas
       // programação automática e seleção de compatibilidade ficam divergentes.
@@ -730,11 +750,19 @@
       const payloadFicha = { cod, desc, unid, pc_min, maquina, categoria, classificacao, metaCoberturaDias, producaoMinima, multiploProducao, tipoMinimo, prioridadeProducao, alergenico, insumos, atualizadoEm: agora };
       const fichaExistente = _fichas.find(f => String(f.cod) === cod);
       if (fichaExistente) {
-        await fs().collection(COL_FICHAS).doc(fichaExistente._firestoreId).set(payloadFicha, { merge: true });
+        await _refFichaCrossLoja(lojaEdicao,fichaExistente._firestoreId).set(payloadFicha, { merge: true });
       } else {
         payloadFicha.criadoEm = agora;
-        await fs().collection(COL_FICHAS).add(payloadFicha);
+        await raw().collection('lojas').doc(lojaEdicao).collection(COL_FICHAS).add(payloadFicha);
       }
+
+      // Cadastro mestre recebe somente identidade global + receita. Os
+      // parâmetros operacionais (produção mínima/múltiplo/prioridade, empresa
+      // produtora etc.) ficam por loja, evitando last-write-wins entre filiais.
+      try {
+        await _sincronizarProdutoMestreFicha({cod,desc,categoria,classificacao,pc_min,ativo:produtoAtivo,insumos,agora});
+      } catch (eMestre) { console.warn('[Ficha Técnica] falha ao gravar em produtos_mestre (não bloqueia o salvamento):', eMestre); }
+      await global.registrarAuditoria?.({colecao:COL_PRODUTOS,docId:(antesAuditoria._firestoreId||cod),produtoCod:cod,produtoNome:desc,lojaId:lojaEdicao,antes:antesAuditoria,depois:{...antesAuditoria,...payloadProdutoBase},camposRastreados:['metaCoberturaDias','producaoMinima','multiploProducao','tipoMinimo','prioridadeProducao'],origem:'producao-ficha-tecnica'});
 
       global.closeModal?.('modal-pft');
       global.showToast?.('Ficha técnica salva.', 'success');
@@ -748,6 +776,8 @@
       global.showToast?.('Erro ao salvar: ' + (e.message || e), 'error');
     }
   }
+
+  async function _limparMestreSeOrfao(cod){cod=String(cod||'').trim();if(!cod)return false;try{const lojas=await global.DTLoja?.listar?.(false)||[];for(const l of lojas){const lid=String(l.id||l.lojaId||'');if(!lid||lid===_lojaAtivaId())continue;const snap=await raw().collection('lojas').doc(lid).collection(COL_PRODUTOS).where('cod','==',cod).limit(1).get().catch(()=>({empty:true}));if(!snap.empty)return false;}const doc=raw().collection('produtos_mestre').doc(cod),ins=await doc.collection('insumos').get().catch(()=>({docs:[]}));if(ins.docs?.length){const b=raw().batch();ins.docs.forEach(d=>b.delete(doc.collection('insumos').doc(d.id)));await b.commit();}await doc.delete();return true;}catch(e){console.warn('[Ficha Técnica] limpeza mestre órfão:',e);return false;}}
 
   async function pftExcluir(cod) {
     const ficha = _fichas.find(f => String(f.cod) === String(cod));
@@ -783,8 +813,9 @@
     const fichas = _fichas.filter(f => String(f.cod) === String(cod));
     const executar = async () => {
       try {
-        await Promise.all(produtos.map(p => fs().collection(COL_PRODUTOS).doc(p._firestoreId).delete()));
-        await Promise.all(fichas.map(f => fs().collection(COL_FICHAS).doc(f._firestoreId).delete()));
+        await Promise.all(produtos.map(p => _refProdutoCrossLoja(_lojaAtivaId(),p._firestoreId).delete()));
+        await Promise.all(fichas.map(f => _refFichaCrossLoja(_lojaAtivaId(),f._firestoreId).delete()));
+        await _limparMestreSeOrfao(cod);
         global.DTProducao?.invalidarTudo?.(); await carregarProducaoDados(true); _desenharProducaoFichaTecnica();
         global.showToast?.('Produto excluído.', 'success');
       } catch (e) { global.showToast?.('Erro ao excluir produto: ' + (e.message || e), 'error'); }
@@ -806,18 +837,20 @@
     if (digitado !== 'APAGAR TUDO') { if (digitado != null) global.showToast?.('Texto não confere — nada foi apagado.', 'warning'); return; }
     try {
       const rawFs = global.getDTRawFirestore();
+      const codsProdutos=[...new Set(_produtos.map(p=>String(p.cod||'')).filter(Boolean))];
       const idsProdutos = _produtos.map(p => p._firestoreId);
       const idsFichas = _fichas.map(f => f._firestoreId);
       for (let i = 0; i < idsProdutos.length; i += 300) {
         const batch = rawFs.batch();
-        idsProdutos.slice(i, i + 300).forEach(id => batch.delete(fs().collection(COL_PRODUTOS).doc(id)));
+        idsProdutos.slice(i, i + 300).forEach(id => batch.delete(_refProdutoCrossLoja(_lojaAtivaId(),id)));
         await batch.commit();
       }
       for (let i = 0; i < idsFichas.length; i += 300) {
         const batch = rawFs.batch();
-        idsFichas.slice(i, i + 300).forEach(id => batch.delete(fs().collection(COL_FICHAS).doc(id)));
+        idsFichas.slice(i, i + 300).forEach(id => batch.delete(_refFichaCrossLoja(_lojaAtivaId(),id)));
         await batch.commit();
       }
+      for(const cod of codsProdutos)await _limparMestreSeOrfao(cod);
       global.DTProducao?.invalidarTudo?.();
       await carregarProducaoDados(true);
       _desenharProducaoFichaTecnica();

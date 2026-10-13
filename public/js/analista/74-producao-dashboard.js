@@ -35,6 +35,7 @@
   let _maquinas = [];
   let _apontamentos = [];
   let _setups = [];
+  let _resumoDashboard = null;
   let _carregado = false;
   let _dashModoFluxo = 'caixas'; // 'caixas' | 'ops'
   let _chartFluxoDash = null;
@@ -45,18 +46,60 @@
   function _domingoDaSemana(d) { const r = new Date(d); r.setHours(0, 0, 0, 0); r.setDate(r.getDate() - r.getDay()); return r; }
   function _isoData(d) { return d.toISOString().slice(0, 10); }
 
+  function _statusDash(status) {
+    status = String(status || '').trim();
+    return status === 'em_andamento' || status === 'concluido' ? status : 'pendente';
+  }
+
+  function _resumirRegistrosDash(registros) {
+    const resumo = { total:0, pend:0, and:0, ok:0, totalCx:0, pendCx:0, andCx:0, okCx:0, maquinas:[], topProdutos:[], recentes:[] };
+    const porM = new Map(), porP = new Map();
+    const recentes = [];
+    (registros || []).forEach(r => {
+      const status = _statusDash(r.status), caixas = Number(r.qntCaixas) || 0;
+      const maquina = String(r.maquina || '').trim(), produto = String(r.produto || '').trim();
+      resumo.total++; resumo.totalCx += caixas;
+      if (status === 'pendente') { resumo.pend++; resumo.pendCx += caixas; }
+      else if (status === 'em_andamento') { resumo.and++; resumo.andCx += caixas; }
+      else { resumo.ok++; resumo.okCx += caixas; }
+      if (maquina) {
+        let m = porM.get(maquina);
+        if (!m) { m = {nome:maquina,totalCx:0,okCx:0,pendCount:0,emAndamentoProduto:'',status:{pendente:{ops:0,caixas:0},em_andamento:{ops:0,caixas:0},concluido:{ops:0,caixas:0}}}; porM.set(maquina,m); }
+        m.totalCx += caixas; m.status[status].ops++; m.status[status].caixas += caixas;
+        if (status === 'concluido') m.okCx += caixas;
+        if (status === 'pendente') m.pendCount++;
+        if (status === 'em_andamento' && !m.emAndamentoProduto) m.emAndamentoProduto = produto;
+      }
+      if (produto) porP.set(produto, (porP.get(produto) || 0) + caixas);
+      recentes.push({_firestoreId:r._firestoreId||r._id||'',produto,maquina,qntCaixas:caixas,status,atualizadoEm:r.atualizadoEm||'',criadoEm:r.criadoEm||''});
+    });
+    resumo.maquinas = Array.from(porM.values()).sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+    resumo.topProdutos = Array.from(porP.entries()).sort((a,b)=>b[1]-a[1]).slice(0,8).map(([nome,caixas])=>({nome,caixas}));
+    resumo.recentes = recentes.sort((a,b)=>String(b.atualizadoEm||b.criadoEm||'').localeCompare(String(a.atualizadoEm||a.criadoEm||''))).slice(0,8);
+    return resumo;
+  }
+
   async function carregarProducaoDashboard(forcar) {
     if (_carregado && !forcar) return;
-    const [snapReg, snapMaq, snapApon, snapSetup] = await Promise.all([
-      fs().collection(COL_REGISTROS).get(),
-      fs().collection(COL_MAQUINAS).get(),
-      fs().collection(COL_APONTAMENTOS).get(),
-      fs().collection(COL_SETUP).get(),
-    ]);
-    _registros = snapReg.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
-    _maquinas = snapMaq.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
-    _apontamentos = snapApon.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
-    _setups = snapSetup.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
+    const lojaId = String(global.getDTLojaAtiva?.() || '');
+    try {
+      if (!lojaId || !global.firebase?.app) throw new Error('Loja/Firebase indisponível para consulta agregada.');
+      const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarResumoProducaoDashboard');
+      const resp = await callable({lojaId});
+      const resumo = resp?.data?.resumo;
+      if (!resumo || !Array.isArray(resumo.maquinas) || !Array.isArray(resumo.topProdutos) || !Array.isArray(resumo.recentes)) throw new Error('Resposta inválida do resumo de produção.');
+      _resumoDashboard = resumo;
+      _registros = [];
+      _maquinas = []; _apontamentos = []; _setups = [];
+    } catch (erroBackend) {
+      console.warn('[Produção Dashboard] Consulta agregada indisponível; usando fallback Firestore.', erroBackend);
+      // Fallback compatível: lê SOMENTE registros. As outras 3 coleções eram carregadas
+      // pela tela antiga, mas não participavam de nenhum cálculo do Dashboard.
+      const snapReg = await fs().collection(COL_REGISTROS).get();
+      _registros = snapReg.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
+      _resumoDashboard = _resumirRegistrosDash(_registros);
+      _maquinas = []; _apontamentos = []; _setups = [];
+    }
     _carregado = true;
   }
 
@@ -73,18 +116,16 @@
     const pagina = document.getElementById('page-producao-dashboard');
     if (!pagina) return;
 
-    const total = _registros.length;
-    const pend = _registros.filter(r => r.status === 'pendente' || !r.status).length;
-    const and = _registros.filter(r => r.status === 'em_andamento').length;
-    const ok = _registros.filter(r => r.status === 'concluido').length;
-    const totalCx = _registros.reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
-    const pendCx = _registros.filter(r => r.status === 'pendente' || !r.status).reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
-    const andCx = _registros.filter(r => r.status === 'em_andamento').reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
-    const okCx = _registros.filter(r => r.status === 'concluido').reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
-
-    const recentes = [..._registros]
-      .sort((a, b) => (b.atualizadoEm || b.criadoEm || '').localeCompare(a.atualizadoEm || a.criadoEm || ''))
-      .slice(0, 8);
+    const rsum = _resumoDashboard || _resumirRegistrosDash(_registros);
+    const total = Number(rsum.total) || 0;
+    const pend = Number(rsum.pend) || 0;
+    const and = Number(rsum.and) || 0;
+    const ok = Number(rsum.ok) || 0;
+    const totalCx = Number(rsum.totalCx) || 0;
+    const pendCx = Number(rsum.pendCx) || 0;
+    const andCx = Number(rsum.andCx) || 0;
+    const okCx = Number(rsum.okCx) || 0;
+    const recentes = Array.isArray(rsum.recentes) ? rsum.recentes : [];
 
     // PEDIDO AO VIVO (auditoria, item 3): estrutura, textos e ordem
     // copiados literalmente de buildDashHTML() em dashboard-enhanced.js —
@@ -263,20 +304,19 @@
     const canvas = document.getElementById('pdash-chart-fluxo');
     if (!canvas || typeof global.Chart !== 'function') return;
     _chartFluxoDash = _destruirChartDash(_chartFluxoDash);
-    const maqs = [...new Set(_registros.map(r => r.maquina).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const maqs = Array.isArray(_resumoDashboard?.maquinas) ? _resumoDashboard.maquinas : [];
     if (!maqs.length) { canvas.parentElement.innerHTML = '<div style="height:220px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.75rem">Nenhuma OP cadastrada</div>'; return; }
     const statusList = ['pendente', 'em_andamento', 'concluido'];
     const datasets = statusList.map(st => ({
       label: STATUS_INFO[st].label,
-      data: maqs.map(m => _registros.filter(r => r.maquina === m && (r.status === st || (st === 'pendente' && !r.status)))
-        .reduce((s, r) => s + (_dashModoFluxo === 'caixas' ? (Number(r.qntCaixas) || 0) : 1), 0)),
+      data: maqs.map(m => Number(m?.status?.[st]?.[_dashModoFluxo === 'caixas' ? 'caixas' : 'ops']) || 0),
       backgroundColor: COR_STATUS_HEX[st] + 'cc',
       borderColor: COR_STATUS_HEX[st], borderWidth: 1, borderRadius: 4,
     }));
     const opts = _opcoesChartDash();
     opts.plugins.legend = { display: true, position: 'bottom', labels: { color: COR_MUTED, font: { size: 10 }, boxWidth: 10, padding: 10 } };
     opts.scales.x.stacked = true; opts.scales.y.stacked = true;
-    _chartFluxoDash = new global.Chart(canvas.getContext('2d'), { type: 'bar', data: { labels: maqs, datasets }, options: opts });
+    _chartFluxoDash = new global.Chart(canvas.getContext('2d'), { type: 'bar', data: { labels: maqs.map(m=>m.nome), datasets }, options: opts });
   }
 
   function _desenharGraficoStatusDash(total, pend, and, ok) {
@@ -302,32 +342,23 @@
     const canvas = document.getElementById('pdash-chart-top-prod');
     if (!canvas || typeof global.Chart !== 'function') return;
     _chartTopProdDash = _destruirChartDash(_chartTopProdDash);
-    if (!_registros.length) { canvas.parentElement.innerHTML = '<div style="height:180px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.75rem">Sem dados</div>'; return; }
-    const mapa = {};
-    _registros.forEach(r => {
-      const produto = String(r.produto || '').trim();
-      if (!produto) return;
-      const nome = produto.length > 28 ? produto.slice(0, 28) + '…' : produto;
-      mapa[nome] = (mapa[nome] || 0) + (Number(r.qntCaixas) || 0);
+    const sorted = (Array.isArray(_resumoDashboard?.topProdutos) ? _resumoDashboard.topProdutos : []).map(x => {
+      const p=String(x.nome||''); return [p.length>28?p.slice(0,28)+'…':p, Number(x.caixas)||0];
     });
-    const sorted = Object.entries(mapa).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    if (!sorted.length) { canvas.parentElement.innerHTML = '<div style="height:180px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.75rem">Sem dados</div>'; return; }
     const paleta = sorted.map((_, i) => `hsl(${25 + i * 22}, 70%, 55%)`);
     const paletaFill = paleta.map(p => p.replace('hsl', 'hsla').replace(')', ', 0.8)'));
     _chartTopProdDash = new global.Chart(canvas.getContext('2d'), {
       type: 'bar',
       data: { labels: sorted.map(x => x[0]), datasets: [{ label: 'Caixas', data: sorted.map(x => x[1]), backgroundColor: paletaFill, borderColor: paleta, borderWidth: 1, borderRadius: 4 }] },
-      options: {
-        indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + ctx.parsed.x.toLocaleString('pt-BR') + ' caixas' } } },
-        scales: { x: { grid: { color: COR_BORDER }, ticks: { color: COR_MUTED, font: { size: 9 } }, border: { display: false } }, y: { grid: { display: false }, ticks: { color: COR_MUTED, font: { size: 10 } }, border: { display: false } } },
-      },
+      options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => ' ' + ctx.parsed.x.toLocaleString('pt-BR') + ' caixas' } } }, scales: { x: { grid: { color: COR_BORDER }, ticks: { color: COR_MUTED, font: { size: 9 } }, border: { display: false } }, y: { grid: { display: false }, ticks: { color: COR_MUTED, font: { size: 10 } }, border: { display: false } } } },
     });
   }
 
   function _desenharMetricasRapidasDash(total, ok, and, totalCx, okCx) {
     const wrap = document.getElementById('pdash-metricas-wrap');
     if (!wrap) return;
-    const maqsAtivas = [...new Set(_registros.map(r => r.maquina).filter(Boolean))].length;
+    const maqsAtivas = Array.isArray(_resumoDashboard?.maquinas) ? _resumoDashboard.maquinas.length : 0;
     const pctConc = total > 0 ? Math.round(ok / total * 100) : 0;
     const pctCx = totalCx > 0 ? Math.round(okCx / totalCx * 100) : 0;
     // PEDIDO AO VIVO (auditoria, item 3): valores/cores/rótulos exatos de
@@ -355,30 +386,22 @@
   function _desenharGradeMaquinasDash() {
     const grid = document.getElementById('pdash-maquinas-grid');
     if (!grid) return;
-    const maqs = [...new Set(_registros.map(r => r.maquina).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const maqs = Array.isArray(_resumoDashboard?.maquinas) ? _resumoDashboard.maquinas : [];
     if (!maqs.length) { grid.innerHTML = '<div style="color:var(--muted);font-size:.72rem;padding:10px">Nenhuma máquina com OP cadastrada.</div>'; return; }
     grid.innerHTML = maqs.map(m => {
-      const mRegs = _registros.filter(r => r.maquina === m);
-      const andReg = mRegs.find(r => r.status === 'em_andamento');
-      const pendRegs = mRegs.filter(r => r.status === 'pendente' || !r.status);
-      const totalCxM = mRegs.reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
-      const okCxM = mRegs.filter(r => r.status === 'concluido').reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
+      const andOps = Number(m?.status?.em_andamento?.ops)||0, pendCount=Number(m.pendCount)||0;
+      const totalCxM=Number(m.totalCx)||0, okCxM=Number(m.okCx)||0;
       const pct = totalCxM > 0 ? Math.round(okCxM / totalCxM * 100) : 0;
       let cor = 'var(--muted)', label = 'Livre';
-      if (andReg) { cor = 'var(--orange)'; label = 'Em produção'; }
-      else if (pendRegs.length) { cor = 'var(--warn)'; label = pendRegs.length + ' pend.'; }
-      const curProduto = andReg ? String(andReg.produto || '').slice(0, 22) : '—';
+      if (andOps) { cor = 'var(--orange)'; label = 'Em produção'; }
+      else if (pendCount) { cor = 'var(--warn)'; label = pendCount + ' pend.'; }
+      const curProduto = andOps ? String(m.emAndamentoProduto || '').slice(0, 22) : '—';
       return `<div style="background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;position:relative;overflow:hidden">
         <div style="position:absolute;top:0;left:0;right:0;height:2px;background:${cor}"></div>
-        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-          <span style="width:7px;height:7px;border-radius:50%;background:${cor};display:inline-block"></span>
-          <span style="font-size:.74rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m)}</span>
-        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><span style="width:7px;height:7px;border-radius:50%;background:${cor};display:inline-block"></span><span style="font-size:.74rem;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.nome)}</span></div>
         <div style="font-size:.62rem;color:${cor};font-weight:600;margin-bottom:5px">${esc(label)}</div>
-        <div style="font-size:.62rem;color:var(--muted);margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(andReg ? andReg.produto : '')}">${esc(curProduto)}</div>
-        <div style="display:flex;justify-content:space-between;font-size:.6rem;color:var(--muted);margin-bottom:3px">
-          <span>${okCxM.toLocaleString('pt-BR')} / ${totalCxM.toLocaleString('pt-BR')} cx</span><span style="font-weight:700;color:${pct >= 80 ? 'var(--success)' : 'var(--muted)'}">${pct}%</span>
-        </div>
+        <div style="font-size:.62rem;color:var(--muted);margin-bottom:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(m.emAndamentoProduto||'')}">${esc(curProduto)}</div>
+        <div style="display:flex;justify-content:space-between;font-size:.6rem;color:var(--muted);margin-bottom:3px"><span>${okCxM.toLocaleString('pt-BR')} / ${totalCxM.toLocaleString('pt-BR')} cx</span><span style="font-weight:700;color:${pct >= 80 ? 'var(--success)' : 'var(--muted)'}">${pct}%</span></div>
         <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden"><div style="height:100%;width:${pct}%;background:${pct >= 80 ? 'var(--success)' : 'var(--orange)'};border-radius:2px"></div></div>
       </div>`;
     }).join('');
@@ -387,24 +410,15 @@
   function _desenharBarrasCaixasMaquinaDash() {
     const wrap = document.getElementById('pdash-maq-bars-wrap');
     if (!wrap) return;
-    const maqs = [...new Set(_registros.map(r => r.maquina).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const maqs = Array.isArray(_resumoDashboard?.maquinas) ? _resumoDashboard.maquinas : [];
     if (!maqs.length) { wrap.innerHTML = '<div style="color:var(--muted);font-size:.72rem;padding:10px">Sem dados</div>'; return; }
-    const maxCx = Math.max(...maqs.map(m => _registros.filter(r => r.maquina === m).reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0)), 1);
+    const maxCx = Math.max(...maqs.map(m => Number(m.totalCx)||0), 1);
     wrap.innerHTML = maqs.map(m => {
-      const mRegs = _registros.filter(r => r.maquina === m);
-      const totalM = mRegs.reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
-      const okM = mRegs.filter(r => r.status === 'concluido').reduce((s, r) => s + (Number(r.qntCaixas) || 0), 0);
-      const pctBar = totalM / maxCx * 100;
-      const pctOk = totalM > 0 ? okM / totalM * 100 : 0;
-      return `<div title="${esc(m)}: ${okM.toLocaleString('pt-BR')} / ${totalM.toLocaleString('pt-BR')} caixas concluídas">
-        <div style="display:flex;justify-content:space-between;margin-bottom:3px">
-          <span style="font-size:.68rem;color:var(--muted);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m)}</span>
-          <span style="font-size:.62rem;font-family:monospace;color:var(--muted)">${totalM.toLocaleString('pt-BR')} cx</span>
-        </div>
-        <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden;position:relative">
-          <div style="position:absolute;top:0;left:0;height:100%;width:${pctBar}%;background:rgba(224,112,32,.25);border-radius:4px"></div>
-          <div style="position:absolute;top:0;left:0;height:100%;width:${pctOk * pctBar / 100}%;background:var(--success);border-radius:4px"></div>
-        </div>
+      const totalM=Number(m.totalCx)||0, okM=Number(m.okCx)||0;
+      const pctBar = totalM / maxCx * 100, pctOk = totalM > 0 ? okM / totalM * 100 : 0;
+      return `<div title="${esc(m.nome)}: ${okM.toLocaleString('pt-BR')} / ${totalM.toLocaleString('pt-BR')} caixas concluídas">
+        <div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:.68rem;color:var(--muted);max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.nome)}</span><span style="font-size:.62rem;font-family:monospace;color:var(--muted)">${totalM.toLocaleString('pt-BR')} cx</span></div>
+        <div style="height:8px;background:var(--surface-2);border-radius:4px;overflow:hidden;position:relative"><div style="position:absolute;top:0;left:0;height:100%;width:${pctBar}%;background:rgba(224,112,32,.25);border-radius:4px"></div><div style="position:absolute;top:0;left:0;height:100%;width:${pctOk * pctBar / 100}%;background:var(--success);border-radius:4px"></div></div>
       </div>`;
     }).join('');
   }
@@ -440,5 +454,5 @@
 
   global.renderProducaoDashboard = renderProducaoDashboard;
   global._desenharProducaoDashboard = _desenharProducaoDashboard;
-  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _registros=[]; _apontamentos=[]; _maquinas=[]; _setups=[]; });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ _carregado=false; _resumoDashboard=null; _registros=[]; _apontamentos=[]; _maquinas=[]; _setups=[]; });
 })(window);

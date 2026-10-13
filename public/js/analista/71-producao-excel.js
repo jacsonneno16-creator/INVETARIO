@@ -26,6 +26,7 @@
   const COL_CONFIG = 'producao_config';
 
   function fs() { return global.getDTFirestore(); }
+  function raw() { return global.getDTRawFirestore(); }
 
   // PEDIDO AO VIVO (usuário: "o arquivo que eu subo... não salva nada que
   // nem no original"): o template REAL do original (app.js:9444-9552,
@@ -70,9 +71,10 @@
 
   async function exportarProducaoTemplate() {
     try {
+      let estoqueBi=[];try{estoqueBi=await global.DTProducaoInsumosBI?.carregar?.(false)||[];}catch(e){console.warn('[Produção Excel] BI de insumos indisponível; usando materialização legada.',e);}
       const [snapMaq, snapProd, snapFicha, snapSetup, snapReg, snapApon, snapFunc, snapEst, snapProj, snapProc, snapCat, snapCfg] = await Promise.all([
         fs().collection(COL_MAQUINAS).get(), fs().collection(COL_PRODUTOS).get(), fs().collection(COL_FICHAS).get(), fs().collection(COL_SETUP).get(),
-        fs().collection(COL_REGISTROS).get(), fs().collection(COL_APONTAMENTOS).get(), fs().collection(COL_FUNCIONARIOS).get(), fs().collection(COL_ESTOQUE_INSUMOS).get(), fs().collection(COL_PROJECAO).get(),
+        fs().collection(COL_REGISTROS).get(), fs().collection(COL_APONTAMENTOS).get(), fs().collection(COL_FUNCIONARIOS).get(), estoqueBi.length?Promise.resolve({docs:[]}):fs().collection(COL_ESTOQUE_INSUMOS).get(), fs().collection(COL_PROJECAO).get(),
         fs().collection(COL_PROCESSOS).get().catch(()=>({docs:[]})), fs().collection(COL_CATEGORIAS).get().catch(()=>({docs:[]})), fs().collection(COL_CONFIG).get().catch(()=>({docs:[]})),
       ]);
       const maquinas = snapMaq.docs.map(d => ({ id:d.id, ...d.data() }));
@@ -82,7 +84,7 @@
       const registros = snapReg.docs.map(d => ({ id: d.id, ...d.data() }));
       const apontamentos = snapApon.docs.map(d => ({ id: d.id, ...d.data() }));
       const funcionarios = snapFunc.docs.map(d => ({ id:d.id, ...d.data() }));
-      const estoqueInsumos = snapEst.docs.map(d => ({ id:d.id, ...d.data() }));
+      const estoqueInsumos = estoqueBi.length?estoqueBi.map((x,i)=>({id:x.id||x._firestoreId||String(i),...x})):snapEst.docs.map(d => ({ id:d.id, ...d.data() }));
       const projecao = snapProj.docs.map(d => ({ id: d.id, ...d.data() }));
       const processos = snapProc.docs.map(d => ({ id: d.id, ...d.data() }));
       const categorias = snapCat.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -149,9 +151,10 @@
         'info'
       );
 
+      const usarEstoqueLegado=!global.DTProducaoInsumosBI;
       const [snapMaq, snapProd, snapFicha, snapSetup, snapReg, snapApon, snapFunc, snapEst, snapProj, snapProc, snapCat, snapCfg] = await Promise.all([
         fs().collection(COL_MAQUINAS).get(), fs().collection(COL_PRODUTOS).get(), fs().collection(COL_FICHAS).get(), fs().collection(COL_SETUP).get(),
-        fs().collection(COL_REGISTROS).get(), fs().collection(COL_APONTAMENTOS).get(), fs().collection(COL_FUNCIONARIOS).get(), fs().collection(COL_ESTOQUE_INSUMOS).get(), fs().collection(COL_PROJECAO).get(),
+        fs().collection(COL_REGISTROS).get(), fs().collection(COL_APONTAMENTOS).get(), fs().collection(COL_FUNCIONARIOS).get(), usarEstoqueLegado?fs().collection(COL_ESTOQUE_INSUMOS).get():Promise.resolve({docs:[]}), fs().collection(COL_PROJECAO).get(),
         fs().collection(COL_PROCESSOS).get().catch(()=>({docs:[]})), fs().collection(COL_CATEGORIAS).get().catch(()=>({docs:[]})), fs().collection(COL_CONFIG).get().catch(()=>({docs:[]})),
       ]);
       const maquinasExistentes = snapMaq.docs.map(d => ({ _id: d.id, ...d.data() }));
@@ -221,6 +224,21 @@
         if (existente) { await fs().collection(COL_PRODUTOS).doc(existente._id).set(payload, { merge: true }); atualizados++; }
         else if(id){ await fs().collection(COL_PRODUTOS).doc(id).set({...payload,criadoEm:payload.criadoEm||agora},{merge:true}); criados++; }
         else { await fs().collection(COL_PRODUTOS).add({ ...payload, criadoEm: payload.criadoEm||agora }); criados++; }
+        // PEDIDO AO VIVO (2026-09-21): "único lugar gravando todas as
+        // informações dos produtos" — dual-write aditivo em produtos_mestre
+        // (cadastro único global), mesmo padrão já usado em 81-pcp-
+        // parametros.js e 60-producao-ficha-tecnica.js. Best-effort: nunca
+        // trava a importação em massa se a regra ainda não tiver sido
+        // liberada, ou getDTRawFirestore nem existir, num ambiente antigo.
+        try {
+          if (typeof global.getDTRawFirestore === 'function') {
+            await raw().collection('produtos_mestre').doc(cod).set({
+              cod, nome: payload.nome, categoria: payload.categoria, classificacao: payload.classificacao,
+              pc_min: payload.pc_min, metaCoberturaDias: payload.metaCoberturaDias, ativo: payload.ativo,
+              atualizadoEm: agora, atualizadoPor: global._currentAnalistaUser?.email || '',
+            }, { merge: true });
+          }
+        } catch (_) { /* best-effort, não bloqueia a importação */ }
       });
 
       const insumosPorCod = {};
@@ -269,7 +287,7 @@
       // preservamos os IDs para manter os vínculos Programação ↔ Realizado.
       for (const r of linhasProgramacao) {
         const id = String(r.id || '').trim(); if (!id) continue;
-        const full=_dadosLinha(r), payload = {...full,data:String(r.data||full.data||''),maquina:String(r.maquina||full.maquina||''),produto:String(r.produto||full.produto||''),qntCaixas:Number(r.qntCaixas??full.qntCaixas)||0,qntUnid:Number(r.qntUnid??full.qntUnid)||0,status:String(r.status||full.status||'programado'),sortOrder:r.sortOrder===''?(full.sortOrder??null):Number(r.sortOrder),realizadoCaixas:Number(r.realizadoCaixas??full.realizadoCaixas)||0,atualizadoEm:agora};
+        const full=_dadosLinha(r), payload = {...full,data:String(r.data||full.data||''),maquina:String(r.maquina||full.maquina||''),produto:String(r.produto||full.produto||''),qntCaixas:Number(r.qntCaixas??full.qntCaixas)||0,qntUnid:Number(r.qntUnid??full.qntUnid)||0,status:(()=>{const st=String(r.status||full.status||'programado').trim().toLowerCase().replace(/[ -]+/g,'_');return ['concluido','concluida','finalizado','finalizada'].includes(st)?'concluido':['em_andamento','em_producao','producao','iniciado','iniciada'].includes(st)?'em_andamento':['pendente','programado','programada'].includes(st)?'pendente':'pendente';})(),sortOrder:r.sortOrder===''?(full.sortOrder??null):Number(r.sortOrder),realizadoCaixas:Number(r.realizadoCaixas??full.realizadoCaixas)||0,atualizadoEm:agora};
         await fs().collection(COL_REGISTROS).doc(id).set(payload,{merge:true}); atualizados++;
       }
       for (const r of linhasRealizado) {
@@ -278,7 +296,8 @@
         await fs().collection(COL_APONTAMENTOS).doc(id).set({...full,registroId,data,qntCaixas:Number(r.qntCaixas??full.qntCaixas)||0,qntUnid:Number(r.qntUnid??full.qntUnid)||0,observacao:String(r.observacao??full.observacao??''),horas,atualizadoEm:agora},{merge:true}); atualizados++;
       }
       for (const r of linhasFuncionarios) { const id=String(r.id||r._firestoreId||'').trim(); const payload={..._dadosLinha(r),...r,atualizadoEm:agora}; delete payload.id; delete payload._firestoreId; delete payload.dadosJson; if(id){await fs().collection(COL_FUNCIONARIOS).doc(id).set(payload,{merge:true});}else{await fs().collection(COL_FUNCIONARIOS).add(payload);} atualizados++; }
-      for (const r of linhasEstoqueInsumos) { const nome=String(r.insumo||r.Insumo||'').trim(); if(!nome)continue; const ex=snapEst.docs.find(d=>String(d.data().insumo||'').toLowerCase()===nome.toLowerCase()); const full=_dadosLinha(r),payload={...full,insumo:nome,quantidade:Number(r.quantidade??r.Quantidade??full.quantidade)||0,unidade:String(r.unidade??r.Unidade??full.unidade??''),categoria:String(r.categoria??r.Categoria??full.categoria??''),atualizadoEm:agora}; if(ex)await fs().collection(COL_ESTOQUE_INSUMOS).doc(ex.id).set(payload,{merge:true});else await fs().collection(COL_ESTOQUE_INSUMOS).add(payload); atualizados++; }
+      // O saldo oficial de insumos vem do BI. A aba Estoque_Insumos só restaura a materialização legada quando o serviço BI não existe; com BI ativo ela é ignorada para não transformar backup Excel em nova autoridade de saldo.
+      if(usarEstoqueLegado){for (const r of linhasEstoqueInsumos) { const nome=String(r.insumo||r.Insumo||'').trim(); if(!nome)continue; const ex=snapEst.docs.find(d=>String(d.data().insumo||'').toLowerCase()===nome.toLowerCase()); const full=_dadosLinha(r),payload={...full,insumo:nome,quantidade:Number(r.quantidade??r.Quantidade??full.quantidade)||0,unidade:String(r.unidade??r.Unidade??full.unidade??''),categoria:String(r.categoria??r.Categoria??full.categoria??''),atualizadoEm:agora}; if(ex)await fs().collection(COL_ESTOQUE_INSUMOS).doc(ex.id).set(payload,{merge:true});else await fs().collection(COL_ESTOQUE_INSUMOS).add(payload); atualizados++; }}
       for (const r of linhasProjecao) { const id=String(r.id||r._firestoreId||'').trim(); const payload={..._dadosLinha(r),...r,atualizadoEm:agora}; delete payload.id; delete payload._firestoreId; delete payload.dadosJson; if(id)await fs().collection(COL_PROJECAO).doc(id).set(payload,{merge:true}); else await fs().collection(COL_PROJECAO).add(payload); atualizados++; }
       for (const r of linhasProcessos) { const id=String(r.id||r._id||'').trim(); const payload={..._dadosLinha(r),...r,atualizadoEm:agora}; delete payload.id; delete payload._id; delete payload.dadosJson; if(id)await fs().collection(COL_PROCESSOS).doc(id).set(payload,{merge:true}); else await fs().collection(COL_PROCESSOS).add(payload); atualizados++; }
       for (const r of linhasCategorias) { const id=String(r.id||r._id||'').trim(); const payload={..._dadosLinha(r),...r,atualizadoEm:agora}; delete payload.id; delete payload._id; delete payload.dadosJson; if(id)await fs().collection(COL_CATEGORIAS).doc(id).set(payload,{merge:true}); else await fs().collection(COL_CATEGORIAS).add(payload); atualizados++; }

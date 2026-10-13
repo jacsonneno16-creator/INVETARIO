@@ -114,21 +114,24 @@
 
   async function carregarProducaoProgramacao(forcar) {
     if (_carregado && !forcar) return;
+    let estoqueBi=[];
+    try { estoqueBi = await global.DTProducaoInsumosBI.carregar(!!forcar); } catch (e) { console.warn('[Produção Programação] BI de insumos indisponível; usando materialização legada.', e); }
     const [snapReg, snapProd, snapMaq, snapFicha, snapEstoque] = await Promise.all([
       fs().collection(COL_REGISTROS).get(),
       fs().collection(COL_PRODUTOS).get(),
       fs().collection(COL_MAQUINAS).get(),
       fs().collection(COL_FICHAS).get(),
-      fs().collection(COL_ESTOQUE).get().catch(() => ({ docs: [] })),
+      estoqueBi.length ? Promise.resolve({ docs: [] }) : fs().collection(COL_ESTOQUE).get().catch(() => ({ docs: [] })),
     ]);
     _registros = snapReg.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _produtos = snapProd.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _maquinas = snapMaq.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
     _fichas = snapFicha.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
-    _estoqueIns = snapEstoque.docs.map(d => ({ _firestoreId: d.id, ...d.data() }));
+    _estoqueIns = estoqueBi.length ? estoqueBi : snapEstoque.docs.map(d => ({ _firestoreId: d.id, ...d.data(), _fonte: 'legado' }));
     _carregado = true;
   }
 
+  function _statusProgramacao(v){const s=String(v||'pendente').trim().toLowerCase().replace(/[ -]+/g,'_');if(['em_andamento','em_producao','producao','iniciado','iniciada'].includes(s))return 'em_andamento';if(['concluido','concluida','finalizado','finalizada'].includes(s))return 'concluido';return 'pendente';}
   const STATUS_INFO = {
     pendente: { label: 'Pendente', cor: 'b-orange' },
     em_andamento: { label: 'Em Andamento', cor: 'b-blue' },
@@ -257,7 +260,7 @@
     const linhasFiltradas = _registros
       .filter(r => !busca || String(r.produto || '').toLowerCase().includes(busca))
       .filter(r => !filtroMaquina || r.maquina === filtroMaquina)
-      .filter(r => !filtroStatus || r.status === filtroStatus)
+      .filter(r => !filtroStatus || _statusProgramacao(r.status) === filtroStatus)
       .filter(r => !semanaIni || (String(r.data || '') >= semanaIni && String(r.data || '') <= semanaFim))
       .sort((a, b) => (b.sortOrder || 0) - (a.sortOrder || 0));
 
@@ -295,7 +298,7 @@
             <tbody>
               ${linhas.length ? linhas.map((r, idx) => {
                 const numLinha = (_pagina - 1) * PAGE_SIZE + idx + 1;
-                const status = STATUS_INFO[r.status] || STATUS_INFO.pendente;
+                const status = STATUS_INFO[_statusProgramacao(r.status)] || STATUS_INFO.pendente;
                 const tempo = _calcTempoHoras(r.qntUnid, r.pcMin);
                 const expandido = _expandidos.has(r._firestoreId);
                 const statusIns = _statusInsumosOP(r);

@@ -3,7 +3,8 @@
 (function(global){'use strict';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const CREG='producao_registros', CAP='producao_apontamentos', CMAQ='producao_maquinas', CPROD='producao_produtos', CPROJ='producao_projecao', CFICHA='producao_ficha_tecnica', CEST='producao_insumos_estoque', CPROC='producao_processos';
-let regs=[],aps=[],maqs=[],produtos=[],projecao=[],fichas=[],estoqueIns=[],processos=[],weekStart=domingo(new Date()),aba='resumo',carregado=false,charts=[];
+let regs=[],aps=[],maqs=[],produtos=[],projecao=[],fichas=[],estoqueIns=[],processos=[],weekStart=domingo(new Date()),aba='resumo',carregado=false,charts=[],totalRealPorRegistro={},grpTudo=false,periodoCarregadoKey='';
+let complementosCarregados={gerencial:false,insumos:false,exportacao:false},complementosEmAndamento={};
 // PEDIDO AO VIVO (auditoria 2ª rodada, seção 12): Filtros Globais do
 // original (index.html:754-780) — De/Até + atalhos de período + Máquina/
 // Produto/Operador. grpDtIni/grpDtFim vazios = usa a semana atual
@@ -13,29 +14,26 @@ let regs=[],aps=[],maqs=[],produtos=[],projecao=[],fichas=[],estoqueIns=[],proce
 // tabelas, export) já usa datas()/semanaRegs() por baixo, então herda o
 // filtro automaticamente sem precisar reescrever cada função.
 let grpDtIni='',grpDtFim='',grpMaquina='',grpProduto='',grpFuncionario='';
-function periodoIni(){return grpDtIni||iso(weekStart);}
-function periodoFimStr(){return grpDtFim||iso(fim());}
+function periodoIni(){if(grpTudo){const ds=[...regs.map(r=>r.data),...aps.map(a=>a.data)].filter(Boolean).sort();return ds[0]||iso(weekStart);}return grpDtIni||iso(weekStart);}
+function periodoFimStr(){if(grpTudo){const ds=[...regs.map(r=>r.data),...aps.map(a=>a.data)].filter(Boolean).sort();return ds[ds.length-1]||iso(fim());}return grpDtFim||iso(fim());}
 function grpSetPeriodo(tipo){
-  const hoje=new Date();let ini=null,f=hoje;
+  const hoje=new Date();hoje.setHours(0,0,0,0);let ini=null,f=hoje;grpTudo=false;
   if(tipo==='hoje')ini=hoje;
   else if(tipo==='semana'){ini=new Date(hoje);ini.setDate(hoje.getDate()-(hoje.getDay()===0?6:hoje.getDay()-1));}
   else if(tipo==='mes')ini=new Date(hoje.getFullYear(),hoje.getMonth(),1);
   else if(tipo==='trimestre')ini=new Date(hoje.getFullYear(),Math.floor(hoje.getMonth()/3)*3,1);
   else if(tipo==='ano')ini=new Date(hoje.getFullYear(),0,1);
-  else if(tipo==='tudo'){
-    // "Tudo" no original limpa o filtro (sem De/Até nenhum). Aqui datas()
-    // sempre precisa de um intervalo concreto pra enumerar dia a dia, então
-    // usa o menor/maior data já cadastrado — efeito idêntico (mostra tudo).
-    const todasDatas=[...regs.map(r=>r.data),...aps.map(a=>a.data)].filter(Boolean).sort();
-    if(todasDatas.length){grpDtIni=todasDatas[0];grpDtFim=todasDatas[todasDatas.length-1];return;}
-    ini=null;f=null;
-  }
+  else if(tipo==='tudo'){grpTudo=true;grpDtIni='';grpDtFim='';return;}
   grpDtIni=ini?iso(ini):'';grpDtFim=f?iso(f):'';
 }
-function grpClear(){grpDtIni='';grpDtFim='';grpMaquina='';grpProduto='';grpFuncionario='';weekStart=domingo(new Date());}
+function grpClear(){grpTudo=false;grpDtIni='';grpDtFim='';grpMaquina='';grpProduto='';grpFuncionario='';weekStart=domingo(new Date());}
 // Gerencial — pivot table interativo (paridade com a original: Gráficos/Tabela/Pivot, filtros busca+máquina+categoria, tabela ordenável, pivot linhas×colunas×valor×agregação com heatmap).
 let gerView='graficos',gerBusca='',gerMaquina='',gerCategoria='',gerPivot={linhas:'maquina',colunas:'dia',valor:'realizado',agregacao:'soma'},gerSort={col:'real',asc:false},gerChartTipoMaq='horizontal',gerChartTipoDia='line',gerChartTipoCat='doughnut',gerCharts=[];
-function fs(){return global.getDTFirestore();} function domingo(d){const x=new Date(d);x.setHours(0,0,0,0);x.setDate(x.getDate()-x.getDay());return x;} function iso(d){return d.toISOString().slice(0,10);} function fim(){const d=new Date(weekStart);d.setDate(d.getDate()+6);return d;} function fmt(d){return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});} function n(v){return Number(v)||0;}
+function fs(){return global.getDTFirestore();} function domingo(d){const x=new Date(d);x.setHours(0,0,0,0);x.setDate(x.getDate()-x.getDay());return x;} // Data LOCAL, não UTC — toISOString() cruza pro dia seguinte perto da
+// meia-noite no fuso do Brasil (UTC-3), fazendo o atalho "Hoje" (e qualquer
+// outro período calculado a partir de `new Date()`) apontar pro dia errado
+// à noite. Mesma classe de bug já corrigida antes em grpSetPeriodo/hoje().
+function iso(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');} function fim(){const d=new Date(weekStart);d.setDate(d.getDate()+6);return d;} function fmt(d){return d.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'});} function n(v){return Number(v)||0;}
 function datas(){
   const iniD=new Date(periodoIni()+'T12:00:00'),fimD=new Date(periodoFimStr()+'T12:00:00');
   if(Number.isNaN(iniD.getTime())||Number.isNaN(fimD.getTime())||fimD<iniD)return [];
@@ -43,8 +41,79 @@ function datas(){
   while(cur<=fimD&&guarda<731){out.push(iso(cur));cur.setDate(cur.getDate()+1);guarda++;}
   return out;
 }
-async function carregar(forcar){if(carregado&&!forcar)return;const vazio={docs:[]};const [r,a,m,pj,pr,fi,ei,pc]=await Promise.all([fs().collection(CREG).get(),fs().collection(CAP).get(),fs().collection(CMAQ).get(),fs().collection(CPROD).get().catch(()=>vazio),fs().collection(CPROJ).get().catch(()=>vazio),fs().collection(CFICHA).get().catch(()=>vazio),fs().collection(CEST).get().catch(()=>vazio),fs().collection(CPROC).get().catch(()=>vazio)]);regs=r.docs.map(d=>({_id:d.id,...d.data()}));aps=a.docs.map(d=>({_id:d.id,...d.data()}));maqs=m.docs.map(d=>({_id:d.id,...d.data()}));produtos=pj.docs.map(d=>({_id:d.id,...d.data()}));projecao=pr.docs.map(d=>({_id:d.id,...d.data()}));fichas=fi.docs.map(d=>({_id:d.id,...d.data()}));estoqueIns=ei.docs.map(d=>({_id:d.id,...d.data()}));processos=pc.docs.map(d=>({_id:d.id,...d.data()}));carregado=true;}
-function semanaRegs(){const ds=datas();return regs.filter(r=>(ds.includes(r.data)||aps.some(a=>a.registroId===r._id&&ds.includes(a.data)))&&(!grpMaquina||r.maquina===grpMaquina)&&(!grpProduto||r.produto===grpProduto));} function realReg(id){const ds=datas();return aps.filter(a=>a.registroId===id&&ds.includes(a.data)).reduce((s,a)=>s+n(a.qntCaixas),0);} function totalReal(id){return aps.filter(a=>a.registroId===id).reduce((s,a)=>s+n(a.qntCaixas),0);}
+async function carregar(forcar){
+  const lojaId=String(global.getDTLojaAtiva?.()||'');
+  const chave=grpTudo?'TUDO':(periodoIni()+'|'+periodoFimStr());
+  if(carregado&&!forcar&&periodoCarregadoKey===chave)return;
+  let carregouBackend=false;
+  try{
+    if(!lojaId||!global.firebase?.app)throw new Error('Loja/Firebase indisponível para consulta de relatório.');
+    const callable=global.firebase.app().functions('southamerica-east1').httpsCallable('buscarRelatorioProducaoPeriodo');
+    const payload=grpTudo?{lojaId,tudo:true}:{lojaId,ini:periodoIni(),fim:periodoFimStr()};
+    const resp=await callable(payload),r=resp?.data?.relatorio;
+    if(!r||!Array.isArray(r.registros)||!Array.isArray(r.apontamentos)||!Array.isArray(r.maquinas)||!Array.isArray(r.processos))throw new Error('Resposta inválida do relatório de produção.');
+    regs=r.registros;aps=r.apontamentos;maqs=r.maquinas;processos=r.processos;totalRealPorRegistro=r.totalRealPorRegistro||{};
+    carregouBackend=true;
+  }catch(erroBackend){
+    console.warn('[Produção Relatórios] Consulta por período indisponível; usando fallback Firestore.',erroBackend);
+    const vazio={docs:[]};
+    const [r,a,m,pc]=await Promise.all([
+      fs().collection(CREG).get(),
+      fs().collection(CAP).get(),
+      fs().collection(CMAQ).get(),
+      fs().collection(CPROC).get().catch(()=>vazio)
+    ]);
+    regs=r.docs.map(d=>({_id:d.id,...d.data()}));
+    aps=a.docs.map(d=>({_id:d.id,...d.data()}));
+    maqs=m.docs.map(d=>({_id:d.id,...d.data()}));
+    processos=pc.docs.map(d=>({_id:d.id,...d.data()}));
+    totalRealPorRegistro={};
+  }
+  if(forcar){
+    produtos=[];projecao=[];fichas=[];estoqueIns=[];
+    complementosCarregados={gerencial:false,insumos:false,exportacao:false};
+    complementosEmAndamento={};
+  }
+  carregado=true;periodoCarregadoKey=chave;
+  return carregouBackend;
+}
+async function carregarComplementos(tipo,forcar){
+  const chave=tipo||'gerencial';
+  if(!forcar&&complementosCarregados[chave])return;
+  if(!forcar&&complementosEmAndamento[chave])return complementosEmAndamento[chave];
+  const vazio={docs:[]};
+  const tarefa=(async()=>{
+    if(chave==='gerencial'){
+      const pj=await fs().collection(CPROD).get().catch(()=>vazio);
+      produtos=pj.docs.map(d=>({_id:d.id,...d.data()}));
+      complementosCarregados.gerencial=true;
+      return;
+    }
+    if(chave==='insumos'){
+      let bi=[];try{bi=await global.DTProducaoInsumosBI.carregar(!!forcar);}catch(e){console.warn('[Produção Relatórios] BI de insumos indisponível; usando materialização legada.',e);}
+      const [fi,ei]=await Promise.all([
+        fs().collection(CFICHA).get().catch(()=>vazio),
+        bi.length?Promise.resolve(vazio):fs().collection(CEST).get().catch(()=>vazio)
+      ]);
+      fichas=fi.docs.map(d=>({_id:d.id,...d.data()}));
+      estoqueIns=bi.length?bi:ei.docs.map(d=>({_id:d.id,...d.data(),_fonte:'legado'}));
+      complementosCarregados.insumos=true;
+      return;
+    }
+    if(chave==='exportacao'){
+      const faltam=[];
+      if(!complementosCarregados.gerencial)faltam.push('gerencial');
+      if(!complementosCarregados.insumos)faltam.push('insumos');
+      if(faltam.length)await Promise.all(faltam.map(x=>carregarComplementos(x,forcar)));
+      const pr=await fs().collection(CPROJ).get().catch(()=>vazio);
+      projecao=pr.docs.map(d=>({_id:d.id,...d.data()}));
+      complementosCarregados.exportacao=true;
+    }
+  })();
+  complementosEmAndamento[chave]=tarefa;
+  try{await tarefa;}finally{delete complementosEmAndamento[chave];}
+}
+function semanaRegs(){const ds=datas();return regs.filter(r=>(ds.includes(r.data)||aps.some(a=>a.registroId===r._id&&ds.includes(a.data)))&&(!grpMaquina||r.maquina===grpMaquina)&&(!grpProduto||r.produto===grpProduto));} function realReg(id){const ds=datas();return aps.filter(a=>a.registroId===id&&ds.includes(a.data)).reduce((s,a)=>s+n(a.qntCaixas),0);} function totalReal(id){return Object.prototype.hasOwnProperty.call(totalRealPorRegistro,id)?n(totalRealPorRegistro[id]):aps.filter(a=>a.registroId===id).reduce((s,a)=>s+n(a.qntCaixas),0);}
 function dados(){const rr=semanaRegs(), porM={}, porP={}, porD={}; datas().forEach(d=>porD[d]={prog:0,real:0});let prog=0,real=0,concl=0,atras=0;rr.forEach(r=>{const p=n(r.qntCaixas),x=realReg(r._id),m=r.maquina||'Sem máquina',pr=r.produto||'Sem produto';prog+=p;real+=x;if(r.status==='concluido')concl++;if(r.data&&r.data<iso(new Date())&&totalReal(r._id)<p&&r.status!=='concluido')atras++;(porM[m]??={prog:0,real:0,ops:0}).prog+=p;porM[m].real+=x;porM[m].ops++;(porP[pr]??={prog:0,real:0,ops:0}).prog+=p;porP[pr].real+=x;porP[pr].ops++;if(porD[r.data])porD[r.data].prog+=p;});aps.filter(a=>datas().includes(a.data)).forEach(a=>{if(porD[a.data])porD[a.data].real+=n(a.qntCaixas);});return{rr,prog,real,concl,atras,porM,porP,porD,ader:prog?Math.round(real/prog*100):0};}
 function ocupacao(nome){if(typeof global.buildProducaoSchedule!=='function')return 0;const mm={};maqs.forEach(m=>mm[m.nome]=m);const s=global.buildProducaoSchedule(weekStart,regs,mm,global._producaoSetups||[]);const x=s?.porMaquina?.[nome];return x&&x.capacidadeMinutosSemana?Math.round(x.totalMinutosUsados/x.capacidadeMinutosSemana*100):0;}
 function tabelaMapa(obj,label){const rows=Object.entries(obj).sort((a,b)=>b[1].prog-a[1].prog),tot=rows.reduce((a,[,v])=>({prog:a.prog+v.prog,real:a.real+v.real}),{prog:0,real:0}),adTot=tot.prog?Math.round(tot.real/tot.prog*100):0;return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>${label}</th><th style="text-align:right">Programado</th><th style="text-align:right">Realizado</th><th style="text-align:right">Desvio</th><th style="text-align:center">Aderência</th>${label==='Máquina'?'<th style="text-align:center">Ocupação</th>':''}</tr></thead><tbody>${rows.length?rows.map(([k,v])=>{const ad=v.prog?Math.round(v.real/v.prog*100):0,des=v.real-v.prog;return `<tr><td><b>${esc(k)}</b></td><td style="text-align:right">${v.prog.toLocaleString('pt-BR')}</td><td style="text-align:right">${v.real.toLocaleString('pt-BR')}</td><td style="text-align:right">${des.toLocaleString('pt-BR')}</td><td style="text-align:center"><span class="badge ${ad>=100?'b-green':ad>=80?'b-blue':'b-orange'}">${ad}%</span></td>${label==='Máquina'?`<td style="text-align:center">${ocupacao(k)}%</td>`:''}</tr>`}).join(''):'<tr><td colspan="6"><div class="empty">Sem dados no período.</div></td></tr>'}</tbody>${rows.length?`<tfoot><tr><th>TOTAL</th><th style="text-align:right">${tot.prog.toLocaleString('pt-BR')}</th><th style="text-align:right">${tot.real.toLocaleString('pt-BR')}</th><th style="text-align:right">${(tot.real-tot.prog).toLocaleString('pt-BR')}</th><th style="text-align:center">${adTot}%</th>${label==='Máquina'?'<th></th>':''}</tr></tfoot>`:''}</table></div></div>`;}
@@ -52,7 +121,7 @@ function tabelaMapa(obj,label){const rows=Object.entries(obj).sort((a,b)=>b[1].p
 function norm(v){return String(v??'').trim().toLowerCase();}
 function categoriaReg(r){const p=produtos.find(x=>String(x.cod||'')===String(r.prodCod||r.cod||'')||norm(x.descricao||x.produto)===norm(r.produto));return r.configSnapshot?.produto?.categoria||r.categoria||p?.categoria||'Sem categoria';}
 function tabelaCategorias(d){const map={};d.rr.forEach(r=>{const k=categoriaReg(r);const x=(map[k]??={prog:0,real:0,ops:0});x.prog+=n(r.qntCaixas);x.real+=realReg(r._id);x.ops++;});return tabelaMapa(map,'Categoria');}
-function coberturaHtml(){let lin=[];if(typeof global.calcularProjecaoComRisco==='function'){try{lin=global.calcularProjecaoComRisco('ponderada')||[];}catch(e){lin=[];}}if(!lin.length)lin=projecao.map(p=>{const m1=n(p.venda_m1),m2=n(p.venda_m2),m3=n(p.venda_m3),mens=(m1+2*m2+3*m3)/6,sem=mens/4.33,est=n(p.estoqueAtual),cob=sem>0?est/sem*7:null;return {...p,projSemanal:sem,coberturaDias:cob,risco:cob==null?'nd':cob<=3?'critico':cob<=7?'alto':cob<=14?'medio':'ok'};});lin.sort((a,b)=>(a.coberturaDias??999999)-(b.coberturaDias??999999));return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Produto</th><th style="text-align:right">Estoque</th><th style="text-align:right">Demanda/sem.</th><th style="text-align:right">Cobertura</th><th>Risco</th></tr></thead><tbody>${lin.length?lin.map(p=>`<tr><td><b>${esc(p.produto||p.descricao||'')}</b></td><td style="text-align:right">${n(p.estoqueAtual).toLocaleString('pt-BR')}</td><td style="text-align:right">${n(p.projSemanal).toLocaleString('pt-BR',{maximumFractionDigits:1})}</td><td style="text-align:right">${p.coberturaDias==null?'—':Number(p.coberturaDias).toLocaleString('pt-BR',{maximumFractionDigits:1})+'d'}</td><td><span class="badge ${p.risco==='critico'?'b-red':p.risco==='alto'?'b-orange':p.risco==='medio'?'b-yellow':p.risco==='ok'?'b-green':'b-gray'}">${esc(p.risco||'nd')}</span></td></tr>`).join(''):'<tr><td colspan="5">Sem dados de projeção/estoque.</td></tr>'}</tbody></table></div></div>`;}
+function coberturaHtml(){let lin=[];if(typeof global.calcularProjecaoComRisco==='function'){try{lin=global.calcularProjecaoComRisco('ponderada')||[];}catch(e){lin=[];}}if(!lin.length)lin=projecao.map(p=>{const m1=n(p.venda_m1),m2=n(p.venda_m2),m3=n(p.venda_m3),mens=(m1+2*m2+3*m3)/6,sem=mens/4.33,est=n(p.estoqueAtual),cob=sem>0?est/sem*7:null;return {...p,projSemanal:sem,coberturaDias:cob,risco:cob==null?'nd':cob<=3?'critico':cob<=7?'alto':cob<=14?'medio':'ok'};});lin.sort((a,b)=>(a.coberturaDias??999999)-(b.coberturaDias??999999));return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Produto</th><th style="text-align:right">Estoque</th><th style="text-align:right">Demanda/sem.</th><th style="text-align:right">Cobertura operacional</th><th>Risco operacional</th></tr></thead><tbody>${lin.length?lin.map(p=>`<tr><td><b>${esc(p.produto||p.descricao||'')}</b></td><td style="text-align:right">${n(p.estoqueAtual).toLocaleString('pt-BR')}</td><td style="text-align:right">${n(p.projSemanal).toLocaleString('pt-BR',{maximumFractionDigits:1})}</td><td style="text-align:right">${p.coberturaDias==null?'—':Number(p.coberturaDias).toLocaleString('pt-BR',{maximumFractionDigits:1})+'d'}</td><td><span class="badge ${p.risco==='critico'?'b-red':p.risco==='alto'?'b-orange':p.risco==='medio'?'b-yellow':p.risco==='ok'?'b-green':'b-gray'}">${esc(p.risco||'nd')}</span></td></tr>`).join(''):'<tr><td colspan="5">Sem dados de projeção/estoque.</td></tr>'}</tbody></table></div></div>`;}
 function funcionariosHtml(){const ds=datas(),map={};processos.filter(p=>ds.includes(p.data)).forEach(p=>(p.funcionarios||[]).forEach(f=>{const k=f.nome||'Sem nome';if(grpFuncionario&&k!==grpFuncionario)return;const x=(map[k]??={min:0,processos:0,funcoes:new Set()});x.min+=n(f.tempoMin||p.tempoMinutos);x.processos++;if(f.funcao)x.funcoes.add(f.funcao);}));const rows=Object.entries(map).sort((a,b)=>b[1].min-a[1].min);return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Funcionário</th><th>Funções</th><th style="text-align:right">Processos</th><th style="text-align:right">Tempo</th></tr></thead><tbody>${rows.length?rows.map(([k,v])=>`<tr><td><b>${esc(k)}</b></td><td>${esc([...v.funcoes].join(', ')||'—')}</td><td style="text-align:right">${v.processos}</td><td style="text-align:right">${Math.round(v.min)} min</td></tr>`).join(''):'<tr><td colspan="4">Sem processos com funcionários nesta semana.</td></tr>'}</tbody></table></div></div>`;}
 function fichaDoReg(r){return fichas.find(f=>String(f.cod||f.prodCod||'')===String(r.prodCod||r.cod||'')||norm(f.produto||f.descricao)===norm(r.produto));}
 function insumosHtml(d){const map={};d.rr.forEach(r=>{const f=fichaDoReg(r);const its=r.configSnapshot?.insumos||f?.insumos||[];its.forEach(i=>{const nome=i.insumo||i.nome;if(!nome)return;const x=(map[nome]??={necessario:0,unidade:i.unidade||'',categoria:i.categoria||''});x.necessario+=n(i.qty??i.quantidade)*n(r.qntCaixas);});});estoqueIns.forEach(e=>{const key=Object.keys(map).find(k=>norm(k)===norm(e.insumo||e.nome));if(key){map[key].estoque=n(e.quantidade??e.estoque);map[key].unidade=map[key].unidade||e.unidade||'';map[key].categoria=map[key].categoria||e.categoria||'';}});const rows=Object.entries(map).sort((a,b)=>((a[1].estoque??0)-a[1].necessario)-((b[1].estoque??0)-b[1].necessario));return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Insumo</th><th>Categoria</th><th style="text-align:right">Necessário</th><th style="text-align:right">Estoque</th><th style="text-align:right">Saldo</th><th>Un.</th></tr></thead><tbody>${rows.length?rows.map(([k,v])=>{const est=v.estoque??0,s=est-v.necessario;return `<tr><td><b>${esc(k)}</b></td><td>${esc(v.categoria||'—')}</td><td style="text-align:right">${v.necessario.toLocaleString('pt-BR',{maximumFractionDigits:2})}</td><td style="text-align:right">${est.toLocaleString('pt-BR',{maximumFractionDigits:2})}</td><td style="text-align:right"><span class="badge ${s<0?'b-red':'b-green'}">${s.toLocaleString('pt-BR',{maximumFractionDigits:2})}</span></td><td>${esc(v.unidade||'')}</td></tr>`;}).join(''):'<tr><td colspan="6">Sem consumo de insumos calculável.</td></tr>'}</tbody></table></div></div>`;}
@@ -71,7 +140,7 @@ function gerDestruirGraficos(){while(gerCharts.length){try{gerCharts.pop().destr
 function gerCriarGraficos(gd){gerDestruirGraficos();if(typeof global.Chart!=='function')return;const cMaq=document.getElementById('ger-chart-maq');if(cMaq){const nomes=Object.keys(gd.porM).sort((a,b)=>gd.porM[b].real-gd.porM[a].real);gerCharts.push(new global.Chart(cMaq,{type:'bar',data:{labels:nomes,datasets:[{label:'Programado',data:nomes.map(x=>gd.porM[x].prog),backgroundColor:'#DDE3EC'},{label:'Realizado',data:nomes.map(x=>gd.porM[x].real),backgroundColor:'#E8751A'}]},options:{indexAxis:gerChartTipoMaq==='horizontal'?'y':'x',responsive:true,maintainAspectRatio:false}}));}const cDia=document.getElementById('ger-chart-dia');if(cDia){const ds=datas(),labs=ds.map(x=>{const z=new Date(x+'T12:00:00');return z.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit'});});gerCharts.push(new global.Chart(cDia,{type:gerChartTipoDia,data:{labels:labs,datasets:[{label:'Programado',data:ds.map(x=>gd.porD[x]?.prog||0),borderColor:'#5A6B80',backgroundColor:'#5A6B80'},{label:'Realizado',data:ds.map(x=>gd.porD[x]?.real||0),borderColor:'#E8751A',backgroundColor:'#E8751A'}]},options:{responsive:true,maintainAspectRatio:false}}));}const cEfic=document.getElementById('ger-chart-efic');if(cEfic){const nomes=Object.keys(gd.porM),eficPorM=nomes.map(x=>gd.porM[x].prog?Math.round(gd.porM[x].real/gd.porM[x].prog*100):0);gerCharts.push(new global.Chart(cEfic,{type:'bar',data:{labels:nomes,datasets:[{label:'Eficiência %',data:eficPorM,backgroundColor:eficPorM.map(v=>v>=85?'#15803D':v>=60?'#C97A06':'#D92020')}]},options:{responsive:true,maintainAspectRatio:false}}));}const cCat=document.getElementById('ger-chart-cat');if(cCat){const nomes=Object.keys(gd.porCat);gerCharts.push(new global.Chart(cCat,{type:gerChartTipoCat,data:{labels:nomes,datasets:[{label:'Realizado',data:nomes.map(x=>gd.porCat[x].real),backgroundColor:nomes.map((_,i)=>`hsl(${25+i*35},65%,50%)`)}]},options:{responsive:true,maintainAspectRatio:false}}));}}
 function gerencialHtml(d){const rrFiltrado=gerFiltrarRegs(d.rr);const gd=gerCalcular(rrFiltrado);const conteudo=gerView==='tabela'?gerTabelaHtml(gd):gerView==='pivot'?gerPivotHtml(rrFiltrado):gerGraficosHtml();if(gerView==='graficos')setTimeout(()=>gerCriarGraficos(gd),0);else gerDestruirGraficos();return gerFiltrosHtml(d.rr)+gerKpisHtml(gd)+gerInsightsHtml(gd)+conteudo;}
 
-function tabelaOps(d){return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Data</th><th>Produto</th><th>Máquina</th><th style="text-align:right">Prog.</th><th style="text-align:right">Real.</th><th style="text-align:center">%</th><th>Status</th></tr></thead><tbody>${d.rr.length?d.rr.sort((a,b)=>(a.data||'').localeCompare(b.data||'')).map(r=>{const x=realReg(r._id),p=n(r.qntCaixas),ad=p?Math.round(x/p*100):0;return `<tr><td>${esc(r.data||'')}</td><td><b>${esc(r.produto)}</b></td><td>${esc(r.maquina)}</td><td style="text-align:right">${p.toLocaleString('pt-BR')}</td><td style="text-align:right">${x.toLocaleString('pt-BR')}</td><td style="text-align:center">${ad}%</td><td>${esc(r.status||'programado')}</td></tr>`}).join(''):'<tr><td colspan="7">Sem OPs.</td></tr>'}</tbody></table></div></div>`;}
+function tabelaOps(d){return `<div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Data</th><th>Produto</th><th>Máquina</th><th style="text-align:right">Prog.</th><th style="text-align:right">Real.</th><th style="text-align:center">%</th><th>Status</th></tr></thead><tbody>${d.rr.length?d.rr.sort((a,b)=>(a.data||'').localeCompare(b.data||'')).map(r=>{const x=realReg(r._id),p=n(r.qntCaixas),ad=p?Math.round(x/p*100):0;return `<tr><td>${esc(r.data||'')}</td><td><b>${esc(r.produto)}</b></td><td>${esc(r.maquina)}</td><td style="text-align:right">${p.toLocaleString('pt-BR')}</td><td style="text-align:right">${x.toLocaleString('pt-BR')}</td><td style="text-align:center">${ad}%</td><td>${esc((['em_producao','producao','iniciado','iniciada'].includes(String(r.status||'').toLowerCase())?'em_andamento':(r.status||'programado')))}</td></tr>`}).join(''):'<tr><td colspan="7">Sem OPs.</td></tr>'}</tbody></table></div></div>`;}
 function alertas(d){const arr=[];if(d.atras)arr.push(`⚠️ ${d.atras} OP(s) atrasada(s) ou incompleta(s).`);Object.entries(d.porM).forEach(([m])=>{const o=ocupacao(m);if(o>100)arr.push(`🔥 ${m}: ${o}% de ocupação (sobrecarga).`);});if(d.ader<80&&d.prog)arr.push(`📉 Aderência semanal em ${d.ader}% — abaixo de 80%.`);if(!arr.length)arr.push('✅ Nenhum alerta crítico detectado na semana.');return `<div class="tc" style="padding:14px">${arr.map(x=>`<div style="padding:7px 0;border-bottom:1px solid var(--border)">${esc(x)}</div>`).join('')}</div>`;}
 function destruir(){while(charts.length){try{charts.pop().destroy();}catch(e){}}} function grafHtml(){return `<div class="prel-chart-grid"><div class="tc prel-chart-card"><div class="prel-chart-title"><b>Programado × Realizado por dia</b></div><div class="prel-chart-box"><canvas id="prel-dia"></canvas></div></div><div class="tc prel-chart-card"><div class="prel-chart-title"><b>Programado × Realizado por máquina</b></div><div class="prel-chart-box"><canvas id="prel-maq"></canvas></div></div></div>`;}
 function criarGraficos(d){destruir();if(typeof global.Chart!=='function')return;const ds=datas(),labs=ds.map(x=>{const z=new Date(x+'T12:00:00');return z.toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit'});});const c1=document.getElementById('prel-dia');if(c1)charts.push(new global.Chart(c1,{type:'bar',data:{labels:labs,datasets:[{label:'Programado',data:ds.map(x=>d.porD[x].prog)},{label:'Realizado',data:ds.map(x=>d.porD[x].real)}]},options:{responsive:true,maintainAspectRatio:false}}));const nomes=Object.keys(d.porM);const c2=document.getElementById('prel-maq');if(c2)charts.push(new global.Chart(c2,{type:'bar',data:{labels:nomes,datasets:[{label:'Programado',data:nomes.map(x=>d.porM[x].prog)},{label:'Realizado',data:nomes.map(x=>d.porM[x].real)}]},options:{responsive:true,maintainAspectRatio:false}}));}
@@ -113,22 +182,29 @@ function desenhar(){const p=document.getElementById('page-producao-relatorios');
     <div class="prel-tabs">${[['resumo','📊 Produção'],['maquina','⚙️ Máquinas'],['produto','📦 Produtos'],['funcionarios','👷 Funcionários'],['insumos','🧪 Insumos'],['gerencial','📈 Gerencial']].map(x=>`<button class="prel-tab ${aba===x[0]?'active':''}" data-prel-aba="${x[0]}">${x[1]}</button>`).join('')}</div>
     <div id="prel-conteudo">${aba==='resumo'?tabelaMapa(d.porM,'Máquina'):aba==='maquina'?tabelaMapa(d.porM,'Máquina'):aba==='produto'?tabelaMapa(d.porP,'Produto'):aba==='funcionarios'?funcionariosHtml():aba==='insumos'?insumosHtml(d):gerencialHtml(d)}</div>`;}
 async function render(){const p=document.getElementById('page-producao-relatorios');if(!p)return;p.innerHTML='<div class="empty">Carregando relatórios...</div>';try{await carregar();desenhar();}catch(e){p.innerHTML='<div class="empty">Falha: '+esc(e.message||e)+'</div>';}}
-function exportar(){if(!global.XLSX){global.showToast?.('Biblioteca Excel não carregada.','error');return;}const d=dados(),wb=global.XLSX.utils.book_new();const ops=d.rr.map(r=>({Data:r.data,Produto:r.produto,Maquina:r.maquina,Programado:n(r.qntCaixas),Realizado:realReg(r._id),Desvio:realReg(r._id)-n(r.qntCaixas),Status:r.status||''}));const pm=Object.entries(d.porM).map(([k,v])=>({Maquina:k,Programado:v.prog,Realizado:v.real,Desvio:v.real-v.prog,Aderencia:v.prog?v.real/v.prog:0,Ocupacao:ocupacao(k)/100}));const pp=Object.entries(d.porP).map(([k,v])=>({Produto:k,Programado:v.prog,Realizado:v.real,Desvio:v.real-v.prog,Aderencia:v.prog?v.real/v.prog:0}));const dia=Object.entries(d.porD).map(([k,v])=>({Data:k,Programado:v.prog,Realizado:v.real,Desvio:v.real-v.prog}));global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(ops),'OPs');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(pm),'Maquinas');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(pp),'Produtos');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(dia),'Diario');const cat={};d.rr.forEach(r=>{const k=categoriaReg(r),x=(cat[k]??={Categoria:k,Programado:0,Realizado:0});x.Programado+=n(r.qntCaixas);x.Realizado+=realReg(r._id);});global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(Object.values(cat)),'Categorias');const cob=projecao.map(p=>{const mens=(n(p.venda_m1)+2*n(p.venda_m2)+3*n(p.venda_m3))/6,sem=mens/4.33,c=sem>0?n(p.estoqueAtual)/sem*7:null;return {Produto:p.produto||'',Estoque:n(p.estoqueAtual),DemandaSemanal:sem,CoberturaDias:c??''};});global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(cob),'Cobertura');const fun=[];processos.filter(p=>datas().includes(p.data)).forEach(p=>(p.funcionarios||[]).forEach(f=>fun.push({Data:p.data,Processo:p.nome||p.descricao||'',Funcionario:f.nome||'',Funcao:f.funcao||'',TempoMin:n(f.tempoMin||p.tempoMinutos)})));global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(fun),'Funcionarios');global.XLSX.writeFile(wb,'relatorio_producao_'+iso(weekStart)+'.xlsx');}
-function prelSetAba(v){aba=v||'resumo';desenhar();}
+async function exportar(){if(!global.XLSX){global.showToast?.('Biblioteca Excel não carregada.','error');return;}try{await carregarComplementos('exportacao');}catch(e){console.warn('[Produção Relatórios] Complementos da exportação indisponíveis.',e);}const d=dados(),wb=global.XLSX.utils.book_new();const ops=d.rr.map(r=>({Data:r.data,Produto:r.produto,Maquina:r.maquina,Programado:n(r.qntCaixas),Realizado:realReg(r._id),Desvio:realReg(r._id)-n(r.qntCaixas),Status:r.status||''}));const pm=Object.entries(d.porM).map(([k,v])=>({Maquina:k,Programado:v.prog,Realizado:v.real,Desvio:v.real-v.prog,Aderencia:v.prog?v.real/v.prog:0,Ocupacao:ocupacao(k)/100}));const pp=Object.entries(d.porP).map(([k,v])=>({Produto:k,Programado:v.prog,Realizado:v.real,Desvio:v.real-v.prog,Aderencia:v.prog?v.real/v.prog:0}));const dia=Object.entries(d.porD).map(([k,v])=>({Data:k,Programado:v.prog,Realizado:v.real,Desvio:v.real-v.prog}));global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(ops),'OPs');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(pm),'Maquinas');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(pp),'Produtos');global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(dia),'Diario');const cat={};d.rr.forEach(r=>{const k=categoriaReg(r),x=(cat[k]??={Categoria:k,Programado:0,Realizado:0});x.Programado+=n(r.qntCaixas);x.Realizado+=realReg(r._id);});global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(Object.values(cat)),'Categorias');const cob=projecao.map(p=>{const mens=(n(p.venda_m1)+2*n(p.venda_m2)+3*n(p.venda_m3))/6,sem=mens/4.33,c=sem>0?n(p.estoqueAtual)/sem*7:null;return {Produto:p.produto||'',Estoque:n(p.estoqueAtual),DemandaSemanal:sem,CoberturaDias:c??''};});global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(cob),'Cobertura operacional');const fun=[];processos.filter(p=>datas().includes(p.data)).forEach(p=>(p.funcionarios||[]).forEach(f=>fun.push({Data:p.data,Processo:p.nome||p.descricao||'',Funcionario:f.nome||'',Funcao:f.funcao||'',TempoMin:n(f.tempoMin||p.tempoMinutos)})));global.XLSX.utils.book_append_sheet(wb,global.XLSX.utils.json_to_sheet(fun),'Funcionarios');global.XLSX.writeFile(wb,'relatorio_producao_'+iso(weekStart)+'.xlsx');}
+async function prelSetAba(v){
+  aba=v||'resumo';
+  try{
+    if(aba==='gerencial')await carregarComplementos('gerencial');
+    else if(aba==='insumos')await carregarComplementos('insumos');
+  }catch(e){console.warn('[Produção Relatórios] Falha ao carregar dados complementares da aba.',e);}
+  desenhar();
+}
 function prelGetAba(){return aba;}
 global.prelSetAba=prelSetAba;global.prelGetAba=prelGetAba;
 global.renderProducaoRelatorios=render;global.exportarProducaoRelatorios=exportar;document.addEventListener('click',e=>{
-  const per=e.target.closest('[data-prel-periodo]');if(per){grpSetPeriodo(per.getAttribute('data-prel-periodo'));desenhar();return;}
-  if(e.target.closest('[data-prel-limpar-periodo]')){grpClear();desenhar();return;}
-  const a=e.target.closest('[data-prel-aba]');if(a){prelSetAba(a.dataset.prelAba);return;}if(e.target.closest('[data-prel-export]'))exportar();if(e.target.closest('[data-prel-pdf]'))global.exportarElementoProducaoPDF?.('page-producao-relatorios','relatorio_producao.pdf');if(e.target.closest('[data-prel-img]'))global.exportarElementoProducaoImagem?.('page-producao-relatorios','relatorio_producao.png');if(e.target.closest('[data-prel-atualizar]')){carregar(true).then(desenhar);}
+  const per=e.target.closest('[data-prel-periodo]');if(per){grpSetPeriodo(per.getAttribute('data-prel-periodo'));carregar().then(desenhar).catch(err=>global.showToast?.('Falha ao carregar período: '+(err.message||err),'error'));return;}
+  if(e.target.closest('[data-prel-limpar-periodo]')){grpClear();carregar().then(desenhar).catch(err=>global.showToast?.('Falha ao carregar período: '+(err.message||err),'error'));return;}
+  const a=e.target.closest('[data-prel-aba]');if(a){prelSetAba(a.dataset.prelAba);return;}if(e.target.closest('[data-prel-export]'))exportar();if(e.target.closest('[data-prel-pdf]'))global.exportarElementoProducaoPDF?.('page-producao-relatorios','relatorio_producao.pdf');if(e.target.closest('[data-prel-img]'))global.exportarElementoProducaoImagem?.('page-producao-relatorios','relatorio_producao.png');if(e.target.closest('[data-prel-atualizar]')){carregar(true).then(async()=>{if(aba==='gerencial')await carregarComplementos('gerencial');else if(aba==='insumos')await carregarComplementos('insumos');desenhar();});}
   const gv=e.target.closest('[data-ger-view]');if(gv){gerView=gv.getAttribute('data-ger-view');desenhar();return;}
   const gl=e.target.closest('[data-ger-limpar-filtros]');if(gl){gerBusca='';gerMaquina='';gerCategoria='';desenhar();return;}
   const gs=e.target.closest('[data-ger-sort]');if(gs){const campo=gs.getAttribute('data-ger-sort');gerSort=gerSort.col===campo?{col:campo,asc:!gerSort.asc}:{col:campo,asc:false};desenhar();return;}
   const gt=e.target.closest('[data-ger-chart-tipo]');if(gt){const [dim,tipo]=gt.getAttribute('data-ger-chart-tipo').split(':');if(dim==='maq')gerChartTipoMaq=tipo;else if(dim==='dia')gerChartTipoDia=tipo;else if(dim==='cat')gerChartTipoCat=tipo;desenhar();return;}
 });
 document.addEventListener('change',e=>{
-  if(e.target.matches('[data-prel-dt-ini]')){grpDtIni=e.target.value||'';desenhar();return;}
-  if(e.target.matches('[data-prel-dt-fim]')){grpDtFim=e.target.value||'';desenhar();return;}
+  if(e.target.matches('[data-prel-dt-ini]')){grpTudo=false;grpDtIni=e.target.value||'';carregar().then(desenhar).catch(err=>global.showToast?.('Falha ao carregar período: '+(err.message||err),'error'));return;}
+  if(e.target.matches('[data-prel-dt-fim]')){grpTudo=false;grpDtFim=e.target.value||'';carregar().then(desenhar).catch(err=>global.showToast?.('Falha ao carregar período: '+(err.message||err),'error'));return;}
   if(e.target.matches('[data-prel-maquina]')){grpMaquina=e.target.value;desenhar();return;}
   if(e.target.matches('[data-prel-produto]')){grpProduto=e.target.value;desenhar();return;}
   if(e.target.matches('[data-prel-funcionario]')){grpFuncionario=e.target.value;desenhar();return;}
@@ -139,5 +215,5 @@ document.addEventListener('change',e=>{
 document.addEventListener('input',e=>{
   if(e.target.matches('[data-ger-busca]')){gerBusca=e.target.value;const pos=e.target.selectionStart;desenhar();const el=document.querySelector('[data-ger-busca]');if(el){el.focus();try{el.setSelectionRange(pos,pos);}catch(_){}}return;}
 });
-  global.DTProducao?.registrarInvalidacao?.(()=>{ carregado=false; regs=[]; aps=[]; maqs=[]; produtos=[]; projecao=[]; fichas=[]; estoqueIns=[]; processos=[]; charts.forEach(c=>{try{c?.destroy?.();}catch(_){}}); charts=[]; gerCharts.forEach(c=>{try{c?.destroy?.();}catch(_){}}); gerCharts=[]; });
+  global.DTProducao?.registrarInvalidacao?.(()=>{ carregado=false; periodoCarregadoKey=''; totalRealPorRegistro={}; regs=[]; aps=[]; maqs=[]; produtos=[]; projecao=[]; fichas=[]; estoqueIns=[]; processos=[]; complementosCarregados={gerencial:false,insumos:false,exportacao:false}; complementosEmAndamento={}; charts.forEach(c=>{try{c?.destroy?.();}catch(_){}}); charts=[]; gerCharts.forEach(c=>{try{c?.destroy?.();}catch(_){}}); gerCharts=[]; });
 })(window);
