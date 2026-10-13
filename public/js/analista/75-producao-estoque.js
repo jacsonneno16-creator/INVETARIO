@@ -1,17 +1,15 @@
-// Setor Produção — Estoque via Bluesoft (fase 3f da unificação com o
+// Setor Produção — Estoque sincronizado pelo BI/SharePoint.
 // Sistema de Produção; fase 11 migrou a busca/paginação/normalização pro
-// serviço compartilhado 90-bluesoft-service.js, em vez de manter uma cópia
-// própria; fase 12b passou a trazer só produto relevante — com estoque OU
+// base materializada pelo BI/SharePoint, sem consulta direta à BlueSoft;
+// fase 12b passou a trazer só produto relevante — com estoque OU
 // com pedido/reserva pendente — e paginar o resultado na tela, porque um
 // catálogo grande (10-20 mil produtos) travava o navegador ao renderizar
 // tudo de uma vez numa tabela só). A original tinha SUA PRÓPRIA
 // configuração Bluesoft (token/URL num projeto Firebase separado,
 // "programacao-producao"). Aqui não duplicamos nada disso: reaproveitamos a
-// MESMA configuração (`dt_config/integracao_api`), a MESMA Cloud Function
-// de proxy (`bluesoftProxy`, já existente neste projeto) e o MESMO vínculo
-// loja→Bluesoft (`bluesoft_loja_key`/`bluesoft_loja_cd` em `lojas`, editado
-// em Gestão de Lojas) que o Inventário já usa pra abrir inventário via API.
-// Só a consulta “quanto tem agora” é nova aqui — sem gerar inventário, sem
+// materialização de estoque recebida do BI/SharePoint. Este módulo não chama
+// API BlueSoft nem depende do vínculo loja→BlueSoft.
+// Só a consulta “quanto tem agora” é feita na base local — sem gerar inventário, sem
 // tocar em endereços/lotes.
 (function (global) {
   'use strict';
@@ -30,8 +28,9 @@
 
   async function carregarProducaoEstoque(forcar) {
     if (_carregado && !forcar) return;
-    const snap = await raw().collection('lojas').get();
-    _lojas = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => l.bluesoft_loja_key);
+    const lista = global.DTLoja?.listar ? await global.DTLoja.listar(!!forcar) : [];
+    if (lista.length) _lojas = lista.filter(l => l.ativa !== false);
+    else { const snap = await raw().collection('lojas').get(); _lojas = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(l => l.ativa !== false); }
     _carregado = true;
   }
 
@@ -53,12 +52,12 @@
     if (!_lojas.length) {
       pagina.innerHTML = `
         <div style="margin-bottom:16px">
-          <div class="page-title" style="font-size:1.1rem">📦 Estoque (Bluesoft)</div>
+          <div class="page-title" style="font-size:1.1rem">📦 Estoque (BI)</div>
         </div>
         <div class="empty">
           <div class="empty-icon">🔗</div>
-          <div class="empty-title">Nenhuma loja vinculada à Bluesoft</div>
-          <div class="empty-sub">Vá em Gestão de Lojas e vincule ao menos uma loja a um código da Bluesoft para consultar estoque aqui.</div>
+          <div class="empty-title">Nenhuma loja vinculada ao BI</div>
+          <div class="empty-sub">Vincule a loja ao código usado nos arquivos do BI para consultar o estoque sincronizado.</div>
         </div>`;
       return;
     }
@@ -73,16 +72,15 @@
     let status = '';
     if (resultado) {
       status = itensOrdenados.length.toLocaleString('pt-BR') + ' produto(s) relevante(s) — com estoque ou pedido pendente';
-      if (resultado.totalRecebido > itensOrdenados.length) status += ' (de ' + resultado.totalRecebido.toLocaleString('pt-BR') + ' recebido(s) da Bluesoft)';
-      if (resultado.rotaSimplificada) status += ' · rota simplificada (sem reserva/trânsito/custo — a rota completa não retornou dados pra essa loja)';
+      if (resultado.totalRecebido > itensOrdenados.length) status += ' (de ' + resultado.totalRecebido.toLocaleString('pt-BR') + ' sincronizado(s))';
       status += ' — ' + esc(resultado.lojaNome) + ' · atualizado ' + esc(resultado.atualizadoEm);
     }
 
     pagina.innerHTML = `
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
         <div>
-          <div class="page-title" style="font-size:1.1rem">📦 Estoque (Bluesoft)</div>
-          <div style="font-size:.72rem;color:var(--muted)">Consulta em tempo real do saldo de estoque por loja/CD, via integração Bluesoft já configurada em Importar/Exportar. Só traz produto com saldo, reserva, trânsito ou pedido pendente — produto zerado e sem movimento fica de fora. Lojas comuns também trazem disponível, reservado, em trânsito, pedidos pendentes, consumo médio/dia e custo — o mesmo dado que alimenta o PCP.</div>
+          <div class="page-title" style="font-size:1.1rem">📦 Estoque (BI)</div>
+          <div style="font-size:.72rem;color:var(--muted)">Saldo sincronizado dos arquivos do SharePoint pelo servidor. A consulta lê somente a loja escolhida e não acessa a API BlueSoft.</div>
         </div>
       </div>
 
@@ -131,21 +129,20 @@
       </tr>`).join('');
   }
 
-  // Estoque de UMA loja via o serviço compartilhado (90-bluesoft-service.js)
-  // — sem endereço/lote/validade (isso é específico do fluxo de abertura de
-  // inventário, em 43-importar-exportar-api.js). O nome do produto não vem
-  // no endpoint de estoque; reaproveita o catálogo (cacheado 24h) em vez de
-  // fazer uma chamada nova só pra descrição.
+  // Estoque materializado pelo sincronizador agendado do SharePoint. A
+  // coleção conserva o nome legado para compatibilidade com o PCP.
   async function _consultarEstoqueLoja(loja) {
-    const [resultadoEstoque, catalogo] = await Promise.all([
-      global.obterEstoqueBluesoft(loja, true),
-      global.obterCatalogoBluesoft(false).catch(() => []),
-    ]);
-    const nomesPorCod = new Map(catalogo.map(p => [p.cod, p.nome]));
+    const snap = await raw().collection('lojas').doc(loja.id).collection('pcp_estoque_bluesoft').where('origem', '==', 'bi').get();
+    const itens = snap.docs.map(d => {
+      const x = d.data() || {}, reservado = Number(x.estoqueReservadoVenda) || 0, atual = Number(x.estoqueAtual) || 0;
+      return { cod: String(x.cod || ''), descricao: x.produto || '', estoqueAtual: atual,
+        estoqueDisponivel: atual - reservado, estoqueReservado: reservado,
+        estoqueEmTransito: Number(x.estoqueEmTransito) || 0, pedidosPendentes: reservado,
+        consumoDiaMedio: Number(x.consumoDiaMedioBluesoft) || 0,
+        custoUltimaCompra: x.custoUltimaCompra == null ? null : Number(x.custoUltimaCompra) };
+    }).filter(i => i.estoqueAtual || i.estoqueReservado || i.estoqueEmTransito || i.pedidosPendentes);
     return {
-      itens: resultadoEstoque.itens.map(i => ({ ...i, descricao: nomesPorCod.get(i.cod) || '' })),
-      totalRecebido: resultadoEstoque.totalRecebido,
-      rotaSimplificada: resultadoEstoque.rotaSimplificada,
+      itens, totalRecebido: snap.size, rotaSimplificada: false,
     };
   }
 
