@@ -1,5 +1,9 @@
-var CACHE='dt-inventario-20260909b-revert-emergencial';
+var CACHE='dt-inventario-20261012-e1064d6063fe';
 var PRECACHE=[
+  '/css/separacao.css',
+  '/js/shared/separacao-ui.js',
+  '/js/coletor/32-separacao-erros.js',
+  '/js/analista/129-estoque-separacao.js',
   '/',
   '/index.html',
   '/analista.html',
@@ -51,6 +55,9 @@ var PRECACHE=[
   '/js/analista/40-relatorios-produtividade.js',
   '/js/analista/41-dashboard-acomp-v37.js',
   '/js/analista/41-inventario-actions-v52.js',
+  '/js/analista/50-inventario-classificacoes-v275.js',
+  '/js/analista/51-inventario-por-produto-v286.js',
+  '/js/analista/53-inventario-workspace-v4.js',
   '/js/analista/42-topbar-tools.js',
   '/js/analista/43-importar-exportar-api.js',
   '/js/analista/44-auditoria-remediacoes.js',
@@ -104,17 +111,16 @@ self.addEventListener('fetch',function(e){
   var u=new URL(e.request.url);
   var local=u.origin===self.location.origin;
   if(local){
-    // REVERT EMERGENCIAL (2026-09-09): a tentativa de cache-first pra
-    // .js/.css (correção de performance) coincidiu com o app inteiro
-    // travando em "carregando" — tela pisca mostrando dado real e volta a
-    // travar, em todo o sistema, não só numa tela. Bate com o padrão de o
-    // ciclo de instalação/ativação do Service Worker (skipWaiting +
-    // clients.claim, que já existiam antes) atropelando conexões de tempo
-    // real do Firestore já abertas (WebChannel 'Listen' errando e
-    // reconectando sem parar, visto ao vivo no console). Voltando pro
-    // comportamento de antes (sempre busca .js/.css na rede, sem
-    // cache-first) até isso ser investigado com mais cuidado, longe do
-    // horário de uso ao vivo.
+    // REVERT 2026-09-09 (2ª vez): a tentativa de cache-first pra .js/.css
+    // com skipWaiting()/clients.claim() removidos (pra não trocar de SW no
+    // meio da sessão) AINDA ASSIM coincidiu com telas de dado "ao vivo"
+    // (ex. Transbordo) parando de mostrar nada em produção. Ainda não sei
+    // se a causa é o cache-first em si, a remoção do skipWaiting, ou algo
+    // não relacionado ao SW — voltando pro comportamento que pelo menos
+    // funciona (sempre busca .js/.css/.html na rede, sem cache-first, COM
+    // skipWaiting/clients.claim como sempre foi) até investigar com calma,
+    // fora do horário de uso ao vivo. NÃO tentar essa otimização nesta
+    // tela de novo sem antes reproduzir e confirmar num ambiente de teste.
     var arquivoCritico=e.request.mode==='navigate' ||
       u.pathname.slice(-5)==='.html' ||
       u.pathname.slice(-3)==='.js' ||

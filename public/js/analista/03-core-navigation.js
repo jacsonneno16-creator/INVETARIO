@@ -44,11 +44,23 @@ const PAGE_NAMES = {
   'recebimento-cargas':     'Recebimento · Cargas (Montagem/Expedição)',
   'recebimento-paletes':    'Recebimento · Paletes',
   'recebimento-patio-tempo-real': 'Recebimento · Pátio em Tempo Real',
+  'recebimento-patio-inventarios': 'Recebimento · Inventários do Pátio',
   'recebimento-recusas': 'Recebimento · Recusas',
   'recebimento-recusas-cadastros': 'Recebimento · Notas Retornadas · Cadastros',
   'recebimento-tempos': 'Recebimento · Tempos / Performance',
   'recebimento-historico': 'Recebimento · Histórico',
   'recebimento-config': 'Recebimento · Configurações',
+  'estoque-rel-apontamento': 'Estoque · Apontamento de Produção',
+  'estoque-enderecamento': 'Estoque · Endereçamento de Paletes',
+  'estoque-separacao': 'Estoque · Separação',
+  'estoque-lote-trocas': 'Estoque · Lote de Trocas',
+  'estoque-transformacao-api': 'Estoque · Transformação de Produtos',
+  'estoque-rel-analise': 'Estoque · Análise de Inventários',
+  'estoque-rel-analise-inventario': 'Estoque · Análise Completa do Inventário',
+  'estoque-rel-inventario': 'Estoque · Relatório de Inventário',
+  'estoque-rel-descarte': 'Estoque · Relatório de Descarte',
+  'estoque-rel-requisicao': 'Estoque · Relatório de Baixa de Requisição',
+  'estoque-rel-transformacao': 'Estoque · Relatório de Transformação',
 };
 
 let _currentPage = 'dashboard';
@@ -58,6 +70,12 @@ function goPage(id, el) {
     if (typeof window.showToast === 'function') window.showToast('Você não possui acesso a esta aba.', 'error');
     return;
   }
+
+  // Escutas específicas de página devem morrer ao sair da área correspondente.
+  if (_currentPage === 'coletores' && id !== 'coletores') {
+    window.AnalistaFirebaseService?.pararEscutaColetores?.();
+  }
+
   document.querySelectorAll('.page').forEach(p => p.classList.remove('on'));
   document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('on'));
   const pageEl = document.getElementById('page-' + id);
@@ -92,13 +110,62 @@ function goPage(id, el) {
   document.getElementById('page-title').textContent = PAGE_NAMES[id] || id;
   _currentPage = id;
   renderPage(id);
+  // Reaplica visibilidade por ação toda vez que a página muda. Antes a
+  // proteção granular dependia de uma mutação de DOM acontecer depois da
+  // navegação; páginas estáticas podiam exibir botões sem permissão até o
+  // próximo redraw.
+  if (typeof window.aplicarPermissoesAnalista === 'function') {
+    setTimeout(window.aplicarPermissoesAnalista, 0);
+  }
 }
 
 function renderCurrentPage() { renderPage(_currentPage); }
 
+const _lazyPageRetry = Object.create(null);
+function _areaLazyPorFuncao(fnName) {
+  if (/^renderProducao/.test(fnName) || fnName === 'renderRelatoriosBi') return 'producao';
+  if (/^renderPCP/.test(fnName)) return 'pcp';
+  if (/^renderCompras/.test(fnName)) return 'compras';
+  if (/^renderRecebimento/.test(fnName) || fnName === 'renderPatioTempoReal') return 'recebimento';
+  if (/^renderEstoque/.test(fnName)) return 'estoque';
+  return '';
+}
 function _callPage(fnName, fallback) {
   const fn = window[fnName];
-  if (typeof fn === 'function') return fn();
+  if (typeof fn === 'function') {
+    const resultado = fn();
+    if (resultado && typeof resultado.then === 'function' && resultado.__dtBackground !== true) {
+      resultado.catch(function (erro) {
+        console.error('[Navegação] Falha ao carregar página:', fnName, erro);
+        const pagina = document.querySelector('.page.on');
+        if (!pagina) return;
+        const id = String(pagina.id || '').replace(/^page-/, '') || _currentPage;
+        pagina.innerHTML = '<div class="empty" style="padding:28px">'
+          + '<div class="empty-icon">⚠️</div>'
+          + '<div class="empty-title">Não foi possível carregar esta tela</div>'
+          + '<div class="empty-sub">Tente novamente. Se o problema continuar, verifique sua conexão ou permissão.</div>'
+          + '<button type="button" class="btn btn-primary" data-recarregar-pagina="' + id + '">Tentar novamente</button>'
+          + '</div>';
+      });
+    }
+    return resultado;
+  }
+  // Se uma página de setor foi aberta por rota, histórico ou clique antes
+  // de o carregamento lazy terminar, carrega o setor e tenta uma única vez.
+  // Isso evita o estado em que a página fica vazia com "Função ausente".
+  const areaLazy = _areaLazyPorFuncao(fnName);
+  if (areaLazy && typeof window.carregarScriptsDeArea === 'function' && !_lazyPageRetry[fnName]) {
+    _lazyPageRetry[fnName] = true;
+    return window.carregarScriptsDeArea(areaLazy).then(function () {
+      const carregada = window[fnName];
+      if (typeof carregada === 'function') return carregada();
+      console.warn('[Navegação] Função ausente após carregar setor:', fnName);
+      if (typeof fallback === 'function') return fallback();
+    }).catch(function (erro) {
+      console.error('[Navegação] Falha ao carregar setor ' + areaLazy + ':', erro);
+      if (typeof fallback === 'function') return fallback();
+    });
+  }
   console.warn('[Navegação] Função ausente:', fnName);
   if (typeof fallback === 'function') return fallback();
 }
@@ -121,6 +188,8 @@ function renderPage(id) {
       case 'produtos':           return _callPage('renderBaseProdutos');
       case 'coletores':
         if (typeof window.inicializarAbaColetores === 'function') window.inicializarAbaColetores();
+        window.AnalistaFirebaseService?.iniciarEscutaColetores?.();
+        if (typeof window.atualizarAbaColetores === 'function') return window.atualizarAbaColetores();
         return _callPage('renderColetores');
       case 'operadores':         return _callPage('listarOperadores');
       case 'lojas':              return _callPage('renderGestaoLojas');
@@ -155,6 +224,7 @@ function renderPage(id) {
       case 'recebimento-cargas':         return _callPage('renderRecebimentoCargas');
       case 'recebimento-paletes':        return _callPage('renderRecebimentoPaletes');
       case 'recebimento-patio-tempo-real': return _callPage('renderPatioTempoReal');
+      case 'recebimento-patio-inventarios': return _callPage('renderPatioInventariosRelatorio');
       case 'recebimento-recusas':        return _callPage('renderRecebimentoRecusas');
       case 'recebimento-recusas-cadastros': return _callPage('renderRecebimentoRecusasCadastros');
       case 'recebimento-retornos-indicadores': return _callPage('renderRecebimentoRetornosIndicadores');
@@ -165,6 +235,17 @@ function renderPage(id) {
       case 'recebimento-tempos':         return _callPage('renderRecebimentoTempos');
       case 'recebimento-historico':      return _callPage('renderRecebimentoHistorico');
       case 'recebimento-config':         return _callPage('renderRecebimentoConfig');
+      case 'estoque-rel-apontamento':    return _callPage('renderEstoqueRelApontamento');
+      case 'estoque-enderecamento':      return _callPage('renderEstoqueEnderecamento');
+      case 'estoque-separacao': return _callPage('renderEstoqueSeparacao');
+      case 'estoque-lote-trocas':        return _callPage('renderEstoqueLoteTrocas');
+      case 'estoque-transformacao-api':  return _callPage('renderEstoqueTransformacaoApi');
+      case 'estoque-rel-analise':        return _callPage('renderEstoqueRelAnalise');
+      case 'estoque-rel-analise-inventario': return _callPage('renderEstoqueRelAnaliseInventario');
+      case 'estoque-rel-inventario':     return _callPage('renderEstoqueRelInventario');
+      case 'estoque-rel-descarte':       return _callPage('renderEstoqueRelDescarte');
+      case 'estoque-rel-requisicao':     return _callPage('renderEstoqueRelRequisicao');
+      case 'estoque-rel-transformacao':  return _callPage('renderEstoqueRelTransformacao');
     }
   } catch (e) {
     console.error('[Navegação] Falha ao renderizar a página "' + id + '":', e);

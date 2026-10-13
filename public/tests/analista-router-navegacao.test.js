@@ -19,10 +19,11 @@ const BASE = path.join(__dirname, '..', 'js', 'analista');
 function ler(nome) { return fs.readFileSync(path.join(BASE, nome), 'utf8'); }
 
 const INVENTARIO = ['dashboard', 'inventarios', 'acompanhamento', 'auditoria', 'contagens', 'pendencias', 'recontagens', 'rel-divergencias', 'capas-duplicadas', 'produtividade', 'enderecos', 'produtos', 'rastreabilidade', 'importar-exportar'];
-const RECEBIMENTO = ['recebimento-dashboard', 'recebimento-operacao', 'recebimento-historico', 'recebimento-config', 'recebimento-notas', 'recebimento-fornecedores', 'recebimento-agendamentos', 'recebimento-transbordo', 'recebimento-cargas', 'recebimento-tempos', 'recebimento-paletes', 'recebimento-recusas', 'recebimento-retornos-indicadores', 'recebimento-retornos-status', 'recebimento-recusas-indicadores', 'recebimento-recusas-cadastros', 'recebimento-consulta-notas'];
+const RECEBIMENTO = ['recebimento-dashboard', 'recebimento-operacao', 'recebimento-historico', 'recebimento-config', 'recebimento-notas', 'recebimento-fornecedores', 'recebimento-agendamentos', 'recebimento-transbordo', 'recebimento-cargas', 'recebimento-tempos', 'recebimento-paletes', 'recebimento-patio-tempo-real', 'recebimento-patio-inventarios', 'recebimento-recusas', 'recebimento-retornos-indicadores', 'recebimento-retornos-status', 'recebimento-recusas-indicadores', 'recebimento-recusas-cadastros', 'recebimento-consulta-notas'];
+const ESTOQUE = ['estoque-rel-apontamento', 'estoque-rel-analise', 'estoque-rel-analise-inventario', 'estoque-rel-inventario', 'estoque-rel-descarte', 'estoque-rel-requisicao', 'estoque-rel-transformacao'];
 const PRODUCAO = ['producao-dashboard', 'producao-programacao', 'producao-maquinas', 'producao-gantt', 'producao-realizado', 'producao-insumos', 'producao-prog-automatica', 'producao-relatorios', 'producao-ficha-tecnica', 'producao-projecao', 'producao-funcionarios', 'producao-setup', 'producao-mapa-fabrica', 'producao-config', 'producao-importacao', 'producao-estoque', 'producao-relatorios-bi'];
 const PCP_EXTERNAS = ['dashboard', 'parametros', 'timeline', 'compras-acompanhamento', 'producao-insumo', 'produto-360', 'alertas', 'relatorios'];
-const COMPRAS_121 = ['solicitacoes', 'cotacoes', 'pedidos', 'produtos', 'fornecedores', 'recebimentos', 'relatorios', 'administracao'];
+const COMPRAS_121 = ['solicitacoes', 'cotacoes', 'pedidos', 'precos', 'produtos', 'fornecedores', 'recebimentos', 'relatorios', 'administracao'];
 
 function divsPagina(ids, prefixoNav) {
   return ids.map(id => `<div class="page" id="page-${id}"></div><div class="nav-item" id="${prefixoNav || 'nav-'}${id}"></div>`).join('');
@@ -35,6 +36,7 @@ function montarHtml() {
     <div id="setor-placeholder"></div>
     <div id="app-main-logistica">${divsPagina(INVENTARIO)}</div>
     <div id="setor-logistica-recebimento-shell">${divsPagina(RECEBIMENTO)}</div>
+    <div id="setor-logistica-estoque-shell">${divsPagina(ESTOQUE)}</div>
     <div id="setor-producao-shell">
       ${divsPagina(PRODUCAO)}
       <div id="pcfg-embed-host"></div>
@@ -57,7 +59,7 @@ function montarHtml() {
       ${COMPRAS_121.map(a => `<div class="page" id="page-compras-${a}"></div>`).join('')}
       <div class="nav-item" id="nav-compras-dashboard"></div><div class="nav-item" id="nav-compras-central"></div>
       <div class="nav-item" id="nav-compras-solicitacoes"></div><div class="nav-item" id="nav-compras-cotacoes"></div>
-      <div class="nav-item" id="nav-compras-pedidos"></div><div class="nav-item" id="nav-compras-produtos"></div>
+      <div class="nav-item" id="nav-compras-pedidos"></div><div class="nav-item" id="nav-compras-precos"></div><div class="nav-item" id="nav-compras-produtos"></div>
       <div class="nav-item" id="nav-compras-fornecedores"></div><div class="nav-item" id="nav-compras-recebimentos"></div>
       <div class="nav-item" id="nav-compras-relatorios"></div><div class="nav-item" id="nav-compras-administracao"></div>
     </div>
@@ -114,6 +116,9 @@ function montarAmbiente(hashInicial, acesso) {
   PCP_EXTERNAS.forEach(nome => win.pcpRegistrarPagina(nome, { elId: 'page-pcp-' + nome, render: '_stubRenderPcp' + nome, titulo: nome }));
   win['_stubRenderPcp'] = () => {};
   PCP_EXTERNAS.forEach(nome => { win['_stubRenderPcp' + nome] = () => {}; });
+  // Relatórios de Estoque (125-estoque-relatorios.js) não são carregados aqui —
+  // mesmo registro de stub das páginas PCP, pra rota ativar sem puxar BigQuery.
+  ['Apontamento', 'Inventario', 'Descarte', 'Requisicao', 'Transformacao'].forEach(nome => { win['renderEstoqueRel' + nome] = () => {}; });
   return { win, dom };
 }
 
@@ -189,12 +194,10 @@ test('4) Rota sem permissão: nunca mostra a página protegida, cai no fallback 
 // ---------------------------------------------------------------------
 // 5/6. Trocar entre setores
 // ---------------------------------------------------------------------
-// PEDIDO AO VIVO (2026-09-10): "tirar PCP, Compras e Produção... como se
-// não fizesse mais parte do projeto" — SETORES_INFO (37-usuarios-
-// permissoes.js) só tem mais 'logistica'; irParaSetor recusa qualquer id
-// desconhecido (`if(!SETORES_INFO[id])return;`), então navegar pra essas
-// rotas não troca mais nada — fica sempre em Logística.
-test('5) Produção/PCP/Compras não existem mais: navegar pra essas rotas não troca de shell, continua em Logística', async () => {
+// 2026-09-13: Compras, PCP e Produção foram reativados. A navegação deve
+// trocar para o shell correspondente, preservando Logística como setor
+// inicial e mantendo o carregamento lazy dos módulos.
+test('5) Produção/PCP/Compras reativados: navegar troca para o shell correto', async () => {
   const { win } = montarAmbiente('#/logistica/inventario/dashboard');
   win.AnalistaRouter.init();
   await flush(win);
@@ -202,11 +205,11 @@ test('5) Produção/PCP/Compras não existem mais: navegar pra essas rotas não 
   function ativo() { return shells.filter(s => win.document.getElementById(s).style.display !== 'none'); }
   assert.deepEqual(ativo(), ['app-main-logistica']);
   win.AnalistaRouter.navigate('producao/dashboard'); win.dispatchEvent(new win.Event('hashchange')); await flush(win);
-  assert.deepEqual(ativo(), ['app-main-logistica'], 'setor Produção não existe mais — não troca de shell');
+  assert.deepEqual(ativo(), ['setor-producao-shell'], 'Produção deve abrir o shell próprio');
   win.AnalistaRouter.navigate('pcp/dashboard'); win.dispatchEvent(new win.Event('hashchange')); await flush(win);
-  assert.deepEqual(ativo(), ['app-main-logistica'], 'setor PCP não existe mais — não troca de shell');
+  assert.deepEqual(ativo(), ['setor-pcp-shell'], 'PCP deve abrir o shell próprio');
   win.AnalistaRouter.navigate('compras/dashboard'); win.dispatchEvent(new win.Event('hashchange')); await flush(win);
-  assert.deepEqual(ativo(), ['app-main-logistica'], 'setor Compras não existe mais — não troca de shell');
+  assert.deepEqual(ativo(), ['setor-compras-shell'], 'Compras deve abrir o shell próprio');
 });
 
 test('6) Trocar Inventário → Recebimento: dentro do MESMO setor "logistica", troca de view sem mexer nos outros 3 shells', async () => {
@@ -243,9 +246,10 @@ function testarTodasAsRotas(nomeSuite, filtro) {
   });
 }
 testarTodasAsRotas('7) Navegar por todas as páginas de Produção (tabela completa)', r => r.setor === 'producao');
-testarTodasAsRotas('8) Navegar por todas as páginas/abas do PCP (internas + externas)', r => r.setor === 'pcp');
+testarTodasAsRotas('8) Navegar por todas as páginas/abas atuais do PCP (internas + externas)', r => r.setor === 'pcp');
 testarTodasAsRotas('9) Navegar por todas as páginas de Compras', r => r.setor === 'compras');
 testarTodasAsRotas('10) Navegar por todas as páginas de Recebimento', r => r.setor === 'logistica' && r.view === 'recebimento');
+testarTodasAsRotas('11) Navegar por todas as páginas de Estoque (Relatórios)', r => r.setor === 'logistica' && r.view === 'estoque');
 
 // ---------------------------------------------------------------------
 // 11/12. Voltar / Avançar
@@ -309,7 +313,7 @@ test('15) Restaura sub-aba de Realizado (aba=processos&dia=hoje) de forma compor
   // (weekStart = domingo da semana de "agora") — "hoje" é o único valor
   // que está garantido dentro dessa janela em qualquer data que o teste
   // rodar, ao contrário de uma data fixa que sai da semana com o tempo.
-  const hoje = new Date().toISOString().slice(0, 10);
+  const agora = new Date(); const dow = agora.getUTCDay(); const ajuste = dow===0 ? -6 : dow===6 ? -5 : 0; const hoje = new Date(agora.getTime()+ajuste*86400000).toISOString().slice(0,10);
   const { win } = montarAmbiente('#/producao/realizado?aba=processos&dia=' + hoje);
   win.AnalistaRouter.init();
   await flush(win);
@@ -325,7 +329,7 @@ test('15) Restaura sub-aba de Realizado (aba=processos&dia=hoje) de forma compor
 // conteúdo inteiro da página (diaAtivo='__total__') e virou um modal por
 // cima do dia que já estava aberto, sem navegar pra lugar nenhum.
 test('15b) "Total da Semana" (Realizado) abre um MODAL por cima do dia atual — não troca a página nem o dia selecionado', async () => {
-  const hoje = new Date().toISOString().slice(0, 10);
+  const agora = new Date(); const dow = agora.getUTCDay(); const ajuste = dow===0 ? -6 : dow===6 ? -5 : 0; const hoje = new Date(agora.getTime()+ajuste*86400000).toISOString().slice(0,10);
   const { win } = montarAmbiente('#/producao/realizado?dia=' + hoje);
   win.AnalistaRouter.init();
   await flush(win);
@@ -405,18 +409,18 @@ test('21) Usuário sem permissão pra rota específica: goPage recusa e a págin
 // 22. Rota direta após autenticação (sequência completa de login simulada)
 // ---------------------------------------------------------------------
 test('22) Rota direta pós-login: hash presente ANTES do init() é a tela restaurada, não o Dashboard padrão', async () => {
-  const { win } = montarAmbiente('#/pcp/estoque', { admin_mestre: true, permissoes: {} });
+  const { win } = montarAmbiente('#/pcp/planejamento', { admin_mestre: true, permissoes: {} });
   // Simula a sequência real de 00-auth-login.js: permissões → primeira página → setores → router.init()
   win.aplicarPermissoesAnalista = () => {};
   win.irParaPrimeiraPaginaPermitida();   // escolheria Inventário/Dashboard por padrão
   win.aplicarSetoresPermitidos();         // reforça o padrão
   win.AnalistaRouter.init();              // deve SOBRESCREVER com a rota da URL
   await flush(win);
-  assert.equal(win.AnalistaRouter.rotaAtual().path, 'pcp/estoque', 'a rota da URL não pode ser sobrescrita pelo Dashboard padrão do boot');
+  assert.equal(win.AnalistaRouter.rotaAtual().path, 'pcp/planejamento', 'a rota da URL não pode ser sobrescrita pelo Dashboard padrão do boot');
 });
 
 test('REGRESSÃO: init() não chama irParaPrimeiraPaginaPermitida/aplicarSetoresPermitidos de novo quando a rota da URL já é válida (evita 2ª leitura/render no boot)', async () => {
-  const { win } = montarAmbiente('#/pcp/estoque', { admin_mestre: true, permissoes: {} });
+  const { win } = montarAmbiente('#/pcp/planejamento', { admin_mestre: true, permissoes: {} });
   let chamadasPrimeira = 0, chamadasSetores = 0;
   const origPrimeira = win.irParaPrimeiraPaginaPermitida, origSetores = win.aplicarSetoresPermitidos;
   win.aplicarPermissoesAnalista = () => {};

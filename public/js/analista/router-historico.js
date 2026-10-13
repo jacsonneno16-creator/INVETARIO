@@ -22,6 +22,19 @@
   'use strict';
 
   var HASH_PREFIXO = '#/';
+  // PCP reorganizado: mantém links antigos funcionando, mas converte a
+  // URL para a rota canônica atual em vez de exigir nav-items que saíram
+  // do menu. Isso evita tela em branco em favoritos/links antigos.
+  var ROTAS_PCP_LEGADAS = {
+    'pcp/estoque':'pcp/planejamento',
+    'pcp/pedidos-x-estoque':'pcp/planejamento',
+    'pcp/compras':'pcp/planejamento',
+    'pcp/alertas':'pcp/planejamento',
+    'pcp/timeline':'pcp/planejamento',
+    'pcp/insumos-producao':'pcp/insumos',
+    'pcp/acompanhamento-compras':'compras/solicitacoes',
+    'pcp/agendamentos':'compras/pedidos'
+  };
 
   // Reentrância: true enquanto o PRÓPRIO roteador está aplicando uma rota
   // (boot, popstate/hashchange, dismiss do modal). As funções embrulhadas só
@@ -50,6 +63,7 @@
     else if (h.indexOf('#') === 0) h = h.slice(1).replace(/^\//, '');
     var partes = h.split('?');
     var path = (partes[0] || '').replace(/\/+$/, '');
+    path = ROTAS_PCP_LEGADAS[path] || path;
     var params = new URLSearchParams(partes[1] || '');
     return { path: path, params: params };
   }
@@ -126,6 +140,19 @@
     };
   }
 
+
+  function paginaAtendimento(path, nome, navId) {
+    return {
+      path: path, setor: 'atendimento',
+      apply: function () { global.atendimentoIrParaPagina(nome, elId(navId)); },
+      currentRoute: function () {
+        var pg = elId('page-atendimento-' + nome);
+        if (!pg || !pg.classList.contains('on')) return null;
+        return { path: path, params: new URLSearchParams() };
+      }
+    };
+  }
+
   // ---------------------------------------------------------------------
   // Tabela de rotas
   // ---------------------------------------------------------------------
@@ -182,6 +209,13 @@
     paginaSimples('logistica/recebimento/transbordo', 'recebimento-transbordo', { setor: 'logistica', view: 'recebimento' }),
     paginaSimples('logistica/recebimento/cargas', 'recebimento-cargas', { setor: 'logistica', view: 'recebimento' }),
     paginaSimples('logistica/recebimento/paletes', 'recebimento-paletes', { setor: 'logistica', view: 'recebimento' }),
+    // BUG AO VIVO REAL (2026-09-17): faltava esta rota — usuário cujo único
+    // módulo liberado era este ficava preso na casca errada (Inventário
+    // clássico vazio) ao entrar direto pela URL, porque encontrarRota()
+    // nunca achava esta página e o roteador desistia silenciosamente sem
+    // chamar irParaSetor('logistica','recebimento').
+    paginaSimples('logistica/recebimento/patio-tempo-real', 'recebimento-patio-tempo-real', { setor: 'logistica', view: 'recebimento' }),
+    paginaSimples('logistica/recebimento/patio-inventarios', 'recebimento-patio-inventarios', { setor: 'logistica', view: 'recebimento' }),
     paginaSimples('logistica/recebimento/tempos', 'recebimento-tempos', { setor: 'logistica', view: 'recebimento' }),
     paginaSimples('logistica/recebimento/recusas', 'recebimento-recusas', { setor: 'logistica', view: 'recebimento' }),
     paginaSimples('logistica/recebimento/retornos-indicadores', 'recebimento-retornos-indicadores', { setor: 'logistica', view: 'recebimento' }),
@@ -190,7 +224,17 @@
     paginaSimples('logistica/recebimento/recusas-cadastros', 'recebimento-recusas-cadastros', { setor: 'logistica', view: 'recebimento' }),
     paginaSimples('logistica/recebimento/consulta-notas', 'recebimento-consulta-notas', { setor: 'logistica', view: 'recebimento' }),
 
+    // ---- Logística — Estoque (Relatórios, BigQuery) ----
+    paginaSimples('logistica/estoque/relatorios/inventario', 'estoque-rel-inventario', { setor: 'logistica', view: 'estoque' }),
+    paginaSimples('logistica/estoque/relatorios/descarte', 'estoque-rel-descarte', { setor: 'logistica', view: 'estoque' }),
+    paginaSimples('logistica/estoque/relatorios/requisicao', 'estoque-rel-requisicao', { setor: 'logistica', view: 'estoque' }),
+    paginaSimples('logistica/estoque/relatorios/transformacao', 'estoque-rel-transformacao', { setor: 'logistica', view: 'estoque' }),
+
     // ---- Produção — páginas principais ----
+    paginaAtendimento('atendimento/dashboard', 'dashboard', 'nav-atendimento-dashboard'),
+    paginaAtendimento('atendimento/conversas', 'conversas', 'nav-atendimento-conversas'),
+    paginaAtendimento('atendimento/config', 'config', 'nav-atendimento-config'),
+
     paginaSimples('producao/dashboard', 'producao-dashboard', { setor: 'producao' }),
     paginaSimples('producao/programacao', 'producao-programacao', { setor: 'producao' }),
     paginaSimples('producao/maquinas', 'producao-maquinas', { setor: 'producao' }),
@@ -256,21 +300,14 @@
     paginaConfigProducao('producao/configuracoes/mapa-fabrica', 'producao-mapa-fabrica'),
     paginaConfigProducao('producao/configuracoes/estoque', 'producao-estoque'),
 
-    // ---- PCP — abas internas (compartilham #page-pcp-central) ----
+    // ---- PCP reorganizado — somente rotas canônicas que ainda existem no menu ----
     paginaPcpInterna('pcp/pedidos', 'pedidos', 'nav-pcp-pedidos'),
-    paginaPcpInterna('pcp/estoque', 'estoque', 'nav-pcp-estoque'),
-    paginaPcpInterna('pcp/pedidos-x-estoque', 'pedidos-estoque', 'nav-pcp-cruzamento'),
-    paginaPcpInterna('pcp/compras', 'compras', 'nav-pcp-compras'),
-    paginaPcpInterna('pcp/agendamentos', 'agendamentos', 'nav-pcp-agendamentos'),
+    paginaPcpInterna('pcp/planejamento', 'planejamento', 'nav-pcp-planejamento'),
+    paginaPcpInterna('pcp/insumos', 'insumos', 'nav-pcp-insumos'),
     paginaPcpInterna('pcp/programacao-producao', 'producao', 'nav-pcp-producao'),
-    // ---- PCP — páginas externas (cada uma com seu próprio #page-pcp-*) ----
     paginaPcpExterna('pcp/dashboard', 'dashboard', 'nav-pcp-dashboard'),
     paginaPcpExterna('pcp/parametros', 'parametros', 'nav-pcp-parametros'),
-    paginaPcpExterna('pcp/timeline', 'timeline', 'nav-pcp-timeline'),
-    paginaPcpExterna('pcp/acompanhamento-compras', 'compras-acompanhamento', 'nav-pcp-compras-acompanhamento'),
-    paginaPcpExterna('pcp/insumos-producao', 'producao-insumo', 'nav-pcp-producao-insumo'),
     paginaPcpExterna('pcp/produto-360', 'produto-360', null),
-    paginaPcpExterna('pcp/alertas', 'alertas', 'nav-pcp-alertas'),
     paginaPcpExterna('pcp/relatorios', 'relatorios', 'nav-pcp-relatorios'),
 
     // ---- Compras ----
@@ -292,6 +329,7 @@
     paginaCompras('compras/solicitacoes', 'solicitacoes', 'nav-compras-solicitacoes'),
     paginaCompras('compras/cotacoes', 'cotacoes', 'nav-compras-cotacoes'),
     paginaCompras('compras/pedidos', 'pedidos', 'nav-compras-pedidos'),
+    paginaCompras('compras/precos', 'precos', 'nav-compras-precos'),
     {
       // Corrige, ao restaurar por URL, o mesmo bug que a navegação por
       // clique já corrige (selectedProduct nunca ficava preso): uma rota
@@ -431,7 +469,7 @@
   function init() {
     if (_iniciado) return;
     _iniciado = true;
-    ['goPage', 'irParaSetor', 'pcpIrParaAba', 'comprasIrParaPagina', 'abrirModalConfiguracoes', 'fecharModalConfiguracoes'].forEach(_instalarWrapper);
+    ['goPage', 'irParaSetor', 'pcpIrParaAba', 'comprasIrParaPagina', 'atendimentoIrParaPagina', 'abrirModalConfiguracoes', 'fecharModalConfiguracoes'].forEach(_instalarWrapper);
     global.addEventListener('hashchange', _aoTrocarHash);
     applyCurrentRoute();
   }

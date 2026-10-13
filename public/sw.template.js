@@ -1,5 +1,9 @@
 var CACHE='__CACHE_VERSION__';
 var PRECACHE=[
+  '/css/separacao.css',
+  '/js/shared/separacao-ui.js',
+  '/js/coletor/32-separacao-erros.js',
+  '/js/analista/129-estoque-separacao.js',
   '/',
   '/index.html',
   '/analista.html',
@@ -51,6 +55,9 @@ var PRECACHE=[
   '/js/analista/40-relatorios-produtividade.js',
   '/js/analista/41-dashboard-acomp-v37.js',
   '/js/analista/41-inventario-actions-v52.js',
+  '/js/analista/50-inventario-classificacoes-v275.js',
+  '/js/analista/51-inventario-por-produto-v286.js',
+  '/js/analista/53-inventario-workspace-v4.js',
   '/js/analista/42-topbar-tools.js',
   '/js/analista/43-importar-exportar-api.js',
   '/js/analista/44-auditoria-remediacoes.js',
