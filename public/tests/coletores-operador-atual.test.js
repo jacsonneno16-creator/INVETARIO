@@ -172,6 +172,84 @@ test('REGRESSÃO ("fala que foi excluído mas não some"): excluirColetor() remo
   assert.equal(gravado.aprovado, 'revogado');
 });
 
+// ── (5) Analista: verificarStatusColetores() desloga de verdade (Firestore,
+// não só a tela local) um coletor parado há mais de 40min ────────────────
+// PEDIDO AO VIVO (2026-10-02): "tem que fazer logout com 40m sem uso, e
+// sumir o nome daqui" — confirmado com dados reais que sessões de
+// DIAS/SEMANAS atrás continuavam "Online" com o nome do operador, porque
+// nem o timer do próprio Coletor (que só funciona com o app rodando) nem
+// esta checagem local do Analista (que só mudava `col.status` em memória,
+// nunca no Firestore, e some no próximo snapshot) de fato corrigiam o
+// banco. Esta função agora grava o logout de verdade, reaproveitando o
+// mesmo formato de logoutOperadorColetor() (teste (2) acima).
+function montarDomComPaginaColetoresAberta(colecoes, coletoresIniciais) {
+  const { window, registroFS, estado } = loadColetoresAnalista(colecoes);
+  const pagina = window.document.createElement('div');
+  pagina.id = 'page-coletores';
+  pagina.classList.add('on');
+  window.document.body.appendChild(pagina);
+  estado.coletores = coletoresIniciais;
+  return { window, registroFS, estado };
+}
+
+test('verificarStatusColetores(): coletor com ultimo_ping de mais de 40min e operador logado é deslogado DE VERDADE no Firestore', () => {
+  const pingAntigo = new Date(Date.now() - 50 * 60 * 1000).toISOString(); // 50min atrás
+  const { window, registroFS, estado } = montarDomComPaginaColetoresAberta(
+    { col1: { operador_atual: 'Ana', sessao: { operador: 'Ana' }, status: 'online', ultimo_ping: pingAntigo } },
+    [{ id: 'col1', numero: '01', operador_atual: 'Ana', sessao: { operador: 'Ana' }, status: 'online', ultimo_ping: pingAntigo }]
+  );
+
+  window.verificarStatusColetores();
+
+  assert.equal(estado.coletores[0].operador_atual, null, 'o nome precisa sumir do estado local na hora, sem esperar round-trip');
+  assert.equal(estado.coletores[0].status, 'offline');
+});
+
+test('verificarStatusColetores(): a escrita no Firestore (assíncrona) realmente zera operador_atual/sessao, com o motivo marcado', async () => {
+  const pingAntigo = new Date(Date.now() - 50 * 60 * 1000).toISOString();
+  const { window, registroFS, estado } = montarDomComPaginaColetoresAberta(
+    { col1: { operador_atual: 'Ana', sessao: { operador: 'Ana' }, status: 'online', ultimo_ping: pingAntigo } },
+    [{ id: 'col1', numero: '01', operador_atual: 'Ana', sessao: { operador: 'Ana' }, status: 'online', ultimo_ping: pingAntigo }]
+  );
+
+  window.verificarStatusColetores();
+  await new Promise(r => setTimeout(r, 0)); // deixa a Promise do .update() resolver
+
+  const gravado = registroFS.get('col1');
+  assert.equal(gravado.operador_atual, null);
+  assert.equal(gravado.operador_email, null);
+  assert.equal(gravado.operador_uid, null);
+  assert.equal(gravado.sessao, null);
+  assert.equal(gravado.status, 'offline');
+  assert.equal(gravado.logout_motivo, 'inatividade_automatica');
+  assert.ok(gravado.logout_em);
+});
+
+test('verificarStatusColetores(): coletor com ping recente (menos de 40min) NÃO é tocado', async () => {
+  const pingRecente = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // 10min atrás
+  const { window, registroFS, estado } = montarDomComPaginaColetoresAberta(
+    { col1: { operador_atual: 'Ana', sessao: { operador: 'Ana' }, status: 'online', ultimo_ping: pingRecente } },
+    [{ id: 'col1', numero: '01', operador_atual: 'Ana', sessao: { operador: 'Ana' }, status: 'online', ultimo_ping: pingRecente }]
+  );
+
+  window.verificarStatusColetores();
+  await new Promise(r => setTimeout(r, 0));
+
+  assert.equal(estado.coletores[0].operador_atual, 'Ana', 'menos de 40min — ainda é uma sessão válida, não pode ser derrubada');
+  assert.equal(registroFS.get('col1').logout_motivo, undefined, 'nenhuma escrita de logout automático deveria ter acontecido');
+});
+
+test('verificarStatusColetores(): tela Coletores fechada não gasta nem calcula nada (mesma guarda de sempre)', () => {
+  const pingAntigo = new Date(Date.now() - 50 * 60 * 1000).toISOString();
+  const { window, registroFS, estado } = loadColetoresAnalista({ col1: { operador_atual: 'Ana', status: 'online', ultimo_ping: pingAntigo } });
+  estado.coletores = [{ id: 'col1', numero: '01', operador_atual: 'Ana', status: 'online', ultimo_ping: pingAntigo }];
+  // Sem a page-coletores no DOM / sem classe "on" — mesma guarda já existente.
+
+  window.verificarStatusColetores();
+
+  assert.equal(estado.coletores[0].operador_atual, 'Ana', 'tela fechada não deve mexer em nada');
+});
+
 test('REGRESSÃO: aprovarColetor() também atualiza o estado local e redesenha a tela na hora', async () => {
   const { window, estado } = loadColetoresAnalista({
     col2: { aprovado: 'pendente', status: 'pendente', numero: '02' },

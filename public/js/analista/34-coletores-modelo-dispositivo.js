@@ -447,7 +447,21 @@ function atualizarHeartbeat(coletorId) {
   if (col) { col.ultimo_ping = new Date().toISOString(); col.status = 'online'; salvarDB_coletores(); }
 }
 
+// PEDIDO AO VIVO (2026-10-02): "tem que fazer logout com 40m sem uso, e
+// sumir o nome daqui" — o Coletor já tenta se deslogar sozinho após 40min
+// (04-auth-login.js), mas só funciona se o app continuar rodando em
+// primeiro plano; em aparelhos industriais (Memor K/WebView antiga) que
+// suspendem JS em segundo plano, o timer simplesmente nunca dispara —
+// confirmado ao vivo: sessões com ULTIMO_PING de DIAS/SEMANAS atrás ainda
+// apareciam "Online" com o nome do operador. Por isso este limite roda
+// INDEPENDENTE do aparelho: o Analista corrige o Firestore de verdade
+// (não só a tela local) assim que alguém abre/mantém aberta a aba
+// Coletores, usando o mesmo formato de gravação de logoutOperadorColetor()
+// (o botão manual "Encerrar sessão") logo acima.
+const LOGOUT_INATIVIDADE_MS = 40 * 60 * 1000;
 function verificarStatusColetores() {
+  // Não gastar CPU com cálculo de status quando a própria tela não está aberta.
+  if (!document.getElementById('page-coletores')?.classList.contains('on')) return;
   // Status real vem do Firebase via onSnapshot.
   // Fallback local: marca offline coletores sem ping há +2 min.
   const agora = Date.now();
@@ -458,8 +472,20 @@ function verificarStatusColetores() {
     if (ref && (agora - ref) > OFFLINE_TIMEOUT_MS && col.status === 'online') {
       col.status = 'offline'; mudou = true;
     }
+    if (ref && (agora - ref) > LOGOUT_INATIVIDADE_MS && (col.operador_atual || col.sessao || col.status === 'online')) {
+      const nomeOp = col.sessao?.operador || col.operador_atual || 'Operador';
+      col.sessao = null; col.status = 'offline'; col.operador_atual = null; col.operador_email = null; col.operador_uid = null;
+      mudou = true;
+      FS_AN.collection(FS_COL_COLETORES).doc(col.id).set({
+        sessao: null, status: 'offline',
+        operador_atual: null, operador_email: null, operador_uid: null,
+        logout_motivo: 'inatividade_automatica', logout_em: new Date().toISOString(),
+      }, { merge: true }).then(() => {
+        logAuditoria('SISTEMA', `Operador ${nomeOp} deslogado automaticamente do Coletor ${col.numero} (40min sem uso)`, '');
+      }).catch(e => console.warn('[Coletores] Falha ao gravar logout por inatividade:', e.message));
+    }
   });
-  if (mudou && document.getElementById('page-coletores')?.classList.contains('on')) renderColetores();
+  if (mudou) { salvarDB_coletores(); if (document.getElementById('page-coletores')?.classList.contains('on')) renderColetores(); }
 }
 setInterval(verificarStatusColetores, 15000);
 

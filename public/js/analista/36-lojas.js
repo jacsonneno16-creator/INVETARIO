@@ -77,27 +77,36 @@
 
   // Consulta GET /api/lojas (via bluesoftProxy) e preenche o seletor de
   // vínculo no modal de edição. Cada lojaKey guarda o lojaCd como
-  // data-attribute para que salvarLojaEdicao saiba qual fluxo gravar
-  // (ENDERECAMENTO_LOGISTICO vs PADRAO) sem precisar consultar de novo.
+  // data-attribute para que lojaSalvarEdicao (44-auditoria-remediacoes.js)
+  // saiba qual fluxo gravar (ENDERECAMENTO_LOGISTICO vs PADRAO) sem
+  // precisar consultar de novo.
+  // PEDIDO AO VIVO (2026-10-03): reativada — estava desligada (só mostrava
+  // "consulta desativada fora do Inventário"), o que impedia vincular
+  // qualquer loja além da que já tinha sido vinculada manualmente antes.
+  // Isso é a causa raiz de "os relatórios só trazem a loja Filial": o
+  // relatório de Estoque só busca lojas com bluesoft_loja_key preenchido.
   async function lojaBuscarLojasBluesoft(){
     const sel=document.getElementById('loja-edit-bluesoft-key'), status=document.getElementById('loja-edit-bluesoft-status');
     if(!sel)return;
     const valorAtual=sel.value;
-    if(status){status.textContent='⏳ Consultando lojas na Bluesoft...';}
+    if(status)status.textContent='Consultando a Bluesoft...';
     try{
+      if(typeof global.apiBluesoftListarLojas!=='function')throw new Error('Consulta à Bluesoft indisponível nesta tela.');
       const lojas=await global.apiBluesoftListarLojas(true);
-      if(!lojas.length)throw new Error('Nenhuma loja retornada pela Bluesoft.');
-      sel.innerHTML='<option value="">— não vinculada —</option>'+lojas.map(l=>{
-        const chave=String(l.lojakey||'').trim();
-        const nome=String(l.descricao||l.nomefantasia||('Loja '+chave)).trim();
-        const cd=l.lojacd===true;
-        return `<option value="${esc(chave)}" data-cd="${cd?'1':'0'}">#${esc(chave)} — ${esc(nome)}${cd?' (CD)':''}</option>`;
-      }).join('');
-      if(valorAtual && [...sel.options].some(o=>o.value===valorAtual)) sel.value=valorAtual;
-      if(status)status.textContent=lojas.length+' loja(s) encontrada(s) na Bluesoft. Selecione a correspondente.';
+      if(!lojas.length)throw new Error('A Bluesoft não retornou nenhuma loja.');
+      const opcoes=lojas.map(item=>{
+        const lojaKey=String(item.lojakey||'').trim();
+        if(!lojaKey)return '';
+        const cd=item.lojacd===true;
+        const nome=String(item.descricao||item.nomefantasia||('Loja '+lojaKey)).trim();
+        return `<option value="${esc(lojaKey)}" data-cd="${cd?'1':'0'}">#${esc(lojaKey)} — ${esc(nome)}${cd?' (CD)':''}</option>`;
+      }).filter(Boolean).join('');
+      sel.innerHTML='<option value="">— não vinculada —</option>'+opcoes;
+      sel.value=valorAtual&&Array.from(sel.options).some(o=>o.value===valorAtual)?valorAtual:'';
+      if(status)status.textContent=lojas.length+' loja(s) encontrada(s) na Bluesoft. Selecione o vínculo e clique em Salvar.';
     }catch(e){
-      if(status)status.textContent='Erro ao consultar Bluesoft: '+(e.message||e);
-      global.showToast?.('Erro ao consultar lojas na Bluesoft: '+(e.message||e),'error');
+      if(status)status.textContent='Falha ao consultar a Bluesoft: '+(e.message||e)+'. Mantenha o vínculo atual ou informe a chave manualmente.';
+      global.showToast?.('Falha ao consultar a Bluesoft: '+(e.message||e),'error');
     }
   }
 

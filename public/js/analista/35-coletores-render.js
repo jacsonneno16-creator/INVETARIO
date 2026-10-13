@@ -66,14 +66,20 @@ async function tratarCliqueAcaoColetor(event) {
 }
 
 // Busca direta usada pelo botão Atualizar e ao abrir a aba.
+// BUG AO VIVO REAL (2026-09-14): "os que já tinha cadastrado antes não
+// aparecem" — refreshColetores() buscava os dados e atualizava o Store
+// certinho, mas essa função só desenhava a tabela (renderColetores) no
+// ramo de ERRO. No caminho de sucesso ela só devolvia a Promise, sem
+// nunca chamar renderColetores() — a tela ficava vazia mesmo com os 25+
+// coletores já carregados no estado. Confirmado reproduzindo com dados
+// reais de produção antes de corrigir.
 async function atualizarAbaColetores() {
   const btn = document.activeElement;
   try {
     if (window.AnalistaFirebaseService?.refreshColetores) {
       await window.AnalistaFirebaseService.refreshColetores();
-    } else {
-      renderColetores();
     }
+    renderColetores();
   } catch (e) {
     renderColetores();
     if (typeof showToast === 'function') showToast('Não foi possível atualizar os coletores: ' + e.message, 'e');
@@ -479,6 +485,41 @@ function abrirModalNovoColetorComCodigo() {
   };
 }
 window.abrirModalNovoColetorComCodigo = abrirModalNovoColetorComCodigo;
+
+
+function abrirCadastroColetoresLote() {
+  const campo=document.getElementById('coletores-lote-texto');
+  const fb=document.getElementById('coletores-lote-feedback');
+  if(campo)campo.value='';
+  if(fb)fb.textContent='';
+  if(typeof openModal==='function') openModal('modal-coletores-lote');
+  else { const m=document.getElementById('modal-coletores-lote'); if(m)m.style.display='flex'; }
+}
+
+async function cadastrarColetoresLote() {
+  const campo=document.getElementById('coletores-lote-texto');
+  const fb=document.getElementById('coletores-lote-feedback');
+  const nomes=[...new Set(String(campo&&campo.value||'').split(/\r?\n/).map(x=>x.trim()).filter(Boolean))];
+  if(!nomes.length){ if(typeof showToast==='function')showToast('Informe pelo menos um coletor.','w'); return; }
+  const resultados=[];
+  for(let i=0;i<nomes.length;i++){
+    if(fb)fb.textContent='Gerando '+(i+1)+' de '+nomes.length+': '+nomes[i];
+    try{
+      const codigo=await gerarCodigoAprovacaoColetor(nomes[i]);
+      if(!codigo)throw new Error('código não gerado');
+      resultados.push({nome:nomes[i],codigo,ok:true});
+    }catch(e){resultados.push({nome:nomes[i],erro:e.message||String(e),ok:false});}
+  }
+  if(fb){
+    fb.innerHTML=resultados.map(r=>r.ok
+      ? '<div style="padding:6px 0"><b>'+escapeHTML(r.nome)+'</b> — código <span style="font-family:var(--mono);font-weight:900;letter-spacing:2px">'+escapeHTML(r.codigo)+'</span></div>'
+      : '<div style="padding:6px 0;color:var(--danger)"><b>'+escapeHTML(r.nome)+'</b> — '+escapeHTML(r.erro)+'</div>').join('');
+  }
+  const ok=resultados.filter(r=>r.ok).length;
+  if(typeof showToast==='function')showToast(ok+' código(s) de coletor gerado(s).','s');
+}
+window.abrirCadastroColetoresLote=abrirCadastroColetoresLote;
+window.cadastrarColetoresLote=cadastrarColetoresLote;
 
 // A Auditoria Operacional pertence exclusivamente ao módulo
 // 38-auditoria-operacional-v22.js. Não manter implementações paralelas aqui.

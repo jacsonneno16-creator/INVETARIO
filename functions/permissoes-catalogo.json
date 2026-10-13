@@ -1,0 +1,1053 @@
+[
+  {
+    "id": "dashboard",
+    "nome": "Inventário · Dashboard",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "atualizar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "inventarios",
+    "nome": "Inventário · Inventários",
+    "setor": "logistica",
+    "canais": [
+      "analista",
+      "coletor"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "importar",
+      "exportar",
+      "publicar",
+      "finalizar",
+      "contar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "acompanhamento",
+    "nome": "Inventário · Acompanhamento",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "atualizar",
+      "exportar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "auditoria",
+    "nome": "Inventário · Auditoria",
+    "setor": "logistica",
+    "canais": [
+      "analista",
+      "coletor"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "importar",
+      "exportar",
+      "publicar",
+      "finalizar",
+      "conferir"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "contagens",
+    "nome": "Inventário · Contagens",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "editar",
+      "excluir",
+      "exportar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "pendencias",
+    "nome": "Inventário · Pendências",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "editar",
+      "exportar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "recontagens",
+    "nome": "Inventário · Recontagem",
+    "setor": "logistica",
+    "canais": [
+      "analista",
+      "coletor"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "exportar",
+      "executar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "rel-divergencias",
+    "nome": "Inventário · Relatório de Conflitos",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "exportar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "capas-duplicadas",
+    "nome": "Inventário · Capas Duplicadas",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "editar",
+      "excluir",
+      "exportar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "produtividade",
+    "nome": "Inventário · Produtividade",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "exportar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "enderecos",
+    "nome": "Inventário · Endereços",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "importar",
+      "exportar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "produtos",
+    "nome": "Inventário · Produtos",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "importar",
+      "exportar",
+      "atualizar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "coletores",
+    "nome": "Inventário · Coletores",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "aprovar",
+      "bloquear"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "operadores",
+    "nome": "Inventário · Usuários e Permissões",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir"
+    ],
+    "area": "sistema"
+  },
+  {
+    "id": "lojas",
+    "nome": "Inventário · Lojas",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "importar"
+    ],
+    "area": "sistema"
+  },
+  {
+    "id": "rastreabilidade",
+    "nome": "Inventário · Rastreabilidade",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "excluir",
+      "exportar"
+    ],
+    "area": "inventario"
+  },
+  {
+    "id": "importar-exportar",
+    "nome": "Inventário · Importar / Exportar / API",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "importar",
+      "exportar",
+      "configurar",
+      "executar",
+      "excluir"
+    ],
+    "area": "sistema"
+  },
+  {
+    "id": "impressoras",
+    "nome": "Configurações · Impressoras de rede",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir"
+    ],
+    "area": "sistema"
+  },
+  {
+    "id": "producao-dashboard",
+    "nome": "Produção · Dashboard",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-ficha-tecnica",
+    "nome": "Produção · Ficha Técnica",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-maquinas",
+    "nome": "Produção · Máquinas",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-programacao",
+    "nome": "Produção · Programação",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "importar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-gantt",
+    "nome": "Produção · Gantt",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "editar",
+      "reordenar",
+      "exportar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-realizado",
+    "nome": "Produção · Realizado",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "editar",
+      "finalizar",
+      "liberar",
+      "resetar",
+      "importar",
+      "exportar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-insumos",
+    "nome": "Produção · Insumos",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "editar",
+      "importar",
+      "exportar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-projecao",
+    "nome": "Produção · Projeção",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "importar",
+      "exportar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-prog-automatica",
+    "nome": "Produção · Prog. Automática",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "executar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-funcionarios",
+    "nome": "Produção · Funcionários",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-relatorios",
+    "nome": "Produção · Relatórios",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "exportar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-setup",
+    "nome": "Produção · Tempos de Setup",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "importar",
+      "exportar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-mapa-fabrica",
+    "nome": "Produção · Mapa da Fábrica",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-config",
+    "nome": "Produção · Configurações",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "editar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-importacao",
+    "nome": "Produção · Importação / API",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "importar",
+      "exportar",
+      "configurar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-estoque",
+    "nome": "Produção · Estoque (BI/SharePoint)",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "producao-relatorios-bi",
+    "nome": "Produção · Relatórios BI (Compras/PCP/Produção)",
+    "setor": "producao",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "exportar"
+    ],
+    "area": "producao"
+  },
+  {
+    "id": "pcp-central",
+    "nome": "PCP · Central de Planejamento",
+    "setor": "pcp",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "configurar"
+    ],
+    "area": "pcp"
+  },
+  {
+    "id": "compras-central",
+    "nome": "Compras · Central de Compras",
+    "setor": "compras",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "editar",
+      "configurar"
+    ],
+    "area": "compras"
+  },
+  {
+    "id": "recebimento-dashboard",
+    "nome": "Recebimento · Dashboard",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-operacao",
+    "nome": "Recebimento · Recebimentos",
+    "setor": "logistica",
+    "canais": [
+      "analista",
+      "coletor"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "cancelar",
+      "finalizar",
+      "corrigir-horario",
+      "gerar-qrcode",
+      "exportar",
+      "excluir"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-notas",
+    "nome": "Recebimento · Notas Fiscais",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir",
+      "importar",
+      "exportar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-fornecedores",
+    "nome": "Recebimento · Fornecedores",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "editar",
+      "exportar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-agendamentos",
+    "nome": "Recebimento · Agenda / Cargas",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-transbordo",
+    "nome": "Recebimento · Transbordo",
+    "setor": "logistica",
+    "canais": [
+      "analista",
+      "coletor"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "cancelar",
+      "finalizar",
+      "corrigir-horario",
+      "gerar-qrcode",
+      "excluir"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-paletes",
+    "nome": "Recebimento · Controle de Pallets",
+    "setor": "logistica",
+    "canais": [
+      "analista",
+      "coletor"
+    ],
+    "acoes": [
+      "visualizar",
+      "estoque",
+      "saida",
+      "transferir",
+      "criar",
+      "editar",
+      "excluir"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-patio-tempo-real",
+    "nome": "Recebimento · Pátio em Tempo Real",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-patio-inventarios",
+    "nome": "Recebimento · Inventários do Pátio (Relatório)",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-recusas",
+    "nome": "Recebimento · Notas Retornadas",
+    "setor": "logistica",
+    "canais": [
+      "analista",
+      "coletor"
+    ],
+    "acoes": [
+      "visualizar",
+      "entrada",
+      "saida",
+      "rastrear",
+      "identificar",
+      "criar",
+      "editar",
+      "excluir",
+      "importar",
+      "exportar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-retornos-indicadores",
+    "nome": "Recebimento · Indicadores de Retornos",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-retornos-status",
+    "nome": "Recebimento · Status de Retornos",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-recusas-indicadores",
+    "nome": "Recebimento · Recusas",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-consulta-notas",
+    "nome": "Recebimento · Devoluções (BI)",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "importar",
+      "exportar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-devolucoes-indicadores",
+    "nome": "Recebimento · Indicadores de Devoluções",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-recusas-cadastros",
+    "nome": "Recebimento · Notas Retornadas · Cadastros",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-config",
+    "nome": "Recebimento · Configurações",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "excluir"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "estoque-rel-apontamento",
+    "nome": "Estoque · Apontamento de Produção",
+    "setor": "logistica",
+    "canais": [
+      "analista",
+      "coletor"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "conferir",
+      "cancelar",
+      "reprocessar",
+      "configurar"
+    ],
+    "area": "estoque"
+  },
+  {
+    "id": "estoque-enderecamento",
+    "nome": "Estoque · Endereçamento de Paletes",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "importar",
+      "executar",
+      "exportar"
+    ],
+    "area": "estoque"
+  },
+  {
+    "id": "estoque-lote-trocas",
+    "nome": "Estoque · Lote de Trocas",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "importar",
+      "executar",
+      "exportar",
+      "configurar"
+    ],
+    "area": "estoque"
+  },
+  {
+    "id": "estoque-transformacao-api",
+    "nome": "Estoque · Transformação de Produtos",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "importar",
+      "executar",
+      "exportar",
+      "configurar"
+    ],
+    "area": "estoque"
+  },
+  {
+    "id": "recebimento-tempos",
+    "nome": "Recebimento · Tempos / Performance",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "recebimento-historico",
+    "nome": "Recebimento · Histórico",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "exportar"
+    ],
+    "area": "recebimento"
+  },
+  {
+    "id": "estoque-rel-inventario",
+    "nome": "Estoque · Relatório de Inventário",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "exportar"
+    ],
+    "area": "estoque"
+  },
+  {
+    "id": "estoque-rel-descarte",
+    "nome": "Estoque · Relatório de Descarte",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "exportar"
+    ],
+    "area": "estoque"
+  },
+  {
+    "id": "estoque-rel-requisicao",
+    "nome": "Estoque · Relatório de Baixa de Requisição",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "exportar"
+    ],
+    "area": "estoque"
+  },
+  {
+    "id": "estoque-rel-transformacao",
+    "nome": "Estoque · Relatório de Transformação",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "exportar"
+    ],
+    "area": "estoque"
+  },
+  {
+    "id": "estoque-rel-analise",
+    "nome": "Estoque · Análise de Inventários",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "exportar"
+    ],
+    "area": "estoque"
+  },
+  {
+    "id": "estoque-rel-analise-inventario",
+    "nome": "Estoque · Análise Completa do Inventário",
+    "setor": "logistica",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "exportar"
+    ],
+    "area": "estoque"
+  },
+  {
+    "id": "atendimento-dashboard",
+    "nome": "Atendimento · Dashboard",
+    "setor": "atendimento",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "supervisionar"
+    ],
+    "area": "atendimento"
+  },
+  {
+    "id": "atendimento-conversas",
+    "nome": "Atendimento · Conversas WhatsApp",
+    "setor": "atendimento",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "responder",
+      "assumir",
+      "transferir",
+      "finalizar",
+      "notas",
+      "supervisionar"
+    ],
+    "area": "atendimento"
+  },
+  {
+    "id": "atendimento-config",
+    "nome": "Atendimento · Configuração WhatsApp",
+    "setor": "atendimento",
+    "canais": [
+      "analista"
+    ],
+    "acoes": [
+      "visualizar",
+      "configurar"
+    ],
+    "area": "atendimento"
+  },
+  {
+    "id": "estoque-separacao",
+    "nome": "Estoque · Separação",
+    "setor": "logistica",
+    "canais": [
+      "analista",
+      "coletor"
+    ],
+    "acoes": [
+      "visualizar",
+      "criar",
+      "editar",
+      "iniciar",
+      "finalizar",
+      "corrigir-horario",
+      "registrar-erro",
+      "tratar-erro",
+      "cancelar",
+      "reabrir",
+      "exportar",
+      "configurar"
+    ],
+    "area": "estoque"
+  }
+]

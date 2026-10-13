@@ -61,7 +61,7 @@ function mockDtOperadoresPorLoja() {
 
 function htmlFormularioCriar() {
   return `
-    <input id="op-nome"><input id="op-senha"><input id="op-username" readonly><div id="op-logins-preview"></div>
+    <input id="op-nome"><input id="op-senha"><input id="op-email-login"><input id="op-email-recuperacao"><datalist id="op-emails-recuperacao"></datalist><div id="op-logins-preview"></div>
     <label><input type="radio" name="op-tipo" value="analista"></label>
     <label><input type="radio" name="op-tipo" value="operador" checked></label>
     <div id="op-canais-criar"></div>
@@ -91,7 +91,7 @@ function htmlFormularioEditarELista() {
 }
 
 function novoAmbiente(html) {
-  const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { runScripts: 'outside-only' });
+  const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { runScripts: 'dangerously' });
   dom.window.eval(codigoPermissoes);
   return dom.window;
 }
@@ -103,295 +103,31 @@ function marcarPermissao(win, prefix, moduloId, acao) {
   chk.checked = true;
 }
 
-test('CORREÇÃO ESTRUTURAL: criarOperador() grava a MESMA permissão marcada no formulário pra conta secundária do Coletor — não mais permissoes:{} fixo', async () => {
-  const access = mockAccessCollection([]);
-  const dtOperadores = mockDtOperadoresPorLoja();
-  const win = novoAmbiente(htmlFormularioCriar());
-  win.getDTRawFirestore = () => ({
-    collection: (nome) => nome === 'usuarios_acessos' ? access : (nome === 'lojas' ? { doc: dtOperadores.doc } : mockAccessCollection([])),
-  });
-  win.DTLoja = { garantirLojaInicial: async () => [{ id: 'loja_matriz', nome: 'Matriz' }], listar: async () => [{ id: 'loja_matriz', nome: 'Matriz' }] };
-  win._currentAnalistaUser = { email: 'admin@daterrinhaalimentos.com.br' };
-  win.firebase = {
-    app: () => ({
-      functions: () => ({
-        httpsCallable: (nome) => {
-          assert.equal(nome, 'criarUsuarioVinculado');
-          return async () => ({ data: { ok: true, uid: 'uidPrincipal', analista_uid: null, coletor_uid: 'uidColetor', conta_existente: false } });
-        },
-      }),
-    }),
-  };
-
-  win.opAbrirModalCriar();
-  await flush(); await flush(); await flush();
-
-  win.document.getElementById('op-nome').value = 'João Silva';
-  win.opGerarUsername?.();
-  win.document.getElementById('op-senha').value = 'Senha1234';
-  // Permissão administrativa real marcada no formulário (o cenário exato do
-  // bug ao vivo: "recebimento-transbordo → criar" liberado pro operador).
-  marcarPermissao(win, 'criar', 'recebimento-transbordo', 'criar');
-
-  await win.criarOperador();
-
-  const principal = access._registro.get('uidPrincipal');
-  const secundaria = access._registro.get('uidColetor');
-  assert.ok(principal, 'conta principal não foi gravada');
-  assert.ok(secundaria, 'conta secundária (Coletor) não foi gravada');
-  assert.equal(principal.permissoes['recebimento-transbordo'].criar, true);
-  // A asserção que prova a correção: a conta secundária tem a MESMA
-  // permissão, não um mapa vazio.
-  assert.equal(secundaria.permissoes['recebimento-transbordo'].criar, true);
-  assert.deepEqual(secundaria.permissoes, principal.permissoes);
-  assert.equal(secundaria.conta_secundaria, true);
-  assert.equal(secundaria.cadastro_principal_uid, 'uidPrincipal');
+test('cadastro envia permissões e canais para o endpoint seguro; navegador não grava réplicas',async()=>{
+ const w=novoAmbiente(htmlFormularioCriar()),chamadas=[];
+ w.DT_USUARIO_ACESSO_ATUAL={perfil:'administrador',ativo:true};w.DTLoja={garantirLojaInicial:async()=>[{id:'loja_matriz',nome:'Matriz'}]};
+ w.firebase={app:()=>({functions:()=>({httpsCallable:n=>async d=>{chamadas.push({n,d});return {data:{ok:true,uid:'novo'}};}})})};
+ w.getDTRawFirestore=()=>{throw new Error('Não deve gravar acesso diretamente');};
+ w.opAbrirModalCriar();await flush();w.document.getElementById('op-nome').value='João Silva';w.document.getElementById('op-senha').value='123456';w.document.getElementById('op-email-login').value='login.escolhido@example.com';w.document.getElementById('op-email-recuperacao').value='gestao@example.com';marcarPermissao(w,'criar','recebimento-transbordo','criar');await w.criarOperador();
+ assert.equal(chamadas[0].n,'salvarUsuarioArea');assert.equal(chamadas[0].d.acesso.permissoes['recebimento-transbordo'].criar,true);assert.equal(chamadas[0].d.emailColetor,'login.escolhido@example.com');assert.equal(chamadas[0].d.acesso.canais_acesso.coletor,true);
 });
-
-// PEDIDO AO VIVO (2026-09-08): "todo login criado, no primeiro acesso
-// peça pra alterar a senha... só pra quem tem Analista, pra Coletor não é
-// necessário" — a flag `precisaTrocarSenha` só vai pro documento
-// PRINCIPAL quando o canal Analista está marcado, e NUNCA vai pro
-// documento secundário do Coletor (mesmo quando os dois canais existem
-// juntos pra mesma pessoa).
-function marcarCanal(win, prefix, canal, valor) {
-  const chk = win.document.querySelector(`#op-canais-${prefix} [data-canal="${canal}"]`);
-  assert.ok(chk, 'checkbox de canal não encontrado: ' + canal);
-  chk.checked = valor;
-}
-
-test('PEDIDO AO VIVO: criarOperador() com canal Analista marcado grava precisaTrocarSenha:true no documento principal', async () => {
-  const access = mockAccessCollection([]);
-  const dtOperadores = mockDtOperadoresPorLoja();
-  const win = novoAmbiente(htmlFormularioCriar());
-  win.getDTRawFirestore = () => ({
-    collection: (nome) => nome === 'usuarios_acessos' ? access : (nome === 'lojas' ? { doc: dtOperadores.doc } : mockAccessCollection([])),
-  });
-  win.DTLoja = { garantirLojaInicial: async () => [{ id: 'loja_matriz', nome: 'Matriz' }], listar: async () => [{ id: 'loja_matriz', nome: 'Matriz' }] };
-  win._currentAnalistaUser = { email: 'admin@daterrinhaalimentos.com.br' };
-  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: () => async () => ({ data: { ok: true, uid: 'uidAnalista', analista_uid: 'uidAnalista', coletor_uid: null, conta_existente: false } }) }) }) };
-
-  win.opAbrirModalCriar();
-  await flush(); await flush(); await flush();
-  win.document.getElementById('op-nome').value = 'João Silva';
-  win.document.getElementById('op-senha').value = 'Senha1234';
-  marcarCanal(win, 'criar', 'analista', true);
-  marcarCanal(win, 'criar', 'coletor', false);
-  marcarPermissao(win, 'criar', 'recebimento-transbordo', 'visualizar'); // validarAcesso exige 1 aba liberada quando o canal Analista está marcado
-
-  await win.criarOperador();
-
-  assert.equal(access._registro.get('uidAnalista').precisaTrocarSenha, true);
+test('marcar módulo e setor atualiza parcial e contadores; seleção respeita canal',async()=>{
+ const w=novoAmbiente(htmlFormularioCriar());w.DT_USUARIO_ACESSO_ATUAL={perfil:'administrador',ativo:true};w.DTLoja={garantirLojaInicial:async()=>[{id:'loja_matriz',nome:'Matriz'}]};w.opAbrirModalCriar();await flush();
+ const d=w.document;d.querySelector('[data-modulo-all="inventarios"]').click();assert.equal(d.querySelector('[data-modulo="inventarios"][data-acao="contar"]').checked,true);
+ d.querySelector('[data-modulo="inventarios"][data-acao="contar"]').checked=false;w.opAtualizarContagemModulo('criar','inventarios');assert.equal(d.querySelector('[data-modulo-all="inventarios"]').indeterminate,true);
+ d.querySelector('[data-setor-all="logistica"]').click();assert.equal(d.querySelector('[data-setor-all="logistica"]').checked,true);assert.equal(d.querySelector('[data-modulo="dashboard"][data-acao="visualizar"]').checked,false,'Analista não está liberado');
+ w.opMarcarPermissoes('criar',true);assert.equal(d.querySelector('[data-modulo="compras-central"][data-acao="visualizar"]').checked,false,'Compras escondido não deve ganhar acesso');
+ w.opMarcarSetor('criar','logistica',false);assert.equal(d.querySelector('[data-modulo-all="inventarios"]').checked,false);
 });
-
-test('PEDIDO AO VIVO: criarOperador() com canal SÓ Coletor marcado NÃO grava precisaTrocarSenha — não é necessário pro Coletor', async () => {
-  const access = mockAccessCollection([]);
-  const dtOperadores = mockDtOperadoresPorLoja();
-  const win = novoAmbiente(htmlFormularioCriar());
-  win.getDTRawFirestore = () => ({
-    collection: (nome) => nome === 'usuarios_acessos' ? access : (nome === 'lojas' ? { doc: dtOperadores.doc } : mockAccessCollection([])),
-  });
-  win.DTLoja = { garantirLojaInicial: async () => [{ id: 'loja_matriz', nome: 'Matriz' }], listar: async () => [{ id: 'loja_matriz', nome: 'Matriz' }] };
-  win._currentAnalistaUser = { email: 'admin@daterrinhaalimentos.com.br' };
-  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: () => async () => ({ data: { ok: true, uid: 'uidColetor', analista_uid: null, coletor_uid: 'uidColetor', conta_existente: false } }) }) }) };
-
-  win.opAbrirModalCriar();
-  await flush(); await flush(); await flush();
-  win.document.getElementById('op-nome').value = 'João Silva';
-  win.document.getElementById('op-senha').value = 'Senha1234';
-  marcarCanal(win, 'criar', 'analista', false);
-  marcarCanal(win, 'criar', 'coletor', true);
-
-  await win.criarOperador();
-
-  assert.equal(access._registro.get('uidColetor').precisaTrocarSenha, undefined, 'login só de Coletor nunca precisa trocar senha no 1º acesso');
+test('responsável não consegue marcar ações fora do limite nem via selecionar tudo',async()=>{
+ const w=novoAmbiente(htmlFormularioCriar());w.DT_USUARIO_ACESSO_ATUAL={perfil:'analista',ativo:true,permissoes:{inventarios:{visualizar:true,contar:true}},gestao_areas:{areas:['inventario'],canais:{coletor:true},operacoes:{criar:true,atribuir:true},permissoes:{inventarios:{visualizar:true,contar:true}}}};w.DTLoja={garantirLojaInicial:async()=>[{id:'loja_matriz',nome:'Matriz'}]};w.opAbrirModalCriar();await flush();
+ w.opMarcarPermissoes('criar',true);const d=w.document;assert.equal(d.querySelector('[data-modulo="inventarios"][data-acao="contar"]').checked,true);assert.equal(d.querySelector('[data-modulo="inventarios"][data-acao="excluir"]').checked,false);assert.equal(d.querySelector('[data-modulo="inventarios"][data-acao="excluir"]').disabled,true);
 });
-
-test('PEDIDO AO VIVO: criarOperador() com os DOIS canais — precisaTrocarSenha vai só no documento principal (Analista), o secundário do Coletor nunca recebe essa flag', async () => {
-  const access = mockAccessCollection([]);
-  const dtOperadores = mockDtOperadoresPorLoja();
-  const win = novoAmbiente(htmlFormularioCriar());
-  win.getDTRawFirestore = () => ({
-    collection: (nome) => nome === 'usuarios_acessos' ? access : (nome === 'lojas' ? { doc: dtOperadores.doc } : mockAccessCollection([])),
-  });
-  win.DTLoja = { garantirLojaInicial: async () => [{ id: 'loja_matriz', nome: 'Matriz' }], listar: async () => [{ id: 'loja_matriz', nome: 'Matriz' }] };
-  win._currentAnalistaUser = { email: 'admin@daterrinhaalimentos.com.br' };
-  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: () => async () => ({ data: { ok: true, uid: 'uidPrincipal', analista_uid: 'uidPrincipal', coletor_uid: 'uidColetor', conta_existente: false } }) }) }) };
-
-  win.opAbrirModalCriar();
-  await flush(); await flush(); await flush();
-  win.document.getElementById('op-nome').value = 'João Silva';
-  win.document.getElementById('op-senha').value = 'Senha1234';
-  marcarCanal(win, 'criar', 'analista', true);
-  marcarCanal(win, 'criar', 'coletor', true);
-  marcarPermissao(win, 'criar', 'recebimento-transbordo', 'visualizar');
-
-  await win.criarOperador();
-
-  assert.equal(access._registro.get('uidPrincipal').precisaTrocarSenha, true, 'identidade Analista precisa trocar');
-  assert.equal(access._registro.get('uidColetor').precisaTrocarSenha, undefined, 'conta secundária do Coletor nunca recebe a flag');
-  assert.equal(access._registro.get('uidColetor').conta_secundaria, true);
-});
-
-test('CORREÇÃO ESTRUTURAL: opSalvarEdicao() propaga a permissão editada pra TODOS os UIDs vinculados (analista_uid/coletor_uid/uids_vinculados), não só a conta principal', async () => {
-  // Estado inicial: exatamente o bug ao vivo — conta principal (Analista)
-  // já tinha uma permissão, a secundária (Coletor) ainda está com
-  // permissoes:{} (como ficava presa antes desta correção).
-  const access = mockAccessCollection([
-    { id: 'uidPrincipal', data: { uid: 'uidPrincipal', coletor_uid: 'uidColetor', email: 'joao@daterrinhaalimentos.com.br', nome: 'João Silva', perfil: 'analista', ativo: true, canais_acesso: { coletor: true, analista: true }, acesso_todas_lojas: true, lojas_permitidas: [], permissoes: { 'recebimento-transbordo': { visualizar: true, criar: true } } } },
-    { id: 'uidColetor', data: { uid: 'uidColetor', email: 'joao.silva@daterrinhaalimentos.com.br', nome: 'João Silva', perfil: 'operador', ativo: true, canais_acesso: { coletor: true, analista: false }, acesso_todas_lojas: true, lojas_permitidas: [], permissoes: {}, conta_secundaria: true, cadastro_principal_uid: 'uidPrincipal' } },
-  ]);
-  const dtOperadores = mockDtOperadoresPorLoja();
-  const win = novoAmbiente(htmlFormularioEditarELista());
-  win.getDTRawFirestore = () => ({
-    collection: (nome) => nome === 'usuarios_acessos' ? access : (nome === 'lojas' ? { doc: dtOperadores.doc } : mockAccessCollection([])),
-  });
-  win.DTLoja = { garantirLojaInicial: async () => [{ id: 'loja_matriz', nome: 'Matriz' }], listar: async () => [{ id: 'loja_matriz', nome: 'Matriz' }] };
-  // O admin logado É a própria conta sendo editada (já existe no mock) —
-  // evita que coletarUsuariosExistentes() insira uma 2ª conta (a do admin)
-  // na lista, o que mudaria o índice esperado.
-  win._currentAnalistaUser = { uid: 'uidPrincipal', email: 'joao@daterrinhaalimentos.com.br', admin_mestre: true };
-  win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true, permissoes: {} };
-
-  await win.listarOperadores();
-  const indice = 0; // só um usuário na lista (uidColetor é conta_secundaria, filtrada)
-  await win.opEditarUsuario(indice);
-
-  // Admin adiciona uma NOVA permissão que o funcionário não tinha.
-  marcarPermissao(win, 'editar', 'recebimento-transbordo', 'editar');
-
-  await win.opSalvarEdicao();
-
-  const principal = access._registro.get('uidPrincipal');
-  const secundaria = access._registro.get('uidColetor');
-  assert.equal(principal.permissoes['recebimento-transbordo'].editar, true);
-  // A asserção que prova a correção: a conta do Coletor (secundária) também
-  // recebeu a permissão nova — antes disso ficava presa em permissoes:{}
-  // pra sempre, mesmo depois de reeditar.
-  assert.equal(secundaria.permissoes['recebimento-transbordo'].editar, true);
-  assert.deepEqual(secundaria.permissoes, principal.permissoes);
-});
-
-// BUG AO VIVO REAL (relatado pelo usuário: "mesmo colocando [uma senha com
-// letras e números] tá dando erro"): a validação de opSalvarEdicao()
-// (trocar senha de um usuário JÁ existente — diferente de criarOperador(),
-// que valida certo) usava `/\\d/` (uma regex que procura o texto literal
-// "\d", nunca um dígito de verdade) em vez de `/\d/` — a checagem "tem
-// número" nunca passava pra nenhuma senha normal, então NENHUMA senha válida
-// conseguia ser salva, sempre voltando o mesmo erro de "mínimo 8
-// caracteres, com letras e números" independente do que fosse digitado.
-test('REGRESSÃO: opSalvarEdicao() aceita uma senha nova válida (8+ caracteres, letras E números) e chama alterarSenhaUsuario — antes disso a checagem de dígito nunca passava pra nenhuma senha real', async () => {
-  const access = mockAccessCollection([
-    // Só canal Coletor (analista:false) — evita a checagem "libere ao menos
-    // uma aba do Analista" de validarAcesso(), irrelevante pro que este
-    // teste cobre (a validação da SENHA, não de permissões de módulo).
-    { id: 'uidPrincipal', data: { uid: 'uidPrincipal', coletor_uid: 'uidColetor', email: 'joao@daterrinhaalimentos.com.br', nome: 'João Silva', perfil: 'operador', ativo: true, canais_acesso: { coletor: true, analista: false }, acesso_todas_lojas: true, lojas_permitidas: [], permissoes: {} } },
-  ]);
-  const dtOperadores = mockDtOperadoresPorLoja();
-  const win = novoAmbiente(htmlFormularioEditarELista());
-  win.getDTRawFirestore = () => ({
-    collection: (nome) => nome === 'usuarios_acessos' ? access : (nome === 'lojas' ? { doc: dtOperadores.doc } : mockAccessCollection([])),
-  });
-  win.DTLoja = { garantirLojaInicial: async () => [{ id: 'loja_matriz', nome: 'Matriz' }], listar: async () => [{ id: 'loja_matriz', nome: 'Matriz' }] };
-  win._currentAnalistaUser = { uid: 'uidPrincipal', email: 'joao@daterrinhaalimentos.com.br', admin_mestre: true };
-  win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true, permissoes: {} };
-  const toasts = [];
-  win.showToast = (msg, tipo) => toasts.push({ msg, tipo });
-  let chamadaAlterarSenha = null;
-  win.firebase = {
-    app: () => ({
-      functions: () => ({
-        httpsCallable: (nome) => {
-          assert.equal(nome, 'alterarSenhaUsuario');
-          return async (args) => { chamadaAlterarSenha = args; return { data: { ok: true } }; };
-        },
-      }),
-    }),
-  };
-
-  await win.listarOperadores();
-  await win.opEditarUsuario(0);
-  win.document.getElementById('opedit-senha').value = 'Senha1234'; // letras E números, 8+ caracteres — válida de verdade
-
-  await win.opSalvarEdicao();
-
-  assert.equal(toasts.some(t => /mínimo 6 caracteres/.test(t.msg)), false, 'não devia mostrar o erro de senha inválida pra uma senha que já tem 8+ caracteres');
-  assert.ok(chamadaAlterarSenha, 'alterarSenhaUsuario precisava ter sido chamada');
-  assert.equal(chamadaAlterarSenha.senha, 'Senha1234');
-  assert.deepEqual([...chamadaAlterarSenha.uids].sort(), ['uidColetor', 'uidPrincipal']);
-});
-
-// PEDIDO AO VIVO (usuário: "deixar colocar senha de 4 dígitos, podendo ser só
-// números... hoje lá tá falando que pode colocar com 6 mas quando coloco dá
-// erro falando que tem que ter 8 entre letra e números") — 4 dígitos não dá
-// porque o Firebase Authentication tem piso fixo de 6 caracteres (não
-// configurável), mas a exigência de letra+número foi removida: 6 dígitos só
-// números já é senha válida agora, tanto pra criar quanto pra editar.
-test('PEDIDO AO VIVO: senha só com números (6+ caracteres) é aceita — não exige mais letra junto', async () => {
-  const access = mockAccessCollection([
-    { id: 'uidPrincipal', data: { uid: 'uidPrincipal', coletor_uid: 'uidColetor', email: 'joao@daterrinhaalimentos.com.br', nome: 'João Silva', perfil: 'operador', ativo: true, canais_acesso: { coletor: true, analista: false }, acesso_todas_lojas: true, lojas_permitidas: [], permissoes: {} } },
-  ]);
-  const dtOperadores = mockDtOperadoresPorLoja();
-  const win = novoAmbiente(htmlFormularioEditarELista());
-  win.getDTRawFirestore = () => ({
-    collection: (nome) => nome === 'usuarios_acessos' ? access : (nome === 'lojas' ? { doc: dtOperadores.doc } : mockAccessCollection([])),
-  });
-  win.DTLoja = { garantirLojaInicial: async () => [{ id: 'loja_matriz', nome: 'Matriz' }], listar: async () => [{ id: 'loja_matriz', nome: 'Matriz' }] };
-  win._currentAnalistaUser = { uid: 'uidPrincipal', email: 'joao@daterrinhaalimentos.com.br', admin_mestre: true };
-  win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true, permissoes: {} };
-  const toasts = [];
-  win.showToast = (msg, tipo) => toasts.push({ msg, tipo });
-  let chamadaAlterarSenha = null;
-  win.firebase = {
-    app: () => ({
-      functions: () => ({
-        httpsCallable: (nome) => async (args) => { chamadaAlterarSenha = args; return { data: { ok: true } }; },
-      }),
-    }),
-  };
-
-  await win.listarOperadores();
-  await win.opEditarUsuario(0);
-  win.document.getElementById('opedit-senha').value = '123456';
-
-  await win.opSalvarEdicao();
-
-  assert.equal(toasts.some(t => t.tipo === 'error'), false, 'senha numérica de 6 dígitos não devia disparar erro de validação');
-  assert.ok(chamadaAlterarSenha, 'alterarSenhaUsuario precisava ter sido chamada com a senha numérica');
-  assert.equal(chamadaAlterarSenha.senha, '123456');
-});
-
-test('PEDIDO AO VIVO: senha numérica com menos de 6 dígitos ainda é rejeitada (piso real do Firebase Authentication)', async () => {
-  const access = mockAccessCollection([
-    { id: 'uidPrincipal', data: { uid: 'uidPrincipal', coletor_uid: 'uidColetor', email: 'joao@daterrinhaalimentos.com.br', nome: 'João Silva', perfil: 'operador', ativo: true, canais_acesso: { coletor: true, analista: false }, acesso_todas_lojas: true, lojas_permitidas: [], permissoes: {} } },
-  ]);
-  const dtOperadores = mockDtOperadoresPorLoja();
-  const win = novoAmbiente(htmlFormularioEditarELista());
-  win.getDTRawFirestore = () => ({
-    collection: (nome) => nome === 'usuarios_acessos' ? access : (nome === 'lojas' ? { doc: dtOperadores.doc } : mockAccessCollection([])),
-  });
-  win.DTLoja = { garantirLojaInicial: async () => [{ id: 'loja_matriz', nome: 'Matriz' }], listar: async () => [{ id: 'loja_matriz', nome: 'Matriz' }] };
-  win._currentAnalistaUser = { uid: 'uidPrincipal', email: 'joao@daterrinhaalimentos.com.br', admin_mestre: true };
-  win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true, permissoes: {} };
-  const toasts = [];
-  win.showToast = (msg, tipo) => toasts.push({ msg, tipo });
-  let chamou = false;
-  win.firebase = {
-    app: () => ({
-      functions: () => ({
-        httpsCallable: () => async (args) => { chamou = true; return { data: { ok: true } }; },
-      }),
-    }),
-  };
-
-  await win.listarOperadores();
-  await win.opEditarUsuario(0);
-  win.document.getElementById('opedit-senha').value = '1234';
-
-  await win.opSalvarEdicao();
-
-  assert.equal(chamou, false, '4 dígitos não é aceito — abaixo do piso real do Firebase Authentication');
-  assert.ok(toasts.some(t => /mínimo 6 caracteres/.test(t.msg)));
+test('modelo cadastrado preenche formulário, permite ajuste individual e envia vínculo',async()=>{
+ const w=novoAmbiente(htmlFormularioCriar()+htmlFormularioEditarELista()),calls=[];w.DT_USUARIO_ACESSO_ATUAL={perfil:'administrador',ativo:true};w.DTLoja={garantirLojaInicial:async()=>[{id:'loja_matriz',nome:'Matriz'}]};
+ w.firebase={app:()=>({functions:()=>({httpsCallable:n=>async d=>{calls.push({n,d});return {data:n==='listarGestaoAcessos'?{usuarios:[],modelos:[{id:'monitor',nome:'Monitoramento',ativo:true,canais:{analista:true},permissoes:{inventarios:{visualizar:true},acompanhamento:{visualizar:true}}}]}:{ok:true,uid:'novo'}};}})})};w.getDTRawFirestore=()=>({collection:()=>({doc:()=>({collection:()=>({limit:()=>({get:async()=>({docs:[]})})})})})});
+ await w.listarOperadores();w.opAbrirModalCriar();await flush();w.opSelecionarModelo('criar','monitor');assert.equal(w.document.querySelector('[data-modulo="inventarios"][data-acao="visualizar"]').checked,true);assert.equal(w.document.querySelector('[data-modulo="inventarios"][data-acao="excluir"]').checked,false);assert.equal(w.document.getElementById('op-modelo-criar').value,'monitor');
+ w.opMarcarModulo('criar','acompanhamento',false);w.document.getElementById('op-nome').value='João Silva';w.document.getElementById('op-senha').value='123456';w.document.getElementById('op-email-login').value='login.escolhido@example.com';w.document.getElementById('op-email-recuperacao').value='gestao@example.com';await w.criarOperador();const save=calls.find(x=>x.n==='salvarUsuarioArea');assert.equal(save.d.acesso.modelo_acesso_id,'monitor');assert.equal(save.d.acesso.permissoes.acompanhamento.visualizar,false);
 });
 
 test('Diagnóstico de acesso: mostra "não sincronizado" pra uma conta já dessincronizada, e "Ressincronizar" corrige sem mexer em quem já está ok', async () => {
@@ -407,6 +143,7 @@ test('Diagnóstico de acesso: mostra "não sincronizado" pra uma conta já dessi
   win.DTLoja = { garantirLojaInicial: async () => [{ id: 'loja_matriz', nome: 'Matriz' }], listar: async () => [{ id: 'loja_matriz', nome: 'Matriz' }] };
   win._currentAnalistaUser = { uid: 'uidPrincipal', email: 'joao@daterrinhaalimentos.com.br', admin_mestre: true };
   win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true, permissoes: {} };
+  win.firebase={app:()=>({functions:()=>({httpsCallable:()=>async()=>({data:{modelos:[],usuarios:[...access._registro.entries()].filter(([id,u])=>!u.conta_secundaria).map(([id,u])=>({id,...u}))}})})})};
 
   await win.listarOperadores();
   await win.opEditarUsuario(0);
@@ -436,6 +173,7 @@ test('Diagnóstico de acesso: conta já sincronizada não mostra alerta nem bot�
   win.DTLoja = { garantirLojaInicial: async () => [{ id: 'loja_matriz', nome: 'Matriz' }], listar: async () => [{ id: 'loja_matriz', nome: 'Matriz' }] };
   win._currentAnalistaUser = { uid: 'uidPrincipal', email: 'joao@daterrinhaalimentos.com.br', admin_mestre: true };
   win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true, permissoes: {} };
+  win.firebase={app:()=>({functions:()=>({httpsCallable:()=>async()=>({data:{modelos:[],usuarios:[...access._registro.entries()].filter(([id,u])=>!u.conta_secundaria).map(([id,u])=>({id,...u}))}})})})};
 
   await win.listarOperadores();
   await win.opEditarUsuario(0);

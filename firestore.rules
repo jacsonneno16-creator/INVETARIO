@@ -23,7 +23,7 @@ service cloud.firestore {
 
     function admin() {
       return active() && (
-        (access().keys().hasAny(['perfil']) && access().perfil == 'administrador') ||
+        (access().keys().hasAny(['perfil']) && access().perfil is string && access().perfil.lower() == 'administrador') ||
         (access().keys().hasAny(['admin_mestre']) && access().admin_mestre == true) ||
         (access().keys().hasAny(['administrador_mestre']) && access().administrador_mestre == true)
       );
@@ -63,6 +63,77 @@ service cloud.firestore {
         access().permissoes[area].keys().hasAny([operation]) &&
         access().permissoes[area][operation] == true
       );
+    }
+
+    // Compras: posse operacional mantém o comprador responsável original,
+    // mas também permite a quem está cobrindo férias/ausência executar o
+    // andamento sem transferir a requisição. Novas coberturas usam id
+    // determinístico origemUid__substitutoUid para a regra poder validar
+    // sem consulta por query. Gerente pode operar linhas dos nomes que
+    // estão explicitamente em compradoresGerenciados.
+    function activePurchaseCoverage(ownerUid) {
+      let coberturaId = ownerUid + '__' + request.auth.uid;
+      return signedIn() && ownerUid is string && ownerUid != '' &&
+        exists(/databases/$(database)/documents/compras_cobertura_temporaria/$(coberturaId)) &&
+        get(/databases/$(database)/documents/compras_cobertura_temporaria/$(coberturaId)).data.ativo == true &&
+        get(/databases/$(database)/documents/compras_cobertura_temporaria/$(coberturaId)).data.origemUid == ownerUid &&
+        get(/databases/$(database)/documents/compras_cobertura_temporaria/$(coberturaId)).data.substitutoUid == request.auth.uid;
+    }
+
+    function canOperatePurchase(data) {
+      let a = access();
+      return signedIn() && (
+        (data.keys().hasAny(['compradorUid']) && data.compradorUid == request.auth.uid) ||
+        (data.keys().hasAny(['compradorUid']) && activePurchaseCoverage(data.compradorUid)) ||
+        (
+          a.keys().hasAny(['papelCompras']) &&
+          a.papelCompras == 'gerente' &&
+          (
+            (
+              a.keys().hasAny(['compradoresGerenciadosUids']) &&
+              a.compradoresGerenciadosUids is list &&
+              data.keys().hasAny(['compradorUid']) &&
+              data.compradorUid in a.compradoresGerenciadosUids
+            ) ||
+            (
+              a.keys().hasAny(['compradoresGerenciados']) &&
+              a.compradoresGerenciados is list &&
+              data.keys().hasAny(['compradorNome']) &&
+              a.compradoresGerenciados.hasAny([data.compradorNome])
+            )
+          )
+        )
+      );
+    }
+
+    // Permissão granular válida nos dois canais. Usada somente nas ações do
+    // Coletor que agora fazem parte do mesmo catálogo do Analista (Inventário,
+    // Auditoria e Recontagem). Não substitui hasPermission() nas telas de
+    // Analista: apenas evita que canUseColetor() sozinho vire acesso total.
+    function hasPermissionAnyChannel(area, operation) {
+      let a = access();
+      let temMapa = active() && a.keys().hasAny(['permissoes']) && a.permissoes is map;
+      let definida = temMapa &&
+        a.permissoes.keys().hasAny([area]) &&
+        a.permissoes[area] is map &&
+        a.permissoes[area].keys().hasAny([operation]);
+      let explicita = definida && a.permissoes[area][operation] == true;
+      // Compatibilidade temporária do rollout V2: Inventário/Auditoria/
+      // Recontagem já eram usados por contas Coletor existentes antes das
+      // novas chaves granulares existirem. Ausência da chave herda o acesso
+      // antigo; false explícito NUNCA herda. O script de backfill grava as
+      // chaves e permite remover este bloco numa rodada futura.
+      let coletorLegado = !definida && active() &&
+        (
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.coletor == true) ||
+          (a.keys().hasAny(['perfil']) && a.perfil == 'operador')
+        ) &&
+        (
+          (area == 'inventarios' && (operation == 'visualizar' || operation == 'contar')) ||
+          (area == 'auditoria' && (operation == 'visualizar' || operation == 'conferir')) ||
+          (area == 'recontagens' && (operation == 'visualizar' || operation == 'executar'))
+        );
+      return admin() || explicita || coletorLegado;
     }
 
     // Variante de hasPermission() que TAMBÉM aceita canal Coletor — usada só
@@ -780,6 +851,8 @@ service cloud.firestore {
         (!request.resource.data.keys().hasAny(['administrador_mestre']) ||
           request.resource.data.administrador_mestre != true) &&
         permissoesWithinGrantorScope() &&
+        (!request.resource.data.keys().hasAny(['gestao_areas']) || request.resource.data.gestao_areas == {}) &&
+        (resource == null || !resource.data.keys().hasAny(['gestao_areas']) || resource.data.gestao_areas == {}) &&
         (
           (
             access().keys().hasAny(['acesso_todas_lojas']) &&
@@ -797,20 +870,35 @@ service cloud.firestore {
       );
     }
 
+    // Modelos e administração por área: somente Functions autenticadas escrevem.
+    // Separação: somente Functions validam lojas, ações, versões e autoria.
+    match /lojas/{lojaId}/sep_cargas/{document=**} { allow read, write: if false; }
+    match /lojas/{lojaId}/sep_erros/{document=**} { allow read, write: if false; }
+    match /lojas/{lojaId}/sep_pessoas/{document=**} { allow read, write: if false; }
+    match /lojas/{lojaId}/sep_operacoes/{document=**} { allow read, write: if false; }
+    match /lojas/{lojaId}/sep_chaves_carga/{document=**} { allow read, write: if false; }
+    match /lojas/{lojaId}/sep_cadastros_historico/{document=**} { allow read, write: if false; }
+    match /dt_modelos_acesso/{id} {
+      allow read, write: if false;
+    }
+    match /dt_acessos_auditoria/{id} {
+      allow read: if admin();
+      allow write: if false;
+    }
+    match /dt_setores_endereco/{id} {
+      allow read, write: if false;
+    }
+
     match /usuarios_acessos/{userId} {
-      allow read: if active() && (
-        request.auth.uid == userId ||
-        admin() ||
-        hasPermission('operadores', 'visualizar')
+      allow read: if signedIn() && request.auth.uid == userId || active() && (
+        admin() || hasPermission('operadores', 'visualizar')
       );
 
-      allow create: if request.auth.uid != userId &&
-        hasPermission('operadores', 'criar') &&
-        safeUserScope();
+      // Responsáveis por área usam salvarUsuarioArea (Admin SDK com validação).
+      // Cliente não administrador não pode alterar cadastro/autorização.
+      allow create: if admin() && request.auth.uid != userId;
 
-      allow update: if request.auth.uid != userId &&
-        hasPermission('operadores', 'editar') &&
-        safeUserScope();
+      allow update: if admin() && request.auth.uid != userId;
 
       // PEDIDO AO VIVO (2026-09-08): troca de senha obrigatória no 1º
       // acesso (só contas com Analista) — o próprio dono do documento
@@ -823,8 +911,7 @@ service cloud.firestore {
         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['precisaTrocarSenha']) &&
         request.resource.data.precisaTrocarSenha == false;
 
-      allow delete: if request.auth.uid != userId &&
-        hasPermission('operadores', 'excluir') &&
+      allow delete: if admin() && request.auth.uid != userId &&
         resource.data.admin_mestre != true &&
         resource.data.administrador_mestre != true;
     }
@@ -907,6 +994,15 @@ service cloud.firestore {
       allow read: if canUseAnalista();
       allow write: if false;
     }
+    // PEDIDO AO VIVO (2026-09-21): classificação real da Bluesoft
+    // (departamento/seção/grupo) por produto — já sincronizada há tempos
+    // por sincronizarComprasHistoricoBiAgendado, mas nunca liberada pra
+    // leitura do cliente. Usada agora como fallback de categoria no PCP
+    // (cadastro único de produtos). Escrita continua só via Admin SDK.
+    match /bi_classificacao_produtos/{docId} {
+      allow read: if canUseAnalista();
+      allow write: if false;
+    }
 
     // Fase 1A — Fundação de Compras (fornecedor mestre). Coleções GLOBAIS
     // (fornecedor não pertence a uma loja, mesmo raciocínio já usado para
@@ -915,8 +1011,14 @@ service cloud.firestore {
     // — histórico de fornecedor não pode desaparecer.
     match /compras_fornecedores/{docId} {
       allow read: if hasPermission('compras-central', 'visualizar');
-      allow create, update: if hasPermission('compras-central', 'editar') ||
-        hasPermission('compras-central', 'configurar');
+      allow create: if hasPermission('compras-central', 'configurar') ||
+        (hasPermission('compras-central', 'editar') &&
+          request.resource.data.situacao != 'bloqueado' &&
+          (!request.resource.data.keys().hasAny(['bloqueios']) || request.resource.data.bloqueios.size() == 0) &&
+          (!request.resource.data.keys().hasAny(['homologacao']) || request.resource.data.homologacao.status != 'homologado'));
+      allow update: if hasPermission('compras-central', 'configurar') ||
+        (hasPermission('compras-central', 'editar') &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['situacao','bloqueios','homologacao']));
       allow delete: if false;
     }
 
@@ -927,14 +1029,49 @@ service cloud.firestore {
     // a regra de escrita espelha a de compras_fornecedores.
     match /compras_fornecedores_resumo/{docId} {
       allow read: if canUseAnalista();
-      allow write: if hasPermission('compras-central', 'editar') ||
-        hasPermission('compras-central', 'configurar');
+      // O resumo é projeção do mestre, não uma segunda fonte editável.
+      // getAfter() também enxerga o mestre gravado no mesmo batch.
+      allow create, update: if (
+        hasPermission('compras-central', 'editar') ||
+        hasPermission('compras-central', 'configurar')
+      ) &&
+        request.resource.data.fornecedorId == docId &&
+        request.resource.data.situacao == getAfter(/databases/$(database)/documents/compras_fornecedores/$(docId)).data.situacao &&
+        request.resource.data.homologacaoStatus == getAfter(/databases/$(database)/documents/compras_fornecedores/$(docId)).data.homologacao.status;
+      allow delete: if false;
     }
 
     match /compras_fornecedor_produtos/{docId} {
       allow read: if hasPermission('compras-central', 'visualizar');
-      allow write: if hasPermission('compras-central', 'editar') ||
-        hasPermission('compras-central', 'configurar');
+      allow create: if hasPermission('compras-central', 'configurar') ||
+        (hasPermission('compras-central', 'editar') && request.resource.data.homologado != true);
+      allow update: if hasPermission('compras-central', 'configurar') ||
+        (hasPermission('compras-central', 'editar') && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['homologado']));
+      allow delete: if false;
+    }
+
+    // PEDIDO AO VIVO (2026-09-21): "um único lugar gravando todas as
+    // informações dos produtos" — cadastro único, GLOBAL (não por loja,
+    // igual compras_fornecedor_produtos acima; ao contrário de
+    // lojas/{id}/producao_produtos, que continua só com o que é
+    // genuinamente local de cada loja). Leitura ampla porque identidade e
+    // classificação de produto são usadas por PCP/Produção/Compras juntos;
+    // escrita restrita às mesmas permissões que já gravam essas informações
+    // hoje em producao_produtos (ver regra dessa coleção, mais abaixo, pro
+    // paralelo exato de campos por permissão). Delete só lógico (ativo:
+    // false), nunca hard delete — mesmo critério já usado em
+    // compras_fornecedores.
+    match /produtos_mestre/{cod} {
+      allow read: if canUseAnalista();
+      allow create, update: if hasPermission('producao-ficha-tecnica', 'editar') ||
+        hasPermission('pcp-central', 'configurar') ||
+        hasPermission('producao-importacao', 'importar');
+      allow delete: if false;
+
+      match /insumos/{insumoCod} {
+        allow read: if canUseAnalista();
+        allow write: if hasPermission('producao-ficha-tecnica', 'editar');
+      }
     }
 
     // Append-only (mesmo padrão de pcp_auditoria): nunca update/delete.
@@ -945,16 +1082,34 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // PEDIDO AO VIVO (2026-09-18): "o gerente vai poder pegar o login de
+    // uma pessoa e unificar na outra... os pedidos da pessoa aparecem só
+    // pra quem vai cobrir, pra não ficar parado" — cobertura temporária
+    // (ex.: férias) entre 2 compradores. Global (relação entre PESSOAS,
+    // não entre lojas — mesmo raciocínio de usuarios_acessos/
+    // recebimento_motoristas). Escrita usa a mesma permissão
+    // administrativa de compras_regras_comprador — o papel "gerente" em
+    // usuarios_acessos.papelCompras é só um filtro de tela (ver comentário
+    // acima em compras_regras_comprador), não uma permissão de verdade.
+    match /compras_cobertura_temporaria/{docId} {
+      allow read: if hasPermission('compras-central', 'visualizar');
+      allow write: if hasPermission('compras-central', 'configurar');
+    }
+
     match /lojas/{lojaId} {
       allow read: if canAccessStore(lojaId);
       allow create, update: if admin() && validText(request.resource.data.nome, 120);
       allow delete: if false;
 
       match /dt_contagens/{docId} {
-        allow read: if canAccessStore(lojaId);
+        allow read: if canAccessStore(lojaId) && (
+          hasPermission('inventarios', 'visualizar') ||
+          (canUseColetor() && hasPermissionAnyChannel('inventarios', 'visualizar'))
+        );
 
         allow create: if canAccessStore(lojaId) &&
           canUseColetor() &&
+          hasPermissionAnyChannel('inventarios', 'contar') &&
           sameOperator(request.resource.data) &&
           validOperationalWrite() &&
           inventoryOpen(lojaId, request.resource.data);
@@ -964,10 +1119,14 @@ service cloud.firestore {
       }
 
       match /dt_vazios/{docId} {
-        allow read: if canAccessStore(lojaId);
+        allow read: if canAccessStore(lojaId) && (
+          hasPermission('inventarios', 'visualizar') ||
+          (canUseColetor() && hasPermissionAnyChannel('inventarios', 'visualizar'))
+        );
 
         allow create: if canAccessStore(lojaId) &&
           canUseColetor() &&
+          hasPermissionAnyChannel('inventarios', 'contar') &&
           sameOperator(request.resource.data) &&
           validOperationalWrite() &&
           inventoryOpen(lojaId, request.resource.data);
@@ -976,8 +1135,33 @@ service cloud.firestore {
           canUseAnalista();
       }
 
+      // Leitura de recontagens por loja com UM único access() (mesmo motivo de
+      // podeLerInventariosNaLoja: canAccessStore + hasPermission + hasPermissionAnyChannel
+      // juntos estouram 1000 sub-expressões do motor de regras).
+      function podeLerRecontagensNaLoja(lojaId) {
+        let a = access();
+        let canal = active() && (
+          (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true) ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.coletor == true) ||
+          (a.keys().hasAny(['perfil']) && a.perfil == 'operador')
+        );
+        let temRec = a.keys().hasAny(['permissoes']) && a.permissoes is map &&
+          a.permissoes.keys().hasAny(['recontagens']) && a.permissoes['recontagens'] is map;
+        let definida = temRec && a.permissoes['recontagens'].keys().hasAny(['visualizar']);
+        let explicita = definida && a.permissoes['recontagens']['visualizar'] == true;
+        let explicitaExecutar = temRec && a.permissoes['recontagens'].keys().hasAny(['executar']) && a.permissoes['recontagens']['executar'] == true;
+        let legadoColetor = !definida && (
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.coletor == true) ||
+          (a.keys().hasAny(['perfil']) && a.perfil == 'operador')
+        );
+        let lojaOk = (a.keys().hasAny(['acesso_todas_lojas']) && a.acesso_todas_lojas == true) ||
+          (a.keys().hasAny(['lojas_permitidas']) && a.lojas_permitidas is list && lojaId in a.lojas_permitidas);
+        return admin() || (active() && lojaOk && canal && (explicita || explicitaExecutar || legadoColetor));
+      }
+
       match /dt_recontagens/{docId} {
-        allow read: if canAccessStore(lojaId);
+        allow read: if podeLerRecontagensNaLoja(lojaId);
 
         allow create, delete: if canAccessStore(lojaId) &&
           hasPermission('recontagens', 'editar');
@@ -986,6 +1170,7 @@ service cloud.firestore {
           hasPermission('recontagens', 'editar') ||
           (
             canUseColetor() &&
+            hasPermissionAnyChannel('recontagens', 'executar') &&
             assignedToCurrentUser(resource.data) &&
             (
               !request.resource.data.keys().hasAny(['operador_uid']) ||
@@ -1022,8 +1207,33 @@ service cloud.firestore {
           hasPermission('recontagens', 'editar');
       }
 
+      // Leitura de inventários por loja com UM único access(): o motor do
+      // Firestore estoura 1000 sub-expressões quando canAccessStore +
+      // hasPermission + hasPermissionAnyChannel rodam juntos (cada um refaz
+      // admin()/access()). Mesma regra de antes, sem repetição.
+      function podeLerInventariosNaLoja(lojaId) {
+        let a = access();
+        let canal = active() && (
+          (a.keys().hasAny(['perfil']) && a.perfil == 'analista') ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.analista == true) ||
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.coletor == true) ||
+          (a.keys().hasAny(['perfil']) && a.perfil == 'operador')
+        );
+        let temInv = a.keys().hasAny(['permissoes']) && a.permissoes is map &&
+          a.permissoes.keys().hasAny(['inventarios']) && a.permissoes['inventarios'] is map;
+        let definida = temInv && a.permissoes['inventarios'].keys().hasAny(['visualizar']);
+        let explicita = definida && a.permissoes['inventarios']['visualizar'] == true;
+        let legadoColetor = !definida && (
+          (a.keys().hasAny(['canais_acesso']) && a.canais_acesso is map && a.canais_acesso.coletor == true) ||
+          (a.keys().hasAny(['perfil']) && a.perfil == 'operador')
+        );
+        let lojaOk = (a.keys().hasAny(['acesso_todas_lojas']) && a.acesso_todas_lojas == true) ||
+          (a.keys().hasAny(['lojas_permitidas']) && a.lojas_permitidas is list && lojaId in a.lojas_permitidas);
+        return admin() || (active() && lojaOk && canal && (explicita || legadoColetor));
+      }
+
       match /dt_inventarios/{docId} {
-        allow read: if canAccessStore(lojaId);
+        allow read: if podeLerInventariosNaLoja(lojaId);
 
         allow create: if canAccessStore(lojaId) &&
           hasPermission('inventarios', 'criar');
@@ -1035,7 +1245,9 @@ service cloud.firestore {
               !resource.data.keys().hasAny(['versao']) &&
               request.resource.data.versao == 1
             ) ||
-            request.resource.data.versao == resource.data.versao + 1
+            request.resource.data.versao == resource.data.versao + 1 ||
+            // Botão Visível (ocultar do Coletor): troca só o flag, sem mexer em versao.
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['oculto_coletor'])
           );
 
         // Exclusão permanente pedida explicitamente pelo usuário (v305):
@@ -1103,7 +1315,7 @@ service cloud.firestore {
             hasPermission('pcp-central', 'configurar') &&
             request.resource.data
               .diff(resource.data)
-              .affectedKeys().hasOnly(['metaCoberturaDias','estoqueMinimo','estoqueMaximo','estoqueSeguranca','leadTimeDias','loteMinimoCompra','multiploCompra','criticidade','fornecedorPadrao','atualizadoEm','atualizadoPor'])
+              .affectedKeys().hasOnly(['metaCoberturaDias','estoqueMinimo','estoqueMaximo','estoqueSeguranca','leadTimeDias','loteMinimoCompra','multiploCompra','criticidade','fornecedorPadrao','capacidadePorCaminhao','maxCaminhoesPorEntrega','atualizadoEm','atualizadoPor'])
           ) ||
           (
             hasPermission('producao-importacao', 'importar') &&
@@ -1436,13 +1648,26 @@ service cloud.firestore {
         allow read: if canAccessStore(lojaId) && canUseAnalista();
       }
 
+      // PEDIDO AO VIVO (2026-10-02): retrato imutável de cada "Inventário do
+      // Pátio" finalizado no Coletor (29-recebimento-patio-inventario.js/
+      // confirmarFinalizacao()) — nunca editado nem apagado depois de
+      // criado, só consultado no relatório novo do Analista (124-
+      // recebimento-patio-inventarios-relatorio.js). Criado na MESMA
+      // chamada que atualiza recebimento_recusas logo acima — mesmo dueto
+      // de permissão do `allow update` de lá.
+      match /recebimento_patio_inventarios/{docId} {
+        allow read: if canAccessStore(lojaId) && hasPermission('recebimento-patio-inventarios', 'visualizar');
+        allow create: if canAccessStore(lojaId) && (
+          hasPermissionRecusas('editar') ||
+          hasPermissionColetorRecebimento('editar')
+        );
+      }
+
       match /recebimento_agendamentos/{docId} {
         allow read: if canAccessStore(lojaId);
-        allow write: if canAccessStore(lojaId) && (
-          hasPermission('recebimento-agendamentos', 'criar') ||
-          hasPermission('recebimento-agendamentos', 'editar') ||
-          hasPermission('recebimento-agendamentos', 'excluir')
-        );
+        allow create: if canAccessStore(lojaId) && hasPermission('recebimento-agendamentos', 'criar');
+        allow update: if canAccessStore(lojaId) && hasPermission('recebimento-agendamentos', 'editar');
+        allow delete: if canAccessStore(lojaId) && hasPermission('recebimento-agendamentos', 'excluir');
       }
 
       // Correção de horário (`horaChegada/horaInicioDescarga/horaFimDescarga/
@@ -1783,8 +2008,15 @@ service cloud.firestore {
       match /pcp_pedidos/{docId} {
         allow read: if canAccessStore(lojaId);
 
-        allow create: if canAccessStore(lojaId) &&
-          hasPermission('pcp-central', 'criar');
+        allow create: if canAccessStore(lojaId) && (
+          hasPermission('pcp-central', 'criar') ||
+          (
+            hasPermission('compras-central', 'editar') &&
+            request.resource.data.origem == 'COMPRAS_COTACAO' &&
+            request.resource.data.status == 'em_cotacao' &&
+            request.resource.data.compradorUid == request.auth.uid
+          )
+        );
 
         allow update: if canAccessStore(lojaId) &&
           hasPermission('pcp-central', 'editar');
@@ -1820,8 +2052,22 @@ service cloud.firestore {
       match /pcp_requisicoes_compra/{docId} {
         allow read: if canAccessStore(lojaId);
 
-        allow create: if canAccessStore(lojaId) &&
-          hasPermission('pcp-central', 'criar');
+        // Requisição operacional continua sendo criada pelo PCP. A única
+        // exceção é a cotação comercial iniciada diretamente por Compras:
+        // ela usa a mesma coleção/cache para não adicionar uma nova leitura
+        // no navegador, mas nasce explicitamente tipada e com quantidade 0.
+        // Assim não exige permissão de criar PCP e também não se mistura às
+        // Solicitações PCP (a UI filtra origem=COMPRAS_COTACAO).
+        allow create: if canAccessStore(lojaId) && (
+          hasPermission('pcp-central', 'criar') ||
+          (
+            (hasPermission('compras-central', 'editar') || hasPermission('compras-central', 'configurar')) &&
+            request.resource.data.origem == 'COMPRAS_COTACAO' &&
+            request.resource.data.tipoCotacao == 'comercial' &&
+            request.resource.data.quantidade == 0 &&
+            request.resource.data.status == 'em_cotacao'
+          )
+        );
 
         allow update: if canAccessStore(lojaId) && (
           hasPermission('compras-central', 'configurar') ||
@@ -1831,11 +2077,11 @@ service cloud.firestore {
           hasPermission('pcp-central', 'editar') ||
           (
             hasPermission('compras-central', 'editar') &&
-            resource.data.compradorUid == request.auth.uid &&
-            request.resource.data.compradorUid == request.auth.uid &&
+            canOperatePurchase(resource.data) &&
+            request.resource.data.compradorUid == resource.data.compradorUid &&
             request.resource.data
               .diff(resource.data)
-              .affectedKeys().hasOnly(['status','numeroCompra','fornecedor','quantidadeComprada','precoUnitario','valorTotal','dataPrevista','observacaoCompras','compradoEm','compradoPor','atualizadoEm','atualizadoPor','cotacoes'])
+              .affectedKeys().hasOnly(['status','numeroCompra','fornecedor','fornecedorId','quantidade','quantidadeComprada','saldoComprar','excessoCompra','precoUnitario','valorTotal','valorTotalEfetivo','dataPrevista','dataNecessaria','observacaoCompras','compradoEm','compradoPor','compradoPorUid','atualizadoEm','atualizadoPor','cotacoes','pedidosCompra','decisaoCotacao','pcpAlteracaoPendente','pcpUltimoRetornoCompras','historicoSolicitacao','canceladoEm','canceladoPor','cancelamentoMotivo','postergadaEm','postergadaPor','postergacaoMotivo','quantidadeAlteradaEm','quantidadeAlteradaPor'])
           ) ||
           (
             hasPermission('compras-central', 'configurar') &&
@@ -1856,7 +2102,7 @@ service cloud.firestore {
         allow read: if canAccessStore(lojaId) && (
           hasPermission('pcp-central', 'visualizar') ||
           hasPermission('compras-central', 'configurar') ||
-          (hasPermission('compras-central', 'visualizar') && resource.data.compradorUid == request.auth.uid)
+          (hasPermission('compras-central', 'visualizar') && canOperatePurchase(resource.data))
         );
 
         allow create: if canAccessStore(lojaId) && (
@@ -1866,7 +2112,8 @@ service cloud.firestore {
 
         allow update: if canAccessStore(lojaId) && (
           hasPermission('pcp-central', 'editar') ||
-          hasPermission('compras-central', 'editar')
+          (hasPermission('compras-central', 'editar') && canOperatePurchase(resource.data)) ||
+          hasPermission('compras-central', 'configurar')
         );
 
         allow delete: if canAccessStore(lojaId) &&
@@ -2089,8 +2336,8 @@ service cloud.firestore {
 
       match /dt_auditorias_coletor/{docId} {
         allow read: if canAccessStore(lojaId) && (
-          canUseAnalista() ||
-          canUseColetor()
+          hasPermission('auditoria', 'visualizar') ||
+          (canUseColetor() && hasPermissionAnyChannel('auditoria', 'visualizar'))
         );
 
         allow create, update: if canAccessStore(lojaId) && (
@@ -2168,6 +2415,16 @@ service cloud.firestore {
         .affectedKeys().hasOnly(['status','recebidoEm','recebidoPor','opId','opLojaId','maquina','programadoEm','programadoPor','producaoIniciadaEm','producaoIniciadaPor','produzidoEm','produzidoPor','finalizadoEm','finalizadoPor','estoqueEntradaCx','atualizadoEm']);
 
       allow delete: if false;
+    }
+
+    match /impressoras_rede/{printerId} {
+      // A configuração de impressão é necessária também dentro dos fluxos
+      // operacionais (ex.: anexar PDF à NF em Cargas), onde o usuário pode
+      // ter acesso válido à loja/Recebimento sem possuir o canal Analista
+      // explícito. Restringir a leitura a qualquer colaborador ativo mantém
+      // a coleção protegida e evita permission-denied nesse fluxo.
+      allow read: if active();
+      allow create, update, delete: if admin() || hasPermission('coletores', 'editar');
     }
 
     match /dt_coletores/{deviceId} {
@@ -2333,8 +2590,8 @@ service cloud.firestore {
     }
 
     match /dt_auditorias/{docId} {
-      allow read: if canUseAnalista() ||
-        collectorCanReadOperationalDoc(resource.data);
+      allow read: if hasPermission('inventarios', 'visualizar') ||
+        (collectorCanReadOperationalDoc(resource.data) && hasPermissionAnyChannel('inventarios', 'visualizar'));
 
       allow create: if canCreateAudit() &&
         canAccessDocumentStore(request.resource.data);
@@ -2388,8 +2645,9 @@ service cloud.firestore {
     }
 
     match /dt_auditorias_coletor/{docId} {
-      allow read: if collectorCanReadOperationalDoc(resource.data) ||
-        canUseAnalista();
+      allow read: if (
+        collectorCanReadOperationalDoc(resource.data) && hasPermissionAnyChannel('auditoria', 'visualizar')
+      ) || hasPermission('auditoria', 'visualizar');
 
       allow create, update: if (
         canPublishAudit() ||
@@ -2426,10 +2684,37 @@ service cloud.firestore {
       allow delete: if false;
 
       match /{nested=**} {
-        allow read: if canUseColetor() || canUseAnalista();
+        allow read: if hasPermission('inventarios', 'visualizar') ||
+          (canUseColetor() && hasPermissionAnyChannel('inventarios', 'visualizar'));
 
         allow write: if hasPermission('inventarios', 'editar');
       }
+    }
+
+    // DT Atendimento / WhatsApp — dados globais da empresa. Todas as escritas
+    // passam pelas Cloud Functions para garantir atribuição de atendente,
+    // auditoria e validação da integração oficial da Meta.
+    match /wa_conversas/{conversaId} {
+      allow read: if hasPermission('atendimento-conversas', 'visualizar');
+      allow write: if false;
+
+      match /mensagens/{mensagemId} {
+        allow read: if hasPermission('atendimento-conversas', 'visualizar');
+        allow write: if false;
+      }
+      match /notas/{notaId} {
+        allow read: if hasPermission('atendimento-conversas', 'visualizar');
+        allow write: if false;
+      }
+    }
+
+    match /wa_meta_mensagens/{docId} {
+      allow read, write: if false;
+    }
+
+    match /wa_config/{docId} {
+      allow read: if hasPermission('atendimento-config', 'visualizar');
+      allow write: if false;
     }
 
     match /{legacyCollection}/{docId} {

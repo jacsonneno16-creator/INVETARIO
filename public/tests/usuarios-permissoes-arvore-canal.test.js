@@ -20,7 +20,7 @@ const codigoPermissoes = fs.readFileSync(path.join(__dirname, '..', 'js', 'anali
 
 function htmlFormularioCriar() {
   return `
-    <input id="op-nome"><input id="op-senha"><input id="op-username" readonly><div id="op-logins-preview"></div>
+    <input id="op-nome"><input id="op-senha"><input id="op-email-login"><input id="op-email-recuperacao"><datalist id="op-emails-recuperacao"></datalist><div id="op-logins-preview"></div>
     <label><input type="radio" name="op-tipo" value="analista"></label>
     <label><input type="radio" name="op-tipo" value="operador" checked></label>
     <div id="op-canais-criar"></div>
@@ -35,6 +35,7 @@ function htmlFormularioCriar() {
 
 function novoAmbiente(html) {
   const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`, { runScripts: 'outside-only' });
+  dom.window.DT_USUARIO_ACESSO_ATUAL={perfil:'administrador',ativo:true};
   dom.window.eval(codigoPermissoes);
   return dom.window;
 }
@@ -83,7 +84,7 @@ test('checkbox de Setores usa data-op-setor, NUNCA data-setor sozinho (colide co
   assert.doesNotMatch(box.innerHTML, /\sdata-setor=/, 'data-setor sozinho colide com a navegação global de setores do topo do app');
 });
 
-test('árvore de permissões: só canal Coletor marcado — mostra SOMENTE recebimento-operacao/recebimento-transbordo, nada exclusivo do Analista', async () => {
+test('árvore de permissões: só canal Coletor marcado — mostra Inventário/Auditoria/Recontagem e módulos operacionais de Recebimento, nunca módulos exclusivos do Analista', async () => {
   const win = novoAmbiente(htmlFormularioCriar());
   await abrirCriar(win);
   marcarCanal(win, 'criar', 'coletor', true);
@@ -92,12 +93,12 @@ test('árvore de permissões: só canal Coletor marcado — mostra SOMENTE receb
   const visiveis = modulosVisiveis(win, 'criar');
   assert.ok(visiveis.includes('recebimento-operacao'));
   assert.ok(visiveis.includes('recebimento-transbordo'));
-  // Nada exclusivo do Analista pode aparecer — nem módulos de outros
-  // setores (Produção/PCP/Compras são 100% analista-only hoje), nem outros
-  // módulos de Logística (dashboard, inventarios, auditoria...).
+  // Inventário/Auditoria/Recontagem agora são permissionáveis também no
+  // Coletor. O que continua exclusivo do Analista não pode aparecer.
   assert.ok(!visiveis.includes('dashboard'));
-  assert.ok(!visiveis.includes('inventarios'));
-  assert.ok(!visiveis.includes('auditoria'));
+  assert.ok(visiveis.includes('inventarios'));
+  assert.ok(visiveis.includes('auditoria'));
+  assert.ok(visiveis.includes('recontagens'));
   assert.ok(!visiveis.includes('producao-dashboard'));
   assert.ok(!visiveis.includes('pcp-central'));
   assert.ok(!visiveis.includes('compras-central'));
@@ -285,7 +286,7 @@ test('opAbrirModalCriar limpa nome, senha e a prévia de login toda vez que abre
 
   assert.equal(win.document.getElementById('op-nome').value, '');
   assert.equal(win.document.getElementById('op-senha').value, '');
-  assert.equal(win.document.getElementById('op-logins-preview').innerHTML, 'Informe o nome completo.');
+  assert.equal(win.document.getElementById('op-logins-preview').textContent, 'Digite o e-mail que será usado para entrar.');
 });
 
 // PEDIDO AO VIVO (2026-08-27): "se eu tiver criando um e eu fechar, quando
