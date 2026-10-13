@@ -157,6 +157,25 @@ let _heartbeatInterval = null;
  * GARANTIA: usa o deviceId como chave do documento (doc(deviceId)).
  * Nunca cria mais de um documento para o mesmo aparelho.
  */
+
+// Sessão do Coletor: operador puro só pode ficar em um aparelho por vez.
+// Contas que também têm canal Analista podem trabalhar em vários coletores.
+async function encerrarOutrasSessoesDoOperador(uid, acessoGlobal) {
+  if (!uid || (acessoGlobal && acessoGlobal.canais_acesso && acessoGlobal.canais_acesso.analista === true)) return;
+  try {
+    const atual = obterDeviceId();
+    const snap = await FS.collection(FCOL.coletores).where('operador_uid','==',uid).get();
+    const batch = FS.batch(); let alterou = false;
+    snap.docs.forEach(function(doc){
+      if (doc.id === atual) return;
+      const d=doc.data()||{};
+      if (d.status !== 'online' && !d.sessao) return;
+      batch.set(doc.ref,{status:'offline',sessao:null,operador_atual:null,operador_email:null,operador_uid:null,logout_motivo:'login_em_outro_coletor',logout_em:ST()},{merge:true}); alterou=true;
+    });
+    if (alterou) await batch.commit();
+  } catch(e) { console.warn('[Coletor] sessão única:', e.message); }
+}
+window.encerrarOutrasSessoesDoOperador = encerrarOutrasSessoesDoOperador;
 async function registrarColetorNoFirestore(operadorInfo) {
   const deviceId = obterDeviceId();
   const ref = FS.collection(FCOL.coletores).doc(deviceId);
@@ -450,6 +469,12 @@ function iniciarListenerColetor() {
       if (!snap.exists) return; // doc ainda não existe (primeiro cadastro)
       const dados = snap.data();
       if (!dados) return;
+      if (dados.aprovado === 'aprovado' && APP.operador && dados.operador_uid !== APP.operador.uid) {
+        console.warn('[Coletor] Sessão encerrada por login em outro aparelho.');
+        AUTH.signOut().catch(function(){}); APP.operador=null; goScreen('login');
+        if (typeof toast === 'function') toast('Sua sessão foi encerrada porque este login entrou em outro coletor.', 'w');
+        return;
+      }
       if (dados.aprovado === 'bloqueado') {
         // Analista bloqueou — forçar logout e mostrar tela de bloqueio
         console.warn('[Coletor] Bloqueado pelo analista em tempo real.');
@@ -544,19 +569,14 @@ async function encerrarTurnoColetor() {
   if (APP.turnoEncerrado) return;
 
   // ── 1. Verificar contagens pendentes no IDB ──────────────────────────────
+  // O envio é sempre manual (ver enviarFilaPendente) — encerrar turno nunca
+  // envia sozinho, só bloqueia e leva o operador pra aba Status pra ele
+  // mesmo revisar e clicar em "Enviar Contagens".
   const pendentes = await idbGetPendentes();
   if (pendentes.length > 0) {
-    if (!navigator.onLine) {
-      toast('⚠️ Sem Conexão: Você possui contagens pendentes. Conecte-se para enviar antes de encerrar.', 'e');
-      return;
-    }
-    toast('Enviando contagens pendentes antes de encerrar...', 'i');
-    await enviarFilaPendente();
-    const aindaPendentes = await idbGetPendentes();
-    if (aindaPendentes.length > 0) {
-      toast('Falha ao enviar algumas contagens. Tente novamente.', 'e');
-      return;
-    }
+    toast('📤 Você possui ' + pendentes.length + ' contagem(ns) não enviada(s). Vá em Status e clique em "Enviar Contagens" antes de encerrar o turno.', 'e');
+    showView('status', document.getElementById('tab-status'));
+    return;
   }
 
   // ── 2. Verificar recontagens pendentes ───────────────────────────────────
@@ -768,8 +788,17 @@ async function verificarInventarioAtivo() {
 let _enviandoFilaEmAndamento = false;
 
 /** Envia todas as contagens pendentes em background (não bloqueia UI) */
-async function enviarFilaPendente() {
+async function enviarFilaPendente(origem) {
   var _APP$inventario6;
+  // Envio da fila de contagens físicas só acontece por ação manual do
+  // operador (botão "Enviar Contagens" na aba Status) — pedido ao vivo
+  // 2026-09-29: antes disso o operador quer poder corrigir/estornar à
+  // vontade sem que a contagem já tenha chegado pro Analista. Os outros
+  // gatilhos automáticos (intervalo de 30s, reconexão, boot, login, logo
+  // após salvar) continuam chamando esta função sem "origem", então caem
+  // aqui e não fazem nada — Auditoria/Recebimento usam filas separadas e
+  // não são afetados.
+  if (origem !== 'manual') return;
   if (_enviandoFilaEmAndamento) return;
   if (!navigator.onLine) return;
 

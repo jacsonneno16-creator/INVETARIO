@@ -114,13 +114,10 @@ async function enviarRecuperacaoSenhaAnalista(event) {
   if (!email) return _setLoginErro('Informe o e-mail do Analista para receber o link de redefinição.');
   if (!email.includes('@')) email += '@daterrinhaalimentos.com.br';
   try {
-    await AUTH_AN.sendPasswordResetEmail(email);
-    _setLoginErro('Se este e-mail estiver cadastrado, o link para criar uma nova senha será enviado.');
+    await firebase.app().functions('southamerica-east1').httpsCallable('solicitarRecuperacaoSenha')({email:email,canal:'analista'});
+    _setLoginErro('Se o login estiver cadastrado e ativo, o link será enviado ao e-mail de recuperação registrado. Confira também o spam.');
   } catch (err) {
-    if (err?.code === 'auth/invalid-email') return _setLoginErro('Informe um e-mail válido.');
-    if (err?.code === 'auth/too-many-requests') return _setLoginErro('Muitas tentativas. Aguarde alguns minutos e tente novamente.');
-    if (err?.code === 'auth/network-request-failed') return _setLoginErro('Não foi possível conectar. Verifique a internet e tente novamente.');
-    _setLoginErro('Se este e-mail estiver cadastrado, o link para criar uma nova senha será enviado.');
+    _setLoginErro(err && err.message || 'Não foi possível solicitar a recuperação. Tente novamente mais tarde.');
   }
 }
 
@@ -189,14 +186,19 @@ async function _onAnalistaLogado(user) {
     let acesso = acc.exists ? { uid:user.uid, ...acc.data() } : null;
 
     if (!acesso || acesso.ativo === false) {
-      throw new Error('Este login não possui acesso ativo. Solicite o provisionamento ao administrador.');
+      const erroAcesso = new Error('Este login não possui acesso ativo. Solicite o provisionamento ao administrador.');
+      erroAcesso.acessoNegado = true;
+      throw erroAcesso;
     }
     window.DT_USUARIO_ACESSO_ATUAL = acesso;
+    if(typeof window.DTObservarAcessoAtual==='function')window.DTObservarAcessoAtual(user,'analista');
 
     // Quando o administrador definiu os canais, o painel só aceita usuários
     // com acesso explícito ao Analista. Cadastros antigos continuam compatíveis.
     if (acesso?.canais_acesso && acesso.canais_acesso.analista !== true) {
-      throw new Error('Este login possui acesso somente ao Coletor.');
+      const erroCanal = new Error('Este login possui acesso somente ao Coletor.');
+      erroCanal.acessoNegado = true;
+      throw erroCanal;
     }
 
     // PEDIDO AO VIVO (2026-09-08): "todo login criado, no primeiro acesso
@@ -231,7 +233,23 @@ async function _onAnalistaLogado(user) {
     // múltiplas filas de escrita. Ela é disparada depois que o painel abre,
     // com trava única, checkpoints e lotes pequenos.
   }
-  catch(e){ _setLoginErro('Não foi possível preparar o ambiente da loja: '+e.message); await AUTH_AN.signOut(); return; }
+  catch(e){
+    if (e && e.acessoNegado === true) {
+      _setLoginErro('Não foi possível preparar o ambiente da loja: '+e.message);
+      await AUTH_AN.signOut();
+      return;
+    }
+    const el = document.getElementById('login-error-msg');
+    if (el) {
+      el.innerHTML = 'Não foi possível preparar o ambiente da loja: ' + String(e?.message || e) + ' <button type="button" data-login-tentar-de-novo>Tentar de novo</button>';
+      el.classList.add('show');
+      const btn = el.querySelector('[data-login-tentar-de-novo]');
+      if (btn) btn.onclick = () => _onAnalistaLogado(user);
+    } else {
+      _setLoginErro('Não foi possível preparar o ambiente da loja: '+(e?.message || e));
+    }
+    return;
+  }
   _mostrarApp();
   if (typeof window.aplicarPermissoesAnalista === 'function') {
     window.aplicarPermissoesAnalista();
@@ -368,8 +386,12 @@ function _registrarListenerAuthAnalista() {
   _authListenerRegistrado = true;
   AUTH_AN.onAuthStateChanged(async user => {
     if (user) {
+      // Só aceita a autenticação que nasceu do clique em Entrar nesta página.
+      // Qualquer sessão restaurada automaticamente pelo Firebase fica bloqueada
+      // na tela de login e é encerrada, mantendo apenas o e-mail lembrado.
       if (!_loginSolicitadoPeloUsuario) {
-        await AUTH_AN.signOut();
+        try { await AUTH_AN.signOut(); } catch (err) { console.warn('[Login Analista] Falha ao encerrar sessão restaurada:', err); }
+        window._currentAnalistaUser = null;
         _mostrarLogin();
         return;
       }
@@ -386,10 +408,20 @@ async function _iniciarAuthAnalista() {
   _loginSolicitadoPeloUsuario = false;
   _mostrarLogin();
   _carregarLoginLembrado();
+  if (_prepararFirebaseAnalista()) {
+    // Não aguardamos esta Promise para registrar o listener: assim a tela de
+    // login fica ativa imediatamente e qualquer sessão restaurada é interceptada.
+    AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(err => {
+      console.warn('[Login Analista] Não foi possível desativar a persistência da sessão:', err);
+    });
+  }
   if (!_registrarListenerAuthAnalista()) {
     let tentativas = 0;
     const timer = setInterval(() => {
       tentativas += 1;
+      if (_prepararFirebaseAnalista()) {
+        AUTH_AN.setPersistence(firebase.auth.Auth.Persistence.NONE).catch(() => {});
+      }
       if (_registrarListenerAuthAnalista() || tentativas >= 20) clearInterval(timer);
     }, 250);
   }
@@ -656,3 +688,23 @@ if(!window.__dtLojaSwitcherBound){
 
 window.aplicarTrocaLojaAnalista=aplicarTrocaLojaAnalista;
 window.trocarLojaInventario=trocarLojaInventario;
+
+
+(function(){
+  function atualizarTopo(){
+    var u=window._currentAnalistaUser||{}, nome=u.displayName||u.nome||u.email||'Analista';
+    var n=document.getElementById('dt-user-top-name');if(n)n.textContent=nome;
+    var foto=document.getElementById('dt-user-photo');if(foto){var key='dt_user_photo_'+(u.uid||u.email||'local'),src=localStorage.getItem(key);foto.innerHTML=src?'<img src="'+src+'" style="width:100%;height:100%;object-fit:cover">':String(nome).split(/\s+/).slice(0,2).map(function(x){return x.charAt(0)}).join('').toUpperCase();}
+  }
+  document.addEventListener('click',function(e){
+    var b=e.target.closest&&e.target.closest('#dt-user-menu-btn');var m=document.getElementById('dt-user-menu');if(b&&m){m.style.display=m.style.display==='none'?'block':'none';return;}
+    var a=e.target.closest&&e.target.closest('[data-dt-user-action]');if(!a)return; if(m)m.style.display='none';
+    var x=a.getAttribute('data-dt-user-action');
+    if(x==='logout')return doLogoutAnalista();
+    if(x==='config'){if(typeof window.abrirConfiguracoesSistema==='function'){window.abrirConfiguracoesSistema('visao-geral');return;}var btn=document.getElementById('setor-btn-config')||document.querySelector('[data-config-abrir]');if(btn)btn.click();return;}
+    if(x==='profile'){if(typeof window.abrirPerfilSistema==='function')return window.abrirPerfilSistema();var inp=document.getElementById('dt-user-photo-input');if(inp)inp.click();}
+  });
+  document.addEventListener('change',function(e){if(e.target.id!=='dt-user-photo-input'||!e.target.files||!e.target.files[0])return;var r=new FileReader();r.onload=function(){var u=window._currentAnalistaUser||{},key='dt_user_photo_'+(u.uid||u.email||'local');try{localStorage.setItem(key,String(r.result));}catch(_){ }atualizarTopo();};r.readAsDataURL(e.target.files[0]);});
+  window.atualizarUsuarioTopoAnalista=atualizarTopo;
+  atualizarTopo();
+})();

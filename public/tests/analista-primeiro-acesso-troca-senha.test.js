@@ -66,14 +66,15 @@ function carregarPagina(usuariosAcessos, opts) {
   const authStateCallbacks = [];
   const persistenciasUsadas = [];
   const auth = {
-    currentUser: null,
+    currentUser: opts.usuarioRestaurado ? fakeUser('u-restaurado', 'restaurado@daterrinhaalimentos.com.br') : null,
     setPersistence: async valor => { persistenciasUsadas.push(valor); },
     signInWithEmailAndPassword: async () => {},
-    signOut: async () => {},
+    signOut: async () => { auth._signOutChamadas += 1; auth.currentUser = null; },
     sendPasswordResetEmail: async () => {},
-    onAuthStateChanged: cb => { authStateCallbacks.push(cb); cb(null); },
+    onAuthStateChanged: cb => { authStateCallbacks.push(cb); cb(auth.currentUser); },
   };
   auth._persistenciasUsadas = persistenciasUsadas;
+  auth._signOutChamadas = 0;
   win.getDTAuth = () => auth;
   win.firebase = { auth: { Auth: { Persistence: { NONE: 'NONE', LOCAL: 'LOCAL', SESSION: 'SESSION' } } } };
   win.DTLoja = {
@@ -248,58 +249,22 @@ test('REGRESSÃO: conta genuinamente sem acesso (ativo:false) continua deslogand
 // nunca grava a sessão em lugar nenhum, só sobrevive enquanto a aba
 // continua rodando na memória. Celular recarrega abas em 2º plano o tempo
 // todo pra economizar memória — cada recarga perdia a sessão inteira.
-test('BUG AO VIVO REAL: a persistência preparada (no boot e/ou no login) é LOCAL, não NONE — sessão precisa sobreviver a recarregar a aba (celular recarrega abas em 2º plano o tempo todo)', async () => {
-  const { win, document, auth } = carregarPagina();
-  document.getElementById('an-email').value = 'joao@daterrinhaalimentos.com.br';
-  document.getElementById('an-pass').value = 'senhaCorreta123';
-
-  await win.doLoginAnalista();
-
-  assert.ok(auth._persistenciasUsadas.includes('LOCAL'), 'NONE faz a sessão inteira sumir ao recarregar a aba — celular faz isso o tempo todo em 2º plano. Chamadas: ' + JSON.stringify(auth._persistenciasUsadas));
+test('login do Analista usa persistência NONE — recarregar exige senha novamente, mas o e-mail pode continuar lembrado', async () => {
+  const { auth } = await carregarPagina();
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok(auth._persistenciasUsadas.includes('NONE'), 'o Analista deve usar NONE para não restaurar usuário automaticamente após recarregar');
+  assert.equal(auth._persistenciasUsadas.includes('LOCAL'), false, 'não deve persistir a sessão autenticada do Analista em LOCAL');
 });
 
-// BUG AO VIVO REAL (2026-09-09, achado por último — os 2 fixes anteriores,
-// sozinhos, não resolviam): o listener de auth deslogava IMEDIATAMENTE
 // qualquer sessão restaurada automaticamente pelo Firebase (sem o usuário
 // ter clicado "Entrar" NESTE carregamento de página) — exatamente o que
 // acontece toda vez que o celular recarrega a aba em 2º plano. Mesmo com
 // persistência LOCAL gravando certinho, essa sessão restaurada era
 // desfeita na hora por este código, não pela falta de persistência.
-test('BUG AO VIVO REAL: sessão restaurada pelo Firebase (sem clique em Entrar nesta página) NÃO é deslogada — autorização real continua sendo validada em _onAnalistaLogado', async () => {
-  const acessos = mockColecaoAcesso([{ id: 'u1', data: { ativo: true, canais_acesso: { analista: true } } }]);
-  const dom = new JSDOM(SHELL, { url: 'http://localhost/', runScripts: 'outside-only' });
-  const win = dom.window;
-  const document = win.document;
-  const rawFs = { collection: nome => (nome === 'usuarios_acessos' ? acessos : mockColecaoAcesso([])) };
-  win.getDTFirebaseApp = () => ({});
-  win.getDTRawFirestore = () => rawFs;
-  win.getDTFirestore = () => rawFs;
-  let chamouSignOut = false;
-  const user = fakeUser('u1', 'joao@daterrinhaalimentos.com.br');
-  const auth = {
-    currentUser: null,
-    setPersistence: async () => {},
-    signInWithEmailAndPassword: async () => {},
-    signOut: async () => { chamouSignOut = true; },
-    sendPasswordResetEmail: async () => {},
-    // Simula sessão restaurada pelo Firebase sozinho — SEM doLoginAnalista()
-    // ter rodado nesta página (é exatamente isso que acontece quando o
-    // celular reconstrói a aba em 2º plano com uma sessão LOCAL já salva).
-    onAuthStateChanged: cb => cb(user),
-  };
-  win.getDTAuth = () => auth;
-  win.firebase = { auth: { Auth: { Persistence: { NONE: 'NONE', LOCAL: 'LOCAL', SESSION: 'SESSION' } } } };
-  win.DTLoja = {
-    garantirLojaInicial: async () => [{ id: 'loja1', nome: 'Loja Matriz' }],
-    selecionarInterativamente: async () => {},
-    listar: async () => [{ id: 'loja1', nome: 'Loja Matriz' }],
-  };
-  win.getDTLojaAtiva = () => 'loja1';
-  win.setDTLojaAtiva = () => {};
-  win.escHTML = s => String(s == null ? '' : s);
-  win.eval(code);
-  await new Promise(r => setTimeout(r, 0));
-
-  assert.equal(chamouSignOut, false, 'sessão restaurada nunca pode ser deslogada só por não ter vindo de um clique em Entrar nesta página');
-  assert.equal(document.getElementById('app-main').style.display, 'flex', 'com acesso válido de verdade, a sessão restaurada entra no app normalmente');
+test('sessão restaurada pelo Firebase sem novo clique em Entrar é encerrada e permanece na tela de login', async () => {
+  const { auth, document } = await carregarPagina(null, { usuarioRestaurado: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.ok(auth._signOutChamadas >= 1, 'sessão restaurada deve ser encerrada');
+  assert.equal(document.getElementById('screen-login').style.display, 'flex');
+  assert.notEqual(document.getElementById('app-main').style.display, 'flex');
 });

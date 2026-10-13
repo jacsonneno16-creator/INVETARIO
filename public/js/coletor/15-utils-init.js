@@ -34,7 +34,7 @@ async function sincronizarTudoEmSegundoPlano(origem = 'automatico') {
         const pendentes = await idbGetPendentes();
         FILA_ENVIO = Array.isArray(pendentes) ? pendentes : [];
         filaSave(FILA_ENVIO);
-        if (FILA_ENVIO.length) await enviarFilaPendente();
+        if (FILA_ENVIO.length) await enviarFilaPendente(origem);
       }
     } catch (e) {
       erros.push(e);
@@ -79,13 +79,32 @@ async function sincronizarTudoEmSegundoPlano(origem = 'automatico') {
 }
 window.sincronizarTudoEmSegundoPlano = sincronizarTudoEmSegundoPlano;
 
-/** Botão manual para enviar fila (aba STATUS) */
+/**
+ * Botão "Enviar Contagens" (aba STATUS). Pedido ao vivo 2026-09-29: o envio
+ * das contagens de inventário é sempre manual — enquanto não enviadas, o
+ * operador pode continuar corrigindo/estornando; depois de enviadas, ficam
+ * visíveis pro Analista e travadas (não dá mais pra estornar). Por isso essa
+ * ação pede confirmação explícita antes de mandar de vez.
+ */
 async function enviarFilaManual() {
   if (!navigator.onLine) {
     toast('📶 Sem internet — os registros continuam salvos no aparelho', 'w');
     return;
   }
-  toast('⬆️ Sincronizando contagens e auditorias em segundo plano…', 'w');
+  const pendentes = typeof idbGetPendentes === 'function' ? (await idbGetPendentes()).length : FILA_ENVIO.length;
+  if (!pendentes) {
+    toast('✅ Nenhuma contagem pendente para enviar.', 's');
+    return;
+  }
+  showConfirm(
+    `Enviar ${pendentes} contagem(ns) pendente(s)? Depois de enviadas, elas ficam visíveis para o Analista e não podem mais ser estornadas.`,
+    _enviarFilaManualConfirmado,
+    { title: 'Enviar Contagens', icon: '📤', okLabel: 'Enviar Agora', okColor: 'var(--danger)' }
+  );
+}
+
+async function _enviarFilaManualConfirmado() {
+  toast('⬆️ Enviando contagens e sincronizando auditorias…', 'w');
   await sincronizarTudoEmSegundoPlano('manual');
   updateStats();
   await atualizarFilaStatus();
@@ -97,7 +116,7 @@ async function enviarFilaManual() {
     console.warn("[Erro tratado]", e);
   }
   const total = contagens + auditorias;
-  if (total === 0) toast('✅ Contagens e auditorias enviadas com sucesso!', 's');else toast(`⚠️ ${total} registro(s) ainda pendente(s) — nova tentativa será automática`, 'w');
+  if (total === 0) toast('✅ Contagens e auditorias enviadas com sucesso!', 's');else toast(`⚠️ ${total} registro(s) ainda pendente(s) — tente enviar de novo`, 'w');
 }
 
 /** Atualiza o indicador de fila na aba STATUS */

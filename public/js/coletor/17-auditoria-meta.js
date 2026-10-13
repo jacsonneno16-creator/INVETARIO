@@ -388,6 +388,8 @@
       erro.textContent = '';
     }
     if (entrar) {
+      entrar.setAttribute('data-perm-modulo','auditoria');
+      entrar.setAttribute('data-perm-acao','conferir');
       entrar.style.display = 'none';
       entrar.textContent = 'OK — iniciar auditoria';
       entrar.onclick = window.entrarAuditoriaCarregada;
@@ -410,6 +412,7 @@
     goScreen('auditorias');
   };
   window.entrarAuditoriaCarregada = function () {
+    if (typeof coletorExigirPermissao === 'function' && !coletorExigirPermissao('auditoria','conferir')) return;
     if (!APP._auditoriaPronta) {
       toast('Aguarde o carregamento completo da auditoria.', 'e');
       return;
@@ -597,7 +600,9 @@
       APP._auditoriaPronta = true;
       const entrar = document.getElementById('dl-btn-entrar');
       if (entrar) {
-        entrar.style.display = '';
+        entrar.setAttribute('data-perm-modulo','auditoria');
+        entrar.setAttribute('data-perm-acao','conferir');
+        entrar.style.display = (typeof coletorTemPermissao !== 'function' || coletorTemPermissao('auditoria','conferir')) ? '' : 'none';
         entrar.textContent = 'OK — iniciar auditoria';
         entrar.onclick = window.entrarAuditoriaCarregada;
       }

@@ -253,8 +253,8 @@ async function doLogin() {
 
   // Regex permissiva: aceita qualquer login com pelo menos um ponto
   // ex: joao.silva, joao.da.silva, maria.souza2, etc.
-  if (!/^[a-z0-9._-]+\.[a-z0-9._-]+$/.test(login)) {
-    toast('Login inválido — use o formato nome.sobrenome', 'e');
+  if (!(login.includes('@') ? /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(login) : /^[a-z0-9._-]+\.[a-z0-9._-]+$/.test(login))) {
+    toast('Informe o e-mail cadastrado ou o login nome.sobrenome.', 'e');
     return;
   }
   _salvarOuLimparLoginColetor(login, pass);
@@ -326,6 +326,8 @@ async function doLogin() {
       return;
     }
 
+    if(acessoGlobal&&typeof window.DTObservarAcessoAtual==='function')window.DTObservarAcessoAtual(user,'coletor');
+
     // Carrega as lojas permitidas. Uma única loja entra direto; duas ou
     // mais exibem o seletor antes do menu principal.
     window.setDTLojaAtiva('');
@@ -355,6 +357,7 @@ async function doLogin() {
       return;
     }
     _setBtn('Verificando aparelho…', true);
+    if (typeof window.encerrarOutrasSessoesDoOperador === 'function') await window.encerrarOutrasSessoesDoOperador(user.uid, acessoGlobal);
     let status;
     try {
       status = await registrarColetorNoFirestore({
@@ -418,7 +421,9 @@ async function doLogin() {
     _setBtn('ENTRAR', false);
     _atualizarLojaColetorUI(window.DT_LOJAS_USUARIO_ATUAL || []);
     goScreen('acesso');
+    if(typeof window.aplicarPermissoesMenuColetor==='function')window.aplicarPermissoesMenuColetor();
     iniciarSyncBackground();
+    if (typeof window.iniciarTimeoutInatividadeColetor === 'function') window.iniciarTimeoutInatividadeColetor();
     toast('Bem-vindo, ' + name + '!', 's');
   }).catch(err => {
     clearTimeout(_tid);
@@ -533,3 +538,109 @@ function _doLogoutConfirmado() {
     console.warn("[Erro tratado]", e);
   }
 })();
+
+// PEDIDO AO VIVO (2026-10-02): "tem que fazer logout com 40m sem uso, e
+// sumir o nome daqui" — baixado de 60 pra 40 minutos. marcarColetorOffline()
+// já zera operador_atual/sessao (ver 02-sync-dispositivo.js), que é o que
+// faz o nome sumir e virar "Nenhum" na tela Coletores do Analista
+// (35-coletores-render.js) — nenhuma mudança adicional precisou ser feita
+// ali, só encurtar este limite.
+// Logout automático após 40 minutos sem interação no Coletor.
+(function(){
+  var LIMITE=40*60*1000, timer=null;
+  function armar(){ if(timer)clearTimeout(timer); if(!APP || !APP.operador)return; timer=setTimeout(function(){
+    if(!APP || !APP.operador)return;
+    if(typeof marcarColetorOffline==='function') marcarColetorOffline().finally(function(){ AUTH.signOut().catch(function(){}); APP.operador=null; goScreen('login'); if(typeof toast==='function')toast('Sessão encerrada após 40 minutos sem uso.','w'); });
+  },LIMITE); }
+  ['pointerdown','keydown','touchstart','scannerinput'].forEach(function(ev){document.addEventListener(ev,armar,{passive:true});});
+  window.iniciarTimeoutInatividadeColetor=armar;
+})();
+
+
+// Permissões granulares do Coletor. Regra: sem permissão explícita, o
+// módulo/ação não aparece. O bloqueio no handler continua como 2ª camada.
+window.coletorTemPermissao = function(modulo, acao) {
+  var a=window.DT_USUARIO_ACESSO_ATUAL||{};
+  if(a.perfil==='admin' || a.perfil==='administrador' || a.admin===true || a.admin_mestre===true || a.administrador_mestre===true) return true;
+  var p=a.permissoes||{}, operacao=acao||'visualizar', m=p[modulo];
+  // Se a chave já existe, inclusive false, ela é a fonte de verdade.
+  if(m && typeof m==='object' && Object.prototype.hasOwnProperty.call(m,operacao)) return m[operacao]===true;
+  // Rollout seguro das permissões granulares do Coletor. Antes do V2 essas
+  // ações não existiam no Firestore e Inventário era liberado por canal.
+  // Só herdamos enquanto a chave NOVA estiver ausente; o backfill torna esse
+  // fallback desnecessário depois da migração, sem reabrir negações explícitas.
+  var canalColetor=(a.canais_acesso && a.canais_acesso.coletor===true) || a.perfil==='operador';
+  if(canalColetor){
+    if(modulo==='inventarios' && (operacao==='visualizar'||operacao==='contar')) return true;
+    if(modulo==='auditoria' && (operacao==='visualizar'||operacao==='conferir')) return true;
+    if(modulo==='recontagens' && (operacao==='visualizar'||operacao==='executar')) return true;
+  }
+  return false;
+};
+window.coletorTemAlgumaPermissao = function(lista) {
+  return (lista||[]).some(function(x){return window.coletorTemPermissao(x[0],x[1]||'visualizar');});
+};
+window.coletorExigirPermissao = function(modulo, acao) {
+  if(window.coletorTemPermissao(modulo,acao)) return true;
+  if(typeof toast==='function') toast('Você não tem permissão para esta função.','w');
+  return false;
+};
+window.aplicarPermissoesMenuColetor = function(){
+  // Elementos explícitos — vale também para conteúdo dinâmico que use
+  // data-perm-modulo/data-perm-acao.
+  document.querySelectorAll('[data-perm-modulo]').forEach(function(el){
+    var modulo=el.getAttribute('data-perm-modulo'),acao=el.getAttribute('data-perm-acao')||'visualizar';
+    el.style.display=window.coletorTemPermissao(modulo,acao)?'':'none';
+  });
+  // Hubs: só aparecem se houver pelo menos uma função filha liberada.
+  document.querySelectorAll('[data-perm-grupo="inventario"]').forEach(function(el){
+    el.style.display=window.coletorTemAlgumaPermissao([
+      ['inventarios','visualizar'],['auditoria','visualizar'],['recontagens','visualizar']
+    ])?'':'none';
+  });
+  document.querySelectorAll('[data-perm-grupo="recebimento"]').forEach(function(el){
+    el.style.display=window.coletorTemAlgumaPermissao([
+      ['recebimento-transbordo','visualizar'],['recebimento-operacao','visualizar'],['recebimento-recusas','visualizar'],
+      ['recebimento-paletes','visualizar'],['recebimento-agendamentos','visualizar']
+    ])?'':'none';
+  });
+  document.querySelectorAll('[data-perm-grupo="estoque"]').forEach(function(el){
+    el.style.display=window.coletorTemAlgumaPermissao([
+      ['estoque-rel-apontamento','visualizar'],['estoque-rel-apontamento','criar'],['estoque-rel-apontamento','conferir'],['estoque-separacao','visualizar']
+    ])?'':'none';
+  });
+  document.querySelectorAll('[data-perm-grupo="apontamento"]').forEach(function(el){el.style.display=window.coletorTemAlgumaPermissao([['estoque-rel-apontamento','visualizar'],['estoque-rel-apontamento','criar'],['estoque-rel-apontamento','conferir']])?'':'none';});
+};
+
+// Segunda camada: conteúdo sem permissão nem executa se for reexibido por
+// algum redraw antigo antes da próxima aplicação de visibilidade.
+document.addEventListener('click',function(event){
+  var el=event.target&&event.target.closest?event.target.closest('[data-perm-modulo]'):null;
+  if(!el)return;
+  var modulo=el.getAttribute('data-perm-modulo'),acao=el.getAttribute('data-perm-acao')||'visualizar';
+  if(window.coletorTemPermissao(modulo,acao))return;
+  event.preventDefault();event.stopPropagation();if(typeof event.stopImmediatePropagation==='function')event.stopImmediatePropagation();
+  if(typeof toast==='function')toast('Você não tem permissão para esta função.','w');
+},true);
+
+document.addEventListener('DOMContentLoaded',function(){
+  try{
+    new MutationObserver(function(muts){
+      if(!muts.some(function(m){return m.addedNodes&&m.addedNodes.length;}))return;
+      setTimeout(function(){if(typeof window.aplicarPermissoesMenuColetor==='function')window.aplicarPermissoesMenuColetor();},0);
+    }).observe(document.body,{childList:true,subtree:true});
+  }catch(e){console.warn('[Permissões Coletor]',e);}
+});
+
+var _recuperacaoColetorPendente=false;
+async function enviarRecuperacaoSenhaColetor(){
+  if(_recuperacaoColetorPendente)return;
+  var campo=document.getElementById('l-login'),login=campo&&campo.value||'';
+  if(!login.trim()){toast('Informe o e-mail de login para recuperar a senha.','w');return;}
+  _recuperacaoColetorPendente=true;
+  try{
+    await firebase.app().functions('southamerica-east1').httpsCallable('solicitarRecuperacaoSenha')({email:_montarEmail(login),canal:'coletor'});
+    toast('Se o login estiver cadastrado e ativo, enviaremos o link ao e-mail de recuperação. Confira o spam.','s');
+  }catch(e){toast(e&&e.message||'Não foi possível solicitar a recuperação.','e');}
+  finally{_recuperacaoColetorPendente=false;}
+}
