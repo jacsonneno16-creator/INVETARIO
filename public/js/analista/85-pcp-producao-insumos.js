@@ -16,6 +16,7 @@
   const unidadeExibivel = u => (u && !/^unidades?$/i.test(String(u).trim())) ? ' ' + esc(u) : '';
 
   let _horizonteDias = 30;
+  let _ultimoCalculo = { porInsumo: [], porOP: [] };
 
   function fs() { return global.getDTFirestore(); }
   function tem(acao) { return typeof global.temPermissao !== 'function' || global.temPermissao('pcp-central', acao); }
@@ -68,7 +69,8 @@
       // "sem dado no BI" em vez de fingir que é zero de verdade.
       return { ...x, disponivel, unidade: est?.unidade || '', saldo, status: saldo < 0 ? 'falta' : 'suficiente', semDadoBi: !est };
     }).sort((a, b) => a.saldo - b.saldo);
-    return { porInsumo, porOP: resultado.porOP };
+    _ultimoCalculo = { porInsumo, porOP: resultado.porOP };
+    return _ultimoCalculo;
   }
   async function _buscarInsumosBiEAtualizar(btn) {
     const original = btn ? btn.innerHTML : '';
@@ -116,7 +118,7 @@
       </div>
       <div class="tc"><div style="overflow:auto"><table class="dt-table">
         <thead><tr><th>Categoria</th><th>Insumo</th><th>Necessário</th><th>Disponível</th><th>Saldo</th><th>Status</th><th></th></tr></thead>
-        <tbody>${porInsumo.length ? porInsumo.map(x => `<tr><td>${esc(x.categoria)}</td><td><b>${esc(x.insumo)}</b></td><td>${x.necessidade.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td><td>${x.disponivel.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}${unidadeExibivel(x.unidade)}${x.semDadoBi ? ' <span style="color:var(--muted);font-size:.7rem" title="Sem correspondência no BI — nem por código, nem por nome. Confira o vínculo (bluesoftProdutoKey) desse insumo na Ficha Técnica.">(sem dado no BI)</span>' : ''}</td><td style="color:${x.saldo < 0 ? '#D92020' : 'inherit'};font-weight:700">${x.saldo.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td><td><span class="badge ${x.status === 'falta' ? 'b-red' : 'b-green'}">${x.status === 'falta' ? 'em falta' : 'suficiente'}</span></td><td>${x.status === 'falta' && tem('criar') ? `<button class="btn btn-ghost btn-sm" data-pcppi-gerar="${esc(x.insumo)}|${esc(x.categoria)}|${esc(x.unidade)}|${Math.ceil(Math.max(0, -x.saldo))}">Gerar necessidade</button>` : ''}</td></tr>`).join('') : '<tr><td colspan="7">Nenhum insumo necessário no período — sem produção programada com ficha técnica.</td></tr>'}</tbody>
+        <tbody>${porInsumo.length ? porInsumo.map(x => `<tr><td>${esc(x.categoria)}</td><td><b>${esc(x.insumo)}</b></td><td>${x.necessidade.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td><td>${x.disponivel.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}${unidadeExibivel(x.unidade)}${x.semDadoBi ? ' <span style="color:var(--muted);font-size:.7rem" title="Sem correspondência no BI — nem por código, nem por nome. Confira o vínculo (bluesoftProdutoKey) desse insumo na Ficha Técnica.">(sem dado no BI)</span>' : ''}</td><td style="color:${x.saldo < 0 ? '#D92020' : 'inherit'};font-weight:700">${x.saldo.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}</td><td><span class="badge ${x.status === 'falta' ? 'b-red' : 'b-green'}">${x.status === 'falta' ? 'em falta' : 'suficiente'}</span></td><td style="white-space:nowrap"><button class="btn btn-ghost btn-sm" data-pcp-insumo-360="${esc(x.cod || x.insumo)}" data-pcp-insumo-nome="${esc(x.insumo)}">360°</button>${x.status === 'falta' && tem('criar') ? ` <button class="btn btn-ghost btn-sm" data-pcppi-gerar="${esc(x.insumo)}|${esc(x.categoria)}|${esc(x.unidade)}|${Math.ceil(Math.max(0, -x.saldo))}">Gerar necessidade</button>` : ''}</td></tr>`).join('') : '<tr><td colspan="7">Nenhum insumo necessário no período — sem produção programada com ficha técnica.</td></tr>'}</tbody>
       </table></div></div>
       <div class="tc" style="margin-top:14px;padding:12px">
         <b>Ordens de produção no período</b>
@@ -147,7 +149,7 @@
 
   global.pcpRegistrarPagina?.('producao-insumo', { elId: 'page-pcp-producao-insumo', render: 'renderPCPProducaoInsumos', titulo: 'Insumos da Produção' });
   global.renderPCPProducaoInsumos = renderPCPProducaoInsumos;
-  global._pcpProducaoInsumosInternals = { _calcular, setHorizonte: v => { _horizonteDias = Number(v) || 30; }, unidadeExibivel };
+  global._pcpProducaoInsumosInternals = { _calcular, setHorizonte: v => { _horizonteDias = Number(v) || 30; }, getHorizonte: () => _horizonteDias, getUltimoCalculo: () => _ultimoCalculo, unidadeExibivel };
 
   document.addEventListener('click', function (event) {
     const gerar = event.target.closest('[data-pcppi-gerar]');

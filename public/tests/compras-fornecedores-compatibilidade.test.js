@@ -20,11 +20,30 @@ test('campos legados de fornecedor-texto continuam existindo sem alteração', (
   assert.match(funcoesServidor, /fornecedorNome/); // recebimento_agendamentos.fornecedorNome intacto (Cloud Function, fora do escopo da Fase 1A)
 });
 
-test('Fase 1A não mexe em Produção nem no roteamento/regras do PCP — 81, 78 e 79 não dependem do cadastro mestre', () => {
-  ['81-pcp-parametros.js', '78-pcp-central.js', '79-compras-central.js'].forEach(arquivo => {
-    const codigo = fs.readFileSync(path.join(base, arquivo), 'utf8');
-    assert.doesNotMatch(codigo, /_fornecedoresService|compras_fornecedores/, arquivo + ' não deveria depender do cadastro mestre nesta fase');
-  });
+test('compatibilidade: 81 grava fornecedorId e 79 usa o mestre somente para enriquecer regra, mantendo texto legado', () => {
+  const parametros = fs.readFileSync(path.join(base, '81-pcp-parametros.js'), 'utf8');
+  const comprasCentral = fs.readFileSync(path.join(base, '79-compras-central.js'), 'utf8');
+  assert.match(parametros, /global\._fornecedoresService/);
+  assert.match(parametros, /fornecedorPadraoId/);
+  assert.match(parametros, /fornecedorPadrao/);
+  assert.match(comprasCentral, /resolverFornecedorAptoPorNome/);
+  assert.match(comprasCentral, /fornecedorId/);
+  assert.match(comprasCentral, /valor/); // nome legado continua salvo como fallback
+});
+
+// PEDIDO AO VIVO (2026-09-18): "não quero fazer uma solicitação de cada
+// vez... selecionar fornecedor, ver os produtos dele" — a partir daqui
+// 78-pcp-central.js PASSA a depender do cadastro mestre (Fase 1A), de
+// propósito: a solicitação em lote precisa do vínculo fornecedor→produto
+// pra saber quais produtos aquele fornecedor vende. Isto substitui a
+// restrição do teste acima só pra este arquivo — o resto da Fase 1A
+// (81/79, roteamento por texto legado) continua intocado.
+test('78-pcp-central.js: solicitação em lote continua por categoria e reaproveita vínculo homologado sem substituir o fluxo legado', () => {
+  const codigo = fs.readFileSync(path.join(base, '78-pcp-central.js'), 'utf8');
+  assert.match(codigo, /_loteCatalogoCategoria/);
+  assert.match(codigo, /Selecione a categoria/);
+  assert.match(codigo, /global\._fornecedoresService\?\.listarVinculosHomologados/);
+  assert.match(codigo, /vinc\?\.fornecedorNome\|\|cad\.fornecedorPadrao/);
 });
 
 test('_rankingFornecedoresBiHtml continua intacta — a Fase 1A só reembute a função, não reescreve', () => {

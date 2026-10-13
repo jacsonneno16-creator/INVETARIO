@@ -54,15 +54,23 @@ test('Fornecedores: sem dado do BI, não mostra a seção de ranking (mas a tabe
 
 // PEDIDO AO VIVO (2026-08-28): "a quantidade que usa de cada insumo, você
 // não aplicou" — bi_consumo_insumos_resumo cruzado no Produto 360°.
+// Atualizado 2026-09-18: Produto 360° não lê mais pcp_requisicoes_compra
+// (solicitação manual do PCP) — lê o histórico REAL de compras via
+// BigQuery (buscarResumoProdutosComprasBigQuery + buscarHistoricoComprasBigQuery).
 test('Produto 360°: mostra "Consumo médio mensal (BI)" quando o código do produto bate com bi_consumo_insumos_resumo', async () => {
   const dom = new (require('jsdom').JSDOM)('<!doctype html><html><body><div id="page-compras-produtos"></div><div id="nav-compras-produtos" class="nav-item on"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
   win.showToast = () => {};
   win.temPermissao = () => true;
   win._currentAnalistaUser = { uid: 'u1', email: 'comprador@empresa.com' };
-  const requests = mockColecao([{ id: 'r1', data: { produto: 'Farinha de Trigo', prodKey: '500', quantidadeComprada: 10, precoUnitario: 2, valorTotal: 20, compradoEm: '2026-08-01', fornecedor: 'F1' } }]);
-  win.getDTFirestore = () => ({ collection: (nome) => nome === 'pcp_requisicoes_compra' ? requests : mockColecao([]) });
+  win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true };
+  win.getDTFirestore = () => ({ collection: () => mockColecao([]) });
   win.getDTRawFirestore = () => ({ collection: (nome) => nome === 'bi_consumo_insumos_resumo' ? mockColecao([{ id: '500', data: { sku: '500', produto: 'Farinha', mediaMensal: 850.5 } }]) : mockColecao([]) });
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nome => async () => {
+    if (nome === 'buscarResumoProdutosComprasBigQuery') return { data: { produtos: [{ produtoKey: '500', descricao: 'Farinha de Trigo', numCompras: 1, ultimaData: '2026-08-01', ultimoFornecedor: 'F1', ultimoPreco: 2 }] } };
+    if (nome === 'buscarHistoricoComprasBigQuery') return { data: { linhas: [{ data_emissao: '2026-08-01', nf_numero: 'NF1', nome_abreviado: 'F1', quantidade_faturada: 10, custo_liq_unit: 2, Custo_liquido_total: 20, comprador_nome: 'Comprador' }] } };
+    return { data: {} };
+  } }) }) };
   win.eval(code);
   await win.renderComprasProfissional('produtos');
   win.comprasSetProduto('500');
@@ -82,9 +90,14 @@ test('Produto 360° (Compras): mostra "Cortes e faturamento por mês" quando o c
   win.showToast = () => {};
   win.temPermissao = () => true;
   win._currentAnalistaUser = { uid: 'u1', email: 'comprador@empresa.com' };
-  const requests = mockColecao([{ id: 'r1', data: { produto: 'Tapioca 1kg', prodKey: '304', quantidadeComprada: 10, precoUnitario: 2, valorTotal: 20, compradoEm: '2026-08-01', fornecedor: 'F1' } }]);
-  win.getDTFirestore = () => ({ collection: (nome) => nome === 'pcp_requisicoes_compra' ? requests : mockColecao([]) });
+  win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true };
+  win.getDTFirestore = () => ({ collection: () => mockColecao([]) });
   win.getDTRawFirestore = () => ({ collection: () => mockColecao([]) });
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nome => async () => {
+    if (nome === 'buscarResumoProdutosComprasBigQuery') return { data: { produtos: [{ produtoKey: '304', descricao: 'Tapioca 1kg', numCompras: 1, ultimaData: '2026-08-01', ultimoFornecedor: 'F1', ultimoPreco: 2 }] } };
+    if (nome === 'buscarHistoricoComprasBigQuery') return { data: { linhas: [{ data_emissao: '2026-08-01', nf_numero: 'NF1', nome_abreviado: 'F1', quantidade_faturada: 10, custo_liq_unit: 2, Custo_liquido_total: 20, comprador_nome: 'Comprador' }] } };
+    return { data: {} };
+  } }) }) };
   win._pcpCortesInternals = { buscarHistoricoProduto: async (produtoKey) => produtoKey === '304' ? [{ mes: '2026-07', produtoKey: '304', quantidadePedidaCx: 80, quantidadeFaturadaCx: 60, corteRoteiroCx: 20, faturamentoRs: 600 }] : [] };
   win.eval(code);
   await win.renderComprasProfissional('produtos');

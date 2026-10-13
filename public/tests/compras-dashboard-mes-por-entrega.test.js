@@ -175,17 +175,16 @@ test('Dashboard: se a leitura do histórico real falhar (rede/permissão), mostr
 // pro servidor buscar de novo do BI (isso só existia na tela separada
 // "Relatórios BI"). Agora o Dashboard também tem um botão que chama a
 // MESMA Cloud Function.
-test('"🔄 Forçar sincronização com o BI": chama sincronizarComprasHistoricoBiAgora e relê os dados ignorando o cache em memória', async () => {
-  let funcaoChamada = '';
-  const firebase = { app: () => ({ functions: () => ({ httpsCallable: (nome) => { funcaoChamada = nome; return async () => ({ data: { ok: true } }); } }) }) };
-  const { win, document, chamadasHistoricoBi } = carregarPagina([], [], [{ nf_numero: 1, data_emissao: '2026-06-01', data_recebimento: '2026-06-01', Custo_liquido_total: 10 }], { firebase });
+test('"🔄 Forçar sincronização com o BI": chama sincronizarComprasHistoricoBiAgora e depois consulta o resumo pronto no BigQuery', async () => {
+  const funcoesChamadas = [];
+  const firebase = { app: () => ({ functions: () => ({ httpsCallable: (nome) => { funcoesChamadas.push(nome); return async () => nome === 'buscarResumoComprasDashboardBigQuery' ? ({ data: { ok: true, resumo: { nPedidos: 1, compradoNoMes: 10, compradoNoAno: 10, valorTotal: 10, porMes: [], topProdutos: [], topFornecedores: [], maisSubiram: [], maisCairam: [] } } }) : ({ data: { ok: true } }); } }) }) };
+  const { win, document } = carregarPagina([], [], [{ nf_numero: 1, data_emissao: '2026-06-01', data_recebimento: '2026-06-01', Custo_liquido_total: 10 }], { firebase });
   await win.renderComprasDashboard();
   document.querySelector('[data-compd-forcar-sync]').click();
   await new Promise(r => setTimeout(r, 0));
   await new Promise(r => setTimeout(r, 0));
-  assert.equal(funcaoChamada, 'sincronizarComprasHistoricoBiAgora');
-  // 1ª chamada é do render inicial (sem forçar), a 2ª (depois de clicar) tem que ser com forcar=true
-  assert.equal(chamadasHistoricoBi[chamadasHistoricoBi.length - 1], true, 'depois de forçar sincronização, tem que reler ignorando o cache em memória');
+  assert.ok(funcoesChamadas.includes('sincronizarComprasHistoricoBiAgora'));
+  assert.ok(funcoesChamadas.filter(x => x === 'buscarResumoComprasDashboardBigQuery').length >= 2, 'render inicial e pós-sync consultam o resumo agregado');
 });
 
 test('"↻ Atualizar" normal também ignora o cache em memória (nunca só pisca com o mesmo dado antigo)', async () => {

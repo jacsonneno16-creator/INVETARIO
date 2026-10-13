@@ -43,12 +43,11 @@ test('Relatório do Produto: título não fala mais "Memória de cálculo", most
       { mes: '2026-06', produtoKey: '100', quantidadePedidaCx: 50, quantidadeFaturadaCx: 50, corteRoteiroCx: 0, faturamentoRs: 500 },
     ],
   });
-  win.pcpIrParaAba('estoque');
-  win.document.querySelector('[data-pcp-filtro-check="ocultarZerados"]').checked = false;
-  win.document.querySelector('[data-pcp-filtro-check="ocultarZerados"]').dispatchEvent(new win.Event('change', { bubbles: true }));
-  const key = win.document.querySelector('[data-pcp-memoria]')?.dataset.pcpMemoria;
-  assert.ok(key, 'precisa existir ao menos um produto com botão de relatório');
-  await win.modalMemoria(key);
+  win._pcpInternals.setAba('planejamento');
+  win._pcpInternals.setFiltros({ocultarZerados:false});
+  win._pcpInternals.desenhar();
+  assert.match(win.document.getElementById('page-pcp-central').innerHTML,/data-pcp-360="100"/,'Produto 360 continua como drill-down da visão central');
+  await win.modalMemoria('100');
   const html = win.document.getElementById('pcp-modal-host').innerHTML;
   assert.match(html, /Relatório do Produto/);
   assert.doesNotMatch(html, /Memória de cálculo/i);
@@ -63,11 +62,10 @@ test('Relatório do Produto: sem histórico de cortes pra esse produto, não mos
     produtosCadastrados: [{ cod: '999', nome: 'Produto Sem Corte', metaCoberturaDias: 10 }],
     historicoCortes: [],
   });
-  win.pcpIrParaAba('estoque');
-  win.document.querySelector('[data-pcp-filtro-check="ocultarZerados"]').checked = false;
-  win.document.querySelector('[data-pcp-filtro-check="ocultarZerados"]').dispatchEvent(new win.Event('change', { bubbles: true }));
-  const key = win.document.querySelector('[data-pcp-memoria]')?.dataset.pcpMemoria;
-  await win.modalMemoria(key);
+  win._pcpInternals.setAba('planejamento');
+  win._pcpInternals.setFiltros({ocultarZerados:false});
+  win._pcpInternals.desenhar();
+  await win.modalMemoria('999');
   const html = win.document.getElementById('pcp-modal-host').innerHTML;
   assert.match(html, /Relatório do Produto/);
   assert.doesNotMatch(html, /Cortes por mês/);

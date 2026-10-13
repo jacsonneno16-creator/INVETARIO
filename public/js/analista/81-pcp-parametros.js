@@ -10,7 +10,7 @@
   const COL_PRODUTOS = 'producao_produtos';
   // Campos que esta tela é responsável por editar/rastrear — usado tanto na
   // gravação individual/em massa quanto na auditoria.
-  const CAMPOS = ['metaCoberturaDias', 'estoqueMinimo', 'estoqueMaximo', 'estoqueSeguranca', 'leadTimeDias', 'loteMinimoCompra', 'multiploCompra', 'criticidade', 'fornecedorPadrao'];
+  const CAMPOS = ['metaCoberturaDias', 'estoqueMinimo', 'estoqueMaximo', 'estoqueSeguranca', 'leadTimeDias', 'loteMinimoCompra', 'multiploCompra', 'criticidade', 'fornecedorPadrao', 'fornecedorPadraoId', 'capacidadePorCaminhao', 'maxCaminhoesPorEntrega'];
   const CRITICIDADES = ['baixa', 'media', 'alta', 'critica'];
 
   let _produtos = [];
@@ -82,17 +82,31 @@
   function _variantesDoCod(lojaId, cod) {
     return _produtos.filter(p => p._lojaId === lojaId && String(p.cod) === String(cod));
   }
+  function _configEntregaDoFornecedor(produto) {
+    const fornecedorId=String(produto?.fornecedorPadraoId||'').trim(),fornecedor = String(produto?.fornecedorPadrao || '').trim().toLocaleLowerCase('pt-BR');
+    const proprio=n(produto?.capacidadePorCaminhao)>0||produto?.maxCaminhoesPorEntrega!=null;
+    if(proprio)return {...(produto||{}),_herdado:false};
+    if (!fornecedorId&&!fornecedor) return {...(produto||{}),_herdado:false};
+    const herdado=_produtos.find(p=>p!==produto&&((fornecedorId&&String(p.fornecedorPadraoId||'')===fornecedorId)||(!fornecedorId&&String(p.fornecedorPadrao||'').trim().toLocaleLowerCase('pt-BR')===fornecedor))&&n(p.capacidadePorCaminhao)>0);
+    return herdado?{...herdado,_herdado:true,_herdadoDe:herdado.nome||herdado.cod||''}:{...(produto||{}),_herdado:false};
+  }
 
   function _criticidadeBadge(c) {
     const cor = c === 'critica' ? 'b-red' : c === 'alta' ? 'b-orange' : c === 'media' ? 'b-yellow' : 'b-gray';
-    return `<span class="badge ${cor}">${esc(c || 'baixa')}</span>`;
+    return c?`<span class="badge ${cor}">${esc(c)}</span>`:`<span class="badge b-gray">Não configurada</span>`;
+  }
+  function _leadInfoProduto(p) {
+    const info = global._pcpInternals?.resolverLeadTimeProduto?.(String(p?.cod || ''), { produto: p, lojaId: p?._lojaId || '' });
+    if (info) return info;
+    const manual = n(p?.leadTimeDias);
+    return manual > 0 ? { dias: manual, fonte: 'manual', rotulo: 'Configurado manualmente', amostras: 0 } : { dias: n(global.PCP_DEMANDA_PARAMETROS?.defaultLeadTimeDays) || 7, fonte: 'padrao', rotulo: 'Padrão operacional', amostras: 0 };
   }
 
   async function renderPCPParametros() {
     const pagina = document.getElementById('page-pcp-parametros');
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try { await carregarPCPParametros(); }
+    try { await Promise.all([carregarPCPParametros(), global._pcpInternals?.carregar?.() || Promise.resolve()]); }
     catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
     _desenharPCPParametros();
   }
@@ -106,7 +120,7 @@
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
         <div>
           <div class="page-title" style="font-size:1.1rem">⚙️ Parâmetros de Cobertura e Compra</div>
-          <div style="font-size:.72rem;color:var(--muted)">${linhas.length.toLocaleString('pt-BR')} produto(s) — cobertura desejada, mínimo/máximo/segurança, lead time, lote/múltiplo de compra, criticidade e fornecedor preferencial</div>
+          <div style="font-size:.72rem;color:var(--muted)">${linhas.length.toLocaleString('pt-BR')} produto(s) — cobertura, estoque, compra e capacidade física de entrega por fornecedor</div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <select id="pcpp-f-loja" class="field" style="min-width:160px">
@@ -137,7 +151,7 @@
           <table class="dt-table">
             <thead><tr>
               ${podeEditar ? '<th><input type="checkbox" id="pcpp-marcar-todos"></th>' : ''}
-              <th>Cód.</th><th>Produto</th><th>Loja</th><th>Cobertura (d)</th><th>Mín.</th><th>Máx.</th><th>Segurança</th><th>Lead time (d)</th><th>Lote mín. compra</th><th>Múltiplo compra</th><th>Criticidade</th><th>Fornecedor pref.</th><th></th>
+              <th>Cód.</th><th>Produto</th><th>Loja</th><th>Cobertura (d)</th><th>Mín.</th><th>Máx.</th><th>Segurança</th><th>Lead time efetivo</th><th>Lote mín. compra</th><th>Múltiplo compra</th><th>Criticidade (informativa)</th><th>Fornecedor pref.</th><th></th>
             </tr></thead>
             <tbody>
               ${linhas.length ? linhas.map(p => `
@@ -150,7 +164,7 @@
                   <td>${esc(p.estoqueMinimo ?? '—')}</td>
                   <td>${esc(p.estoqueMaximo ?? '—')}</td>
                   <td>${esc(p.estoqueSeguranca ?? '—')}</td>
-                  <td>${esc(p.leadTimeDias ?? '—')}</td>
+                  <td>${(()=>{const lt=_leadInfoProduto(p);return `<b>${esc(lt.dias)}d</b><small style="display:block;color:var(--muted);font-size:.6rem">${esc(lt.rotulo)}</small>`;})()}</td>
                   <td>${esc(p.loteMinimoCompra ?? '—')}</td>
                   <td>${esc(p.multiploCompra ?? '—')}</td>
                   <td>${_criticidadeBadge(p.criticidade)}</td>
@@ -177,26 +191,51 @@
   function _abrirModalIndividual(p) {
     const host = document.getElementById('pcpp-modal-host');
     if (!host) return;
-    host.innerHTML = `<div class="modal-overlay" style="display:flex"><div class="modal-card" style="max-width:640px">
+    const configEntrega = _configEntregaDoFornecedor(p);
+    host.innerHTML = `<div class="modal-overlay" style="display:flex"><div class="modal-card" style="max-width:600px;max-height:88vh">
       <div class="modal-header"><b>Parâmetros — ${esc(p.nome)}</b><button class="modal-x" data-pcpp-modal-close>×</button></div>
-      <div class="modal-body">
-        <div style="font-size:.72rem;color:var(--muted);margin-bottom:8px">🏬 ${esc(p._lojaNome)}</div>
+      <div class="modal-body" style="padding:14px 18px">
+        <div style="font-size:.7rem;color:var(--muted);margin-bottom:10px">🏬 ${esc(p._lojaNome)} · código ${esc(p.cod)}</div>
         <input type="hidden" id="pcpp-cod" value="${esc(p.cod)}">
         <input type="hidden" id="pcpp-loja-id" value="${esc(p._lojaId)}">
-        <div class="grid2">
+        <div style="font-size:.7rem;font-weight:800;margin-bottom:7px">Estoque e cobertura</div>
+        <div class="grid2" style="gap:9px 12px">
           <div class="form-group"><label>Cobertura desejada (dias)</label><input class="field" id="pcpp-cobertura" type="number" min="0" value="${esc(p.metaCoberturaDias ?? '')}"></div>
           <div class="form-group"><label>Estoque mínimo</label><input class="field" id="pcpp-min" type="number" min="0" value="${esc(p.estoqueMinimo ?? '')}"></div>
           <div class="form-group"><label>Estoque máximo</label><input class="field" id="pcpp-max" type="number" min="0" value="${esc(p.estoqueMaximo ?? '')}"></div>
           <div class="form-group"><label>Estoque de segurança</label><input class="field" id="pcpp-seguranca" type="number" min="0" value="${esc(p.estoqueSeguranca ?? '')}"></div>
-          <div class="form-group"><label>Lead time (dias)</label><input class="field" id="pcpp-leadtime" type="number" min="0" value="${esc(p.leadTimeDias ?? '')}"></div>
+        </div>
+        <div style="font-size:.7rem;font-weight:800;margin:12px 0 7px">Compra</div>
+        <div class="grid2" style="gap:9px 12px">
+          <div class="form-group"><label>Lead time manual (dias, opcional)</label><input class="field" id="pcpp-leadtime" type="number" min="0" value="${esc(n(p.leadTimeDias)>0?p.leadTimeDias:'')}" placeholder="Automático pelo histórico"><small style="display:block;color:var(--muted);font-size:.62rem;margin-top:3px">Em branco: usa histórico real do SKU; sem 3 recebimentos válidos, usa o padrão operacional.</small></div>
           <div class="form-group"><label>Lote mínimo de compra</label><input class="field" id="pcpp-lote" type="number" min="0" value="${esc(p.loteMinimoCompra ?? '')}"></div>
           <div class="form-group"><label>Múltiplo de compra</label><input class="field" id="pcpp-multiplo" type="number" min="0" value="${esc(p.multiploCompra ?? '')}"></div>
-          <div class="form-group"><label>Criticidade</label><select class="field" id="pcpp-criticidade">${CRITICIDADES.map(c => `<option value="${c}" ${String(p.criticidade || 'baixa') === c ? 'selected' : ''}>${c}</option>`).join('')}</select></div>
+          <div class="form-group"><label>Criticidade manual (informativa)</label><select class="field" id="pcpp-criticidade"><option value="" ${!p.criticidade?'selected':''}>Não configurada</option>${CRITICIDADES.map(c => `<option value="${c}" ${String(p.criticidade || '') === c ? 'selected' : ''}>${c}</option>`).join('')}</select><small style="display:block;color:var(--muted);font-size:.62rem;margin-top:3px">Não altera sozinho o status “Crítico”; esse status continua vindo de estoque, ruptura e cobertura × lead time.</small></div>
         </div>
-        <div class="form-group"><label>Fornecedor preferencial</label><input class="field" id="pcpp-fornecedor" value="${esc(p.fornecedorPadrao || '')}"></div>
+        <div style="font-size:.7rem;font-weight:800;margin:12px 0 7px">Entrega do fornecedor</div>
+        <div class="form-group"><label>Fornecedor preferencial</label><input class="field" id="pcpp-fornecedor" value="${esc(p.fornecedorPadrao || '')}"><input type="hidden" id="pcpp-fornecedor-id" value="${esc(p.fornecedorPadraoId || '')}"><small style="display:block;color:var(--muted);font-size:.62rem;margin-top:3px">Ao salvar, um fornecedor ativo/homologado com nome exato é vinculado pelo ID mestre.</small></div>
+        <div class="grid2" style="gap:9px 12px;margin-top:9px">
+          <div class="form-group"><label>Quantidade por caminhão</label><input class="field" id="pcpp-capacidade-caminhao" type="number" min="0" step="1" inputmode="numeric" placeholder="Ex.: 2880" value="${esc(configEntrega.capacidadePorCaminhao ?? '')}"></div>
+          <div class="form-group"><label>Máx. caminhões por entrega</label><input class="field" id="pcpp-max-caminhoes" type="number" min="1" step="1" inputmode="numeric" placeholder="Não configurado" value="${esc(configEntrega.maxCaminhoesPorEntrega ?? '')}"></div>
+        </div>
+        ${configEntrega._herdado?`<div style="font-size:.66rem;color:var(--orange);margin-top:7px">⚠ Capacidade herdada de ${esc(configEntrega._herdadoDe||'outro produto')} do mesmo fornecedor. Salve para criar configuração própria neste SKU.</div>`:''}
+        <div style="font-size:.66rem;color:var(--muted);margin-top:7px;line-height:1.35">Somente quantidade física, não é um campo financeiro. Produtos deste fornecedor podem compartilhar a capacidade total da entrega.</div>
       </div>
       <div class="modal-footer"><button class="btn btn-ghost" data-pcpp-modal-close>Cancelar</button><button class="btn btn-primary" data-pcpp-salvar-individual="1">Salvar</button></div>
     </div></div>`;
+  }
+
+
+  async function _resolverFornecedorPreferencial(nome, idAtual) {
+    const texto=String(nome||'').trim(),atual=String(idAtual||'').trim();
+    if(!texto)return {fornecedorPadrao:'',fornecedorPadraoId:''};
+    const svc=global._fornecedoresService;
+    if(!svc?.resolverFornecedorAptoPorNome)return {fornecedorPadrao:texto,fornecedorPadraoId:atual};
+    const resolvido=await svc.resolverFornecedorAptoPorNome(texto).catch(()=>null);
+    if(resolvido?.fornecedorId)return {fornecedorPadrao:resolvido.fornecedorNome||texto,fornecedorPadraoId:String(resolvido.fornecedorId)};
+    // Compatibilidade: se o texto não mudou, preserve o ID já cadastrado.
+    const pAtual=_produtos.find(p=>String(p.fornecedorPadraoId||'')===atual&&String(p.fornecedorPadrao||'').trim()===texto);
+    return {fornecedorPadrao:texto,fornecedorPadraoId:pAtual?atual:''};
   }
 
   function pcppEditar(lojaId, cod) {
@@ -218,6 +257,9 @@
     const antes = {}; CAMPOS.forEach(c => { antes[c] = variantes[0][c] ?? null; });
     const payload = { ...camposNovos, atualizadoEm: now(), atualizadoPor: global._currentAnalistaUser?.email || '' };
     await Promise.all(variantes.map(v => refProdutoCrossLoja(lojaId, v._firestoreId).set(payload, { merge: true })));
+    // Parâmetros de PCP são por loja. `produtos_mestre` guarda identidade
+    // global do SKU e NÃO recebe estes campos operacionais; assim uma edição
+    // na loja A nunca sobrescreve silenciosamente cobertura/lead time/lote da loja B.
     await global.registrarAuditoria?.({
       colecao: COL_PRODUTOS, docId: variantes[0]._firestoreId, produtoCod: cod, produtoNome: variantes[0].nome,
       antes, depois: { ...antes, ...camposNovos }, camposRastreados: CAMPOS, origem: origem || 'pcp-parametros',
@@ -230,6 +272,7 @@
     const cod = document.getElementById('pcpp-cod')?.value || '';
     const lojaId = document.getElementById('pcpp-loja-id')?.value || '';
     if (!cod || !lojaId || !_variantesDoCod(lojaId, cod).length) return;
+    const fornecedor=await _resolverFornecedorPreferencial(document.getElementById('pcpp-fornecedor')?.value,document.getElementById('pcpp-fornecedor-id')?.value);
     const camposNovos = {
       metaCoberturaDias: n(document.getElementById('pcpp-cobertura')?.value),
       estoqueMinimo: n(document.getElementById('pcpp-min')?.value),
@@ -238,8 +281,10 @@
       leadTimeDias: n(document.getElementById('pcpp-leadtime')?.value),
       loteMinimoCompra: n(document.getElementById('pcpp-lote')?.value),
       multiploCompra: n(document.getElementById('pcpp-multiplo')?.value),
-      criticidade: document.getElementById('pcpp-criticidade')?.value || 'baixa',
-      fornecedorPadrao: String(document.getElementById('pcpp-fornecedor')?.value || '').trim(),
+      criticidade: document.getElementById('pcpp-criticidade')?.value || '',
+      ...fornecedor,
+      capacidadePorCaminhao: n(document.getElementById('pcpp-capacidade-caminhao')?.value),
+      maxCaminhoesPorEntrega: String(document.getElementById('pcpp-max-caminhoes')?.value||'').trim()===''?null:Math.max(1,Math.floor(n(document.getElementById('pcpp-max-caminhoes')?.value))),
     };
     try {
       await _salvarProdutoComAuditoria(lojaId, cod, camposNovos, 'pcp-parametros-individual');
@@ -263,7 +308,9 @@
           <option value="leadTimeDias">Lead time (dias)</option>
           <option value="loteMinimoCompra">Lote mínimo de compra</option>
           <option value="multiploCompra">Múltiplo de compra</option>
-          <option value="criticidade">Criticidade</option>
+          <option value="capacidadePorCaminhao">Quantidade por caminhão</option>
+          <option value="maxCaminhoesPorEntrega">Máx. caminhões por entrega</option>
+          <option value="criticidade">Criticidade informativa</option>
           <option value="fornecedorPadrao">Fornecedor preferencial</option>
         </select></div>
         <div class="form-group" id="pcpp-massa-valor-wrap"><label>Novo valor</label><input class="field" id="pcpp-massa-valor" type="number" min="0"></div>
@@ -280,7 +327,7 @@
     const wrap = document.getElementById('pcpp-massa-valor-wrap');
     if (!wrap) return;
     if (campo === 'criticidade') {
-      wrap.innerHTML = `<label>Novo valor</label><select class="field" id="pcpp-massa-valor">${CRITICIDADES.map(c => `<option value="${c}">${c}</option>`).join('')}</select>`;
+      wrap.innerHTML = `<label>Novo valor</label><select class="field" id="pcpp-massa-valor"><option value="">Não configurada</option>${CRITICIDADES.map(c => `<option value="${c}">${c}</option>`).join('')}</select>`;
     } else if (campo === 'fornecedorPadrao') {
       wrap.innerHTML = '<label>Novo valor</label><input class="field" id="pcpp-massa-valor">';
     } else {
@@ -294,10 +341,11 @@
     const valorEl = document.getElementById('pcpp-massa-valor');
     const valor = campo === 'criticidade' || campo === 'fornecedorPadrao' ? String(valorEl?.value || '').trim() : n(valorEl?.value);
     if (!campo) return;
+    const fornecedorMassa=campo==='fornecedorPadrao'?await _resolverFornecedorPreferencial(valor,''):null;
     let ok = 0;
     for (const chave of _selecionados) {
       const [lojaId, cod] = chave.split('|');
-      try { await _salvarProdutoComAuditoria(lojaId, cod, { [campo]: valor }, 'pcp-parametros-massa'); ok++; }
+      try { await _salvarProdutoComAuditoria(lojaId, cod, fornecedorMassa||{ [campo]: valor }, 'pcp-parametros-massa'); ok++; }
       catch (e) { /* segue tentando os demais */ }
     }
     document.getElementById('pcpp-modal-host').innerHTML = '';

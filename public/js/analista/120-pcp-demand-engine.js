@@ -1,6 +1,8 @@
 // Motor operacional do PCP. Não recebe, calcula ou devolve valores monetários.
 (function (global) {
   'use strict';
+  const DEFAULT_PARAMETERS={defaultLeadTimeDays:7,targetCoverageDays:30,serviceLevel:95};
+  global.PCP_DEMANDA_PARAMETROS={...DEFAULT_PARAMETERS,...(global.PCP_DEMANDA_PARAMETROS||{})};
   const num = (v, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
   const first = (obj, names, fallback = null) => { for (const name of names) if (obj?.[name] !== undefined && obj[name] !== null && obj[name] !== '') return num(obj[name]); return fallback; };
   const weighted = (values, weights) => { let sum = 0, used = 0; values.forEach((v, i) => { if (v !== null) { sum += v * weights[i]; used += weights[i]; } }); return used ? sum / used : null; };
@@ -35,6 +37,10 @@
     // outro peso.
     const historicalWeight = num(parameters.historicalWeight, .5), forecastWeight = num(parameters.forecastWeight, .5);
     let dailyDemand = history !== null && future !== null ? history * historicalWeight + future * forecastWeight : (future ?? history ?? 0);
+    // Fonte externa já carregada (ex.: BI/Escadinha) pode fornecer a demanda diária
+    // sem provocar nenhuma leitura adicional. O motor apenas recebe o valor em memória.
+    const demandOverride = first(operational, ['dailyDemandOverride', 'consumptionDailyOverride'], null);
+    if (demandOverride !== null) dailyDemand = demandOverride;
     dailyDemand = Math.max(0, dailyDemand);
     const leadTime = Math.max(0, first(product, ['leadTimeDias', 'lead_time_dias'], num(parameters.defaultLeadTimeDays, 7)));
     const serviceLevel = Math.min(99.9, Math.max(50, first(product, ['nivelServico', 'nivel_servico'], num(parameters.serviceLevel, 95))));
@@ -44,19 +50,32 @@
     const targetDays = Math.max(0, first(product, ['metaCoberturaDias', 'coberturaMetaDias'], num(parameters.targetCoverageDays, 30)));
     const reorderPoint = dailyDemand * leadTime + safetyStock;
     const targetStock = Math.max(first(product, ['estoqueMinimo'], 0), dailyDemand * targetDays + safetyStock);
-    const projectedPosition = num(operational.availableStock) + num(operational.inbound) + num(operational.production) - num(operational.committedDemand);
+    const physicalStock = num(operational.availableStock);
+    const committedDemand = Math.max(0, num(operational.committedDemand));
+    const availablePosition = physicalStock - committedDemand;
+    const projectedPosition = availablePosition + num(operational.inbound) + num(operational.production);
     const rawNeed = Math.max(0, targetStock - projectedPosition);
-    let suggestedQuantity = roundMultiple(rawNeed, first(product, ['multiploCompra', 'multiplo_compra'], 1));
-    const minimum = first(product, ['loteMinimo', 'compraMinima'], 0); if (suggestedQuantity > 0) suggestedQuantity = Math.max(suggestedQuantity, minimum);
-    const maximum = first(product, ['estoqueMaximo'], null); if (maximum !== null) suggestedQuantity = Math.min(suggestedQuantity, Math.max(0, maximum - projectedPosition));
-    const coverageDays = dailyDemand > 0 ? Math.max(0, num(operational.availableStock)) / dailyDemand : null;
+    const multiple = first(product, ['multiploCompra', 'multiplo_compra'], 1);
+    const minimum = Math.max(0, first(product, ['loteMinimoCompra', 'lote_minimo_compra', 'loteMinimo', 'compraMinima'], 0));
+    let suggestedQuantity = rawNeed > 0 ? roundMultiple(Math.max(rawNeed, minimum), multiple) : 0;
+    const maximum = first(product, ['estoqueMaximo'], null);
+    if (maximum !== null && suggestedQuantity > 0) {
+      const limite = Math.max(0, maximum - projectedPosition);
+      if (limite <= 0) suggestedQuantity = 0;
+      else if (suggestedQuantity > limite) {
+        const mult = Math.max(1, multiple);
+        const candidato = Math.floor(limite / mult) * mult;
+        suggestedQuantity = candidato >= minimum ? candidato : 0;
+      }
+    }
+    const coverageDays = dailyDemand > 0 ? Math.max(0, availablePosition) / dailyDemand : null;
     const projectedCoverageDays = dailyDemand > 0 ? Math.max(0, projectedPosition) / dailyDemand : null;
     const alerts = [];
     if (dailyDemand <= 0) alerts.push({ severity: 'warning', code: 'SEM_DEMANDA', message: 'Sem histórico ou previsão suficiente.' });
     if (projectedPosition < 0) alerts.push({ severity: 'critical', code: 'RUPTURA_PROJETADA', message: 'Saldo projetado negativo.' });
     else if (projectedPosition <= reorderPoint) alerts.push({ severity: 'high', code: 'PONTO_PEDIDO', message: 'Produto atingiu o ponto de pedido.' });
     if (coverageDays !== null && coverageDays < leadTime) alerts.push({ severity: 'critical', code: 'COBERTURA_MENOR_LEADTIME', message: 'Cobertura menor que o prazo de reposição.' });
-    return { dailyDemand, weeklyDemand: dailyDemand * 7, historicalDailyDemand: history, forecastDailyDemand: future, safetyStock, reorderPoint, targetStock, targetDays, leadTime, serviceLevel, projectedPosition, coverageDays, projectedCoverageDays, rawNeed, suggestedQuantity, alerts, memory: { historyTotals, historyDaily, futureTotals, futureDaily, historicalWeight, forecastWeight, variability } };
+    return { dailyDemand, weeklyDemand: dailyDemand * 7, historicalDailyDemand: history, forecastDailyDemand: future, safetyStock, reorderPoint, targetStock, targetDays, leadTime, serviceLevel, availablePosition, projectedPosition, coverageDays, projectedCoverageDays, rawNeed, suggestedQuantity, alerts, memory: { historyTotals, historyDaily, futureTotals, futureDaily, historicalWeight, forecastWeight, variability } };
   }
-  global.PCPDemandEngine = { calculate, weighted, stddev, roundMultiple };
+  global.PCPDemandEngine = { calculate, weighted, stddev, roundMultiple, defaults:{...DEFAULT_PARAMETERS} };
 })(window);

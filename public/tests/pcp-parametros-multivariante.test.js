@@ -169,3 +169,16 @@ test('CORREÇÃO ESTRUTURAL: o MESMO cod em lojas diferentes é tratado como pro
   win.pcppEditar('filial', '8445');
   assert.equal(win.document.getElementById('pcpp-cobertura').value, '20', 'editar o cod 8445 da Matriz não pode mudar o cod 8445 da Filial');
 });
+
+test('capacidade de entrega aparece nos demais produtos do mesmo fornecedor', async () => {
+  const { win, document } = carregarPagina(LOJAS, {
+    matriz: [
+      { id: 'batata', data: { cod: '10', nome: 'Batata Tradicional', fornecedorPadrao: 'Arte Fritas', capacidadePorCaminhao: 2880, maxCaminhoesPorEntrega: 2 } },
+      { id: 'extra', data: { cod: '20', nome: 'Batata Extra Fina', fornecedorPadrao: 'arte fritas' } },
+    ],
+  });
+  await win.renderPCPParametros();
+  win.pcppEditar('matriz', '20');
+  assert.equal(document.getElementById('pcpp-capacidade-caminhao').value, '2880');
+  assert.equal(document.getElementById('pcpp-max-caminhoes').value, '2');
+});

@@ -30,20 +30,29 @@ function criarServicoMock(overrides) {
     atualizarFornecedor: async (id, dados) => { chamadas.push({ acao: 'atualizar', id, dados }); return { fornecedorId: id, ...dados }; },
     bloquearFornecedor: async (id, motivo) => { chamadas.push({ acao: 'bloquear', id, motivo }); return {}; },
     desbloquearFornecedor: async (id, motivo) => { chamadas.push({ acao: 'desbloquear', id, motivo }); return {}; },
+    vincularProdutoFornecedor: async (payload) => { chamadas.push({ acao: 'vincular', payload }); return payload; },
+    removerVinculoProduto: async (fornecedorId, produtoId) => { chamadas.push({ acao: 'removerVinculo', fornecedorId, produtoId }); },
     simularConciliacaoLegado: async () => ({ exato: [{ nomeLegado: 'X', candidatos: [{ nomeFantasia: 'Fornecedor A' }] }], provavel: [], ambiguo: [], semCorrespondencia: [{ nomeLegado: 'Y', candidatos: [] }] }),
   };
   return Object.assign(base, overrides, { _chamadas: chamadas });
 }
 
-function carregarPagina({ fornecedoresBi = [], servico, temPermissao } = {}) {
+function carregarPagina({ fornecedoresBi = [], servico, temPermissao, produtosBi, schedules = [], requests = [] } = {}) {
   const dom = new JSDOM('<!doctype html><html><body><div id="page-compras-fornecedores"></div><div id="nav-compras-fornecedores" class="nav-item on"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
   const toasts = [];
   win.showToast = (msg, tipo) => toasts.push({ msg, tipo });
+  win.confirm = () => true;
   win.temPermissao = temPermissao || (() => true);
   win._currentAnalistaUser = { uid: 'u1', email: 'comprador@empresa.com' };
-  win.getDTFirestore = () => ({ collection: () => mockColecao([]) });
+  win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true };
+  win.getDTFirestore = () => ({ collection: (nome) => {
+    if (nome === 'pcp_agendamentos') return mockColecao(schedules);
+    if (nome === 'pcp_requisicoes_compra') return mockColecao(requests);
+    return mockColecao([]);
+  } });
   win.getDTRawFirestore = () => ({ collection: (nome) => nome === 'bi_fornecedores_agregado' ? mockColecao(fornecedoresBi) : mockColecao([]) });
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nome => async () => nome === 'buscarResumoProdutosComprasBigQuery' ? { data: { produtos: produtosBi || [] } } : { data: {} } }) }) };
   win._fornecedoresService = servico || criarServicoMock();
   win.listarAuditoria = async () => [];
   win.eval(code);
@@ -131,6 +140,64 @@ test('Fornecedores › 360°: mostra produtos vinculados; bloquear exige justifi
   assert.equal(chamada.motivo, 'Atraso recorrente em entregas.');
 });
 
+// PEDIDO AO VIVO (2026-09-18): "monta um cadastro de fornecedor→produto,
+// tipo o modal de máquina da Programação Produção" — vincularProdutoFornecedor
+// já existia (Fase 1A) mas nenhuma tela chamava; o 360° só EXIBIA vínculos,
+// nunca deixava criar um novo nem desfazer um errado.
+test('Fornecedores › 360°: vincular produto chama o serviço com o produtoKey certo (escolhido da lista, não texto livre)', async () => {
+  const servico = criarServicoMock();
+  const { win, document, toasts } = carregarPagina({ servico, produtosBi: [
+    { produtoKey: '700', descricao: 'Batata Palha 1kg', numCompras: 3, ultimaData: '2026-09-01', ultimoFornecedor: 'X', ultimoPreco: 5 },
+  ] });
+  await win.renderComprasProfissional('fornecedores');
+  document.querySelector('[data-cf-detalhe]').click();
+  await tick(); await tick();
+  assert.match(document.getElementById('page-compras-fornecedores').innerHTML, /Vincular produto a este fornecedor/);
+
+  document.getElementById('cf-vinc-produto').value = 'Batata Palha 1kg';
+  document.getElementById('cf-vinc-codigo').value = 'COD-BP1';
+  document.getElementById('cf-vinc-preco').value = '5.90';
+  document.querySelector('[data-cf-vincular]').click();
+  await tick(); await tick();
+
+  const chamada = servico._chamadas.find(c => c.acao === 'vincular');
+  assert.ok(chamada, 'chamou vincularProdutoFornecedor');
+  assert.equal(chamada.payload.produtoId, '700');
+  assert.equal(chamada.payload.produtoNomeSnapshot, 'Batata Palha 1kg');
+  assert.equal(chamada.payload.codigoNoFornecedor, 'COD-BP1');
+  assert.equal(chamada.payload.precoReferencia, 5.9);
+});
+
+test('Fornecedores › 360°: vincular sem escolher da lista de sugestões (texto digitado livre) recusa e não chama o serviço', async () => {
+  const servico = criarServicoMock();
+  const { win, document, toasts } = carregarPagina({ servico, produtosBi: [
+    { produtoKey: '700', descricao: 'Batata Palha 1kg', numCompras: 3, ultimaData: '2026-09-01', ultimoFornecedor: 'X', ultimoPreco: 5 },
+  ] });
+  await win.renderComprasProfissional('fornecedores');
+  document.querySelector('[data-cf-detalhe]').click();
+  await tick(); await tick();
+
+  document.getElementById('cf-vinc-produto').value = 'coisa que não existe na lista';
+  document.querySelector('[data-cf-vincular]').click();
+  await tick(); await tick();
+  assert.equal(servico._chamadas.filter(c => c.acao === 'vincular').length, 0);
+  assert.ok(toasts.some(t => /não encontrado/i.test(t.msg)));
+});
+
+test('Fornecedores › 360°: remover vínculo chama o serviço com fornecedor+produto certos', async () => {
+  const servico = criarServicoMock();
+  const { win, document } = carregarPagina({ servico });
+  await win.renderComprasProfissional('fornecedores');
+  document.querySelector('[data-cf-detalhe]').click();
+  await tick(); await tick();
+  document.querySelector('[data-cf-remover-vinculo]').click();
+  await tick(); await tick();
+  const chamada = servico._chamadas.find(c => c.acao === 'removerVinculo');
+  assert.ok(chamada);
+  assert.equal(chamada.fornecedorId, 'f1');
+  assert.equal(chamada.produtoId, '500');
+});
+
 test('Fornecedores › Conciliação: só aparece pra quem pode configurar; "Rodar simulação" mostra os grupos classificados (sem gravar nada)', async () => {
   const servico = criarServicoMock();
   const { win, document } = carregarPagina({ servico });
@@ -155,4 +222,44 @@ test('Fornecedores › Conciliação: fica oculta para quem não tem permissão 
   const html = document.getElementById('page-compras-fornecedores').innerHTML;
   assert.doesNotMatch(html, /Conciliação/);
   assert.doesNotMatch(html, /\+ Novo fornecedor/);
+});
+
+
+test('Fornecedores › desempenho real usa recebidoEm: mostra pontualidade, atraso e lead time sem usar dataAgendada', async () => {
+  const schedules = [
+    { id: 's1', data: { requisicaoId: 'r1', fornecedor: 'Fornecedor A', produto: 'Farinha', numeroCompra: 'P1', quantidade: 100, quantidadeRecebida: 100, status: 'finalizada', dataPrevista: '2026-09-10', recebidoEm: '2026-09-10T14:00:00.000Z' } },
+    { id: 's2', data: { requisicaoId: 'r2', fornecedor: 'Fornecedor A', produto: 'Farinha', numeroCompra: 'P2', quantidade: 100, quantidadeRecebida: 100, status: 'finalizada', dataPrevista: '2026-09-10', recebidoEm: '2026-09-14T14:00:00.000Z' } },
+    // Parcial ainda não concluído: não entra no KPI de entrega final.
+    { id: 's3', data: { requisicaoId: 'r3', fornecedor: 'Fornecedor A', produto: 'Farinha', numeroCompra: 'P3', quantidade: 100, quantidadeRecebida: 50, status: 'parcial', dataPrevista: '2026-09-10', recebidoEm: '2026-09-20T14:00:00.000Z' } },
+  ];
+  const requests = [
+    { id: 'r1', data: { fornecedor: 'Fornecedor A', numeroCompra: 'P1', compradoEm: '2026-09-05T08:00:00.000Z' } },
+    { id: 'r2', data: { fornecedor: 'Fornecedor A', numeroCompra: 'P2', compradoEm: '2026-09-04T08:00:00.000Z' } },
+    { id: 'r3', data: { fornecedor: 'Fornecedor A', numeroCompra: 'P3', compradoEm: '2026-09-01T08:00:00.000Z' } },
+  ];
+  const { win, document } = carregarPagina({ schedules, requests });
+  await win.renderComprasProfissional('fornecedores');
+  let html = document.getElementById('page-compras-fornecedores').textContent.replace(/\s+/g, ' ');
+  assert.match(html, /50%/, '1 de 2 entregas finalizadas ficou no prazo');
+  assert.match(html, /2 d/, 'atraso médio considera 0 e 4 dias = 2 dias');
+  assert.match(html, /2/, 'duas entregas confirmadas entram no indicador');
+
+  document.querySelector('[data-cf-detalhe="f1"]').click();
+  await tick(); await tick();
+  html = document.getElementById('page-compras-fornecedores').textContent.replace(/\s+/g, ' ');
+  assert.match(html, /Desempenho real de entrega/);
+  assert.match(html, /recebimento real confirmado/i);
+  assert.match(html, /P1/);
+  assert.match(html, /P2/);
+  const blocoDesempenho = html.slice(html.indexOf('Desempenho real de entrega'), html.indexOf('Produtos fornecidos'));
+  assert.doesNotMatch(blocoDesempenho, /P3/, 'recebimento parcial não é tratado como entrega final do fornecedor');
+  assert.match(html, /50%/);
+});
+
+test('Fornecedores › desempenho real não adiciona leitura: usa pcp_agendamentos já carregado no load base', () => {
+  assert.match(code, /const nomesBase=\['requests','products','schedules','rules'\]/);
+  assert.match(code, /_desempenhoFornecedoresReais\(\)/);
+  const bloco = code.slice(code.indexOf('function _desempenhoFornecedoresReais()'), code.indexOf('function _historicoFornecedores()'));
+  assert.doesNotMatch(bloco, /\.collection\s*\(/);
+  assert.doesNotMatch(bloco, /getDTFirestore|getDTRawFirestore/);
 });

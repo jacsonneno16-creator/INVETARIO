@@ -50,26 +50,117 @@ test('Compras contém operação, análises, valores e produto 360', () => {
   assert.match(html,/Produtos 360°/); assert.match(js,/Preço médio/); assert.match(js,/Última compra/); assert.match(js,/Fornecedores/);
 });
 
-// PEDIDO AO VIVO (2026-09-02): "produtos cadastrado na produção ele nem
-// tem, nem vai ter histórico de compras porque é produzido aqui" —
-// completar a lista de Produtos com producao_produtos não pode trazer quem
-// tem empresaProdutoraId (produzido internamente, nunca comprado).
-test('página Produtos (121-compras-profissional): completa a lista com o cadastro, mas NUNCA com quem tem empresaProdutoraId', async () => {
+function _mockColVazio() { return { get: async () => ({ docs: [] }), where: () => _mockColVazio() }; }
+function _carregarPaginaProdutos(win, { resumoProdutos, historicoLinhas } = {}) {
+  win.getDTFirestore = () => ({ collection: () => _mockColVazio() });
+  win.getDTRawFirestore = () => ({ collection: () => _mockColVazio() });
+  win.temPermissao = () => true;
+  win._currentAnalistaUser = { uid: 'u1', email: 'comprador@empresa.com', nome: 'Comprador' };
+  win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true };
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nome => async () => {
+    if (nome === 'buscarResumoProdutosComprasBigQuery') return { data: { produtos: resumoProdutos || [] } };
+    if (nome === 'buscarHistoricoComprasBigQuery') return { data: { linhas: historicoLinhas || [] } };
+    return { data: {} };
+  } }) }) };
+  win.eval(read('js/analista/121-compras-profissional.js'));
+}
+
+// PEDIDO AO VIVO (2026-09-18): "só mostra produto de produção, não mostra
+// matéria-prima comprada... os números têm que ser do arquivo real, não da
+// solicitação do PCP" — Produtos 360° agora lista TUDO que já foi comprado
+// de verdade (histórico real, BigQuery), matéria-prima/embalagem inclusos,
+// nunca mais depende de estar cadastrado em Produção nem de ter passado
+// pela solicitação manual do PCP.
+test('página Produtos (121-compras-profissional): lista vem do histórico REAL de compras (BigQuery) — matéria-prima/embalagem aparecem normalmente', async () => {
   const { JSDOM } = require('jsdom');
   const dom = new JSDOM('<!doctype html><html><body><div id="page-compras-produtos"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
-  const colecoes = {
-    producao_produtos: [{ cod: '100', nome: 'Farinha Própria', empresaProdutoraId: 'lojaFilial' }, { cod: '200', nome: 'Especiaria do Fornecedor', fornecedorPadrao: 'Fornecedor Y' }],
-  };
-  const mockCol = nome => ({ get: async () => ({ docs: (colecoes[nome] || []).map((d, i) => ({ id: nome + i, data: () => d })) }), where: () => mockCol(nome) });
-  win.getDTFirestore = () => ({ collection: mockCol });
-  win.getDTRawFirestore = () => ({ collection: () => ({ get: async () => ({ docs: [] }) }) });
-  win.temPermissao = () => true;
-  win.eval(read('js/analista/121-compras-profissional.js'));
+  _carregarPaginaProdutos(win, { resumoProdutos: [
+    { produtoKey: '200', descricao: 'Especiaria do Fornecedor', numCompras: 4, ultimaData: '2026-09-10', ultimoFornecedor: 'Fornecedor Y', ultimoPreco: 12.5 },
+    { produtoKey: '300', descricao: 'Embalagem Plástica 1kg', numCompras: 9, ultimaData: '2026-09-12', ultimoFornecedor: 'Embalagens SA', ultimoPreco: 0.8 },
+  ] });
   await win.renderComprasProfissional('produtos');
   const html = win.document.getElementById('page-compras-produtos').innerHTML;
-  assert.doesNotMatch(html, /Farinha Própria/, 'produzido internamente não pode aparecer na lista de Produtos de Compras');
-  assert.match(html, /Especiaria do Fornecedor/, 'produto de fornecedor continua aparecendo normalmente');
+  assert.match(html, /Especiaria do Fornecedor/);
+  assert.match(html, /Embalagem Plástica 1kg/, 'matéria-prima/embalagem comprada aparece — não fica restrito a produto "de produção"');
+  assert.match(html, /12,50/);
+});
+
+test('página Produtos: erro ao consultar o BigQuery mostra a falha, não finge lista vazia', async () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body><div id="page-compras-produtos"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const win = dom.window;
+  win.getDTFirestore = () => ({ collection: () => _mockColVazio() });
+  win.getDTRawFirestore = () => ({ collection: () => _mockColVazio() });
+  win.temPermissao = () => true;
+  win._currentAnalistaUser = { uid: 'u1' };
+  win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true };
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: () => async () => { throw new Error('BigQuery indisponível'); } }) }) };
+  win.eval(read('js/analista/121-compras-profissional.js'));
+  await win.renderComprasProfissional('produtos');
+  assert.match(win.document.getElementById('page-compras-produtos').innerHTML, /BigQuery indisponível/);
+});
+
+// PEDIDO AO VIVO (2026-09-18): "cada comprador só vai poder pesquisar os
+// seus produtos... isso vai servir pra tudo dentro da parte de compras" —
+// Produtos 360° manda o filtro de comprador pro PRÓPRIO BigQuery (lista E
+// detalhe), não só esconde depois no navegador.
+test('Produtos 360°: lista e detalhe mandam o filtro de comprador pro BigQuery (lista) e usam produtoKey exato (detalhe)', async () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body><div id="page-compras-produtos"></div><div id="setor-compras-shell"><div class="nav-item on" id="nav-compras-produtos"></div></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const win = dom.window;
+  win.getDTFirestore = () => ({ collection: () => _mockColVazio() });
+  win.getDTRawFirestore = () => ({ collection: () => _mockColVazio() });
+  win.temPermissao = () => true;
+  win._currentAnalistaUser = { uid: 'u1' };
+  win.DT_USUARIO_ACESSO_ATUAL = { papelCompras: 'comprador', nome: 'Fabricio Silva' };
+  const chamadas = [];
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nome => async payload => {
+    chamadas.push({ nome, payload });
+    if (nome === 'buscarResumoProdutosComprasBigQuery') return { data: { produtos: [{ produtoKey: '200', descricao: 'Especiaria do Fornecedor', numCompras: 1, ultimaData: '2026-09-10', ultimoFornecedor: 'F', ultimoPreco: 1 }] } };
+    if (nome === 'buscarHistoricoComprasBigQuery') return { data: { linhas: [] } };
+    return { data: {} };
+  } }) }) };
+  win.eval(read('js/analista/121-compras-profissional.js'));
+  await win.renderComprasProfissional('produtos');
+  const listaCall = chamadas.find(c => c.nome === 'buscarResumoProdutosComprasBigQuery');
+  assert.deepEqual(Array.from(listaCall.payload.compradores || []), ['fabricio silva']);
+
+  win.comprasSetProduto('200');
+  await new Promise(r => setTimeout(r, 0));
+  const detalheCall = chamadas.find(c => c.nome === 'buscarHistoricoComprasBigQuery');
+  assert.equal(detalheCall.payload.produtoKey, '200', 'detalhe busca por produtoKey exato, nunca por texto solto');
+  assert.deepEqual(Array.from(detalheCall.payload.compradores || []), ['fabricio silva']);
+});
+
+// BUG AO VIVO REAL (2026-09-18): "apareceu uma setinha pra voltar" e "tenho
+// que clicar de novo pra continuar digitando" — Produtos 360° não tinha
+// botão de voltar (só dava pra sair clicando na aba de novo), e a busca
+// perdia o foco a cada letra digitada (render() reconstrói o innerHTML
+// inteiro, inclusive o próprio campo de busca).
+test('Produtos 360°: tem botão de voltar pra lista, e a busca mantém o foco depois de cada letra digitada', async () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body><div id="page-compras-produtos"></div><div id="setor-compras-shell"><div class="nav-item on" id="nav-compras-produtos"></div></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const win = dom.window;
+  _carregarPaginaProdutos(win, { resumoProdutos: [{ produtoKey: '200', descricao: 'Especiaria do Fornecedor', numCompras: 4, ultimaData: '2026-09-10', ultimoFornecedor: 'Fornecedor Y', ultimoPreco: 12.5 }], historicoLinhas: [] });
+  await win.renderComprasProfissional('produtos');
+
+  win.comprasSetProduto('200');
+  await new Promise(r => setTimeout(r, 0));
+  let html = win.document.getElementById('page-compras-produtos').innerHTML;
+  assert.match(html, /data-cp-produto-voltar/, 'entrando no 360° do produto, o botão de voltar aparece');
+
+  win.document.querySelector('[data-cp-produto-voltar]').dispatchEvent(new win.Event('click', { bubbles: true }));
+  await new Promise(r => setTimeout(r, 0));
+  html = win.document.getElementById('page-compras-produtos').innerHTML;
+  assert.doesNotMatch(html, /data-cp-produto-voltar/, 'clicar em voltar sai do 360° e volta pra lista');
+  assert.match(html, /Especiaria do Fornecedor/, 'lista de produtos aparece de novo');
+
+  const campo = win.document.querySelector('[data-cp-search]');
+  campo.value = 'esp';
+  campo.dispatchEvent(new win.Event('input', { bubbles: true }));
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(win.document.activeElement.getAttribute('data-cp-search') != null, true, 'campo de busca continua com o foco depois de digitar');
 });
 
 test('nenhum módulo de Produção foi alterado durante esta entrega', () => {
@@ -80,4 +171,75 @@ test('nenhum módulo de Produção foi alterado durante esta entrega', () => {
     const before=path.join(checkpoint,'public/js/analista',current);
     if(fs.existsSync(before)) assert.equal(read('js/analista/'+current),fs.readFileSync(before,'utf8'),current);
   }
+});
+
+// PEDIDO AO VIVO (2026-09-18): "reconstrua usando os arquivos reais de BI
+// que já existem hoje — a integração BlueSoft não vai acontecer" —
+// Relatórios de Compras era um placeholder estático (KPIs zerados, aviso
+// de "Próximas integrações BlueSoft"); agora reaproveita a MESMA consulta
+// do Dashboard de Compras (buscarResumoComprasDashboardBigQuery), em
+// formato tabular/detalhado.
+test('Relatórios de Compras: mostra indicadores reais (BigQuery), não mais o placeholder estático de BlueSoft', async () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body><div id="page-compras-relatorios"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const win = dom.window;
+  const _mockColVazio = () => ({ get: async () => ({ docs: [] }), where: () => _mockColVazio() });
+  win.getDTFirestore = () => ({ collection: () => _mockColVazio() });
+  win.getDTRawFirestore = () => ({ collection: () => _mockColVazio() });
+  win.temPermissao = () => true;
+  win._currentAnalistaUser = { uid: 'u1' };
+  win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true };
+  const resumo = {
+    compradoNoMes: 5000, compradoNoAno: 60000, nPedidos: 12, valorTotal: 60000,
+    porMes: [{ mes: '2026-09', valor: 5000 }, { mes: '2026-08', valor: 4000 }],
+    topFornecedores: [{ fornecedor: 'Ebrali Embalagens', qtd: 100, valor: 3000 }],
+    topProdutos: [{ produto: 'Fita Adesiva', qtd: 50, valor: 1000 }],
+    maisSubiram: [{ produto: 'Farofa', variacaoPct: 12.5 }],
+    maisCairam: [{ produto: 'Tapioca', variacaoPct: -8 }],
+  };
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nome => async () => nome === 'buscarResumoComprasDashboardBigQuery' ? { data: { resumo } } : { data: {} } }) }) };
+  win.eval(read('js/analista/121-compras-profissional.js'));
+  await win.renderComprasProfissional('relatorios');
+  const html = win.document.getElementById('page-compras-relatorios').innerHTML;
+  assert.doesNotMatch(html, /Próximas integrações BlueSoft/, 'placeholder antigo não pode mais aparecer');
+  assert.match(html, /5\.000,00|5000,00/);
+  assert.match(html, /Ebrali Embalagens/);
+  assert.match(html, /Fita Adesiva/);
+  assert.match(html, /Farofa/);
+  assert.match(html, /12,5%/);
+  assert.match(html, /Tapioca/);
+  assert.match(html, /09\/2026/);
+});
+
+test('Relatórios de Compras: manda o filtro de comprador (papel comprador/gerente) pro mesmo BigQuery do Dashboard', async () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body><div id="page-compras-relatorios"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const win = dom.window;
+  const _mockColVazio = () => ({ get: async () => ({ docs: [] }), where: () => _mockColVazio() });
+  win.getDTFirestore = () => ({ collection: () => _mockColVazio() });
+  win.getDTRawFirestore = () => ({ collection: () => _mockColVazio() });
+  win.temPermissao = () => true;
+  win._currentAnalistaUser = { uid: 'u1' };
+  win.DT_USUARIO_ACESSO_ATUAL = { papelCompras: 'comprador', nome: 'Fabricio Silva' };
+  let payloadRecebido = null;
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nome => async payload => { if (nome === 'buscarResumoComprasDashboardBigQuery') payloadRecebido = payload; return { data: { resumo: {} } }; } }) }) };
+  win.eval(read('js/analista/121-compras-profissional.js'));
+  await win.renderComprasProfissional('relatorios');
+  assert.deepEqual(Array.from(payloadRecebido.compradores || []), ['fabricio silva']);
+});
+
+test('Relatórios de Compras: falha ao consultar mostra o erro (não finge KPI zerado)', async () => {
+  const { JSDOM } = require('jsdom');
+  const dom = new JSDOM('<!doctype html><html><body><div id="page-compras-relatorios"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const win = dom.window;
+  const _mockColVazio = () => ({ get: async () => ({ docs: [] }), where: () => _mockColVazio() });
+  win.getDTFirestore = () => ({ collection: () => _mockColVazio() });
+  win.getDTRawFirestore = () => ({ collection: () => _mockColVazio() });
+  win.temPermissao = () => true;
+  win._currentAnalistaUser = { uid: 'u1' };
+  win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true };
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: () => async () => { throw new Error('BigQuery indisponível'); } }) }) };
+  win.eval(read('js/analista/121-compras-profissional.js'));
+  await win.renderComprasProfissional('relatorios');
+  assert.match(win.document.getElementById('page-compras-relatorios').innerHTML, /BigQuery indisponível/);
 });

@@ -62,16 +62,64 @@
   // a ficha técnica não tem código de insumo, só nome). Sem correspondência
   // ou sem a aba Insumos carregada ainda, mostra só qty da ficha, sem
   // estoque/cobertura — nunca quebra por falta desse cruzamento.
+  function _normMaterial(v) {
+    const canon = global._producaoInsumosInternals && global._producaoInsumosInternals.canonInsumo;
+    if (typeof canon === 'function') return canon(v);
+    const base = String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+    return base.replace(/^\s*\d+[^A-Z0-9]*/, '').replace(/^\s*(MP|MAT(?:ERIA)?\s*PRIMA|MATERIA\s*PRIMA|LOGISTICA)[^A-Z0-9]+/, '').replace(/[^A-Z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+
   async function _buscarInsumosDoProduto(cod) {
     if (!cod) return [];
     try {
       const snap = await global.getDTFirestore().collection('producao_ficha_tecnica').get();
-      const ficha = snap.docs.map(d => d.data()).find(f => String(f.cod) === String(cod));
+      const aliases = new Set((global._pcpInternals.aliasesProduto?.(cod) || [String(cod)]).map(String));
+      const ficha = snap.docs.map(d => d.data()).find(f => [f.cod,f.codigo,f.produtoCod,f.prodKey,f.bluesoftProdutoKey,f.produtoUnitarioKey,f.canonicalKey].some(v => v != null && aliases.has(String(v))));
       const insumosFicha = (ficha && ficha.insumos) || [];
-      const insumosBi = global._pcpInternals.getInsumosBi?.() || [];
-      const norm = global._pcpInternals.norm || (v => String(v || '').trim().toLowerCase());
-      const porNome = new Map(insumosBi.map(x => [norm(x.produto), x]));
-      return insumosFicha.map(i => ({ insumo: i.insumo, qty: n(i.qty), categoria: i.categoria || '', bi: porNome.get(norm(i.insumo)) || null }));
+      const internos = global._pcpInternals || {};
+      const norm = internos.norm || (v => String(v || '').trim().toLowerCase());
+
+      // O Produto 360 não pode depender do filtro visual que ficou selecionado
+      // na aba Insumos. Se a origem crua estiver em memória, reconstrói uma
+      // visão consolidada exclusivamente para o 360; não faz nova leitura.
+      let insumosBi = internos.getInsumosBi?.() || [];
+      const raw = internos.getInsumosBiRaw?.();
+      if (raw && typeof internos._juntarInsumosBi === 'function') {
+        const consolidados = internos._juntarInsumosBi(raw, null, '');
+        if (Array.isArray(consolidados) && consolidados.length) insumosBi = consolidados;
+      }
+
+      const porCod = new Map();
+      const porNome = new Map();
+      const porNomeMaterial = new Map();
+      insumosBi.forEach(x => {
+        const codBi = String(x.cod ?? x.sku ?? x.codigo ?? x.produto_key ?? '').trim();
+        if (codBi && !porCod.has(codBi)) porCod.set(codBi, x);
+        const nomeExato = norm(x.produto);
+        if (nomeExato && !porNome.has(nomeExato)) porNome.set(nomeExato, x);
+        const k = _normMaterial(x.produto);
+        if (k && !porNomeMaterial.has(k)) porNomeMaterial.set(k, x);
+      });
+
+      return insumosFicha.map(i => {
+        // A própria ficha técnica já guarda o código Bluesoft do insumo.
+        // O 360 estava ignorando esse código e tentando casar só pelo nome,
+        // enquanto o MRP (65/85) já usa código primeiro. Isso fazia vários
+        // materiais aparecerem com "—" mesmo existindo saldo no BI.
+        const codInsumo = String(i.bluesoftProdutoKey ?? i.produtoKey ?? i.cod ?? i.codigo ?? '').trim();
+        const nome = i.insumo || i.nome || i.desc_insumo || i.descricao || '';
+        const bi = (codInsumo && porCod.get(codInsumo))
+          || porNome.get(norm(nome))
+          || porNomeMaterial.get(_normMaterial(nome))
+          || null;
+        return {
+          insumo: nome,
+          cod: codInsumo,
+          qty: n(i.qty ?? i.qtd ?? i.quantidade ?? i.consumoPorCaixa),
+          categoria: i.categoria || i.cat || '',
+          bi
+        };
+      });
     } catch (e) { return []; }
   }
 
@@ -79,24 +127,73 @@
     const pagina = document.getElementById('page-pcp-produto-360');
     if (!pagina) return;
     const internos = global._pcpInternals;
-    const visao = internos.construirVisao({ estoqueBi: internos.getEstoqueBi?.() });
+    const filtrosPCP=internos.getFiltros?.()||{};
+    const lojaContexto=String(filtrosPCP.loja||global.getDTLojaAtiva?.()||'');
+    const visao = internos.construirVisao({ estoqueBi: internos.getEstoqueBi?.(), lojaContexto });
     const item = visao.find(x => x.key === _produtoKey);
     if (!item) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Produto não encontrado</div><div class="empty-sub">Volte e selecione um produto em qualquer tabela do PCP.</div></div>'; return; }
-    const produtoCad = (internos.getProdutos?.() || []).find(p => internos.keyOf(p) === _produtoKey) || {};
-    const projecaoRec = (internos.getProjecao?.() || []).find(p => internos.keyOf(p) === _produtoKey) || {};
+    // PEDIDO AO VIVO (2026-09-21): "cadastro único" — quando o mestre
+    // global (produtos_mestre) já tiver o produto (pós-migração), seus
+    // campos (categoria de verdade, parâmetros de compra, etc.) prevalecem
+    // sobre o cadastro por loja; até lá o Map vem vazio e isto não muda
+    // nada do comportamento atual.
+    // Usa o mesmo cadastro canônico do motor/Planejamento. Evita o Produto
+    // 360° pegar simplesmente a primeira variante do código e exibir
+    // parâmetros diferentes dos usados no cálculo (ex.: 5d em Parâmetros e
+    // 30d aqui por causa da ordem dos documentos).
+    const produtoCad = internos.resolverCadastroProduto?.(_produtoKey,{lojaId:lojaContexto}) || {};
+    const projecaoRec = (internos.getProjecao?.() || []).find(p => internos.keyOf(p) === _produtoKey && (!lojaContexto || String(p.lojaId||'')===lojaContexto)) || {};
     const proxMeses = _proximosMesesEscadinha(item, projecaoRec);
+    const produzidoInternamente = (internos.produzidoInternamenteNaLoja?.(_produtoKey, lojaContexto) ?? internos.produzidoInternamente?.(_produtoKey)) === true;
     const historico = (internos.getReqs?.() || [])
       .filter(r => internos.keyOf(r) === _produtoKey && n(r.quantidadeComprada) > 0)
+      .filter(r => !lojaContexto || String(r.lojaId||r.origemLojaId||'') === lojaContexto)
       .sort((a, b) => String(b.compradoEm || '').localeCompare(String(a.compradoEm || '')));
+    // Carrega a mesma fonte local de insumos usada pelo PCP, quando ainda
+    // não estiver em memória. Não cria leitura Firestore adicional.
+    if (!internos.getInsumosBi?.()?.length) {
+      try { await internos._garantirCatalogosSolicitacao?.('insumos'); } catch (_) {}
+    }
     const insumos = await _buscarInsumosDoProduto(item.cod);
     const passos = internos.memoriaDeCalculo(item);
     const marcos = global._pcpTimelineInternals?.construirLinhaDoTempo?.(item, 90) || [];
-    const proximaCompraSugerida = item.necessidade > 0 ? Math.ceil(item.necessidade / Math.max(1, n(produtoCad.multiploCompra) || 1)) * Math.max(1, n(produtoCad.multiploCompra) || 1) : 0;
+    const riscoTemporal = global._pcpTimelineInternals?.calcularRiscoTemporal?.(item, 365) || null;
+    const ajusteProducao = produzidoInternamente ? internos._quantidadeProducaoAjustada?.(item) : null;
+    const proximaSugestao = produzidoInternamente ? Math.max(0,n(ajusteProducao?.quantidade ?? item.necessidade)) : Math.max(0, n(item.quantidadeSugerida != null ? item.quantidadeSugerida : item.necessidade));
     const marcoIdeal = marcos.find(m => m.estado === 'abaixo_minimo' || m.estado === 'critico' || m.estado === 'ruptura');
+    const dataAcao = riscoTemporal?.pontoPedidoEm || marcoIdeal?.data || null;
+    const abastecimentoCard = produzidoInternamente ? `
+        <div class="tc" style="padding:12px">
+          <b>🏭 Produção</b>
+          <table class="dt-table" style="margin-top:8px"><tbody>
+            <tr><td>Origem do abastecimento</td><td style="text-align:right"><b>Produção interna</b></td></tr>
+            <tr><td>Produção programada</td><td style="text-align:right">${n(item.producaoProgramada).toLocaleString('pt-BR')}</td></tr>
+            <tr><td>Produção mínima</td><td style="text-align:right">${n(produtoCad.producaoMinima) > 0 ? n(produtoCad.producaoMinima).toLocaleString('pt-BR') : '—'}</td></tr>
+            <tr><td>Múltiplo de produção</td><td style="text-align:right">${n(produtoCad.multiploProducao) > 0 ? n(produtoCad.multiploProducao).toLocaleString('pt-BR') : '—'}</td></tr>
+            <tr><td>Empresa produtora</td><td style="text-align:right">${esc(produtoCad.empresaProdutoraNome || produtoCad.empresaProdutoraId || '—')}</td></tr>
+          </tbody></table>
+        </div>` : `
+        <div class="tc" style="padding:12px">
+          <b>🛒 Compras</b>
+          <table class="dt-table" style="margin-top:8px"><tbody>
+            <tr><td>Requisições compradas (operacional)</td><td style="text-align:right">${historico.length}</td></tr>
+            <tr><td>Qtd. comprada nas requisições PCP</td><td style="text-align:right">${historico.reduce((s, h) => s + n(h.quantidadeComprada), 0).toLocaleString('pt-BR')}</td></tr>
+            <tr><td>Último fornecedor</td><td style="text-align:right">${esc(historico[0]?.fornecedor || '—')}</td></tr>
+            <tr><td>Última quantidade</td><td style="text-align:right">${historico.length ? n(historico[0].quantidadeComprada).toLocaleString('pt-BR') : '—'}</td></tr>
+            <tr><td>Fornecedor preferencial</td><td style="text-align:right">${esc(produtoCad.fornecedorPadrao || '—')}</td></tr>
+          </tbody></table>
+        </div>`;
+    const historicoAbastecimento = produzidoInternamente ? '' : `
+      <div class="tc" style="padding:12px;margin-top:14px">
+        <b>Histórico operacional de compras</b>
+        <div style="overflow:auto;margin-top:8px"><table class="dt-table"><thead><tr><th>Data</th><th>Fornecedor</th><th>Qtd</th><th>Previsão</th><th>Status</th></tr></thead><tbody>
+        ${historico.length ? historico.map(h => `<tr><td>${esc(String(h.compradoEm || '').slice(0, 10))}</td><td>${esc(h.fornecedor || '')}</td><td>${n(h.quantidadeComprada).toLocaleString('pt-BR')}</td><td>${esc(String(h.dataPrevista || '').slice(0, 10))}</td><td>${esc(h.status || '')}</td></tr>`).join('') : '<tr><td colspan="5">Nenhuma compra registrada ainda.</td></tr>'}
+        </tbody></table></div>
+      </div>`;
 
     pagina.innerHTML = `
       <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-        <div><div class="page-title" style="font-size:1.2rem">🔎 ${esc(item.produto)}</div><div style="font-size:.74rem;color:var(--muted)">Cód. ${esc(item.cod || '—')} · ${esc(produtoCad.categoria || 'Sem categoria')}</div></div>
+        <div><div class="page-title" style="font-size:1.2rem">🔎 ${esc(item.produto)}</div><div style="font-size:.74rem;color:var(--muted)">Cód. ${esc(item.cod || '—')} · ${esc(internos.metaProduto?.(item)?.categoria || produtoCad.categoria || 'Sem categoria')}</div></div>
         <button type="button" class="acao-lapis" title="Memória de cálculo completa" data-pcp-memoria="${esc(item.key)}">🧮 Memória de cálculo</button>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px">
@@ -108,9 +205,9 @@
             <tr><td>Comprometido</td><td style="text-align:right">${item.estoqueComprometido.toLocaleString('pt-BR')}</td></tr>
             <tr><td>Em trânsito (entradas previstas)</td><td style="text-align:right">${item.entradasPrevistas.toLocaleString('pt-BR')}</td></tr>
             <tr><td>Projetado (saldo)</td><td style="text-align:right"><b>${item.saldo.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}</b></td></tr>
-            <tr><td>Cobertura atual</td><td style="text-align:right">${item.coberturaDias == null ? '—' : item.coberturaDias.toFixed(1) + 'd'}</td></tr>
+            <tr><td>Cobertura atual</td><td style="text-align:right">${item.consumoDia>0?(item.estoqueDisponivel/item.consumoDia).toFixed(1)+'d':'—'}</td></tr>
             <tr><td>Cobertura desejada</td><td style="text-align:right">${item.diasAlvo}d</td></tr>
-            <tr><td>Mínimo / Máximo / Segurança</td><td style="text-align:right">${esc(produtoCad.estoqueMinimo ?? '—')} / ${esc(produtoCad.estoqueMaximo ?? '—')} / ${esc(produtoCad.estoqueSeguranca ?? '—')}</td></tr>
+            <tr><td>Mínimo / Máximo / Segurança</td><td style="text-align:right">${esc(produtoCad.estoqueMinimo ?? '—')} / ${esc(produtoCad.estoqueMaximo ?? '—')} / ${item.estoqueSeguranca != null ? esc(Number(item.estoqueSeguranca).toLocaleString('pt-BR',{maximumFractionDigits:1})) : '—'}</td></tr>
           </tbody></table>
         </div>
         <div class="tc" style="padding:12px">
@@ -122,36 +219,23 @@
             <tr><td>Tendência</td><td style="text-align:right">${proxMeses.valores[0] > 0 ? (((proxMeses.valores[2] - proxMeses.valores[0]) / proxMeses.valores[0] * 100).toFixed(1) + '%') : '—'}</td></tr>
           </tbody></table>
         </div>
-        <div class="tc" style="padding:12px">
-          <b>🛒 Compras</b>
-          <table class="dt-table" style="margin-top:8px"><tbody>
-            <tr><td>Compras registradas</td><td style="text-align:right">${historico.length}</td></tr>
-            <tr><td>Quantidade total comprada</td><td style="text-align:right">${historico.reduce((s, h) => s + n(h.quantidadeComprada), 0).toLocaleString('pt-BR')}</td></tr>
-            <tr><td>Último fornecedor</td><td style="text-align:right">${esc(historico[0]?.fornecedor || '—')}</td></tr>
-            <tr><td>Última quantidade</td><td style="text-align:right">${historico.length ? n(historico[0].quantidadeComprada).toLocaleString('pt-BR') : '—'}</td></tr>
-            <tr><td>Fornecedor preferencial</td><td style="text-align:right">${esc(produtoCad.fornecedorPadrao || '—')}</td></tr>
-          </tbody></table>
-        </div>
+        ${abastecimentoCard}
         <div class="tc" style="padding:12px">
           <b>🗓️ Planejamento</b>
           <table class="dt-table" style="margin-top:8px"><tbody>
             <tr><td>Necessidade atual</td><td style="text-align:right">${item.necessidade.toLocaleString('pt-BR', { maximumFractionDigits: 0 })}</td></tr>
-            <tr><td>Próxima compra sugerida</td><td style="text-align:right"><b>${proximaCompraSugerida.toLocaleString('pt-BR')}</b></td></tr>
-            <tr><td>Data ideal da compra</td><td style="text-align:right">${marcoIdeal ? esc(marcoIdeal.data) : 'sem urgência nos próximos 90 dias'}</td></tr>
-            <tr><td>Lead time</td><td style="text-align:right">${esc(produtoCad.leadTimeDias ?? '—')} dias</td></tr>
-            <tr><td>Criticidade</td><td style="text-align:right">${esc(produtoCad.criticidade || 'baixa')}</td></tr>
+            <tr><td>${produzidoInternamente ? 'Próxima produção sugerida' : 'Próxima compra sugerida'}</td><td style="text-align:right"><b>${proximaSugestao.toLocaleString('pt-BR')}</b></td></tr>
+            <tr><td>Data limite para agir</td><td style="text-align:right">${dataAcao ? esc(dataAcao) : 'sem urgência no horizonte projetado'}</td></tr>
+            <tr><td>Ruptura projetada</td><td style="text-align:right">${riscoTemporal?.rupturaEm ? esc(riscoTemporal.rupturaEm) : 'não prevista no horizonte'}</td></tr>
+            <tr><td>Lead time</td><td style="text-align:right"><b>${esc(item.leadTimeDias)} dias</b><small style="display:block;color:var(--muted);margin-top:2px">${esc(item.leadTimeRotulo || 'Fonte resolvida pelo PCP')}</small></td></tr>
+            <tr><td>Criticidade manual</td><td style="text-align:right">${produtoCad.criticidade ? esc(produtoCad.criticidade) : '<span style="color:var(--muted)">Não configurada</span>'}</td></tr>
           </tbody></table>
         </div>
       </div>
-      <div class="tc" style="padding:12px;margin-top:14px">
-        <b>Histórico operacional de compras</b>
-        <div style="overflow:auto;margin-top:8px"><table class="dt-table"><thead><tr><th>Data</th><th>Fornecedor</th><th>Qtd</th><th>Previsão</th><th>Status</th></tr></thead><tbody>
-        ${historico.length ? historico.map(h => `<tr><td>${esc(String(h.compradoEm || '').slice(0, 10))}</td><td>${esc(h.fornecedor || '')}</td><td>${n(h.quantidadeComprada).toLocaleString('pt-BR')}</td><td>${esc(String(h.dataPrevista || '').slice(0, 10))}</td><td>${esc(h.status || '')}</td></tr>`).join('') : '<tr><td colspan="5">Nenhuma compra registrada ainda.</td></tr>'}
-        </tbody></table></div>
-      </div>
+      ${historicoAbastecimento}
       <div class="tc" style="padding:12px;margin-top:14px">
         <b>🧪 Insumos usados neste produto</b>
-        <div style="font-size:.7rem;color:var(--muted);margin-top:3px">${global._pcpInternals.getInsumosBi?.()?'':'Estoque/cobertura de insumo não carregados ainda — abra a aba "Insumos" e clique em Buscar do BI pra ver aqui também.'}</div>
+        <div style="font-size:.7rem;color:var(--muted);margin-top:3px">${global._pcpInternals.getInsumosBi?.()?.length ? '' : (global.DTBiPastaLocal?.suportado?.() ? 'Estoque/cobertura ainda não carregados nesta sessão. Abra/atualize a aba Insumos.' : 'Este navegador não oferece suporte à fonte local necessária para saldo/cobertura de insumos.') }</div>
         <div style="overflow:auto;margin-top:8px"><table class="dt-table"><thead><tr><th>Insumo</th><th>Qtd. por caixa</th><th>Estoque do insumo</th><th>Cobertura</th></tr></thead><tbody>
         ${insumos.length ? insumos.map(i => `<tr><td>${esc(i.insumo)}</td><td>${i.qty.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td><td>${i.bi ? i.bi.estoque.toLocaleString('pt-BR') + ' ' + esc(i.bi.unidade || '') : '—'}</td><td>${i.bi && i.bi.coberturaDias != null ? i.bi.coberturaDias.toFixed(1) + 'd' : '—'}</td></tr>`).join('') : '<tr><td colspan="4">Sem ficha técnica cadastrada pra este produto ainda.</td></tr>'}
         </tbody></table></div>
@@ -163,7 +247,7 @@
   global.pcpRegistrarPagina?.('produto-360', { elId: 'page-pcp-produto-360', render: 'renderPCPProduto360', titulo: 'Produto 360°' });
   global.abrirProduto360 = abrirProduto360;
   global.renderPCPProduto360 = renderPCPProduto360;
-  global._pcp360Internals = { _buscarInsumosDoProduto, _proximosMesesEscadinha };
+  global._pcp360Internals = { _buscarInsumosDoProduto, _proximosMesesEscadinha, _normMaterial };
 
   document.addEventListener('click', function (event) {
     const el = event.target.closest('[data-pcp-360]');

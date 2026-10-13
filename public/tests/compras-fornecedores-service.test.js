@@ -32,6 +32,7 @@ function criarFirestoreFake() {
           id: docId,
           get: async () => ({ exists: dados.has(chave), id: docId, data: () => dados.get(chave) }),
           set: async (valor, opts) => { const atual = dados.get(chave) || {}; dados.set(chave, (opts && opts.merge) ? { ...atual, ...valor } : valor); },
+          delete: async () => { dados.delete(chave); },
         };
       },
       where: (c, o, v) => whereChain([[c, o, v]]),
@@ -147,4 +148,41 @@ test('documentosVencidos filtra só documentos com validade no passado', () => {
   assert.equal(vencidos.length, 1);
   assert.equal(vencidos[0].tipo, 'contrato');
   assert.notEqual(hoje, undefined);
+});
+
+// PEDIDO AO VIVO (2026-09-18): "monta um cadastro de fornecedor→produto,
+// tipo o modal de máquina da Programação Produção" — vincularProdutoFornecedor
+// já existia (Fase 1A) mas nenhum teste cobria (nem tela nenhuma chamava).
+test('vincularProdutoFornecedor: cria o vínculo com id determinístico (fornecedorId_produtoId); chamar de novo faz merge, não duplica', async () => {
+  const raw = criarFirestoreFake();
+  const svc = carregarServico(raw);
+  const r1 = await svc.vincularProdutoFornecedor({ fornecedorId: 'f1', produtoId: '500', produtoNomeSnapshot: 'Farinha', precoReferencia: 2.5 });
+  assert.equal(r1.fornecedorId, 'f1');
+  assert.equal(r1.produtoId, '500');
+  const lista1 = await svc.listarProdutosDoFornecedor('f1');
+  assert.equal(lista1.length, 1);
+
+  await svc.vincularProdutoFornecedor({ fornecedorId: 'f1', produtoId: '500', produtoNomeSnapshot: 'Farinha', precoReferencia: 3 });
+  const lista2 = await svc.listarProdutosDoFornecedor('f1');
+  assert.equal(lista2.length, 1, 'vincular o MESMO produto de novo atualiza, não duplica');
+  assert.equal(lista2[0].precoReferencia, 3);
+});
+
+test('listarProdutosDoFornecedor: só traz os vínculos daquele fornecedor', async () => {
+  const raw = criarFirestoreFake();
+  const svc = carregarServico(raw);
+  await svc.vincularProdutoFornecedor({ fornecedorId: 'f1', produtoId: '500', produtoNomeSnapshot: 'Farinha' });
+  await svc.vincularProdutoFornecedor({ fornecedorId: 'f2', produtoId: '600', produtoNomeSnapshot: 'Açúcar' });
+  const doF1 = await svc.listarProdutosDoFornecedor('f1');
+  assert.equal(doF1.length, 1);
+  assert.equal(doF1[0].produtoId, '500');
+});
+
+test('removerVinculoProduto: apaga de verdade (não é bloqueio lógico como o fornecedor) — some da lista', async () => {
+  const raw = criarFirestoreFake();
+  const svc = carregarServico(raw);
+  await svc.vincularProdutoFornecedor({ fornecedorId: 'f1', produtoId: '500', produtoNomeSnapshot: 'Farinha' });
+  assert.equal((await svc.listarProdutosDoFornecedor('f1')).length, 1);
+  await svc.removerVinculoProduto('f1', '500');
+  assert.equal((await svc.listarProdutosDoFornecedor('f1')).length, 0);
 });

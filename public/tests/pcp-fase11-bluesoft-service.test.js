@@ -88,11 +88,12 @@ test('sincronização de produtos nunca escreve nos campos de planejamento do PC
   assert.match(trechoSync,/unidadeMedidaBluesoft/);
 });
 
-test('75-producao-estoque.js foi migrado pro serviço compartilhado (sem duplicar request/paginação própria)',()=>{
-  assert.match(estoqueCode,/global\.obterEstoqueBluesoft/);
-  assert.match(estoqueCode,/global\.obterCatalogoBluesoft/);
+test('75-producao-estoque.js lê somente o estoque materializado do BI, sem proxy/paginação Bluesoft',()=>{
+  assert.match(estoqueCode,/pcp_estoque_bluesoft/);
+  assert.match(estoqueCode,/where\('origem', '==', 'bi'\)/);
   assert.doesNotMatch(estoqueCode,/BLUESOFT_PROXY_URL/);
   assert.doesNotMatch(estoqueCode,/function _paginarTudo/);
+  assert.doesNotMatch(estoqueCode,/global\.obterEstoqueBluesoft/);
 });
 
 // PEDIDO AO VIVO (2026-08-27): "tira tudo da bluesoft" — cadastro de
@@ -110,6 +111,7 @@ test('Firestore rules dão uma 3ª via de escrita em producao_produtos pra sincr
   assert.match(rules,/affectedKeys\(\)\.hasOnly\(\['nome','unidadeMedidaBluesoft','gtin','ativo','categoria','fornecedorPadrao','fornecedorPadraoKey','bluesoftProdutoKey','bluesoftTipoProduto','bluesoftSincronizadoEm','multiploCompra','atualizadoEm','atualizadoPor'\]\)/);
 });
 
-test('HTML carrega o serviço Bluesoft compartilhado',()=>{
-  assert.match(htmlCode,/90-bluesoft-service\.js/);
+test('HTML NÃO carrega o serviço Bluesoft geral no boot; Recebimento usa módulo BI sob demanda',()=>{
+  assert.doesNotMatch(htmlCode,/90-bluesoft-service\.js/);
+  assert.match(htmlCode,/bi-pasta-local\.js/);
 });

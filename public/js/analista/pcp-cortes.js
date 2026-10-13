@@ -16,6 +16,10 @@
   let _meses = []; // [{mes, itens}], mais recente primeiro
   let _mesAtivo = '';
   let _carregado = false;
+  // PEDIDO AO VIVO (2026-09-18): "dar pra procurar por produto" — filtro
+  // client-side sobre os itens já carregados do mês ativo (nunca refaz
+  // leitura no Firestore, só filtra o que já está em memória).
+  let _filtroProduto = '';
 
   async function _carregar(forcar) {
     if (_carregado && !forcar) return;
@@ -43,7 +47,9 @@
   function _desenhar() {
     const p = document.getElementById('page-pcp-cortes');
     if (!p) return;
-    const itens = _itensMesAtivo().slice().sort((a, b) => b.corteRoteiroCx - a.corteRoteiroCx);
+    const todosDoMes = _itensMesAtivo().slice().sort((a, b) => b.corteRoteiroCx - a.corteRoteiroCx);
+    const busca = _filtroProduto.trim().toUpperCase();
+    const itens = busca ? todosDoMes.filter(x => String(x.descricao || '').toUpperCase().includes(busca) || String(x.produtoKey || '').toUpperCase().includes(busca)) : todosDoMes;
     const totalPedida = itens.reduce((s, x) => s + n(x.quantidadePedidaCx), 0);
     const totalFaturada = itens.reduce((s, x) => s + n(x.quantidadeFaturadaCx), 0);
     const totalCorte = itens.reduce((s, x) => s + n(x.corteRoteiroCx), 0);
@@ -55,14 +61,16 @@
       <div class="tc" style="padding:10px 12px;margin-bottom:12px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <div style="font-size:.72rem;color:var(--muted)">MÊS</div>
         <select class="field" id="pcpc-mes-sel" style="max-width:180px">${_meses.map(m => `<option value="${esc(m.mes)}" ${m.mes === _mesAtivo ? 'selected' : ''}>${esc(rotuloMes(m.mes))}</option>`).join('') || '<option value="">Sem dados ainda</option>'}</select>
+        <div style="font-size:.72rem;color:var(--muted);margin-left:10px">PRODUTO</div>
+        <input class="field" id="pcpc-busca" type="text" placeholder="Buscar produto..." value="${esc(_filtroProduto)}" style="max-width:260px">
       </div>
       <div class="kpi-grid" style="margin-bottom:14px">
         <div class="kpi blue"><div class="kpi-val">${totalPedida.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Total pedido (cx)</div></div>
         <div class="kpi teal"><div class="kpi-val">${totalFaturada.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Total faturado (cx)</div></div>
         <div class="kpi ${totalCorte > 0 ? 'red' : 'green'}"><div class="kpi-val">${totalCorte.toLocaleString('pt-BR')}</div><div class="kpi-lbl">Total cortado (cx)</div></div>
-        <div class="kpi orange"><div class="kpi-val">${itens.length}</div><div class="kpi-lbl">Produtos no mês</div></div>
+        <div class="kpi orange"><div class="kpi-val">${itens.length}</div><div class="kpi-lbl">Produtos no mês${busca ? ' (filtrado)' : ''}</div></div>
       </div>
-      <div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Produto</th><th>Pedida (cx)</th><th>Faturada (cx)</th><th>Corte (cx)</th><th>Valor Pedido</th><th>Faturamento</th><th>% Atingimento</th></tr></thead><tbody>${itens.length ? itens.map(_linha).join('') : `<tr><td colspan="7">${_meses.length ? 'Sem produtos neste mês.' : 'Nenhum dado sincronizado ainda.'}</td></tr>`}</tbody></table></div></div>`;
+      <div class="tc"><div style="overflow:auto"><table class="dt-table"><thead><tr><th>Produto</th><th>Pedida (cx)</th><th>Faturada (cx)</th><th>Corte (cx)</th><th>Valor Pedido</th><th>Faturamento</th><th>% Atingimento</th></tr></thead><tbody>${itens.length ? itens.map(_linha).join('') : `<tr><td colspan="7">${busca ? 'Nenhum produto encontrado.' : (_meses.length ? 'Sem produtos neste mês.' : 'Nenhum dado sincronizado ainda.')}</td></tr>`}</tbody></table></div></div>`;
   }
 
   async function renderPCPCortes() {
@@ -96,5 +104,16 @@
   });
   document.addEventListener('change', function (event) {
     if (event.target && event.target.id === 'pcpc-mes-sel') { _mesAtivo = event.target.value; _desenhar(); }
+  });
+  // _desenhar() redesenha a página inteira (innerHTML) — sem restaurar
+  // foco/cursor manualmente, o campo de busca perderia o foco a cada letra
+  // digitada (mesmo bug relatado em Produtos 360°/Compras).
+  document.addEventListener('input', function (event) {
+    if (!event.target || event.target.id !== 'pcpc-busca') return;
+    _filtroProduto = event.target.value || '';
+    const pos = event.target.selectionStart;
+    _desenhar();
+    const campo = document.getElementById('pcpc-busca');
+    if (campo) { campo.focus(); campo.setSelectionRange(pos, pos); }
   });
 })(window);

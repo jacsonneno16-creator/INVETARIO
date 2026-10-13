@@ -91,5 +91,7 @@ test('Dashboard sem DTBiPastaLocal disponível: não quebra, mantém o fallback 
   });
   assert.equal(win._pcpInternals.getEstoqueBi?.(), null, 'sem suporte a BI, nunca tenta preencher _estoqueBi');
   const html = win.document.getElementById('page-pcp-dashboard').innerHTML;
-  assert.match(html, /CANJICA/, 'dashboard continua funcionando com o fallback quando o BI não está disponível');
+  assert.match(html, /Ações prioritárias/, 'dashboard continua funcionando como cockpit quando o BI não está disponível');
+  const visao=win._pcpInternals.construirVisao({estoqueBi:null});
+  assert.ok(visao.some(x=>/CANJICA/.test(x.produto)), 'fallback de producao_projecao continua disponível no motor, só não é repetido como tabela no Dashboard');
 });

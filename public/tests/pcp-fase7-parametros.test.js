@@ -42,7 +42,7 @@ test('auditoria é append-only (helper exportado, sem update/delete)',()=>{
 });
 
 test('Parâmetros do PCP cobrem os campos novos de cobertura/compra e reaproveitam producao_produtos',()=>{
-  for(const campo of ['estoqueMinimo','estoqueMaximo','estoqueSeguranca','leadTimeDias','loteMinimoCompra','multiploCompra','criticidade','fornecedorPadrao','metaCoberturaDias']){
+  for(const campo of ['estoqueMinimo','estoqueMaximo','estoqueSeguranca','leadTimeDias','loteMinimoCompra','multiploCompra','criticidade','fornecedorPadrao','metaCoberturaDias','capacidadePorCaminhao','maxCaminhoesPorEntrega']){
     assert.match(parametrosCode,new RegExp(campo));
   }
   assert.match(parametrosCode,/COL_PRODUTOS = 'producao_produtos'/);
@@ -59,7 +59,7 @@ test('PCP está ligado à página de Parâmetros (registro dinâmico + sidebar +
   assert.match(permCode,/id:'pcp-central'.*'configurar'/);
   assert.match(rules,/match \/pcp_auditoria/);
   assert.match(rules,/hasPermission\('pcp-central', 'configurar'\)/);
-  for(const campo of ['estoqueMinimo','estoqueMaximo','estoqueSeguranca','leadTimeDias','loteMinimoCompra','multiploCompra','criticidade','fornecedorPadrao']){
+  for(const campo of ['estoqueMinimo','estoqueMaximo','estoqueSeguranca','leadTimeDias','loteMinimoCompra','multiploCompra','criticidade','fornecedorPadrao','capacidadePorCaminhao','maxCaminhoesPorEntrega']){
     assert.match(rules,new RegExp(campo));
   }
 });

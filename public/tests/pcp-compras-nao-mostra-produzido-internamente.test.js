@@ -54,30 +54,33 @@ async function montarAmbiente(produtosCadastrados, opts) {
   return { win, colReq };
 }
 
-test('aba Compras: produto com empresa produtora cadastrada NÃO aparece como necessidade de compra', async () => {
+test('Planejamento diferencia corretamente PRODUZIR de COMPRAR sem duplicar uma tela de necessidades', async () => {
   const { win } = await montarAmbiente([
     { cod: '100', nome: 'Farinha Própria', metaCoberturaDias: 10, empresaProdutoraId: 'lojaFilial', empresaProdutoraNome: 'Filial' },
     { cod: '200', nome: 'Especiaria do Fornecedor', metaCoberturaDias: 10, fornecedorPadrao: 'Fornecedor Y' },
   ]);
-  win.pcpIrParaAba('compras');
-  const html = win.document.getElementById('page-pcp-central').innerHTML;
-  assert.doesNotMatch(html, /Farinha Própria/, 'produzido pela própria empresa não pode virar sugestão de compra');
-  assert.match(html, /Especiaria do Fornecedor/, 'sem empresa produtora (fornecedor) continua aparecendo pra comprar');
+  win.pcpIrParaAba('planejamento');
+  const visao=win._pcpInternals.construirVisao();
+  assert.equal(win._pcpInternals._acaoPlanejamento(visao.find(x=>x.key==='100')).chave,'produzir');
+  assert.equal(win._pcpInternals._acaoPlanejamento(visao.find(x=>x.key==='200')).chave,'comprar');
+  const html=win.document.getElementById('page-pcp-central').innerHTML;
+  assert.match(html,/Farinha Própria/);
+  assert.match(html,/Especiaria do Fornecedor/);
 });
 
 // PEDIDO AO VIVO (2026-09-02): "dividir esses produtos por linhas... e
 // colocar já alguma coisa que já envia automaticamente o pedido pra
 // compras direto" — tabela normal (não mais nuvem de botões) + botão de
 // enviar pedido direto (sem modal), já roteado pro comprador certo.
-test('aba Compras: "Necessidades calculadas" é tabela (não nuvem de botões), com botão "Enviar pedido" por linha', async () => {
-  const { win } = await montarAmbiente([
-    { cod: '200', nome: 'Especiaria do Fornecedor', metaCoberturaDias: 10, fornecedorPadrao: 'Fornecedor Y' },
-  ]);
-  win.pcpIrParaAba('compras');
+test('Planejamento substitui a tela separada de Necessidades e concentra ação recomendada no mesmo grid', async () => {
+  const { win } = await montarAmbiente([{ cod: '200', nome: 'Especiaria do Fornecedor', metaCoberturaDias: 10, fornecedorPadrao: 'Fornecedor Y' }]);
+  win.pcpIrParaAba('compras'); // rota antiga deve cair na nova visão
   const html = win.document.getElementById('page-pcp-central').innerHTML;
-  assert.match(html, /<table[^>]*>[\s\S]*Necessidade \(cx\)[\s\S]*<\/table>/, 'tabela com coluna Necessidade');
-  assert.match(html, /data-pcp-nec-enviar="/, 'botão de enviar pedido direto por linha');
-  assert.match(html, /data-pcp-nec-enviar-todos/, 'botão de enviar todos em lote');
+  assert.match(html,/Planejamento/);
+  assert.match(html,/Ação recomendada/);
+  assert.match(html,/Necessidade/);
+  assert.doesNotMatch(html,/Necessidades calculadas/);
+  assert.doesNotMatch(html,/data-pcp-nec-enviar=/);
 });
 
 test('enviarNecessidadeDireto: cria a requisição direto (sem modal), já roteada pro comprador da regra', async () => {
@@ -116,15 +119,15 @@ test('enviarTodasNecessidades: envia todo mundo com necessidade de compra de uma
 // em Produção › Cadastro de Produtos SEMPRE grava a máquina (pftSalvar em
 // 60-producao-ficha-tecnica.js), então isso sozinho já deve bastar pra
 // excluir o produto das necessidades de compra, mesmo sem empresaProdutoraId.
-test('aba Compras: produto SEM empresa produtora mas COM máquina cadastrada (típico de quem esqueceu de preencher "empresa produtora") também não aparece como necessidade de compra', async () => {
+test('Planejamento trata produto com máquina como PRODUZIR mesmo sem empresaProdutoraId', async () => {
   const { win } = await montarAmbiente([
     { cod: '100', nome: 'Milho Pipoca da Terrinha', metaCoberturaDias: 10, maquina: 'ALFATECK 16' },
     { cod: '200', nome: 'Especiaria do Fornecedor', metaCoberturaDias: 10, fornecedorPadrao: 'Fornecedor Y' },
   ]);
-  win.pcpIrParaAba('compras');
-  const html = win.document.getElementById('page-pcp-central').innerHTML;
-  assert.doesNotMatch(html, /Milho Pipoca da Terrinha/, 'ter máquina cadastrada já prova que é produzido internamente, mesmo sem empresaProdutoraId preenchido');
-  assert.match(html, /Especiaria do Fornecedor/, 'sem empresa produtora nem máquina, continua aparecendo pra comprar');
+  win.pcpIrParaAba('planejamento');
+  const visao=win._pcpInternals.construirVisao();
+  assert.equal(win._pcpInternals._acaoPlanejamento(visao.find(x=>x.key==='100')).chave,'produzir');
+  assert.equal(win._pcpInternals._acaoPlanejamento(visao.find(x=>x.key==='200')).chave,'comprar');
 });
 
 test('aba Produção (Sugestões de produção): só mostra produto COM empresa produtora cadastrada', async () => {

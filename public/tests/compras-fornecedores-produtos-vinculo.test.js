@@ -66,6 +66,8 @@ test('vincularProdutoFornecedor: exige fornecedor e produto', async () => {
 test('listarProdutosDoFornecedor e listarHomologadosPorProduto filtram corretamente', async () => {
   const rawFs = criarFirestoreFake();
   const svc = carregarServico(rawFs);
+  await rawFs.collection('compras_fornecedores_resumo').doc('f1').set({ fornecedorId:'f1', nomeFantasia:'Fornecedor 1', situacao:'ativo', homologacaoStatus:'homologado' });
+  await rawFs.collection('compras_fornecedores_resumo').doc('f2').set({ fornecedorId:'f2', nomeFantasia:'Fornecedor 2', situacao:'ativo', homologacaoStatus:'homologado' });
   await svc.vincularProdutoFornecedor({ fornecedorId: 'f1', produtoId: '500', homologado: true });
   await svc.vincularProdutoFornecedor({ fornecedorId: 'f2', produtoId: '500', homologado: false });
   await svc.vincularProdutoFornecedor({ fornecedorId: 'f1', produtoId: '600', homologado: true });
@@ -74,4 +76,15 @@ test('listarProdutosDoFornecedor e listarHomologadosPorProduto filtram corretame
   const homologados500 = await svc.listarHomologadosPorProduto('500');
   assert.equal(homologados500.length, 1);
   assert.equal(homologados500[0].fornecedorId, 'f1');
+});
+
+test('fornecedor bloqueado/inativo não volta como homologado só porque o vínculo produto está homologado', async () => {
+  const rawFs = criarFirestoreFake();
+  const svc = carregarServico(rawFs);
+  await rawFs.collection('compras_fornecedores_resumo').doc('ok').set({fornecedorId:'ok',nomeFantasia:'OK',situacao:'ativo',homologacaoStatus:'homologado'});
+  await rawFs.collection('compras_fornecedores_resumo').doc('blk').set({fornecedorId:'blk',nomeFantasia:'Bloqueado',situacao:'bloqueado',homologacaoStatus:'homologado'});
+  await svc.vincularProdutoFornecedor({fornecedorId:'ok',produtoId:'700',homologado:true});
+  await svc.vincularProdutoFornecedor({fornecedorId:'blk',produtoId:'700',homologado:true});
+  const lista=await svc.listarHomologadosPorProduto('700');
+  assert.deepEqual(lista.map(x=>x.fornecedorId),['ok']);
 });

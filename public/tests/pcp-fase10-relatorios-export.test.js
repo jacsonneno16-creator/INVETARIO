@@ -3,10 +3,10 @@ const base=path.join(__dirname,'../js/analista');
 const code=fs.readFileSync(path.join(base,'88-pcp-relatorios.js'),'utf8');
 const htmlCode=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8')+fs.readFileSync(path.join(__dirname,'../js/analista/00-lazy-areas.js'),'utf8');
 
-test('Relatórios do PCP cobrem somente indicadores operacionais',()=>{
-  for(const id of ['necessidade','demandas','ruptura','cobertura','estoque-projetado']){
-    assert.match(code,new RegExp(`'${id}'`));
-  }
+test('Análises do PCP expõem somente análises não repetidas no seletor principal',()=>{
+  const bloco=code.slice(code.indexOf('const RELATORIOS'),code.indexOf('let _precisaoAgrupamento'));
+  for(const id of ['previsao-realizado','abc-xyz','cenarios']) assert.match(bloco,new RegExp(`'${id}'`));
+  for(const id of ['necessidade','demandas','ruptura','cobertura','estoque-projetado']) assert.doesNotMatch(bloco,new RegExp(`'${id}'`));
   assert.doesNotMatch(code,/pre[cç]o|valorTotal|currency\s*:\s*['"]BRL/i);
 });
 
@@ -47,6 +47,7 @@ test('relatório "necessidade": Data1aCompra/2ª/3ª vêm de calcularProximasDat
   };
   const document={addEventListener:()=>{}};
   vm.runInNewContext(code,{window,document,console,Date,Math,Number,String,Array,Object,Set,Map,Blob:function(){},URL:{createObjectURL:()=>'',revokeObjectURL:()=>{}}});
+  window._pcpRelatoriosInternals.setRelatorio('necessidade');
   const linhas=window._pcpRelatoriosInternals._linhas();
   assert.equal(linhas.length,1);
   assert.equal(linhas[0].Data1aCompra,'2026-10-01');
@@ -54,4 +55,31 @@ test('relatório "necessidade": Data1aCompra/2ª/3ª vêm de calcularProximasDat
   assert.equal(linhas[0].Data2aCompra,'2026-11-01');
   assert.equal(linhas[0].Data3aCompra,'2026-12-01');
   assert.equal(chamadas,1,'calcularProximasDatasCompra é chamada de verdade — não é um valor salvo/fixo');
+});
+
+// PEDIDO AO VIVO (2026-10-01): "quero saber quantos dias negativos fica
+// com o saldo negativo... em todo lugar que mostre cobertura de estoque"
+// — x.coberturaDias vem floorado em 0 (construirVisao), de propósito, pra
+// classificação de risco; os relatórios/exportações mostram agora o valor
+// recalculado sem esse piso.
+test('relatórios "necessidade"/"ruptura"/"cobertura": coluna Cobertura mostra os dias negativos de verdade, não "0" floorado',()=>{
+  const vm=require('vm');
+  const item={key:'k1',produto:'Alho Triturado',necessidade:10,estoqueAtual:-144,estoqueDisponivel:-344,saldo:-344,consumoDia:32,coberturaDias:0,diasAlvo:30,estoqueAlvo:300,eventos:[],rupturaEm:'2026-10-05'};
+  const window={
+    document:{addEventListener:()=>{}},
+    _pcpInternals:{
+      construirVisao:()=>[item],getEstoqueBi:()=>null,getReqs:()=>[],getProdutos:()=>[],keyOf:p=>String(p.cod||''),
+      produzidoInternamente:()=>false,
+    },
+    _pcpTimelineInternals:{calcularProximasDatasCompra:()=>[]},
+  };
+  const document={addEventListener:()=>{}};
+  vm.runInNewContext(code,{window,document,console,Date,Math,Number,String,Array,Object,Set,Map,Blob:function(){},URL:{createObjectURL:()=>'',revokeObjectURL:()=>{}}});
+  window._pcpRelatoriosInternals.setRelatorio('necessidade');
+  assert.equal(window._pcpRelatoriosInternals._linhas()[0].Cobertura,-10.75,'necessidade: -344/32 = -10.75, não 0');
+  window._pcpRelatoriosInternals.setRelatorio('ruptura');
+  assert.equal(window._pcpRelatoriosInternals._linhas()[0].Cobertura,-10.75,'ruptura: -344/32 = -10.75, não 0');
+  window._pcpRelatoriosInternals.setRelatorio('cobertura');
+  assert.equal(window._pcpRelatoriosInternals._linhas()[0].CoberturaAtual,-10.75,'cobertura: -344/32 = -10.75, não 0');
+  assert.equal(window._pcpRelatoriosInternals._linhas()[0].Situacao,'abaixo','classificação continua usando a cobertura floorada — negativo também é "abaixo", sem mudar de faixa');
 });

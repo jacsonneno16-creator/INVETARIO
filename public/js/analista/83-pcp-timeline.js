@@ -18,8 +18,11 @@
   let _busca = '';
 
   function _estadoNoDia(saldo, item, consumoDia) {
-    if (saldo <= 0) return 'ruptura';
-    if (consumoDia > 0 && saldo / consumoDia <= 3) return 'critico';
+    if (saldo <= 0 && (Number(consumoDia)>0 || Number(item.estoqueComprometido)>0 || Number(item.necessidade)>0)) return 'ruptura';
+    // Mesma regra conceitual do Planejamento: crítico quando a cobertura
+    // projetada fica abaixo do lead time do produto. Não usa mais 3 dias fixos.
+    const cobertura = consumoDia > 0 ? saldo / consumoDia : null;
+    if (cobertura != null && Number(item.leadTimeDias) > 0 && cobertura < Number(item.leadTimeDias)) return 'critico';
     if (item.estoqueMinimo > 0 && saldo < item.estoqueMinimo) return 'abaixo_minimo';
     if (item.estoqueAlvo > 0 && saldo >= item.estoqueAlvo) return 'ideal';
     return 'ok';
@@ -59,7 +62,7 @@
       eventosPorData.set(ev.data, arr);
     });
     const hojeD = new Date(); hojeD.setHours(0, 0, 0, 0);
-    let saldo = item.estoqueAtual;
+    let saldo = Number.isFinite(Number(item.timelineSaldoInicial)) ? Number(item.timelineSaldoInicial) : item.estoqueAtual;
     const resultado = [];
     for (let d = 0; d <= horizonteDias; d++) {
       const data = new Date(hojeD); data.setDate(data.getDate() + d);
@@ -111,7 +114,7 @@
       eventosPorData.set(ev.data, arr);
     });
     const hojeD = new Date(); hojeD.setHours(0, 0, 0, 0);
-    let saldo = item.estoqueAtual;
+    let saldo = Number.isFinite(Number(item.timelineSaldoInicial)) ? Number(item.timelineSaldoInicial) : item.estoqueAtual;
     const compras = [];
     for (let d = 0; d <= horizonteDiasMax && compras.length < quantasCompras; d++) {
       const data = new Date(hojeD); data.setDate(data.getDate() + d);
@@ -132,6 +135,40 @@
     return compras;
   }
 
+
+  // Risco temporal exato, reaproveitando a MESMA caminhada da Timeline.
+  // Não consulta nenhuma fonte: trabalha somente com o item já calculado
+  // por construirVisao(). O ponto de ação é o primeiro dia em que o saldo
+  // projetado alcança o ponto de pedido do motor (demanda durante lead time
+  // + estoque de segurança).
+  function calcularRiscoTemporal(item, horizonteDias) {
+    horizonteDias = horizonteDias || 365;
+    const eventosPorData = new Map();
+    (item.eventos || []).forEach(ev => {
+      if (!ev.data) return;
+      const arr = eventosPorData.get(ev.data) || [];
+      arr.push(ev);
+      eventosPorData.set(ev.data, arr);
+    });
+    const hojeD = new Date(); hojeD.setHours(0, 0, 0, 0);
+    let saldo = Number.isFinite(Number(item.timelineSaldoInicial)) ? Number(item.timelineSaldoInicial) : Number(item.estoqueAtual) || 0;
+    const pontoPedido = Math.max(0, Number(item.pontoPedido) || 0);
+    let pontoPedidoEm = null, rupturaEm = null, menorSaldo = saldo, menorCobertura = null;
+    for (let d = 0; d <= horizonteDias; d++) {
+      const data = new Date(hojeD); data.setDate(data.getDate() + d);
+      const consumoDia = _consumoDiaNaData(item, data);
+      const iso = data.toISOString().slice(0, 10);
+      if (d > 0) saldo -= consumoDia;
+      (eventosPorData.get(iso) || []).forEach(ev => { saldo += Number(ev.delta) || 0; });
+      menorSaldo = Math.min(menorSaldo, saldo);
+      const cobertura = consumoDia > 0 ? Math.max(0, saldo) / consumoDia : null;
+      if (cobertura != null) menorCobertura = menorCobertura == null ? cobertura : Math.min(menorCobertura, cobertura);
+      if (!pontoPedidoEm && consumoDia > 0 && saldo <= pontoPedido) pontoPedidoEm = iso;
+      if (!rupturaEm && consumoDia > 0 && saldo <= 0) { rupturaEm = iso; break; }
+    }
+    return { pontoPedidoEm, rupturaEm, menorSaldo, menorCobertura, horizonteDias };
+  }
+
   async function renderPCPTimeline() {
     const pagina = document.getElementById('page-pcp-timeline');
     if (!pagina) return;
@@ -148,7 +185,11 @@
     const pagina = document.getElementById('page-pcp-timeline');
     if (!pagina) return;
     const busca = _busca.trim().toLowerCase();
-    const visao = global._pcpInternals.construirVisao({ estoqueBi: global._pcpInternals.getEstoqueBi?.() })
+    // Correção de desempenho: sem deduplicar produtos multi-loja antes de
+    // chamar construirVisao(), o motor caía no pior caso (recalcula a visão
+    // inteira por loja pra cada produto presente em mais de uma) — medido em
+    // ~293s com o catálogo real, contra ~2s deduplicado.
+    const visao = global._pcpInternals.construirVisao({ ...(global._pcpInternals.dadosConsolidadosTodasLojas?.() || {}), estoqueBi: global._pcpInternals.getEstoqueBi?.() })
       .filter(x => x.consumoDia > 0 || x.estoqueAtual > 0)
       .filter(x => !busca || String(x.produto || '').toLowerCase().includes(busca));
     const linhas = visao.map(item => ({ item, marcos: construirLinhaDoTempo(item, 90) }));
@@ -183,7 +224,7 @@
 
   global.pcpRegistrarPagina?.('timeline', { elId: 'page-pcp-timeline', render: 'renderPCPTimeline', titulo: 'Linha do Tempo' });
   global.renderPCPTimeline = renderPCPTimeline;
-  global._pcpTimelineInternals = { construirLinhaDoTempo, _consumoDiaNaData, calcularProximasDatasCompra };
+  global._pcpTimelineInternals = { construirLinhaDoTempo, _consumoDiaNaData, calcularProximasDatasCompra, calcularRiscoTemporal };
 
   document.addEventListener('input', function (event) {
     if (event.target && event.target.id === 'pcptl-busca') { _busca = event.target.value; _desenhar(); }

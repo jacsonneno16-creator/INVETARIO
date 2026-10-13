@@ -4,7 +4,11 @@ const code=fs.readFileSync(path.join(base,'78-pcp-central.js'),'utf8');
 function load(calc=[]){const document={addEventListener:()=>{},getElementById:()=>null};const window={calcularProjecaoComRisco:()=>calc,getParametrosProducaoProjecao:()=>({}),temPermissao:()=>true};vm.runInNewContext(code,{window,document,console,Date,Math,Number,String,Array,Object,Set,Map,confirm:()=>true,prompt:()=>null});return window._pcpInternals;}
 test('PCP exemplo estoque 1000 pedidos 700 consumo 100/dia resulta saldo 300 cobertura 3 dias',()=>{const h=load([{cod:'X',produto:'Produto X',estoqueNormalizado:1000,projFinal:700,projSemanal:700}]);const v=h.construirVisao({produtos:[{cod:'X',nome:'Produto X'}],projecao:[{cod:'X',produto:'Produto X'}],pedidos:[{cod:'X',produto:'Produto X',quantidade:700,quantidadeAtendida:0,status:'pendente'}],ops:[],agendamentos:[],requisicoes:[]})[0];assert.equal(v.estoqueAtual,1000);assert.equal(v.pendente,700);assert.equal(v.saldo,300);assert.equal(v.estoqueDisponivel,300);assert.equal(v.coberturaDias,3);});
 test('PCP soma produção programada e entrada prevista sem contar duas vezes compra sem entrega',()=>{const h=load([{cod:'A',produto:'A',estoqueNormalizado:500,projFinal:700,projSemanal:700}]);const v=h.construirVisao({produtos:[{cod:'A',nome:'A'}],projecao:[{cod:'A'}],pedidos:[{cod:'A',quantidade:800,status:'pendente'}],ops:[{prodCod:'A',qntCaixas:400,realizadoCaixas:100,status:'programado'}],agendamentos:[{cod:'A',quantidade:1000,quantidadeRecebida:200,status:'prevista'}],requisicoes:[{prodKey:'A',quantidade:500,status:'solicitada'}]})[0];assert.equal(v.producaoProgramada,300);assert.equal(v.entradasPrevistas,800);assert.equal(v.comprasProgramadas,500);assert.equal(v.saldo,800);});
-test('PCP possui seis abas da fase 2 e fontes únicas da Produção',()=>{for(const t of ['pedidos','estoque','pedidos-estoque','compras','agendamentos','producao'])assert.match(code,new RegExp("'"+t+"'"));assert.match(code,/CPROJ='producao_projecao'/);assert.match(code,/COP='producao_registros'/);assert.match(code,/CPED='pcp_pedidos'/);assert.match(code,/pcp_requisicoes_compra/);assert.match(code,/pcp_agendamentos/);assert.match(code,/pcp_solicitacoes_producao/);});
+test('PCP centraliza operação em Planejamento, Insumos, Solicitação e Programação mantendo as fontes existentes',()=>{
+  for(const t of ['pedidos','planejamento','insumos','producao'])assert.match(code,new RegExp("'"+t+"'"));
+  assert.match(code,/CPROJ='producao_projecao'/);assert.match(code,/COP='producao_registros'/);assert.match(code,/CPED='pcp_pedidos'/);
+  assert.match(code,/pcp_requisicoes_compra/);assert.match(code,/pcp_agendamentos/);assert.match(code,/pcp_solicitacoes_producao/);
+});
 test('PCP está ligado à navegação permissões setor e Firestore',()=>{const nav=fs.readFileSync(path.join(base,'03-core-navigation.js'),'utf8'),perm=fs.readFileSync(path.join(base,'37-usuarios-permissoes.js'),'utf8'),rules=fs.readFileSync(path.join(__dirname,'../../firestore.rules'),'utf8'),html=fs.readFileSync(path.join(__dirname,'../analista.html'),'utf8')+fs.readFileSync(path.join(base,'00-lazy-areas.js'),'utf8');assert.match(nav,/pcp-central/);assert.match(nav,/renderPCPCentral/);assert.match(perm,/id:'pcp-central'/);assert.match(perm,/setor-pcp-shell/);assert.match(html,/id="setor-pcp-shell"/);assert.match(html,/78-pcp-central\.js/);for(const c of ['pcp_pedidos','pcp_requisicoes_compra','pcp_agendamentos','pcp_solicitacoes_producao'])assert.match(rules,new RegExp('match /'+c.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));});
 test('PCP calcula linha do tempo e identifica ruptura por data',()=>{const h=load([{cod:'T',produto:'T',estoqueNormalizado:100,projFinal:70,projSemanal:70}]);const v=h.construirVisao({produtos:[{cod:'T',nome:'T'}],projecao:[{cod:'T'}],pedidos:[{cod:'T',quantidade:150,quantidadeAtendida:0,status:'pendente',dataNecessaria:'2026-08-20'}],ops:[{prodCod:'T',qntCaixas:30,realizadoCaixas:0,status:'programado',data:'2026-08-18'}],agendamentos:[],requisicoes:[]})[0];assert.equal(v.eventos.length,2);assert.equal(v.proximoEvento.tipo,'producao');assert.equal(v.proximoEvento.saldoApos,130);assert.equal(v.rupturaEm,'2026-08-20');});
 
@@ -69,21 +73,46 @@ test('_juntarEstoqueBi: sem correspondência no escadinha, estoque/pedido contin
   assert.equal(item.pedido,20);
   assert.equal(item.consumoDia,0);
 });
-// PEDIDO AO VIVO (2026-09-02, 4ª rodada, "codsValidos"): mesma proteção
-// contra lixo que 101-relatorios-bi.js já usa (produtos_estoque.json
-// mistura produto de venda de verdade com item que não é cadastro real) —
-// só entra produto_key que já está no cadastro (producao_produtos ∪
-// pcp_produtos_bluesoft, já carregado em `produtos`, sem leitura nova).
-test('_juntarEstoqueBi: com codsValidos, produto_key fora do cadastro real não entra',()=>{
+// PEDIDO AO VIVO (2026-09-30): "agora é o nome que não veio escrito por
+// completo" — dados-escadinha.json guarda o produto sem o código numérico
+// na frente; quando existia linha correspondente lá, esse nome truncado
+// sempre vencia o nome completo de produtos_estoque.json.
+test('_juntarEstoqueBi: quando o escadinha tem correspondência mas com nome SEM o código (mais curto que o do estoque), fica o nome mais completo',()=>{
+  const h=load();
+  const dadosProdutosEstoque=[{loja:'OISHII',produto_key:139934,produto:'14009 MILHOCA OISHII 500 G - CX 20',quantidade_estoque:2204,quantidadePedidos:0}];
+  const dadosEscadinha={produtos:[{cod:139934,produto:'MILHOCA OISHII 500 G - CX 20',plano:new Array(12).fill(0),real:new Array(12).fill(0)}]};
+  const mapa=h._juntarEstoqueBi(dadosProdutosEstoque,dadosEscadinha,0);
+  const item=mapa.get('139934');
+  assert.equal(item.produto,'14009 MILHOCA OISHII 500 G - CX 20','nome completo (com código) vence o nome truncado do escadinha');
+});
+test('_juntarEstoqueBi: quando o nome do escadinha é MAIS completo que o do estoque, o do escadinha vence',()=>{
+  const h=load();
+  const dadosProdutosEstoque=[{loja:'MATRIZ',produto_key:5,produto:'CURTO',quantidade_estoque:10,quantidadePedidos:0}];
+  const dadosEscadinha={produtos:[{cod:5,produto:'00005 NOME BEM MAIS COMPLETO DO ESCADINHA',plano:new Array(12).fill(0),real:new Array(12).fill(0)}]};
+  const mapa=h._juntarEstoqueBi(dadosProdutosEstoque,dadosEscadinha,0);
+  assert.equal(mapa.get('5').produto,'00005 NOME BEM MAIS COMPLETO DO ESCADINHA');
+});
+// PEDIDO AO VIVO (2026-09-30): "tem que aparecer todos os novos produtos"
+// — o 4º argumento (antigo "codsValidos") deixou de ser uma ALLOWLIST
+// (exigir cadastro prévio pra entrar) e virou uma BLOCKLIST só da variante
+// solta em UN (ver teste dedicado em pcp-estoquebi-exclui-variante-
+// unidade.test.js). Motivo: essa allowlist também escondia produto GENUÍNO
+// que simplesmente ainda não tinha sido cadastrado (achado ao vivo: 12 de
+// 14 produtos de um cliente/terceiro sumiam do Planejamento, um deles com
+// estoque em risco de falta). O usuário confirmou que os filtros de
+// relevância que já existem (ocultar sem estoque/pedido/necessidade etc.)
+// bastam — não precisa mais exigir cadastro prévio como proxy de "é
+// produto de verdade".
+test('_juntarEstoqueBi: 4º argumento agora só bloqueia cods explicitamente passados (ex.: variante UN), não exige mais cadastro prévio',()=>{
   const h=load();
   const dadosProdutosEstoque=[
     {loja:'MATRIZ',produto_key:304,produto:'TAPIOCA DA TERRINHA 1 KG - CX 12',quantidade_estoque:100,quantidadePedidos:20},
-    {loja:'MATRIZ',produto_key:999,produto:'MKT TRADE - FOGAO ELETRICO',quantidade_estoque:5,quantidadePedidos:0},
+    {loja:'MATRIZ',produto_key:999,produto:'PRODUTO NOVO AINDA SEM CADASTRO',quantidade_estoque:5,quantidadePedidos:0},
   ];
-  const codsValidos=new Set(['304']);
-  const mapa=h._juntarEstoqueBi(dadosProdutosEstoque,{produtos:[]},0,codsValidos);
+  const codsUnidade=new Set(['2']); // nenhum dos dois é variante UN
+  const mapa=h._juntarEstoqueBi(dadosProdutosEstoque,{produtos:[]},0,codsUnidade);
   assert.equal(mapa.has('304'),true);
-  assert.equal(mapa.has('999'),false,'produto_key fora do cadastro real não entra, mesmo tendo linha no arquivo');
+  assert.equal(mapa.has('999'),true,'produto sem cadastro prévio ainda entra — só a blocklist explícita exclui');
 });
 // BUG AO VIVO REAL (2026-09-04, "verifica pq não foi atualizado
 // corretamente"): a mesma descrição comercial aparece 2x em
@@ -224,6 +253,22 @@ test('construirVisao com estoqueBi: sem produto cadastrado (nunca teve empresaPr
   const v=h.construirVisao({produtos:[],projecao:[],pedidos:[],ops:[],agendamentos:[],requisicoes:[],estoqueBi})[0];
   assert.equal(v.necessidade,150,'sem nada em estoque, precisa de 5*30=150 pra cobrir 30 dias');
 });
+// PEDIDO AO VIVO (2026-09-30): "verifica pq tem produto que não ta
+// aparecendo" — achado ao vivo: 12 de 14 produtos de um terceiro (estoque
+// real, um deles com "Risco de falta") sumiam do Planejamento porque
+// nunca tinham sido cadastrados — o BI de estoque exigia cadastro prévio
+// pra entrar (ver mudança em buscarEstoqueBi/_juntarEstoqueBi acima). O
+// usuário pediu sem aviso nenhum na tela — só aparecer normal, igual
+// qualquer outro produto (cadastrar continua sendo o jeito de ganhar os
+// parâmetros extras de compra/fornecedor, não pré-requisito pra aparecer).
+test('estoqueHtml: produto do BI sem cadastro prévio aparece na tabela normalmente, sem nenhum aviso (antes ficava invisível)',()=>{
+  const h=load();
+  const estoqueBi=new Map([['139934',{cod:'139934',produto:'14009 MILHOCA OISHII 500 G - CX 20',estoque:2204,pedido:0,consumoDia:10}]]);
+  const v=h.construirVisao({produtos:[],projecao:[],pedidos:[],ops:[],agendamentos:[],requisicoes:[],estoqueBi});
+  const html=h.estoqueHtml(v);
+  assert.match(html,/14009 MILHOCA OISHII 500 G - CX 20/,'produto sem cadastro precisa aparecer na tabela');
+  assert.doesNotMatch(html,/[Nn]ão cadastrado/,'sem aviso — pedido explícito do usuário');
+});
 // BUG AO VIVO REAL (2026-09-04): "a necessidade só cobre o negativo, não
 // coloca um saldo pros 30 dias ou os dias configurados pro produto" —
 // achada a causa raiz: TODO produto novo cadastrado em Ficha Técnica
@@ -324,6 +369,65 @@ test('_juntarInsumosBi: filtra só estoque>0 ou projecaoBom>0, recalcula cobertu
   const paradoItem=lista.find(x=>x.cod==='1');
   assert.equal(paradoItem.necessidade,0,'sem projecaoBom, não gera necessidade mesmo com status/sugestaoCompra do BI dizendo outra coisa');
 });
+test('_juntarInsumosBi: não perde matéria-prima com saldo positivo e aceita chaves alternativas do dados-insumos',()=>{
+  const h=load();
+  const lista=h._juntarInsumosBi({dados:[
+    {produto_key:'MP77',descricao:'MP - CURRY KG',categoria:'MATERIA PRIMA',estoque:0,saldo:915,projecaoBom:365,unidade:'kg'},
+    {codigo:'PA99',descricao:'PRODUTO ACABADO TESTE',categoria:'PRODUTO ACABADO',saldo:100,projecaoBom:10},
+  ]},0);
+  const curry=lista.find(x=>x.cod==='MP77');
+  assert.ok(curry,'matéria-prima com saldo positivo aparece mesmo se estoque vier zerado');
+  assert.equal(curry.estoque,915);
+  assert.equal(curry.grupo,'materia-prima');
+  assert.equal(lista.some(x=>x.cod==='PA99'),false,'linha explicitamente marcada como produto acabado não contamina Insumos');
+});
+
+// PEDIDO AO VIVO (2026-09-20): "não traz o saldo de todos os insumos" —
+// dados-insumos.json às vezes vem com estoque zerado/vazio pra um material
+// que tem consumo real nesse mesmo arquivo. produtos_estoque.json (mesmo BI
+// de Planejamento, carregado por código pra TODOS os produtos cadastrados)
+// vira saldo de reserva só quando dados-insumos não trouxe nada de verdade.
+test('_juntarInsumosBi: sem estoque no dados-insumos, usa o saldo de produtos_estoque.json (mesmo BI de Planejamento) como reserva',()=>{
+  const h=load();
+  h.setEstoqueBi(new Map([
+    ['44353',{cod:'44353',produto:'MP - PREPARACAO FAROFA TRADICIONAL KG',estoque:180,pedido:0}],
+  ]));
+  const dadosInsumos={produtos:[
+    {sku:'44353',produto:'MP - PREPARACAO FAROFA TRADICIONAL KG',categoria:'MATERIA PRIMA',estoque:0,projecaoBom:219454},
+  ]};
+  const lista=h._juntarInsumosBi(dadosInsumos,0);
+  const item=lista.find(x=>x.cod==='44353');
+  assert.ok(item,'aparece mesmo com estoque zerado no dados-insumos, porque tem consumo');
+  assert.equal(item.estoque,180,'usou o saldo de produtos_estoque.json, não ficou zerado');
+});
+test('_juntarInsumosBi: dados-insumos com saldo real (mesmo pequeno) nunca é sobrescrito pelo BI de Planejamento',()=>{
+  const h=load();
+  h.setEstoqueBi(new Map([
+    ['5',{cod:'5',produto:'Tem saldo direto no dados-insumos',estoque:9999,pedido:0}],
+  ]));
+  const dadosInsumos={produtos:[
+    {sku:'5',produto:'Tem saldo direto no dados-insumos',estoque:12,projecaoBom:50},
+  ]};
+  const lista=h._juntarInsumosBi(dadosInsumos,0);
+  assert.equal(lista.find(x=>x.cod==='5').estoque,12,'estoque real do próprio arquivo é sempre o que vale, o outro é só reserva');
+});
+test('insumosHtml: colunas Estoque e Consumo mensal mostram só o número, sem "kg"/"unidade" ao lado',()=>{
+  const h=load();
+  const html=h.insumosHtml([
+    {cod:'1',produto:'Saco Pouch Tapioca',grupo:'insumo',tipo:'Embalagem',estoque:110277,consumoMensal:156000,unidade:'unidade',coberturaDias:21.2},
+    {cod:'2',produto:'MP - Bicarbonato de Sodio Kg',grupo:'materia-prima',tipo:'Matéria-prima',estoque:3567,consumoMensal:45435,unidade:'kg',coberturaDias:2.4},
+  ]);
+  assert.match(html,/110\.277<\/td>/,'estoque em número puro, sem "unidade" colado');
+  assert.match(html,/156\.000<\/td>/,'consumo mensal em número puro, sem "unidade" colado');
+  assert.match(html,/3\.567<\/td>/,'estoque em número puro, sem "kg" colado');
+  assert.doesNotMatch(html,/110\.277\s*unidade/);
+  assert.doesNotMatch(html,/3\.567\s*kg/);
+});
+test('insumosHtml: estoque negativo (erro real de inventário) aparece negativo, não vira 0',()=>{
+  const h=load();
+  const html=h.insumosHtml([{cod:'1',produto:'Alho Triturado Insumo',grupo:'materia-prima',tipo:'Matéria-prima',estoque:-50,consumoMensal:1000,coberturaDias:-1.5}]);
+  assert.match(html,/>-50<\/td>/,'estoque negativo aparece de verdade, não 0');
+});
 test('_juntarInsumosBi: ordena por necessidade decrescente (maior falta primeiro)',()=>{
   const h=load();
   const dadosInsumos={produtos:[
@@ -355,6 +459,11 @@ test('cruzamentoHtml: saldo negativo ganha fundo vermelho/letra branca e coluna 
   const linhaSemConsumo=html.slice(html.indexOf('Sem Consumo'));
   assert.match(linhaSemConsumo,/>—<\/td>/,'sem consumoDia, cobertura fica indefinida (travessão)');
 });
+test('cruzamentoHtml: estoque negativo (erro real de inventário) também aparece negativo, não vira 0',()=>{
+  const h=load();
+  const html=h.cruzamentoHtml([{key:'k1',produto:'Alho Triturado',estoqueAtual:-144,pendente:200,consumoDia:32}]);
+  assert.match(html,/>-144<\/td>/);
+});
 
 // PEDIDO AO VIVO (2026-09-07): "o saldo que é pra aparecer lá não é pra
 // trazer saldo de compra, saldo de produção... é estoque menos pedido, que
@@ -378,12 +487,36 @@ test('cruzamentoHtml: Saldo da tabela é SEMPRE Estoque − Pedidos, mesmo quand
 
 // PEDIDO AO VIVO (2026-09-07): "eu quero que coloque consumo mesmo, que
 // vai pegar a média dos três últimos meses... não quero consumo dia não"
-test('estoqueHtml: mostra "Consumo" (mensal), não "Consumo/dia"',()=>{
+test('estoqueHtml virou Planejamento enxuto sem repetir consumo e com saldo operacional',()=>{
   const h=load();
-  const html=h.estoqueHtml([{key:'k1',produto:'Produto X',estoqueAtual:100,estoqueComprometido:20,estoqueDisponivel:80,estoqueMinimo:10,consumoMensal:930,coberturaDias:8,diasAlvo:30,necessidade:50}]);
-  assert.doesNotMatch(html,/Consumo\/dia/,'cabeçalho antigo "Consumo/dia" não aparece mais');
-  assert.match(html,/>Consumo</,'cabeçalho novo é só "Consumo"');
-  assert.match(html,/>930</,'mostra o valor mensal (930), não um valor diário');
+  const html=h.estoqueHtml([{key:'k1',produto:'Produto X',estoqueAtual:100,pendente:20,estoqueDisponivel:80,consumoMensal:930,coberturaDias:8,diasAlvo:30,necessidade:50}]);
+  assert.match(html,/>Estoque</);assert.match(html,/>Pedidos</);assert.match(html,/>Saldo</);assert.match(html,/>Cobertura</);assert.match(html,/>Necessidade</);assert.match(html,/Ação recomendada/);
+  assert.doesNotMatch(html,/>Consumo</);assert.doesNotMatch(html,/Consumo\/dia/);
+  assert.match(html,/>80<\/b>/,'saldo visível é estoque - pedidos');
+});
+
+// PEDIDO AO VIVO (2026-10-01): "verifique se não mostra que o estoque está
+// negativo também... para saber que é um erro no sistema e tem que
+// ajustar via inventário lá no Bluesoft" — comparado com o BI de
+// referência (produtos_estoque.json tinha quantidade_estoque=-143.9 pra um
+// produto real), o Planejamento mostrava Estoque=0 (qtd() floorava em 0),
+// escondendo o erro de inventário. "Quero saber quantos dias negativos
+// fica com o saldo negativo... em todo lugar que mostre cobertura de
+// estoque" — x.coberturaDias também vem floorado em 0 (construirVisao),
+// de propósito, pra outros usos (ordenação/risco/transferência); aqui a
+// tabela recalcula sem esse piso só pro texto mostrado, igual já era
+// feito em cruzamentoHtml/comprasHtml.
+test('estoqueHtml: estoque negativo (erro real de inventário na Bluesoft) aparece negativo, não vira 0',()=>{
+  const h=load();
+  const html=h.estoqueHtml([{key:'k1',produto:'Alho Triturado',estoqueAtual:-144,pendente:200,estoqueDisponivel:-344,consumoDia:32,necessidade:0}]);
+  const linha=html.slice(html.indexOf('Alho Triturado'));
+  assert.match(linha,/>-144<\/td>/,'Estoque negativo aparece de verdade, não 0');
+});
+test('estoqueHtml: cobertura mostra os dias NEGATIVOS de verdade quando o saldo está negativo (não "0d")',()=>{
+  const h=load();
+  const html=h.estoqueHtml([{key:'k1',produto:'Alho Triturado',estoqueAtual:-144,pendente:200,estoqueDisponivel:-344,consumoDia:32,necessidade:0}]);
+  assert.match(html,/>-10,8d<\/span>|>-10\.8d<\/span>/,'cobertura real = -344\/32 ≈ -10,8 dias, não "0d"');
+  assert.doesNotMatch(html,/>0d<\/span>/,'nunca mostra "0d" pra saldo negativo — essa é a confusão que o usuário reportou');
 });
 
 // PEDIDO AO VIVO (2026-09-07): "da programação de produção... é pra

@@ -36,6 +36,13 @@ function carregarPagina(colecoes) {
     recebimento_agendamentos: mockColecao([]),
   };
   win.getDTFirestore = () => ({ collection: (nome) => cols[nome] || mockColecao([]) });
+  win._fornecedoresService = {
+    normalizarNomeFornecedor: v => String(v||'').trim().toLowerCase(),
+    listarHomologadosPorProduto: async produtoId => [{ fornecedorId:'f1', fornecedorNome:'Fornecedor X', produtoId:String(produtoId), homologado:true }],
+    buscarPorId: async () => ({ fornecedorId:'f1', nomeFantasia:'Fornecedor X', situacao:'ativo', homologacao:{status:'homologado'}, documentos:[] }),
+    estaBloqueado: () => false,
+    documentosVencidos: () => [],
+  };
   win.eval(code);
   return { win, document, cols };
 }
@@ -98,4 +105,43 @@ test('clicar em "Em análise" muda o status sem abrir modal', async () => {
   await new Promise(r => setTimeout(r, 0));
   await new Promise(r => setTimeout(r, 0));
   assert.equal(requests._registro.get('r4').status, 'em_analise');
+});
+
+test('compra parcial: uma solicitação aceita vários pedidos, preserva o comprador responsável e registra quem executou', async () => {
+  const requests = mockColecao([{ id: 'rp', data: { produto: 'Sal', quantidade: 30, status: 'solicitada', prodKey: '999', destino: 'Filial', compradorUid:'u-original', compradorNome:'Comprador Original', compradorEmail:'original@empresa.com' } }]);
+  const schedules = mockColecao([]);
+  const { win, document } = carregarPagina({ requests, schedules });
+  await win.renderComprasProfissional('solicitacoes');
+  document.querySelector('[data-cp-req-comprar="rp"]').click();
+  document.getElementById('cp-req-num').value = 'PC-1';
+  document.getElementById('cp-req-forn').value = 'Fornecedor X';
+  document.getElementById('cp-req-qtd').value = '10';
+  document.getElementById('cp-req-preco').value = '2';
+  document.getElementById('cp-req-prev').value = '2026-09-10';
+  document.querySelector('[data-cp-req-save="rp"]').click();
+  await new Promise(r => setTimeout(r, 0)); await new Promise(r => setTimeout(r, 0));
+  let req=requests._registro.get('rp');
+  assert.equal(req.status,'parcialmente_comprada');
+  assert.equal(req.quantidadeComprada,10);
+  assert.equal(req.saldoComprar,20);
+  assert.equal(req.pedidosCompra.length,1);
+  let ag=schedules._registro.get('req_rp');
+  assert.equal(ag.compradorUid,'u-original','cobertura/execução não transfere a carteira');
+  assert.equal(ag.registradoPorUid,'u1','ator real fica separado para auditoria');
+
+  await win.renderComprasProfissional('solicitacoes');
+  document.querySelector('[data-cp-req-comprar="rp"]').click();
+  document.getElementById('cp-req-num').value = 'PC-2';
+  document.getElementById('cp-req-forn').value = 'Fornecedor X';
+  document.getElementById('cp-req-qtd').value = '20';
+  document.getElementById('cp-req-preco').value = '2.5';
+  document.getElementById('cp-req-prev').value = '2026-09-11';
+  document.querySelector('[data-cp-req-save="rp"]').click();
+  await new Promise(r => setTimeout(r, 0)); await new Promise(r => setTimeout(r, 0));
+  req=requests._registro.get('rp');
+  assert.equal(req.status,'comprada');
+  assert.equal(req.quantidadeComprada,30);
+  assert.equal(req.saldoComprar,0);
+  assert.equal(req.pedidosCompra.length,2);
+  assert.ok(schedules._registro.get('req_rp_PC-2'),'segundo pedido ganha agendamento próprio, sem sobrescrever o primeiro');
 });

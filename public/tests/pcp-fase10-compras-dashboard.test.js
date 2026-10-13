@@ -22,3 +22,11 @@ test('HTML liga o setor Compras ao Dashboard novo',()=>{
   assert.match(htmlCode,/comprasIrParaPagina\('dashboard',this\)/);
   assert.match(htmlCode,/89-compras-dashboard\.js/);
 });
+
+test('Dashboard operacional distingue compra parcial, sem comprador, cotação vencendo e entrega após data necessária',()=>{
+  assert.match(dashboard,/Compras parciais:/);
+  assert.match(dashboard,/Sem comprador:/);
+  assert.match(dashboard,/Cotações vencendo em 7d:/);
+  assert.match(dashboard,/Entrega após data necessária:/);
+  assert.match(dashboard,/!\/final\|comprad\|cancel\|rejeit\/i\.test\(String\(x\.status \|\| ''\)\)/,'solicitação totalmente comprada não pode continuar no KPI de abertas');
+});

@@ -14,10 +14,16 @@ const code = fs.readFileSync(path.join(__dirname, '../js/analista/121-compras-pr
 
 function mockColecao(docsIniciais) {
   const registro = new Map((docsIniciais || []).map(d => [d.id, d.data]));
+  function comFiltros(filtros) {
+    return {
+      where: (campo, op, valor) => comFiltros([...filtros, { campo, valor }]),
+      get: async () => ({ docs: [...registro.entries()].filter(([, data]) => filtros.every(f => data && data[f.campo] === f.valor)).map(([id, data]) => ({ id, data: () => data })) }),
+    };
+  }
   return {
     get: async () => ({ docs: [...registro.entries()].map(([id, data]) => ({ id, data: () => data })) }),
     doc: (id) => ({ id, set: async () => {} }),
-    where: () => ({ get: async () => ({ docs: [] }) }),
+    where: (campo, op, valor) => comFiltros([{ campo, valor }]),
     _registro: registro,
   };
 }
@@ -27,7 +33,13 @@ function carregarPagina(pagina, colecoes) {
   const win = dom.window; const document = win.document;
   win.showToast = () => {};
   win.temPermissao = () => true;
-  win._currentAnalistaUser = { uid: 'u1', email: 'comprador@empresa.com', nome: 'Comprador' };
+  win._currentAnalistaUser = { uid: (colecoes && colecoes.uid) || 'u1', email: 'comprador@empresa.com', nome: 'Comprador' };
+  // Este arquivo testa exibição/agrupamento (colunas, filtros, soma de
+  // itens), não o recorte por comprador — que tem cobertura própria em
+  // compras-dashboard-papel-comprador.test.js. Sem isso, os fixtures abaixo
+  // (compradorNome de outra pessoa) ficariam escondidos pelo novo filtro
+  // "cada comprador só vê os seus produtos" (121-compras-profissional.js).
+  win.DT_USUARIO_ACESSO_ATUAL = (colecoes && colecoes.acesso) || { admin_mestre: true };
   const cols = {
     pcp_requisicoes_compra: colecoes.requests || mockColecao([]),
     producao_produtos: mockColecao([]),
@@ -35,7 +47,9 @@ function carregarPagina(pagina, colecoes) {
     compras_regras_comprador: mockColecao([]),
     recebimento_agendamentos: colecoes.receiptAgenda || mockColecao([]),
   };
+  const rawCols = { compras_cobertura_temporaria: (colecoes && colecoes.coberturaCol) || mockColecao([]) };
   win.getDTFirestore = () => ({ collection: (nome) => cols[nome] || mockColecao([]) });
+  win.getDTRawFirestore = () => ({ collection: (nome) => rawCols[nome] || mockColecao([]) });
   win.eval(code);
   return { win, document, cols };
 }
@@ -132,4 +146,59 @@ test('Recebimentos: filtro "Agendados" só mostra pedidos com dataAgendada preen
   // "Item Pendente" ainda aparece no <select> de filtro (lista todos os
   // produtos possíveis) — o que importa é sumir da LINHA da tabela.
   assert.doesNotMatch(html, /<b>Item Pendente<\/b>/);
+});
+
+// PEDIDO AO VIVO (2026-09-18): "cada comprador só vai poder pesquisar os
+// seus produtos... isso vai servir pra tudo dentro da parte de compras" —
+// Pedidos e Recebimentos também recortam por comprador (papelCompras),
+// igual ao Dashboard (ver compras-dashboard-papel-comprador.test.js).
+test('Recebimentos: um comprador comum só vê os pedidos com o próprio nome; gerente vê a equipe; admin vê tudo', async () => {
+  const fixture = () => mockColecao([
+    { id: 'p1', data: { numeroPedido: '30', fornecedorNome: 'F1', compradorNome: 'Dilma', dataPrevista: '2026-09-01', dataAgendada: '', itensPedido: [{ produto: 'Pedido da Dilma', quantidadePendente: 5 }] } },
+    { id: 'p2', data: { numeroPedido: '31', fornecedorNome: 'F2', compradorNome: 'Fabricio', dataPrevista: '2026-09-05', dataAgendada: '', itensPedido: [{ produto: 'Pedido do Fabricio', quantidadePendente: 8 }] } },
+  ]);
+
+  const comprador = carregarPagina('recebimentos', { receiptAgenda: fixture() });
+  comprador.win.DT_USUARIO_ACESSO_ATUAL = { nome: 'Dilma', papelCompras: 'comprador' };
+  await comprador.win.renderComprasProfissional('recebimentos');
+  let html = comprador.document.getElementById('page-compras-recebimentos').innerHTML;
+  assert.match(html, /Pedido da Dilma/);
+  assert.doesNotMatch(html, /Pedido do Fabricio/);
+
+  const gerente = carregarPagina('recebimentos', { receiptAgenda: fixture() });
+  gerente.win.DT_USUARIO_ACESSO_ATUAL = { nome: 'Gerente', papelCompras: 'gerente', compradoresGerenciados: ['Fabricio'] };
+  await gerente.win.renderComprasProfissional('recebimentos');
+  html = gerente.document.getElementById('page-compras-recebimentos').innerHTML;
+  assert.doesNotMatch(html, /Pedido da Dilma/);
+  assert.match(html, /Pedido do Fabricio/);
+
+  const admin = carregarPagina('recebimentos', { receiptAgenda: fixture() });
+  admin.win.DT_USUARIO_ACESSO_ATUAL = { admin_mestre: true };
+  await admin.win.renderComprasProfissional('recebimentos');
+  html = admin.document.getElementById('page-compras-recebimentos').innerHTML;
+  assert.match(html, /Pedido da Dilma/);
+  assert.match(html, /Pedido do Fabricio/);
+});
+
+// PEDIDO AO VIVO (2026-09-18): "o gerente vai poder pegar o login de uma
+// pessoa que vai sair de férias e unificar na outra... os pedidos dela
+// aparecem TAMBÉM pra quem tá cobrindo, pra não ficar parado."
+test('Recebimentos: cobertura temporária ativa faz o substituto ver TAMBÉM os pedidos de quem ele está cobrindo (sem perder os próprios)', async () => {
+  const receiptAgenda = mockColecao([
+    { id: 'p1', data: { numeroPedido: '30', fornecedorNome: 'F1', compradorNome: 'Dilma', dataPrevista: '2026-09-01', dataAgendada: '', itensPedido: [{ produto: 'Pedido da Dilma', quantidadePendente: 5 }] } },
+    { id: 'p2', data: { numeroPedido: '31', fornecedorNome: 'F2', compradorNome: 'Fabricio', dataPrevista: '2026-09-05', dataAgendada: '', itensPedido: [{ produto: 'Pedido do Fabricio', quantidadePendente: 8 }] } },
+    { id: 'p3', data: { numeroPedido: '32', fornecedorNome: 'F3', compradorNome: 'Marta', dataPrevista: '2026-09-06', dataAgendada: '', itensPedido: [{ produto: 'Pedido da Marta', quantidadePendente: 3 }] } },
+  ]);
+  // Marta está cobrindo a Dilma (que saiu de férias) — a conta autenticada
+  // aqui é a da Marta (uid 'u-marta', ver `uid` no fixture).
+  const coberturaCol = mockColecao([{ id: 'c1', data: { origemUid: 'u-dilma', origemNome: 'Dilma', substitutoUid: 'u-marta', substitutoNome: 'Marta', ativo: true } }]);
+  const { win, document } = carregarPagina('recebimentos', {
+    receiptAgenda, coberturaCol, uid: 'u-marta',
+    acesso: { nome: 'Marta', papelCompras: 'comprador' },
+  });
+  await win.renderComprasProfissional('recebimentos');
+  const html = document.getElementById('page-compras-recebimentos').innerHTML;
+  assert.match(html, /Pedido da Marta/, 'continua vendo os próprios pedidos');
+  assert.match(html, /Pedido da Dilma/, 'e TAMBÉM os pedidos de quem está cobrindo (Dilma)');
+  assert.doesNotMatch(html, /Pedido do Fabricio/, 'mas não os de quem ela não está cobrindo');
 });

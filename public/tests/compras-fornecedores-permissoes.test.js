@@ -11,21 +11,27 @@ const rules = fs.readFileSync(path.join(__dirname, '../../firestore.rules'), 'ut
 test('compras_fornecedores: leitura/escrita exigem permissão de compras-central, exclusão lógica só (delete sempre false)', () => {
   const bloco = rules.match(/match \/compras_fornecedores\/\{docId\}[\s\S]*?\n {4}\}/)[0];
   assert.match(bloco, /allow read: if hasPermission\('compras-central', 'visualizar'\)/);
-  assert.match(bloco, /allow create, update: if hasPermission\('compras-central', 'editar'\)/);
+  assert.match(bloco, /allow create: if hasPermission\('compras-central', 'configurar'\) \|\|/);
+  assert.match(bloco, /allow update: if hasPermission\('compras-central', 'configurar'\) \|\|/);
   assert.match(bloco, /allow delete: if false/);
 });
 
 test('compras_fornecedores_resumo: PCP/Produção (canUseAnalista) leem, só Compras escreve — nenhum campo de preço aparece na regra', () => {
   const bloco = rules.match(/match \/compras_fornecedores_resumo\/\{docId\}[\s\S]*?\n {4}\}/)[0];
   assert.match(bloco, /allow read: if canUseAnalista\(\)/);
-  assert.match(bloco, /allow write: if hasPermission\('compras-central', 'editar'\)/);
+  assert.match(bloco, /allow create, update: if \(/);
+  assert.match(bloco, /hasPermission\('compras-central', 'editar'\)/);
+  assert.match(bloco, /getAfter/);
   assert.doesNotMatch(bloco, /preco|precoReferencia|condicaoPagamento/i);
 });
 
 test('compras_fornecedor_produtos: leitura/escrita restritas a compras-central (preço/condição comercial não vaza pra PCP)', () => {
   const bloco = rules.match(/match \/compras_fornecedor_produtos\/\{docId\}[\s\S]*?\n {4}\}/)[0];
   assert.match(bloco, /allow read: if hasPermission\('compras-central', 'visualizar'\)/);
-  assert.match(bloco, /allow write: if hasPermission\('compras-central', 'editar'\)/);
+  assert.match(bloco, /allow create: if hasPermission\('compras-central', 'configurar'\) \|\|/);
+  assert.match(bloco, /allow update: if hasPermission\('compras-central', 'configurar'\) \|\|/);
+  assert.match(bloco, /hasPermission\('compras-central', 'editar'\)/);
+  assert.match(bloco, /homologado/);
   assert.doesNotMatch(bloco, /canUseAnalista/);
 });
 

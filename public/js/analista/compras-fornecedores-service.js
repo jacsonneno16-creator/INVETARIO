@@ -291,14 +291,52 @@
     return dados;
   }
 
+  // PEDIDO AO VIVO (2026-09-18): "monta um cadastro de fornecedor→produto,
+  // tipo o modal de máquina da Programação Produção" — vincularProdutoFornecedor
+  // já existia (Fase 1A), mas nenhuma tela chamava; o vínculo ficava sem
+  // jeito de ser desfeito também. Delete de verdade (não é como o
+  // fornecedor em si, que só bloqueia): errar o produto ao vincular é um
+  // erro de digitação comum, não precisa virar histórico.
+  async function removerVinculoProduto(fornecedorId, produtoId) {
+    const id = `${fornecedorId}_${idSeguro(produtoId)}`;
+    await raw().collection(COL_PRODUTOS).doc(id).delete();
+  }
   async function listarProdutosDoFornecedor(fornecedorId) {
     const snap = await raw().collection(COL_PRODUTOS).where('fornecedorId', '==', fornecedorId).get().catch(() => ({ docs: [] }));
     return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
   }
 
+  function _resumoAptoCompra(r) {
+    if(!r)return false; // sem cadastro mestre não há como provar situação/homologação; não liberar compra por vínculo órfão
+    const sit=String(r.situacao||'ativo').toLowerCase(),hom=String(r.homologacaoStatus||'nao_homologado').toLowerCase();
+    return !/bloqueado|inativo|pendente/.test(sit) && hom==='homologado';
+  }
   async function listarHomologadosPorProduto(produtoId) {
-    const snap = await raw().collection(COL_PRODUTOS).where('produtoId', '==', String(produtoId)).where('homologado', '==', true).get().catch(() => ({ docs: [] }));
-    return snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+    const [snap,resumos]=await Promise.all([
+      raw().collection(COL_PRODUTOS).where('produtoId', '==', String(produtoId)).where('homologado', '==', true).get().catch(() => ({ docs: [] })),
+      raw().collection(COL_RESUMO).get().catch(()=>({docs:[]})),
+    ]);
+    const mapa=new Map(resumos.docs.map(d=>[String(d.id),d.data()||{}]));
+    return snap.docs.map(d=>({_id:d.id,...d.data()})).filter(x=>_resumoAptoCompra(mapa.get(String(x.fornecedorId||'')))).map(x=>{const r=mapa.get(String(x.fornecedorId||''))||{};return {...x,fornecedorNome:r.nomeFantasia||r.nome||String(x.fornecedorId||''),fornecedorSituacao:r.situacao||'',homologacaoStatus:r.homologacaoStatus||''};});
+  }
+
+  async function resolverFornecedorAptoPorNome(nome) {
+    const alvo=normalizarNomeFornecedor(nome);if(!alvo)return null;
+    const todos=await listar({limit:100000});
+    const candidatos=todos.filter(f=>[f.nomeFantasia,f.razaoSocial].some(v=>normalizarNomeFornecedor(v)===alvo));
+    if(candidatos.length!==1)return null;
+    const f=candidatos[0];
+    if(estaBloqueado(f)||String(f.situacao||'ativo')!=='ativo'||String(f.homologacao?.status||'')!=='homologado'||documentosVencidos(f).length)return null;
+    return {fornecedorId:f.fornecedorId,fornecedorNome:f.nomeFantasia||f.razaoSocial||'',fornecedorSituacao:f.situacao||'',homologacaoStatus:f.homologacao?.status||''};
+  }
+
+  async function listarVinculosHomologados() {
+    const [snap,resumos]=await Promise.all([
+      raw().collection(COL_PRODUTOS).where('homologado','==',true).get().catch(()=>({docs:[]})),
+      raw().collection(COL_RESUMO).get().catch(()=>({docs:[]})),
+    ]);
+    const mapa=new Map(resumos.docs.map(d=>[String(d.id),d.data()||{}]));
+    return snap.docs.map(d=>({_id:d.id,...d.data()})).filter(x=>_resumoAptoCompra(mapa.get(String(x.fornecedorId||'')))).map(x=>{const r=mapa.get(String(x.fornecedorId||''))||{};return {...x,fornecedorNome:r.nomeFantasia||r.nome||String(x.fornecedorId||''),fornecedorSituacao:r.situacao||'',homologacaoStatus:r.homologacaoStatus||''};});
   }
 
   // Nunca associa sozinho — só classifica candidatos. "exato": nome
@@ -373,7 +411,7 @@
     estaBloqueado, documentosVencidos, condicoesComerciaisPadrao,
     detectarDuplicidade, criarFornecedor, atualizarFornecedor,
     bloquearFornecedor, desbloquearFornecedor,
-    vincularProdutoFornecedor, listarProdutosDoFornecedor, listarHomologadosPorProduto,
+    vincularProdutoFornecedor, removerVinculoProduto, listarProdutosDoFornecedor, listarHomologadosPorProduto, listarVinculosHomologados, resolverFornecedorAptoPorNome,
     conciliarFornecedorLegado, simularConciliacaoLegado,
   };
 })(window);

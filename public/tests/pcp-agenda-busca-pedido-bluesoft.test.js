@@ -42,11 +42,30 @@ async function montarAmbiente({ buscarPedido, produtosCadastrados = [] } = {}) {
       ? { get: async () => ({ docs: produtosCadastrados.map((p, i) => ({ id: 'p' + i, data: () => p })) }) }
       : colecaoVazia(),
   });
-  win.getDTRawFirestore = () => ({ collection: () => colecaoVazia() });
-  win.buscarPedidoCompraBluesoftPorNumero = buscarPedido || (async () => { throw new Error('não deveria ser chamado neste teste'); });
+  win.getDTRawFirestore = () => ({ collection: (nome) => {
+    if (nome === 'lojas') return {
+      get: async () => ({ docs: [{ id:'loja1', data:()=>({ nome:'Loja 1', ativa:true, bluesoft_loja_key:1 }) }] }),
+      doc: () => ({ collection: (sub) => {
+        if (sub === 'producao_produtos') return { get: async()=>({docs:produtosCadastrados.map((p,i)=>({id:'p'+i,data:()=>p}))}) };
+        if (sub === 'recebimento_agendamentos') return {
+          where: (_campo,_op,numero) => ({ limit: () => ({ get: async () => {
+            try {
+              const p = await (buscarPedido || (async () => { throw new Error('não deveria ser chamado neste teste'); }))(numero);
+              const itensPedido=(p.itens||[]).map(it=>({produtoKey:it.produtoKey||it.cod,cod:it.cod,produto:it.produtoNome||it.produto,quantidadePendente:it.quantidadePendente||0,quantidadeRecebida:Math.max(0,(it.quantidadePedida||0)-(it.quantidadePendente||0))}));
+              return { empty:false, docs:[{ data:()=>({numeroPedido:p.numeroPedido,fornecedorNome:p.fornecedorNome,dataRecebida:p.entregaPendente?null:'2026-01-01',itensPedido}) }] };
+            } catch(e) { if (/não encontrado/i.test(e.message||'')) return { empty:true, docs:[] }; throw e; }
+          } }) })
+        };
+        return colecaoVazia();
+      } })
+    };
+    return { where:()=>({get:async()=>({docs:[]})}), get:async()=>({docs:[]}) };
+  } });
+  win.buscarPedidoCompraBluesoftPorNumero = () => { throw new Error('serviço Bluesoft antigo não deve ser usado'); };
   vm.runInContext(code, dom.getInternalVMContext(), { filename: '78-pcp-central.js' });
   await win.renderPCPCentral();
-  win.pcpIrParaAba('agendamentos');
+  win._pcpInternals.setAba('agendamentos');
+  await win.renderPCPCentral();
   return { win, chamadas };
 }
 
@@ -110,7 +129,7 @@ test('pedido não encontrado na Bluesoft: mostra o erro específico, não trava 
   win.document.querySelector('[data-pcp-age-buscar]').dispatchEvent(new win.Event('click', { bubbles: true }));
   await new Promise(r => setTimeout(r, 20));
   const html = win.document.getElementById('page-pcp-central').innerHTML;
-  assert.match(html, /não encontrado na Bluesoft/);
+  assert.match(html, /não encontrado no espelho do BI/);
 });
 
 test('depois de salvar o agendamento com sucesso, o resultado da busca some da tela (não fica um pedido velho preso ali)', async () => {
@@ -130,14 +149,23 @@ test('depois de salvar o agendamento com sucesso, o resultado da busca some da t
       return colecaoVazia();
     },
   });
-  win.getDTRawFirestore = () => ({ collection: () => colecaoVazia() });
-  win.buscarPedidoCompraBluesoftPorNumero = async () => ({
-    numeroPedido: '42', fornecedorNome: 'Fornecedor Y', entregaPendente: true,
-    itens: [{ produtoKey: '3', cod: '3', produtoNome: 'Fermento', cadastradoNaProducao: true, quantidadePedida: 8, quantidadePendente: 8 }],
-  });
+  win.getDTRawFirestore = () => ({ collection: (nome) => {
+    if (nome==='lojas') return {
+      get:async()=>({docs:[{id:'loja1',data:()=>({nome:'Loja 1',ativa:true,bluesoft_loja_key:1})}]}),
+      doc:()=>({collection:(sub)=>{
+        if(sub==='producao_produtos') return {get:async()=>({docs:[{id:'p3',data:()=>({cod:'3',nome:'Fermento'})}]})};
+        if(sub==='pcp_agendamentos') return {get:async()=>({docs:[]}),add:async(doc)=>{salvo=doc;return{id:'novo'};}};
+        if(sub==='recebimento_agendamentos') return {where:()=>({limit:()=>({get:async()=>({empty:false,docs:[{data:()=>({numeroPedido:'42',fornecedorNome:'Fornecedor Y',itensPedido:[{produtoKey:'3',produto:'Fermento',quantidadePendente:8,quantidadeRecebida:0}]})}]})})})};
+        return colecaoVazia();
+      }})
+    };
+    return {where:()=>({get:async()=>({docs:[]})}),get:async()=>({docs:[]})};
+  } });
+  win.buscarPedidoCompraBluesoftPorNumero = () => { throw new Error('serviço Bluesoft antigo não deve ser usado'); };
   vm.runInContext(code, dom.getInternalVMContext(), { filename: '78-pcp-central.js' });
   await win.renderPCPCentral();
-  win.pcpIrParaAba('agendamentos');
+  win._pcpInternals.setAba('agendamentos');
+  await win.renderPCPCentral();
 
   win.document.getElementById('pcp-age-busca-num').value = '42';
   win.document.querySelector('[data-pcp-age-buscar]').dispatchEvent(new win.Event('click', { bubbles: true }));
