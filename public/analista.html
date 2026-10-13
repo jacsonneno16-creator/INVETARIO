@@ -20,7 +20,8 @@
 <script defer src="vendor/firebase-10.12.2/firebase-app-compat.js"></script>
 <script defer src="vendor/firebase-10.12.2/firebase-auth-compat.js"></script>
 <script defer src="vendor/firebase-10.12.2/firebase-firestore-compat.js"></script>
-<link rel="stylesheet" href="/css/analista.css?v=20260827-fix-pcp-modal-overlay">
+<script defer src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script>
+<link rel="stylesheet" href="/css/analista.css?v=20261001-foto-volta-sem-moldura">
 <style id="v80-analista-compacto">
 /* v80 — layout compacto e tabelas largas sem quebrar nomes de produtos */
 :root{font-size:14px}
@@ -107,6 +108,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <link rel="stylesheet" href="css/analista-cadastros-v287.css?v=20260806-v296.1">
 <!-- Compatibilidade de auditoria: producao-completa.css?v=20260823f-gantt-min-width-responsivo -->
 <link rel="stylesheet" href="css/producao-completa.css?v=20260831c-tabela-densa-fonte-padding">
+<link rel="stylesheet" href="css/separacao.css?v=20261012-separacao-v1">
 </head>
 <body>
 <!-- ══════════ TELA DE LOGIN ══════════ -->
@@ -275,49 +277,25 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <span class="nav-icon">📊</span>Dashboard
 </div>
 <div class="sb-sec">Planejamento</div>
-<div class="nav-item" id="nav-pcp-pedidos" onclick="pcpIrParaAba('pedidos',this)">
-<span class="nav-icon">📥</span>Pedidos
+<div class="nav-item" id="nav-pcp-planejamento" onclick="pcpIrParaAba('planejamento',this)">
+<span class="nav-icon">📦</span>Planejamento
 </div>
-<div class="nav-item" id="nav-pcp-estoque" onclick="pcpIrParaAba('estoque',this)">
-<span class="nav-icon">📦</span>Estoque
-</div>
-<div class="nav-item" id="nav-pcp-cruzamento" onclick="pcpIrParaAba('pedidos-estoque',this)">
-<span class="nav-icon">🔀</span>Pedidos x Estoque
-</div>
-<div class="nav-item" id="nav-pcp-compras" onclick="pcpIrParaAba('compras',this)">
-<span class="nav-icon">🛒</span>Necessidades de Compra
+<div class="nav-item" id="nav-pcp-insumos" onclick="pcpIrParaAba('insumos',this)">
+<span class="nav-icon">🧱</span>Insumos
 </div>
 <div class="sb-sec">Execução</div>
-<div class="nav-item" id="nav-pcp-agendamentos" onclick="pcpIrParaAba('agendamentos',this)">
-<span class="nav-icon">📅</span>Agendamentos
+<div class="nav-item" id="nav-pcp-pedidos" onclick="pcpIrParaAba('pedidos',this)">
+<span class="nav-icon">📥</span>Solicitação de Compra
 </div>
 <div class="nav-item" id="nav-pcp-producao" onclick="pcpIrParaAba('producao',this)">
 <span class="nav-icon">🏭</span>Programação Produção
 </div>
-<div class="nav-item" id="nav-pcp-producao-insumo" onclick="pcpIrParaAba('producao-insumo',this)">
-<span class="nav-icon">🧪</span>Insumos da Produção
-</div>
-<div class="nav-item" id="nav-pcp-compras-acompanhamento" onclick="pcpIrParaAba('compras-acompanhamento',this)">
-<span class="nav-icon">📦</span>Acompanhamento de Compras
-</div>
-<div class="nav-item" id="nav-pcp-timeline" onclick="pcpIrParaAba('timeline',this)">
-<span class="nav-icon">🗓️</span>Linha do Tempo
-</div>
-<div class="nav-item" id="nav-pcp-cortes" onclick="pcpIrParaAba('cortes',this)">
-<span class="nav-icon">✂️</span>Cortes
-</div>
-<div class="sb-sec">Controle</div>
-<div class="nav-item" id="nav-pcp-alertas" onclick="pcpIrParaAba('alertas',this)">
-<span class="nav-icon">🚨</span>Alertas
-</div>
+<div class="sb-sec">Análise e controle</div>
 <div class="nav-item" id="nav-pcp-relatorios" onclick="pcpIrParaAba('relatorios',this)">
-<span class="nav-icon">📄</span>Relatórios
+<span class="nav-icon">📊</span>Análises
 </div>
 <div class="nav-item" id="nav-pcp-parametros" onclick="pcpIrParaAba('parametros',this)">
 <span class="nav-icon">⚙️</span>Parâmetros
-</div>
-<div class="nav-item" id="nav-pcp-projecao-vendas" onclick="abrirProjecaoVendasPcp(this)">
-<span class="nav-icon">📈</span>Projeção de Vendas
 </div>
 </aside>
 <div class="content" style="flex:1">
@@ -328,6 +306,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="page" id="page-pcp-producao-insumo"></div>
 <div class="page" id="page-pcp-compras-acompanhamento"></div>
 <div class="page" id="page-pcp-produto-360"></div>
+<div class="page" id="page-pcp-insumo-360"></div>
 <div class="page" id="page-pcp-alertas"></div>
 <div class="page" id="page-pcp-relatorios"></div>
 <div class="page" id="page-pcp-projecao-vendas"></div>
@@ -353,6 +332,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="nav-item" id="nav-compras-recebimentos" onclick="comprasIrParaPagina('recebimentos',this)"><span class="nav-icon">🚚</span>Recebimentos</div>
 <div class="sb-sec">Análises</div>
 <div class="nav-item" id="nav-compras-produtos" onclick="comprasIrParaPagina('produtos',this)"><span class="nav-icon">🔎</span>Produtos 360°</div>
+<div class="nav-item" id="nav-compras-precos" onclick="comprasIrParaPagina('precos',this)"><span class="nav-icon">💹</span>Análise de Preços</div>
 <div class="nav-item" id="nav-compras-fornecedores" onclick="comprasIrParaPagina('fornecedores',this)"><span class="nav-icon">🏢</span>Fornecedores</div>
 <div class="nav-item" id="nav-compras-relatorios" onclick="comprasIrParaPagina('relatorios',this)"><span class="nav-icon">📈</span>Relatórios</div>
 <div class="sb-sec">Configuração</div>
@@ -366,9 +346,24 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="page" id="page-compras-pedidos"></div>
 <div class="page" id="page-compras-recebimentos"></div>
 <div class="page" id="page-compras-produtos"></div>
+<div class="page" id="page-compras-precos"></div>
 <div class="page" id="page-compras-fornecedores"></div>
 <div class="page" id="page-compras-relatorios"></div>
 <div class="page" id="page-compras-administracao"></div>
+</div>
+</div>
+<!-- Setor Atendimento / WhatsApp — central multiatendente -->
+<div id="setor-atendimento-shell" style="display:none;flex:1;flex-direction:row;min-height:100vh">
+<aside class="sidebar">
+<div class="sb-sec">Atendimento</div>
+<div class="nav-item" id="nav-atendimento-dashboard" onclick="atendimentoIrParaPagina('dashboard',this)"><span class="nav-icon">📊</span>Dashboard</div>
+<div class="nav-item" id="nav-atendimento-conversas" onclick="atendimentoIrParaPagina('conversas',this)"><span class="nav-icon">💬</span>Conversas WhatsApp</div>
+<div class="nav-item" id="nav-atendimento-config" onclick="atendimentoIrParaPagina('config',this)"><span class="nav-icon">⚙️</span>Configuração</div>
+</aside>
+<div class="content" style="flex:1">
+<div class="page" id="page-atendimento-dashboard"></div>
+<div class="page" id="page-atendimento-conversas"></div>
+<div class="page" id="page-atendimento-config"></div>
 </div>
 </div>
 <!-- Setor Logística · Recebimento (fase 15/FASE 1) — contexto próprio,
@@ -428,6 +423,9 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="nav-item" id="nav-recebimento-patio-tempo-real" onclick="goPage('recebimento-patio-tempo-real',this)">
 <span class="nav-icon">📦</span>Pátio em Tempo Real
 </div>
+<div class="nav-item" id="nav-recebimento-patio-inventarios" onclick="goPage('recebimento-patio-inventarios',this)">
+<span class="nav-icon">🗒️</span>Inventários do Pátio
+</div>
 <div class="nav-item" id="nav-recebimento-recusas" onclick="goPage('recebimento-recusas',this)">
 <span class="nav-icon">↩️</span>Notas Retornadas
 </div>
@@ -460,6 +458,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="page" id="page-recebimento-cargas"></div>
 <div class="page" id="page-recebimento-paletes"></div>
 <div class="page" id="page-recebimento-patio-tempo-real"></div>
+<div class="page" id="page-recebimento-patio-inventarios"></div>
 <div class="page" id="page-recebimento-recusas"></div>
 <div class="page" id="page-recebimento-retornos-indicadores"></div>
 <div class="page" id="page-recebimento-retornos-status"></div>
@@ -470,6 +469,58 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="page" id="page-recebimento-tempos"></div>
 <div class="page" id="page-recebimento-historico"></div>
 <div class="page" id="page-recebimento-config"></div>
+</div>
+</div>
+<!-- PEDIDO AO VIVO (2026-10-02): Logística ganhou um 3º sub-setor, Estoque
+     (Relatórios vindos do BigQuery: Inventário/Descarte/Baixa de
+     Requisição/Transformação, coletados da Bluesoft só com GET). Mesmo
+     padrão simples do shell de Recebimento logo acima — sidebar + content,
+     sem topbar própria; alternado por irParaSetor('logistica','estoque'). -->
+<div id="setor-logistica-estoque-shell" style="display:none;flex:1;flex-direction:row;min-height:100vh">
+<aside class="sidebar">
+<div class="sb-sec">Operação</div>
+<div class="nav-item" id="nav-estoque-separacao" onclick="goPage('estoque-separacao',this)"><span class="nav-icon">📦</span>Separação</div>
+<div class="nav-item" id="nav-estoque-rel-apontamento" onclick="goPage('estoque-rel-apontamento',this)">
+<span class="nav-icon">🏷️</span>Apontamento
+</div>
+<div class="nav-item" id="nav-estoque-enderecamento" onclick="goPage('estoque-enderecamento',this)">
+<span class="nav-icon">📍</span>Endereçamento
+</div>
+<div class="nav-item" id="nav-estoque-lote-trocas" onclick="goPage('estoque-lote-trocas',this)">
+<span class="nav-icon">♻️</span>Lote de Trocas
+</div>
+<div class="nav-item" id="nav-estoque-transformacao-api" onclick="goPage('estoque-transformacao-api',this)">
+<span class="nav-icon">🔁</span>Transformação
+</div>
+<div class="sb-sec">Relatórios</div>
+<div class="nav-item" id="nav-estoque-rel-analise" onclick="goPage('estoque-rel-analise',this)">
+<span class="nav-icon">📊</span>Análise de Inventários
+</div>
+<div class="nav-item" id="nav-estoque-rel-inventario" onclick="goPage('estoque-rel-inventario',this)">
+<span class="nav-icon">📋</span>Inventário
+</div>
+<div class="nav-item" id="nav-estoque-rel-descarte" onclick="goPage('estoque-rel-descarte',this)">
+<span class="nav-icon">🗑️</span>Descarte
+</div>
+<div class="nav-item" id="nav-estoque-rel-requisicao" onclick="goPage('estoque-rel-requisicao',this)">
+<span class="nav-icon">📤</span>Baixa de Requisição
+</div>
+<div class="nav-item" id="nav-estoque-rel-transformacao" onclick="goPage('estoque-rel-transformacao',this)">
+<span class="nav-icon">🔄</span>Transformação
+</div>
+</aside>
+<div class="content" style="flex:1">
+<div class="page" id="page-estoque-separacao"></div>
+<div class="page" id="page-estoque-rel-apontamento"></div>
+<div class="page" id="page-estoque-enderecamento"></div>
+<div class="page" id="page-estoque-lote-trocas"></div>
+<div class="page" id="page-estoque-transformacao-api"></div>
+<div class="page" id="page-estoque-rel-analise"></div>
+<div class="page" id="page-estoque-rel-analise-inventario"></div>
+<div class="page" id="page-estoque-rel-inventario"></div>
+<div class="page" id="page-estoque-rel-descarte"></div>
+<div class="page" id="page-estoque-rel-requisicao"></div>
+<div class="page" id="page-estoque-rel-transformacao"></div>
 </div>
 </div>
 <!-- Configurações globais (cross-loja) — Usuários/Coletores/Lojas, acessível
@@ -489,11 +540,13 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <button type="button" class="cfgm-tab" id="cfgm-tab-coletores" data-config-abrir="coletores">👤 Coletores</button>
 <button type="button" class="cfgm-tab" id="cfgm-tab-lojas" data-config-abrir="lojas">🏪 Lojas</button>
 <button type="button" class="cfgm-tab" id="cfgm-tab-integracao" data-config-abrir="integracao">🔗 Integração API</button>
+<button type="button" class="cfgm-tab" id="cfgm-tab-impressoras" data-config-abrir="impressoras">🖨️ Impressoras</button>
 </div>
 <div id="modal-config-conteudo" style="flex:1;overflow-y:auto"></div>
+<div class="page" id="page-impressoras" style="display:none"></div>
 </div></div>
 <!-- Modal de edição de Ficha Técnica (Produção) -->
-<div class="modal-bg" id="modal-pft"><div class="modal prod-form-modal" style="max-width:520px">
+<div class="modal-bg" id="modal-pft" data-perm-context-modulo="producao-ficha-tecnica"><div class="modal prod-form-modal" style="max-width:520px">
 <div class="modal-header"><div class="modal-title">📦 <span id="pft-title">Produto</span></div><button type="button" class="btn btn-ghost" onclick="closeModal('modal-pft')" aria-label="Fechar">✕</button></div>
 <div class="modal-body pft-modal-grid">
 <input type="hidden" id="pft-doc-id"/>
@@ -509,7 +562,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="form-group"><label>Produção mínima (cx)</label><input class="field" id="pft-prod-min" type="number" min="0" placeholder="500"/></div>
 <div class="form-group"><label>Múltiplo de produção</label><input class="field" id="pft-multiplo" type="number" min="0" placeholder="25"/></div>
 <div class="form-group"><label>Tipo mínimo</label><select class="field" id="pft-tipo-min"><option value="">— Selecione —</option><option value="fixo">Fixo</option><option value="multiplo">Múltiplo</option><option value="palete">Palete</option></select></div>
-<div class="form-group"><label>Prioridade (1 = alta)</label><input class="field" id="pft-prioridade" type="number" min="1" max="99" value="2"/></div>
+<div class="form-group"><label>Prioridade (1 = alta)</label><input class="field" id="pft-prioridade" type="number" min="1" max="99" value="" placeholder="2 = padrão operacional"/></div>
 <div class="form-group"><label>Alérgênico</label><select class="field" id="pft-alergenico"><option value="false">Não alérgênico</option><option value="true">⚠️ Alérgênico</option></select></div>
 <div class="form-group"><label>Status do produto</label><select class="field" id="pft-ativo"><option value="true">✅ Ativo — entra na programação</option><option value="false">⛔ Desativado — ignorado</option></select></div>
 <div class="form-group"><label>Empresa produtora</label><select class="field" id="pft-empresa-produtora"><option value="">— Não definida —</option></select></div>
@@ -521,7 +574,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-pft')">Cancelar</button><button class="btn btn-primary" onclick="pftSalvar()">Salvar</button></div>
 </div></div>
 <!-- Modal de edição de Máquina (Produção) -->
-<div class="modal-bg" id="modal-pmaq"><div class="modal prod-form-modal" style="max-width:680px">
+<div class="modal-bg" id="modal-pmaq" data-perm-context-modulo="producao-maquinas"><div class="modal prod-form-modal" style="max-width:680px">
 <div class="modal-header"><div class="modal-title">⚙️ <span id="pmaq-title">Máquina</span></div><button type="button" class="btn btn-ghost" onclick="closeModal('modal-pmaq')" aria-label="Fechar">✕</button></div>
 <div class="pmaq-tabs"><button type="button" class="on" data-pmaq-tab="dados">Dados Gerais</button><button type="button" data-pmaq-tab="capacidade">Capacidade</button><button type="button" data-pmaq-tab="produtos">Produtos Compatíveis</button></div>
 <div class="modal-body">
@@ -557,7 +610,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-pmaq')">Cancelar</button><button class="btn btn-primary" onclick="pmaqSalvar()">Salvar Máquina</button></div>
 </div></div>
 <!-- Modais de cadastro do Recebimento (fase 15/FASE 2a) -->
-<div class="modal-bg" id="modal-recmot"><div class="modal" style="max-width:480px">
+<div class="modal-bg" id="modal-recmot" data-perm-context-modulo="recebimento-config"><div class="modal" style="max-width:480px">
 <div class="modal-title">👤 <span id="recmot-title">Motorista</span></div>
 <input type="hidden" id="recmot-doc-id"/>
 <input type="hidden" id="recmot-codigo"/>
@@ -568,7 +621,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="form-group"><label>Status</label><select class="field" id="recmot-ativo"><option value="true">Ativo</option><option value="false">Inativo</option></select></div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-recmot')">Cancelar</button><button class="btn btn-primary" onclick="recmotSalvar()">Salvar</button></div>
 </div></div>
-<div class="modal-bg" id="modal-recveic"><div class="modal" style="max-width:480px">
+<div class="modal-bg" id="modal-recveic" data-perm-context-modulo="recebimento-config"><div class="modal" style="max-width:480px">
 <div class="modal-title">🚚 <span id="recveic-title">Veículo</span></div>
 <input type="hidden" id="recveic-doc-id"/>
 <div class="form-group"><label>Placa</label><input class="field" id="recveic-placa" placeholder="Ex.: ABC1D23"/></div>
@@ -579,7 +632,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="form-group"><label>Status</label><select class="field" id="recveic-ativo"><option value="true">Ativo</option><option value="false">Inativo</option></select></div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-recveic')">Cancelar</button><button class="btn btn-primary" onclick="recveicSalvar()">Salvar</button></div>
 </div></div>
-<div class="modal-bg" id="modal-recdoca"><div class="modal" style="max-width:480px">
+<div class="modal-bg" id="modal-recdoca" data-perm-context-modulo="recebimento-config"><div class="modal" style="max-width:480px">
 <div class="modal-title">🚪 <span id="recdoca-title">Doca</span></div>
 <input type="hidden" id="recdoca-doc-id"/>
 <div class="form-group"><label>Nome/Número</label><input class="field" id="recdoca-nome" placeholder="Ex.: Doca 1"/></div>
@@ -587,9 +640,10 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="form-group"><label>Status</label><select class="field" id="recdoca-ativo"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-recdoca')">Cancelar</button><button class="btn btn-primary" onclick="recdocaSalvar()">Salvar</button></div>
 </div></div>
-<div class="modal-bg" id="modal-recop"><div class="modal" style="max-width:640px">
+<div class="modal-bg" id="modal-recop" data-perm-context-modulo="recebimento-operacao"><div class="modal" style="max-width:640px">
 <div class="modal-title">🚚 Novo Recebimento</div>
 <input type="hidden" id="recop-doc-id"/>
+<div class="form-group"><label>Pedido da agenda (opcional)</label><select class="field" id="recop-pedido" onchange="recopPedidoAlterado()"><option value="">— Sem vínculo / recebimento avulso —</option></select></div>
 <div class="form-group"><label>Fornecedor</label><input class="field" id="recop-fornecedor" placeholder="Nome do fornecedor"/></div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
 <div class="form-group"><label>Motorista</label><select class="field" id="recop-motorista"></select></div>
@@ -604,29 +658,26 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="form-group"><label>Observação</label><input class="field" id="recop-observacao" placeholder="Opcional"/></div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-recop')">Cancelar</button><button class="btn btn-primary" onclick="recopSalvar()">Registrar chegada</button></div>
 </div></div>
-<div class="modal-bg" id="modal-recag"><div class="modal" style="max-width:520px">
+<div class="modal-bg" id="modal-recag" data-perm-context-modulo="recebimento-agendamentos"><div class="modal" style="max-width:520px">
 <div class="modal-title">📅 <span id="recag-title">Agendamento</span></div>
 <input type="hidden" id="recag-doc-id"/>
 <div class="form-group"><label>Fornecedor</label><input class="field" id="recag-fornecedor" placeholder="Nome do fornecedor"/></div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
 <div class="form-group"><label>Data agendada</label><input class="field" id="recag-data" type="date"/></div>
-<div class="form-group"><label>Hora agendada</label><input class="field" id="recag-hora" type="time"/></div>
-</div>
-<div class="form-group"><label>Código da carga</label><input class="field" id="recag-codigo" placeholder="Opcional"/></div>
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
-<div class="form-group"><label>Motorista</label><input class="field" id="recag-motorista" placeholder="Nome"/></div>
-<div class="form-group"><label>Placa</label><input class="field" id="recag-placa" placeholder="Ex.: ABC1D23"/></div>
-</div>
-<div class="form-group"><label>Status</label><select class="field" id="recag-status"><option value="AGENDADO">Agendado</option><option value="UTILIZADO">Utilizado</option><option value="CANCELADO">Cancelado</option></select></div>
+<div class="form-group"><label>Tipo de carga/descarga</label><select class="field" id="recag-tipo-carga"><option value="PALETIZADA">Paletizada</option><option value="BATIDA">Batida</option></select></div>
 <div class="form-group"><label>Observação</label><input class="field" id="recag-observacao" placeholder="Opcional"/></div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-recag')">Cancelar</button><button class="btn btn-primary" onclick="recagSalvar()">Salvar</button></div>
 </div></div>
-<div class="modal-bg" id="modal-recist-etapas"><div class="modal" style="max-width:640px">
+<div class="modal-bg" id="modal-recist-etapas" data-perm-context-modulo="recebimento-operacao"><div class="modal" style="max-width:640px">
 <div class="modal-title">🕓 Histórico das etapas</div>
 <div id="recist-etapas-corpo"></div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-recist-etapas')">Fechar</button></div>
 </div></div>
-<div class="modal-bg" id="modal-rebt"><div class="modal" style="max-width:720px">
+<div class="modal-bg" id="modal-patio-inventario-detalhe" data-perm-context-modulo="recebimento-patio-inventarios"><div class="modal" style="max-width:640px">
+<div class="modal-title">🗒️ Inventário do Pátio</div>
+<div id="patio-inv-detalhe-corpo"></div>
+<div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-patio-inventario-detalhe')">Fechar</button></div>
+</div></div>
+<div class="modal-bg" id="modal-rebt" data-perm-context-modulo="recebimento-transbordo"><div class="modal" style="max-width:720px">
 <div class="modal-title">🚛 Novo Transbordo — Analista</div>
 <div style="font-size:.76rem;color:var(--muted);margin:-2px 0 10px">O analista pode cadastrar a rota e, quando necessário, informar os horários reais da operação. Os horários são opcionais e o status é calculado automaticamente pela última etapa preenchida.</div>
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
@@ -661,7 +712,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="form-group"><label>Observação</label><input class="field" id="rebt-observacao" placeholder="Opcional"/></div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-rebt')">Cancelar</button><button class="btn btn-primary" id="rebt-salvar" onclick="recbtSalvar()">Criar transbordo</button></div>
 </div></div>
-<div class="modal-bg" id="modal-rebt-editar-rota"><div class="modal" style="max-width:520px">
+<div class="modal-bg" id="modal-rebt-editar-rota" data-perm-context-modulo="recebimento-transbordo"><div class="modal" style="max-width:520px">
 <div class="modal-title">⇄ Corrigir remetente e destino</div>
 <div id="rebt-edit-rota-info" style="font-size:.78rem;color:var(--muted);padding:9px 11px;border:1px solid var(--border);border-radius:8px;margin-bottom:12px"></div>
 <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:end">
@@ -674,14 +725,14 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-rebt-editar-rota')">Cancelar</button><button class="btn btn-primary" id="rebt-edit-rota-salvar" onclick="recbtSalvarRota()">Salvar correção</button></div>
 </div></div>
-<div class="modal-bg" id="modal-rebt-qr"><div class="modal" style="max-width:360px;text-align:center">
+<div class="modal-bg" id="modal-rebt-qr" data-perm-context-modulo="recebimento-transbordo"><div class="modal" style="max-width:360px;text-align:center">
 <div class="modal-title" id="rebt-qr-titulo">QR Code</div>
 <img id="rebt-qr-img" style="width:220px;height:220px;margin:10px auto;display:block;background:#fff;border-radius:8px"/>
 <div class="mono" id="rebt-qr-codigo" style="font-size:.85rem;margin-bottom:10px"></div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-rebt-qr')">Fechar</button><button class="btn btn-primary" data-rebt-imprimir-qr="1">🖨️ Imprimir / Baixar</button></div>
 </div></div>
 <!-- Controle de Nota Fiscal — saída da Matriz -->
-<div class="modal-bg" id="modal-rebt-nf-saida"><div class="modal" style="max-width:420px">
+<div class="modal-bg" id="modal-rebt-nf-saida" data-perm-context-modulo="recebimento-transbordo"><div class="modal" style="max-width:420px">
 <div class="modal-title">🧾 Nota Fiscal da Saída</div>
 <div style="font-size:.8rem;color:var(--muted);margin-bottom:8px">Informe o número da Nota Fiscal antes de concluir a saída. Esse número acompanha a carga até a finalização.</div>
 <input type="hidden" id="rebt-nf-saida-id"/>
@@ -696,7 +747,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-rebt-nf-saida')">Cancelar</button><button class="btn btn-primary" onclick="recbtConfirmarNfSaida()">Confirmar saída</button></div>
 </div></div>
 <!-- Controle de Nota Fiscal — chegada na Filial (registrada manualmente pelo Analista, mesma checagem do Coletor) -->
-<div class="modal-bg" id="modal-rebt-nf-chegada"><div class="modal" style="max-width:420px">
+<div class="modal-bg" id="modal-rebt-nf-chegada" data-perm-context-modulo="recebimento-transbordo"><div class="modal" style="max-width:420px">
 <div class="modal-title">🧾 Confirmar Nota Fiscal da Chegada</div>
 <div style="font-size:.8rem;color:var(--muted);margin-bottom:8px">Nota Fiscal registrada na saída: <b class="mono" id="rebt-nf-chegada-registrada">—</b></div>
 <input type="hidden" id="rebt-nf-chegada-id"/>
@@ -728,7 +779,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
      cada um sobrescrevendo o outro. Removido — a versão dinâmica (a única
      mantida/testada) passa a ser criada normalmente. -->
 <!-- Modal de edição de OP de Programação (Produção) -->
-<div class="modal-bg" id="modal-pprog"><div class="modal pprog-modal" style="max-width:680px">
+<div class="modal-bg" id="modal-pprog" data-perm-context-modulo="producao-programacao"><div class="modal pprog-modal" style="max-width:680px">
 <div class="modal-header"><div class="modal-title" id="pprog-title">Nova Solicitação</div><button type="button" class="modal-close" onclick="closeModal('modal-pprog')" aria-label="Fechar">✕</button></div>
 <div class="modal-body">
 <input type="hidden" id="pprog-doc-id"/><select id="pprog-produto" hidden></select>
@@ -751,7 +802,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-pprog')">Cancelar</button><button class="btn btn-primary" onclick="pprogSalvar()">💾 Salvar</button></div>
 </div></div>
 <!-- Modal de edição de item de Projeção de Vendas (Produção) -->
-<div class="modal-bg" id="modal-pproj"><div class="modal" style="max-width:480px">
+<div class="modal-bg" id="modal-pproj" data-perm-context-modulo="producao-projecao"><div class="modal" style="max-width:480px">
 <div class="modal-title">📈 <span id="pproj-title">Projeção de Vendas</span></div>
 <input type="hidden" id="pproj-doc-id"/>
 <div class="form-group"><label>Código</label><input class="field" id="pproj-cod" placeholder="Ex.: 00001"/></div>
@@ -764,7 +815,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-pproj')">Cancelar</button><button class="btn btn-primary" onclick="pprojSalvar()">Salvar</button></div>
 </div></div>
 <!-- Modal de edição de Funcionário (Produção) -->
-<div class="modal-bg" id="modal-pfunc"><div class="modal" style="max-width:480px">
+<div class="modal-bg" id="modal-pfunc" data-perm-context-modulo="producao-funcionarios"><div class="modal" style="max-width:480px">
 <div class="modal-header"><div class="modal-title"><span id="pfunc-title">Funcionário</span></div><button type="button" class="modal-close" onclick="closeModal('modal-pfunc')">✕</button></div>
 <div class="modal-body"><input type="hidden" id="pfunc-doc-id"/>
 <div class="pfunc-grid">
@@ -779,7 +830,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal('modal-pfunc')">Cancelar</button><button class="btn btn-primary" onclick="pfuncSalvar()">Salvar</button></div>
 </div></div>
 <!-- Modal "Desativar temporariamente" um Funcionário -->
-<div class="modal-bg" id="modal-pfunc-desativar"><div class="modal" style="max-width:420px">
+<div class="modal-bg" id="modal-pfunc-desativar" data-perm-context-modulo="producao-funcionarios"><div class="modal" style="max-width:420px">
 <div class="modal-title">⏸️ Desativar temporariamente</div>
 <input type="hidden" id="pfuncd-doc-id"/>
 <div class="form-group"><label>Até quando (opcional)</label><input class="field" id="pfuncd-ate" type="date"/></div>
@@ -787,7 +838,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-pfunc-desativar')">Cancelar</button><button class="btn btn-primary" onclick="pfuncConfirmarDesativar()">Confirmar</button></div>
 </div></div>
 <!-- Modal "Reordenar fila" de uma máquina no Gantt -->
-<div class="modal-bg" id="modal-pgantt-reorder"><div class="modal" style="max-width:480px">
+<div class="modal-bg" id="modal-pgantt-reorder" data-perm-context-modulo="producao-gantt"><div class="modal" style="max-width:480px">
 <div class="modal-title">⇅ Reordenar fila da máquina</div>
 <div class="form-group"><label>Máquina</label>
 <select class="field" id="pgantt-reorder-maquina"></select>
@@ -796,7 +847,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-pgantt-reorder')">Cancelar</button><button class="btn btn-primary" onclick="pganttReorderSalvar()">💾 Aplicar Ordem</button></div>
 </div></div>
 <!-- Modal de edição de Tempo de Setup (Produção) -->
-<div class="modal-bg" id="modal-psetup"><div class="modal" style="max-width:480px">
+<div class="modal-bg" id="modal-psetup" data-perm-context-modulo="producao-setup"><div class="modal" style="max-width:480px">
 <div class="modal-title">🔧 <span id="psetup-title">Tempo de Setup</span></div>
 <input type="hidden" id="psetup-doc-id"/>
 <div class="form-group"><label>Máquina</label>
@@ -812,7 +863,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-psetup')">Cancelar</button><button class="btn btn-primary" onclick="psetupSalvar()">Salvar</button></div>
 </div></div>
 <!-- Modal "Editar atalhos de turno" T1/T2/T3 (Produção · Máquinas) -->
-<div class="modal-bg" id="modal-pmaq-atalhos"><div class="modal" style="max-width:420px">
+<div class="modal-bg" id="modal-pmaq-atalhos" data-perm-context-modulo="producao-maquinas"><div class="modal" style="max-width:420px">
 <div class="modal-title">⚡ Atalhos de turno (T1/T2/T3)</div>
 <div id="pmaq-atalhos-list" style="display:flex;flex-direction:column;gap:10px"></div>
 <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-pmaq-atalhos')">Cancelar</button><button class="btn btn-primary" onclick="pmaqAtalhosSalvar()">Salvar</button></div>
@@ -830,80 +881,31 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div>
 </div>
-<div class="sb-sec">Principal</div>
-<div class="nav-item on" id="nav-dashboard" onclick="goPage('dashboard',this)">
-<span class="nav-icon">📊</span>Dashboard
-  </div>
-<div class="nav-item" id="nav-inventarios" onclick="goPage('inventarios',this)">
-<span class="nav-icon">📦</span>Inventários
-  </div>
-<div class="nav-item" id="nav-acompanhamento" onclick="goPage('acompanhamento',this)">
-<span class="nav-icon">🎯</span>Acompanhamento
-  </div>
-<div class="nav-item" id="nav-auditoria" onclick="goPage('auditoria',this)">
-<span class="nav-icon">📋</span>Auditoria Operacional
-  </div>
-<div class="sb-sec">Operação</div>
-<div class="nav-item" id="nav-contagens" onclick="goPage('contagens',this)">
-<span class="nav-icon">📋</span>Contagens
-    <span class="nav-badge" id="nb-contagens">0</span>
+<div class="sb-sec">Inventário</div>
+<div class="nav-item on" id="nav-dashboard" onclick="goPage('dashboard',this)"><span class="nav-icon">📊</span>Dashboard</div>
+<div class="nav-item" id="nav-inventarios" onclick="goPage('inventarios',this)"><span class="nav-icon">📦</span>Inventários</div>
+<div class="nav-item" id="nav-acompanhamento" onclick="goPage('acompanhamento',this)"><span class="nav-icon">🎯</span>Acompanhamento</div>
+<div class="nav-item" id="nav-recontagens" onclick="goPage('recontagens',this)"><span class="nav-icon">⚠️</span>Divergências <span class="nav-badge" id="nb-divergencias">0</span><span class="nav-badge" id="nb-recontagens" style="display:none">0</span></div>
+<div class="nav-item" id="nav-rastreabilidade" onclick="goPage('rastreabilidade',this)"><span class="nav-icon">🕘</span>Histórico</div>
+<div class="sb-sec">Auditoria</div>
+<div class="nav-item" id="nav-auditoria" onclick="goPage('auditoria',this)"><span class="nav-icon">📋</span>Auditoria Operacional</div>
+<!-- Navegação legada preservada apenas para router/permissões; as telas são acessadas pelas abas do inventário. -->
+<div id="inventario-nav-legado-v4" style="display:none!important" aria-hidden="true">
+  <div class="nav-item" id="nav-contagens" onclick="goPage('contagens',this)">Contagens <span class="nav-badge" id="nb-contagens">0</span></div>
+  <div class="nav-item" id="nav-pendencias" onclick="goPage('pendencias',this)">Pendências <span class="nav-badge yellow" id="nb-pendencias">0</span></div>
+  <div class="nav-item" id="nav-rel-divergencias" onclick="goPage('rel-divergencias',this)">Rel. Conflitos</div>
+  <div class="nav-item" id="nav-capas-duplicadas" onclick="goPage('capas-duplicadas',this)">Capas Duplicadas <span class="nav-badge yellow" id="nb-capas-dup" style="display:none">0</span></div>
+  <div class="nav-item" id="nav-produtividade" onclick="goPage('produtividade',this)">Produtividade</div>
+  <div class="nav-item" id="nav-enderecos" onclick="goPage('enderecos',this)">Endereços <span class="nav-badge" id="nb-enderecos">0</span></div>
+  <div class="nav-item" id="nav-produtos" onclick="goPage('produtos',this)">Base de Produtos <span class="nav-badge" id="nb-produtos">0</span></div>
+  <div class="nav-item" id="nav-importar-exportar" onclick="goPage('importar-exportar',this)">Importar / Exportar</div>
 </div>
-<div class="nav-item" id="nav-pendencias" onclick="goPage('pendencias',this)">
-<span class="nav-icon">⏳</span>Pendências
-    <span class="nav-badge yellow" id="nb-pendencias">0</span>
-</div>
-<div class="nav-item" id="nav-recontagens" onclick="goPage('recontagens',this)">
-<span class="nav-icon">🔄</span>Recontagem
-    <span class="nav-badge" id="nb-divergencias">0</span>
-    <span class="nav-badge" id="nb-recontagens" style="display:none">0</span>
-</div>
-<div class="sb-sec">Relatórios</div>
-<div class="nav-item" id="nav-rel-divergencias" onclick="goPage('rel-divergencias',this)">
-<span class="nav-icon">📋</span>Rel. Conflitos
-  </div>
-<div class="nav-item" id="nav-capas-duplicadas" onclick="goPage('capas-duplicadas',this)">
-<span class="nav-icon">🪪</span>Capas Duplicadas
-    <span class="nav-badge yellow" id="nb-capas-dup" style="display:none">0</span>
-</div>
-<div class="nav-item" id="nav-produtividade" onclick="goPage('produtividade',this)">
-<span class="nav-icon">🏆</span>Produtividade
-  </div>
-<div class="sb-sec">Gestão</div>
-<div class="nav-item" id="nav-enderecos" onclick="goPage('enderecos',this)">
-<span class="nav-icon">📍</span>Endereços
-    <span class="nav-badge" id="nb-enderecos" style="background:#1E6F4E;border:1px solid rgba(255,255,255,.3)">0</span>
-</div>
-<div class="nav-item" id="nav-produtos" onclick="goPage('produtos',this)">
-<span class="nav-icon">📦</span><span class="nav-label">Base de Produtos</span>
-<span class="nav-badge" id="nb-produtos" style="background:#2563EB;border:1px solid rgba(255,255,255,.3)">0</span>
-</div>
-<div class="nav-item" id="nav-rastreabilidade" onclick="goPage('rastreabilidade',this)">
-<span class="nav-icon">📜</span>Rastreabilidade
-  </div>
-<div class="sb-divider"></div>
-<div class="nav-item" id="nav-importar-exportar" onclick="goPage('importar-exportar',this)">
-<span class="nav-icon">🔄</span>Importar / Exportar
-  </div>
 <div class="sb-divider"></div>
 <div class="nav-item" id="nav-ajuda" onclick="abrirAjuda()" style="color:rgba(255,255,255,.55)">
 <span class="nav-icon">📖</span>Central de Ajuda
     <span style="margin-left:auto;font-size:.6rem;background:rgba(232,117,26,.25);color:#F2893A;border:1px solid rgba(232,117,26,.3);border-radius:20px;padding:2px 7px;font-weight:700;letter-spacing:.04em;white-space:nowrap">↗ Nova aba</span>
 </div>
-<div class="sb-bottom">
-<div class="user-pill">
-<div class="u-avatar" id="avatar-initials">AN</div>
-<div style="flex:1">
-<div class="u-name" id="user-name-display">Analista</div>
-<div class="u-role">Administrador</div>
-</div>
-<button onclick="doLogoutAnalista()" onmouseout="this.style.color='rgba(255,255,255,.35)'" onmouseover="this.style.color='#ef4444'" style="background:transparent;border:none;cursor:pointer;color:rgba(255,255,255,.35);font-size:1rem;padding:4px;transition:color .2s" title="Sair">⏻</button>
-</div>
-<div class="sync-status">
-<div class="sync-dot" id="sync-dot"></div>
-<div class="sync-txt" id="sync-txt">Aguardando sync...</div>
-</div>
-</div>
-</aside>
+            </aside>
 <!-- ══════════ MAIN ══════════ -->
 <div class="main">
 <div class="topbar">
@@ -917,7 +919,19 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div style="font-size:.6rem;color:var(--muted);line-height:1;margin-top:1px">Sistema de Inventário — Da Terrinha Alimentos</div>
 </div>
 </div>
-<div class="topbar-actions">
+<div class="topbar-actions"><div class="dt-user-top" style="display:flex;align-items:center;gap:8px;margin-right:4px;position:relative">
+  <label for="dt-user-photo-input" title="Alterar foto" style="cursor:pointer"><span id="dt-user-photo" class="u-avatar" style="width:34px;height:34px;overflow:hidden">AN</span></label>
+  <input id="dt-user-photo-input" type="file" accept="image/*" style="display:none">
+  <span id="dt-user-top-name" style="font-size:.75rem;font-weight:700;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Analista</span>
+  <button type="button" class="btn btn-ghost btn-sm" id="dt-user-menu-btn" title="Menu do usuário">⋮</button>
+  <div id="dt-user-menu" style="display:none;position:absolute;right:0;top:42px;z-index:1800;min-width:190px;background:var(--surface);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.2);padding:6px">
+    <button type="button" class="menu3pts-item" data-dt-user-action="config">⚙️ Configurações</button>
+    <button type="button" class="menu3pts-item" data-dt-user-action="profile">👤 Meu perfil</button>
+    <div class="menu3pts-sep"></div>
+    <button type="button" class="menu3pts-item" data-dt-user-action="logout" style="color:#ef4444">🚪 Sair</button>
+  </div>
+</div>
+
 <div id="dt-loja-switcher" style="position:relative">
 <button class="btn btn-ghost btn-sm" id="dt-loja-switcher-btn" onclick="trocarLojaInventario(event)" title="Trocar ambiente" aria-haspopup="true" aria-expanded="false"><span>🏪</span> <span id="dt-loja-atual-label">Loja</span> ▾</button>
 <div id="dt-loja-switcher-menu" style="display:none;position:absolute;right:0;top:calc(100% + 7px);z-index:1200;min-width:245px;max-width:330px;background:var(--surface,#fff);border:1px solid var(--border,#dfe3e8);border-radius:12px;box-shadow:0 14px 35px rgba(15,23,42,.18);padding:7px"></div>
@@ -925,6 +939,9 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <button class="btn btn-ghost btn-sm" id="btn-inv-ativo" onclick="goPage('acompanhamento',document.getElementById('nav-acompanhamento'))" style="display:none">
         🟢 <span id="inv-ativo-nome">—</span>
 </button>
+<button class="btn btn-ghost btn-sm" onclick="location.reload()" style="font-size:.68rem" title="Recarregar a página do zero — use se alguma tela ficar em branco ou travada">
+        🔄 Recarregar
+      </button>
 <button class="btn btn-ghost btn-sm" onclick="diagnosticarSync()" style="font-size:.68rem;color:var(--warn)" title="Mostrar diagnóstico de sincronização">
         🔍 Diagnóstico
       </button>
@@ -936,31 +953,6 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="content">
 <!-- ══ DASHBOARD ══ -->
 <div class="page on" id="page-dashboard">
-<!-- ── Banner de boas-vindas Da Terrinha ── -->
-<div style="background:linear-gradient(135deg,#1E6F4E 0%,#155d3f 55%,#0f4530 100%);border-radius:var(--r);padding:22px 28px;display:flex;align-items:center;justify-content:space-between;gap:20px;box-shadow:0 4px 20px rgba(30,111,78,.25);overflow:hidden;position:relative">
-<!-- Detalhe geométrico de fundo -->
-<div style="position:absolute;right:-30px;top:-30px;width:160px;height:160px;border-radius:50%;background:rgba(245,158,11,.08);pointer-events:none"></div>
-<div style="position:absolute;right:60px;bottom:-40px;width:100px;height:100px;border-radius:50%;background:rgba(245,158,11,.06);pointer-events:none"></div>
-<div style="position:relative;z-index:1">
-<div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
-<!-- Logo mark inline -->
-<div style="width:44px;height:44px;border-radius:10px;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 2px 10px rgba(0,0,0,.2);flex-shrink:0">
-<span style="font-family:var(--mono);font-weight:800;font-size:.9rem;color:#1E6F4E;line-height:1">DT</span>
-<div style="width:18px;height:3px;background:#F59E0B;border-radius:2px;margin-top:2px"></div>
-</div>
-<div>
-<div style="font-size:1.2rem;font-weight:800;color:#fff;line-height:1.1">DT Inventário</div>
-<div style="font-size:.65rem;color:rgba(255,255,255,.55);text-transform:uppercase;letter-spacing:.1em;margin-top:2px">Sistema de Inventário · Da Terrinha Alimentos</div>
-</div>
-</div>
-<div style="font-size:.78rem;color:rgba(255,255,255,.65);max-width:420px;line-height:1.5">Painel do Analista — gerencie inventários, monitore contagens, analise divergências e controle endereços de estoque.</div>
-</div>
-<div style="flex-shrink:0;text-align:right;position:relative;z-index:1">
-<div style="font-size:.65rem;color:rgba(255,255,255,.45);text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px">Hoje</div>
-<div id="dash-today-date" style="font-family:var(--mono);font-size:1.4rem;font-weight:700;color:#fff">—</div>
-<button class="btn btn-sm" onclick="abrirNovoInventario()" style="margin-top:10px;background:#F59E0B;color:#fff;font-weight:700;box-shadow:0 2px 10px rgba(245,158,11,.4)">＋ Novo Inventário</button>
-</div>
-</div>
 <div id="dash-alert-wrap"></div>
 <!-- Filtros do Dashboard -->
 <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:var(--surface-2);border-radius:var(--r);padding:12px 16px;margin-bottom:4px">
@@ -1043,7 +1035,6 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <option value="ATIVO">Ativo</option>
 <option value="PAUSADO">Pausado</option>
 <option value="FECHADO">Fechado</option>
-<option value="CANCELADO">Cancelado</option>
 </select>
 <select class="filter-sel" id="inv-floja" onchange="filtrarInvLoja(this.value)" style="min-width:160px">
 <option value="">🏪 Todas as lojas</option>
@@ -1233,8 +1224,8 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="atualizarDadosAnalista(this)">🔄 Atualizar</button></div>
 <div class="sec-hdr">
 <div>
-<div class="sec-title">🔄 Recontagem</div>
-<div class="sec-sub">Pendências e histórico consolidado por endereço, com todas as contagens realizadas</div>
+<div class="sec-title">⚠️ Divergências</div>
+<div class="sec-sub">Divergências do inventário, recontagens em andamento e decisões do analista</div>
 </div>
 <div style="display:flex;gap:8px;flex-wrap:wrap">
 <button class="btn btn-primary btn-sm" id="btn-atribuir-selecionados" style="display:none" disabled onclick="abrirAtribuirRecontagem()">👥 Atribuir selecionados</button>
@@ -1258,11 +1249,11 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <!-- Filtros rápidos operacionais -->
 <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
 <span style="font-size:.72rem;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.08em">Filtros rápidos:</span>
-<button class="btn btn-ghost btn-sm" id="fq-nao-atribuidas" onclick="divFiltroRapido('nao_atribuidas')" style="font-size:.75rem">🔓 Não atribuídas</button>
-<button class="btn btn-ghost btn-sm" id="fq-minhas" onclick="divFiltroRapido('minhas')" style="font-size:.75rem">👤 Minhas recontagens</button>
-<button class="btn btn-ghost btn-sm" id="fq-pendentes" onclick="divFiltroRapido('pendentes')" style="font-size:.75rem">⏳ Pendentes</button>
-<button class="btn btn-ghost btn-sm" id="fq-aguard-analista" onclick="divFiltroRapido('aguardando_analista')" style="font-size:.75rem">🔒 Aguard. analista</button>
-<button class="btn btn-ghost btn-sm" id="fq-concluidas" onclick="divFiltroRapido('concluidas')" style="font-size:.75rem">✅ Concluídas</button>
+<button class="btn btn-ghost btn-sm" id="fq-aguardando-recontagem" onclick="divFiltroRapido('aguardando_recontagem')" style="font-size:.75rem">⏳ Aguardando recontagem</button>
+<button class="btn btn-ghost btn-sm" id="fq-em-recontagem" onclick="divFiltroRapido('em_recontagem')" style="font-size:.75rem">🔄 Em recontagem</button>
+<button class="btn btn-ghost btn-sm" id="fq-aguard-analista" onclick="divFiltroRapido('aguardando_analista')" style="font-size:.75rem">👤 Aguardando analista</button>
+<button class="btn btn-ghost btn-sm" id="fq-resolvidas" onclick="divFiltroRapido('resolvidas')" style="font-size:.75rem">✅ Resolvidas</button>
+<button class="btn btn-ghost btn-sm" id="fq-persistentes" onclick="divFiltroRapido('persistentes')" style="font-size:.75rem">🔒 Persistentes</button>
 <button class="btn btn-ghost btn-sm" id="fq-limpar" onclick="divFiltroRapido('limpar')" style="font-size:.75rem;color:var(--muted)">✕ Limpar filtros</button>
 </div>
 <div class="tc">
@@ -1441,67 +1432,6 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div>
 </div>
-<!-- ══ RECONTAGENS ══ -->
-<div class="page" id="page-recontagens-historico" style="display:none!important">
-<div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="atualizarDadosAnalista(this)">🔄 Atualizar</button></div>
-<div class="sec-hdr">
-<div>
-<div class="sec-title">🔄 Rodadas de Contagem</div>
-<div class="sec-sub">Histórico de todas as rodadas de recontagem — atribua operadores e acompanhe resultados</div>
-</div>
-<div style="display:flex;gap:8px;flex-wrap:wrap">
-<select class="filter-sel" id="rec-sel-inv" onchange="renderRecontagens()">
-<option value="">Todos os inventários</option>
-</select>
-<button class="btn btn-export btn-sm" onclick="exportarRecontagens()">⬇ Exportar</button>
-</div>
-</div>
-<!-- KPIs recontagens -->
-<div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
-<div class="kpi yellow"><span class="kpi-icon">⏳</span><div class="kpi-val" id="rk-pendentes">—</div><div class="kpi-lbl">Pendentes</div></div>
-<div class="kpi orange"><span class="kpi-icon">👤</span><div class="kpi-val" id="rk-atribuidas">—</div><div class="kpi-lbl">Atribuídas</div></div>
-<div class="kpi teal"><span class="kpi-icon">🔓</span><div class="kpi-val" id="rk-nao-atribuidas">—</div><div class="kpi-lbl">Não Atribuídas</div></div>
-<div class="kpi green"><span class="kpi-icon">✅</span><div class="kpi-val" id="rk-concluidas">—</div><div class="kpi-lbl">Concluídas</div></div>
-<div class="kpi red"><span class="kpi-icon">🔴</span><div class="kpi-val" id="rk-persistentes">—</div><div class="kpi-lbl">Persistentes</div></div>
-<div class="kpi red"><span class="kpi-icon">📉</span><div class="kpi-val" id="rk-maior-diff">—</div><div class="kpi-lbl">Maior Diferença</div></div>
-<div class="kpi purple"><span class="kpi-icon">📊</span><div class="kpi-val" id="rk-pct">—</div><div class="kpi-lbl">% Resolvidas</div></div>
-</div>
-<div class="tc">
-<div class="tc-toolbar" style="flex-wrap:wrap;gap:8px">
-<input class="search" id="rec-busca" oninput="_debounce('rec',renderRecontagens)" placeholder="🔍 Buscar rua, endereço, produto, operador..." style="flex:1;min-width:200px"/>
-<select class="filter-sel" id="rec-fstatus" onchange="renderRecontagens()">
-<option value="">Todos os status</option>
-<option value="PENDENTE">⏳ Pendente</option>
-<option value="CONCLUIDA">✅ Concluída</option>
-</select>
-<select class="filter-sel" id="rec-fstatus-rec" onchange="renderRecontagens()">
-<option value="">Status recontagem</option>
-<option value="nao_atribuida">🔓 Não atribuída</option>
-<option value="pendente">⏳ Atribuída / Pendente</option>
-<option value="em_andamento">🔄 Em andamento</option>
-<option value="concluida">✅ Concluída</option>
-<option value="cancelada">❌ Cancelada</option>
-<option value="persistente">🔴 Persistente</option>
-</select>
-<select class="filter-sel" id="rec-foperador" onchange="renderRecontagens()">
-<option value="">Todos os operadores</option>
-</select>
-<select class="filter-sel" id="rec-frua" onchange="renderRecontagens()">
-<option value="">Todas as ruas</option>
-</select>
-<select class="filter-sel" id="rec-ford" onchange="renderRecontagens()">
-<option value="">Ordenar por...</option>
-<option value="maior_diff">Maior Diferença</option>
-<option value="endereco">Endereço (A-Z)</option>
-<option value="recente">Mais Recente</option>
-<option value="atribuicao">Mais Recente Atribuição</option>
-</select>
-</div>
-<div id="rec-table-wrap">
-<div class="empty"><div class="empty-icon">🔄</div><div class="empty-title">Nenhuma rodada pendente</div><div class="empty-sub">Rodadas são criadas automaticamente ao processar contagens em conflito</div></div>
-</div>
-</div>
-</div>
 <!-- ══ CAPAS DUPLICADAS ══ -->
 <div class="page" id="page-capas-duplicadas">
 <div class="sec-hdr">
@@ -1578,6 +1508,25 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="kpi-grid"><div class="kpi"><div class="kpi-val" id="prod-k-total">0</div><div class="kpi-lbl">Total de produtos</div></div><div class="kpi"><div class="kpi-val" id="prod-k-semdun">0</div><div class="kpi-lbl">Sem DUN</div></div><div class="kpi"><div class="kpi-val" id="prod-k-semgtin">0</div><div class="kpi-lbl">Sem GTIN</div></div></div>
 <div class="tc"><div class="tc-toolbar" style="flex-wrap:wrap"><input class="search" id="prod-busca" oninput="renderBaseProdutos()" placeholder="🔍 Buscar código, produto, família ou GTIN..."/><select class="filter-sel" id="prod-status" onchange="renderBaseProdutos()"><option value="">Todos os status</option><option value="ativo">Ativos</option><option value="inativo">Inativos</option></select></div><div id="prod-familias" style="padding:12px 14px;border-top:1px solid var(--border);border-bottom:1px solid var(--border)"></div><div id="prod-table-wrap"><div class="empty"><div class="empty-icon">📦</div><div class="empty-title">Nenhum produto cadastrado</div><div class="empty-sub">Importe uma planilha ou cadastre manualmente.</div></div></div></div>
 </div>
+<!-- Modal cadastro em lote de coletores — precisa ficar FORA de qualquer
+     .page (estava, por engano, dentro de #page-operadores: como toda
+     .page vira display:none quando não está ativa, o modal ficava
+     escondido enquanto o usuário estava em Coletores e só "aparecia" se
+     ele navegasse pra Operadores/Usuários, que é a página-mãe errada que
+     ele tinha herdado). Bug ao vivo real, relatado e confirmado
+     comparando a classe "modal-bg open" (aplicada certinho) com o
+     display computado (escondido pelo ancestral errado). -->
+<div class="modal-bg" id="modal-coletores-lote" data-perm-context-modulo="coletores">
+  <div class="modal" style="max-width:680px">
+    <div class="modal-hdr"><div class="modal-title">📱 Cadastrar vários coletores</div><button class="modal-close" onclick="closeModal('modal-coletores-lote')">✕</button></div>
+    <div style="padding:16px">
+      <div class="sec-sub" style="margin-bottom:10px">Um nome por linha. O sistema gera um código de aprovação para cada coletor; depois basta digitar o código no aparelho para vinculá-lo.</div>
+      <textarea id="coletores-lote-texto" class="field" rows="10" placeholder="Coletor Expedição 01&#10;Coletor Expedição 02&#10;Coletor Recebimento 01"></textarea>
+      <div id="coletores-lote-feedback" style="margin-top:10px;font-size:.78rem;color:var(--muted)"></div>
+    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-coletores-lote')">Cancelar</button><button class="btn btn-primary" onclick="cadastrarColetoresLote()">Cadastrar</button></div>
+  </div>
+</div>
 <!-- ══ COLETORES ══ -->
 <div class="page" id="page-coletores">
 <div class="sec-hdr">
@@ -1591,6 +1540,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </select>
 <button class="btn btn-ghost btn-sm" onclick="atualizarAbaColetores()">🔄 Atualizar</button>
 <button class="btn btn-primary btn-sm" onclick="abrirModalNovoColetorComCodigo()">➕ Novo Coletor</button>
+<button class="btn btn-ghost btn-sm" onclick="abrirCadastroColetoresLote()">📱 Cadastrar vários</button>
 </div>
 </div>
 <!-- Info: como funciona -->
@@ -1614,7 +1564,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div>
 <!-- MODAL: LOGIN DE OPERADOR EM COLETOR -->
-<div class="modal-bg" id="modal-login-operador">
+<div class="modal-bg" id="modal-login-operador" data-perm-context-modulo="operadores">
 <div class="modal modal-sm">
 <div class="modal-hdr">
 <div class="modal-title">👤 Login de Operador no Coletor</div>
@@ -1653,7 +1603,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div>
 <!-- MODAL: SIMULAR ACESSO DE COLETOR (para testes) -->
-<div class="modal-bg" id="modal-simular-coletor">
+<div class="modal-bg" id="modal-simular-coletor" data-perm-context-modulo="coletores">
 <div class="modal modal-sm">
 <div class="modal-hdr">
 <div class="modal-title">🧪 Simular Acesso de Coletor</div>
@@ -1807,14 +1757,14 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <input autocomplete="off" id="op-nome" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--orange)'" oninput="opGerarUsername()" placeholder="Ex: João Silva" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.85rem;outline:none;background:var(--surface)">
 </input></div>
 <div class="fi">
-<div class="fl" style="display:flex;justify-content:space-between">
-<span>Login <span style="color:var(--danger)">*</span></span>
-<span style="font-size:.68rem;color:var(--muted);font-weight:400">gerado pelo nome</span>
+<div class="fl">E-mail de login *</div>
+<input class="field" id="op-email-login" type="email" autocomplete="off" placeholder="E-mail escolhido por você" oninput="opGerarUsername()">
+<div id="op-logins-preview" style="font-size:.75rem;color:var(--muted);margin-top:6px">Digite o e-mail que será usado para entrar.</div>
 </div>
-<input id="op-username" type="hidden">
-<div id="op-logins-preview" style="padding:11px 13px;border:1.5px solid var(--border);border-radius:var(--r);background:var(--surface);font-family:var(--mono);font-size:.8rem;line-height:1.7;color:var(--text)">Informe o nome completo.</div>
-<div id="op-username-fb" style="font-size:.73rem;margin-top:4px;min-height:16px"></div>
-</div>
+<div class="fi"><div class="fl">E-mail de recuperação *</div>
+<input class="field" id="op-email-recuperacao" type="email" list="op-emails-recuperacao" autocomplete="off" placeholder="Caixa real que receberá o link de nova senha">
+<datalist id="op-emails-recuperacao"></datalist>
+<small>Pode ser diferente do login. Quem recebe esse e-mail pode redefinir a senha desta pessoa.</small></div>
 <div class="fi">
 <div class="fl" style="display:flex;justify-content:space-between;align-items:center">
 <span>Senha <span style="color:var(--danger)">*</span></span>
@@ -1830,7 +1780,7 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <!-- Onde este login pode entrar (canais) -->
 <div class="op-secao">
 <div class="op-secao-titulo">📲 Onde este login pode entrar</div>
-<div class="op-secao-sub">Cria só a(s) conta(s) marcada(s) — Analista e Coletor são logins separados.</div>
+<div class="op-secao-sub">O e-mail e a senha informados valem para os canais selecionados. As permissões vêm do setor escolhido.</div>
 <div id="op-canais-criar" style="display:flex;gap:10px;flex-wrap:wrap"></div>
 </div>
 <!-- Acesso às lojas -->
@@ -1878,6 +1828,8 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div style="display:flex;gap:8px;flex-wrap:wrap">
 <button class="btn btn-ghost btn-sm" id="op-btn-atualizar" onclick="listarOperadores();opVerificarMinhaConta()">🔄 Atualizar</button>
 <button class="btn btn-success btn-sm" id="op-btn-criar-usuario" onclick="opAbrirModalCriar()">＋ Novo Usuário</button>
+<button class="btn btn-ghost btn-sm" onclick="opVerificarRemetente()">Verificar recuperação de senha</button>
+<button class="btn btn-ghost btn-sm" id="op-btn-criar-lote" onclick="opAbrirModalCriarLote()">👥 Vários usuários</button>
 </div>
 </div>
 <div class="tc-toolbar">
@@ -1895,12 +1847,42 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="empty"><div class="empty-icon">🔑</div><div class="empty-title">Carregando operadores…</div></div>
 </div>
 </div>
+<!-- Modal cadastro em lote de usuários -->
+<div class="modal-bg" id="op-modal-lote-bg" style="display:none">
+  <div class="modal" style="max-width:760px">
+    <div class="modal-hdr"><div class="modal-title">👥 Cadastrar vários usuários</div><button class="modal-close" onclick="opFecharModalCriarLote()">✕</button></div>
+    <div style="padding:16px;display:flex;flex-direction:column;gap:12px">
+      <div class="op-secao"><div class="op-secao-titulo">Pessoas</div>
+        <div class="op-secao-sub">Informe cada login manualmente. Escolha um setor por pessoa ou use as permissões comuns abaixo. Os cadastros concluídos não são reenviados ao tentar novamente.</div>
+        <div id="op-lote-pessoas"></div>
+        <button type="button" class="btn btn-ghost" onclick="opAdicionarPessoaLote()">+ Adicionar pessoa</button>
+      </div>
+      <div class="op-secao"><div class="op-secao-titulo">📲 Onde estes logins podem entrar</div><div id="op-canais-lote" style="display:flex;gap:10px;flex-wrap:wrap"></div></div>
+      <div class="op-secao"><div class="op-secao-titulo">🏪 Lojas</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+          <label class="op-toggle-chip"><input checked name="op-lojas-lote-modo" type="radio" value="todas"> Todas</label>
+          <label class="op-toggle-chip"><input name="op-lojas-lote-modo" type="radio" value="selecionadas"> Selecionadas</label>
+        </div>
+        <div id="op-lojas-lote-box" style="display:none"><div id="op-lojas-lote-lista"></div></div>
+      </div>
+      <div class="op-secao"><div class="op-secao-titulo">🧭 Setores</div><div id="op-setores-lote" style="display:flex;gap:10px;flex-wrap:wrap"></div></div>
+      <div class="op-secao"><div class="op-secao-titulo">🔐 Permissões</div><div id="op-permissoes-lote"></div></div>
+      <div id="op-lote-feedback" style="font-size:.78rem;color:var(--muted)"></div>
+    </div>
+    <div class="modal-actions"><button class="btn btn-ghost" onclick="opFecharModalCriarLote()">Cancelar</button><button class="btn btn-primary" id="op-lote-salvar" onclick="opCriarUsuariosLote()">Criar usuários</button></div>
+  </div>
+</div>
+
 <!-- Modal editar operador -->
 <!-- PEDIDO AO VIVO (2026-08-27): mesmo bug de z-index já achado e corrigido
-     em #loja-edit-modal-bg/#loja-modal-bg hoje — z-index:900 é MENOR que o
+     em #loja-edit-modal-bg/#loja-modal-bg hoje — z-index:900 era MENOR que o
      999 de #modal-configuracoes (Usuários fica dentro desse modal), então
-     Editar Usuário abria escondido atrás da tela de Configurações. -->
-<div id="op-modal-bg" onclick="if(event.target===this)opFecharModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:1050;align-items:center;justify-content:center">
+     Editar Usuário abria escondido atrás da tela de Configurações.
+     BUG AO VIVO REAL (2026-10-03): a tela de Configurações de verdade hoje
+     é outra (#dt-settings-shell, z-index:2400 — ver analista.css), não mais
+     #modal-configuracoes (999). 1050 continuava menor que 2400, então
+     Editar Usuário voltou a abrir escondido atrás de Configurações. -->
+<div id="op-modal-bg" onclick="if(event.target===this)opFecharModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:2500;align-items:center;justify-content:center">
 <div style="background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:560px;max-height:88vh;overflow:auto;margin:20px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px">
 <div style="font-weight:700;font-size:1rem">✏️ Editar Operador</div>
@@ -1911,6 +1893,8 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="fl">Nome completo</div>
 <input id="opedit-nome" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--orange)'" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.85rem;outline:none"/>
 </div>
+<div class="fi"><div class="fl">Login atual</div><div id="opedit-logins" style="font-size:.8rem;word-break:break-word"></div><small>Adicionar a recuperação preserva o usuário e seu histórico.</small></div>
+<div class="fi"><div class="fl">E-mail de recuperação</div><input class="field" type="email" id="opedit-email-recuperacao" list="op-emails-recuperacao" placeholder="E-mail real para receber o link de nova senha"></div>
 <div class="fi">
 <div class="fl">Cargo</div>
 <input id="opedit-cargo" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--orange)'" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.85rem;outline:none"/>
@@ -1918,6 +1902,19 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 <div class="fi">
 <div class="fl">Setor</div>
 <input id="opedit-setor" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--orange)'" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.85rem;outline:none"/>
+</div>
+<div class="fi">
+<div class="fl">Papel em Compras</div>
+<select id="opedit-papel-compras" onchange="opAtualizarCamposPapelCompras()" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.85rem;outline:none">
+<option value="">Nenhum</option>
+<option value="comprador">Comprador — só vê os próprios fornecedores/produtos nas telas de Compras</option>
+<option value="gerente">Gerente — escolhe ver um comprador específico ou o geral</option>
+</select>
+</div>
+<div class="fi" id="opedit-compradores-gerenciados-wrap" style="display:none">
+<div class="fl">Compradores que este gerente pode ver (nomes separados por vírgula)</div>
+<input id="opedit-compradores-gerenciados" placeholder="Ex: Dilma, Fabricio" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.85rem;outline:none"/>
+<div style="font-size:.68rem;color:var(--muted);margin-top:4px">Precisa bater com o primeiro nome usado no cadastro de cada comprador. Deixe em branco pra ver todos.</div>
 </div>
 <div class="fi">
 <div class="fl">Acesso às lojas</div>
@@ -1974,102 +1971,6 @@ body.col-resizing{cursor:col-resize!important;user-select:none!important}
 </div>
 </div><!-- /opl-page-operadores -->
 </div><!-- /page-operadores -->
-<!-- ════ MODAL: NOVA LOJA ════ -->
-<div id="loja-modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1050;align-items:center;justify-content:center">
-<div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:0;width:100%;max-width:500px;margin:20px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.25)">
-<!-- Header do modal -->
-<div style="padding:22px 26px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:linear-gradient(135deg,rgba(245,158,11,.08),transparent)">
-<div>
-<div style="font-weight:800;font-size:1.1rem;color:var(--text)">🏪 Nova Loja</div>
-<div style="font-size:.75rem;color:var(--muted);margin-top:2px">Cadastre uma nova loja no sistema</div>
-</div>
-<button onclick="lojaFecharModalCriar()" onmouseout="this.style.background='none'" onmouseover="this.style.background='var(--surface-2)'" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--muted);line-height:1;padding:4px 8px;border-radius:6px;transition:background .15s">✕</button>
-</div>
-<div style="padding:22px 26px;display:flex;flex-direction:column;gap:16px">
-<!-- Código / Sigla -->
-<div class="fi">
-<div class="fl">Código / Sigla <span style="color:var(--danger)">*</span></div>
-<input autocomplete="off" id="loja-codigo" maxlength="10" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" oninput="this.value=this.value.toUpperCase()" placeholder="Ex: 01, SP1, MAT" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--mono);font-size:.9rem;outline:none;text-transform:uppercase">
-<div style="font-size:.68rem;color:var(--muted);margin-top:3px">Identificador único da loja (usado nos endereços e inventários)</div>
-</input></div>
-<!-- Nome da Loja -->
-<div class="fi">
-<div class="fl">Nome da Loja <span style="color:var(--danger)">*</span></div>
-<input autocomplete="off" id="loja-nome" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" placeholder="Ex: Loja Matriz, Filial São Paulo" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.88rem;outline:none"/>
-</div>
-<!-- Responsável -->
-<div class="fi">
-<div class="fl">Responsável</div>
-<input autocomplete="off" id="loja-responsavel" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" placeholder="Nome do responsável pela loja" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.88rem;outline:none"/>
-</div>
-<!-- Observação -->
-<div class="fi">
-<div class="fl">Observação</div>
-<textarea id="loja-obs" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" placeholder="Endereço físico, região, observações..." rows="2" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.83rem;outline:none;resize:vertical"></textarea>
-</div>
-<!-- Copiar endereços de outra loja -->
-<div class="fi" style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:var(--r);padding:12px 14px">
-<div class="fl" style="color:var(--text)">📋 Copiar base de endereços de outra loja <span style="font-size:.68rem;color:var(--muted);font-weight:400">(opcional)</span></div>
-<select id="loja-copiar-de" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.83rem;outline:none;background:var(--surface);color:var(--text);margin-top:4px">
-<option value="">Não copiar — loja começa sem endereços</option>
-</select>
-<div style="font-size:.68rem;color:var(--muted);margin-top:4px">Se selecionado, todos os endereços da loja escolhida serão copiados para a nova loja</div>
-</div>
-<div id="loja-modal-feedback" style="display:none"></div>
-</div>
-<div style="padding:16px 26px;border-top:1px solid var(--border);display:flex;gap:10px;background:var(--surface-2)">
-<button class="btn btn-ghost" onclick="lojaFecharModalCriar()" style="flex:1">Cancelar</button>
-<button class="btn" id="btn-criar-loja" onclick="lojaCriar()" style="flex:2;padding:11px;font-size:.9rem;font-weight:700;background:linear-gradient(135deg,var(--amber,#F59E0B),#d97706);color:#fff;border:none;border-radius:var(--r);cursor:pointer;transition:all .2s;box-shadow:0 4px 14px rgba(245,158,11,.35)">
-              🏪 Criar Loja
-            </button>
-</div>
-</div>
-</div>
-<!-- ════ MODAL: EDITAR LOJA ════ -->
-<!-- PEDIDO AO VIVO (2026-08-27): "clico no lápis da loja lá para editar mas
-não funciona" — este modal tinha z-index:960, MENOR que o z-index:999 do
-próprio #modal-configuracoes (Configurações → Lojas fica DENTRO desse
-modal). Ao abrir, ficava renderizado por baixo do Configurações — display
-mudava pra flex de verdade, só que invisível atrás do modal pai. Mesmo bug
-em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
-<div id="loja-edit-modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:1050;align-items:center;justify-content:center">
-<div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:0;width:100%;max-width:460px;margin:20px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.25)">
-<div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
-<div style="font-weight:800;font-size:1rem">✏️ Editar Loja</div>
-<button onclick="lojaFecharModalEditar()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--muted)">✕</button>
-</div>
-<div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
-<input id="loja-edit-id" type="hidden"/>
-<div class="fi">
-<div class="fl">Nome da Loja <span style="color:var(--danger)">*</span></div>
-<input id="loja-edit-nome" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.88rem;outline:none"/>
-</div>
-<div class="fi">
-<div class="fl">Responsável</div>
-<input id="loja-edit-responsavel" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.88rem;outline:none"/>
-</div>
-<div class="fi">
-<div class="fl">Observação</div>
-<textarea id="loja-edit-obs" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" rows="2" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.83rem;outline:none;resize:vertical"></textarea>
-</div>
-<div class="fi" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px">
-<div class="fl" style="color:#1d4ed8">🔵 Vínculo com a Bluesoft</div>
-<div style="display:flex;gap:6px;align-items:center">
-<select id="loja-edit-bluesoft-key" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.83rem"><option value="">— não vinculada —</option></select>
-<button class="btn btn-ghost btn-sm" onclick="lojaBuscarLojasBluesoft()" type="button" title="Consultar lojas cadastradas na Bluesoft">🔄 Buscar</button>
-</div>
-<div id="loja-edit-bluesoft-status" style="font-size:.68rem;color:var(--muted);margin-top:4px"></div>
-</div>
-<div id="loja-edit-feedback" style="display:none"></div>
-<div style="display:flex;gap:8px;margin-top:4px;align-items:center">
-<button class="btn btn-ghost" id="loja-edit-usar" onclick="usarLoja(document.getElementById('loja-edit-id').value)" type="button">Usar esta loja</button>
-<div style="flex:1"></div>
-<button class="btn btn-ghost" onclick="lojaFecharModalEditar()" type="button">Cancelar</button>
-<button class="btn btn-primary" onclick="lojaSalvarEdicao()" type="button">💾 Salvar</button>
-</div>
-</div>
-</div>
-</div>
 <!-- ══ IMPORTAR / EXPORTAR ══ -->
 
 <div class="page" id="page-lojas">
@@ -2320,11 +2221,10 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 <!-- ══ PAINEL API ══ -->
 <div id="ie-panel-api" style="display:none">
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-<!-- Card: Configuração da API — movido em tempo de execução (mesmo padrão
-     de page-operadores/coletores/lojas) pra dentro do modal global de
-     Configurações (⚙️ no topo), porque essa config (dt_config/integracao_api)
-     já serve Produção/PCP/Compras via 90-bluesoft-service.js, não só
-     Inventário. Continua com id="ie-panel-api" como pai só pelo layout em
+<!-- Card: Configuração da API do Inventário — movido em tempo de execução
+     (mesmo padrão de page-operadores/coletores/lojas) pra dentro do modal
+     global de Configurações (⚙️ no topo). A integração BlueSoft permanece
+     restrita ao fluxo de Inventário. Continua com id="ie-panel-api" como pai só pelo layout em
      grid — o nó real que se move é este (page-integracao-api). -->
 <div class="page" id="page-integracao-api" style="grid-column:1/-1">
 <div class="tc" style="border-top:3px solid var(--info)">
@@ -2582,8 +2482,118 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div><!-- /content -->
 </div><!-- /main -->
 </div><!-- /app-main-logistica -->
+<!-- ════ MODAL: NOVA LOJA ════ -->
+<!-- BUG AO VIVO REAL (2026-10-03): "clico no lápis da loja e não abre nada"
+— os 2 modais de Loja (criar/editar) viviam DENTRO de #app-main-logistica
+(acima), que fica com display:none sempre que o setor Logística não é a
+view ativa — inclusive quando a tela de Lojas é aberta via Configurações
+(um modal por cima, não uma troca de setor). O modal até tentava abrir
+(display:flex certo, z-index 1050 certo), mas herdava tamanho 0x0 de um
+ancestral com display:none, ficando invisível mesmo "aberto" (confirmado
+ao vivo: getBoundingClientRect() width/height = 0 com todo o resto OK).
+Diferente do bug de z-index já documentado antes (que também existiu, já
+corrigido com z-index:1050 > 999 do extinto #modal-configuracoes) — este é
+outro bug, de posição no DOM. Movidos pra fora de qualquer shell de setor,
+igual o #modal-api-simulador logo abaixo, que nunca teve esse problema por
+já estar aqui fora.
+SEGUNDO BUG AO VIVO REAL (2026-10-03, mesmo dia): corrigido o tamanho 0x0,
+o modal ainda ficava escondido ENQUANTO a tela de Configurações estava
+aberta — só aparecia depois de sair dela. Causa: a Configurações real hoje
+é #dt-settings-shell (z-index:2400 — ver analista.css), não mais o antigo
+#modal-configuracoes (999) que o comentário acima cita. 1050 < 2400, então
+o modal renderizava atrás dela. z-index subiu pra 2500 nos dois modais de
+Loja (e no #op-modal-bg de Editar Operador, mesmo problema, mesma causa). -->
+<div id="loja-modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:2500;align-items:center;justify-content:center">
+<div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:0;width:100%;max-width:500px;margin:20px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.25)">
+<!-- Header do modal -->
+<div style="padding:22px 26px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;background:linear-gradient(135deg,rgba(245,158,11,.08),transparent)">
+<div>
+<div style="font-weight:800;font-size:1.1rem;color:var(--text)">🏪 Nova Loja</div>
+<div style="font-size:.75rem;color:var(--muted);margin-top:2px">Cadastre uma nova loja no sistema</div>
+</div>
+<button onclick="lojaFecharModalCriar()" onmouseout="this.style.background='none'" onmouseover="this.style.background='var(--surface-2)'" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--muted);line-height:1;padding:4px 8px;border-radius:6px;transition:background .15s">✕</button>
+</div>
+<div style="padding:22px 26px;display:flex;flex-direction:column;gap:16px">
+<!-- Código / Sigla -->
+<div class="fi">
+<div class="fl">Código / Sigla <span style="color:var(--danger)">*</span></div>
+<input autocomplete="off" id="loja-codigo" maxlength="10" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" oninput="this.value=this.value.toUpperCase()" placeholder="Ex: 01, SP1, MAT" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--mono);font-size:.9rem;outline:none;text-transform:uppercase">
+<div style="font-size:.68rem;color:var(--muted);margin-top:3px">Identificador único da loja (usado nos endereços e inventários)</div>
+</input></div>
+<!-- Nome da Loja -->
+<div class="fi">
+<div class="fl">Nome da Loja <span style="color:var(--danger)">*</span></div>
+<input autocomplete="off" id="loja-nome" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" placeholder="Ex: Loja Matriz, Filial São Paulo" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.88rem;outline:none"/>
+</div>
+<!-- Responsável -->
+<div class="fi">
+<div class="fl">Responsável</div>
+<input autocomplete="off" id="loja-responsavel" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" placeholder="Nome do responsável pela loja" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.88rem;outline:none"/>
+</div>
+<!-- Observação -->
+<div class="fi">
+<div class="fl">Observação</div>
+<textarea id="loja-obs" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" placeholder="Endereço físico, região, observações..." rows="2" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.83rem;outline:none;resize:vertical"></textarea>
+</div>
+<!-- Copiar endereços de outra loja -->
+<div class="fi" style="background:rgba(245,158,11,.06);border:1px solid rgba(245,158,11,.2);border-radius:var(--r);padding:12px 14px">
+<div class="fl" style="color:var(--text)">📋 Copiar base de endereços de outra loja <span style="font-size:.68rem;color:var(--muted);font-weight:400">(opcional)</span></div>
+<select id="loja-copiar-de" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.83rem;outline:none;background:var(--surface);color:var(--text);margin-top:4px">
+<option value="">Não copiar — loja começa sem endereços</option>
+</select>
+<div style="font-size:.68rem;color:var(--muted);margin-top:4px">Se selecionado, todos os endereços da loja escolhida serão copiados para a nova loja</div>
+</div>
+<div id="loja-modal-feedback" style="display:none"></div>
+</div>
+<div style="padding:16px 26px;border-top:1px solid var(--border);display:flex;gap:10px;background:var(--surface-2)">
+<button class="btn btn-ghost" onclick="lojaFecharModalCriar()" style="flex:1">Cancelar</button>
+<button class="btn" id="btn-criar-loja" onclick="lojaCriar()" style="flex:2;padding:11px;font-size:.9rem;font-weight:700;background:linear-gradient(135deg,var(--amber,#F59E0B),#d97706);color:#fff;border:none;border-radius:var(--r);cursor:pointer;transition:all .2s;box-shadow:0 4px 14px rgba(245,158,11,.35)">
+              🏪 Criar Loja
+            </button>
+</div>
+</div>
+</div>
+<!-- ════ MODAL: EDITAR LOJA ════ -->
+<div id="loja-edit-modal-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:2500;align-items:center;justify-content:center">
+<div style="background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:0;width:100%;max-width:460px;margin:20px;overflow:hidden;box-shadow:0 24px 64px rgba(0,0,0,.25)">
+<div style="padding:20px 24px 16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center">
+<div style="font-weight:800;font-size:1rem">✏️ Editar Loja</div>
+<button onclick="lojaFecharModalEditar()" style="background:none;border:none;font-size:1.3rem;cursor:pointer;color:var(--muted)">✕</button>
+</div>
+<div style="padding:20px 24px;display:flex;flex-direction:column;gap:14px">
+<input id="loja-edit-id" type="hidden"/>
+<div class="fi">
+<div class="fl">Nome da Loja <span style="color:var(--danger)">*</span></div>
+<input id="loja-edit-nome" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.88rem;outline:none"/>
+</div>
+<div class="fi">
+<div class="fl">Responsável</div>
+<input id="loja-edit-responsavel" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.88rem;outline:none"/>
+</div>
+<div class="fi">
+<div class="fl">Observação</div>
+<textarea id="loja-edit-obs" onblur="this.style.borderColor='var(--border)'" onfocus="this.style.borderColor='var(--amber,#F59E0B)'" rows="2" style="width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.83rem;outline:none;resize:vertical"></textarea>
+</div>
+<div class="fi" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px">
+<div class="fl" style="color:#1d4ed8">🔵 Vínculo com a Bluesoft</div>
+<div style="display:flex;gap:6px;align-items:center">
+<select id="loja-edit-bluesoft-key" style="flex:1;padding:8px 10px;border:1.5px solid var(--border);border-radius:var(--r);font-family:var(--sans);font-size:.83rem"><option value="">— não vinculada —</option></select>
+<button class="btn btn-ghost btn-sm" onclick="lojaBuscarLojasBluesoft()" type="button" title="Consultar lojas cadastradas na Bluesoft">🔄 Buscar</button>
+</div>
+<div id="loja-edit-bluesoft-status" style="font-size:.68rem;color:var(--muted);margin-top:4px"></div>
+</div>
+<div id="loja-edit-feedback" style="display:none"></div>
+<div style="display:flex;gap:8px;margin-top:4px;align-items:center">
+<button class="btn btn-ghost" id="loja-edit-usar" onclick="usarLoja(document.getElementById('loja-edit-id').value)" type="button">Usar esta loja</button>
+<div style="flex:1"></div>
+<button class="btn btn-ghost" onclick="lojaFecharModalEditar()" type="button">Cancelar</button>
+<button class="btn btn-primary" onclick="lojaSalvarEdicao()" type="button">💾 Salvar</button>
+</div>
+</div>
+</div>
+</div>
 <!-- ══ MODAL: API ADAPTER SIMULADOR ══ -->
-<div class="modal-bg" id="modal-api-simulador">
+<div class="modal-bg" id="modal-api-simulador" data-perm-context-modulo="importar-exportar">
 <div class="modal" style="max-width:900px;width:96vw;padding:0">
 <div class="modal-hdr" style="padding:14px 20px">
 <div class="modal-title">🧪 Simulador de Payload — API Adapter</div>
@@ -2674,7 +2684,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: VALIDAÇÃO EXPORTAÇÃO BLUESOFT ══ -->
-<div class="modal-bg" id="modal-validar-exportacao">
+<div class="modal-bg" id="modal-validar-exportacao" data-perm-context-modulo="importar-exportar">
 <div class="modal" style="max-width:640px">
 <div class="modal-hdr">
 <div class="modal-title">📤 Exportar para Bluesoft</div>
@@ -2710,7 +2720,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: NOVO INVENTÁRIO ══ -->
-<div class="modal-bg" id="modal-inv">
+<div class="modal-bg" id="modal-inv" data-perm-context-modulo="inventarios">
 <div class="modal modal-lg">
 <div class="modal-hdr">
 <div class="modal-title">📦 Novo Inventário</div>
@@ -2777,7 +2787,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: REIMPORTAR BASE DE INVENTÁRIO EXISTENTE ══ -->
-<div class="modal-bg" id="modal-reimportar-base">
+<div class="modal-bg" id="modal-reimportar-base" data-perm-context-modulo="inventarios">
 <div class="modal modal-lg">
 <div class="modal-hdr">
 <div class="modal-title">📂 Reimportar Base — <span id="reimp-inv-nome" style="font-weight:400;color:var(--muted)"></span></div>
@@ -2803,7 +2813,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: SELECIONAR ENDEREÇOS PARA INVENTÁRIO ══ -->
-<div class="modal-bg" id="modal-sel-end">
+<div class="modal-bg" id="modal-sel-end" data-perm-context-modulo="inventarios">
 <div class="modal modal-lg">
 <div class="modal-hdr">
 <div class="modal-title">📍 Selecionar Endereços do Inventário</div>
@@ -2826,7 +2836,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: IMPORTAR ENDEREÇOS ══ -->
-<div class="modal-bg" id="modal-end-import">
+<div class="modal-bg" id="modal-end-import" data-perm-context-modulo="enderecos">
 <div class="modal modal-lg" style="max-width:760px">
 <div class="modal-hdr">
 <div class="modal-title">📥 Importar Endereços</div>
@@ -2856,7 +2866,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: REATRIBUIR LOCAIS ══ -->
-<div class="modal-bg" id="modal-reatrib-local">
+<div class="modal-bg" id="modal-reatrib-local" data-perm-context-modulo="enderecos">
 <div class="modal modal-lg" style="max-width:680px">
 <div class="modal-hdr">
 <div class="modal-title">🏭 Corrigir Nomes dos Locais de Estoque</div>
@@ -2899,7 +2909,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: ENDEREÇO MANUAL ══ -->
-<div class="modal-bg" id="modal-end-manual">
+<div class="modal-bg" id="modal-end-manual" data-perm-context-modulo="enderecos">
 <div class="modal modal-sm">
 <div class="modal-hdr">
 <div class="modal-title">📍 Novo Endereço Manual</div>
@@ -2947,7 +2957,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: VER BASE DO INVENTÁRIO ══ -->
-<div class="modal-bg" id="modal-base">
+<div class="modal-bg" id="modal-base" data-perm-context-modulo="inventarios">
 <div class="modal modal-lg">
 <div class="modal-hdr">
 <div class="modal-title" id="modal-base-title">📂 Base da Auditoria</div>
@@ -2961,7 +2971,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: FECHAR INVENTÁRIO ══ -->
-<div class="modal-bg" id="modal-fechar-inv">
+<div class="modal-bg" id="modal-fechar-inv" data-perm-context-modulo="inventarios">
 <div class="modal modal-sm">
 <div class="modal-hdr">
 <div class="modal-title">⚠️ Fechar Inventário</div>
@@ -2976,7 +2986,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: REGISTRAR RECONTAGEM ══ -->
-<div class="modal-bg" id="modal-reg-recontagem">
+<div class="modal-bg" id="modal-reg-recontagem" data-perm-context-modulo="recontagens">
 <div class="modal modal-sm">
 <div class="modal-hdr">
 <div class="modal-title">🔄 Registrar Recontagem</div>
@@ -3011,7 +3021,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: ATRIBUIR RECONTAGEM ══ -->
-<div class="modal-bg" id="modal-atribuir-recontagem">
+<div class="modal-bg" id="modal-atribuir-recontagem" data-perm-context-modulo="recontagens">
 <div class="modal modal-sm">
 <div class="modal-hdr">
 <div class="modal-title">👥 Atribuir Recontagem</div>
@@ -3037,7 +3047,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 </div>
 </div>
 <!-- ══ MODAL: ESTORNO DE CONTAGEM ══ -->
-<div class="modal-bg" id="modal-estorno">
+<div class="modal-bg" id="modal-estorno" data-perm-context-modulo="contagens">
 <div class="modal modal-sm">
 <div class="modal-hdr">
 <div class="modal-title">↩️ Estorno de Contagem</div>
@@ -3118,8 +3128,8 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 <!-- ══════════ JAVASCRIPT ══════════ -->
 
 
-</div><script defer src="js/shared/common-utils.js?v=20260901-webview66-compat"></script><script defer src="js/shared/address-state-engine.js?v=20260901-webview66-compat"></script><script defer src="js/shared/address-state-selectors.js?v=20260901-webview66-compat"></script><script defer src="js/shared/address-state-view.js?v=20260901-webview66-compat"></script><script defer src="js/shared/firebase-shared.js?v=20260911-revert-enablePersistence"></script><script defer src="js/shared/enderecos-service.js?v=20260901-webview66-compat"></script><script defer src="js/shared/produtos-service.js?v=20260901-webview66-compat"></script><script defer src="js/analista/actions.js?v=20260731-234-auditoria"></script><script defer src="js/analista/reducers.js?v=20260731-234-auditoria"></script><script defer src="js/analista/store.js?v=20260731-234-auditoria"></script><script defer src="js/analista/00-auth-login.js?v=20260908-troca-senha-primeiro-acesso"></script><script defer src="js/analista/01-core-base-storage.js?v=20260731-234-auditoria"></script><script defer src="js/analista/services/inventarioService.js?v=20260731-234-auditoria"></script><script defer src="js/analista/services/auditoriaService.js?v=20260731-234-auditoria"></script><script defer src="js/analista/services/divergenciaService.js?v=20260731-234-auditoria"></script><script defer src="js/analista/firebaseService.js?v=20260911b-remove-diag-temporario"></script><script defer src="js/analista/02-core-state-bootstrap.js?v=20260731-234-auditoria"></script><script defer src="js/analista/03-core-navigation.js?v=20260901-paletes"></script><script defer src="js/analista/router-historico.js?v=20260901-paletes"></script><script defer src="js/analista/04-compat-pages.js?v=20260731-234-auditoria"></script><script defer src="js/analista/09-fs-publicar.js?v=20260809-v325-tipo-endereco-fix"></script><script defer src="js/analista/10-inventarios-negocio.js?v=20260809-v323-diag-inativos"></script><script defer src="js/analista/11-importacao-base-oficial.js?v=20260809-v306-fixes"></script><script defer src="js/analista/12-validacao-operacional.js?v=20260809-v307-perf-pendencias"></script><script defer src="js/analista/13-enderecos-importacao-selecao.js?v=20260806-v296-4"></script><script defer src="js/analista/20-sync-contagens.js?v=20260731-234-auditoria"></script><script defer src="js/analista/services/rodadaFisicaService.js?v=20260731-234-auditoria"></script><script defer src="js/analista/21-divergencias-recontagens.js?v=20260819-vendedor-targetado-por-nota"></script><script defer src="js/analista/22-dashboard-render-sync.js?v=20260805-dashboard-v282"></script><script defer src="js/analista/30-render-inventarios-acompanhamento.js?v=20260809-v304-delegacao-cliques"></script><script defer src="js/analista/31-render-contagens-pendencias.js?v=20260809-v307-perf-pendencias"></script><script defer src="js/analista/32-render-divergencias-recontagens.js?v=20260805-recontagem-v258"></script><script defer src="js/analista/33-render-enderecos.js?v=20260806-v296-4"></script><script defer src="js/analista/34-coletores-modelo-dispositivo.js?v=20260904-codigo-aprovacao"></script><script defer src="js/analista/35-coletores-render.js?v=20260904-codigo-aprovacao"></script><script defer src="js/analista/38-auditoria-operacional-v22.js?v=20260901b-auto-atualiza-ao-entrar"></script><script defer src="js/analista/39-base-produtos.js?v=20260809-v317-export-dun"></script><script defer src="js/analista/40-relatorios-produtividade.js?v=20260731-234-auditoria"></script><script defer src="js/analista/41-inventario-actions-v52.js?v=20260809-v306-fixes"></script>
-<div class="modal-bg" id="modal-loja-cadastro"><div class="modal" style="max-width:480px">
+</div><script defer src="js/shared/common-utils.js?v=20260901-webview66-compat"></script><script defer src="js/shared/address-state-engine.js?v=20260901-webview66-compat"></script><script defer src="js/shared/address-state-selectors.js?v=20260901-webview66-compat"></script><script defer src="js/shared/address-state-view.js?v=20260901-webview66-compat"></script><script defer src="js/shared/firebase-shared.js?v=20261009-setores-gestao-v1"></script><script defer src="js/shared/enderecos-service.js?v=20260901-webview66-compat"></script><script defer src="js/shared/produtos-service.js?v=20260901-webview66-compat"></script><script defer src="js/analista/actions.js?v=20260731-234-auditoria"></script><script defer src="js/analista/reducers.js?v=20260731-234-auditoria"></script><script defer src="js/analista/store.js?v=20260731-234-auditoria"></script><script defer src="js/analista/00-auth-login.js?v=20261012-email-manual-recuperacao-v2"></script><script defer src="js/analista/01-core-base-storage.js?v=20260731-234-auditoria"></script><script defer src="js/analista/services/inventarioService.js?v=20260731-234-auditoria"></script><script defer src="js/analista/services/auditoriaService.js?v=20260731-234-auditoria"></script><script defer src="js/analista/services/divergenciaService.js?v=20260731-234-auditoria"></script><script defer src="js/analista/firebaseService.js?v=20261006-base-estavel-login"></script><script defer src="js/analista/02-core-state-bootstrap.js?v=20260731-234-auditoria"></script><script defer src="js/analista/03-core-navigation.js?v=20261012-separacao-v1"></script><script defer src="js/analista/router-historico.js?v=20261005-v8-tela-detalhe"></script><script defer src="js/analista/04-compat-pages.js?v=20260731-234-auditoria"></script><script defer src="js/analista/09-fs-publicar.js?v=20260809-v325-tipo-endereco-fix"></script><script defer src="js/analista/10-inventarios-negocio.js?v=20261006-endereco-objeto"></script><script defer src="js/analista/11-importacao-base-oficial.js?v=20260809-v306-fixes"></script><script defer src="js/analista/12-validacao-operacional.js?v=20260928-inventario-v4-hotfix-recontagens"></script><script defer src="js/analista/13-enderecos-importacao-selecao.js?v=20260806-v296-4"></script><script defer src="js/analista/20-sync-contagens.js?v=20260731-234-auditoria"></script><script defer src="js/analista/services/rodadaFisicaService.js?v=20260731-234-auditoria"></script><script defer src="js/analista/21-divergencias-recontagens.js?v=20261006-esperado-em-und"></script><script defer src="js/analista/22-dashboard-render-sync.js?v=20261006-geral-cadastro-enderecos"></script><script defer src="js/analista/30-render-inventarios-acompanhamento.js?v=20260928-inventario-v4-acompanhar-btn"></script><script defer src="js/analista/31-render-contagens-pendencias.js?v=20261006-pendencias-sem-inativos"></script><script defer src="js/analista/32-render-divergencias-recontagens.js?v=20261006-esperado-em-und"></script><script defer src="js/analista/33-render-enderecos.js?v=20260806-v296-4"></script><script defer src="js/analista/34-coletores-modelo-dispositivo.js?v=20261002-logout-automatico-40min"></script><script defer src="js/analista/35-coletores-render.js?v=20260914-fix-render-apos-refresh"></script><script defer src="js/analista/38-auditoria-operacional-v22.js?v=20260901b-auto-atualiza-ao-entrar"></script><script defer src="js/analista/39-base-produtos.js?v=20260809-v317-export-dun"></script><script defer src="js/analista/40-relatorios-produtividade.js?v=20260929-fix-data-produto-renomear-capa"></script><script defer src="js/analista/41-inventario-actions-v52.js?v=20260809-v306-fixes"></script>
+<div class="modal-bg" id="modal-loja-cadastro" data-perm-context-modulo="lojas"><div class="modal" style="max-width:480px">
   <div class="modal-title">🏪 <span id="ml-title">Cadastrar loja</span></div>
   <input type="hidden" id="ml-id"/>
   <div class="form-group"><label>Nome da loja</label><input class="field" id="ml-nome" placeholder="Ex.: CD Matriz"/></div>
@@ -3127,7 +3137,7 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
   <div class="form-group"><label>Status</label><select class="field" id="ml-ativa"><option value="true">Ativa</option><option value="false">Inativa</option></select></div>
   <div class="modal-actions"><button class="btn btn-ghost" onclick="closeModal('modal-loja-cadastro')">Cancelar</button><button class="btn btn-primary" onclick="salvarLoja()">Salvar</button></div>
 </div></div>
-<script defer src="vendor/firebase-10.12.2/firebase-functions-compat.js"></script><script defer src="js/analista/36-lojas.js?v=20260809-v297-bluesoft"></script><script defer src="js/analista/37-usuarios-permissoes.js?v=20260911b-fix-escopo-scan-recebimento"></script><script defer src="js/analista/41-dashboard-acomp-v37.js?v=20260805-auditoria-v282"></script><script defer src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script defer src="js/analista/43-importar-exportar-api.js?v=20260823-fix-classificacao-tipo"></script><script defer src="js/analista/44-auditoria-remediacoes.js?v=20260809-v297-bluesoft"></script><script defer src="js/analista/app-controller.js?v=20260804-v257-trava-clique-recontagem"></script>
+<script defer src="js/shared/separacao-ui.js?v=20261012-separacao-v1"></script><script defer src="js/analista/00-lazy-areas.js?v=20261012-separacao-v1"></script><script defer src="js/analista/36-lojas.js?v=20261003-busca-bluesoft-reativada"></script><script defer src="js/analista/37-usuarios-permissoes.js?v=20261012-separacao-v1"></script><script defer src="js/analista/123-configuracoes-sistema.js?v=20261012-email-manual-recuperacao-v2"></script><script defer src="js/analista/41-dashboard-acomp-v37.js?v=20260928-inventario-v4-hotfix-recontagens"></script><script defer src="js/analista/42-topbar-tools.js?v=20260731-234-auditoria"></script><script defer src="js/analista/43-importar-exportar-api.js?v=20260823-fix-classificacao-tipo"></script><script defer src="js/analista/44-auditoria-remediacoes.js?v=20260809-v297-bluesoft"></script><script defer src="js/analista/app-controller.js?v=20260804-v257-trava-clique-recontagem"></script>
 <style id="dashboard-v38-css">
 .dash-wide{grid-column:span 12}.dash-pie{grid-column:span 4}.dash-pie-body{display:flex;align-items:center;justify-content:center;gap:22px;padding:18px 20px 24px}
 .dash-ranking-body{padding:4px 18px 20px}
@@ -3238,9 +3248,10 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 <script defer src="js/analista/47-dashboard-acomp-v252.js?v=20260805-v274"></script>
 <script defer src="js/analista/48-usuarios-lojas-v253.js?v=20260805-0030"></script>
 <script defer src="js/analista/49-quatro-telas-v254.js?v=20260805-dashboard-v282"></script>
-<script defer src="js/analista/50-inventario-classificacoes-v275.js?v=20260823-motivo-tipo"></script>
-<script defer src="js/analista/51-inventario-por-produto-v286.js?v=20260805-v286"></script>
-<script defer src="js/analista/52-cadastros-v287.js?v=20260911-busca-unica-sem-onsnapshot"></script>
+<script defer src="js/analista/50-inventario-classificacoes-v275.js?v=20260929-checkpoint-pdf-retrato"></script>
+<script defer src="js/analista/51-inventario-por-produto-v286.js?v=20261006-lista-do-arquivo"></script>
+<script defer src="js/analista/53-inventario-workspace-v4.js?v=20260928-inventario-v4-acompanhar-btn"></script>
+<script defer src="js/analista/52-cadastros-v287.js?v=20260913-sob-demanda"></script>
 <!-- Compatibilidade de auditoria: 59-producao-ui-completa.js?v=20260822d-config-tela-cheia -->
 
 
@@ -3276,21 +3287,22 @@ em #loja-modal-bg (botão "+ Nova Loja" logo acima). -->
 
 
 
-<script defer src="js/analista/bi-pasta-local.js?v=20260827-so-via-api-graph"></script>
-<script defer src="js/analista/90-bluesoft-service.js?v=20260826-import-bi-compras-a-receber"></script>
+<script defer src="js/analista/bi-pasta-local.js?v=20260913-cache-dedup"></script>
 
 
-<script defer src="js/analista/91-logistica-recebimento.js?v=20260909e-sem-timeout-artificial"></script>
-<script defer src="js/analista/92-recebimento-config.js?v=20260814-fase15f4h-rotas-globais"></script>
-<script defer src="js/analista/93-recebimento-operacao.js?v=20260911-poll-sem-onsnapshot"></script>
-<script defer src="js/analista/94-recebimento-relatorios.js?v=20260827-so-buscar-auto-refresh"></script>
-<script defer src="js/analista/95-recebimento-transbordo.js?v=20260911b-trava-concorrencia"></script>
-<script defer src="js/analista/96-recebimento-performance.js?v=20260821-filtro-periodo-livre"></script>
-<script defer src="js/analista/97-recebimento-recusas.js?v=20260911h-filtro-tratamento-todos"></script>
-<script defer src="js/analista/100-consulta-notas-fiscais.js?v=20260902b-gtin-ean-dun-separados"></script>
-<script defer src="js/analista/101-relatorios-bi.js?v=20260909-timeout-compras-bi"></script>
-<script defer src="js/analista/98-recebimento-retornos-indicadores.js?v=20260911f-cache-compartilhado"></script>
-<script defer src="js/analista/102-devolucoes-bi-indicadores.js?v=20260910-busca-manual-periodo-2-anos"></script>
-<script defer src="js/analista/99-recebimento-retornos-status.js?v=20260911d-status-detalhe-auto"></script><script defer src="js/analista/103-recusas-indicadores.js?v=20260911e-migra-bigquery"></script><script defer src="js/coletor/28-recebimento-paletes-ledger.js?v=20260906-tambem-no-analista"></script><script defer src="js/analista/recebimento-paletes-monitoramento.js?v=20260908b-split-transbordo-entrega"></script><script defer src="js/analista/104-recebimento-cargas-cards.js?v=20260911c-pdf-portrait-sequenciado"></script><script defer src="js/analista/105-recebimento-patio-tempo-real.js?v=20260911k-ranking-filtrado-timeout"></script>
+
+
+
+
+
+
+
+
+
+<script defer src="js/analista/101-relatorios-bi.js?v=20260913-somente-bigquery"></script>
+
+
+
+<script defer src="js/analista/122-impressoras-rede.js?v=20260913"></script>
 </body>
 </html>

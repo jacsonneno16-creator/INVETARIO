@@ -29,10 +29,10 @@
     }
     *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 html{overscroll-behavior-y:contain}
-    body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100dvh;display:flex;flex-direction:column;overflow-x:hidden;overscroll-behavior-y:contain}
+    body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;overflow-x:hidden;overscroll-behavior-y:contain}
 
     /* ── SCREENS ── */
-    .screen{display:none;flex-direction:column;min-height:100dvh}
+    .screen{display:none;flex-direction:column;min-height:100vh;min-height:100dvh}
     .screen.active{display:flex}
 
     /* ── LOGIN ── */
@@ -80,7 +80,7 @@ html{overscroll-behavior-y:contain}
     .screen-title{font-size:1.3rem;font-weight:800;color:var(--text)}
     .screen-sub{font-size:0.82rem;color:var(--muted);margin-top:2px}
 #screen-recebimento .screen-content{min-height:0}
-#rec-lista-andamento{display:flex;flex-direction:column;gap:10px;min-height:0;max-height:calc(100dvh - 315px);overflow-y:auto;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;padding:0 2px 28px}
+#rec-lista-andamento{display:flex;flex-direction:column;gap:10px;min-height:0;max-height:calc(100vh - 315px);max-height:calc(100dvh - 315px);overflow-y:auto;overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;padding:0 2px 28px}
 #rec-lista-andamento .inv-card{flex:0 0 auto}
 /* BUG AO VIVO REAL (2026-09-04): "já tem muito card, já precisa colocar uma
    barra de rolagem" — screen-recebimento-modo (e as outras telas de menu com
@@ -127,7 +127,11 @@ html{overscroll-behavior-y:contain}
     .empty-inv-icon{font-size:3rem;opacity:.3;margin-bottom:14px}
 
     /* ── APP PRINCIPAL ── */
-    #screen-app{background:var(--bg)}
+    #screen-app{background:var(--bg);height:100vh;height:100dvh}
+    #screen-app .view{min-height:0}
+    /* Telas do Apontamento de Produção: sem container de rolagem próprio, o
+       conteúdo passava da tela e não rolava. Limita a altura e rola dentro. */
+    #screen-apontamento-producao,#screen-apontamento-conferencia,#screen-apontamento-historico{height:100vh;height:100dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain}
     .app-header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10}
     .app-inv-name{font-size:0.78rem;font-weight:600;color:var(--accent);font-family:var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px}
     .btn-back{background:transparent;border:none;border-radius:50%;width:30px;height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:1.15rem;font-weight:700;color:var(--text);cursor:pointer;font-family:var(--sans);padding:0}

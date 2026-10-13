@@ -4,10 +4,17 @@ const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
 const cors = require('cors')({origin: true});
 const {BigQuery} = require('@google-cloud/bigquery');
+const fsNode = require('fs');
+const os = require('os');
+const path = require('path');
 
 admin.initializeApp();
 
 const db = admin.firestore();
+const politicaAcessos = require('./permissoes-politica');
+Object.assign(exports, require('./permissoes-servico')({db,admin,functions}));
+Object.assign(exports, require('./recuperacao-senha')({db,admin,functions}));
+Object.assign(exports, require('./separacao')({db,admin,functions}));
 
 const PERFIS_ADMIN = new Set(['administrador']);
 const MAX_NOME = 120;
@@ -33,8 +40,8 @@ function administrador(acesso) {
 }
 
 function permissao(acesso, operacao) {
-  return administrador(acesso) ||
-    (acessoAtivo(acesso) && acesso.permissoes?.operadores?.[operacao] === true);
+  // Administração de pessoas exige autoridade explícita, separada do trabalho.
+  return politicaAcessos.pode(acesso, operacao);
 }
 
 function podeEditarUsuarios(acesso) {
@@ -68,7 +75,10 @@ function lojasPermitidas(acesso) {
     acesso.lojas_permitidas : []).map(String));
 }
 
-function podeGerirAlvo(solicitante, alvo) {
+async function podeGerirAlvo(solicitante, alvo) {
+  if (alvo && alvo.cadastro_principal_uid) {const s=await db.collection('usuarios_acessos').doc(alvo.cadastro_principal_uid).get();if(!s.exists)return false;alvo=s.data();}
+  if (politicaAcessos.protegido(alvo)) return false;
+  if (Object.keys(politicaAcessos.delegacao(solicitante)).length && !administrador(solicitante)) return politicaAcessos.completo(solicitante, alvo);
   if (adminMestre(alvo)) return false;
   if (adminMestre(solicitante) || solicitante?.acesso_todas_lojas === true) return true;
   if (alvo?.acesso_todas_lojas === true) return false;
@@ -168,6 +178,7 @@ exports.criarUsuarioVinculado = functions
     if (!podeCriarUsuarios(solicitante)) {
       throw new functions.https.HttpsError('permission-denied', 'Seu login não pode criar usuários.');
     }
+    if (!administrador(solicitante) && Object.keys(politicaAcessos.delegacao(solicitante)).length) throw new functions.https.HttpsError('permission-denied', 'Use o cadastro de usuários por área.');
     return _criarUsuarioVinculadoInterno(data);
   });
 
@@ -180,7 +191,7 @@ exports.alterarSenhaUsuario = functions
       throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
     }
     const solicitante = await acessoSolicitante(context);
-    if (!podeEditarUsuarios(solicitante)) {
+    if (!(Object.keys(politicaAcessos.delegacao(solicitante)).length && !administrador(solicitante) ? politicaAcessos.pode(solicitante,'senha') : podeEditarUsuarios(solicitante))) {
       throw new functions.https.HttpsError('permission-denied', 'Seu login não pode alterar senhas.');
     }
     const senha = String(data?.senha || '');
@@ -196,7 +207,7 @@ exports.alterarSenhaUsuario = functions
     for (const uid of uids) {
       const alvoSnap = await db.collection('usuarios_acessos').doc(uid).get();
       const alvo = alvoSnap.exists ? alvoSnap.data() : null;
-      if (!alvo || !podeGerirAlvo(solicitante, alvo)) {
+      if (!alvo || !(await podeGerirAlvo(solicitante, alvo))) {
         throw new functions.https.HttpsError(
           'permission-denied',
           'O usuário-alvo não pertence ao seu escopo de lojas.'
@@ -235,7 +246,7 @@ exports.excluirUsuario = functions
     if (!podeExcluir(solicitante)) {
       throw new functions.https.HttpsError('permission-denied', 'Seu login não pode excluir usuários.');
     }
-    if (!alvo || !podeGerirAlvo(solicitante, alvo)) {
+    if (!alvo || !(await podeGerirAlvo(solicitante, alvo))) {
       throw new functions.https.HttpsError(
         'permission-denied',
         'O usuário-alvo não pertence ao seu escopo de lojas.'
@@ -932,7 +943,11 @@ async function _sincronizarFichaTecnicaBiLoja(lojaId, lojaKey, registrosFicha) {
   const colFichas = db.collection('lojas').doc(lojaId).collection('producao_ficha_tecnica');
   const [produtosSnap, fichasSnap] = await Promise.all([colProdutos.get(), colFichas.get()]);
   const codsComProduto = new Set(produtosSnap.docs.map(d => String((d.data() || {}).cod)));
-  const fichasPorCod = new Map(fichasSnap.docs.map(d => [String((d.data() || {}).cod), d.id]));
+  // PEDIDO AO VIVO (2026-09-16): revisão de custo — guarda os DADOS
+  // existentes também (não só o id), pra poder comparar e pular a
+  // gravação quando nada mudou desde a última sincronização (2x/dia
+  // agora; antes disso era a cada 30min, então quase sempre nada muda).
+  const fichasPorCod = new Map(fichasSnap.docs.map(d => [String((d.data() || {}).cod), {id: d.id, dados: d.data() || {}}]));
 
   const porProduto = new Map();
   registrosFicha.forEach(it => {
@@ -948,20 +963,21 @@ async function _sincronizarFichaTecnicaBiLoja(lojaId, lojaKey, registrosFicha) {
   });
   const agrupadas = [...porProduto.values()];
   const agora = new Date().toISOString();
-  let semProduto = 0;
+  let semProduto = 0, inalterados = 0;
   for (let i = 0; i < agrupadas.length; i += 300) {
     const lote = agrupadas.slice(i, i + 300);
     const batch = db.batch();
     lote.forEach(f => {
       if (!codsComProduto.has(f.cod)) semProduto++;
+      const existente = fichasPorCod.get(f.cod);
+      if (existente && existente.dados.desc === f.desc && JSON.stringify(existente.dados.insumos || []) === JSON.stringify(f.insumos)) { inalterados++; return; }
       const payload = {cod: f.cod, desc: f.desc, insumos: f.insumos, atualizadoEm: agora};
-      const idExistente = fichasPorCod.get(f.cod);
-      if (idExistente) batch.set(colFichas.doc(idExistente), payload, {merge: true});
+      if (existente) batch.set(colFichas.doc(existente.id), payload, {merge: true});
       else batch.set(colFichas.doc(), Object.assign({}, payload, {criadoEm: agora}));
     });
     await batch.commit();
   }
-  return {total: agrupadas.length, semProduto};
+  return {total: agrupadas.length, semProduto, inalterados};
 }
 
 async function _sincronizarAgendaBiLoja(lojaId, loja, registrosCompras) {
@@ -970,7 +986,12 @@ async function _sincronizarAgendaBiLoja(lojaId, loja, registrosCompras) {
   registrosCompras.forEach(it => {
     if (lojaKey != null && String(it.loja_key) !== String(lojaKey)) return;
     const pendente = Number(it.qtd_unidades_pendentes) || 0;
-    if (pendente <= 0) return;
+    const recebida = Number(it.qtd_unidades_recebidas) || 0;
+    // Mantém também a última fotografia de um item já recebido quando ela
+    // ainda aparece no arquivo. Não criamos agenda nova para pedido 100%
+    // recebido, mas isso permite atualizar a quantidade recebida de uma
+    // agenda já existente antes de o registro sumir da fonte "a receber".
+    if (pendente <= 0 && recebida <= 0) return;
     const numeroPedido = it.pedido_key != null ? String(it.pedido_key) : '';
     if (!numeroPedido) return;
     if (!porPedido.has(numeroPedido)) {
@@ -991,7 +1012,7 @@ async function _sincronizarAgendaBiLoja(lojaId, loja, registrosCompras) {
     // custoUnitario fica com o valor mais recente lido.
     const atual = pedido.itensPorProduto.get(chaveProduto) || {produto: it.descricao || '', produtoKey: it.produto_key != null ? String(it.produto_key) : '', tipoProduto: '', quantidadePendente: 0, quantidadeRecebida: 0, valorPendente: 0, custoUnitario: 0};
     atual.quantidadePendente += pendente;
-    atual.quantidadeRecebida += Number(it.qtd_unidades_recebidas) || 0;
+    atual.quantidadeRecebida += recebida;
     atual.valorPendente += Number(it.valor_pendente) || 0;
     if (Number(it.custo_unitario) > 0) atual.custoUnitario = Number(it.custo_unitario);
     pedido.itensPorProduto.set(chaveProduto, atual);
@@ -1007,7 +1028,7 @@ async function _sincronizarAgendaBiLoja(lojaId, loja, registrosCompras) {
   const docPorNumeroPedido = new Map();
   snap.docs.forEach(d => { const x = d.data() || {}; if (x.numeroPedido != null) docPorNumeroPedido.set(String(x.numeroPedido), {id: d.id, dados: x}); });
   const agora = new Date().toISOString();
-  let criados = 0, atualizados = 0;
+  let criados = 0, atualizados = 0, inalterados = 0;
   for (let i = 0; i < pendentes.length; i += 300) {
     const lote = pendentes.slice(i, i + 300);
     const batch = db.batch();
@@ -1028,12 +1049,23 @@ async function _sincronizarAgendaBiLoja(lojaId, loja, registrosCompras) {
       // é "veio de sync automático", não qual sync.
       if (existente) {
         const limparPrevisaoAntiga = (existente.dados.origem === 'bluesoft' || existente.dados.origem === 'bi') && !existente.dados.agendamentoConfirmadoManual;
+        // PEDIDO AO VIVO (2026-09-16): revisão de custo — pula a gravação
+        // quando nada de relevante mudou (compara com o doc existente
+        // antes de gravar; antes regravava TODO pedido pendente em toda
+        // rodada, mesmo sem nenhuma mudança real).
+        const vaiLimparDataAgendada = limparPrevisaoAntiga && existente.dados.dataAgendada;
+        const semMudanca = !vaiLimparDataAgendada && existente.dados.origem === 'bi' && existente.dados.fornecedorNome === fornecedorNome &&
+          existente.dados.dataPrevista === dataPrevista && (existente.dados.dataEntregaFinal || null) === (p.dataEntregaFinal || null) &&
+          existente.dados.compradorNome === (p.compradorNome || '') && JSON.stringify(existente.dados.itensPedido || []) === JSON.stringify(p.itens || []);
+        if (semMudanca) { inalterados++; return; }
         batch.set(colAgenda.doc(existente.id), Object.assign({
           origem: 'bi', lojaId, lojaNome: loja.nome || loja.codigo || lojaId, numeroPedido: p.numeroPedido, fornecedorNome, dataPrevista,
           dataEntregaFinal: p.dataEntregaFinal || null, compradorNome: p.compradorNome || '', itensPedido: p.itens || [], bluesoftSincronizadoEm: agora, atualizadoEm: agora,
         }, limparPrevisaoAntiga ? {dataAgendada: ''} : {}), {merge: true});
         atualizados++;
       } else {
+        const totalPendente=(p.itens||[]).reduce((s,it)=>s+(Number(it.quantidadePendente)||0),0);
+        if(totalPendente<=0){inalterados++;return;}
         batch.set(colAgenda.doc(), {
           origem: 'bi', lojaId, lojaNome: loja.nome || loja.codigo || lojaId, numeroPedido: p.numeroPedido, fornecedorNome, dataPrevista, dataAgendada: '', compradorNome: p.compradorNome || '', itensPedido: p.itens || [],
           dataEntregaFinal: p.dataEntregaFinal || null, horaAgendada: '', codigo: 'PC-' + p.numeroPedido,
@@ -1046,8 +1078,114 @@ async function _sincronizarAgendaBiLoja(lojaId, loja, registrosCompras) {
     });
     await batch.commit();
   }
-  return {totalPedidosPendentes: pendentes.length, criados, atualizados};
+  const totalPedidosPendentes=pendentes.filter(p=>(p.itens||[]).some(it=>(Number(it.quantidadePendente)||0)>0)).length;
+  return {totalPedidosPendentes, criados, atualizados, inalterados};
 }
+
+// Ponte segura Recebimento -> PCP/Compras. Só espelha uma data de recebimento
+// quando o documento logístico traz explicitamente uma data/hora REAL.
+// Quantidade recebida pode ser atualizada sem data; data prevista/agendada
+// jamais é convertida em "recebidoEm".
+function _aliasesProdutoPcpServidor(x){
+  x=x||{};
+  const norm=v=>String(v==null?'':v).trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^A-Z0-9]+/g,'');
+  const out=new Set();
+  [x.produtoKey,x.prodKey,x.produto_key,x.cod,x.codigo,x.sku,x.gtin,x.ean,x.dun,x.codigoProduto,x.produtoCodigo,x.bluesoftProdutoKey,x.produtoUnitarioKey,x.produtoUnitarioKeyBluesoft,x.canonicalKey].forEach(v=>{const n=norm(v);if(n)out.add(n);});
+  const nome=norm(x.produto||x.produtoNome||x.descricao||x.nome);if(nome)out.add('N:'+nome);
+  return out;
+}
+function _mesmoProdutoPcpServidor(a,b){
+  const aa=_aliasesProdutoPcpServidor(a),bb=_aliasesProdutoPcpServidor(b);
+  for(const k of aa)if(bb.has(k))return true;
+  return false;
+}
+
+async function _sincronizarRecebimentoAgendaNoPcp(lojaId, agenda, dbRef=db) {
+  agenda=agenda||{};
+  const numeroPedido=String(agenda.numeroPedido||agenda.numeroCompra||'').trim();
+  if(!lojaId||!numeroPedido)return {atualizados:0};
+  const itens=Array.isArray(agenda.itensPedido)?agenda.itensPedido:[];
+  const col=dbRef.collection('lojas').doc(String(lojaId)).collection('pcp_agendamentos');
+  const colReq=dbRef.collection('lojas').doc(String(lojaId)).collection('pcp_requisicoes_compra');
+  const snap=await col.where('numeroCompra','==',numeroPedido).get();
+  if(!snap.docs.length)return {atualizados:0};
+  const recebidoEm=agenda.recebidoEm||agenda.dataRecebimento||agenda.horaFechamentoRecebimento||'';
+  const agora=new Date().toISOString();
+  const batch=dbRef.batch();
+  let atualizados=0;
+  snap.docs.forEach(d=>{
+    const x=d.data()||{},it=itens.find(item=>_mesmoProdutoPcpServidor(x,item));
+    if(!it)return;
+    const qtdRecebida=Math.max(0,Number(it.quantidadeRecebida)||0);
+    const total=Math.max(0,Number(x.quantidade)||0);
+    const statusRecebimento=total>0&&qtdRecebida>=total?'finalizada':'parcial';
+    const payload={quantidadeRecebida:qtdRecebida,atualizadoEm:agora};
+    if(recebidoEm){payload.recebidoEm=recebidoEm;payload.recebidoPor='recebimento';payload.status=statusRecebimento;}
+    batch.set(col.doc(d.id),payload,{merge:true});
+    const requisicaoId=String(x.requisicaoId||'').trim();
+    if(requisicaoId){
+      const reqPayload={quantidadeRecebida:qtdRecebida,atualizadoEm:agora};
+      if(recebidoEm){reqPayload.recebidoEm=recebidoEm;reqPayload.status=statusRecebimento;}
+      batch.set(colReq.doc(requisicaoId),reqPayload,{merge:true});
+    }
+    atualizados++;
+  });
+  if(atualizados)await batch.commit();
+  return {atualizados};
+}
+
+
+// Quando um recebimento físico é finalizado e foi vinculado a um pedido de
+// compra, espelha o horário REAL de fechamento na agenda logística. A agenda
+// continua sendo a ponte única para PCP/Compras; não inferimos pedido por nome
+// de fornecedor e não convertemos previsão em recebimento.
+async function _sincronizarRecebimentoFisicoNaAgenda(lojaId, recebimento, recebimentoId, dbRef=db) {
+  recebimento=recebimento||{};
+  const numeroPedido=String(recebimento.numeroPedido||'').trim();
+  const recebidoEm=recebimento.horaFechamentoRecebimento||'';
+  if(!lojaId||!numeroPedido||!recebidoEm||String(recebimento.status||'').toUpperCase()!=='FINALIZADO')return {atualizados:0};
+  const col=dbRef.collection('lojas').doc(lojaId).collection('recebimento_agendamentos');
+  let refs=[];
+  const agendaId=String(recebimento.agendamentoRecebimentoId||'').trim();
+  if(agendaId){
+    const snap=await col.doc(agendaId).get();
+    if(snap.exists)refs=[col.doc(agendaId)];
+  }
+  if(!refs.length){
+    const snap=await col.where('numeroPedido','==',numeroPedido).get();
+    refs=snap.docs.map(d=>col.doc(d.id));
+  }
+  if(!refs.length)return {atualizados:0};
+  const payload={horaFechamentoRecebimento:recebidoEm,recebidoEm,recebimentoId:recebimentoId||'',status:'FINALIZADO',atualizadoEm:new Date().toISOString()};
+  const batch=dbRef.batch();refs.forEach(ref=>batch.set(ref,payload,{merge:true}));await batch.commit();
+  return {atualizados:refs.length};
+}
+
+exports.onRecebimentoFisicoFinalizado = functions
+  .region('southamerica-east1')
+  .firestore.document('lojas/{lojaId}/recebimentos/{docId}')
+  .onWrite(async (change, context) => {
+    if(!change.after.exists)return null;
+    const atual=change.after.data()||{},antes=change.before.exists?(change.before.data()||{}):{};
+    const sig=x=>[x.status||'',x.numeroPedido||'',x.agendamentoRecebimentoId||'',x.horaFechamentoRecebimento||''].join('|');
+    if(sig(atual)===sig(antes))return null;
+    return _sincronizarRecebimentoFisicoNaAgenda(context.params.lojaId,atual,context.params.docId,db);
+  });
+
+exports.sincronizarRecebimentoAgendaNoPcp = functions
+  .region('southamerica-east1')
+  .firestore.document('lojas/{lojaId}/recebimento_agendamentos/{docId}')
+  .onWrite(async change=>{
+    if(!change.after.exists)return null;
+    const antes=change.before.exists?(change.before.data()||{}):{},depois=change.after.data()||{};
+    const assinatura=x=>JSON.stringify({
+      numeroPedido:x.numeroPedido||x.numeroCompra||'',
+      recebidoEm:x.recebidoEm||x.dataRecebimento||x.horaFechamentoRecebimento||'',
+      itens:(Array.isArray(x.itensPedido)?x.itensPedido:[]).map(it=>[it.produtoKey||it.cod||'',Number(it.quantidadeRecebida)||0])
+    });
+    if(assinatura(antes)===assinatura(depois))return null;
+    return _sincronizarRecebimentoAgendaNoPcp(change.after.ref.parent.parent.id,depois,db);
+  });
 
 const _idSeguro = v => String(v ?? '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 180);
 
@@ -1076,26 +1214,37 @@ const _idSeguro = v => String(v ?? '').replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 
 async function _sincronizarEstoqueInsumosBiLoja(lojaId, lojaKey, registrosInsumos) {
   const colEstoque = db.collection('lojas').doc(lojaId).collection('pcp_estoque_bluesoft');
   const relevantes = (registrosInsumos || []).filter(it => lojaKey != null && String(it.loja) === String(lojaKey) && it.sku != null);
+  // PEDIDO AO VIVO (2026-09-16): revisão de custo — antes gravava TODO
+  // item às cegas em toda rodada (centenas de docs x 2x/dia), mesmo sem
+  // nenhuma mudança real de estoque/consumo. Uma leitura da coleção
+  // inteira aqui sai muito mais barata que reescrever tudo sempre.
+  const existentesSnap = await colEstoque.get();
+  const existentesPorId = new Map(existentesSnap.docs.map(d => [d.id, d.data() || {}]));
   const agora = new Date().toISOString();
-  let gravados = 0;
+  let gravados = 0, inalterados = 0;
   for (let i = 0; i < relevantes.length; i += 300) {
     const lote = relevantes.slice(i, i + 300);
     const batch = db.batch();
     lote.forEach(it => {
       const cod = String(it.sku);
-      const payload = {
+      const docId = 'produto_' + _idSeguro(cod);
+      const campos = {
         cod, produto: it.produto || ('Produto ' + cod),
         estoqueAtual: Number(it.estoque) || 0,
         unidadeExibicao: it.unidade || '',
         consumoDiaMedioBluesoft: (Number(it.consumoMensal) || 0) / 30,
-        biSincronizadoEm: agora, atualizadoEm: agora, origem: 'bi',
       };
-      batch.set(colEstoque.doc('produto_' + _idSeguro(cod)), payload, {merge: true});
+      const existente = existentesPorId.get(docId);
+      if (existente && existente.produto === campos.produto && existente.estoqueAtual === campos.estoqueAtual &&
+          existente.unidadeExibicao === campos.unidadeExibicao && existente.consumoDiaMedioBluesoft === campos.consumoDiaMedioBluesoft) {
+        inalterados++; return;
+      }
+      batch.set(colEstoque.doc(docId), Object.assign({}, campos, {biSincronizadoEm: agora, atualizadoEm: agora, origem: 'bi'}), {merge: true});
       gravados++;
     });
     await batch.commit();
   }
-  return {total: relevantes.length, gravados};
+  return {total: relevantes.length, gravados, inalterados};
 }
 
 // PEDIDO AO VIVO (2026-08-27): "migra tudo" — depois de confirmado que
@@ -1140,25 +1289,36 @@ async function _sincronizarEstoqueProdutoAcabadoBiLoja(lojaId, lojaKey, registro
     ...produtosBluesoftSnap.docs.map(d => String((d.data() || {}).cod || '')),
   ].filter(Boolean));
   const relevantes = (registrosProdutos || []).filter(it => lojaKey != null && String(it.loja_key) === String(lojaKey) && it.produto_key != null && codsRegistrados.has(String(it.produto_key)));
+  // PEDIDO AO VIVO (2026-09-16): revisão de custo — mesmo ajuste de
+  // _sincronizarEstoqueInsumosBiLoja logo acima: só grava quem realmente
+  // mudou. produtosBluesoftSnap já foi lido antes (linha ~1164) só pra
+  // validar cadastro; aqui precisa do estado ATUAL de pcp_estoque_bluesoft
+  // pra comparar valor por valor.
+  const existentesSnap = await colEstoque.get();
+  const existentesPorId = new Map(existentesSnap.docs.map(d => [d.id, d.data() || {}]));
   const agora = new Date().toISOString();
-  let gravados = 0;
+  let gravados = 0, inalterados = 0;
   for (let i = 0; i < relevantes.length; i += 300) {
     const lote = relevantes.slice(i, i + 300);
     const batch = db.batch();
     lote.forEach(it => {
       const cod = String(it.produto_key);
-      const payload = {
+      const docId = 'produto_' + _idSeguro(cod);
+      const campos = {
         cod, produto: it.produto || ('Produto ' + cod),
         estoqueAtual: Number(it.quantidade_estoque) || 0,
         estoqueReservadoVenda: Number(it.quantidadePedidos) || 0,
-        biSincronizadoEm: agora, atualizadoEm: agora, origem: 'bi',
       };
-      batch.set(colEstoque.doc('produto_' + _idSeguro(cod)), payload, {merge: true});
+      const existente = existentesPorId.get(docId);
+      if (existente && existente.produto === campos.produto && existente.estoqueAtual === campos.estoqueAtual && existente.estoqueReservadoVenda === campos.estoqueReservadoVenda) {
+        inalterados++; return;
+      }
+      batch.set(colEstoque.doc(docId), Object.assign({}, campos, {biSincronizadoEm: agora, atualizadoEm: agora, origem: 'bi'}), {merge: true});
       gravados++;
     });
     await batch.commit();
   }
-  return {total: relevantes.length, gravados};
+  return {total: relevantes.length, gravados, inalterados};
 }
 
 // PEDIDO AO VIVO (2026-08-27): "migra tudo" — último dado real que faltava
@@ -1188,10 +1348,12 @@ async function _sincronizarHistoricoVendasBiLoja(lojaId, lojaKey, registrosNotas
   });
   const colProjecao = db.collection('lojas').doc(lojaId).collection('producao_projecao');
   const snap = await colProjecao.get();
+  // PEDIDO AO VIVO (2026-09-16): revisão de custo — guarda os dados do doc
+  // (não só o id) pra comparar e pular quando m1/m2/m3 não mudaram.
   const porCod = new Map();
-  snap.docs.forEach(d => { const x = d.data() || {}; if (x.cod != null) porCod.set(String(x.cod), d.id); });
+  snap.docs.forEach(d => { const x = d.data() || {}; if (x.cod != null) porCod.set(String(x.cod), {id: d.id, dados: x}); });
   const agora = new Date().toISOString();
-  let gravados = 0;
+  let gravados = 0, inalterados = 0;
   const entradas = [...porProdutoMes.entries()];
   for (let i = 0; i < entradas.length; i += 300) {
     const lote = entradas.slice(i, i + 300);
@@ -1204,15 +1366,19 @@ async function _sincronizarHistoricoVendasBiLoja(lojaId, lojaKey, registrosNotas
       // central.js:69 lê TUDO de producao_projecao sem filtrar cadastro).
       // Só atualiza doc que já existe; produto sem projeção cadastrada
       // fica de fora, nunca cria um novo.
-      const id = porCod.get(cod);
-      if (!id) return;
+      const existente = porCod.get(cod);
+      if (!existente) return;
+      if (existente.dados.venda_m1 === m1 && existente.dados.venda_m2 === m2 && existente.dados.venda_m3 === m3 &&
+          JSON.stringify(existente.dados.historicoVendasMeses || []) === JSON.stringify(mesesDisponiveis)) {
+        inalterados++; return;
+      }
       const payload = {cod, venda_m1: m1, venda_m2: m2, venda_m3: m3, historicoVendasMeses: mesesDisponiveis, biSincronizadoEm: agora, atualizadoEm: agora, origem: 'bi'};
-      batch.set(colProjecao.doc(id), payload, {merge: true});
+      batch.set(colProjecao.doc(existente.id), payload, {merge: true});
       gravados++;
     });
     await batch.commit();
   }
-  return {total: entradas.length, gravados, meses: mesesDisponiveis};
+  return {total: entradas.length, gravados, inalterados, meses: mesesDisponiveis};
 }
 
 // PEDIDO AO VIVO (2026-08-29): "se eu quiser que ela atualize sozinha, vai
@@ -1471,17 +1637,24 @@ async function _sincronizarNotasRetornadasVendaBiLoja(lojaId, lojaKey, registros
 // servidor, sem depender de navegador nenhum aberto — o botão "Buscar"
 // manual da tela continua existindo, só deixa de ser a única forma de a
 // devolução se manter em dia.
+// PEDIDO AO VIVO (2026-09-17): "padronizar, para não ficar duas coisas do
+// mesmo jeito" — motivoNome (BI) saía em Capitalizado, motivoNome (Coletor/
+// cadastro manual) sai em MAIÚSCULO; o gráfico "Motivos da Volta" agrupa
+// por string exata (sem normalizar caixa), então a mesma razão virava 2
+// barras separadas. Categorias em maiúsculo aqui pra nascer já no mesmo
+// padrão do cadastro manual, nos dois lados (aqui e em 100-consulta-notas-
+// fiscais.js).
 const CATEGORIAS_MOTIVO_DEVOLUCAO_BI = [
-  ['Troca', /\bTROCA/],
-  ['Impróprio para consumo/venda', /IMPROPRI/],
-  ['Avaria', /AVARI/],
-  ['Falta na carga/entrega', /FALTA|FALTOU/],
-  ['Produto errado/divergente', /ERRAD|DIVERGEN/],
-  ['Vencido/vencimento', /VENCID|VENC:/],
-  ['Desacordo com pedido', /DESACORDO/],
+  ['TROCA', /\bTROCA/],
+  ['IMPRÓPRIO PARA CONSUMO/VENDA', /IMPROPRI/],
+  ['AVARIA', /AVARI/],
+  ['FALTA NA CARGA/ENTREGA', /FALTA|FALTOU/],
+  ['PRODUTO ERRADO/DIVERGENTE', /ERRAD|DIVERGEN/],
+  ['VENCIDO/VENCIMENTO', /VENCID|VENC:/],
+  ['DESACORDO COM PEDIDO', /DESACORDO/],
 ];
-const SEM_MOTIVO_NO_TEXTO_BI = '(sem motivo no texto)';
-const CATEGORIAS_MOTIVO_PRECISAM_COLETOR_BI = new Set(['Troca', 'Avaria', 'Vencido/vencimento', 'Impróprio para consumo/venda', SEM_MOTIVO_NO_TEXTO_BI]);
+const SEM_MOTIVO_NO_TEXTO_BI = '(SEM MOTIVO NO TEXTO)';
+const CATEGORIAS_MOTIVO_PRECISAM_COLETOR_BI = new Set(['TROCA', 'AVARIA', 'VENCIDO/VENCIMENTO', 'IMPRÓPRIO PARA CONSUMO/VENDA', SEM_MOTIVO_NO_TEXTO_BI]);
 function _classificarMotivoTextoBi(texto) {
   const t = String(texto || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   for (const [nome, regex] of CATEGORIAS_MOTIVO_DEVOLUCAO_BI) if (regex.test(t)) return nome;
@@ -1720,10 +1893,19 @@ async function _limparDadosAntigosBluesoftTodasLojas() {
   return resultados;
 }
 
+// PEDIDO AO VIVO (2026-09-15): rodava a cada 30 min (48x/dia) sem necessidade
+// — conferido o histórico de versões real de 3 dos 5 arquivos no SharePoint
+// (notas_fiscais_jacson.json, compras_a_receber.json, produtos_estoque.json)
+// e os 3 batem no MESMO padrão, todo dia, sem exceção real: a Controladoria
+// sobe tudo às 08:30 e 15:30 (horário de Brasília). Rodando só 2x/dia, 15min
+// depois de cada horário (folga de segurança), cai de 48 pra 2 execuções —
+// mesmo resultado (dado sempre fresco), fração do custo de uma function
+// pesada (1GB de memória, até 9min de execução).
 exports.sincronizarBiAgendado = functions
   .region('southamerica-east1')
   .runWith({secrets: ['GRAPH_CLIENT_SECRET'], timeoutSeconds: 540, memory: '1GB'})
-  .pubsub.schedule('every 30 minutes')
+  .pubsub.schedule('45 8,15 * * *')
+  .timeZone('America/Sao_Paulo')
   .onRun(async () => { await _sincronizarBiTodasLojas(); return null; });
 
 // Gatilho manual (callable) — pra testar sem esperar o próximo horário
@@ -1846,20 +2028,95 @@ function _construirClassificacaoProdutosComprasBi(registros) {
 
 async function _gravarClassificacaoProdutosComprasBi(lista) {
   const col = db.collection('bi_classificacao_produtos');
+  // PEDIDO AO VIVO (2026-09-16): revisão de custo — o comentário acima já
+  // explica que isso reprocessa por design (produto pode trocar de
+  // departamento). Mas "reprocessar o cálculo" não precisa dizer "regravar
+  // o documento" quando o resultado é IDÊNTICO ao que já está salvo — só
+  // grava quem realmente mudou de descrição/grupo/departamento/seção.
+  const existentesSnap = await col.get();
+  const existentesPorId = new Map(existentesSnap.docs.map(d => [d.id, d.data() || {}]));
   const agora = new Date().toISOString();
-  let gravados = 0;
+  let gravados = 0, inalterados = 0;
   for (let i = 0; i < lista.length; i += 300) {
     const lote = lista.slice(i, i + 300);
     const batch = db.batch();
-    lote.forEach(item => { batch.set(col.doc(_idSeguro(item.produtoKey)), Object.assign({}, item, {atualizadoEm: agora}), {merge: true}); gravados++; });
+    lote.forEach(item => {
+      const docId = _idSeguro(item.produtoKey);
+      const existente = existentesPorId.get(docId);
+      if (existente && existente.descricao === item.descricao && existente.grupo === item.grupo &&
+          existente.departamento === item.departamento && existente.secao === item.secao) {
+        inalterados++; return;
+      }
+      batch.set(col.doc(docId), Object.assign({}, item, {atualizadoEm: agora}), {merge: true});
+      gravados++;
+    });
     await batch.commit();
   }
-  return {totalProdutos: lista.length, gravados};
+  return {totalProdutos: lista.length, gravados, inalterados};
 }
 
-async function _sincronizarComprasHistoricoBi(registros) {
+
+const TABELA_COMPRAS_HISTORICO_BQ = 'compras_historico';
+const SCHEMA_COMPRAS_HISTORICO_BQ = [
+  {name: 'chave', type: 'STRING'}, {name: 'loja_key', type: 'STRING'},
+  {name: 'data_emissao', type: 'STRING'}, {name: 'data_recebimento', type: 'STRING'},
+  {name: 'nf_numero', type: 'STRING'}, {name: 'produto_key', type: 'STRING'},
+  {name: 'descricao', type: 'STRING'}, {name: 'quantidade_faturada', type: 'FLOAT'},
+  {name: 'nome_abreviado', type: 'STRING'}, {name: 'custo_liq_unit', type: 'FLOAT'},
+  {name: 'Custo_liquido_total', type: 'FLOAT'}, {name: 'comprador_nome', type: 'STRING'},
+  {name: 'departamento', type: 'STRING'}, {name: 'grupo', type: 'STRING'},
+  {name: 'secao', type: 'STRING'}, {name: 'tipo_operacao', type: 'STRING'},
+];
+function _slimCompraHistoricoBi(r) {
+  return {
+    chave: String(r.nota_fiscal_item_key == null ? '' : r.nota_fiscal_item_key),
+    loja_key: r.loja_key == null ? '' : String(r.loja_key),
+    data_emissao: r.data_emissao || '', data_recebimento: r.data_recebimento || '',
+    nf_numero: r.nf_numero == null ? '' : String(r.nf_numero),
+    produto_key: r.produto_key == null ? '' : String(r.produto_key), descricao: r.descricao || '',
+    quantidade_faturada: Number(r.quantidade_faturada) || 0, nome_abreviado: r.nome_abreviado || '',
+    custo_liq_unit: Number(r.custo_liq_unit) || 0, Custo_liquido_total: Number(r.Custo_liquido_total) || 0,
+    comprador_nome: r.comprador_nome || '', departamento: r.Departamento || '', grupo: r.grupo || '',
+    secao: r.Secao || '', tipo_operacao: r.TIPO_OPERACAO || '',
+  };
+}
+async function _sincronizarComprasHistoricoBigQuery(registros, bigqueryClient) {
+  if (!bigqueryClient) bigqueryClient = _obterBigQueryCliente();
+  const dataset = bigqueryClient.dataset('dt_relatorios');
+  const table = dataset.table(TABELA_COMPRAS_HISTORICO_BQ);
+  const tmp = path.join(os.tmpdir(), `compras_historico_${Date.now()}_${process.pid}.ndjson`);
+  const stream = fsNode.createWriteStream(tmp, {encoding: 'utf8'});
+  try {
+    for (const r of registros) {
+      if (!stream.write(JSON.stringify(_slimCompraHistoricoBi(r)) + '\n')) {
+        await new Promise(resolve => stream.once('drain', resolve));
+      }
+    }
+    await new Promise((resolve, reject) => { stream.end(resolve); stream.on('error', reject); });
+    await table.load(tmp, {
+      sourceFormat: 'NEWLINE_DELIMITED_JSON', schema: {fields: SCHEMA_COMPRAS_HISTORICO_BQ},
+      writeDisposition: 'WRITE_TRUNCATE', createDisposition: 'CREATE_IF_NEEDED',
+    });
+    return {ok: true, total: registros.length, tabela: 'dt_relatorios.' + TABELA_COMPRAS_HISTORICO_BQ};
+  } finally {
+    try { if (!stream.destroyed) stream.destroy(); } catch (_) {}
+    try { fsNode.unlinkSync(tmp); } catch (_) {}
+  }
+}
+
+async function _sincronizarComprasHistoricoBi(registros, bigqueryClient) {
   const classificacaoProdutos = await _gravarClassificacaoProdutosComprasBi(_construirClassificacaoProdutosComprasBi(registros));
   const filtrados = registros.filter(r => String(r.data_emissao || '').slice(0, 4) >= ANO_MINIMO_RELATORIOS_BI);
+  let bigQuery = {ok: false, erro: 'não executado'};
+  try {
+    bigQuery = await _sincronizarComprasHistoricoBigQuery(filtrados, bigqueryClient);
+  } catch (e) {
+    // Transição segura: enquanto o BigQuery estiver sendo implantado/permissões
+    // ajustadas, o espelho Firestore antigo continua sendo atualizado e as
+    // telas conseguem cair nele como fallback.
+    bigQuery = {ok: false, erro: e && e.message ? e.message : String(e)};
+    console.error('[ComprasHistoricoBi] Falha ao atualizar BigQuery; mantendo fallback Firestore:', bigQuery.erro);
+  }
   const resultado = await _sincronizarRelatorioBiChunkeadoGlobal(
     'relatorios_bi_compras_historico_chunks',
     filtrados,
@@ -1879,7 +2136,7 @@ async function _sincronizarComprasHistoricoBi(registros) {
       departamento: r.Departamento || '', grupo: r.grupo || '', secao: r.Secao || '', tipo_operacao: r.TIPO_OPERACAO || '',
     })
   );
-  return Object.assign({}, resultado, {classificacaoProdutos});
+  return Object.assign({}, resultado, {classificacaoProdutos, bigQuery});
 }
 
 // BUG AO VIVO REAL (2026-09-06): "não vem inventar coisa não, lá não
@@ -1994,15 +2251,29 @@ function _construirConsumoInsumosResumoBi(dados) {
 
 async function _gravarConsumoInsumosResumoBi(lista) {
   const col = db.collection('bi_consumo_insumos_resumo');
+  // PEDIDO AO VIVO (2026-09-16): revisão de custo — só grava insumo cujo
+  // resumo (produto/categoria/tipo/médias) realmente mudou desde a
+  // última rodada.
+  const existentesSnap = await col.get();
+  const existentesPorId = new Map(existentesSnap.docs.map(d => [d.id, d.data() || {}]));
   const agora = new Date().toISOString();
-  let gravados = 0;
+  let gravados = 0, inalterados = 0;
   for (let i = 0; i < lista.length; i += 300) {
     const lote = lista.slice(i, i + 300);
     const batch = db.batch();
-    lote.forEach(item => { batch.set(col.doc(_idSeguro(item.sku)), Object.assign({}, item, {atualizadoEm: agora}), {merge: true}); gravados++; });
+    lote.forEach(item => {
+      const docId = _idSeguro(item.sku);
+      const existente = existentesPorId.get(docId);
+      if (existente && existente.produto === item.produto && existente.categoria === item.categoria && existente.tipo === item.tipo &&
+          existente.mediaMensal === item.mediaMensal && existente.totalPeriodo === item.totalPeriodo) {
+        inalterados++; return;
+      }
+      batch.set(col.doc(docId), Object.assign({}, item, {atualizadoEm: agora}), {merge: true});
+      gravados++;
+    });
     await batch.commit();
   }
-  return {totalInsumos: lista.length, gravados};
+  return {totalInsumos: lista.length, gravados, inalterados};
 }
 
 exports.sincronizarConsumoInsumosResumoBiAgendado = functions
@@ -2041,11 +2312,38 @@ exports.sincronizarConsumoInsumosResumoBiAgora = functions
 // centenas de combinações) e gravado 1 doc por mês, cada um com a lista de
 // produtos daquele mês (não chunk por causa de tamanho, e sim porque cada
 // consulta real é "me dá um mês" — ideal já vir separado por doc).
-function _construirCortesResumoMensalBi(registros) {
+// PEDIDO AO VIVO (2026-09-17): "só precisa ler do dia anterior pra frente,
+// é dados que não mudam" — a Graph API não tem como baixar só o que
+// mudou de um arquivo JSON (não existe leitura incremental de verdade
+// aqui, o arquivo inteiro precisa ser baixado sempre), mas deixamos de
+// REPROCESSAR as 54 mil linhas de histórico a cada rodada: mês fechado no
+// passado nunca muda, então só agregamos o mês atual + o anterior (margem
+// de segurança pra virada de mês) — na prática, ~1-2 mil linhas por
+// rodada em vez de 54 mil, e os meses fechados nem entram no Promise.all
+// de _gravarCortesResumoMensalBi (só busca/compara os meses que vieram
+// aqui).
+// PEDIDO AO VIVO (2026-09-17): "não é pra deixar só Terrinha... a gente
+// também faz venda pela OK Filial, OK Matriz... só o 2JM não é venda pra
+// cliente, é só intercompany" — dados_cortes.json não tem campo de
+// cliente/destinatário (só loja_key, produto_key, quantidades e valores),
+// então não dá pra separar venda real de transferência entre lojas
+// DENTRO de uma mesma loja — só dá pra decidir por loja inteira.
+// Confirmado com o usuário, loja a loja: Terrinha Matriz (1), Terrinha
+// Filial (14), OK Matriz (10), OK Filial (17) e J E Comércio (2) vendem
+// pra cliente de verdade — só a 2JM Amidos (11) é 100% intercompany.
+const LOJA_KEY_EXCLUIDA_CORTES = '11';
+function _construirCortesResumoMensalBi(registros, agoraISO) {
+  const agora = new Date(agoraISO || Date.now());
+  const mesAtual = agora.toISOString().slice(0, 7);
+  const mesAnterior = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+  const mesesRelevantes = new Set([mesAtual, mesAnterior]);
+
   const porChave = new Map();
   (registros || []).forEach(r => {
     if (!r.data || r.produto_key == null) return;
+    if (String(r.loja_key) === LOJA_KEY_EXCLUIDA_CORTES) return;
     const mes = String(r.data).slice(0, 7);
+    if (!mesesRelevantes.has(mes)) return;
     const produtoKey = String(r.produto_key);
     const chave = mes + '_' + produtoKey;
     const atual = porChave.get(chave) || {mes, produtoKey, descricao: r.descricao || '', quantidadePedidaCx: 0, quantidadeFaturadaCx: 0, corteRoteiroCx: 0, valorPedidoTotal: 0, faturamentoRs: 0};
@@ -2063,15 +2361,27 @@ async function _gravarCortesResumoMensalBi(itens) {
   const porMes = new Map();
   itens.forEach(item => { const arr = porMes.get(item.mes) || []; arr.push(item); porMes.set(item.mes, arr); });
   const col = db.collection('bi_cortes_mensal');
-  const agora = new Date().toISOString();
+  // PEDIDO AO VIVO (2026-09-16): revisão de custo — só grava o mês cuja
+  // lista de itens realmente mudou (meses fechados no passado tendem a
+  // ficar idênticos rodada após rodada; só o mês corrente muda de verdade).
   const meses = [...porMes.keys()];
+  const existentesSnap = await Promise.all(meses.map(mes => col.doc(mes).get()));
+  const existentesPorMes = new Map(meses.map((mes, i) => [mes, existentesSnap[i].exists ? existentesSnap[i].data() || {} : null]));
+  const agora = new Date().toISOString();
+  let gravados = 0, inalterados = 0;
   for (let i = 0; i < meses.length; i += 300) {
     const lote = meses.slice(i, i + 300);
     const batch = db.batch();
-    lote.forEach(mes => batch.set(col.doc(mes), {mes, itens: porMes.get(mes), atualizadoEm: agora}));
+    lote.forEach(mes => {
+      const itensDoMes = porMes.get(mes);
+      const existente = existentesPorMes.get(mes);
+      if (existente && JSON.stringify(existente.itens || []) === JSON.stringify(itensDoMes)) { inalterados++; return; }
+      batch.set(col.doc(mes), {mes, itens: itensDoMes, atualizadoEm: agora});
+      gravados++;
+    });
     await batch.commit();
   }
-  return {totalMeses: meses.length, totalItens: itens.length};
+  return {totalMeses: meses.length, totalItens: itens.length, gravados, inalterados};
 }
 
 exports.sincronizarCortesMensalBiAgendado = functions
@@ -2103,6 +2413,306 @@ exports.sincronizarCortesMensalBiAgora = functions
     return {ok: true, resultado};
   });
 
+
+// ─────────────────────────────────────────────────────────────────────────
+// Compras históricas — consultas prontas no BigQuery.
+// O navegador NÃO recebe 30 mil+ itens para somar/filtrar. As telas de
+// Dashboard recebem apenas KPIs, rankings e séries mensais já agregados.
+
+async function _buscarHistoricoComprasBigQueryInterno(data, bigqueryClient) {
+  const inicio = textoSeguro(data?.inicio, 10);
+  const fim = textoSeguro(data?.fim, 10);
+  const lojaKey = textoSeguro(data?.lojaKey, 120);
+  const tipoOperacao = textoSeguro(data?.tipoOperacao, 40).toUpperCase();
+  const produto = textoSeguro(data?.produto, 240);
+  const produtoKey = textoSeguro(data?.produtoKey, 120);
+  const compradores = Array.isArray(data?.compradores) ? data.compradores.map(v => textoSeguro(v, 80).toLowerCase()).filter(Boolean).slice(0, 50) : [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(inicio) || !/^\d{4}-\d{2}-\d{2}$/.test(fim)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Informe um período válido para o histórico de compras.');
+  }
+  const dIni = new Date(inicio + 'T00:00:00Z'), dFim = new Date(fim + 'T23:59:59Z');
+  if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime()) || dIni > dFim || (dFim - dIni) / 86400000 > 731) {
+    throw new functions.https.HttpsError('invalid-argument', 'Escolha um período de até 2 anos.');
+  }
+  const filtros = ["SUBSTR(data_emissao,1,10) BETWEEN @inicio AND @fim"];
+  const params = {inicio, fim};
+  if (lojaKey) { filtros.push('loja_key=@lojaKey'); params.lojaKey = lojaKey; }
+  if (tipoOperacao) { filtros.push('UPPER(IFNULL(tipo_operacao,\'\'))=@tipoOperacao'); params.tipoOperacao = tipoOperacao; }
+  if (produtoKey) { filtros.push('CAST(produto_key AS STRING)=@produtoKey'); params.produtoKey = produtoKey; }
+  if (produto) { filtros.push('LOWER(descricao) LIKE @produto'); params.produto = '%' + produto.toLowerCase() + '%'; }
+  if (compradores.length) { filtros.push("EXISTS (SELECT 1 FROM UNNEST(@compradores) c WHERE (STRPOS(c, ' ') > 0 AND LOWER(TRIM(REGEXP_REPLACE(IFNULL(comprador_nome,''), r'\\s+', ' '))) = c) OR (STRPOS(c, ' ') = 0 AND LOWER(REGEXP_EXTRACT(IFNULL(comprador_nome,''), r'^[^\\.\\s]+')) = c))"); params.compradores = compradores; }
+  const query = `
+    SELECT chave, loja_key, data_emissao, data_recebimento, nf_numero, produto_key,
+           descricao, quantidade_faturada, nome_abreviado, custo_liq_unit,
+           Custo_liquido_total, comprador_nome, departamento, grupo, secao, tipo_operacao
+    FROM \`daterrinha-inventario.dt_relatorios.compras_historico\`
+    WHERE ${filtros.join(' AND ')}
+    ORDER BY data_emissao DESC, nf_numero DESC
+  `;
+  const [rows] = await bigqueryClient.query({query, params});
+  return rows;
+}
+// PEDIDO AO VIVO (2026-09-18): "escrevo farofa e ele traz toda a família
+// junto" — a Análise de Preços buscava por LIKE direto na descrição
+// inteira do período (produto=texto), então "farofa" trazia TODAS as
+// variantes misturadas no mesmo gráfico/tabela. Esta consulta é só pra
+// alimentar a sugestão de digitação (poucos resultados, sem período) — o
+// app usa o produtoKey de quem foi escolhido pra fazer a busca de
+// histórico de verdade (exata, via produtoKey em
+// buscarHistoricoComprasBigQuery), nunca mais o texto solto.
+async function _buscarProdutosComprasBigQueryInterno(data, bigqueryClient) {
+  const busca = textoSeguro(data?.busca, 120).trim().toLowerCase();
+  if (busca.length < 2) return [];
+  const query = `
+    SELECT produto_key AS produtoKey, ANY_VALUE(descricao) AS descricao, COUNT(DISTINCT nf_numero) AS notas
+    FROM \`daterrinha-inventario.dt_relatorios.compras_historico\`
+    WHERE (tipo_operacao IS NULL OR tipo_operacao = '' OR UPPER(tipo_operacao) = 'COMPRA')
+      AND IFNULL(produto_key,'') != ''
+      AND (LOWER(IFNULL(descricao,'')) LIKE @busca OR LOWER(IFNULL(produto_key,'')) LIKE @busca)
+    GROUP BY produto_key
+    ORDER BY notas DESC, descricao
+    LIMIT 20
+  `;
+  const [rows] = await bigqueryClient.query({query, params: {busca: '%' + busca + '%'}});
+  return rows.map(r => ({produtoKey: r.produtoKey, descricao: r.descricao, notas: Number(r.notas) || 0}));
+}
+exports.buscarProdutosComprasBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const produtos = await _buscarProdutosComprasBigQueryInterno(data || {}, _obterBigQueryCliente());
+    return {ok: true, produtos};
+  });
+exports.buscarHistoricoComprasBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const linhas = await _buscarHistoricoComprasBigQueryInterno(data, _obterBigQueryCliente());
+    return {ok: true, linhas};
+  });
+
+// PEDIDO AO VIVO (2026-09-18): "eu não quero ter que ir lá e pegar produto
+// por produto... se tem um fornecedor de tal coisa, ele tem aqueles
+// produtos, quem compra é um comprador — pega o histórico e cadastra no
+// nome da pessoa que mais compra" — em vez de digitar fornecedor por
+// fornecedor (ou produto por produto, mais de mil) em Regras de
+// Compradores (compras_regras_comprador), uma consulta só agrega TODO o
+// histórico real (compras_historico) por fornecedor x comprador (e outra
+// por produto x comprador) e devolve, pra cada um, quem mais comprou (por
+// valor) e o quanto isso representa do total — o app decide o que fazer
+// com a sugestão (mostrar pra revisão, aplicar tudo automaticamente,
+// etc.), esta função só agrega. Só leitura — não grava nada.
+// PEDIDO AO VIVO (2026-09-18, correção do pedido acima): "o comprador de
+// fubá mimoso é Dilma, aí no sistema muda pra Marta — o sistema tem que
+// identificar e alterar sozinho, pra não ficar aparecendo pra pessoa
+// errada" — a granularidade por PRODUTO importa de verdade (um mesmo
+// fornecedor pode ter produtos de compradores diferentes), por isso
+// `agruparPor` aceita 'fornecedor' OU 'produto'; quem decide se aplica
+// automático (sincronização, sem revisão linha a linha — inviável pra
+// >1000 produtos) ou com revisão manual (poucas dezenas de fornecedores)
+// é o app, não esta função.
+function _sugerirRegrasCompradorAgregadoBigQuerySql(agruparPor) {
+  const chave = agruparPor === 'produto' ? 'produto_key' : 'nome_abreviado';
+  const extra = agruparPor === 'produto' ? ', ANY_VALUE(descricao) AS descricao' : '';
+  return `
+    WITH base AS (
+      SELECT ${chave} AS chave, descricao,
+             LOWER(REGEXP_EXTRACT(IFNULL(comprador_nome,''), r'^[^\\.\\s]+')) AS compradorChave,
+             comprador_nome, quantidade_faturada, Custo_liquido_total, nf_numero
+      FROM \`daterrinha-inventario.dt_relatorios.compras_historico\`
+      WHERE (tipo_operacao IS NULL OR tipo_operacao = '' OR UPPER(tipo_operacao) = 'COMPRA')
+        AND IFNULL(${chave},'') != '' AND IFNULL(comprador_nome,'') != ''
+        AND SUBSTR(data_emissao,1,10) >= FORMAT_DATE('%Y-%m-%d', DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 24 MONTH))
+    ), porComprador AS (
+      SELECT chave, compradorChave, ANY_VALUE(comprador_nome) AS compradorNomeOriginal,
+             SUM(quantidade_faturada) AS qtd, SUM(Custo_liquido_total) AS valor,
+             COUNT(DISTINCT nf_numero) AS notas
+      FROM base WHERE compradorChave != ''
+      GROUP BY chave, compradorChave
+    )
+    SELECT chave,
+           SUM(valor) AS totalValor, SUM(qtd) AS totalQtd,
+           ARRAY_AGG(STRUCT(compradorChave, compradorNomeOriginal, qtd, valor, notas) ORDER BY valor DESC) AS compradores
+    FROM porComprador
+    GROUP BY chave
+    ORDER BY totalValor DESC
+  `;
+}
+async function _sugerirRegrasCompradorAgregadoBigQueryInterno(agruparPor, bigqueryClient) {
+  const query = _sugerirRegrasCompradorAgregadoBigQuerySql(agruparPor);
+  const [rows] = await bigqueryClient.query({query, params: {}});
+  return rows.map(r => {
+    const compradores = (r.compradores || []).map(c => ({
+      compradorChave: c.compradorChave, compradorNome: c.compradorNomeOriginal,
+      qtd: Number(c.qtd) || 0, valor: Number(c.valor) || 0, notas: Number(c.notas) || 0,
+    }));
+    const totalValor = Number(r.totalValor) || 0;
+    const top = compradores[0] || null;
+    return {
+      chave: r.chave,
+      totalValor, totalQtd: Number(r.totalQtd) || 0,
+      sugerido: top ? { compradorChave: top.compradorChave, compradorNome: top.compradorNome, participacaoPct: totalValor > 0 ? (top.valor / totalValor) * 100 : 0 } : null,
+      compradores,
+    };
+  });
+}
+async function _sugerirRegrasCompradorPorFornecedorBigQueryInterno(data, bigqueryClient) {
+  const linhas = await _sugerirRegrasCompradorAgregadoBigQueryInterno('fornecedor', bigqueryClient);
+  return linhas.map(l => ({ fornecedor: l.chave, totalValor: l.totalValor, totalQtd: l.totalQtd, sugerido: l.sugerido, compradores: l.compradores }));
+}
+async function _sugerirRegrasCompradorPorProdutoBigQueryInterno(data, bigqueryClient) {
+  const linhas = await _sugerirRegrasCompradorAgregadoBigQueryInterno('produto', bigqueryClient);
+  return linhas.map(l => ({ produtoKey: l.chave, totalValor: l.totalValor, totalQtd: l.totalQtd, sugerido: l.sugerido, compradores: l.compradores }));
+}
+exports.sugerirRegrasCompradorPorFornecedorBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const fornecedores = await _sugerirRegrasCompradorPorFornecedorBigQueryInterno(data || {}, _obterBigQueryCliente());
+    return {ok: true, fornecedores};
+  });
+exports.sugerirRegrasCompradorPorProdutoBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 60, memory: '512MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const produtos = await _sugerirRegrasCompradorPorProdutoBigQueryInterno(data || {}, _obterBigQueryCliente());
+    return {ok: true, produtos};
+  });
+
+// PEDIDO AO VIVO (2026-09-18): "Produtos 360° só mostra produto de
+// produção, não mostra matéria-prima comprada... os números têm que ser
+// do arquivo real, não da solicitação do PCP" — a tela lia
+// pcp_requisicoes_compra (preenchida manualmente pelo PCP; só existe pro
+// que passou por lá) em vez do histórico real de compras. Esta consulta
+// devolve, POR PRODUTO REALMENTE COMPRADO (matéria-prima, embalagem,
+// qualquer coisa que apareça no BI — não só o que o PCP registrou), a
+// última compra (data/fornecedor/preço) e quantas compras já teve —
+// mesmo filtro de comprador (`compradores`) do resumo do Dashboard, pra
+// já sair no ar respeitando "cada comprador só vê os seus produtos".
+async function _buscarResumoProdutosComprasBigQueryInterno(data, bigqueryClient) {
+  const compradores = Array.isArray(data?.compradores) ? data.compradores.map(v => textoSeguro(v, 80).toLowerCase()).filter(Boolean).slice(0, 50) : [];
+  const filtroComprador = compradores.length ? " AND EXISTS (SELECT 1 FROM UNNEST(@compradores) c WHERE (STRPOS(c, ' ') > 0 AND LOWER(TRIM(REGEXP_REPLACE(IFNULL(comprador_nome,''), r'\\s+', ' '))) = c) OR (STRPOS(c, ' ') = 0 AND LOWER(REGEXP_EXTRACT(IFNULL(comprador_nome,''), r'^[^\\.\\s]+')) = c))" : '';
+  const query = `
+    WITH base AS (
+      SELECT produto_key, descricao, nome_abreviado, comprador_nome, data_emissao, custo_liq_unit, nf_numero
+      FROM \`daterrinha-inventario.dt_relatorios.compras_historico\`
+      WHERE (tipo_operacao IS NULL OR tipo_operacao = '' OR UPPER(tipo_operacao) = 'COMPRA')
+        AND IFNULL(produto_key,'') != ''${filtroComprador}
+    )
+    SELECT produto_key AS produtoKey, ANY_VALUE(descricao) AS descricao,
+           COUNT(DISTINCT nf_numero) AS numCompras,
+           ARRAY_AGG(STRUCT(data_emissao, nome_abreviado, custo_liq_unit, comprador_nome) ORDER BY data_emissao DESC LIMIT 1)[SAFE_OFFSET(0)] AS ultima
+    FROM base
+    GROUP BY produto_key
+    ORDER BY ultima.data_emissao DESC
+  `;
+  const [rows] = await bigqueryClient.query({query, params: compradores.length ? {compradores} : {}});
+  return rows.map(r => ({
+    produtoKey: r.produtoKey, descricao: r.descricao, numCompras: Number(r.numCompras) || 0,
+    ultimaData: r.ultima?.data_emissao || '', ultimoFornecedor: r.ultima?.nome_abreviado || '',
+    ultimoPreco: Number(r.ultima?.custo_liq_unit) || 0, ultimoComprador: r.ultima?.comprador_nome || '',
+  }));
+}
+exports.buscarResumoProdutosComprasBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 60, memory: '512MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const produtos = await _buscarResumoProdutosComprasBigQueryInterno(data || {}, _obterBigQueryCliente());
+    return {ok: true, produtos};
+  });
+
+async function _buscarResumoComprasDashboardBigQueryInterno(data, bigqueryClient) {
+  if (!bigqueryClient && data && typeof data.query === 'function') { bigqueryClient = data; data = {}; }
+  data = data || {};
+  const compradores = Array.isArray(data.compradores) ? data.compradores.map(v => textoSeguro(v, 80).toLowerCase()).filter(Boolean).slice(0, 50) : [];
+  const filtroComprador = compradores.length ? " AND EXISTS (SELECT 1 FROM UNNEST(@compradores) c WHERE (STRPOS(c, ' ') > 0 AND LOWER(TRIM(REGEXP_REPLACE(IFNULL(comprador_nome,''), r'\\s+', ' '))) = c) OR (STRPOS(c, ' ') = 0 AND LOWER(REGEXP_EXTRACT(IFNULL(comprador_nome,''), r'^[^\\.\\s]+')) = c))" : '';
+  const query = `
+    WITH base AS (
+      SELECT *, COALESCE(NULLIF(data_recebimento, ''), data_emissao) AS data_ref
+      FROM \`daterrinha-inventario.dt_relatorios.compras_historico\`
+      WHERE (tipo_operacao IS NULL OR tipo_operacao = '' OR UPPER(tipo_operacao) = 'COMPRA')
+        AND UPPER(IFNULL(departamento, '')) NOT IN ('MRO', 'LOGISTICA')${filtroComprador}
+    ), precos AS (
+      SELECT produto_key,
+        ARRAY_AGG(STRUCT(descricao, custo_liq_unit, data_emissao) ORDER BY data_emissao ASC LIMIT 1)[SAFE_OFFSET(0)] primeiro,
+        ARRAY_AGG(STRUCT(descricao, custo_liq_unit, data_emissao) ORDER BY data_emissao DESC LIMIT 1)[SAFE_OFFSET(0)] ultimo,
+        COUNT(*) qtd
+      FROM base WHERE custo_liq_unit > 0
+      GROUP BY produto_key HAVING COUNT(*) >= 2
+    )
+    SELECT
+      (SELECT IFNULL(SUM(Custo_liquido_total),0) FROM base WHERE SUBSTR(data_ref,1,7)=FORMAT_DATE('%Y-%m', CURRENT_DATE('America/Sao_Paulo'))) compradoNoMes,
+      (SELECT IFNULL(SUM(Custo_liquido_total),0) FROM base WHERE SUBSTR(data_ref,1,4)=FORMAT_DATE('%Y', CURRENT_DATE('America/Sao_Paulo'))) compradoNoAno,
+      (SELECT COUNT(DISTINCT nf_numero) FROM base) nPedidos,
+      (SELECT IFNULL(SUM(Custo_liquido_total),0) FROM base) valorTotal,
+      ARRAY(SELECT AS STRUCT SUBSTR(data_ref,1,7) mes, SUM(Custo_liquido_total) valor, SUM(quantidade_faturada) qtd FROM base WHERE LENGTH(data_ref)>=7 GROUP BY mes ORDER BY mes) porMes,
+      ARRAY(SELECT AS STRUCT ANY_VALUE(descricao) produto, SUM(quantidade_faturada) qtd, SUM(Custo_liquido_total) valor FROM base GROUP BY produto_key ORDER BY valor DESC LIMIT 10) topProdutos,
+      ARRAY(SELECT AS STRUCT nome_abreviado fornecedor, SUM(quantidade_faturada) qtd, SUM(Custo_liquido_total) valor FROM base WHERE IFNULL(nome_abreviado,'')!='' GROUP BY nome_abreviado ORDER BY valor DESC LIMIT 10) topFornecedores,
+      ARRAY(SELECT AS STRUCT primeiro.descricao produto, SAFE_DIVIDE(ultimo.custo_liq_unit-primeiro.custo_liq_unit, primeiro.custo_liq_unit)*100 variacaoPct FROM precos WHERE primeiro.custo_liq_unit>0 ORDER BY variacaoPct DESC LIMIT 10) maisSubiram,
+      ARRAY(SELECT AS STRUCT primeiro.descricao produto, SAFE_DIVIDE(ultimo.custo_liq_unit-primeiro.custo_liq_unit, primeiro.custo_liq_unit)*100 variacaoPct FROM precos WHERE primeiro.custo_liq_unit>0 ORDER BY variacaoPct ASC LIMIT 10) maisCairam,
+      ARRAY(SELECT AS STRUCT comprador primeiroNome FROM (SELECT DISTINCT LOWER(TRIM(REGEXP_REPLACE(IFNULL(comprador_nome,''), r'\\s+', ' '))) comprador FROM base WHERE IFNULL(comprador_nome,'')!='') WHERE comprador!='' ORDER BY comprador) compradores
+  `;
+  const [rows] = await bigqueryClient.query({query, params: compradores.length ? {compradores} : {}});
+  return rows[0] || {};
+}
+exports.buscarResumoComprasDashboardBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const resumo = await _buscarResumoComprasDashboardBigQueryInterno(data || {}, _obterBigQueryCliente());
+    return {ok: true, resumo};
+  });
+
+async function _buscarResumoRecebimentoComprasBigQueryInterno(data, acesso, bigqueryClient) {
+  const lojaKey = textoSeguro(data?.lojaKey, 120);
+  if (!lojaKey) throw new functions.https.HttpsError('invalid-argument', 'Loja Bluesoft não informada.');
+  // A permissão por loja continua validada no app pela loja ativa; esta chave
+  // é o identificador Bluesoft, não o id do documento Firestore da loja.
+  const query = `
+    WITH base AS (
+      SELECT COALESCE(NULLIF(data_recebimento, ''), data_emissao) AS data_ref,
+             nf_numero, data_emissao, Custo_liquido_total
+      FROM \`daterrinha-inventario.dt_relatorios.compras_historico\`
+      WHERE loja_key=@lojaKey AND UPPER(IFNULL(tipo_operacao,''))='COMPRA'
+    )
+    SELECT SUBSTR(data_ref,1,7) mes,
+           COUNT(DISTINCT CONCAT(IFNULL(nf_numero,''),'|',IFNULL(data_emissao,''))) notas,
+           IFNULL(SUM(Custo_liquido_total),0) valor
+    FROM base WHERE LENGTH(data_ref)>=7
+    GROUP BY mes ORDER BY mes DESC LIMIT 14
+  `;
+  const [rows] = await bigqueryClient.query({query, params: {lojaKey}});
+  return rows.reverse();
+}
+exports.buscarResumoRecebimentoComprasBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const mensal = await _buscarResumoRecebimentoComprasBigQueryInterno(data, acesso, _obterBigQueryCliente());
+    return {ok: true, mensal};
+  });
+
 // PEDIDO AO VIVO (2026-09-11, Fase 2 do espelho BigQuery — ver
 // bq-recebimento-recusas em extensions/): Indicadores de Retornos
 // (98-recebimento-retornos-indicadores.js) baixava recebimento_recusas
@@ -2123,10 +2733,562 @@ function _lojaPermitidaParaAcesso(acesso, lojaId) {
   return lojasPermitidas(acesso).has(String(lojaId));
 }
 let _bigQueryClienteSingleton = null;
+function _dtRodandoLocalmente() {
+  return process.env.FUNCTIONS_EMULATOR === 'true' || process.env.DT_AMBIENTE_LOCAL === '1';
+}
 function _obterBigQueryCliente() {
+  // O Emulator Suite não emula BigQuery. Falhar explicitamente é obrigatório:
+  // nunca permitir que uma Function local use credenciais ADC e consulte o
+  // projeto daterrinha-inventario por acidente. Testes continuam podendo
+  // injetar bigqueryFake diretamente nas funções internas.
+  if (_dtRodandoLocalmente()) {
+    throw new functions.https.HttpsError(
+      'failed-precondition',
+      'BigQuery de produção bloqueado no ambiente local.'
+    );
+  }
   if (!_bigQueryClienteSingleton) _bigQueryClienteSingleton = new BigQuery({projectId: 'daterrinha-inventario'});
   return _bigQueryClienteSingleton;
 }
+
+async function _buscarRecebimentosOperacaoBigQueryInterno(data, acesso, bigqueryClient, firestoreDb) {
+  const lojaId = textoSeguro(data?.lojaId, 120);
+  if (!lojaId) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
+  if (!_lojaPermitidaParaAcesso(acesso, lojaId)) {
+    throw new functions.https.HttpsError('permission-denied', 'Seu login não tem acesso a esta loja.');
+  }
+
+  // A própria operação precisa enxergar transbordos vindos das lojas que
+  // possuem rota para a loja ativa. Antes o navegador fazia uma consulta
+  // Firestore por origem depois de receber a lista principal. O backend
+  // resolve as rotas e devolve tudo em uma única resposta.
+  let origens = [];
+  if (firestoreDb && typeof firestoreDb.collection === 'function') {
+    const rotasSnap = await firestoreDb.collection('recebimento_rotas_transbordo')
+      .where('destinoLojaId', '==', lojaId).get().catch(() => ({docs: []}));
+    origens = Array.from(new Set((rotasSnap.docs || [])
+      .map(d => String((d.data() || {}).origemLojaId || '')).filter(Boolean)));
+  }
+
+  const query = `
+    SELECT document_id, data, JSON_EXTRACT_SCALAR(path_params, '$.lojaId') AS loja_origem
+    FROM \`daterrinha-inventario.dt_relatorios.recebimentos_raw_latest\`
+    WHERE operation != 'DELETE'
+      AND (
+        JSON_EXTRACT_SCALAR(path_params, '$.lojaId') = @lojaId
+        OR (
+          JSON_EXTRACT_SCALAR(path_params, '$.lojaId') IN UNNEST(@origens)
+          AND UPPER(IFNULL(JSON_VALUE(data, '$.tipo'), '')) = 'TRANSBORDO'
+        )
+      )
+  `;
+  const [rows] = await bigqueryClient.query({query, params: {lojaId, origens}});
+  return rows.map(r => Object.assign({_id: r.document_id, _lojaId: r.loja_origem || lojaId}, JSON.parse(r.data)));
+}
+exports.buscarRecebimentosOperacaoBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const recebimentos = await _buscarRecebimentosOperacaoBigQueryInterno(data, acesso, _obterBigQueryCliente(), admin.firestore());
+    return {ok: true, recebimentos, incluiTransbordosParceiros: true};
+  });
+
+// Histórico de recebimentos — consulta específica para a tela Histórico.
+// Evita carregar a operação inteira (recebimentos + cadastros auxiliares +
+// cruzamento das lojas parceiras) quando a tela precisa apenas de registros
+// FINALIZADO/CANCELADO. O filtro de período já é aplicado no BigQuery.
+async function _buscarHistoricoRecebimentosBigQueryInterno(data, acesso, bigqueryClient, firestoreDb) {
+  const lojaId = textoSeguro(data?.lojaId, 120);
+  const periodo = textoSeguro(data?.periodo, 7);
+  if (!lojaId) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
+  if (periodo && !/^\d{4}-\d{2}$/.test(periodo)) throw new functions.https.HttpsError('invalid-argument', 'Período inválido.');
+  if (!_lojaPermitidaParaAcesso(acesso, lojaId)) {
+    throw new functions.https.HttpsError('permission-denied', 'Seu login não tem acesso a esta loja.');
+  }
+
+  // Mantém a mesma regra do cliente para transbordos recebidos: somente
+  // origens com rota configurada para a loja ativa são cruzadas.
+  const rotasSnap = await firestoreDb.collection('recebimento_rotas_transbordo')
+    .where('destinoLojaId', '==', lojaId).get().catch(() => ({docs: []}));
+  const origens = Array.from(new Set((rotasSnap.docs || []).map(d => String((d.data() || {}).origemLojaId || '')).filter(Boolean)));
+  const lojasBusca = Array.from(new Set([lojaId, ...origens]));
+
+  const filtrosPeriodo = periodo ? `
+      AND SUBSTR(COALESCE(JSON_VALUE(data, '$.horaChegada'), JSON_VALUE(data, '$.criadoEm'), ''), 1, 7) = @periodo` : '';
+  const query = `
+    SELECT document_id, data, JSON_EXTRACT_SCALAR(path_params, '$.lojaId') AS loja_origem
+    FROM \`daterrinha-inventario.dt_relatorios.recebimentos_raw_latest\`
+    WHERE operation != 'DELETE'
+      AND JSON_EXTRACT_SCALAR(path_params, '$.lojaId') IN UNNEST(@lojasBusca)
+      AND JSON_VALUE(data, '$.status') IN ('FINALIZADO', 'CANCELADO')${filtrosPeriodo}
+  `;
+  const params = {lojasBusca};
+  if (periodo) params.periodo = periodo;
+  const [rows] = await bigqueryClient.query({query, params});
+  return rows.map(r => {
+    const dados = JSON.parse(r.data);
+    return Object.assign({_id: r.document_id, _lojaId: r.loja_origem}, dados);
+  }).filter(r => {
+    if (String(r._lojaId) === lojaId) return true;
+    return String(r.tipo || '') === 'TRANSBORDO' && String(r.destinoLojaId || '') === lojaId;
+  });
+}
+exports.buscarHistoricoRecebimentosBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const recebimentos = await _buscarHistoricoRecebimentosBigQueryInterno(data, acesso, _obterBigQueryCliente(), admin.firestore());
+    return {ok: true, recebimentos};
+  });
+
+
+// Recebimento histórico — Dashboard agregado no backend.
+// Lê os espelhos BigQuery de recebimento_notas/recebimento_cargas e devolve
+// somente KPIs, ranking e séries de tempo; o navegador não precisa baixar o
+// histórico bruto só para montar a visão geral.
+function _normTxtRecebimento(v) {
+  return String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+}
+function _mesChaveRecebimento(v) {
+  const st = String(v || '').trim();
+  if (!st) return '';
+  let m = st.match(/^(\d{4})-(\d{2})/);
+  if (m) return m[1] + '-' + m[2];
+  m = st.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  if (m) return m[3] + '-' + m[2];
+  const d = new Date(st);
+  return Number.isNaN(d.getTime()) ? '' : d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+}
+function _ehDevolucaoRecebimento(nota) {
+  const tipos = ['DEVOLUCAO_ENTRE_LOJAS', 'DEVOLUCAO_CLIENTE'];
+  if (tipos.includes(nota && nota.tipoTransferencia)) return true;
+  return /\bDEV(OL|\.)|\bRETORNO\b/.test(_normTxtRecebimento(nota && nota.natureza));
+}
+function _categoriaRecebimento(nota) {
+  if (_ehDevolucaoRecebimento(nota)) return 'DEVOLUCAO';
+  if (nota && nota.tipoTransferencia === 'TRANSFERENCIA_ENTRE_LOJAS') return 'TRANSBORDO';
+  if (_normTxtRecebimento(nota && nota.natureza).includes('TRANSFER')) return 'TRANSBORDO';
+  return 'FORNECEDOR';
+}
+function _minEntreRecebimento(a, b) {
+  if (!a || !b) return null;
+  const da = new Date(a), db = new Date(b);
+  if (Number.isNaN(da.getTime()) || Number.isNaN(db.getTime())) return null;
+  const n = Math.round((db - da) / 60000);
+  return Number.isFinite(n) ? n : null;
+}
+function _mediaRecebimento(vals) {
+  const a = (vals || []).filter(v => v != null && Number.isFinite(Number(v))).map(Number);
+  return a.length ? a.reduce((x,y) => x+y, 0) / a.length : null;
+}
+async function _buscarResumoHistoricoRecebimentoBigQueryInterno(data, acesso, bigqueryClient) {
+  const periodo = textoSeguro(data?.periodo, 7);
+  const categoria = textoSeguro(data?.categoria, 20).toUpperCase() || 'FORNECEDOR';
+  if (periodo && !/^\d{4}-\d{2}$/.test(periodo)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Período inválido.');
+  }
+  if (!['FORNECEDOR','TRANSBORDO','TODAS'].includes(categoria)) {
+    throw new functions.https.HttpsError('invalid-argument', 'Categoria inválida.');
+  }
+  const filtroNotas = periodo
+    ? "WHERE operation != 'DELETE' AND (SUBSTR(JSON_EXTRACT_SCALAR(data, '$.processamento'),1,7)=@periodo OR SUBSTR(JSON_EXTRACT_SCALAR(data, '$.dataRecebimento'),1,7)=@periodo)"
+    : "WHERE operation != 'DELETE'";
+  const filtroCargas = periodo
+    ? "WHERE operation != 'DELETE' AND SUBSTR(JSON_EXTRACT_SCALAR(data, '$.dataGeracao'),1,7)=@periodo"
+    : "WHERE operation != 'DELETE'";
+  const params = periodo ? {periodo} : {};
+  const [notasRows, cargasRows] = await Promise.all([
+    bigqueryClient.query({query:`SELECT document_id, data FROM \`daterrinha-inventario.dt_relatorios.recebimento_notas_raw_latest\` ${filtroNotas}`, params}),
+    bigqueryClient.query({query:`SELECT document_id, data FROM \`daterrinha-inventario.dt_relatorios.recebimento_cargas_raw_latest\` ${filtroCargas}`, params}),
+  ]);
+  const notasTodas = (notasRows[0] || []).map(r => Object.assign({_id:r.document_id}, JSON.parse(r.data || '{}')));
+  const cargas = (cargasRows[0] || []).map(r => Object.assign({_id:r.document_id}, JSON.parse(r.data || '{}')));
+  const transbordoNoPeriodo = notasTodas.filter(x => _categoriaRecebimento(x) === 'TRANSBORDO').length;
+  const devolucoesExcluidas = notasTodas.filter(_ehDevolucaoRecebimento).length;
+  const notas = notasTodas.filter(x => !_ehDevolucaoRecebimento(x)).filter(x => categoria === 'TODAS' || _categoriaRecebimento(x) === categoria);
+  const fornecedores = new Set(notas.map(x => x.fornecedorNome).filter(Boolean));
+  const temposLanc = notas.map(x => x.tempoLancamentoMin).filter(v => v != null).map(Number).filter(Number.isFinite);
+  const comparaveis = notas.filter(x => x.comparavel);
+  const comDivergencia = notas.filter(x => x.temDivergencia).length;
+  const valorTotal = notas.reduce((s,x) => s + (Number(x.valor)||0), 0);
+  const rankingMap = new Map();
+  notas.filter(x => x.fornecedorNome).forEach(x => {
+    const a = rankingMap.get(x.fornecedorNome) || {nome:x.fornecedorNome, entregas:0, valor:0};
+    a.entregas++; a.valor += Number(x.valor)||0; rankingMap.set(x.fornecedorNome, a);
+  });
+  const rankingFornecedores = [...rankingMap.values()].sort((a,b)=>b.entregas-a.entregas).slice(0,10);
+  const temposTotal=[], temposEspera=[], temposConf=[];
+  const porMes = new Map();
+  cargas.forEach(c => {
+    const total = _minEntreRecebimento(c.dataGeracao, c.dataFimRecebimento);
+    const espera = _minEntreRecebimento(c.dataGeracao, c.dataInicioRecebimento);
+    const conf = _minEntreRecebimento(c.dataInicioRecebimento, c.dataFimRecebimento);
+    if (total != null) temposTotal.push(total);
+    if (espera != null) temposEspera.push(espera);
+    if (conf != null) temposConf.push(conf);
+    const mes = _mesChaveRecebimento(c.dataGeracao);
+    if (!mes) return;
+    const a = porMes.get(mes) || {total:[], espera:[], conferencia:[]};
+    if (total != null) a.total.push(total);
+    if (espera != null) a.espera.push(espera);
+    if (conf != null) a.conferencia.push(conf);
+    porMes.set(mes,a);
+  });
+  return {
+    totalNotas:notas.length,
+    fornecedoresDistintos:fornecedores.size,
+    tempoMedioLancamento:_mediaRecebimento(temposLanc),
+    comparaveis:comparaveis.length,
+    comDivergencia,
+    valorTotal,
+    tempoMedioRecebimento:_mediaRecebimento(temposTotal),
+    tempoMedioEspera:_mediaRecebimento(temposEspera),
+    tempoMedioConferencia:_mediaRecebimento(temposConf),
+    transbordoNoPeriodo,
+    devolucoesExcluidas,
+    rankingFornecedores,
+    tempoPorMes:[...porMes.entries()].sort((a,b)=>a[0].localeCompare(b[0])).map(([mes,a])=>({mes,espera:_mediaRecebimento(a.espera),conferencia:_mediaRecebimento(a.conferencia),total:_mediaRecebimento(a.total)})),
+  };
+}
+exports.buscarResumoHistoricoRecebimentoBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds:30, memory:'256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const resumo = await _buscarResumoHistoricoRecebimentoBigQueryInterno(data, acesso, _obterBigQueryCliente());
+    return {ok:true, resumo};
+  });
+
+
+// Recebimento histórico — Notas Fiscais paginadas no backend.
+// A UI recebe apenas a página visível (50 registros), enquanto filtros,
+// contagem total e ordenação acontecem no BigQuery. Isso elimina o download
+// completo de `recebimento_notas` só para mostrar uma página da tabela.
+function _whereNotasRecebimentoPaginadas(data) {
+  const periodo = textoSeguro(data?.periodo, 7);
+  const fornecedor = textoSeguro(data?.fornecedor, 180);
+  const status = textoSeguro(data?.status, 120);
+  const natureza = textoSeguro(data?.natureza, 220);
+  const categoria = textoSeguro(data?.categoria, 20).toUpperCase() || 'FORNECEDOR';
+  const soDivergencia = data?.soDivergencia === true;
+  if (periodo && !/^\d{4}-\d{2}$/.test(periodo)) throw new functions.https.HttpsError('invalid-argument', 'Período inválido.');
+  if (!['FORNECEDOR','TRANSBORDO','TODAS'].includes(categoria)) throw new functions.https.HttpsError('invalid-argument', 'Categoria inválida.');
+  const params = {periodo, fornecedor, status, natureza, categoria, soDivergencia};
+  const where = `
+    categoria != 'DEVOLUCAO'
+    AND (@categoria = 'TODAS' OR categoria = @categoria)
+    AND (@periodo = '' OR mes_ref = @periodo)
+    AND (@fornecedor = '' OR fornecedor_nome = @fornecedor)
+    AND (@status = '' OR status_recebimento = @status)
+    AND (@natureza = '' OR natureza = @natureza)
+    AND (@soDivergencia = FALSE OR tem_divergencia = TRUE)
+  `;
+  return {where, params};
+}
+function _cteNotasRecebimentoPaginadas() {
+  return `
+    WITH base AS (
+      SELECT
+        document_id,
+        data,
+        COALESCE(JSON_EXTRACT_SCALAR(data, '$.fornecedorNome'), '') AS fornecedor_nome,
+        COALESCE(JSON_EXTRACT_SCALAR(data, '$.statusRecebimento'), '') AS status_recebimento,
+        COALESCE(JSON_EXTRACT_SCALAR(data, '$.natureza'), '') AS natureza,
+        COALESCE(JSON_EXTRACT_SCALAR(data, '$.dataRecebimento'), JSON_EXTRACT_SCALAR(data, '$.processamento'), '') AS data_ordem,
+        SUBSTR(COALESCE(JSON_EXTRACT_SCALAR(data, '$.processamento'), JSON_EXTRACT_SCALAR(data, '$.dataRecebimento'), ''), 1, 7) AS mes_ref,
+        LOWER(COALESCE(JSON_EXTRACT_SCALAR(data, '$.temDivergencia'), 'false')) = 'true' AS tem_divergencia,
+        CASE
+          WHEN JSON_EXTRACT_SCALAR(data, '$.tipoTransferencia') IN ('DEVOLUCAO_ENTRE_LOJAS', 'DEVOLUCAO_CLIENTE')
+            OR REGEXP_CONTAINS(UPPER(COALESCE(JSON_EXTRACT_SCALAR(data, '$.natureza'), '')), r'(^|[^A-Z])DEV(OL|\\.)|(^|[^A-Z])RETORNO([^A-Z]|$)')
+            THEN 'DEVOLUCAO'
+          WHEN JSON_EXTRACT_SCALAR(data, '$.tipoTransferencia') = 'TRANSFERENCIA_ENTRE_LOJAS'
+            OR STRPOS(UPPER(COALESCE(JSON_EXTRACT_SCALAR(data, '$.natureza'), '')), 'TRANSFER') > 0
+            THEN 'TRANSBORDO'
+          ELSE 'FORNECEDOR'
+        END AS categoria
+      FROM \`daterrinha-inventario.dt_relatorios.recebimento_notas_raw_latest\`
+      WHERE operation != 'DELETE'
+    )
+  `;
+}
+async function _buscarNotasRecebimentoPaginadasBigQueryInterno(data, acesso, bigqueryClient) {
+  if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+  const pagina = Math.max(1, Math.min(100000, Number(data?.pagina) || 1));
+  const limite = Math.max(1, Math.min(100, Number(data?.limite) || 50));
+  const incluirOpcoes = data?.incluirOpcoes === true;
+  const {where, params} = _whereNotasRecebimentoPaginadas(data || {});
+  const base = _cteNotasRecebimentoPaginadas();
+  const offset = (pagina - 1) * limite;
+  const queryPagina = `${base}
+    SELECT document_id, data
+    FROM base
+    WHERE ${where}
+    ORDER BY data_ordem DESC, document_id DESC
+    LIMIT @limite OFFSET @offset
+  `;
+  const queryTotal = `${base}
+    SELECT COUNT(*) AS total
+    FROM base
+    WHERE ${where}
+  `;
+  const paramsPagina = Object.assign({}, params, {limite, offset});
+  const promessas = [
+    bigqueryClient.query({query:queryPagina, params:paramsPagina}),
+    bigqueryClient.query({query:queryTotal, params}),
+  ];
+  if (incluirOpcoes) {
+    promessas.push(bigqueryClient.query({query:`${base}
+      SELECT
+        ARRAY_AGG(DISTINCT fornecedor_nome IGNORE NULLS ORDER BY fornecedor_nome) AS fornecedores,
+        ARRAY_AGG(DISTINCT status_recebimento IGNORE NULLS ORDER BY status_recebimento) AS status,
+        ARRAY_AGG(DISTINCT natureza IGNORE NULLS ORDER BY natureza) AS naturezas
+      FROM base
+      WHERE fornecedor_nome != '' OR status_recebimento != '' OR natureza != ''
+    `}));
+  }
+  const resultados = await Promise.all(promessas);
+  const linhas = (resultados[0][0] || []).map(r => Object.assign({_id:r.document_id}, JSON.parse(r.data || '{}')));
+  const totalRaw = resultados[1][0] && resultados[1][0][0] ? resultados[1][0][0].total : 0;
+  const total = Number(totalRaw && typeof totalRaw === 'object' && 'value' in totalRaw ? totalRaw.value : totalRaw) || 0;
+  let opcoes = null;
+  if (incluirOpcoes) {
+    const row = resultados[2][0] && resultados[2][0][0] ? resultados[2][0][0] : {};
+    const limpa = arr => (Array.isArray(arr) ? arr : []).map(String).filter(Boolean);
+    opcoes = {fornecedores:limpa(row.fornecedores), status:limpa(row.status), naturezas:limpa(row.naturezas)};
+  }
+  return {linhas, total, pagina, limite, opcoes};
+}
+exports.buscarNotasRecebimentoPaginadasBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds:30, memory:'256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    return Object.assign({ok:true}, await _buscarNotasRecebimentoPaginadasBigQueryInterno(data, acesso, _obterBigQueryCliente()));
+  });
+
+
+// Recebimento — divergências agregadas por fornecedor.
+// A tela de Fornecedores precisa somente da contagem histórica de notas com
+// divergência por fornecedor; não há motivo para mandar `recebimento_notas`
+// inteira ao navegador só para montar esse único campo/ranking.
+async function _buscarDivergenciasFornecedoresRecebimentoBigQueryInterno(data, acesso, bigqueryClient) {
+  const query = `
+    SELECT
+      UPPER(TRIM(COALESCE(JSON_EXTRACT_SCALAR(data, '$.fornecedorNome'), ''))) AS fornecedor_chave,
+      ANY_VALUE(COALESCE(JSON_EXTRACT_SCALAR(data, '$.fornecedorNome'), '')) AS fornecedor,
+      COUNT(1) AS divergencias
+    FROM \`daterrinha-inventario.dt_relatorios.recebimento_notas_raw_latest\`
+    WHERE operation != 'DELETE'
+      AND LOWER(COALESCE(JSON_EXTRACT_SCALAR(data, '$.temDivergencia'), 'false')) = 'true'
+      AND TRIM(COALESCE(JSON_EXTRACT_SCALAR(data, '$.fornecedorNome'), '')) != ''
+    GROUP BY fornecedor_chave
+    ORDER BY divergencias DESC, fornecedor_chave
+  `;
+  const [rows] = await bigqueryClient.query({query});
+  return (rows || []).map(r => ({
+    fornecedor: String(r.fornecedor || r.fornecedor_chave || '').trim(),
+    divergencias: Number(r.divergencias && typeof r.divergencias === 'object' && 'value' in r.divergencias ? r.divergencias.value : r.divergencias) || 0,
+  }));
+}
+exports.buscarDivergenciasFornecedoresRecebimentoBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds:30, memory:'256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const fornecedores = await _buscarDivergenciasFornecedoresRecebimentoBigQueryInterno(data, acesso, _obterBigQueryCliente());
+    return {ok:true, fornecedores};
+  });
+
+
+function _statusProducaoDashboard(status) {
+  status = String(status || '').trim();
+  if(status==='em_producao')return 'em_andamento';
+  return status === 'em_andamento' || status === 'concluido' ? status : 'pendente';
+}
+
+function _resumirRegistrosProducaoDashboard(docs) {
+  const resumo = {
+    total: 0, pend: 0, and: 0, ok: 0,
+    totalCx: 0, pendCx: 0, andCx: 0, okCx: 0,
+    maquinas: [], topProdutos: [], recentes: [],
+  };
+  const porMaquina = new Map();
+  const porProduto = new Map();
+  const recentes = [];
+  (docs || []).forEach(doc => {
+    const d = typeof doc.data === 'function' ? (doc.data() || {}) : (doc || {});
+    const id = doc && doc.id != null ? String(doc.id) : String(d._firestoreId || d._id || '');
+    const status = _statusProducaoDashboard(d.status);
+    const caixas = Number(d.qntCaixas) || 0;
+    const maquina = String(d.maquina || '').trim();
+    const produto = String(d.produto || '').trim();
+    resumo.total++;
+    resumo.totalCx += caixas;
+    if (status === 'pendente') { resumo.pend++; resumo.pendCx += caixas; }
+    else if (status === 'em_andamento') { resumo.and++; resumo.andCx += caixas; }
+    else { resumo.ok++; resumo.okCx += caixas; }
+    if (maquina) {
+      let m = porMaquina.get(maquina);
+      if (!m) {
+        m = {nome: maquina, totalCx: 0, okCx: 0, pendCount: 0, emAndamentoProduto: '', status: {
+          pendente: {ops: 0, caixas: 0}, em_andamento: {ops: 0, caixas: 0}, concluido: {ops: 0, caixas: 0},
+        }};
+        porMaquina.set(maquina, m);
+      }
+      m.totalCx += caixas;
+      m.status[status].ops++;
+      m.status[status].caixas += caixas;
+      if (status === 'concluido') m.okCx += caixas;
+      if (status === 'pendente') m.pendCount++;
+      if (status === 'em_andamento' && !m.emAndamentoProduto) m.emAndamentoProduto = produto;
+    }
+    if (produto) porProduto.set(produto, (porProduto.get(produto) || 0) + caixas);
+    recentes.push({_firestoreId: id, produto, maquina, qntCaixas: caixas, status, atualizadoEm: d.atualizadoEm || '', criadoEm: d.criadoEm || ''});
+  });
+  resumo.maquinas = Array.from(porMaquina.values()).sort((a,b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+  resumo.topProdutos = Array.from(porProduto.entries()).sort((a,b) => b[1] - a[1]).slice(0, 8).map(([nome, caixas]) => ({nome, caixas}));
+  resumo.recentes = recentes.sort((a,b) => String(b.atualizadoEm || b.criadoEm || '').localeCompare(String(a.atualizadoEm || a.criadoEm || ''))).slice(0, 8);
+  return resumo;
+}
+
+async function _buscarResumoProducaoDashboardInterno(data, acesso, firestoreDb) {
+  const lojaId = textoSeguro(data?.lojaId, 120);
+  if (!lojaId) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
+  if (!_lojaPermitidaParaAcesso(acesso, lojaId)) {
+    throw new functions.https.HttpsError('permission-denied', 'Seu login não tem acesso a esta loja.');
+  }
+  const ref = (firestoreDb || db).collection('lojas').doc(lojaId).collection('producao_registros');
+  // Projeção server-side: evita transportar campos grandes/configSnapshot para a Function.
+  const snap = await ref.select('status', 'qntCaixas', 'maquina', 'produto', 'atualizadoEm', 'criadoEm').get();
+  return _resumirRegistrosProducaoDashboard(snap.docs);
+}
+
+exports.buscarResumoProducaoDashboard = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const resumo = await _buscarResumoProducaoDashboardInterno(data, acesso, db);
+    return {ok: true, resumo};
+  });
+
+
+function _chunks(arr, tamanho) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += tamanho) out.push(arr.slice(i, i + tamanho));
+  return out;
+}
+
+async function _buscarRelatorioProducaoPeriodoInterno(data, acesso, firestoreDb) {
+  const lojaId = textoSeguro(data?.lojaId, 120);
+  const tudo = data?.tudo === true;
+  const ini = textoSeguro(data?.ini, 10);
+  const fim = textoSeguro(data?.fim, 10);
+  if (!lojaId) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
+  if (!_lojaPermitidaParaAcesso(acesso, lojaId)) {
+    throw new functions.https.HttpsError('permission-denied', 'Seu login não tem acesso a esta loja.');
+  }
+  if (!tudo) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(ini) || !/^\d{4}-\d{2}-\d{2}$/.test(fim)) {
+      throw new functions.https.HttpsError('invalid-argument', 'Período inválido — use o formato AAAA-MM-DD.');
+    }
+    const dIni = new Date(ini + 'T00:00:00'), dFim = new Date(fim + 'T23:59:59');
+    if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime()) || dIni > dFim || (dFim - dIni) / 86400000 > 731) {
+      throw new functions.https.HttpsError('invalid-argument', 'Escolha um período válido de até 2 anos.');
+    }
+  }
+
+  const lojaRef = (firestoreDb || db).collection('lojas').doc(lojaId);
+  const regsRef = lojaRef.collection('producao_registros');
+  const apsRef = lojaRef.collection('producao_apontamentos');
+  const maqsRef = lojaRef.collection('producao_maquinas');
+  const procRef = lojaRef.collection('producao_processos');
+
+  let qRegs = regsRef;
+  let qAps = apsRef;
+  let qProc = procRef;
+  if (!tudo) {
+    qRegs = qRegs.where('data', '>=', ini).where('data', '<=', fim);
+    qAps = qAps.where('data', '>=', ini).where('data', '<=', fim);
+    qProc = qProc.where('data', '>=', ini).where('data', '<=', fim);
+  }
+
+  // 1) Só o período pedido. Apontamentos do período podem pertencer a uma OP
+  // programada fora do intervalo, então buscamos essas OPs por id em seguida.
+  const [regsSnap, apsPeriodoSnap, maqsSnap, procSnap] = await Promise.all([
+    qRegs.get(), qAps.get(), maqsRef.get(), qProc.get().catch(() => ({docs: []})),
+  ]);
+  const registrosMap = new Map(regsSnap.docs.map(d => [d.id, Object.assign({_id: d.id}, d.data())]));
+  const apontamentosPeriodo = apsPeriodoSnap.docs.map(d => Object.assign({_id: d.id}, d.data()));
+  const idsPorApontamento = [...new Set(apontamentosPeriodo.map(a => String(a.registroId || '')).filter(Boolean))]
+    .filter(id => !registrosMap.has(id));
+
+  for (const lote of _chunks(idsPorApontamento, 250)) {
+    if (!lote.length) continue;
+    const snaps = await (firestoreDb || db).getAll(...lote.map(id => regsRef.doc(id)));
+    snaps.forEach(d => { if (d.exists) registrosMap.set(d.id, Object.assign({_id: d.id}, d.data())); });
+  }
+
+  // 2) Para atraso/incompleto precisamos do realizado TOTAL da OP, não só do
+  // período. Agregamos no servidor e devolvemos apenas um número por OP.
+  const idsRelevantes = [...registrosMap.keys()];
+  const totalRealPorRegistro = {};
+  idsRelevantes.forEach(id => { totalRealPorRegistro[id] = 0; });
+  if (tudo) {
+    apontamentosPeriodo.forEach(a => {
+      const id = String(a.registroId || '');
+      if (id && Object.prototype.hasOwnProperty.call(totalRealPorRegistro, id)) {
+        totalRealPorRegistro[id] += Number(a.qntCaixas) || 0;
+      }
+    });
+  } else {
+    for (const lote of _chunks(idsRelevantes, 30)) {
+      if (!lote.length) continue;
+      const snap = await apsRef.where('registroId', 'in', lote).select('registroId', 'qntCaixas').get();
+      snap.docs.forEach(d => {
+        const a = d.data() || {};
+        const id = String(a.registroId || '');
+        if (id && Object.prototype.hasOwnProperty.call(totalRealPorRegistro, id)) {
+          totalRealPorRegistro[id] += Number(a.qntCaixas) || 0;
+        }
+      });
+    }
+  }
+
+  return {
+    registros: [...registrosMap.values()],
+    apontamentos: apontamentosPeriodo,
+    totalRealPorRegistro,
+    maquinas: maqsSnap.docs.map(d => Object.assign({_id: d.id}, d.data())),
+    processos: (procSnap.docs || []).map(d => Object.assign({_id: d.id}, d.data())),
+  };
+}
+
+exports.buscarRelatorioProducaoPeriodo = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    const relatorio = await _buscarRelatorioProducaoPeriodoInterno(data, acesso, db);
+    return {ok: true, relatorio};
+  });
+
 async function _buscarIndicadoresRetornosBigQueryInterno(data, acesso, bigqueryClient) {
   const lojaId = textoSeguro(data?.lojaId, 120);
   const ini = textoSeguro(data?.ini, 10);
@@ -2158,22 +3320,79 @@ async function _buscarIndicadoresRetornosBigQueryInterno(data, acesso, bigqueryC
   });
   return rows.map(r => Object.assign({_id: r.document_id}, JSON.parse(r.data)));
 }
-// PEDIDO AO VIVO (2026-09-11): "1 a 3 segundos pra mim tá perfeito" —
-// minInstances:1 mantém 1 instância desta função sempre de prontidão,
-// eliminando o "cold start" (2-5s extras de carregar a biblioteca pesada
-// do BigQuery do zero) — sobra só o pedágio inerente do próprio BigQuery
-// (job de consulta, não encolhe mesmo com pouco dado). Custo fixo pequeno
-// e contínuo no Google (a instância fica de pé mesmo sem uso), aceito
-// explicitamente pelo usuário em troca de latência previsível.
+
+// Retorna somente os campos pequenos usados para enriquecer Pátio e
+// Indicadores. Os documentos completos de recebimento_recusas_notas podem
+// conter listas muito grandes; projetar os campos no servidor impede que o
+// navegador baixe dezenas de megabytes por lote de 30 chaves.
+async function _buscarResumoNotasRetorno(lojaId, chaves, firestoreDb) {
+  const unicas = [...new Set((chaves || []).map(String).filter(Boolean))];
+  if (!unicas.length) return {};
+  const col = (firestoreDb || db).collection('lojas').doc(lojaId).collection('recebimento_recusas_notas');
+  const resumo = {};
+  // Compatibilidade com o Firestore em memória dos testes. Em produção o
+  // caminho abaixo usa query + select, que é o ponto da otimização.
+  if (typeof col.where !== 'function' || !admin.firestore.FieldPath) {
+    const snaps = await Promise.all(unicas.map(chave => col.doc(chave).get()));
+    snaps.forEach(doc => {
+      if (!doc.exists) return;
+      const x = doc.data() || {};
+      const item = _resumoNotaRetorno(doc.id, x);
+      resumo[doc.id] = item;
+      resumo[item.chave] = item;
+    });
+    return resumo;
+  }
+  for (let i = 0; i < unicas.length; i += 120) {
+    const grupos = [];
+    const pagina = unicas.slice(i, i + 120);
+    for (let j = 0; j < pagina.length; j += 30) grupos.push(pagina.slice(j, j + 30));
+    const snaps = await Promise.all(grupos.map(grupo => col
+      .where(admin.firestore.FieldPath.documentId(), 'in', grupo)
+      .select('chave', 'numeroNota', 'serie', 'cfop', 'naturezaLabel', 'tipoOperacao', 'pareceDevolucao',
+        'destinatario', 'destinatarioNome', 'destinatarioCnpj', 'vendedorNome', 'vendedorEmail',
+        'supervisorNome', 'supervisorEmail', 'valorTotal', 'informacoesComplementares')
+      .get()));
+    snaps.forEach(snap => snap.docs.forEach(doc => {
+      const x = doc.data() || {};
+      const item = _resumoNotaRetorno(doc.id, x);
+      resumo[doc.id] = item;
+      resumo[item.chave] = item;
+    }));
+  }
+  return resumo;
+}
+
+function _resumoNotaRetorno(id, x) {
+  return {
+    chave: String(x.chave || id), numeroNota: x.numeroNota || '', serie: x.serie || '',
+    cfop: x.cfop || '', naturezaLabel: x.naturezaLabel || '', tipoOperacao: x.tipoOperacao || '',
+    pareceDevolucao: x.pareceDevolucao === true, destinatario: x.destinatario || '',
+    destinatarioNome: x.destinatarioNome || '', destinatarioCnpj: x.destinatarioCnpj || '',
+    vendedorNome: x.vendedorNome || '', vendedorEmail: x.vendedorEmail || '',
+    supervisorNome: x.supervisorNome || '', supervisorEmail: x.supervisorEmail || '',
+    valorTotal: Number(x.valorTotal) || 0, informacoesComplementares: x.informacoesComplementares || '',
+  };
+}
+// PEDIDO AO VIVO (2026-09-11): tinha minInstances:1 aqui (eliminava os 2-5s
+// de "cold start" da biblioteca do BigQuery), aceito na época em troca de
+// latência previsível. PEDIDO AO VIVO (2026-09-15): revisão geral de custo
+// — removido de propósito em todas as 14 functions de BigQuery (essa
+// incluída). Sem isso, a função "esfria" depois de ~15min sem uso e a
+// PRÓXIMA chamada depois disso leva alguns segundos a mais; volta a ficar
+// rápida enquanto continuar em uso. Trade-off aceito conscientemente pelo
+// usuário: menos custo fixo, ocasional espera extra.
 exports.buscarIndicadoresRetornosBigQuery = functions
   .region('southamerica-east1')
-  .runWith({timeoutSeconds: 30, memory: '256MB', minInstances: 1})
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
     const acesso = await acessoSolicitante(context);
     if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
     const recusas = await _buscarIndicadoresRetornosBigQueryInterno(data, acesso, _obterBigQueryCliente());
-    return {ok: true, recusas};
+    const chaves = recusas.flatMap(r => (Array.isArray(r.notas) ? r.notas : []).map(n => n && n.chave));
+    const notasResumo = await _buscarResumoNotasRetorno(textoSeguro(data?.lojaId, 120), chaves, admin.firestore());
+    return {ok: true, recusas, notasResumo};
   });
 
 // PEDIDO AO VIVO (2026-09-11): "a parte do Analista pode puxar do BigQuery,
@@ -2201,20 +3420,17 @@ async function _buscarPatioTempoRealBigQueryInterno(data, acesso, bigqueryClient
   }
   return _consultarPatioTempoRealBigQuery(lojaId, bigqueryClient);
 }
-// PEDIDO AO VIVO (2026-09-11): "clico demora muito para carregar" — mesmo
-// com minInstances:1 (sem cold start), o próprio BigQuery tem um piso de
-// 1-3s por consulta que não dá pra encolher mais. Confirmado direto no log
-// do servidor (Function execution took ~1200-1600ms) — não era bug de
-// código, era o pedágio inerente de "consultar o BigQuery na hora do
-// clique". Em vez de cada clique de cada Analista disparar sua própria
-// consulta, um job agendado (a cada 2 minutos) já deixa o resultado PRONTO
-// — flatten por nota + enriquecido (mercado/vendedor/valor) — guardado em
-// `lojas/{lojaId}/recebimento_patio_cache/atual`. A tela passa a fazer só
-// uma LEITURA de Firestore desse documento (bem abaixo de 1s), igual toda
-// outra tela do app — sem chamar Cloud Function nem BigQuery no clique.
-// Mesma tolerância de atraso (1-5min) que o usuário já aceitou pra essa
-// tela; o job roda bem mais rápido que isso (2min), então na prática fica
-// sempre bem mais fresco que o mínimo aceito.
+// PEDIDO AO VIVO (2026-09-11): "clico demora muito para carregar" —
+// confirmado no log do servidor que o BigQuery tem um piso de 1-3s por
+// consulta, não é bug de código. Solução original: um job agendado a cada
+// 2min deixava o resultado PRONTO em `recebimento_patio_cache/atual`, e a
+// tela só lia esse cache (leitura de Firestore, bem abaixo de 1s).
+// PEDIDO AO VIVO (2026-09-15): revisão de custo — esse job rodava 720x/dia
+// (24h, inclusive de madrugada sem ninguém usando) só pra manter o cache
+// pronto. Removido; a tela (105-recebimento-patio-tempo-real.js) já cai
+// sozinha pro caminho ao vivo (esta function) quando o cache não existe ou
+// passa de 10min — então agora ela é chamada com mais frequência (todo
+// acesso ao vivo, não só o cache-miss ocasional de antes).
 function _estaNoPatioParaCache(doc, nota) {
   if (doc.origem !== 'COLETOR' && doc.origem !== 'INVENTARIO_INICIAL') return false;
   const tratamento = nota.tratamento != null ? nota.tratamento : (doc.tratamento || '');
@@ -2235,7 +3451,13 @@ function _estaNoPatioParaCache(doc, nota) {
 // dentro da própria nota (confirmado direto no BigQuery). Mesmo bug
 // duplicado em public/js/analista/105-recebimento-patio-tempo-real.js
 // (CAMPOS_POR_NOTA) — corrigido junto.
-const _CAMPOS_POR_NOTA_PATIO_CACHE = ['tratamento', 'statusRetorno', 'dataSaidaEm', 'dataProgramadaEm', 'box', 'numeroNota', 'chave', 'destinatario', 'volumeEsperado', 'valorTotal'];
+// BUG AO VIVO REAL (2026-09-17): "aqui ainda tá vazio" — mesmo bug do
+// valorTotal acima, mas pra vendedorNome/supervisorNome: faltavam nesta
+// lista, então vinham sempre do documento (ausente) em vez da própria
+// nota, mesmo depois de uma importação de planilha preencher a nota
+// diretamente. Mesmo bug duplicado em 105-recebimento-patio-tempo-real.js
+// (CAMPOS_POR_NOTA) — corrigido junto.
+const _CAMPOS_POR_NOTA_PATIO_CACHE = ['tratamento', 'statusRetorno', 'dataSaidaEm', 'dataProgramadaEm', 'box', 'numeroNota', 'chave', 'destinatario', 'volumeEsperado', 'valorTotal', 'vendedorNome', 'supervisorNome'];
 function _linhasPorNotaParaCache(recusas) {
   const linhas = [];
   recusas.forEach(r => {
@@ -2254,18 +3476,14 @@ async function _montarCachePatioTempoRealLoja(lojaId, bigqueryClient) {
   const docs = await _consultarPatioTempoRealBigQuery(lojaId, bigqueryClient);
   const linhas = _linhasPorNotaParaCache(docs).filter(l => _estaNoPatioParaCache(l, l));
   const chaves = [...new Set(linhas.map(l => l.chave).filter(Boolean))];
-  const porChave = new Map();
-  if (chaves.length) {
-    const colNotas = db.collection('lojas').doc(lojaId).collection('recebimento_recusas_notas');
-    const snaps = await Promise.all(chaves.map(c => colNotas.doc(c).get()));
-    snaps.forEach(s => { if (s.exists) porChave.set(s.id, s.data()); });
-  }
+  const notasResumo = await _buscarResumoNotasRetorno(lojaId, chaves, db);
+  const porChave = new Map(Object.entries(notasResumo));
   const linhasEnriquecidas = linhas.map(l => {
     const n = porChave.get(l.chave) || {};
     return Object.assign({}, l, {
       destinatario: l.destinatario || n.destinatario || '',
-      vendedorNome: n.vendedorNome || '',
-      supervisorNome: n.supervisorNome || '',
+      vendedorNome: l.vendedorNome || n.vendedorNome || '',
+      supervisorNome: l.supervisorNome || n.supervisorNome || '',
       valorTotal: Number(l.valorTotal != null ? l.valorTotal : n.valorTotal) || 0,
     });
   });
@@ -2309,11 +3527,18 @@ async function _atualizarCachePatioTempoRealTodasLojas(bigqueryClient) {
   }
   return resultados;
 }
-exports.atualizarCachePatioTempoRealAgendado = functions
-  .region('southamerica-east1')
-  .runWith({timeoutSeconds: 120, memory: '256MB'})
-  .pubsub.schedule('every 2 minutes')
-  .onRun(async () => { await _atualizarCachePatioTempoRealTodasLojas(); return null; });
+// PEDIDO AO VIVO (2026-09-15): removido o agendamento automático de 2 em 2
+// minutos (720 execuções/dia, 24h, mesmo de madrugada sem ninguém usando) —
+// custo real sem benefício real. A tela (105-recebimento-patio-tempo-real.js
+// > carregarPatio) já cai sozinha pro caminho ao vivo (callable
+// buscarPatioTempoRealBigQuery) sempre que o cache não existir ou tiver mais
+// de 10min (_tentarCarregarDoCache/LIMITE_IDADE_CACHE_MIN) — mais o botão
+// "↻ Atualizar" e o polling de 45s enquanto a aba está aberta. Sem esse job,
+// toda visita simplesmente busca ao vivo (pouco mais de 1s a mais na
+// primeira vez, sem cache pra reaproveitar) — nada quebra, só troca "sempre
+// pronto, mesmo sem ninguém olhar" por "busca quando alguém precisa".
+// atualizarCachePatioTempoRealAgora (callable, abaixo) continua existindo
+// como gatilho manual, pra quem quiser forçar o cache mesmo assim.
 // Gatilho manual — pra testar sem esperar o próximo ciclo de 2min, mesma
 // checagem de administrador de sincronizarBiAgendadoAgora.
 exports.atualizarCachePatioTempoRealAgora = functions
@@ -2334,13 +3559,15 @@ exports.atualizarCachePatioTempoRealAgora = functions
 // esta consulta direta em vez de mostrar dado vazio/velho demais.
 exports.buscarPatioTempoRealBigQuery = functions
   .region('southamerica-east1')
-  .runWith({timeoutSeconds: 30, memory: '256MB', minInstances: 1})
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
     const acesso = await acessoSolicitante(context);
     if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
     const recusas = await _buscarPatioTempoRealBigQueryInterno(data, acesso, _obterBigQueryCliente());
-    return {ok: true, recusas};
+    const chaves = recusas.flatMap(r => (Array.isArray(r.notas) ? r.notas : []).map(n => n && n.chave));
+    const notasResumo = await _buscarResumoNotasRetorno(textoSeguro(data?.lojaId, 120), chaves, admin.firestore());
+    return {ok: true, recusas, notasResumo};
   });
 
 // PEDIDO AO VIVO (2026-09-11): Transbordo (95-recebimento-transbordo.js) e
@@ -2375,7 +3602,7 @@ async function _buscarTransbordoTodasLojasBigQueryInterno(acesso, bigqueryClient
 }
 exports.buscarTransbordoTodasLojasBigQuery = functions
   .region('southamerica-east1')
-  .runWith({timeoutSeconds: 30, memory: '256MB', minInstances: 1})
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
     const acesso = await acessoSolicitante(context);
@@ -2393,19 +3620,26 @@ async function _buscarCargasTodasLojasBigQueryInterno(data, acesso, bigqueryClie
   // status da tela pede explicitamente (incluirFinalizadas).
   const incluirFinalizadas = data?.incluirFinalizadas === true;
   const filtroStatus = incluirFinalizadas ? '' : "AND JSON_EXTRACT_SCALAR(data, '$.status') IN ('PENDENTE', 'EM_TRANSITO')";
+  const dataInicio = /^\d{4}-\d{2}-\d{2}$/.test(String(data?.dataInicio || '')) ? String(data.dataInicio) : '';
+  const dataFim = /^\d{4}-\d{2}-\d{2}$/.test(String(data?.dataFim || '')) ? String(data.dataFim) : '';
+  const params = Object.assign({}, restricao.params);
+  let filtroPeriodo = '';
+  if (dataInicio) { filtroPeriodo += " AND SUBSTR(JSON_EXTRACT_SCALAR(data, '$.criadoEm'), 1, 10) >= @dataInicio"; params.dataInicio = dataInicio; }
+  if (dataFim) { filtroPeriodo += " AND SUBSTR(JSON_EXTRACT_SCALAR(data, '$.criadoEm'), 1, 10) <= @dataFim"; params.dataFim = dataFim; }
   const query = `
     SELECT document_id, data, path_params
     FROM \`daterrinha-inventario.dt_relatorios.recebimento_transbordo_cargas_raw_latest\`
     WHERE operation != 'DELETE'
       ${filtroStatus}
+      ${filtroPeriodo}
       ${restricao.clausula}
   `;
-  const [rows] = await bigqueryClient.query({query, params: restricao.params});
+  const [rows] = await bigqueryClient.query({query, params});
   return rows.map(r => Object.assign({_id: r.document_id, lojaId: JSON.parse(r.path_params).lojaId}, JSON.parse(r.data)));
 }
 exports.buscarCargasTodasLojasBigQuery = functions
   .region('southamerica-east1')
-  .runWith({timeoutSeconds: 30, memory: '256MB', minInstances: 1})
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
   .https.onCall(async (data, context) => {
     if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
     const acesso = await acessoSolicitante(context);
@@ -2414,24 +3648,2479 @@ exports.buscarCargasTodasLojasBigQuery = functions
     return {ok: true, cargas};
   });
 
+// ═══════════════════════════════════════════════════════════════════════
+// Logística › Estoque › Relatórios (PEDIDO AO VIVO 2026-10-02) — coleta
+// SÓ-LEITURA (GET) da Bluesoft, carregada no BigQuery (dataset
+// dt_relatorios). Schema completo em
+// functions/sql/estoque-relatorios-schema.sql; telas em
+// public/js/analista/125-estoque-relatorios.js.
+//
+// Nomes de campo confirmados direto no OpenAPI real da Bluesoft
+// (api-docs.json) — não são suposição: movimentoEstoqueKey/lojaKey/
+// produtoKey/dataMovimento/dataLancamento/quantidade/valor/custoEstoque/
+// custoEstoqueComIcm/custoContabil/tipoMovimentoKey/tipoMovimento/
+// saldoEstoqueAnterior/saldoEstoque/fornecedorKey/produtoOrigem/
+// produtoOrigemQtd/movimentoEstornoKey/tipoOrigemKey/tipoOrigem/origemKey
+// (schema MovimentacoesDeEstoqueAnaliticoResponse). Envelope de paginação
+// SEMPRE `{currentPage, pageSize, data:[...]}` (schema PaginationResponse*
+// — confirmado nos 4 endpoints paginados usados aqui), query "plana"
+// (currentPage/pageSize/lojaKey/... direto na querystring, sem
+// aninhamento). `InventarioConsultarResponse` NÃO devolve `status` nem
+// `numero` (só `inventarioKey`,`descricao`,`dataAbertura`,`dataFechamento`,
+// `tipoDeInventario`,`lojaKey`) — por isso `numero` usa o próprio
+// inventarioKey e `status` é inferido por `dataFechamento` presente/ausente.
+// ═══════════════════════════════════════════════════════════════════════
+const ESTOQUE_BQ_DATASET = 'dt_relatorios';
+
+// BUG AO VIVO REAL (2026-10-03): "RangeError: Maximum call stack size
+// exceeded" no encode() do firebase-functions — ver comentário completo em
+// _buscarRelatorioEstoqueBigQueryInterno. Qualquer linha crua vinda de
+// `SELECT *` numa tabela/view com coluna NUMERIC (Big.js) ou DATE/DATETIME/
+// TIMESTAMP precisa passar por aqui antes de voltar numa resposta de
+// onCall — função compartilhada pra não duplicar essa lógica.
+function _achatarLinhaBigQuery(linha) {
+  if (!linha) return linha;
+  const r = {};
+  Object.keys(linha).forEach(k => {
+    const v = linha[k];
+    if (v && typeof v === 'object' && !Array.isArray(v) && typeof v.value === 'string' && Object.keys(v).length === 1) {
+      r[k] = v.value; // BigQueryDate/Datetime/Timestamp
+    } else if (v && typeof v === 'object' && v.constructor && v.constructor.name === 'Big') {
+      r[k] = Number(v.toString()); // NUMERIC/BIGNUMERIC (Big.js)
+    } else {
+      r[k] = v;
+    }
+  });
+  return r;
+}
+
+// ── Config / chamada à Bluesoft (servidor) ──────────────────────────────
+// Mesmo formato de dt_config/integracao_api já usado pelo navegador
+// (90-bluesoft-service.js), lido aqui via Admin SDK em vez de
+// getDTRawFirestore(). NÃO passa pelo bluesoftProxy (HTTPS) — chama a
+// Bluesoft direto, do mesmo jeito que o próprio bluesoftProxy já faz
+// server-side (fetch + header x-CustomToken).
+async function _lerConfigIntegracaoApiEstoque(lojaId, firestoreDb) {
+  const fdb = firestoreDb || db;
+  if (lojaId) {
+    const porLoja = await fdb.collection('lojas').doc(lojaId).collection('dt_config').doc('integracao_api').get().catch(() => null);
+    if (porLoja && porLoja.exists) return porLoja.data() || {};
+  }
+  const globalSnap = await fdb.collection('dt_config').doc('integracao_api').get().catch(() => null);
+  return globalSnap && globalSnap.exists ? (globalSnap.data() || {}) : {};
+}
+function _baseUrlBluesoftEstoque(cfg) {
+  return cfg.ambiente === 'producao' ? (cfg.url_prd || '') : (cfg.url_hml || '');
+}
+async function _bluesoftGetUmaVez(pathComQuery, cfg) {
+  const baseUrl = _baseUrlBluesoftEstoque(cfg);
+  if (!baseUrl) throw new Error('URL não encontrada na configuração de integração (dt_config/integracao_api).');
+  if (!cfg.token) throw new Error('Token não encontrado na configuração de integração (dt_config/integracao_api).');
+  let resposta;
+  try {
+    resposta = await fetch(baseUrl.replace(/\/+$/, '') + pathComQuery, {method: 'GET', headers: {'x-CustomToken': String(cfg.token)}});
+  } catch (e) {
+    throw Object.assign(new Error('Falha de rede ao chamar Bluesoft em ' + pathComQuery.split('?')[0] + ': ' + (e.message || e)), {retentavel: true});
+  }
+  const texto = await resposta.text();
+  let dados; try { dados = texto ? JSON.parse(texto) : null; } catch (_) { dados = texto; }
+  if (!resposta.ok) {
+    if (resposta.status === 401) throw Object.assign(new Error('Bluesoft: token inválido ou expirado.'), {status: 401});
+    const detalhe = dados && (dados.erro || dados.message) ? (dados.erro || dados.message) : String(texto).slice(0, 300);
+    throw Object.assign(new Error('Bluesoft HTTP ' + resposta.status + ' em ' + pathComQuery.split('?')[0] + (detalhe ? ': ' + detalhe : '')), {status: resposta.status, retentavel: resposta.status === 429 || resposta.status >= 500});
+  }
+  return dados;
+}
+// PEDIDO AO VIVO: "a função de sincronização deve ter uma trava que recuse
+// qualquer outro método antes de chamar a Bluesoft". Não existe NENHUM
+// parâmetro de método em NENHUMA função de coleta abaixo — só GET,
+// sempre; o `if` abaixo é a 2ª camada de defesa caso este código seja
+// copiado/alterado descuidadamente no futuro.
+async function _bluesoftGetSomenteLeitura(pathComQuery, cfg, metodo, _tentativa) {
+  if ((metodo || 'GET') !== 'GET') {
+    throw new Error('Trava de segurança: esta integração só pode fazer GET na Bluesoft (recusado: "' + metodo + '").');
+  }
+  _tentativa = _tentativa || 1;
+  try {
+    return await _bluesoftGetUmaVez(pathComQuery, cfg);
+  } catch (e) {
+    if (e.retentavel && _tentativa < 3) {
+      await new Promise(r => setTimeout(r, 500 * _tentativa));
+      return _bluesoftGetSomenteLeitura(pathComQuery, cfg, 'GET', _tentativa + 1);
+    }
+    throw e;
+  }
+}
+
+// ── Datas (dd/MM/yyyy [HH:mm[:ss]] -> DATE/DATETIME de verdade) ─────────
+function _dataBrDeDate(d) {
+  return String(d.getUTCDate()).padStart(2, '0') + '/' + String(d.getUTCMonth() + 1).padStart(2, '0') + '/' + d.getUTCFullYear();
+}
+function _dataBrParaIso(dataBr) {
+  const m = String(dataBr || '').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+  return m ? (m[3] + '-' + m[2] + '-' + m[1]) : null;
+}
+function _dataHoraBrParaIso(valor) {
+  const s = String(valor || '').trim();
+  const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})[ T]?(\d{2}:\d{2}(?::\d{2})?)?/);
+  if (!m) return null;
+  const hora = m[4] ? (m[4].length === 5 ? m[4] + ':00' : m[4]) : '00:00:00';
+  return m[3] + '-' + m[2] + '-' + m[1] + ' ' + hora;
+}
+
+// ── Coleta: movimentos do dia (paginação plana + dedupe por chave) ──────
+async function _coletarMovimentosAnaliticoDia(bluesoftLojaKey, dataBr, cfg) {
+  const porChave = new Map();
+  const PAGE_SIZE = 500;
+  // ACHADO AO VIVO (2026-10-03): a paginação FICOU PRESA num dia real —
+  // a trava de "página veio com menos de 500 itens" nunca disparava.
+  // Duas proteções novas, além do dedupe (que já existia): (1) limite
+  // absoluto de páginas, nunca confiar cegamente num "while(true)" contra
+  // uma API de terceiro; (2) se uma página cheia não trouxe NENHUM item
+  // novo (Bluesoft repetindo a mesma página / ignorando currentPage),
+  // para na hora — não espera a página ficar menor que PAGE_SIZE, que é
+  // exatamente a condição que nunca aconteceu no caso real.
+  const MAX_PAGINAS = 200; // 200×500 = 100.000 itens no dia — folga enorme pra um dia real
+  let currentPage = 0;
+  while (currentPage < MAX_PAGINAS) {
+    const resp = await _bluesoftGetSomenteLeitura(
+      '/api/estoques/movimentacoesdeestoque/analitico?currentPage=' + currentPage + '&pageSize=' + PAGE_SIZE +
+      '&lojaKey=' + encodeURIComponent(bluesoftLojaKey) + '&dataMovimento=' + encodeURIComponent(dataBr),
+      cfg
+    );
+    const itens = (resp && Array.isArray(resp.data)) ? resp.data : [];
+    const tamanhoAntes = porChave.size;
+    itens.forEach(it => {
+      const chave = it.movimentoEstoqueKey != null ? String(it.movimentoEstoqueKey) : '';
+      if (chave) porChave.set(chave, it);
+    });
+    if (itens.length < PAGE_SIZE) break;
+    if (porChave.size === tamanhoAntes) break;
+    currentPage++;
+  }
+  return [...porChave.values()];
+}
+function _normalizarMovimentoEstoque(it, lojaId, agoraIso) {
+  return {
+    movimento_estoque_key: String(it.movimentoEstoqueKey),
+    loja_key: lojaId,
+    produto_key: it.produtoKey != null ? String(it.produtoKey) : null,
+    data_movimento: _dataBrParaIso(it.dataMovimento),
+    data_lancamento: _dataHoraBrParaIso(it.dataLancamento),
+    quantidade: Number(it.quantidade) || 0,
+    valor: Number(it.valor) || 0,
+    custo_estoque: Number(it.custoEstoque) || 0,
+    custo_estoque_com_icm: Number(it.custoEstoqueComIcm) || 0,
+    custo_contabil: Number(it.custoContabil) || 0,
+    saldo_anterior: Number(it.saldoEstoqueAnterior) || 0,
+    saldo_posterior: Number(it.saldoEstoque) || 0,
+    tipo_movimento_key: Number(it.tipoMovimentoKey),
+    tipo_movimento: it.tipoMovimento || null,
+    tipo_origem_key: it.tipoOrigemKey != null ? Number(it.tipoOrigemKey) : null,
+    tipo_origem: it.tipoOrigem || null,
+    origem_key: it.origemKey != null ? String(it.origemKey) : null,
+    fornecedor_key: it.fornecedorKey != null ? String(it.fornecedorKey) : null,
+    produto_origem: it.produtoOrigem != null ? String(it.produtoOrigem) : null,
+    produto_origem_qtd: it.produtoOrigemQtd != null ? Number(it.produtoOrigemQtd) : null,
+    movimento_estorno_key: it.movimentoEstornoKey != null ? String(it.movimentoEstornoKey) : null,
+    coletado_em: agoraIso,
+  };
+}
+
+const ESTOQUE_MOVIMENTOS_SCHEMA_BQ = [
+  {name: 'movimento_estoque_key', type: 'STRING'}, {name: 'loja_key', type: 'STRING'}, {name: 'produto_key', type: 'STRING'},
+  {name: 'data_movimento', type: 'DATE'}, {name: 'data_lancamento', type: 'DATETIME'},
+  {name: 'quantidade', type: 'NUMERIC'}, {name: 'valor', type: 'NUMERIC'},
+  {name: 'custo_estoque', type: 'NUMERIC'}, {name: 'custo_estoque_com_icm', type: 'NUMERIC'}, {name: 'custo_contabil', type: 'NUMERIC'},
+  {name: 'saldo_anterior', type: 'NUMERIC'}, {name: 'saldo_posterior', type: 'NUMERIC'},
+  {name: 'tipo_movimento_key', type: 'INTEGER'}, {name: 'tipo_movimento', type: 'STRING'},
+  {name: 'tipo_origem_key', type: 'INTEGER'}, {name: 'tipo_origem', type: 'STRING'}, {name: 'origem_key', type: 'STRING'},
+  {name: 'fornecedor_key', type: 'STRING'}, {name: 'produto_origem', type: 'STRING'}, {name: 'produto_origem_qtd', type: 'NUMERIC'},
+  {name: 'movimento_estorno_key', type: 'STRING'}, {name: 'coletado_em', type: 'TIMESTAMP'},
+];
+
+// Carga incremental de verdade (padrão NOVO neste projeto — toda carga de
+// BI existente até aqui era WRITE_TRUNCATE/substitui a tabela inteira).
+// Staging + MERGE por movimento_estoque_key: um movimento já lançado na
+// Bluesoft nunca muda de valor depois (confirmado no pedido), então só
+// precisa INSERT quando não existe ainda — nunca UPDATE. Staging SEMPRE
+// apagada no finally, mesmo se o MERGE falhar.
+async function _carregarMovimentosEstoqueNoBigQuery(bigqueryClient, linhasNormalizadas) {
+  if (!linhasNormalizadas.length) return {total: 0};
+  if (!bigqueryClient) bigqueryClient = _obterBigQueryCliente();
+  const dataset = bigqueryClient.dataset(ESTOQUE_BQ_DATASET);
+  const nomeStaging = 'estoque_movimentos_staging_' + Date.now() + '_' + process.pid;
+  const tabelaStaging = dataset.table(nomeStaging);
+  const tmp = path.join(os.tmpdir(), `estoque_movimentos_${Date.now()}_${process.pid}.ndjson`);
+  const stream = fsNode.createWriteStream(tmp, {encoding: 'utf8'});
+  try {
+    for (const r of linhasNormalizadas) {
+      if (!stream.write(JSON.stringify(r) + '\n')) await new Promise(resolve => stream.once('drain', resolve));
+    }
+    await new Promise((resolve, reject) => { stream.end(resolve); stream.on('error', reject); });
+    await tabelaStaging.load(tmp, {
+      sourceFormat: 'NEWLINE_DELIMITED_JSON', schema: {fields: ESTOQUE_MOVIMENTOS_SCHEMA_BQ},
+      writeDisposition: 'WRITE_TRUNCATE', createDisposition: 'CREATE_IF_NEEDED',
+    });
+    const mergeSql = `MERGE \`${ESTOQUE_BQ_DATASET}.estoque_movimentos\` destino
+      USING \`${ESTOQUE_BQ_DATASET}.${nomeStaging}\` origem
+      ON destino.movimento_estoque_key = origem.movimento_estoque_key
+      WHEN NOT MATCHED THEN INSERT ROW`;
+    await bigqueryClient.query({query: mergeSql});
+    return {total: linhasNormalizadas.length};
+  } finally {
+    try { if (!stream.destroyed) stream.destroy(); } catch (_) {}
+    try { fsNode.unlinkSync(tmp); } catch (_) {}
+    try { await tabelaStaging.delete(); } catch (_) {}
+  }
+}
+
+// ── Coleta: tipos de movimento (dimensão pequena, WRITE_TRUNCATE normal — não precisa de MERGE) ──
+async function _coletarTiposMovimentoEstoque(cfg) {
+  const resp = await _bluesoftGetSomenteLeitura('/api/estoques/movimentacoesdeestoque/tipos', cfg);
+  return Array.isArray(resp) ? resp : (Array.isArray(resp && resp.data) ? resp.data : []);
+}
+async function _sincronizarTiposMovimentoEstoqueBigQuery(bigqueryClient, cfg) {
+  const tipos = await _coletarTiposMovimentoEstoque(cfg);
+  const agora = new Date().toISOString();
+  const linhas = tipos.map(t => ({tipo_movimento_key: Number(t.tipoMovimentoKey), descricao: t.descricao || null, coletado_em: agora}));
+  if (!bigqueryClient) bigqueryClient = _obterBigQueryCliente();
+  const table = bigqueryClient.dataset(ESTOQUE_BQ_DATASET).table('estoque_tipos_movimento');
+  const tmp = path.join(os.tmpdir(), `estoque_tipos_${Date.now()}_${process.pid}.ndjson`);
+  const stream = fsNode.createWriteStream(tmp, {encoding: 'utf8'});
+  try {
+    for (const r of linhas) { if (!stream.write(JSON.stringify(r) + '\n')) await new Promise(resolve => stream.once('drain', resolve)); }
+    await new Promise((resolve, reject) => { stream.end(resolve); stream.on('error', reject); });
+    await table.load(tmp, {
+      sourceFormat: 'NEWLINE_DELIMITED_JSON',
+      schema: {fields: [{name: 'tipo_movimento_key', type: 'INTEGER'}, {name: 'descricao', type: 'STRING'}, {name: 'coletado_em', type: 'TIMESTAMP'}]},
+      writeDisposition: 'WRITE_TRUNCATE', createDisposition: 'CREATE_IF_NEEDED',
+    });
+    return {total: linhas.length};
+  } finally {
+    try { if (!stream.destroyed) stream.destroy(); } catch (_) {}
+    try { fsNode.unlinkSync(tmp); } catch (_) {}
+  }
+}
+
+// ── Coleta: inventários (cabeçalho + itens só de fechados novos) ────────
+// InventarioConsultarResponse NÃO tem `status`/`numero` — ver comentário
+// grande no topo desta seção.
+async function _coletarInventarios(bluesoftLojaKey, cfg, filtros) {
+  filtros = filtros || {};
+  const porChave = new Map();
+  const PAGE_SIZE = 200;
+  const MAX_PAGINAS = 200; // mesma proteção de _coletarMovimentosAnaliticoDia — ver comentário lá
+  let currentPage = 0;
+  while (currentPage < MAX_PAGINAS) {
+    let qs = '/api/estoques/inventarios?currentPage=' + currentPage + '&pageSize=' + PAGE_SIZE +
+      '&lojaKey=' + encodeURIComponent(bluesoftLojaKey) + '&status=TODOS';
+    if (filtros.dataAberturaInicial) qs += '&dataAberturaInicial=' + encodeURIComponent(filtros.dataAberturaInicial);
+    if (filtros.dataAberturaFinal) qs += '&dataAberturaFinal=' + encodeURIComponent(filtros.dataAberturaFinal);
+    const resp = await _bluesoftGetSomenteLeitura(qs, cfg);
+    const itens = (resp && Array.isArray(resp.data)) ? resp.data : [];
+    const tamanhoAntes = porChave.size;
+    itens.forEach(it => { if (it.inventarioKey != null) porChave.set(String(it.inventarioKey), it); });
+    if (itens.length < PAGE_SIZE) break;
+    if (porChave.size === tamanhoAntes) break;
+    currentPage++;
+  }
+  return [...porChave.values()];
+}
+function _normalizarInventario(it, lojaId, agoraIso) {
+  return {
+    inventario_key: String(it.inventarioKey),
+    loja_key: lojaId,
+    numero: String(it.inventarioKey), // a Bluesoft não devolve um "número" separado
+    descricao: it.descricao || null,
+    tipo: it.tipoDeInventario || null,
+    status: it.dataFechamento ? 'FECHADO' : 'ABERTO', // inferido — a API não devolve status na listagem
+    data_abertura: _dataHoraBrParaIso(it.dataAbertura),
+    data_fechamento: _dataHoraBrParaIso(it.dataFechamento),
+    coletado_em: agoraIso,
+  };
+}
+// PEDIDO AO VIVO (2026-10-03): "o inventário tá vindo sem nome aí quando
+// clico não traz nenhum produto dentro dele" — MESMO BUG do produto: a
+// coleta de cabeçalho de inventário (_coletarInventarios/_normalizarInventario,
+// escrita na Fase C) nunca tinha sido ligada em lugar nenhum. A view faz
+// LEFT JOIN com estoque_inventarios — tabela vazia = inventario_key sempre
+// NULL no resultado = agrupamento "(vazio)" e nenhum drill-down encontra
+// nada. Roda 1x por loja por sincronização (inventário é por loja, ao
+// contrário de produto que é dimensão comercial global).
+async function _sincronizarInventariosLoja(loja, dataInicialIso, dataFinalIso, cfg, bigqueryClient) {
+  const filtros = {
+    dataAberturaInicial: _dataBrDeDate(new Date(dataInicialIso + 'T00:00:00Z')),
+    dataAberturaFinal: _dataBrDeDate(new Date(dataFinalIso + 'T00:00:00Z')),
+  };
+  const itens = await _coletarInventarios(loja.bluesoft_loja_key, cfg, filtros);
+  const agora = new Date().toISOString();
+  // Mesmo cuidado do bug de loja_key em movimentos: grava o código da
+  // BLUESOFT (loja.bluesoft_loja_key), nunca o ID do documento no Firestore.
+  const linhas = itens.map(it => _normalizarInventario(it, loja.bluesoft_loja_key, agora));
+  await _mergeGenericoBigQuery(bigqueryClient, 'estoque_inventarios', ['inventario_key', 'loja_key'], [
+    {name: 'inventario_key', type: 'STRING'}, {name: 'loja_key', type: 'STRING'}, {name: 'numero', type: 'STRING'},
+    {name: 'descricao', type: 'STRING'}, {name: 'tipo', type: 'STRING'}, {name: 'status', type: 'STRING'},
+    {name: 'data_abertura', type: 'DATETIME'}, {name: 'data_fechamento', type: 'DATETIME'}, {name: 'coletado_em', type: 'TIMESTAMP'},
+  ], linhas);
+  return {total: linhas.length};
+}
+
+async function _coletarInventarioProdutos(inventarioKey, cfg) {
+  const porChave = new Map();
+  const PAGE_SIZE = 200;
+  const MAX_PAGINAS = 200; // mesma proteção de _coletarMovimentosAnaliticoDia — ver comentário lá
+  let currentPage = 0;
+  while (currentPage < MAX_PAGINAS) {
+    const resp = await _bluesoftGetSomenteLeitura(
+      '/api/estoques/inventarios/' + encodeURIComponent(inventarioKey) + '/produtos?currentPage=' + currentPage + '&pageSize=' + PAGE_SIZE,
+      cfg
+    );
+    const itens = (resp && Array.isArray(resp.data)) ? resp.data : [];
+    const tamanhoAntes = porChave.size;
+    itens.forEach(it => { if (it.produtoKey != null) porChave.set(String(it.produtoKey), it); });
+    if (itens.length < PAGE_SIZE) break;
+    if (porChave.size === tamanhoAntes) break;
+    currentPage++;
+  }
+  return [...porChave.values()];
+}
+function _normalizarInventarioItem(it, inventarioKey, lojaKey, agoraIso) {
+  return {
+    inventario_key: String(inventarioKey), produto_key: String(it.produtoKey), loja_key: lojaKey,
+    quantidade_contada: it.quantidadeContada != null ? Number(it.quantidadeContada) : null,
+    quantidade_sistema: it.quantidadeSistema != null ? Number(it.quantidadeSistema) : null,
+    custo_bruto: it.custoBruto != null ? Number(it.custoBruto) : null,
+    custo_liquido: it.custoLiquido != null ? Number(it.custoLiquido) : null,
+    custo_contabil: it.custoContabil != null ? Number(it.custoContabil) : null,
+    coletado_em: agoraIso,
+  };
+}
+// PEDIDO AO VIVO (2026-10-03): "não tá trazendo quantidade sistema e
+// contada" — 3ª instância da MESMA classe de bug (produto e cabeçalho de
+// inventário já corrigidos antes): coleta escrita na Fase C
+// (_coletarInventarioProdutos), nunca ligada em lugar nenhum. Só busca
+// itens de inventário JÁ FECHADO (um aberto ainda muda) que ainda não
+// tem nenhuma linha em estoque_inventario_itens — incremental, continua
+// de onde parou a cada chamada, igual a sincronização de produto.
+async function _sincronizarItensInventariosFechadosLoja(loja, cfg, bigqueryClient, limiteMs) {
+  const inicio = Date.now();
+  const [inventariosFaltando] = await bigqueryClient.query({
+    query: `SELECT inventario_key FROM \`${ESTOQUE_BQ_DATASET}.estoque_inventarios\`
+      WHERE loja_key = @lojaKey AND status = 'FECHADO'
+      AND inventario_key NOT IN (
+        SELECT DISTINCT inventario_key FROM \`${ESTOQUE_BQ_DATASET}.estoque_inventario_itens\` WHERE loja_key = @lojaKey
+      )
+      LIMIT 50`,
+    params: {lojaKey: String(loja.bluesoft_loja_key)},
+  });
+  const agora = new Date().toISOString();
+  let totalLinhas = 0;
+  let processados = 0;
+  for (const linha of inventariosFaltando) {
+    if (limiteMs != null && Date.now() - inicio > limiteMs) break;
+    processados++;
+    const inventarioKey = linha.inventario_key;
+    try {
+      const itens = await _coletarInventarioProdutos(inventarioKey, cfg);
+      const linhasNormalizadas = itens.map(it => _normalizarInventarioItem(it, inventarioKey, String(loja.bluesoft_loja_key), agora));
+      await _mergeGenericoBigQuery(bigqueryClient, 'estoque_inventario_itens', ['inventario_key', 'produto_key', 'loja_key'], [
+        {name: 'inventario_key', type: 'STRING'}, {name: 'produto_key', type: 'STRING'}, {name: 'loja_key', type: 'STRING'},
+        {name: 'quantidade_contada', type: 'NUMERIC'}, {name: 'quantidade_sistema', type: 'NUMERIC'},
+        {name: 'custo_bruto', type: 'NUMERIC'}, {name: 'custo_liquido', type: 'NUMERIC'}, {name: 'custo_contabil', type: 'NUMERIC'},
+        {name: 'coletado_em', type: 'TIMESTAMP'},
+      ], linhasNormalizadas);
+      totalLinhas += linhasNormalizadas.length;
+    } catch (e) {
+      console.warn('[EstoqueBluesoft] Falha ao coletar itens do inventário ' + inventarioKey + ':', e && e.message ? e.message : e);
+    }
+  }
+  // PEDIDO AO VIVO (2026-10-03): "vou precisar ficar atualizando várias
+  // vezes?" — sinaliza pro chamador se ainda pode sobrar trabalho (lote
+  // cheio de 50, ou parou no meio por tempo), pra "Atualizar agora" saber
+  // que precisa chamar de novo sozinho, sem o usuário precisar clicar mais.
+  const temMaisPendentes = processados < inventariosFaltando.length || inventariosFaltando.length >= 50;
+  return {total: totalLinhas, temMaisPendentes};
+}
+
+// ── Coleta: notas de saída CFOP 5927/5949 (filtra no cliente — tipoNotaKey dá 400) ──
+async function _coletarNotasBaixa(bluesoftLojaKey, dataRecebimentoInicial, dataRecebimentoFinal, cfg) {
+  const porChave = new Map();
+  const PAGE_SIZE = 200;
+  let currentPage = 0;
+  while (true) {
+    const resp = await _bluesoftGetSomenteLeitura(
+      '/api/estoques/notas-fiscais?currentPage=' + currentPage + '&pageSize=' + PAGE_SIZE +
+      '&lojaKey=' + encodeURIComponent(bluesoftLojaKey) + '&tipoNota=SAIDA' +
+      '&dataRecebimentoInicial=' + encodeURIComponent(dataRecebimentoInicial) + '&dataRecebimentoFinal=' + encodeURIComponent(dataRecebimentoFinal),
+      cfg
+    );
+    const itens = (resp && Array.isArray(resp.data)) ? resp.data : [];
+    itens.forEach(it => {
+      const cfop = String(it.cfop || '').replace(/\D/g, '');
+      if ((cfop === '5927' || cfop === '5949') && it.nfKey != null) porChave.set(String(it.nfKey), it);
+    });
+    if (itens.length < PAGE_SIZE) break;
+    currentPage++;
+  }
+  return [...porChave.values()];
+}
+function _normalizarNotaBaixa(it, lojaId, agoraIso) {
+  return {
+    nf_key: String(it.nfKey), loja_key: lojaId,
+    nf_numero: it.nfNumero != null ? String(it.nfNumero) : null, nf_serie: it.nfSerie || null,
+    cfop: String(it.cfop || '').replace(/\D/g, ''), tipo_nota_key: it.tipoNotaKey != null ? Number(it.tipoNotaKey) : null,
+    tipo_nota: it.tipoNota || null, data_emissao: _dataBrParaIso(it.dataEmissao), coletado_em: agoraIso,
+  };
+}
+
+// ── Coleta: produto (só os que faltam na dimensão) ──────────────────────
+async function _coletarProdutoDescricao(produtoKey, cfg) {
+  const resp = await _bluesoftGetSomenteLeitura('/api/comercial/produtos/' + encodeURIComponent(produtoKey), cfg);
+  return resp && resp.descricao ? String(resp.descricao) : null;
+}
+// Fator cadastrado é opcional (só pra comparar com o fator REAL calculado
+// pela view) — qualquer falha aqui vira null, nunca interrompe a coleta.
+async function _coletarFatorTransformacaoCadastrado(produtoOrigemKey, produtoDestinoKey, cfg) {
+  try {
+    const resp = await _bluesoftGetSomenteLeitura('/api/comercial/produtos/transformacao?produtoKey=' + encodeURIComponent(produtoOrigemKey), cfg);
+    const lista = resp && Array.isArray(resp.produtoTransformacao) ? resp.produtoTransformacao : [];
+    const achado = lista.find(p => String(p.produtoDestinoKey) === String(produtoDestinoKey));
+    return achado && achado.fatorTransformacao != null ? Number(achado.fatorTransformacao) : null;
+  } catch (_) { return null; }
+}
+
+// Carregador genérico WRITE_TRUNCATE-por-upsert-simples pras dimensões
+// pequenas/médias que não precisam de MERGE incremental de verdade aqui
+// (inventários/itens/notas/produtos) — grava só as linhas passadas,
+// mesclando com o que já existe na tabela via MERGE por chave (mesmo
+// raciocínio de _carregarMovimentosEstoqueNoBigQuery, reaproveitado
+// genericamente pra não duplicar a lógica de staging 4 vezes).
+async function _mergeGenericoBigQuery(bigqueryClient, nomeTabela, colunasChave, schemaFields, linhas) {
+  if (!linhas.length) return {total: 0};
+  if (!bigqueryClient) bigqueryClient = _obterBigQueryCliente();
+  const dataset = bigqueryClient.dataset(ESTOQUE_BQ_DATASET);
+  const nomeStaging = nomeTabela + '_staging_' + Date.now() + '_' + process.pid;
+  const tabelaStaging = dataset.table(nomeStaging);
+  const tmp = path.join(os.tmpdir(), `${nomeTabela}_${Date.now()}_${process.pid}.ndjson`);
+  const stream = fsNode.createWriteStream(tmp, {encoding: 'utf8'});
+  try {
+    for (const r of linhas) { if (!stream.write(JSON.stringify(r) + '\n')) await new Promise(resolve => stream.once('drain', resolve)); }
+    await new Promise((resolve, reject) => { stream.end(resolve); stream.on('error', reject); });
+    await tabelaStaging.load(tmp, {
+      sourceFormat: 'NEWLINE_DELIMITED_JSON', schema: {fields: schemaFields},
+      writeDisposition: 'WRITE_TRUNCATE', createDisposition: 'CREATE_IF_NEEDED',
+    });
+    const onClausula = colunasChave.map(c => `destino.${c} = origem.${c}`).join(' AND ');
+    const mergeSql = `MERGE \`${ESTOQUE_BQ_DATASET}.${nomeTabela}\` destino
+      USING \`${ESTOQUE_BQ_DATASET}.${nomeStaging}\` origem
+      ON ${onClausula}
+      WHEN NOT MATCHED THEN INSERT ROW
+      WHEN MATCHED THEN UPDATE SET ${schemaFields.map(f => f.name).filter(n => !colunasChave.includes(n)).map(n => `destino.${n} = origem.${n}`).join(', ')}`;
+    await bigqueryClient.query({query: mergeSql});
+    return {total: linhas.length};
+  } finally {
+    try { if (!stream.destroyed) stream.destroy(); } catch (_) {}
+    try { fsNode.unlinkSync(tmp); } catch (_) {}
+    try { await tabelaStaging.delete(); } catch (_) {}
+  }
+}
+
+// PEDIDO AO VIVO (2026-10-03): "tem que mostrar pela descrição do produto,
+// tá mostrando pelo código" — a view já faz LEFT JOIN com estoque_produtos
+// e já seleciona produto_descricao, mas a coleta de descrição
+// (_coletarProdutoDescricao, escrita na Fase C) nunca tinha sido ligada em
+// lugar nenhum — por isso a dimensão ficava sempre vazia. `estoque_produtos`
+// não tem loja_key (é dimensão comercial global na Bluesoft), então só
+// precisa rodar 1x por sincronização, não por loja. Limitado por lote
+// (LIMIT 500) e por tempo restante — nunca é motivo de a sincronização de
+// movimentos inteira falhar.
+async function _sincronizarProdutosFaltantesEstoque(bigqueryClient, cfg, limiteMs) {
+  if (!bigqueryClient) bigqueryClient = _obterBigQueryCliente();
+  const inicio = Date.now();
+  const [linhasFaltantes] = await bigqueryClient.query({
+    query: `SELECT DISTINCT produto_key FROM \`${ESTOQUE_BQ_DATASET}.estoque_movimentos\`
+      WHERE produto_key IS NOT NULL AND produto_key NOT IN (
+        SELECT produto_key FROM \`${ESTOQUE_BQ_DATASET}.estoque_produtos\`
+      )
+      LIMIT 500`,
+  });
+  const chaves = linhasFaltantes.map(l => l.produto_key).filter(Boolean);
+  const agora = new Date().toISOString();
+  const linhas = [];
+  let processados = 0;
+  for (const chave of chaves) {
+    if (limiteMs != null && Date.now() - inicio > limiteMs) break;
+    processados++;
+    try {
+      const descricao = await _coletarProdutoDescricao(chave, cfg);
+      linhas.push({produto_key: chave, descricao, fator_transformacao_cadastrado: null, coletado_em: agora});
+    } catch (e) {
+      console.warn('[EstoqueBluesoft] Falha ao coletar descrição do produto ' + chave + ':', e && e.message ? e.message : e);
+    }
+  }
+  await _mergeGenericoBigQuery(bigqueryClient, 'estoque_produtos', ['produto_key'], [
+    {name: 'produto_key', type: 'STRING'}, {name: 'descricao', type: 'STRING'},
+    {name: 'fator_transformacao_cadastrado', type: 'NUMERIC'}, {name: 'coletado_em', type: 'TIMESTAMP'},
+  ], linhas);
+  // PEDIDO AO VIVO (2026-10-03): "vou precisar ficar atualizando várias
+  // vezes?" — mesmo sinal usado em _sincronizarItensInventariosFechadosLoja,
+  // pra "Atualizar agora" continuar sozinho sem o usuário precisar clicar
+  // de novo manualmente a cada lote.
+  const temMaisPendentes = processados < chaves.length || chaves.length >= 500;
+  return {total: linhas.length, pendentes: chaves.length - linhas.length, temMaisPendentes};
+}
+
+// ── Orquestração: 1 dia, 1 loja — movimentos + reconciliação leve dos demais ──
+async function _sincronizarEstoqueDiaLoja(loja, dataBr, cfg, bigqueryClient) {
+  const agora = new Date().toISOString();
+  const itens = await _coletarMovimentosAnaliticoDia(loja.bluesoft_loja_key, dataBr, cfg);
+  // BUG AO VIVO REAL (2026-10-03): gravava loja.id (o ID do documento no
+  // Firestore, ex. "loja_matriz") em vez de loja.bluesoft_loja_key (ex.
+  // "14") — e _buscarRelatorioEstoqueBigQueryInterno sempre filtra pelo
+  // código da Bluesoft (lojaDoc.data().bluesoft_loja_key). Os dois nunca
+  // batiam: 246 mil linhas reais foram coletadas com sucesso, mas nenhum
+  // relatório nunca mostrava nada, pra nenhuma loja. Achado comparando
+  // direto no console do BigQuery (SELECT DISTINCT loja_key devolveu
+  // "loja_matriz", não "14").
+  const normalizados = itens.map(it => _normalizarMovimentoEstoque(it, loja.bluesoft_loja_key, agora));
+  await _carregarMovimentosEstoqueNoBigQuery(bigqueryClient, normalizados);
+  return {total: normalizados.length};
+}
+
+// PEDIDO AO VIVO: carga histórica com retomada — NÃO existe nenhum padrão
+// pronto pra copiar no resto do projeto (confirmado: sincronizarComprasHistoricoBiAgora
+// é um reload completo, sem range de data nem resume), desenho novo.
+// Progresso gravado como objeto aninhado COMPLETO reescrito por `.set()`
+// (nunca chave pontilhada em merge — ver o bug documentado em
+// _sincronizarRelatorioBiChunkeadoGlobal mais acima no arquivo).
+async function _sincronizarEstoqueBluesoftIntervalo(dataInicial, dataFinal, lojasAlvo, bigqueryClient, firestoreDb, limiteMs) {
+  const fdb = firestoreDb || db;
+  const inicioExec = Date.now();
+  const progressoRef = fdb.collection('dt_config').doc('estoque_bluesoft_sync');
+  const progressoSnap = await progressoRef.get();
+  const progressoAtual = progressoSnap.exists ? (progressoSnap.data() || {}) : {};
+  const porLoja = Object.assign({}, progressoAtual.porLoja || {});
+  let concluido = true;
+  let proximoDia = null;
+  // PEDIDO AO VIVO (2026-10-03): sinais agregados de "ainda tem mais pra
+  // buscar" (produto/itens de inventário) — devolvidos no resultado final
+  // pra "Atualizar agora" saber que precisa chamar de novo sozinho, sem o
+  // usuário precisar clicar manualmente várias vezes.
+  let inventariosItensPendentes = false;
+
+  for (const loja of lojasAlvo) {
+    if (!loja.bluesoft_loja_key) continue;
+    const cfg = await _lerConfigIntegracaoApiEstoque(loja.id, fdb);
+    const estadoAnterior = porLoja[loja.id] || {};
+    let diasComErro = Array.isArray(estadoAnterior.diasComErro) ? estadoAnterior.diasComErro.slice() : [];
+    let cursor = new Date(dataInicial + 'T00:00:00Z');
+    const fim = new Date(dataFinal + 'T00:00:00Z');
+    // Só retoma a partir do checkpoint se ele pertencer a ESTE range (uma
+    // execução anterior de um range diferente não pode fazer a gente
+    // pular dias de um pedido novo).
+    if (estadoAnterior.ultimoDiaConcluido && estadoAnterior.ultimoDiaConcluido >= dataInicial && estadoAnterior.ultimoDiaConcluido < dataFinal) {
+      const proximo = new Date(estadoAnterior.ultimoDiaConcluido + 'T00:00:00Z');
+      proximo.setUTCDate(proximo.getUTCDate() + 1);
+      if (proximo > cursor) cursor = proximo;
+    }
+    while (cursor <= fim) {
+      if (Date.now() - inicioExec > limiteMs) {
+        concluido = false;
+        proximoDia = cursor.toISOString().slice(0, 10);
+        porLoja[loja.id] = {ultimoDiaConcluido: estadoAnterior.ultimoDiaConcluido || null, diasComErro};
+        await progressoRef.set({porLoja, ultimaExecucaoEm: new Date().toISOString()});
+        return {concluido, proximoDia, porLoja};
+      }
+      const diaIso = cursor.toISOString().slice(0, 10);
+      const dataBr = _dataBrDeDate(cursor);
+      try {
+        await _sincronizarEstoqueDiaLoja(loja, dataBr, cfg, bigqueryClient);
+        diasComErro = diasComErro.filter(d => d !== diaIso);
+        porLoja[loja.id] = {ultimoDiaConcluido: diaIso, diasComErro};
+      } catch (e) {
+        if (!diasComErro.includes(diaIso)) diasComErro.push(diaIso);
+        porLoja[loja.id] = {ultimoDiaConcluido: porLoja[loja.id] ? porLoja[loja.id].ultimoDiaConcluido : (estadoAnterior.ultimoDiaConcluido || null), diasComErro};
+        console.warn('[EstoqueBluesoft] Falha ao coletar ' + diaIso + ' (loja ' + loja.id + '):', e && e.message ? e.message : e);
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    // Loja terminou o range pedido sem estourar o tempo — completa o
+    // cabeçalho de inventário dela pro mesmo período. Silencioso, nunca
+    // derruba a sincronização de movimentos (que é o que importa pro
+    // "concluido" devolvido daqui).
+    try {
+      await _sincronizarInventariosLoja(loja, dataInicial, dataFinal, cfg, bigqueryClient);
+    } catch (e) {
+      console.warn('[EstoqueBluesoft] Falha ao sincronizar inventários da loja ' + loja.id + ':', e && e.message ? e.message : e);
+    }
+    // Com o cabeçalho em dia, completa os ITENS (quantidade sistema/contada)
+    // dos inventários já fechados que ainda não têm nenhum item gravado.
+    try {
+      const tempoRestanteLoja = limiteMs - (Date.now() - inicioExec);
+      if (tempoRestanteLoja > 5000) {
+        const resultadoItens = await _sincronizarItensInventariosFechadosLoja(loja, cfg, bigqueryClient, tempoRestanteLoja - 2000);
+        if (resultadoItens && resultadoItens.temMaisPendentes) inventariosItensPendentes = true;
+      } else {
+        inventariosItensPendentes = true; // nem deu tempo de tentar
+      }
+    } catch (e) {
+      console.warn('[EstoqueBluesoft] Falha ao sincronizar itens de inventário da loja ' + loja.id + ':', e && e.message ? e.message : e);
+    }
+  }
+  // Preenche descrição de produto pros que faltam, com o tempo que sobrou
+  // — nunca derruba a sincronização de movimentos (que é o que importa pro
+  // "concluido" devolvido daqui).
+  let produtosPendentes = false;
+  try {
+    const tempoRestante = limiteMs - (Date.now() - inicioExec);
+    if (tempoRestante > 5000 && lojasAlvo.length) {
+      const cfgQualquer = await _lerConfigIntegracaoApiEstoque(lojasAlvo[0].id, fdb);
+      const resultadoProdutos = await _sincronizarProdutosFaltantesEstoque(bigqueryClient, cfgQualquer, tempoRestante - 2000);
+      if (resultadoProdutos && resultadoProdutos.temMaisPendentes) produtosPendentes = true;
+    } else if (lojasAlvo.length) {
+      produtosPendentes = true; // nem deu tempo de tentar
+    }
+  } catch (e) {
+    console.warn('[EstoqueBluesoft] Falha ao completar descrições de produto:', e && e.message ? e.message : e);
+  }
+  await progressoRef.set({porLoja, ultimaExecucaoEm: new Date().toISOString()});
+  return {concluido, proximoDia, porLoja, produtosPendentes, inventariosItensPendentes};
+}
+
+exports.sincronizarEstoqueBluesoftAgendado = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 540, memory: '512MB'})
+  .pubsub.schedule('0 3 * * *')
+  .timeZone('America/Sao_Paulo')
+  .onRun(async () => {
+    const lojasSnap = await db.collection('lojas').get();
+    const lojas = lojasSnap.docs.map(d => ({id: d.id, ...d.data()})).filter(l => l.bluesoft_loja_key);
+    const hojeUtc = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00Z');
+    const fim = new Date(hojeUtc); fim.setUTCDate(fim.getUTCDate() - 1); // ontem
+    const inicio = new Date(hojeUtc); inicio.setUTCDate(inicio.getUTCDate() - 4); // ontem + 3 dias antes (atraso/estorno)
+    const resultado = await _sincronizarEstoqueBluesoftIntervalo(
+      inicio.toISOString().slice(0, 10), fim.toISOString().slice(0, 10), lojas, _obterBigQueryCliente(), db, 480000
+    );
+    console.log('[EstoqueBluesoftAgendado] concluido=' + resultado.concluido);
+    return null;
+  });
+
+exports.sincronizarEstoqueBluesoftAgora = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 540, memory: '512MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!administrador(acesso)) throw new functions.https.HttpsError('permission-denied', 'Seu login não pode rodar essa sincronização.');
+    const dataInicial = textoSeguro(data && data.dataInicial, 10);
+    const dataFinal = textoSeguro(data && data.dataFinal, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicial) || !/^\d{4}-\d{2}-\d{2}$/.test(dataFinal) || dataInicial > dataFinal) {
+      throw new functions.https.HttpsError('invalid-argument', 'Informe dataInicial/dataFinal válidos (AAAA-MM-DD, inicial <= final).');
+    }
+    const lojaIdFiltro = textoSeguro(data && data.lojaId, 120);
+    const lojasSnap = await db.collection('lojas').get();
+    let lojas = lojasSnap.docs.map(d => ({id: d.id, ...d.data()})).filter(l => l.bluesoft_loja_key);
+    if (lojaIdFiltro) lojas = lojas.filter(l => l.id === lojaIdFiltro);
+    const resultado = await _sincronizarEstoqueBluesoftIntervalo(dataInicial, dataFinal, lojas, _obterBigQueryCliente(), db, 480000);
+    return {
+      ok: true, concluido: resultado.concluido, proximoDia: resultado.proximoDia || null,
+      produtosPendentes: !!resultado.produtosPendentes, inventariosItensPendentes: !!resultado.inventariosItensPendentes,
+    };
+  });
+
+// ── Consulta pras telas (views no lugar das tabelas cruas) ──────────────
+const ESTOQUE_VIEWS_PERMITIDAS = {
+  inventario: 'vw_estoque_rel_inventario',
+  descarte: 'vw_estoque_rel_descarte',
+  requisicao: 'vw_estoque_rel_requisicao',
+  transformacao: 'vw_estoque_rel_transformacao',
+};
+async function _buscarRelatorioEstoqueBigQueryInterno(data, acesso, bigqueryClient, firestoreDb) {
+  const fdb = firestoreDb || db;
+  const relatorio = textoSeguro(data && data.relatorio, 30);
+  const viewNome = ESTOQUE_VIEWS_PERMITIDAS[relatorio];
+  if (!viewNome) throw new functions.https.HttpsError('invalid-argument', 'Relatório inválido. Use inventario/descarte/requisicao/transformacao.');
+
+  // PEDIDO AO VIVO (2026-10-03): "filtro de loja pra todos" — lojaId agora é
+  // OPCIONAL. Sem ele, busca em TODAS as lojas que o login enxerga (mesmo
+  // padrão de permissão de buscarCargasTodasLojasBigQuery/
+  // buscarTransbordoTodasLojasBigQuery: a Cloud Function roda com conta de
+  // serviço, então PRECISA repetir a checagem de permissão — nunca confiar
+  // só no filtro que o cliente mandou).
+  const lojaIdPedida = data && data.lojaId ? textoSeguro(data.lojaId, 120) : null;
+  const lojasSnap = await fdb.collection('lojas').get();
+  const lojasComBluesoft = lojasSnap.docs
+    .map(d => ({id: d.id, nome: (d.data() || {}).nome || d.id, bluesoft_loja_key: (d.data() || {}).bluesoft_loja_key || null}))
+    .filter(l => l.bluesoft_loja_key);
+  let lojasAlvo;
+  if (lojaIdPedida) {
+    if (!_lojaPermitidaParaAcesso(acesso, lojaIdPedida)) throw new functions.https.HttpsError('permission-denied', 'Sem acesso a esta loja.');
+    lojasAlvo = lojasComBluesoft.filter(l => l.id === lojaIdPedida);
+    if (!lojasAlvo.length) throw new functions.https.HttpsError('failed-precondition', 'Esta loja não tem bluesoft_loja_key configurada.');
+  } else {
+    const todasLojas = adminMestre(acesso) || acesso?.acesso_todas_lojas === true;
+    const permitidas = lojasPermitidas(acesso);
+    lojasAlvo = todasLojas ? lojasComBluesoft : lojasComBluesoft.filter(l => permitidas.has(l.id));
+    if (!lojasAlvo.length) throw new functions.https.HttpsError('permission-denied', 'Sem acesso a nenhuma loja com integração configurada.');
+  }
+  const mapaLojaPorBluesoftKey = new Map(lojasAlvo.map(l => [String(l.bluesoft_loja_key), l]));
+  const bluesoftKeys = lojasAlvo.map(l => String(l.bluesoft_loja_key));
+
+  const dataInicial = textoSeguro(data && data.dataInicial, 10);
+  const dataFinal = textoSeguro(data && data.dataFinal, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicial) || !/^\d{4}-\d{2}-\d{2}$/.test(dataFinal) || dataInicial > dataFinal) {
+    throw new functions.https.HttpsError('invalid-argument', 'Informe dataInicial/dataFinal válidos (AAAA-MM-DD, inicial <= final).');
+  }
+  const dias = Math.round((new Date(dataFinal) - new Date(dataInicial)) / 86400000);
+  if (dias > 366) throw new functions.https.HttpsError('invalid-argument', 'Período máximo de 366 dias.');
+
+  const ehTransformacao = relatorio === 'transformacao';
+  const produto = data && data.produto ? textoSeguro(data.produto, 120) : null;
+  const incluirEstornos = data && data.incluirEstornos === true;
+  // PEDIDO AO VIVO (2026-10-03): "o da transformação colocar filtros pra
+  // saber quais produtos quero e não quero com seleção múltipla" — só pro
+  // relatório de transformação (os outros 3 continuam com o campo de busca
+  // livre de sempre, por cima do mesmo `produto`).
+  const produtosIncluir = ehTransformacao && Array.isArray(data && data.produtosIncluir)
+    ? data.produtosIncluir.map(p => textoSeguro(p, 120)).filter(Boolean).slice(0, 200) : [];
+  const produtosExcluir = ehTransformacao && Array.isArray(data && data.produtosExcluir)
+    ? data.produtosExcluir.map(p => textoSeguro(p, 120)).filter(Boolean).slice(0, 200) : [];
+  // PEDIDO AO VIVO (2026-10-03): "quando tiver por inventário ter a opção
+  // de selecionar ele e mostrar só os produtos naquele inventário" — só pro
+  // relatório de inventário, filtra por 1 inventário específico.
+  const inventarioKey = relatorio === 'inventario' && data && data.inventarioKey ? textoSeguro(data.inventarioKey, 120) : null;
+
+  const condicoes = ['loja_key IN UNNEST(@lojaKeys)', 'data_movimento BETWEEN @dataInicial AND @dataFinal'];
+  const params = {lojaKeys: bluesoftKeys, dataInicial, dataFinal};
+  if (produtosIncluir.length) { condicoes.push('(produto_origem_key IN UNNEST(@produtosIncluir) OR produto_destino_key IN UNNEST(@produtosIncluir))'); params.produtosIncluir = produtosIncluir; }
+  if (produtosExcluir.length) { condicoes.push('NOT (produto_origem_key IN UNNEST(@produtosExcluir) OR produto_destino_key IN UNNEST(@produtosExcluir))'); params.produtosExcluir = produtosExcluir; }
+  if (!produtosIncluir.length && !produtosExcluir.length && produto) {
+    if (ehTransformacao) { condicoes.push('(produto_origem_key = @produto OR produto_destino_key = @produto)'); }
+    else { condicoes.push('(produto_key = @produto OR produto_descricao LIKE @produtoLike)'); params.produtoLike = '%' + produto + '%'; }
+    params.produto = produto;
+  }
+  if (inventarioKey) { condicoes.push('inventario_key = @inventarioKey'); params.inventarioKey = inventarioKey; }
+  if (!incluirEstornos) condicoes.push(ehTransformacao ? 'saida_eh_estorno = FALSE' : 'eh_estorno = FALSE');
+
+  const query = `SELECT * FROM \`${ESTOQUE_BQ_DATASET}.${viewNome}\` WHERE ${condicoes.join(' AND ')} ORDER BY data_movimento DESC LIMIT 20000`;
+  const [linhasCruas] = await bigqueryClient.query({query, params});
+  const linhas = linhasCruas.map(_achatarLinhaBigQuery).map(l => {
+    const lojaInfo = mapaLojaPorBluesoftKey.get(String(l.loja_key));
+    l.loja_id = lojaInfo ? lojaInfo.id : null;
+    l.loja_nome = lojaInfo ? lojaInfo.nome : (l.loja_key || null);
+    return l;
+  });
+
+  const campoQtd = ehTransformacao ? 'saida_quantidade' : 'quantidade';
+  const campoValor = ehTransformacao ? 'saida_valor' : 'valor';
+  const campoProduto = ehTransformacao ? 'produto_origem_key' : 'produto_key';
+  const produtosDistintos = new Set();
+  let somaQtd = 0, somaValor = 0;
+  linhas.forEach(l => {
+    somaQtd += Number(l[campoQtd]) || 0;
+    somaValor += Number(l[campoValor]) || 0;
+    if (l[campoProduto]) produtosDistintos.add(l[campoProduto]);
+  });
+  const totais = {lancamentos: linhas.length, quantidade: somaQtd, valor: somaValor, produtosDistintos: produtosDistintos.size};
+
+  const progressoSnap = await fdb.collection('dt_config').doc('estoque_bluesoft_sync').get();
+  const progresso = progressoSnap.exists ? (progressoSnap.data() || {}) : {};
+  // Com várias lojas, "atualizado em" mostra a mais ATRASADA entre elas —
+  // visão conservadora (nunca passa a impressão de um dado mais fresco do
+  // que a loja que ficou pra trás).
+  let ultimaAtualizacao = null;
+  lojasAlvo.forEach(l => {
+    const estadoLoja = progresso.porLoja && progresso.porLoja[l.id];
+    const diaDaLoja = estadoLoja && estadoLoja.ultimoDiaConcluido;
+    if (diaDaLoja && (!ultimaAtualizacao || diaDaLoja < ultimaAtualizacao)) ultimaAtualizacao = diaDaLoja;
+  });
+  if (!ultimaAtualizacao) ultimaAtualizacao = progresso.ultimaExecucaoEm || null;
+
+  return {linhas, totais, ultimaAtualizacao};
+}
+// FERRAMENTA TEMPORÁRIA (2026-10-05) — diagnóstico SOMENTE LEITURA do vínculo
+// pedido Força de Vendas → roteiro/viagem/carga/lote antes do faturamento.
+// Não grava nada. Remover depois que o vínculo estiver confirmado.
+exports.diagnosticoVinculoPedidoBluesoftTemporaria = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 300, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!administrador(acesso)) throw new functions.https.HttpsError('permission-denied', 'Só administrador pode rodar este diagnóstico.');
+    const lojaId = textoSeguro(data && data.lojaId, 120) || null;
+    const pedidoKey = textoSeguro(data && data.pedidoKey, 40) || '980105';
+    const alvo = textoSeguro(data && data.alvo, 40) || '457277';
+    const cdKey = data && data.cdKey != null ? String(data.cdKey) : null;
+    const lojaKey = data && data.lojaKey != null ? String(data.lojaKey) : null;
+    const dataInicio = textoSeguro(data && data.dataInicio, 10) || null; // dd/MM/yyyy
+    const dataFim = textoSeguro(data && data.dataFim, 10) || null;       // dd/MM/yyyy
+
+    const cfg = await _lerConfigIntegracaoApiEstoque(lojaId, db);
+    const resultado = {alvo, pedidoKey, consultas: {}, camposComRelacao: [], todasAsChavesDoPedido: []};
+
+    async function consulta(nome, path) {
+      try {
+        const r = await _bluesoftGetSomenteLeitura(path, cfg);
+        const texto = JSON.stringify(r) || '';
+        resultado.consultas[nome] = {ok: true, path, contemAlvo: texto.includes(alvo), resposta: r};
+        return r;
+      } catch (e) {
+        resultado.consultas[nome] = {ok: false, path, status: e.status || null, erro: e.message || String(e)};
+        return null;
+      }
+    }
+    // Varre o objeto inteiro (inclusive aninhado) e junta chaves com pistas de vínculo.
+    function varrer(obj, caminho, pistas) {
+      if (obj === null || typeof obj !== 'object') return;
+      if (Array.isArray(obj)) { obj.forEach((x, i) => varrer(x, caminho + '[' + i + ']', pistas)); return; }
+      for (const k of Object.keys(obj)) {
+        const v = obj[k];
+        const cam = caminho ? caminho + '.' + k : k;
+        if (/roteiro|viagem|carga|lote|ordem|separ|expedi|wms|nota|nf/i.test(k) && (v === null || typeof v !== 'object')) pistas.push({campo: cam, valor: v});
+        varrer(v, cam, pistas);
+      }
+    }
+    function todasAsChaves(obj, caminho, out) {
+      if (obj === null || typeof obj !== 'object') return;
+      if (Array.isArray(obj)) { obj.slice(0, 3).forEach((x, i) => todasAsChaves(x, caminho + '[' + i + ']', out)); return; }
+      for (const k of Object.keys(obj)) { const cam = caminho ? caminho + '.' + k : k; out.push(cam); todasAsChaves(obj[k], cam, out); }
+    }
+
+    const pedido = await consulta('pedidoForcaVenda', '/api/forca-de-vendas/pedidos/' + encodeURIComponent(pedidoKey));
+    if (pedido) {
+      const pistas = [];
+      varrer(pedido, '', pistas);
+      resultado.camposComRelacao = pistas;
+      todasAsChaves(pedido, '', resultado.todasAsChavesDoPedido);
+      resultado.todasAsChavesDoPedido = [...new Set(resultado.todasAsChavesDoPedido)];
+    }
+
+    // Reservas WMS: a consulta exige filtro (datas em dd/MM/yyyy); não tem filtro por carga.
+    if (dataInicio && dataFim && cdKey) {
+      const qsReserva = 'currentPage=0&pageSize=200&cdOrigemKey=' + encodeURIComponent(cdKey) +
+        '&dataGeracaoInicio=' + encodeURIComponent(dataInicio) + '&dataGeracaoFim=' + encodeURIComponent(dataFim);
+      await consulta('reservasWms', '/api/logistica/estoque/wms/consulta-estoque-reservado?' + qsReserva);
+    }
+
+    // Lotes logísticos: exige cdKey.
+    if (cdKey) {
+      const qsLotes = 'currentPage=0&pageSize=50&cdKey=' + encodeURIComponent(cdKey) + (lojaKey ? '&lojaKey=' + encodeURIComponent(lojaKey) : '');
+      await consulta('lotesLogisticos', '/api/wms/externo/loteslogisticos?' + qsLotes);
+    }
+
+    return resultado;
+  });
+
+exports.buscarRelatorioEstoqueBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 30, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    return _buscarRelatorioEstoqueBigQueryInterno(data, acesso, _obterBigQueryCliente(), db);
+  });
+
+// RECONSTRUÇÃO (2026-10-08): existia em produção (a tela "📊 Análise de
+// Inventários" em 125-estoque-relatorios.js já a chama, com um gate de versão
+// — ANALISE_RELEASE_ESPERADO abaixo precisa bater com o que o front espera),
+// mas sumiu do código-fonte local numa edição anterior sem redeploy — nenhum
+// backup/zip encontrado tinha o original. Reconstruída lendo o CONTRATO
+// exato no front (campos consumidos de d.inventarios/d.produtos/d.itens/etc.)
+// e reaproveitando o mesmo padrão de permissão/loja/achatamento já usado em
+// _buscarRelatorioEstoqueBigQueryInterno. Simplificação assumida e documentada:
+// "historicoProdutos" volta vazio (o front já trata isso defensivamente com
+// Array.isArray(...)||[]) — não há registro de qual série temporal essa lista
+// deveria conter, e inventar o formato seria pior do que não preencher.
+// Custo usado pra valor de perda/ganho: custo_liquido (dentre bruto/líquido/
+// contábil disponíveis em estoque_inventario_itens) — ajustar se o critério
+// real for outro.
+const ANALISE_INVENTARIOS_RELEASE = '20261005-v7-carregamento-rapido';
+function _analiseAgregadoInventarioSql(dataset) {
+  return `SELECT
+      i.inventario_key AS inventario_key, i.loja_key AS loja_key,
+      i.numero AS inventario_numero, i.descricao AS inventario_descricao,
+      i.status AS status, i.data_abertura AS data_abertura, i.data_fechamento AS data_fechamento,
+      COUNT(it.produto_key) AS produtos_total,
+      COUNTIF(it.quantidade_contada = it.quantidade_sistema) AS produtos_corretos,
+      COUNTIF(it.quantidade_contada < it.quantidade_sistema) AS produtos_perda,
+      COUNTIF(it.quantidade_contada > it.quantidade_sistema) AS produtos_ganho,
+      COUNTIF(it.quantidade_contada IS NULL OR it.quantidade_sistema IS NULL) AS produtos_sem_dados,
+      SUM(CASE WHEN it.quantidade_contada < it.quantidade_sistema THEN it.quantidade_sistema - it.quantidade_contada ELSE 0 END) AS perda_quantidade,
+      SUM(CASE WHEN it.quantidade_contada > it.quantidade_sistema THEN it.quantidade_contada - it.quantidade_sistema ELSE 0 END) AS ganho_quantidade,
+      SUM(CASE WHEN it.quantidade_contada < it.quantidade_sistema THEN (it.quantidade_sistema - it.quantidade_contada) * it.custo_liquido ELSE 0 END) AS perda_valor,
+      SUM(CASE WHEN it.quantidade_contada > it.quantidade_sistema THEN (it.quantidade_contada - it.quantidade_sistema) * it.custo_liquido ELSE 0 END) AS ganho_valor,
+      MAX(it.coletado_em) AS coletado_em
+    FROM \`${dataset}.estoque_inventarios\` i
+    JOIN \`${dataset}.estoque_inventario_itens\` it ON it.inventario_key = i.inventario_key AND it.loja_key = i.loja_key`;
+}
+function _analiseCalcularAcuracidade(linha) {
+  const total = Number(linha.produtos_total) || 0;
+  linha.acuracidade_itens = total > 0 ? (Number(linha.produtos_corretos) || 0) * 100 / total : null;
+  return linha;
+}
+async function _buscarAnaliseInventariosBigQueryInterno(data, acesso, bigqueryClient, firestoreDb) {
+  const fdb = firestoreDb || db;
+  const lojasSnap = await fdb.collection('lojas').get();
+  const lojasComBluesoft = lojasSnap.docs
+    .map(d => ({id: d.id, nome: (d.data() || {}).nome || d.id, bluesoft_loja_key: (d.data() || {}).bluesoft_loja_key || null}))
+    .filter(l => l.bluesoft_loja_key);
+  const lojaIdPedida = data && data.lojaId ? textoSeguro(data.lojaId, 120) : null;
+  let lojasAlvo;
+  if (lojaIdPedida) {
+    if (!_lojaPermitidaParaAcesso(acesso, lojaIdPedida)) throw new functions.https.HttpsError('permission-denied', 'Sem acesso a esta loja.');
+    lojasAlvo = lojasComBluesoft.filter(l => l.id === lojaIdPedida);
+    if (!lojasAlvo.length) throw new functions.https.HttpsError('failed-precondition', 'Esta loja não tem bluesoft_loja_key configurada.');
+  } else {
+    const todasLojas = adminMestre(acesso) || acesso?.acesso_todas_lojas === true;
+    const permitidas = lojasPermitidas(acesso);
+    lojasAlvo = todasLojas ? lojasComBluesoft : lojasComBluesoft.filter(l => permitidas.has(l.id));
+    if (!lojasAlvo.length) throw new functions.https.HttpsError('permission-denied', 'Sem acesso a nenhuma loja com integração configurada.');
+  }
+  const mapaLojaPorBluesoftKey = new Map(lojasAlvo.map(l => [String(l.bluesoft_loja_key), l]));
+  const bluesoftKeys = lojasAlvo.map(l => String(l.bluesoft_loja_key));
+  const lojasResposta = lojasAlvo.map(l => ({id: l.id, nome: l.nome, bluesoft_loja_key: l.bluesoft_loja_key}));
+
+  if (data && data.modo === 'inventario') {
+    const inventarioKey = textoSeguro(data.inventarioKey, 120);
+    if (!inventarioKey) throw new functions.https.HttpsError('invalid-argument', 'inventarioKey é obrigatório no modo "inventario".');
+    const lojaDoInventario = lojaIdPedida ? lojasAlvo[0] : null;
+    if (!lojaDoInventario) throw new functions.https.HttpsError('invalid-argument', 'lojaId é obrigatório no modo "inventario".');
+    const params = {inventarioKey, lojaKey: String(lojaDoInventario.bluesoft_loja_key)};
+    const queryItens = `SELECT it.produto_key AS produto_key, p.descricao AS produto_descricao,
+        it.quantidade_contada AS quantidade_contada, it.quantidade_sistema AS quantidade_sistema,
+        it.custo_bruto AS custo_bruto, it.custo_liquido AS custo_liquido, it.custo_contabil AS custo_contabil,
+        (it.quantidade_contada - it.quantidade_sistema) AS diferenca_quantidade,
+        (it.quantidade_contada - it.quantidade_sistema) * it.custo_liquido AS diferenca_valor
+      FROM \`${ESTOQUE_BQ_DATASET}.estoque_inventario_itens\` it
+      LEFT JOIN \`${ESTOQUE_BQ_DATASET}.estoque_produtos\` p ON p.produto_key = it.produto_key
+      WHERE it.inventario_key = @inventarioKey AND it.loja_key = @lojaKey
+      ORDER BY ABS((it.quantidade_contada - it.quantidade_sistema) * it.custo_liquido) DESC
+      LIMIT 20000`;
+    const [itensCrus] = await bigqueryClient.query({query: queryItens, params});
+    const itens = itensCrus.map(_achatarLinhaBigQuery).map(x => Object.assign(x, {
+      dados_validos: x.quantidade_contada != null && x.quantidade_sistema != null
+    }));
+    const queryInv = _analiseAgregadoInventarioSql(ESTOQUE_BQ_DATASET) +
+      ` WHERE i.inventario_key = @inventarioKey AND i.loja_key = @lojaKey
+      GROUP BY i.inventario_key, i.loja_key, i.numero, i.descricao, i.status, i.data_abertura, i.data_fechamento`;
+    const [invCru] = await bigqueryClient.query({query: queryInv, params});
+    const invLinha = invCru.map(_achatarLinhaBigQuery).map(_analiseCalcularAcuracidade)[0] || null;
+    const inventario = invLinha ? Object.assign({}, invLinha, {loja_id: lojaDoInventario.id}) : {
+      inventario_key: inventarioKey, loja_id: lojaDoInventario.id, produtos_total: itens.length,
+      produtos_corretos: 0, produtos_perda: 0, produtos_ganho: 0, produtos_sem_dados: itens.length
+    };
+    return {release: ANALISE_INVENTARIOS_RELEASE, inventario, itens, validacaoBluesoft: null, fonte: 'bigquery', diagnostico: null};
+  }
+
+  const dataInicio = data && data.dataInicio ? textoSeguro(data.dataInicio, 10) : null;
+  const dataFim = data && data.dataFim ? textoSeguro(data.dataFim, 10) : null;
+  const condicoesInv = ['i.loja_key IN UNNEST(@lojaKeys)', "i.status = 'FECHADO'"];
+  const params = {lojaKeys: bluesoftKeys};
+  if (dataInicio) { condicoesInv.push('DATE(i.data_fechamento) >= @dataInicio'); params.dataInicio = dataInicio; }
+  if (dataFim) { condicoesInv.push('DATE(i.data_fechamento) <= @dataFim'); params.dataFim = dataFim; }
+  const queryInvs = _analiseAgregadoInventarioSql(ESTOQUE_BQ_DATASET) +
+    ` WHERE ${condicoesInv.join(' AND ')}
+    GROUP BY i.inventario_key, i.loja_key, i.numero, i.descricao, i.status, i.data_abertura, i.data_fechamento
+    ORDER BY i.data_fechamento DESC
+    LIMIT 500`;
+  const [invsCrus] = await bigqueryClient.query({query: queryInvs, params});
+  const inventarios = invsCrus.map(_achatarLinhaBigQuery).map(_analiseCalcularAcuracidade).map(l => {
+    const lojaInfo = mapaLojaPorBluesoftKey.get(String(l.loja_key));
+    l.loja_id = lojaInfo ? lojaInfo.id : null;
+    return l;
+  });
+
+  const queryProdutos = `SELECT it.produto_key AS produto_key, ANY_VALUE(p.descricao) AS produto_descricao,
+      SUM(CASE WHEN it.quantidade_contada < it.quantidade_sistema THEN it.quantidade_sistema - it.quantidade_contada ELSE 0 END) AS perda_quantidade,
+      SUM(CASE WHEN it.quantidade_contada > it.quantidade_sistema THEN it.quantidade_contada - it.quantidade_sistema ELSE 0 END) AS ganho_quantidade,
+      SUM(CASE WHEN it.quantidade_contada < it.quantidade_sistema THEN (it.quantidade_sistema - it.quantidade_contada) * it.custo_liquido ELSE 0 END) AS perda_valor,
+      SUM(CASE WHEN it.quantidade_contada > it.quantidade_sistema THEN (it.quantidade_contada - it.quantidade_sistema) * it.custo_liquido ELSE 0 END) AS ganho_valor,
+      COUNTIF(it.quantidade_contada != it.quantidade_sistema) AS inventarios_divergentes
+    FROM \`${ESTOQUE_BQ_DATASET}.estoque_inventario_itens\` it
+    JOIN \`${ESTOQUE_BQ_DATASET}.estoque_inventarios\` i ON i.inventario_key = it.inventario_key AND i.loja_key = it.loja_key
+    LEFT JOIN \`${ESTOQUE_BQ_DATASET}.estoque_produtos\` p ON p.produto_key = it.produto_key
+    WHERE ${condicoesInv.join(' AND ')}
+    GROUP BY it.produto_key
+    HAVING perda_quantidade > 0 OR ganho_quantidade > 0
+    ORDER BY (ABS(perda_valor) + ABS(ganho_valor)) DESC
+    LIMIT 500`;
+  const [produtosCrus] = await bigqueryClient.query({query: queryProdutos, params});
+  const produtos = produtosCrus.map(_achatarLinhaBigQuery);
+
+  let atualizadoEm = null;
+  inventarios.forEach(l => { if (l.coletado_em && (!atualizadoEm || l.coletado_em > atualizadoEm)) atualizadoEm = l.coletado_em; });
+
+  return {
+    release: ANALISE_INVENTARIOS_RELEASE,
+    revalidacaoHistorico: null,
+    inventarios, produtos, historicoProdutos: [], lojas: lojasResposta,
+    atualizadoEm
+  };
+}
+exports.buscarAnaliseInventariosBigQuery = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 60, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    if (!acesso) throw new functions.https.HttpsError('permission-denied', 'Login sem acesso cadastrado.');
+    return _buscarAnaliseInventariosBigQueryInterno(data, acesso, _obterBigQueryCliente(), db);
+  });
+
+// ── FERRAMENTA TEMPORÁRIA (2026-10-03) — aplica o schema de
+// functions/sql/estoque-relatorios-schema.sql no BigQuery de produção. Só
+// existe porque não há `bq`/`gcloud` nem credencial local pra rodar esse
+// SQL direto; a conta de serviço das Cloud Functions já tem acesso ao
+// BigQuery (as outras *BigQuery onCall já provam isso). Admin-only, só lê o
+// arquivo já revisado (nenhum SQL novo/arbitrário aceito pela chamada) —
+// remover esta function depois que o schema for confirmado criado (ela não
+// tem utilidade depois disso, e re-rodar não causa dano: todo CREATE é
+// IF NOT EXISTS/OR REPLACE, idempotente).
+function _dividirStatementsSql(sqlTexto) {
+  const semComentarios = sqlTexto.split('\n').map(linha => {
+    const idx = linha.indexOf('--');
+    return idx === -1 ? linha : linha.slice(0, idx);
+  }).join('\n');
+  return semComentarios.split(';').map(s => s.trim()).filter(Boolean);
+}
+async function _aplicarSchemaEstoqueBigQueryInterno(acesso, bigqueryClient, sqlTexto) {
+  if (!administrador(acesso)) throw new functions.https.HttpsError('permission-denied', 'Só administrador pode aplicar o schema.');
+  const statements = _dividirStatementsSql(sqlTexto);
+  const resultados = [];
+  for (const stmt of statements) {
+    try {
+      await bigqueryClient.query({query: stmt});
+      resultados.push({ok: true, trecho: stmt.slice(0, 70).replace(/\s+/g, ' ')});
+    } catch (e) {
+      resultados.push({ok: false, trecho: stmt.slice(0, 70).replace(/\s+/g, ' '), erro: e.message || String(e)});
+    }
+  }
+  return {total: statements.length, sucesso: resultados.filter(r => r.ok).length, resultados};
+}
+exports.aplicarSchemaEstoqueBigQueryTemporaria = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 540, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    const caminho = path.join(__dirname, 'sql', 'estoque-relatorios-schema.sql');
+    const sqlTexto = fsNode.readFileSync(caminho, 'utf8');
+    return _aplicarSchemaEstoqueBigQueryInterno(acesso, _obterBigQueryCliente(), sqlTexto);
+  });
+
+// ── FERRAMENTA TEMPORÁRIA (2026-10-03) — diagnóstico: schema existe mas
+// nenhum relatório mostra linha nenhuma, nem Descarte (tipo de movimento
+// frequente). Essa function olha 3 coisas de uma vez sem precisar de
+// bq/gcloud local: (1) quantas linhas CRUAS existem em estoque_movimentos
+// (prova se a coleta gravou algo, independente de view/classificação);
+// (2) o progresso salvo em dt_config/estoque_bluesoft_sync (dias com erro
+// silencioso por loja); (3) uma amostra de até 5 linhas cruas. Remover
+// junto com aplicarSchemaEstoqueBigQueryTemporaria quando o pipeline
+// estiver confirmado ponta a ponta.
+async function _diagnosticoEstoqueBigQueryInterno(acesso, bigqueryClient, firestoreDb, data) {
+  if (!administrador(acesso)) throw new functions.https.HttpsError('permission-denied', 'Só administrador pode rodar o diagnóstico.');
+  const [totalLinhas] = await bigqueryClient.query({
+    query: `SELECT COUNT(*) AS total, MIN(data_movimento) AS data_min, MAX(data_movimento) AS data_max FROM \`${ESTOQUE_BQ_DATASET}.estoque_movimentos\``,
+  });
+  const [amostraCrua] = await bigqueryClient.query({
+    query: `SELECT * FROM \`${ESTOQUE_BQ_DATASET}.estoque_movimentos\` ORDER BY coletado_em DESC LIMIT 5`,
+  });
+  const amostra = amostraCrua.map(_achatarLinhaBigQuery);
+  const [porTipoOrigem] = await bigqueryClient.query({
+    query: `SELECT tipo_origem_key, tipo_origem, COUNT(*) AS total FROM \`${ESTOQUE_BQ_DATASET}.estoque_movimentos\` GROUP BY tipo_origem_key, tipo_origem ORDER BY total DESC LIMIT 20`,
+  });
+  const fdb = firestoreDb || db;
+  const progressoSnap = await fdb.collection('dt_config').doc('estoque_bluesoft_sync').get();
+  const progresso = progressoSnap.exists ? (progressoSnap.data() || {}) : null;
+  const lojasSnap = await fdb.collection('lojas').get();
+  const lojas = lojasSnap.docs.map(d => ({id: d.id, bluesoft_loja_key: (d.data() || {}).bluesoft_loja_key || null}));
+  const resumoPorLoja = lojas.filter(l => l.bluesoft_loja_key).map(l => {
+    const estado = (progresso && progresso.porLoja && progresso.porLoja[l.id]) || {};
+    return {lojaId: l.id, bluesoft_loja_key: l.bluesoft_loja_key, ultimoDiaConcluido: estado.ultimoDiaConcluido || null, diasComErro: estado.diasComErro || []};
+  });
+
+  // Teste AO VIVO (sem gravar nada): só UMA chamada crua por endpoint (sem
+  // paginação completa), pra confirmar conexão/credencial/PERMISSÃO sem
+  // correr o risco de um dia com muitos registros levar o diagnóstico a
+  // estourar tempo. A paginação completa (usada de verdade na
+  // sincronização) fica de fora daqui de propósito.
+  // PEDIDO AO VIVO (2026-10-03): "tem que ver as permissões na Bluesoft de
+  // cada API" — antes só testava 1 dos 7 endpoints usados pela coleta;
+  // agora testa os 7, um por um, reportando status HTTP de cada (401/403 =
+  // token sem permissão pra aquele endpoint específico na Bluesoft —
+  // precisa ser liberado lá, não é algo que dá pra corrigir por código).
+  let testeAoVivo = null;
+  const lojaIdPedida = data && data.lojaId ? String(data.lojaId) : null;
+  const lojaTeste = lojaIdPedida ? lojas.find(l => l.id === lojaIdPedida) : lojas.find(l => l.bluesoft_loja_key);
+  if (lojaTeste && lojaTeste.bluesoft_loja_key) {
+    const cfg = await _lerConfigIntegracaoApiEstoque(lojaTeste.id, fdb);
+    const baseUrl = _baseUrlBluesoftEstoque(cfg);
+    let dataBr = data && data.dataBr ? String(data.dataBr) : null;
+    if (!dataBr) {
+      const ontem = new Date(); ontem.setUTCDate(ontem.getUTCDate() - 1);
+      dataBr = _dataBrDeDate(ontem);
+    }
+    const hojeBr = _dataBrDeDate(new Date());
+    // Chaves reais pra testar os 3 endpoints que exigem um identificador
+    // existente (inventário/produto) — sem elas o teste ainda prova se o
+    // endpoint está autorizado (401/403 acontece ANTES de qualquer busca
+    // pelo identificador), só não confirma dados de verdade.
+    const produtoKeyTeste = amostra.find(l => l.produto_key)?.produto_key || null;
+    let inventarioKeyTeste = null;
+    try {
+      const [invSnap] = await bigqueryClient.query({query: `SELECT inventario_key FROM \`${ESTOQUE_BQ_DATASET}.estoque_inventarios\` LIMIT 1`});
+      inventarioKeyTeste = invSnap[0]?.inventario_key || null;
+    } catch (_) { /* tabela pode não existir ainda — segue sem essa chave */ }
+
+    const endpoints = [
+      {nome: 'Movimentos de estoque (analítico)', path: '/api/estoques/movimentacoesdeestoque/analitico?currentPage=0&pageSize=1&lojaKey=' + encodeURIComponent(lojaTeste.bluesoft_loja_key) + '&dataMovimento=' + encodeURIComponent(dataBr)},
+      {nome: 'Tipos de movimento de estoque', path: '/api/estoques/movimentacoesdeestoque/tipos'},
+      {nome: 'Inventários (cabeçalho)', path: '/api/estoques/inventarios?currentPage=0&pageSize=1&lojaKey=' + encodeURIComponent(lojaTeste.bluesoft_loja_key) + '&status=TODOS'},
+      inventarioKeyTeste
+        ? {nome: 'Itens de um inventário', path: '/api/estoques/inventarios/' + encodeURIComponent(inventarioKeyTeste) + '/produtos?currentPage=0&pageSize=1'}
+        : {nome: 'Itens de um inventário', pulado: 'nenhum inventario_key encontrado no BigQuery pra testar'},
+      {nome: 'Notas fiscais (saída)', path: '/api/estoques/notas-fiscais?currentPage=0&pageSize=1&lojaKey=' + encodeURIComponent(lojaTeste.bluesoft_loja_key) + '&tipoNota=SAIDA&dataRecebimentoInicial=' + encodeURIComponent(dataBr) + '&dataRecebimentoFinal=' + encodeURIComponent(hojeBr)},
+      produtoKeyTeste
+        ? {nome: 'Descrição de produto', path: '/api/comercial/produtos/' + encodeURIComponent(produtoKeyTeste)}
+        : {nome: 'Descrição de produto', pulado: 'nenhum produto_key encontrado no BigQuery pra testar'},
+      produtoKeyTeste
+        ? {nome: 'Fator de transformação cadastrado', path: '/api/comercial/produtos/transformacao?produtoKey=' + encodeURIComponent(produtoKeyTeste)}
+        : {nome: 'Fator de transformação cadastrado', pulado: 'nenhum produto_key encontrado no BigQuery pra testar'},
+    ];
+    const porEndpoint = [];
+    for (const ep of endpoints) {
+      if (ep.pulado) { porEndpoint.push({nome: ep.nome, status: 'pulado', detalhe: ep.pulado}); continue; }
+      try {
+        await _bluesoftGetSomenteLeitura(ep.path, cfg);
+        porEndpoint.push({nome: ep.nome, status: 'autorizado'});
+      } catch (e) {
+        const semPermissao = e.status === 401 || e.status === 403;
+        porEndpoint.push({nome: ep.nome, status: semPermissao ? 'sem_permissao' : 'erro', httpStatus: e.status || null, detalhe: e.message || String(e)});
+      }
+    }
+    testeAoVivo = {
+      lojaId: lojaTeste.id, dataBr,
+      ambiente: cfg.ambiente || null, temToken: !!cfg.token,
+      baseUrlHost: baseUrl ? String(baseUrl).replace(/^(https?:\/\/[^/]+).*$/, '$1') : null,
+      porEndpoint,
+    };
+  }
+
+  return {totalLinhas: _achatarLinhaBigQuery(totalLinhas[0]), amostra, porTipoOrigem, resumoPorLoja, testeAoVivo};
+}
+exports.diagnosticoEstoqueBigQueryTemporaria = functions
+  .region('southamerica-east1')
+  .runWith({timeoutSeconds: 300, memory: '256MB'})
+  .https.onCall(async (data, context) => {
+    if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+    const acesso = await acessoSolicitante(context);
+    // ACHADO AO VIVO (2026-10-03): o log do `firebase functions:log` ficou
+    // preso/travando nesta sessão (bug do próprio CLI), impossível ver o
+    // stack real de um erro 500 genérico ("INTERNAL") por log — então essa
+    // function nunca deixa um erro virar HttpsError opaco: captura tudo e
+    // devolve o erro + stack DIRETO na resposta (200), sempre visível no
+    // alert() do navegador, sem depender de log nenhum.
+    try {
+      return await _diagnosticoEstoqueBigQueryInterno(acesso, _obterBigQueryCliente(), db, data);
+    } catch (e) {
+      return {erroFatal: e.message || String(e), stack: String((e && e.stack) || '').slice(0, 2000)};
+    }
+  });
+
+exports._estoqueBluesoftInternals = {
+  _lerConfigIntegracaoApiEstoque, _baseUrlBluesoftEstoque, _bluesoftGetSomenteLeitura, _bluesoftGetUmaVez,
+  _dividirStatementsSql, _aplicarSchemaEstoqueBigQueryInterno, _diagnosticoEstoqueBigQueryInterno,
+  _dataBrDeDate, _dataBrParaIso, _dataHoraBrParaIso,
+  _coletarMovimentosAnaliticoDia, _normalizarMovimentoEstoque, _carregarMovimentosEstoqueNoBigQuery,
+  _coletarTiposMovimentoEstoque, _sincronizarTiposMovimentoEstoqueBigQuery,
+  _coletarInventarios, _normalizarInventario, _sincronizarInventariosLoja,
+  _coletarInventarioProdutos, _normalizarInventarioItem, _sincronizarItensInventariosFechadosLoja,
+  _coletarNotasBaixa, _normalizarNotaBaixa,
+  _coletarProdutoDescricao, _coletarFatorTransformacaoCadastrado,
+  _mergeGenericoBigQuery, _sincronizarProdutosFaltantesEstoque, _sincronizarEstoqueDiaLoja, _sincronizarEstoqueBluesoftIntervalo,
+  _buscarRelatorioEstoqueBigQueryInterno, ESTOQUE_VIEWS_PERMITIDAS,
+  _buscarAnaliseInventariosBigQueryInterno, ANALISE_INVENTARIOS_RELEASE,
+  _eopCheckNumero, _eopValidarLote, _eopConsultarPaletesPagina, _eopConferirCadastroAntesPost,
+  _eopCatalogoEnderecosLogisticos, _eopExecutarTrocaAgrupadaUmaVez,
+};
+
 // Exportado só pra teste local contra o emulador do Firestore (nunca
 // chamado em produção) — mesmo padrão de `_XInternals` já usado nos
 // arquivos do front-end.
 exports._graphBiInternals = {
-  _sincronizarFichaTecnicaBiLoja, _sincronizarAgendaBiLoja, _sincronizarBiTodasLojas,
+  _sincronizarFichaTecnicaBiLoja, _sincronizarAgendaBiLoja, _sincronizarRecebimentoAgendaNoPcp, _sincronizarRecebimentoFisicoNaAgenda, _sincronizarBiTodasLojas,
   _sincronizarEstoqueInsumosBiLoja, _sincronizarEstoqueProdutoAcabadoBiLoja, _sincronizarHistoricoVendasBiLoja,
   _sincronizarNotasRetornadasVendaBiLoja, _dividirChunksNotasRetornadasGrandesDemaisSeNecessario, _notasRetornadasDoDocumentoChunk,
   _sincronizarDevolucoesBiLoja, _classificarMotivoTextoBi, _construirRecebimentoAutomaticoBi,
   _limparEstoqueBiContaminadoLoja, _limparEstoqueBiContaminadoTodasLojas,
   _limparDadosAntigosBluesoftLoja, _limparDadosAntigosBluesoftTodasLojas,
-  _sincronizarRelatorioBiChunkeadoGlobal, _sincronizarComprasHistoricoBi,
+  _sincronizarRelatorioBiChunkeadoGlobal, _sincronizarComprasHistoricoBi, _sincronizarComprasHistoricoBigQuery, _slimCompraHistoricoBi,
   _construirClassificacaoProdutosComprasBi, _gravarClassificacaoProdutosComprasBi,
   _sincronizarFornecedoresAgregadoBi,
   _construirConsumoInsumosResumoBi, _gravarConsumoInsumosResumoBi,
   _construirCortesResumoMensalBi, _gravarCortesResumoMensalBi,
-  _buscarIndicadoresRetornosBigQueryInterno, _lojaPermitidaParaAcesso,
+  _buscarHistoricoComprasBigQueryInterno, _buscarResumoComprasDashboardBigQueryInterno, _buscarResumoRecebimentoComprasBigQueryInterno, _buscarResumoHistoricoRecebimentoBigQueryInterno, _buscarNotasRecebimentoPaginadasBigQueryInterno, _buscarDivergenciasFornecedoresRecebimentoBigQueryInterno,
+  _sugerirRegrasCompradorPorFornecedorBigQueryInterno, _sugerirRegrasCompradorPorProdutoBigQueryInterno, _buscarProdutosComprasBigQueryInterno, _buscarResumoProdutosComprasBigQueryInterno,
+  _buscarIndicadoresRetornosBigQueryInterno, _buscarRecebimentosOperacaoBigQueryInterno, _buscarHistoricoRecebimentosBigQueryInterno, _lojaPermitidaParaAcesso,
+  _buscarResumoNotasRetorno,
+  _resumirRegistrosProducaoDashboard, _buscarResumoProducaoDashboardInterno, _buscarRelatorioProducaoPeriodoInterno,
   _buscarPatioTempoRealBigQueryInterno, _consultarPatioTempoRealBigQuery,
   _estaNoPatioParaCache, _linhasPorNotaParaCache, _montarCachePatioTempoRealLoja, _atualizarCachePatioTempoRealTodasLojas,
   _buscarTransbordoTodasLojasBigQueryInterno, _buscarCargasTodasLojasBigQueryInterno, _clausulaLojasPermitidas,
 };
 
+// ═══════════════════════════════════════════════════════════════════════
+// DT Atendimento · WhatsApp Business Platform (V1)
+// Central multiatendente oficial. Tokens ficam no Secret Manager.
+// ═══════════════════════════════════════════════════════════════════════
+
+// ═══════════════════════════════════════════════════════════════════════
+//  APONTAMENTO DE PRODUÇÃO COM CONFERÊNCIA FÍSICA (Logística › Estoque)
+//  Regra central: 1 pallet físico = 1 capa = 1 conferência = no máximo
+//  1 apontamento BlueSoft. A Produção cria somente um PRÉ-apontamento;
+//  a escrita na BlueSoft acontece exclusivamente após a conferência.
+// ═══════════════════════════════════════════════════════════════════════
+const AP_REGION = 'southamerica-east1';
+const AP_COL = 'dt_apontamentos_producao';
+const AP_COUNTER_DOC = 'apontamento_capa_counter';
+
+function _apPerm(acesso, acao) {
+  return administrador(acesso) || Boolean(
+    acesso && acessoAtivo(acesso) && acesso.permissoes &&
+    acesso.permissoes['estoque-rel-apontamento'] &&
+    acesso.permissoes['estoque-rel-apontamento'][acao] === true
+  );
+}
+function _apRequire(acesso, acao) {
+  if (!_apPerm(acesso, acao)) {
+    throw new functions.https.HttpsError('permission-denied', 'Sem permissão para esta ação em Apontamento de Produção.');
+  }
+}
+function _apNome(acesso, context) {
+  return String((acesso && (acesso.nome || acesso.displayName || acesso.email)) ||
+    (context.auth && context.auth.token && (context.auth.token.name || context.auth.token.email)) || 'Usuário');
+}
+function _apLojaPermitida(acesso, lojaId) {
+  if (administrador(acesso) || (acesso && acesso.acesso_todas_lojas === true)) return true;
+  const id = String(lojaId || '');
+  if (!id) return false;
+  const lojas = Array.isArray(acesso && acesso.lojas_permitidas) ? acesso.lojas_permitidas.map(String) : [];
+  if (lojas.includes(id)) return true;
+  return [acesso && acesso.loja_id, acesso && acesso.lojaId, acesso && acesso.loja].filter(Boolean).map(String).includes(id);
+}
+async function _apRequireLoja(acesso, lojaId) {
+  const id = String(lojaId || '').trim();
+  if (!id) throw new functions.https.HttpsError('invalid-argument', 'Loja não informada.');
+  if (!_apLojaPermitida(acesso, id)) throw new functions.https.HttpsError('permission-denied', 'Você não possui acesso a esta loja.');
+  const snap = await db.collection('lojas').doc(id).get();
+  if (!snap.exists) throw new functions.https.HttpsError('not-found', 'Loja não encontrada.');
+  const loja = snap.data() || {};
+  if (!loja.bluesoft_loja_key) throw new functions.https.HttpsError('failed-precondition', 'A loja não possui bluesoft_loja_key configurada.');
+  return {id, dados: loja, bluesoftLojaKey: Number(loja.bluesoft_loja_key)};
+}
+function _apDataIso(v) {
+  if (!v) return null;
+  if (v.toDate) return v.toDate().toISOString();
+  if (v instanceof Date) return v.toISOString();
+  return String(v);
+}
+function _apSerializar(d) {
+  if (!d) return d;
+  const out = Object.assign({}, d);
+  ['criadoEm','atualizadoEm','dataHoraApontamento','dataHoraConferencia','canceladoEm'].forEach(k => {
+    if (out[k]) out[k] = _apDataIso(out[k]);
+  });
+  if (out.integracao) {
+    out.integracao = Object.assign({}, out.integracao);
+    ['dataEnvio','dataConfirmacao','dataUltimaConsulta'].forEach(k => { if (out.integracao[k]) out.integracao[k] = _apDataIso(out.integracao[k]); });
+  }
+  return out;
+}
+async function _apEvento(capa, tipo, context, acesso, extras) {
+  const ref = db.collection(AP_COL).doc(String(capa)).collection('eventos').doc();
+  await ref.set(Object.assign({
+    tipo, usuarioUid: context.auth.uid, usuarioNome: _apNome(acesso, context),
+    criadoEm: admin.firestore.FieldValue.serverTimestamp()
+  }, extras || {}));
+}
+function _apValidarCapa(capa) {
+  const c = String(capa || '').trim();
+  if (!/^\d{7}$/.test(c)) throw new functions.https.HttpsError('invalid-argument', 'Capa inválida. Informe os 7 dígitos.');
+  return c;
+}
+function _apHashPayload(payload) {
+  const crypto = require('crypto');
+  return crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+async function _apBluesoftPost(pathApi, cfg, payload) {
+  const baseUrl = _baseUrlBluesoftEstoque(cfg);
+  if (!baseUrl) throw Object.assign(new Error('URL da BlueSoft não configurada.'), {apTipo:'rejeitado'});
+  if (!cfg.token) throw Object.assign(new Error('Token da BlueSoft não configurado.'), {apTipo:'rejeitado'});
+  let resposta;
+  try {
+    resposta = await fetch(baseUrl.replace(/\/+$/, '') + pathApi, {
+      method:'POST',
+      headers:{'x-CustomToken':String(cfg.token),'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+  } catch (e) {
+    throw Object.assign(new Error('Falha de rede ao enviar para a BlueSoft: ' + (e.message || e)), {apTipo:'incerto'});
+  }
+  const texto = await resposta.text();
+  let dados = null; try { dados = texto ? JSON.parse(texto) : null; } catch (_) { dados = texto; }
+  if (!resposta.ok) {
+    const detalhe0 = dados && (dados.message || dados.erro || dados.detail || dados.title) ? (dados.message || dados.erro || dados.detail || dados.title) : String(texto || '').slice(0,400);
+    // Se a BlueSoft disser quais campos estão errados, mostra a lista também.
+    const campos = dados && typeof dados === 'object' ? (dados.errors || dados.erros || dados.fieldErrors || dados.violations || dados.campos) : null;
+    const detalhe1 = campos ? detalhe0 + ' — ' + JSON.stringify(campos).slice(0,400) : detalhe0;
+    // Mostra o pedido enviado (sem token) para ver valor vazio ou inválido.
+    const detalhe = detalhe1 + ' | enviado: ' + JSON.stringify(payload).slice(0,300);
+    const tipo = resposta.status >= 500 || resposta.status === 429 ? 'incerto' : 'rejeitado';
+    throw Object.assign(new Error('BlueSoft HTTP ' + resposta.status + (detalhe ? ': ' + detalhe : '')), {status:resposta.status, apTipo:tipo});
+  }
+  return dados;
+}
+async function _apBuscarProdutoPorGtin(loja, gtin) {
+  const cfg = await _lerConfigIntegracaoApiEstoque(loja.id, db);
+  const resp = await _bluesoftGetSomenteLeitura('/api/comercial/produtos/gtin-plu?currentPage=0&pageSize=30&gtinPlu=' + encodeURIComponent(gtin), cfg);
+  const lista = resp && Array.isArray(resp.data) ? resp.data : [];
+  if (!lista.length || !lista[0].produtoKey) throw new functions.https.HttpsError('not-found', 'Produto não encontrado na BlueSoft para o código bipado.');
+  const produtoKey = Number(lista[0].produtoKey);
+  let descricao = null;
+  try { descricao = await _coletarProdutoDescricao(produtoKey, cfg); } catch (_) {}
+  // A ficha técnica define QUAL endpoint de apontamento será usado.
+  // Portanto esta consulta não pode falhar silenciosamente: sem saber se há
+  // ficha ativa, enviar pelo endpoint "por produto" poderia criar um
+  // apontamento semanticamente diferente do configurado na BlueSoft.
+  const ft = await _bluesoftGetSomenteLeitura('/api/pcp/ficha-tecnica?currentPage=0&pageSize=30&lojaKey=' + encodeURIComponent(loja.bluesoftLojaKey) + '&produtoKey=' + encodeURIComponent(produtoKey), cfg);
+  const fichas = ft && Array.isArray(ft.data) ? ft.data : [];
+  const ficha = fichas.find(f => String(f.status || '').toUpperCase().includes('ATIV')) || null;
+  return {produtoKey, descricao: descricao || ('Produto ' + produtoKey), ficha, cfg};
+}
+function _apAdicionarDiasIso(dias) {
+  const n = Number(dias || 0); if (!(n > 0)) return null;
+  const d = new Date(); d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0,10);
+}
+
+exports.apontamentoConsultarProduto = functions.region(AP_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context); _apRequire(acesso, 'criar');
+  const loja = await _apRequireLoja(acesso, data && data.lojaId);
+  const gtin = String((data && data.gtin) || '').replace(/\s/g,'');
+  if (!gtin || gtin.length > 32) throw new functions.https.HttpsError('invalid-argument', 'GTIN/DUN inválido.');
+  const achado = await _apBuscarProdutoPorGtin(loja, gtin);
+  const ficha = achado.ficha || null;
+  return {
+    produto:{
+      produtoKey: achado.produtoKey, codigo: achado.produtoKey, gtin,
+      descricao: achado.descricao,
+      fichaTecnicaKey: ficha && ficha.fichaTecnicaKey ? Number(ficha.fichaTecnicaKey) : null,
+      tipoApontamento: ficha && ficha.tipoApontamento ? String(ficha.tipoApontamento) : '',
+      setorProdutivo: ficha && ficha.setorProdutivo ? String(ficha.setorProdutivo) : '',
+      diasDeValidade: ficha && ficha.diasDeValidade != null ? Number(ficha.diasDeValidade) : null
+    },
+    validadeSugerida: ficha ? _apAdicionarDiasIso(ficha.diasDeValidade) : null
+  };
+});
+
+exports.apontamentoCriarPre = functions.region(AP_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context); _apRequire(acesso, 'criar');
+  const loja = await _apRequireLoja(acesso, data && data.lojaId);
+  const produtoKey = Number(data && data.produtoKey), quantidade = Number(data && data.quantidade);
+  const gtin = String((data && data.gtin) || '').trim(), lote = String((data && data.lote) || '').trim(), validade = String((data && data.validade) || '').trim();
+  if (!(produtoKey > 0) || !(quantidade > 0) || !gtin || !lote || !/^\d{4}-\d{2}-\d{2}$/.test(validade)) throw new functions.https.HttpsError('invalid-argument', 'Produto, lote, validade e quantidade são obrigatórios.');
+  if (lote.length > 30) throw new functions.https.HttpsError('invalid-argument', 'O lote pode ter no máximo 30 caracteres.');
+  // Revalida o GTIN no servidor para impedir produto adulterado no navegador.
+  const validado = await _apBuscarProdutoPorGtin(loja, gtin);
+  if (Number(validado.produtoKey) !== produtoKey) throw new functions.https.HttpsError('failed-precondition', 'O produto informado não corresponde ao código bipado.');
+  const requisicaoId=String((data&&data.requisicaoId)||'').trim();
+  if(!/^[A-Za-z0-9_-]{8,100}$/.test(requisicaoId))throw new functions.https.HttpsError('invalid-argument','Identificador da solicitação inválido.');
+  const reqRef=db.collection('dt_apontamento_idempotencia').doc(context.auth.uid+'_'+requisicaoId);
+  const counterRef = db.collection('dt_config').doc(AP_COUNTER_DOC);
+  let capa = null, criadoNovo=false;
+  await db.runTransaction(async tx => {
+    const reqSnap=await tx.get(reqRef);
+    if(reqSnap.exists){capa=String((reqSnap.data()||{}).capa||'');return;}
+    const cSnap = await tx.get(counterRef);
+    let atual = cSnap.exists ? Number((cSnap.data() || {}).ultimo || 999999) : 999999;
+    if (!Number.isFinite(atual) || atual < 999999) atual = 999999;
+    let proximo = atual + 1;
+    if (proximo > 9999999) throw new functions.https.HttpsError('resource-exhausted', 'Faixa de capas de 7 dígitos esgotada.');
+    capa = String(proximo).padStart(7,'0');
+    const ref = db.collection(AP_COL).doc(capa);
+    const existe = await tx.get(ref);
+    if (existe.exists) throw new functions.https.HttpsError('already-exists', 'A capa gerada já existe. Tente novamente.');
+    const ficha = validado.ficha || null;criadoNovo=true;
+    tx.set(counterRef,{ultimo:proximo,atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+    tx.create(reqRef,{capa,uid:context.auth.uid,requisicaoId,criadoEm:admin.firestore.FieldValue.serverTimestamp()});
+    tx.create(ref,{
+      capa, apontamentoId:ref.id, lojaId:loja.id, bluesoftLojaKey:loja.bluesoftLojaKey,
+      produtoKey, gtin, descricaoProduto:validado.descricao || String((data && data.descricaoProduto) || ''),
+      fichaTecnicaKey:ficha && ficha.fichaTecnicaKey ? Number(ficha.fichaTecnicaKey) : null,
+      tipoApontamento:ficha && ficha.tipoApontamento ? String(ficha.tipoApontamento) : '',
+      lote, validade, quantidade, quantidadeApontada:quantidade,
+      usuarioApontamentoUid:context.auth.uid, usuarioApontamentoNome:_apNome(acesso,context),
+      dataHoraApontamento:admin.firestore.FieldValue.serverTimestamp(),
+      status:'AGUARDANDO_CONFERENCIA',
+      integracao:{status:'NAO_ENVIADO',requestId:null,tentativas:0,payloadHash:null,erro:null},
+      criadoEm:admin.firestore.FieldValue.serverTimestamp(), atualizadoEm:admin.firestore.FieldValue.serverTimestamp()
+    });
+  });
+  if(criadoNovo)await _apEvento(capa,'PRE_APONTAMENTO_CRIADO',context,acesso,{lojaId:loja.id,produtoKey,quantidade,requisicaoId});
+  return {ok:true,capa,status:'AGUARDANDO_CONFERENCIA',reutilizado:!criadoNovo};
+});
+
+exports.apontamentoObter = functions.region(AP_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context);
+  if (!_apPerm(acesso,'visualizar') && !_apPerm(acesso,'conferir')) throw new functions.https.HttpsError('permission-denied','Sem permissão para consultar a capa.');
+  const capa = _apValidarCapa(data && data.capa); const ref=db.collection(AP_COL).doc(capa); const snap=await ref.get();
+  if(!snap.exists) throw new functions.https.HttpsError('not-found','Capa não encontrada.');
+  const d=snap.data()||{}; await _apRequireLoja(acesso,d.lojaId);
+  return {apontamento:_apSerializar(d)};
+});
+
+exports.apontamentoListar = functions.region(AP_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context); _apRequire(acesso, 'visualizar');
+  const loja = await _apRequireLoja(acesso, data && data.lojaId);
+  const limite = Math.min(500,Math.max(1,Number(data && data.limite)||100));
+  // Período (AAAA-MM-DD, horário de Brasília). Com período, a consulta usa só o
+  // campo de data (índice automático); a loja é conferida depois da leitura.
+  const ini = data && data.dataInicio ? new Date(String(data.dataInicio)+'T00:00:00-03:00') : null;
+  const fim = data && data.dataFim ? new Date(String(data.dataFim)+'T23:59:59.999-03:00') : null;
+  let docs;
+  if (ini || fim) {
+    let q = db.collection(AP_COL);
+    if (ini && !isNaN(ini)) q = q.where('dataHoraApontamento','>=',admin.firestore.Timestamp.fromDate(ini));
+    if (fim && !isNaN(fim)) q = q.where('dataHoraApontamento','<=',admin.firestore.Timestamp.fromDate(fim));
+    const snap=await q.limit(5000).get();
+    docs=snap.docs.filter(d=>(d.data()||{}).lojaId===loja.id);
+  } else {
+    const snap=await db.collection(AP_COL).where('lojaId','==',loja.id).limit(500).get();
+    docs=snap.docs;
+  }
+  const itens=docs.map(d=>_apSerializar(d.data()||{})).sort((a,b)=>String(b.dataHoraApontamento||'').localeCompare(String(a.dataHoraApontamento||''))).slice(0,limite);
+  return {itens};
+});
+
+// Integração WMS (pallet logístico BlueSoft). Desligada por padrão: enquanto
+// dt_config/apontamento_producao.integracaoWmsAtiva não for true, nada é criado
+// na BlueSoft — só fica registrado que o WMS está aguardando configuração.
+// Vínculo permanente: Capa DT (etiqueta física) ↔ paleteKey BlueSoft (técnico).
+async function _apMarcarWms(ref) {
+  const cfgWms = await _apLerConfigWms();
+  if (!cfgWms.ativa) {
+    await ref.set({wms: {
+      status: 'WMS_AGUARDANDO_CONFIGURACAO',
+      paleteKey: null,
+      atualizadoEm: admin.firestore.FieldValue.serverTimestamp()
+    }}, {merge: true});
+    return;
+  }
+  await _apSolicitarWms(ref);
+}
+// A BlueSoft aceita a validade só no formato dd/MM/yyyy (AAAA-MM-DD é recusado).
+function _apDataBluesoft(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || '').trim());
+  return m ? m[3] + '/' + m[2] + '/' + m[1] : String(iso || '');
+}
+async function _apEnviarParaBluesoft(capa, context, acesso, permitirReprocesso) {
+  const ref=db.collection(AP_COL).doc(capa);
+  let docData=null;
+  await db.runTransaction(async tx=>{
+    const snap=await tx.get(ref); if(!snap.exists)throw new functions.https.HttpsError('not-found','Capa não encontrada.');
+    const d=snap.data()||{}; docData=d;
+    if(d.status==='APONTADO_BLUESOFT'||(d.integracao&&d.integracao.status==='CONCLUIDO'))return;
+    const ist=String(d.integracao&&d.integracao.status||'NAO_ENVIADO');
+    if(ist==='ENVIANDO'||ist==='PROCESSANDO')throw new functions.https.HttpsError('failed-precondition','Este apontamento já está sendo processado.');
+    if(ist==='ERRO_INCERTO')throw new functions.https.HttpsError('failed-precondition','O resultado anterior ficou incerto. Confira a BlueSoft antes de qualquer novo envio para evitar duplicidade.');
+    if(ist==='ERRO_REJEITADO'&&!permitirReprocesso)throw new functions.https.HttpsError('failed-precondition','A integração anterior foi rejeitada. Use Reprocessar com permissão específica.');
+    if(!['CONFERIDO_AGUARDANDO_INTEGRACAO','ERRO_REJEITADO'].includes(String(d.status)))throw new functions.https.HttpsError('failed-precondition','O pallet ainda não está pronto para integração.');
+    tx.update(ref,{'integracao.status':'ENVIANDO','integracao.tentativas':Number(d.integracao&&d.integracao.tentativas||0)+1,'integracao.erro':null,'integracao.dataEnvio':admin.firestore.FieldValue.serverTimestamp(),atualizadoEm:admin.firestore.FieldValue.serverTimestamp()});
+  });
+  if(docData && (docData.status==='APONTADO_BLUESOFT'||(docData.integracao&&docData.integracao.status==='CONCLUIDO')))return {concluido:true,jaExistia:true};
+  const loja=await _apRequireLoja(acesso,docData.lojaId); const cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db);
+  let endpoint,payload;
+  if(docData.fichaTecnicaKey){
+    endpoint='/api/pcp/apontamento-producao/ficha-tecnica';
+    payload={lojaKey:Number(docData.bluesoftLojaKey),fichaTecnicaKey:Number(docData.fichaTecnicaKey),lote:String(docData.lote||''),dataValidade:_apDataBluesoft(docData.validade),quantidadeAProduzir:Number(docData.quantidadeConferida||docData.quantidade),quantidadeProduzida:Number(docData.quantidadeConferida||docData.quantidade),observacao:'Capa '+capa+' - conferido pela Logística'};
+  }else{
+    endpoint='/api/pcp/apontamento-producao';
+    payload={lojaKey:Number(docData.bluesoftLojaKey),produtoFinalKey:Number(docData.produtoKey),lote:String(docData.lote||''),dataValidade:_apDataBluesoft(docData.validade),quantidadeAProduzir:Number(docData.quantidadeConferida||docData.quantidade)};
+  }
+  const hash=_apHashPayload(payload);
+  await ref.set({'integracao.payloadHash':hash,'integracao.endpoint':endpoint,'integracao.payloadResumo':payload,atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+  try{
+    const resp=await _apBluesoftPost(endpoint,cfg,payload);
+    const requestId=resp&&resp.requestId?String(resp.requestId):null;
+    if(requestId){
+      await ref.set({status:'PROCESSANDO','integracao.status':'PROCESSANDO','integracao.requestId':requestId,'integracao.erro':null,atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+      await _apEvento(capa,'BLUESOFT_PROCESSANDO',context,acesso,{requestId,endpoint});
+      return {processando:true,requestId};
+    }
+    await ref.set({status:'APONTADO_BLUESOFT','integracao.status':'CONCLUIDO','integracao.requestId':null,'integracao.erro':null,'integracao.dataConfirmacao':admin.firestore.FieldValue.serverTimestamp(),atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+    await _apEvento(capa,'BLUESOFT_CONCLUIDO',context,acesso,{endpoint});
+    await _apMarcarWms(ref);
+    return {concluido:true};
+  }catch(e){
+    const incerto=e&&e.apTipo==='incerto';
+    const st=incerto?'ERRO_INCERTO':'ERRO_REJEITADO';
+    await ref.set({status:st,'integracao.status':st,'integracao.erro':String(e&&e.message||e).slice(0,1000),atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+    await _apEvento(capa,incerto?'BLUESOFT_ERRO_INCERTO':'BLUESOFT_REJEITADO',context,acesso,{erro:String(e&&e.message||e).slice(0,1000),endpoint});
+    throw new functions.https.HttpsError(incerto?'aborted':'failed-precondition',incerto?'O envio ficou com resultado incerto. Não reenvie: confira a BlueSoft para evitar duplicidade.':String(e&&e.message||e));
+  }
+}
+
+exports.apontamentoConferirEnviar = functions.region(AP_REGION).runWith({timeoutSeconds:120}).https.onCall(async (data, context) => {
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context);_apRequire(acesso,'conferir');
+  const capa=_apValidarCapa(data&&data.capa),gtin=String((data&&data.gtinConferido)||'').trim(),loteConf=String((data&&data.loteConferido)||'').trim(),validadeConf=String((data&&data.validadeConferida)||'').trim(),qtd=Number(data&&data.quantidadeConferida),obs=String((data&&data.observacao)||'').trim().slice(0,500);
+  if(!gtin||!loteConf||!/^\d{4}-\d{2}-\d{2}$/.test(validadeConf)||!(qtd>0))throw new functions.https.HttpsError('invalid-argument','Produto, lote, validade e quantidade conferida são obrigatórios.');
+  const ref=db.collection(AP_COL).doc(capa);const snap=await ref.get();if(!snap.exists)throw new functions.https.HttpsError('not-found','Capa não encontrada.');
+  const d=snap.data()||{};const loja=await _apRequireLoja(acesso,d.lojaId);
+  if(d.status!=='AGUARDANDO_CONFERENCIA'&&d.status!=='DIVERGENTE')throw new functions.https.HttpsError('failed-precondition','Esta capa já foi conferida ou encerrada.');
+  // O segundo código pode ser outro GTIN/DUN da mesma unidade comercial.
+  // Por isso a conferência compara produtoKey resolvido na BlueSoft, não a
+  // string bruta do código de barras.
+  const produtoConferido=await _apBuscarProdutoPorGtin(loja,gtin);
+  const produtoOk=Number(produtoConferido.produtoKey)===Number(d.produtoKey);
+  const loteOk=String(d.lote||'').trim().toUpperCase()===loteConf.toUpperCase();
+  const validadeOk=String(d.validade||'')===validadeConf;
+  const qtdOk=Math.abs(Number(d.quantidade)-qtd)<0.000001;
+  if(!produtoOk||!loteOk||!validadeOk||!qtdOk){
+    await ref.set({status:'DIVERGENTE',gtinConferido:gtin,produtoKeyConferido:Number(produtoConferido.produtoKey),loteConferido:loteConf,validadeConferida:validadeConf,quantidadeConferida:qtd,observacaoConferencia:obs,usuarioConferenciaUid:context.auth.uid,usuarioConferenciaNome:_apNome(acesso,context),dataHoraConferencia:admin.firestore.FieldValue.serverTimestamp(),divergencia:{produto:!produtoOk,lote:!loteOk,validade:!validadeOk,quantidade:!qtdOk,quantidadeApontada:Number(d.quantidade),quantidadeConferida:qtd},atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+    await _apEvento(capa,'CONFERENCIA_DIVERGENTE',context,acesso,{gtinConferido:gtin,produtoKeyConferido:Number(produtoConferido.produtoKey),loteConferido:loteConf,validadeConferida:validadeConf,quantidadeConferida:qtd,produtoOk,loteOk,validadeOk,qtdOk,observacao:obs});
+    return {ok:true,divergente:true,divergencia:{produto:!produtoOk,lote:!loteOk,validade:!validadeOk,quantidade:!qtdOk},podeAprovarQuantidade:produtoOk&&loteOk&&validadeOk&&!qtdOk};
+  }
+  await ref.set({status:'CONFERIDO_AGUARDANDO_INTEGRACAO',gtinConferido:gtin,produtoKeyConferido:Number(produtoConferido.produtoKey),loteConferido:loteConf,validadeConferida:validadeConf,quantidadeConferida:qtd,observacaoConferencia:obs,usuarioConferenciaUid:context.auth.uid,usuarioConferenciaNome:_apNome(acesso,context),dataHoraConferencia:admin.firestore.FieldValue.serverTimestamp(),divergencia:null,atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+  await _apEvento(capa,'CONFERENCIA_APROVADA',context,acesso,{quantidadeConferida:qtd});
+  return _apEnviarParaBluesoft(capa,context,acesso,false);
+});
+
+exports.apontamentoAprovarDivergenciaQuantidade = functions.region(AP_REGION).runWith({timeoutSeconds:120}).https.onCall(async(data,context)=>{
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context);_apRequire(acesso,'conferir');
+  const capa=_apValidarCapa(data&&data.capa),obs=String((data&&data.observacao)||'').trim().slice(0,500);
+  if(!obs)throw new functions.https.HttpsError('invalid-argument','Informe uma justificativa para aprovar a quantidade divergente.');
+  const ref=db.collection(AP_COL).doc(capa),snap=await ref.get();if(!snap.exists)throw new functions.https.HttpsError('not-found','Capa não encontrada.');
+  const d=snap.data()||{};await _apRequireLoja(acesso,d.lojaId);
+  const dv=d.divergencia||{};
+  if(d.status!=='DIVERGENTE'||dv.produto===true||dv.lote===true||dv.validade===true||dv.quantidade!==true)throw new functions.https.HttpsError('failed-precondition','Só é possível aprovar por esta ação quando a única divergência é a quantidade.');
+  const qtd=Number(d.quantidadeConferida);if(!(qtd>0))throw new functions.https.HttpsError('failed-precondition','Quantidade conferida inválida.');
+  await ref.set({status:'CONFERIDO_AGUARDANDO_INTEGRACAO',quantidadeOriginal:Number(d.quantidade),quantidadeAceita:qtd,observacaoAprovacaoDivergencia:obs,divergenciaAprovadaPorUid:context.auth.uid,divergenciaAprovadaPorNome:_apNome(acesso,context),divergenciaAprovadaEm:admin.firestore.FieldValue.serverTimestamp(),atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+  await _apEvento(capa,'DIVERGENCIA_QUANTIDADE_APROVADA',context,acesso,{quantidadeOriginal:Number(d.quantidade),quantidadeAceita:qtd,observacao:obs});
+  return _apEnviarParaBluesoft(capa,context,acesso,false);
+});
+
+exports.apontamentoConsultarStatusBluesoft = functions.region(AP_REGION).https.onCall(async(data,context)=>{
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context);_apRequire(acesso,'visualizar');
+  const capa=_apValidarCapa(data&&data.capa),ref=db.collection(AP_COL).doc(capa),snap=await ref.get();if(!snap.exists)throw new functions.https.HttpsError('not-found','Capa não encontrada.');
+  const d=snap.data()||{};await _apRequireLoja(acesso,d.lojaId);
+  const requestId=d.integracao&&d.integracao.requestId?String(d.integracao.requestId):'';
+  if(!requestId)return {status:d.status,mensagem:'Este apontamento não possui processamento assíncrono pendente.'};
+  const cfg=await _lerConfigIntegracaoApiEstoque(d.lojaId,db);
+  const resp=await _bluesoftGetSomenteLeitura('/api/monitoramento/async/'+encodeURIComponent(requestId),cfg);
+  const lista=Array.isArray(resp)?resp:[];const item=lista.find(x=>String(x.requestId||'')===requestId)||lista[0]||{};const st=String(item.status||'').toUpperCase();
+  if(st==='DONE'){
+    await ref.set({status:'APONTADO_BLUESOFT','integracao.status':'CONCLUIDO','integracao.erro':null,'integracao.dataConfirmacao':admin.firestore.FieldValue.serverTimestamp(),'integracao.dataUltimaConsulta':admin.firestore.FieldValue.serverTimestamp(),atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+    await _apEvento(capa,'BLUESOFT_CONCLUIDO_ASYNC',context,acesso,{requestId});
+    await _apMarcarWms(ref);return {status:'APONTADO_BLUESOFT',mensagem:'BlueSoft concluiu o apontamento.'};
+  }
+  if(st==='FAILED'){
+    const erro='Processamento assíncrono BlueSoft retornou FAILED.';
+    await ref.set({status:'ERRO_REJEITADO','integracao.status':'ERRO_REJEITADO','integracao.erro':erro,'integracao.dataUltimaConsulta':admin.firestore.FieldValue.serverTimestamp(),atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+    await _apEvento(capa,'BLUESOFT_ASYNC_FALHOU',context,acesso,{requestId});return {status:'ERRO_REJEITADO',mensagem:erro};
+  }
+  await ref.set({'integracao.dataUltimaConsulta':admin.firestore.FieldValue.serverTimestamp(),atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+  return {status:'PROCESSANDO',mensagem:'BlueSoft ainda está processando o apontamento.'};
+});
+
+exports.apontamentoReprocessar = functions.region(AP_REGION).runWith({timeoutSeconds:120}).https.onCall(async(data,context)=>{
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context);_apRequire(acesso,'reprocessar');
+  const capa=_apValidarCapa(data&&data.capa),snap=await db.collection(AP_COL).doc(capa).get();if(!snap.exists)throw new functions.https.HttpsError('not-found','Capa não encontrada.');
+  const d=snap.data()||{};await _apRequireLoja(acesso,d.lojaId);
+  if(d.status!=='ERRO_REJEITADO')throw new functions.https.HttpsError('failed-precondition','Só é permitido reprocessar erros rejeitados. Erro incerto exige conferência manual na BlueSoft.');
+  await db.collection(AP_COL).doc(capa).set({status:'CONFERIDO_AGUARDANDO_INTEGRACAO',atualizadoEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+  await _apEvento(capa,'REPROCESSAMENTO_SOLICITADO',context,acesso,{});
+  return _apEnviarParaBluesoft(capa,context,acesso,true);
+});
+
+// Reprovação na conferência: marca o pallet como REPROVADO com motivo. Não envia
+// nada à BlueSoft. Só vale para pallets ainda pendentes de conferência.
+exports.apontamentoReprovar = functions.region(AP_REGION).https.onCall(async(data,context)=>{
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context);_apRequire(acesso,'conferir');
+  const capa=_apValidarCapa(data&&data.capa),ref=db.collection(AP_COL).doc(capa);
+  const motivo=String((data&&data.motivo)||'').trim().slice(0,500);
+  if(!motivo)throw new functions.https.HttpsError('invalid-argument','Informe o motivo da reprovação.');
+  await db.runTransaction(async tx=>{
+    const snap=await tx.get(ref);if(!snap.exists)throw new functions.https.HttpsError('not-found','Capa não encontrada.');
+    const d=snap.data()||{};
+    if(!_apLojaPermitida(acesso,d.lojaId))throw new functions.https.HttpsError('permission-denied','Você não possui acesso a esta loja.');
+    if(!['AGUARDANDO_CONFERENCIA','DIVERGENTE'].includes(String(d.status)))throw new functions.https.HttpsError('failed-precondition','Só é possível reprovar pallets pendentes.');
+    tx.update(ref,{status:'REPROVADO',reprovadoEm:admin.firestore.FieldValue.serverTimestamp(),reprovadoMotivo:motivo,reprovadoPorUid:context.auth.uid,atualizadoEm:admin.firestore.FieldValue.serverTimestamp()});
+  });
+  await _apEvento(capa,'PALLET_REPROVADO',context,acesso,{motivo});
+  return {ok:true};
+});
+
+exports.apontamentoCancelar = functions.region(AP_REGION).https.onCall(async(data,context)=>{
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context);_apRequire(acesso,'cancelar');
+  const capa=_apValidarCapa(data&&data.capa),ref=db.collection(AP_COL).doc(capa),motivo=String((data&&data.motivo)||'').trim().slice(0,500);
+  await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!snap.exists)throw new functions.https.HttpsError('not-found','Capa não encontrada.');const d=snap.data()||{};if(!_apLojaPermitida(acesso,d.lojaId))throw new functions.https.HttpsError('permission-denied','Sem acesso à loja.');if(d.status!=='AGUARDANDO_CONFERENCIA'&&d.status!=='DIVERGENTE')throw new functions.https.HttpsError('failed-precondition','Só é possível cancelar antes do envio à BlueSoft.');tx.update(ref,{status:'CANCELADO',motivoCancelamento:motivo,canceladoPorUid:context.auth.uid,canceladoPorNome:_apNome(acesso,context),canceladoEm:admin.firestore.FieldValue.serverTimestamp(),atualizadoEm:admin.firestore.FieldValue.serverTimestamp()});});
+  await _apEvento(capa,'PRE_APONTAMENTO_CANCELADO',context,acesso,{motivo});return {ok:true};
+});
+
+// RECONSTRUÇÃO (2026-10-08): esta função existia em produção (o botão "Produção
+// já confirmada → iniciar só WMS" em 127-estoque-apontamento.js já a chama),
+// mas sumiu do código-fonte local numa edição anterior sem redeploy — nenhum
+// backup/zip encontrado tinha o original. Reconstruída a partir da descrição
+// funcional já registrada nesta conversa e do contrato exato que o front
+// espera (r.corrigidas[]/r.ignoradas[{capa,motivo}]).
+//
+// Correção administrativa, admin-only (ação "configurar"): alguns apontamentos
+// pelo endpoint síncrono (/api/pcp/apontamento-producao, sem ficha técnica)
+// ficaram presos em status PROCESSANDO sem nenhum requestId — bug antigo já
+// corrigido em _apEnviarParaBluesoft (hoje, sem requestId na resposta, esse
+// endpoint já confirma na hora). Esta ação só destrava registros ANTIGOS
+// presos nesse estado específico: confirma que a produção já está de
+// verdade na BlueSoft (não reenvia o POST) e dispara só a etapa WMS.
+exports.apontamentoConfirmarPcpManual = functions.region(AP_REGION).https.onCall(async(data,context)=>{
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context);_apRequire(acesso,'configurar');
+  const capaUnica=data&&data.capa?_apValidarCapa(data.capa):null;
+  let docs;
+  if(capaUnica){
+    const snap=await db.collection(AP_COL).doc(capaUnica).get();
+    docs=snap.exists?[snap]:[];
+  }else{
+    const snap=await db.collection(AP_COL).where('status','==','PROCESSANDO').limit(200).get();
+    docs=snap.docs;
+  }
+  const corrigidas=[],ignoradas=[];
+  for(const snap of docs){
+    const d=snap.data()||{};
+    const capa=String(d.capa||snap.id);
+    if(!_apLojaPermitida(acesso,d.lojaId)){ignoradas.push({capa,motivo:'Sem acesso à loja desta capa.'});continue;}
+    const integ=d.integracao||{};
+    const elegivel=String(d.status)==='PROCESSANDO'&&String(integ.endpoint||'')==='/api/pcp/apontamento-producao'&&!integ.requestId;
+    if(!elegivel){ignoradas.push({capa,motivo:'Não atende aos critérios (precisa estar PROCESSANDO, pelo endpoint síncrono, sem requestId).'});continue;}
+    const ref=db.collection(AP_COL).doc(snap.id);
+    await ref.set({
+      status:'APONTADO_BLUESOFT',
+      integracao:Object.assign({},integ,{status:'CONCLUIDO',erro:null,dataConfirmacao:admin.firestore.FieldValue.serverTimestamp()}),
+      confirmacaoManualPcp:{confirmadoPorUid:context.auth.uid,confirmadoPorNome:_apNome(acesso,context),confirmadoEm:admin.firestore.FieldValue.serverTimestamp()},
+      atualizadoEm:admin.firestore.FieldValue.serverTimestamp()
+    },{merge:true});
+    await _apEvento(capa,'PCP_CONFIRMADO_MANUALMENTE',context,acesso,{});
+    await _apMarcarWms(ref);
+    corrigidas.push(capa);
+  }
+  if(capaUnica&&!corrigidas.length&&!ignoradas.length)ignoradas.push({capa:capaUnica,motivo:'Capa não encontrada.'});
+  return {corrigidas,ignoradas};
+});
+
+const WA_REGION = 'southamerica-east1';
+const WA_SECRETS = ['WHATSAPP_ACCESS_TOKEN','WHATSAPP_VERIFY_TOKEN','WHATSAPP_APP_SECRET','WHATSAPP_PHONE_NUMBER_ID'];
+const WA_GRAPH_VERSION = process.env.WHATSAPP_GRAPH_VERSION || 'v23.0';
+
+function _waPerm(acesso, modulo, acao) {
+  return administrador(acesso) || Boolean(
+    acesso && acessoAtivo(acesso) && acesso.permissoes &&
+    acesso.permissoes[modulo] && acesso.permissoes[modulo][acao] === true
+  );
+}
+function _waRequire(acesso, modulo, acao) {
+  if (!_waPerm(acesso, modulo, acao)) {
+    throw new functions.https.HttpsError('permission-denied', 'Sem permissão para esta ação no Atendimento.');
+  }
+}
+function _waNome(acesso, context) {
+  return String((acesso && (acesso.nome || acesso.displayName)) ||
+    (context.auth && context.auth.token && (context.auth.token.name || context.auth.token.email)) || 'Atendente');
+}
+function _waConversaRef(id) {
+  if (!id || !/^[A-Za-z0-9_.:+-]{3,120}$/.test(String(id))) {
+    throw new functions.https.HttpsError('invalid-argument', 'Conversa inválida.');
+  }
+  return db.collection('wa_conversas').doc(String(id));
+}
+function _waPodeOperarConversa(acesso, context, conversa) {
+  if (administrador(acesso) || _waPerm(acesso,'atendimento-conversas','supervisionar')) return true;
+  return conversa && String(conversa.responsavelUid || '') === String(context.auth.uid || '');
+}
+
+exports.whatsappStatusIntegracao = functions.region(WA_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context);
+  _waRequire(acesso, 'atendimento-config', 'visualizar');
+  return {
+    configurado: Boolean(process.env.WHATSAPP_ACCESS_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID && process.env.WHATSAPP_VERIFY_TOKEN),
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ? String(process.env.WHATSAPP_PHONE_NUMBER_ID).slice(-6).padStart(String(process.env.WHATSAPP_PHONE_NUMBER_ID).length,'•') : '',
+    graphVersion: WA_GRAPH_VERSION,
+  };
+});
+
+exports.whatsappListarAgentes = functions.region(WA_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context);
+  _waRequire(acesso, 'atendimento-conversas', 'visualizar');
+  const snap = await db.collection('usuarios_acessos').get();
+  const agentes = [];
+  snap.forEach(doc => {
+    const a = doc.data() || {};
+    if (!acessoAtivo(a)) return;
+    if (!(administrador(a) || _waPerm(a,'atendimento-conversas','responder'))) return;
+    agentes.push({uid: doc.id, nome: String(a.nome || a.displayName || a.email || doc.id), email: String(a.email || '')});
+  });
+  agentes.sort((a,b) => a.nome.localeCompare(b.nome,'pt-BR'));
+  return {agentes};
+});
+
+exports.whatsappAssumirConversa = functions.region(WA_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context);
+  _waRequire(acesso, 'atendimento-conversas', 'assumir');
+  const ref = _waConversaRef(data && data.conversaId);
+  const nome = _waNome(acesso, context);
+  await db.runTransaction(async tx => {
+    const snap = await tx.get(ref);
+    if (!snap.exists) throw new functions.https.HttpsError('not-found', 'Conversa não encontrada.');
+    const c = snap.data() || {};
+    if (c.responsavelUid && c.responsavelUid !== context.auth.uid && !_waPerm(acesso,'atendimento-conversas','supervisionar') && !administrador(acesso)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Esta conversa já está com ' + (c.responsavelNome || 'outro atendente') + '.');
+    }
+    tx.set(ref, {responsavelUid: context.auth.uid, responsavelNome: nome, status:'em_atendimento', assumidaEm: admin.firestore.FieldValue.serverTimestamp(), atualizadaEm: admin.firestore.FieldValue.serverTimestamp()}, {merge:true});
+  });
+  return {ok:true};
+});
+
+exports.whatsappTransferirConversa = functions.region(WA_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context);
+  _waRequire(acesso, 'atendimento-conversas', 'transferir');
+  const ref = _waConversaRef(data && data.conversaId);
+  const destinoUid = String((data && data.destinoUid) || '');
+  const [convSnap, destSnap] = await Promise.all([ref.get(), db.collection('usuarios_acessos').doc(destinoUid).get()]);
+  if (!convSnap.exists) throw new functions.https.HttpsError('not-found','Conversa não encontrada.');
+  if (!destSnap.exists || !acessoAtivo(destSnap.data()) || !_waPerm(destSnap.data(),'atendimento-conversas','responder')) throw new functions.https.HttpsError('invalid-argument','Atendente de destino inválido.');
+  const c = convSnap.data() || {};
+  if (!_waPodeOperarConversa(acesso,context,c)) throw new functions.https.HttpsError('permission-denied','Somente o responsável ou supervisor pode transferir.');
+  const da = destSnap.data() || {};
+  await ref.set({responsavelUid:destinoUid,responsavelNome:String(da.nome||da.displayName||da.email||destinoUid),status:'em_atendimento',transferidaPorUid:context.auth.uid,transferidaEm:admin.firestore.FieldValue.serverTimestamp(),atualizadaEm:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+  return {ok:true};
+});
+
+exports.whatsappAtualizarStatus = functions.region(WA_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context);
+  _waRequire(acesso, 'atendimento-conversas', 'finalizar');
+  const status = String((data && data.status) || '');
+  if (!['novo','em_atendimento','aguardando_cliente','resolvido'].includes(status)) throw new functions.https.HttpsError('invalid-argument','Status inválido.');
+  const ref = _waConversaRef(data && data.conversaId); const snap=await ref.get();
+  if (!snap.exists) throw new functions.https.HttpsError('not-found','Conversa não encontrada.');
+  if (!_waPodeOperarConversa(acesso,context,snap.data())) throw new functions.https.HttpsError('permission-denied','Somente o responsável ou supervisor pode alterar o status.');
+  await ref.set({status,atualizadaEm:admin.firestore.FieldValue.serverTimestamp(),finalizadaEm:status==='resolvido'?admin.firestore.FieldValue.serverTimestamp():null},{merge:true});
+  return {ok:true};
+});
+
+exports.whatsappAdicionarNota = functions.region(WA_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context); _waRequire(acesso,'atendimento-conversas','notas');
+  const texto=String((data&&data.texto)||'').trim(); if(!texto||texto.length>4000)throw new functions.https.HttpsError('invalid-argument','Nota inválida.');
+  const ref=_waConversaRef(data&&data.conversaId); const snap=await ref.get(); if(!snap.exists)throw new functions.https.HttpsError('not-found','Conversa não encontrada.');
+  if(!_waPodeOperarConversa(acesso,context,snap.data())&&!_waPerm(acesso,'atendimento-conversas','supervisionar'))throw new functions.https.HttpsError('permission-denied','Sem permissão nesta conversa.');
+  await ref.collection('notas').add({texto,autorUid:context.auth.uid,autorNome:_waNome(acesso,context),criadaEm:admin.firestore.FieldValue.serverTimestamp()});
+  return {ok:true};
+});
+
+
+// ===================================================================
+// INTEGRAÇÃO WMS (pallet logístico BlueSoft) — configuração em dt_config/apontamento_producao.
+// Tudo fica DESLIGADO enquanto integracaoWmsAtiva !== true. As regras de decisão
+// estão em wms-logica.js (testadas). Vínculo permanente: capaDt ↔ paleteKey.
+// ===================================================================
+const wmsLogica = require('./wms-logica');
+async function _apLerConfigWms() {
+  const c = await db.collection('dt_config').doc('apontamento_producao').get();
+  const d = (c.exists && c.data()) || {};
+  return {
+    ativa: d.integracaoWmsAtiva === true,
+    motivo: Number(d.wmsMotivo) || 1,
+    porLoja: (d.wmsPorLoja && typeof d.wmsPorLoja === 'object') ? d.wmsPorLoja : {}
+  };
+}
+function _apCdKeyDaLoja(cfgWms, lojaKey) {
+  const l = cfgWms.porLoja[String(lojaKey)] || {};
+  const cd = Number(l.cdKey);
+  return { cdKey: Number.isFinite(cd) && cd > 0 ? cd : null, ativo: l.ativo === true };
+}
+function _apListaDe(resp) {
+  if (Array.isArray(resp)) return resp;
+  if (resp && Array.isArray(resp.data)) return resp.data;
+  return [];
+}
+// Erro bruto da BlueSoft guardado de forma segura (sem token) para ajuste futuro.
+function _apErroSeguro(e) {
+  return String((e && e.message) || e || '').slice(0, 500);
+}
+// Pede a criação do lote logístico. Lê o registro de novo antes do POST (idempotência).
+async function _apSolicitarWms(ref) {
+  const snap = await ref.get();
+  const d = snap.data() || {};
+  const w = d.wms || {};
+  const cfgWms = await _apLerConfigWms();
+  const lojaKey = Number(d.bluesoftLojaKey);
+  const cd = _apCdKeyDaLoja(cfgWms, lojaKey);
+  const decisao = wmsLogica.podeSolicitarWms({ativa: cfgWms.ativa, cdKey: cd.cdKey, lojaAtiva: cd.ativo, wms: w});
+  if (!decisao.ok) {
+    if (decisao.motivo === 'sem_cdkey' || decisao.motivo === 'loja_inativa') {
+      await ref.set({wms: {status: 'WMS_AGUARDANDO_CONFIGURACAO', erro: decisao.mensagem, atualizadoEm: admin.firestore.FieldValue.serverTimestamp()}}, {merge: true});
+    }
+    return decisao;
+  }
+  const cfg = await _lerConfigIntegracaoApiEstoque(d.lojaId, db);
+  const payload = {
+    importarComDivergencia: false,
+    motivo: cfgWms.motivo,
+    itens: [{ lojaKey: lojaKey, cdKey: cd.cdKey, produtoKey: Number(d.produtoKey), quantidadeSugerida: Number(d.quantidadeConferida || d.quantidade) }]
+  };
+  try {
+    const resp = await _apBluesoftPost('/api/v3/wms/lotes-logisticos/importar', cfg, payload);
+    const requestId = String((resp && resp.requestId) || '');
+    if (!requestId) throw new Error('A BlueSoft não devolveu o requestId da importação de lote.');
+    // requestId = solicitação recebida. NÃO é pallet criado: só o acompanhamento confirma.
+    await ref.set({wms: {status: 'PROCESSANDO', requestId: requestId, paleteKey: null, logisticaLoteItemKey: null, criadoEm: admin.firestore.FieldValue.serverTimestamp(), erro: null}}, {merge: true});
+    return {ok: true, requestId: requestId};
+  } catch (e) {
+    const st = e && e.apTipo === 'incerto' ? 'WMS_RESULTADO_INDETERMINADO' : 'WMS_FALHA';
+    await ref.set({wms: {status: st, erro: _apErroSeguro(e)}}, {merge: true});
+    return {ok: false, motivo: st, mensagem: _apErroSeguro(e)};
+  }
+}
+// Acompanha o requestId. Só marca criado/vinculado quando a consulta confirmar.
+async function _apAcompanharWms(ref, d) {
+  const w = d.wms || {};
+  if (!w.requestId) return w.status;
+  const cfg = await _lerConfigIntegracaoApiEstoque(d.lojaId, db);
+  let resp;
+  try {
+    resp = await _bluesoftGetSomenteLeitura('/api/v3/wms/externo/lotes-logisticos/' + encodeURIComponent(w.requestId), cfg);
+  } catch (e) {
+    if (e && (e.status === 401 || e.status === 403)) {
+      await ref.set({wms: {status: 'WMS_SEM_PERMISSAO_MONITORAMENTO', erro: 'A credencial BlueSoft não possui permissão para consultar processamento assíncrono (4047).'}}, {merge: true});
+      return 'WMS_SEM_PERMISSAO_MONITORAMENTO';
+    }
+    await ref.set({wms: {erro: 'Consulta WMS falhou: ' + _apErroSeguro(e)}}, {merge: true});
+    throw e;
+  }
+  const lotes = Array.isArray(resp && resp.lotesGerados) ? resp.lotesGerados : [];
+  const lojaKey = Number(d.bluesoftLojaKey);
+  let candidatos = [];
+  const pre = wmsLogica.normalizarStatusBlueSoft(resp && resp.status);
+  if (pre === 'FINALIZADO' && lotes.length) {
+    const numeroLote = String((lotes[0] || {}).numeroDoLote || (lotes[0] || {}).numeroLote || d.lote || '');
+    try {
+      const r = await _bluesoftGetSomenteLeitura('/api/wms/enderecamento-de-paletes?currentPage=0&pageSize=100&lojaKey=' + encodeURIComponent(lojaKey) + '&numeroDoLote=' + encodeURIComponent(numeroLote), cfg);
+      candidatos = _apListaDe(r);
+    } catch (e) {
+      candidatos = [];
+    }
+  }
+  const dec = wmsLogica.decidirAcompanhamentoWms(resp, {produtoKey: d.produtoKey, numeroLoteAtual: d.lote, candidatos: candidatos});
+  if (dec.desconhecido) return w.status;
+  await ref.set({wms: Object.assign({status: dec.status, requestId: w.requestId}, dec.dados, dec.status === 'VINCULADO' ? {vinculadoEm: admin.firestore.FieldValue.serverTimestamp()} : {})}, {merge: true});
+  return dec.status;
+}
+
+exports.apontamentoConsultarWms = functions.region(AP_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context); _apRequire(acesso, 'visualizar');
+  const capa = _apValidarCapa(data && data.capa), ref = db.collection(AP_COL).doc(capa);
+  const snap = await ref.get(); if (!snap.exists) throw new functions.https.HttpsError('not-found', 'Capa não encontrada.');
+  const d = snap.data() || {};
+  await _apRequireLoja(acesso, d.lojaId);
+  const status = await _apAcompanharWms(ref, d);
+  return {status: status};
+});
+
+// Teste da configuração WMS (somente administrador). Cada verificação traz resultado próprio.
+exports.apontamentoTestarWms = functions.region(AP_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context);
+  if (!administrador(acesso)) throw new functions.https.HttpsError('permission-denied', 'Somente administrador pode testar a integração WMS.');
+  const loja = await _apRequireLoja(acesso, data && data.lojaId);
+  const cfgWms = await _apLerConfigWms();
+  const checks = [];
+  const cd = _apCdKeyDaLoja(cfgWms, loja.bluesoftLojaKey);
+  checks.push({item: 'cdKey configurado', ok: Boolean(cd.cdKey), detalhe: cd.cdKey ? 'cdKey ' + cd.cdKey : 'Informe o cdKey desta loja.'});
+  let cfg = null;
+  try { cfg = await _lerConfigIntegracaoApiEstoque(loja.id, db); checks.push({item: 'Configuração da API BlueSoft', ok: true, detalhe: 'Carregada.'}); }
+  catch (e) { checks.push({item: 'Configuração da API BlueSoft', ok: false, detalhe: _apErroSeguro(e)}); }
+  if (cfg) {
+    try { await _bluesoftGetSomenteLeitura('/api/comercial/produtos/gtin-plu?currentPage=0&pageSize=1&gtinPlu=0', cfg); checks.push({item: 'Autenticação BlueSoft', ok: true, detalhe: 'Token aceito.'}); }
+    catch (e) { checks.push({item: 'Autenticação BlueSoft', ok: false, detalhe: (e && (e.status === 401 || e.status === 403)) ? 'Token recusado pela BlueSoft.' : _apErroSeguro(e)}); }
+    try { await _bluesoftGetSomenteLeitura('/api/monitoramento/async/0', cfg); checks.push({item: 'Monitoramento assíncrono', ok: true, detalhe: 'Permissão 4047 disponível.'}); }
+    catch (e) {
+      if (e && (e.status === 401 || e.status === 403)) checks.push({item: 'Monitoramento assíncrono', ok: false, detalhe: 'A credencial BlueSoft não possui permissão para consultar processamento assíncrono (4047).'});
+      else checks.push({item: 'Monitoramento assíncrono', ok: true, detalhe: 'Resposta recebida (' + _apErroSeguro(e).slice(0, 120) + ').'});
+    }
+    try { await _bluesoftGetSomenteLeitura('/api/wms/enderecamento-de-paletes?currentPage=0&pageSize=1&lojaKey=' + encodeURIComponent(loja.bluesoftLojaKey), cfg); checks.push({item: 'API WMS acessível', ok: true, detalhe: 'Respondeu.'}); }
+    catch (e) { checks.push({item: 'API WMS acessível', ok: false, detalhe: _apErroSeguro(e).slice(0, 200)}); }
+  }
+  return {checks: checks, integracaoAtiva: cfgWms.ativa};
+});
+
+// Reprocessa SOMENTE a etapa WMS. Antes consulta a tentativa anterior. Nunca reenvia o PCP.
+exports.apontamentoReprocessarWms = functions.region(AP_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context); _apRequire(acesso, 'reprocessar');
+  const capa = _apValidarCapa(data && data.capa), ref = db.collection(AP_COL).doc(capa);
+  const snap = await ref.get(); if (!snap.exists) throw new functions.https.HttpsError('not-found', 'Capa não encontrada.');
+  let d = snap.data() || {};
+  await _apRequireLoja(acesso, d.lojaId);
+  // 1) consulta o estado da tentativa anterior, se existir
+  if ((d.wms || {}).requestId) {
+    try { await _apAcompanharWms(ref, d); } catch (_) { /* erro de consulta fica registrado */ }
+    d = (await ref.get()).data() || {};
+  }
+  const decisao = wmsLogica.podeReprocessarWms(d);
+  if (!decisao.ok) throw new functions.https.HttpsError('failed-precondition', decisao.mensagem);
+  // 2) limpa só a tentativa anterior falha e solicita de novo a etapa WMS
+  await ref.set({wms: {status: null, requestId: null, erro: null}}, {merge: true});
+  const r = await _apSolicitarWms(ref);
+  return {ok: r.ok === true, mensagem: r.ok ? 'WMS reenviado conforme a configuração atual.' : (r.mensagem || r.motivo || 'Não foi possível reenviar o WMS.')};
+});
+
+// Endereçamento: o operador trabalha pela Capa DT; o backend usa o paleteKey vinculado.
+exports.apontamentoEnderecarPallet = functions.region(AP_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated', 'Faça login novamente.');
+  const acesso = await acessoSolicitante(context); _apRequire(acesso, 'conferir');
+  const capa = _apValidarCapa(data && data.capa), ref = db.collection(AP_COL).doc(capa);
+  const enderecoKey = Number(data && data.enderecoLogisticoKey);
+  if (!(enderecoKey > 0)) throw new functions.https.HttpsError('invalid-argument', 'Informe o endereço de destino.');
+  const snap = await ref.get(); if (!snap.exists) throw new functions.https.HttpsError('not-found', 'Capa não encontrada.');
+  const d = snap.data() || {};
+  await _apRequireLoja(acesso, d.lojaId);
+  const decisao = wmsLogica.podeEnderecarPallet(d);
+  if (!decisao.ok) throw new functions.https.HttpsError('failed-precondition', decisao.mensagem);
+  const cfg = await _lerConfigIntegracaoApiEstoque(d.lojaId, db);
+  const w = d.wms || {};
+  try {
+    await _apBluesoftPost('/api/wms/enderecamento-de-paletes', cfg, {lojaKey: Number(d.bluesoftLojaKey), novoEndereco: enderecoKey, paleteKey: Number(w.paleteKey)});
+  } catch (e) {
+    await ref.set({wms: {erroEnderecamento: _apErroSeguro(e), erroEnderecamentoEm: admin.firestore.FieldValue.serverTimestamp()}}, {merge: true});
+    throw new functions.https.HttpsError('failed-precondition', 'BlueSoft recusou o endereçamento: ' + _apErroSeguro(e));
+  }
+  await ref.set({wms: {status: 'ENDERECADO', enderecoLogisticoKey: enderecoKey, enderecadoEm: admin.firestore.FieldValue.serverTimestamp(), erro: null, erroEnderecamento: null}}, {merge: true});
+  return {ok: true};
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// ESTOQUE · OPERAÇÕES VIA ARQUIVO (2026-10-07)
+// Endereçamento de paletes, Lote de Trocas e Transformação de Produtos.
+// Contratos conferidos no OpenAPI real da Bluesoft.
+// ═══════════════════════════════════════════════════════════════════════
+function _eopPerm(acesso, modulo, acao) {
+  return administrador(acesso) || Boolean(acesso && acessoAtivo(acesso) && acesso.permissoes && acesso.permissoes[modulo] && acesso.permissoes[modulo][acao] === true);
+}
+function _eopRequire(acesso, modulo, acao) {
+  if (!_eopPerm(acesso, modulo, acao)) throw new functions.https.HttpsError('permission-denied', 'Sem permissão para esta operação de estoque.');
+}
+async function _eopPost(pathApi, cfg, payload) {
+  return _apBluesoftPost(pathApi, cfg, payload);
+}
+function _eopLinhas(data) {
+  const linhas = Array.isArray(data && data.linhas) ? data.linhas : [];
+  if (!linhas.length) throw new functions.https.HttpsError('invalid-argument', 'O arquivo não possui linhas para processar.');
+  if (linhas.length > 500) throw new functions.https.HttpsError('invalid-argument', 'Máximo de 500 linhas por execução.');
+  const indices=data&&data.indices;
+  if(!Array.isArray(indices)||indices.length!==linhas.length||new Set(indices).size!==indices.length||indices.some(i=>!Number.isSafeInteger(i)||i<0||i>=100000))throw new functions.https.HttpsError('invalid-argument','Índices de linhas inválidos. Reimporte a planilha na versão atualizada.');
+  return linhas;
+}
+function _eopCheckNumero(v, inteiro=true) {
+  const raw=String(v==null?'':v).trim();
+  if (!(inteiro ? /^\d+$/.test(raw) : /^\d+(?:\.\d+)?$/.test(raw))) return false;
+  const n=Number(raw);return n>0&&Number.isFinite(n)&&(!inteiro||Number.isSafeInteger(n));
+}
+function _eopValidarLote(linhas, modo, aceitarEnderecoFisico=false) {
+  const vistos=new Set();
+  linhas.forEach((l,i)=>{
+    const required=modo==='end'?['paleteKey','enderecoLogisticoKey']:modo==='troca'?['gtin','motivoTrocaKey','setorOperacionalKey']:['localDeEstoqueKey'];
+    for(const campo of required)if(!(modo==='end'&&campo==='enderecoLogisticoKey'&&aceitarEnderecoFisico&&/^\d+(?:\.\d+)+$/.test(String(l[campo]||'').trim()))&&!_eopCheckNumero(l[campo]))throw new functions.https.HttpsError('invalid-argument','Linha '+(i+1)+': '+campo+' inválido.');
+    if(modo==='troca'&&!_eopCheckNumero(l.quantidade,false))throw new functions.https.HttpsError('invalid-argument','Linha '+(i+1)+': quantidade inválida.');
+    if(modo==='troca'&&String(l.gtin).length>14)throw new functions.https.HttpsError('invalid-argument','Linha '+(i+1)+': GTIN inválido.');
+    if(modo==='transf'){
+      if(!_eopCheckNumero(l.transformacaoKey)&&!_eopCheckNumero(l.produtoKey))throw new functions.https.HttpsError('invalid-argument','Linha '+(i+1)+': transformação ou produto obrigatório.');
+      if(!_eopCheckNumero(l.quantidadeTransformacao,false))throw new functions.https.HttpsError('invalid-argument','Linha '+(i+1)+': quantidade inválida.');
+      if(!['ESTOQUE_TROCA','ESTOQUE_VENDA'].includes(l.origemDaTransformacao))throw new functions.https.HttpsError('invalid-argument','Linha '+(i+1)+': origem inválida.');
+    }
+    if(modo==='end'){
+      for(const campo of ['paleteKeyParaAglutinar','logisticaLoteItemKey','quantidadeEnderecar','gtin'])if(l[campo]!=null&&l[campo]!==''&&!_eopCheckNumero(l[campo]))throw new functions.https.HttpsError('invalid-argument','Linha '+(i+1)+': '+campo+' inválido.');
+      const present=['logisticaLoteItemKey','quantidadeEnderecar','gtin'].filter(k=>l[k]!=null&&l[k]!=='').length;
+      if(present!==0&&present!==3)throw new functions.https.HttpsError('invalid-argument','Linha '+(i+1)+': dados de item incompletos.');
+    }
+    const chave=modo==='end'?'end:'+l.paleteKey:modo==='troca'?'troca:'+l.gtin+':'+l.motivoTrocaKey+':'+l.setorOperacionalKey:'transf:'+l.transformacaoKey+':'+l.produtoKey+':'+l.localDeEstoqueKey+':'+l.origemDaTransformacao;
+    if(vistos.has(chave))throw new functions.https.HttpsError('invalid-argument','Linha '+(i+1)+': duplicidade na remessa.');
+    vistos.add(chave);
+  });
+}
+// Pré-checagem no SERVIDOR: não confiar exclusivamente no botão de validação do navegador.
+// Todas as consultas são somente leitura; se falharem, nenhum POST desta remessa é iniciado.
+async function _eopConferirCadastroAntesPost(linhas, modo, cfg) {
+  if (modo === 'troca') {
+    const resp = await _bluesoftGetSomenteLeitura('/api/estoque/motivos-de-troca', cfg);
+    const lista = Array.isArray(resp) ? resp : resp && Array.isArray(resp.data) ? resp.data : null;
+    if (!lista) throw new functions.https.HttpsError('failed-precondition','Não foi possível verificar motivos de troca na BlueSoft; nenhum registro foi enviado.');
+    const validos = new Set(lista.filter(x => x && _eopCheckNumero(x.motivoTrocaKey)).map(x => String(Number(x.motivoTrocaKey))));
+    linhas.forEach((l, i) => {
+      if (!validos.has(String(Number(l.motivoTrocaKey)))) throw new functions.https.HttpsError('failed-precondition','Linha '+(i+1)+': motivo de troca não confirmado na BlueSoft; nenhum registro foi enviado.');
+    });
+  }
+  if (modo === 'transf') {
+    const cache = new Map();
+    for (const [i, l] of linhas.entries()) {
+      if (!_eopCheckNumero(l.produtoKey)) throw new functions.https.HttpsError('failed-precondition','Linha '+(i+1)+': informe produtoKey para confirmar a transformação antes de executar.');
+      const produto = String(Number(l.produtoKey));
+      if (!cache.has(produto)) {
+        const resp = await _bluesoftGetSomenteLeitura('/api/comercial/produtos/transformacao?produtoKey='+encodeURIComponent(produto), cfg);
+        const lista = Array.isArray(resp) ? resp : resp && Array.isArray(resp.data) ? resp.data : null;
+        if (!lista) throw new functions.https.HttpsError('failed-precondition','Não foi possível validar transformações do produto '+produto+'; nenhum registro foi enviado.');
+        cache.set(produto, lista);
+      }
+      const lista = cache.get(produto);
+      if (_eopCheckNumero(l.transformacaoKey)) {
+        const chave = String(Number(l.transformacaoKey));
+        if (!lista.some(x => x && String(Number(x.transformacaoKey)) === chave)) throw new functions.https.HttpsError('failed-precondition','Linha '+(i+1)+': transformação não vinculada ao produto '+produto+'; nenhum registro foi enviado.');
+      } else {
+        if (lista.length !== 1 || !_eopCheckNumero(lista[0] && lista[0].transformacaoKey)) throw new functions.https.HttpsError('failed-precondition','Linha '+(i+1)+': transformação ambígua ou sem código válido; nenhum registro foi enviado.');
+        // Fixa o código validado para que a execução não selecione outra transformação depois.
+        l.transformacaoKey = Number(lista[0].transformacaoKey);
+      }
+    }
+  }
+}
+// Registro persistente por linha: se a conexão com a BlueSoft cair após o POST,
+// a mesma operação fica pendente de conciliação, nunca é enviada novamente às cegas.
+async function _eopExecutarUmaVez(data, loja, modo, indice, linha, executar) {
+  const lote=String(data&&data.operacaoId||'');
+  if(!/^[a-zA-Z0-9_-]{12,90}$/.test(lote)) throw new functions.https.HttpsError('invalid-argument','Identificador persistente da operação obrigatório. Reimporte a planilha na tela atualizada.');
+  const crypto=require('crypto');
+  const hash=crypto.createHash('sha256').update(JSON.stringify({loja:String(loja.id),modo,linha})).digest('hex');
+  const key=crypto.createHash('sha256').update(String(loja.id)+':'+modo+':'+lote+':'+indice).digest('hex');
+  const ref=db.collection('dt_estoque_operacoes_execucoes').doc(key);
+  const anterior=await db.runTransaction(async tx=>{
+    const snap=await tx.get(ref);
+    if(snap.exists)return snap.data();
+    tx.create(ref,{lojaId:String(loja.id),modo,operacaoId:lote,indice,hash,status:'processando',criadoEm:admin.firestore.FieldValue.serverTimestamp()});
+    return null;
+  });
+  if(anterior){
+    if(anterior.hash!==hash)return {ok:false,erro:'Operação alterada após o primeiro envio. Inicie nova operação somente depois de conferir a BlueSoft.'};
+    if(anterior.status==='concluido')return {ok:true,jaProcessado:true,detalhe:'Já enviado anteriormente; não reenviado.',...(anterior.retorno||{})};
+    return {ok:false,requerConferencia:true,erro:'Envio anterior já iniciado ou com resultado incerto. Confira na BlueSoft antes de criar uma nova operação.'};
+  }
+  try {
+    const retorno=await executar();
+    await ref.update({status:'concluido',retorno:retorno||{},finalizadoEm:admin.firestore.FieldValue.serverTimestamp()});
+    return {ok:true,...(retorno||{})};
+  }catch(e){
+    const rejeitado=e&&e.apTipo==='rejeitado';
+    await ref.update({status:rejeitado?'rejeitado':'conferencia_necessaria',httpStatus:Number(e&&e.status)||null,erro:String(e.message||e).slice(0,700),finalizadoEm:admin.firestore.FieldValue.serverTimestamp()}).catch(()=>{});
+    return {ok:false,requerConferencia:!rejeitado,rejeitadoPelaBluesoft:rejeitado,erro:String(e.message||e).slice(0,700)+(rejeitado?' — BlueSoft recusou; nenhuma baixa confirmada.':' — Verifique o resultado na BlueSoft antes de tentar novamente.')};
+  }
+}
+// Consulta somente leitura ao histórico persistente da operação. Não altera estoque.
+exports.consultarHistoricoEstoqueArquivo = functions.region(AP_REGION).runWith({timeoutSeconds:120,memory:'256MB'}).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const modo=String(data&&data.modo||'');
+  const modulos={end:'estoque-enderecamento',troca:'estoque-lote-trocas',transf:'estoque-transformacao-api'};
+  if(!Object.prototype.hasOwnProperty.call(modulos,modo)) throw new functions.https.HttpsError('invalid-argument','Tipo de operação inválido.');
+  const acesso=await acessoSolicitante(context);
+  _eopRequire(acesso,modulos[modo],'visualizar');
+  const loja=await _apRequireLoja(acesso,data&&data.lojaId);
+  const lote=String(data&&data.operacaoId||'');
+  if(!/^[a-zA-Z0-9_-]{12,90}$/.test(lote)) throw new functions.https.HttpsError('invalid-argument','Identificador inválido.');
+  const indices=data&&data.indices;
+  if(!Array.isArray(indices)||indices.length>500||new Set(indices).size!==indices.length||indices.some(i=>!Number.isSafeInteger(i)||i<0||i>=100000))throw new functions.https.HttpsError('invalid-argument','Índices inválidos.');
+  const crypto=require('crypto');
+  const refs=indices.map(indice=>db.collection('dt_estoque_operacoes_execucoes').doc(crypto.createHash('sha256').update(String(loja.id)+':'+modo+':'+lote+':'+indice).digest('hex')));
+  const docs=await Promise.all(refs.map(ref=>ref.get()));
+  return {registros:docs.map((snap,i)=>{
+    if(!snap.exists)return {indice:indices[i],status:'nao_iniciado'};
+    const d=snap.data()||{};
+    if(d.lojaId!==String(loja.id)||d.modo!==modo||d.operacaoId!==lote||d.indice!==indices[i])return {indice:indices[i],status:'conferencia_necessaria'};
+    return {indice:indices[i],status:d.status==='concluido'?'concluido':d.status==='rejeitado'?'rejeitado':'conferencia_necessaria',hash:d.hash||'',detalhe:d.status==='concluido'?String((d.retorno&&d.retorno.detalhe)||'Concluído anteriormente').slice(0,200):d.status==='rejeitado'?String(d.erro||'BlueSoft recusou a operação').slice(0,200):'Envio já iniciado ou incerto; confira na BlueSoft.'};
+  })};
+});
+// Lista os paletes por páginas com limite explícito de consulta.
+// Não inferimos ausência quando a paginação ainda pode ter outros resultados.
+async function _eopConsultarPaletesPagina(cfg, lojaKey, paginasMaximas) {
+  const paletes = new Map();
+  let completa = false;
+  for (let pagina = 0; pagina < paginasMaximas; pagina++) {
+    const resp = await _bluesoftGetSomenteLeitura('/api/wms/enderecamento-de-paletes?currentPage='+pagina+'&pageSize=100&lojaKey='+encodeURIComponent(lojaKey),cfg);
+    if (!resp || !Array.isArray(resp.data)) throw new functions.https.HttpsError('failed-precondition','Consulta WMS não retornou a lista de paletes no formato esperado.');
+    for (const item of resp.data) {
+      if (item && _eopCheckNumero(item.paleteKey)) paletes.set(String(Number(item.paleteKey)), item);
+    }
+    if (resp.data.length < 100 || resp.last === true || resp.lastPage === true || (Number.isSafeInteger(resp.totalPages) && pagina+1 >= resp.totalPages)) { completa = true; break; }
+  }
+  return {paletes, completa};
+}
+// CORREÇÃO (2026-10-08): a V13 só reconhecia o endereço físico quando ele era
+// IDÊNTICO ao destino que a própria BlueSoft sugere para aquele palete
+// específico (enderecoDeDestino/enderecoDeDestinoKey de
+// /api/wms/enderecamento-de-paletes) — mas essa sugestão é só uma
+// recomendação do WMS pra UM palete, não a lista de endereços válidos da
+// loja. Isso bloqueava 100% dos 42 paletes sempre que o destino desejado era
+// diferente do sugerido (ou quando o palete não tinha sugestão nenhuma).
+// Fonte real de correspondência físico↔chave, confirmada no schema
+// AjusteEstoqueLogisticoResponse (campos enderecoLogisticoKey +
+// enderecoLogisticoDescritivo) e já usada em produção por
+// 90-bluesoft-service.js pra montar estoque WMS: GET
+// /api/wms/ajuste-estoque-logistico?lojaKey=. Isso é um CATÁLOGO de
+// endereços da loja — não depende de qual palete está sendo endereçado.
+async function _eopCatalogoEnderecosLogisticos(cfg, lojaKey) {
+  const resp = await _bluesoftGetSomenteLeitura('/api/wms/ajuste-estoque-logistico?lojaKey='+encodeURIComponent(lojaKey), cfg);
+  const linhas = Array.isArray(resp) ? resp : (resp && Array.isArray(resp.data) ? resp.data : null);
+  if (!linhas) throw new functions.https.HttpsError('failed-precondition','Catálogo de endereços logísticos (ajuste-estoque-logistico) não retornou formato reconhecido; não é seguro resolver endereços físicos.');
+  const porDescritivo = new Map();
+  linhas.forEach(item => {
+    const descritivo = String((item && item.enderecoLogisticoDescritivo) || '').trim();
+    const key = item && item.enderecoLogisticoKey;
+    if (descritivo && _eopCheckNumero(key)) porDescritivo.set(descritivo, Number(key));
+  });
+  return porDescritivo;
+}
+// Consulta oficial: permissão BlueSoft 4011. Setor de armazenagem do WMS
+// e setor operacional são cadastros diferentes; não inferir pelo endereço.
+const setoresEstoque=require('./estoque-setores');
+async function _eopSetores(cfg){
+  const r=await _bluesoftGetSomenteLeitura('/api/estoque/setor-operacional',cfg);
+  const itens=Array.isArray(r)?r:r&&r.data;
+  if(!Array.isArray(itens))throw new functions.https.HttpsError('failed-precondition','Consulta de setores retornou formato desconhecido. Verifique a permissão BlueSoft 4011.');
+  return itens;
+}
+exports.listarSetoresOperacionais=functions.region(AP_REGION).https.onCall(async(data,context)=>{
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login.');
+  const a=await acessoSolicitante(context),modo=data&&data.modo==='transf'?'transf':'troca',modulo=modo==='transf'?'estoque-transformacao-api':'estoque-lote-trocas';_eopRequire(a,modulo,'visualizar');
+  const loja=await _apRequireLoja(a,data&&data.lojaId),cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db);
+  const itens=await _eopSetores(cfg),vinculos=(await db.collection('dt_setores_endereco').where('lojaId','==',loja.id).get()).docs.map(s=>s.data());
+  return {itens,vinculos,podeConfigurar:_eopPerm(a,modulo,'configurar')};
+});
+exports.salvarVinculoEnderecoSetor=functions.region(AP_REGION).https.onCall(async(data,context)=>{
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login.');
+  const a=await acessoSolicitante(context),modulo=data&&data.modo==='transf'?'estoque-transformacao-api':'estoque-lote-trocas';_eopRequire(a,modulo,'configurar');
+  const loja=await _apRequireLoja(a,data&&data.lojaId),cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db);
+  const endereco=String(data&&data.endereco||'').trim(),key=Number(data&&data.setorOperacionalKey);
+  if(!/^\d+(?:\.\d+)+$/.test(endereco)||endereco.length>100)throw new functions.https.HttpsError('invalid-argument','Informe o endereço físico completo com pontos.');
+  const setores=await _eopSetores(cfg);
+  if(!setores.some(x=>Number(x.setorOperacionalKey)===key))throw new functions.https.HttpsError('invalid-argument','Selecione setor consultado na BlueSoft.');
+  const catalogo=await _eopCatalogoEnderecosLogisticos(cfg,loja.bluesoftLojaKey);
+  if(!catalogo.has(endereco))throw new functions.https.HttpsError('failed-precondition','Endereço não encontrado na consulta WMS desta loja. Confira o endereço; nenhum vínculo foi salvo.');
+  const ref=db.collection('dt_setores_endereco').doc(setoresEstoque.idVinculo(loja.id,endereco));
+  await db.runTransaction(async tx=>{const antes=await tx.get(ref),novo={lojaId:loja.id,endereco,setorOperacionalKey:key,ativo:data.ativo!==false,atualizado_por:context.auth.uid,atualizado_em:admin.firestore.FieldValue.serverTimestamp()};tx.set(ref,novo);tx.set(db.collection('dt_acessos_auditoria').doc(),{tipo:'ASSOCIAR_ENDERECO_SETOR',autor_uid:context.auth.uid,alvo:ref.id,antes:antes.exists?antes.data():null,depois:novo,criado_em:admin.firestore.FieldValue.serverTimestamp()});});
+  return {ok:true};
+});
+async function _eopResolverSetores(linhas,modo,loja,cfg){
+  if(modo!=='troca'&&modo!=='transf')return;
+  const precisam=linhas.filter(l=>modo==='troca'||l.enderecoSetor||l.setorOperacionalKey);
+  if(!precisam.length)return;
+  const setores=await _eopSetores(cfg),cache=new Map();
+  for(const l of precisam){
+    const endereco=String(l.enderecoSetor||'').trim();let vinculo;
+    if(endereco){if(!cache.has(endereco)){const s=await db.collection('dt_setores_endereco').doc(setoresEstoque.idVinculo(loja.id,endereco)).get();cache.set(endereco,s.exists?s.data():null);}vinculo=cache.get(endereco);if(vinculo&&vinculo.lojaId!==loja.id)throw new Error('Vínculo de outra loja.');}
+    try{l.setorOperacionalKey=setoresEstoque.resolver(l,setores,vinculo);}catch(e){throw new functions.https.HttpsError('failed-precondition',e.message);}
+  }
+}
+// Pré-validação consultiva: sem POST e sem alterações de estoque.
+exports.prevalidarEstoqueArquivo = functions.region(AP_REGION).runWith({timeoutSeconds:120,memory:'256MB'}).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const modo=String(data&&data.modo||'');
+  const modulos={end:'estoque-enderecamento',troca:'estoque-lote-trocas',transf:'estoque-transformacao-api'};
+  if (!modulos[modo]) throw new functions.https.HttpsError('invalid-argument','Operação desconhecida.');
+  const acesso=await acessoSolicitante(context);_eopRequire(acesso,modulos[modo],'visualizar');
+  const loja=await _apRequireLoja(acesso,data&&data.lojaId);
+  const linhas=_eopLinhas(data);
+  const cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db);
+  await _eopResolverSetores(linhas,modo,loja,cfg);
+  _eopValidarLote(linhas,modo,modo==='end');
+  const resultados=linhas.map(l=>({ok:true,correcoes:l.enderecoSetor?{setorOperacionalKey:l.setorOperacionalKey}:{},detalhe:'Formato verificado; a API não oferece aqui uma verificação completa da movimentação.'}));
+  if(modo==='troca'){
+    const r=await _bluesoftGetSomenteLeitura('/api/estoque/motivos-de-troca',cfg);
+    const motivos=Array.isArray(r)?r:r&&Array.isArray(r.data)?r.data:null;
+    if(!motivos)throw new functions.https.HttpsError('failed-precondition','A BlueSoft não retornou a lista de motivos em formato reconhecido.');
+    const chaves=new Set(motivos.map(x=>String(x.motivoTrocaKey)));
+    linhas.forEach((l,i)=>{if(!chaves.has(String(l.motivoTrocaKey)))resultados[i]={ok:false,erro:'Motivo de troca não encontrado na BlueSoft.'};else resultados[i].detalhe='Motivo e setor operacional confirmados; saldo sujeito à execução.';resultados[i].correcoes={setorOperacionalKey:l.setorOperacionalKey};});
+  }
+  if(modo==='transf'){
+    const grupos=new Map();
+    linhas.forEach((l,i)=>{if(!l.produtoKey)return;const k=String(l.produtoKey);if(!grupos.has(k))grupos.set(k,[]);grupos.get(k).push(i);});
+    for(const [produto,indices] of grupos){
+      const resp=await _bluesoftGetSomenteLeitura('/api/comercial/produtos/transformacao?produtoKey='+encodeURIComponent(produto),cfg);
+      const lista=Array.isArray(resp)?resp:resp&&Array.isArray(resp.data)?resp.data:null;
+      if(!lista)throw new functions.https.HttpsError('failed-precondition','Resposta de transformação inesperada para produto '+produto+'.');
+      for(const i of indices){
+        const l=linhas[i],chave=String(l.transformacaoKey||'');
+        if(chave){if(!lista.some(x=>String(x.transformacaoKey)===chave))resultados[i]={ok:false,erro:'Transformação não cadastrada para o produto '+produto+'.'};else resultados[i].detalhe='Transformação vinculada ao produto confirmada na BlueSoft.';}
+        else if(lista.length!==1)resultados[i]={ok:false,erro:lista.length?'Há várias transformações; informe transformacaoKey.':'Não há transformação cadastrada.'};
+        else {const encontrada=lista[0]&&lista[0].transformacaoKey;if(!_eopCheckNumero(encontrada))resultados[i]={ok:false,erro:'Transformação encontrada sem código válido; confira o cadastro na BlueSoft.'};else resultados[i]={ok:true,detalhe:'Transformação única encontrada e código preenchido pela BlueSoft.',correcoes:{...(l.enderecoSetor?{setorOperacionalKey:l.setorOperacionalKey}:{}),transformacaoKey:Number(encontrada)}};}
+      }
+    }
+    linhas.forEach((l,i)=>{if(!l.produtoKey&&l.transformacaoKey)resultados[i]={ok:false,erro:'Informe produtoKey para conferir a transformação cadastrada na BlueSoft.'};});
+  }
+  if(modo==='end'){
+    const consulta = await _eopConsultarPaletesPagina(cfg,loja.bluesoftLojaKey,50);
+    const catalogo = await _eopCatalogoEnderecosLogisticos(cfg,loja.bluesoftLojaKey);
+    linhas.forEach((l,i)=>{
+      const palete=consulta.paletes.get(String(Number(l.paleteKey)));
+      if (!palete) {
+        resultados[i]={ok:false,erro:consulta.completa?'Palete não consta entre os paletes a endereçar na BlueSoft.':'Palete não encontrado nas primeiras 500 posições consultadas. Não é seguro confirmar sua disponibilidade.'};
+        return;
+      }
+      // Sugestão do WMS é só informativa — nunca bloqueia e nunca substitui o
+      // destino escolhido. A BlueSoft decide elegibilidade/capacidade no POST
+      // (409/422), não esta pré-validação.
+      const sugeridoKey=Number(palete.enderecoDeDestinoKey||0)||null;
+      const sugeridoFisico=String(palete.enderecoDeDestino||'').trim()||null;
+      const informado=String(l.enderecoLogisticoKey).trim();
+      if(_eopCheckNumero(informado)){
+        resultados[i]={ok:true,detalhe:'Chave numérica informada diretamente ('+informado+').'+(sugeridoFisico?' Sugestão da BlueSoft para este palete: '+sugeridoFisico+' ('+sugeridoKey+').':'')+' A BlueSoft validará elegibilidade e capacidade no POST (409/422).'};
+        return;
+      }
+      if(/^\d+(?:\.\d+)+$/.test(informado)){
+        const resolvido=catalogo.get(informado);
+        if(resolvido){
+          resultados[i]={ok:true,detalhe:'Endereço físico "'+informado+'" localizado no catálogo de endereços logísticos da loja (chave '+resolvido+').'+(sugeridoFisico&&sugeridoFisico!==informado?' Sugestão da BlueSoft para este palete: '+sugeridoFisico+' ('+sugeridoKey+').':'')+' A BlueSoft validará elegibilidade e capacidade no POST (409/422).',correcoes:{enderecoLogisticoKey:resolvido}};
+        } else {
+          resultados[i]={ok:false,erro:'Endereço físico "'+informado+'" não encontrado no catálogo de endereços logísticos desta loja (GET /api/wms/ajuste-estoque-logistico).'+(sugeridoFisico?' Sugestão da BlueSoft para este palete: '+sugeridoFisico+' ('+sugeridoKey+').':' BlueSoft não indicou nenhuma sugestão para este palete.')+' Confirme o código físico ou informe a chave numérica (enderecoLogisticoKey) diretamente.'};
+        }
+        return;
+      }
+      resultados[i]={ok:false,erro:'enderecoLogisticoKey inválido.'};
+    });
+  }
+  return {resultados:resultados.map((r,i)=>({...r,indice:Array.isArray(data&&data.indices)?data.indices[i]:i})),confirmacaoCompleta:resultados.every(r=>r.ok),observacao:'Pré-validação consultiva. A BlueSoft pode recusar operações durante a execução por saldo, estado ou regras internas.'};
+});
+exports.listarPaletesAEnderecar = functions.region(AP_REGION).runWith({timeoutSeconds:120,memory:'256MB'}).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context); _eopRequire(acesso,'estoque-enderecamento','visualizar');
+  const loja=await _apRequireLoja(acesso,data&&data.lojaId), cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db);
+  const consulta=await _eopConsultarPaletesPagina(cfg,loja.bluesoftLojaKey,50);
+  return {itens:Array.from(consulta.paletes.values()),completa:consulta.completa,aviso:consulta.completa?'':'Consulta interrompida no limite de 5000 paletes; lista não pode ser considerada completa.'};
+});
+exports.enderecarPaletesArquivo = functions.region(AP_REGION).runWith({timeoutSeconds:540,memory:'256MB'}).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context); _eopRequire(acesso,'estoque-enderecamento','executar');
+  const loja=await _apRequireLoja(acesso,data&&data.lojaId), cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db), linhas=_eopLinhas(data), resultados=[];
+    _eopValidarLote(linhas,'end');
+  // Confirma só a EXISTÊNCIA do palete na consulta WMS paginada — o destino
+  // não precisa bater com a sugestão do WMS (ela é só uma recomendação pra
+  // aquele palete, não a lista de endereços válidos da loja). Elegibilidade e
+  // capacidade do destino ficam inteiramente a critério da BlueSoft no POST
+  // (ela recusa com 409/422 quando não aceitar).
+  const consultaPaletes = await _eopConsultarPaletesPagina(cfg,loja.bluesoftLojaKey,50);
+  for (const [i,l] of linhas.entries()) {
+    const palete=consultaPaletes.paletes.get(String(Number(l.paleteKey)));
+    if(!palete)throw new functions.https.HttpsError('failed-precondition','Linha '+(data.indices[i]+1)+': palete não encontrado em consulta WMS paginada; nenhum POST iniciado. Consulta completa: '+consultaPaletes.completa);
+  }
+  for (const [indice,l] of linhas.entries()) {
+    const resultado=await _eopExecutarUmaVez(data,loja,'end',data.indices[indice],l,async()=>{
+      const paleteKey=Number(l.paleteKey||l.capa||l.palete), novoEndereco=Number(l.enderecoLogisticoKey||l.novoEndereco||l.enderecoDestinoKey);
+      if (!(paleteKey>0) || !(novoEndereco>0)) throw new Error('Informe paleteKey/capa e enderecoLogisticoKey.');
+      const payload={lojaKey:loja.bluesoftLojaKey,paleteKey:paleteKey,novoEndereco:novoEndereco};
+      if (l.paleteKeyParaAglutinar) payload.paleteKeyParaAglutinar=Number(l.paleteKeyParaAglutinar);
+      // ACHADO AO VIVO (2026-10-09): um lote real de 42 paletes voltou HTTP 200 pra
+      // todos, mas uma consulta de conferência (GET, só leitura) mostrou que NENHUM
+      // palete realmente mudou de endereço na BlueSoft — continuavam na própria
+      // lista de pendentes, no enderecoLogisticoKey de origem. A planilha nunca traz
+      // logisticaLoteItemKey/quantidadeEnderecar/gtin (não existe coluna pra isso),
+      // então `itens` nunca era enviado — e sem ele, a BlueSoft parece aceitar o
+      // POST sem de fato mover o palete (ela não sabe qual item do palete mover).
+      // A própria consulta de paletes pendentes (a mesma usada pra confirmar que o
+      // palete existe, logo acima) já devolve esses 3 campos por palete — usa-los
+      // automaticamente em vez de depender da planilha informar, mesma fonte já
+      // confiável usada no resto desta correção.
+      const paleteConsultado=consultaPaletes.paletes.get(String(paleteKey));
+      if (l.logisticaLoteItemKey && l.quantidadeEnderecar && l.gtin) {
+        payload.itens=[{logisticaLoteItemKey:Number(l.logisticaLoteItemKey),quantidadeEnderecar:Number(l.quantidadeEnderecar),gtin:Number(l.gtin)}];
+      } else if (paleteConsultado && _eopCheckNumero(paleteConsultado.logisticaLoteItemKey) && _eopCheckNumero(paleteConsultado.produtoGtin) && Number(paleteConsultado.quantidadeDisponivelEmUnidades)>0) {
+        payload.itens=[{logisticaLoteItemKey:Number(paleteConsultado.logisticaLoteItemKey),quantidadeEnderecar:Number(paleteConsultado.quantidadeDisponivelEmUnidades),gtin:Number(paleteConsultado.produtoGtin)}];
+      }
+      const r=await _eopPost('/api/wms/enderecamento-de-paletes',cfg,payload);
+      // CORREÇÃO (2026-10-09): antes, qualquer resposta HTTP 2xx virava "Endereçado"
+      // mesmo sem nenhuma confirmação real — foi assim que os 42 paletes acima
+      // ficaram marcados "concluído" sem terem sido movidos de verdade. Agora só é
+      // sucesso se a resposta trouxer este palete de volta (array com paleteKey
+      // batendo); qualquer outro formato vira resultado incerto (conferência
+      // necessária), nunca sucesso presumido.
+      const linhaConfirmada=Array.isArray(r)?r.find(x=>x&&Number(x.paleteKey)===paleteKey):null;
+      // Grava o corpo cru da resposta (truncado) no erro persistido — sem isso,
+      // um caso "sem confirmação" ficava sem nenhuma pista do que a BlueSoft
+      // realmente devolveu, exigindo investigar de novo às cegas toda vez.
+      if(!linhaConfirmada) throw new Error('BlueSoft respondeu, mas a resposta não confirma o endereçamento deste palete (formato inesperado ou palete ausente dela). Resposta recebida: '+JSON.stringify(r).slice(0,500)+'. Resultado tratado como incerto — confira na BlueSoft antes de tentar de novo.');
+      return {paleteKey,detalhe:String(linhaConfirmada.enderecoDescritivo||'Endereçado em '+novoEndereco),enderecoLogisticoKeyConfirmado:linhaConfirmada.enderecoLogisticoKey??null};
+    });
+    resultados.push(resultado);
+  }
+  return {resultados,sucessos:resultados.filter(x=>x.ok).length,erros:resultados.filter(x=>!x.ok).length};
+});
+exports.listarMotivosTroca = functions.region(AP_REGION).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context); _eopRequire(acesso,'estoque-lote-trocas','visualizar');
+  const loja=await _apRequireLoja(acesso,data&&data.lojaId), cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db);
+  const resp=await _bluesoftGetSomenteLeitura('/api/estoque/motivos-de-troca',cfg);
+  return {itens:Array.isArray(resp)?resp:(resp&&Array.isArray(resp.data)?resp.data:[])};
+});
+// Envia todos os produtos do arquivo no mesmo pedido de lote de trocas.
+// A reserva de TODAS as linhas ocorre em uma transação única: nenhuma linha
+// pode ser reenviada separadamente se o POST tiver resultado desconhecido.
+async function _eopExecutarTrocaAgrupadaUmaVez(data, loja, linhas, cfg) {
+  const operacaoId=String(data&&data.operacaoId||'');
+  if(!/^[a-zA-Z0-9_-]{12,90}$/.test(operacaoId))throw new functions.https.HttpsError('invalid-argument','Identificador da operação obrigatório.');
+  const crypto=require('crypto');
+  const indices=data.indices;
+  const refs=indices.map(i=>db.collection('dt_estoque_operacoes_execucoes').doc(crypto.createHash('sha256').update(String(loja.id)+':troca:'+operacaoId+':'+i).digest('hex')));
+  const hashes=linhas.map(l=>crypto.createHash('sha256').update(JSON.stringify({loja:String(loja.id),modo:'troca',linha:l})).digest('hex'));
+  // Firestore limita transações a 500 documentos; cada lote tem no máximo 200 linhas,
+  // para reservar e concluir sem extrapolar os limites de gravação em lote.
+  if(linhas.length>200)throw new functions.https.HttpsError('invalid-argument','Para gerar um lote de trocas, importe no máximo 200 produtos por operação.');
+  const reserva=await db.runTransaction(async tx=>{
+    const snaps=[];
+    for(const ref of refs)snaps.push(await tx.get(ref));
+    if(snaps.some((snap,i)=>snap.exists&&(snap.data().hash!==hashes[i]||snap.data().status!=='concluido')))return {bloqueado:true};
+    const existentes=snaps.filter(s=>s.exists).length;
+    if(existentes===snaps.length)return {concluido:true,retornos:snaps.map(s=>s.data().retorno||{})};
+    if(existentes>0)return {bloqueado:true};
+    refs.forEach((ref,i)=>tx.create(ref,{lojaId:String(loja.id),modo:'troca',operacaoId,indice:indices[i],hash:hashes[i],status:'processando',criadoEm:admin.firestore.FieldValue.serverTimestamp()}));
+    return {novo:true};
+  });
+  if(reserva.bloqueado)return {resultados:indices.map(i=>({ok:false,requerConferencia:true,indice:i,erro:'Há movimentação anterior iniciada ou parcial. Confira a BlueSoft antes de repetir o lote.'})),sucessos:0,erros:indices.length};
+  if(reserva.concluido)return {resultados:reserva.retornos.map((r,i)=>({ok:true,jaProcessado:true,indice:indices[i],...r})),sucessos:indices.length,erros:0};
+  try{
+    const produtos=linhas.map(l=>({gtin:Number(l.gtin),quantidade:Number(l.quantidade),motivoTrocaKey:Number(l.motivoTrocaKey),setorOperacionalKey:Number(l.setorOperacionalKey)}));
+    const resposta=await _eopPost('/api/estoque/troca/lote-troca',cfg,{lojaKey:loja.bluesoftLojaKey,produtos});
+    const retorno={detalhe:'Lote gerado com '+produtos.length+' produto(s).',loteTrocaKeys:(resposta&&resposta.loteTrocaKeys)||[],nfNumero:resposta&&resposta.nfNumero};
+    const lote=db.batch();refs.forEach(ref=>lote.update(ref,{status:'concluido',retorno,finalizadoEm:admin.firestore.FieldValue.serverTimestamp()}));await lote.commit();
+    return {resultados:indices.map(i=>({ok:true,indice:i,...retorno})),sucessos:indices.length,erros:0};
+  }catch(e){
+    const lote=db.batch();refs.forEach(ref=>lote.update(ref,{status:'conferencia_necessaria',erro:String(e.message||e).slice(0,700),finalizadoEm:admin.firestore.FieldValue.serverTimestamp()}));await lote.commit().catch(()=>{});
+    return {resultados:indices.map(i=>({ok:false,indice:i,requerConferencia:true,erro:'Resultado do lote não confirmado. Confira a BlueSoft: '+String(e.message||e).slice(0,400)})),sucessos:0,erros:indices.length};
+  }
+}
+exports.gerarLoteTrocasArquivo = functions.region(AP_REGION).runWith({timeoutSeconds:540,memory:'256MB'}).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context); _eopRequire(acesso,'estoque-lote-trocas','executar');
+  const loja=await _apRequireLoja(acesso,data&&data.lojaId), cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db), linhas=_eopLinhas(data);
+  await _eopResolverSetores(linhas,'troca',loja,cfg);
+  _eopValidarLote(linhas,'troca');
+  await _eopConferirCadastroAntesPost(linhas,'troca',cfg);
+  if(data&&data.finalidade==='descarte'){
+    const respostaMotivos=await _bluesoftGetSomenteLeitura('/api/estoque/motivos-de-troca',cfg);
+    const motivos=Array.isArray(respostaMotivos)?respostaMotivos:respostaMotivos&&respostaMotivos.data;
+    if(!Array.isArray(motivos))throw new functions.https.HttpsError('failed-precondition','Não foi possível confirmar motivos de descarte na BlueSoft.');
+    const autorizados=new Set(motivos.filter(m=>/descarte|perda|quebra/i.test(String(m.nome||''))).map(m=>String(m.motivoTrocaKey)));
+    if(!autorizados.size)throw new functions.https.HttpsError('failed-precondition','Não há motivos identificados como descarte/perda/quebra. Confira o cadastro na BlueSoft.');
+    if(linhas.some(l=>!autorizados.has(String(l.motivoTrocaKey))))throw new functions.https.HttpsError('failed-precondition','Um ou mais produtos têm motivo diferente de descarte/perda/quebra; nenhum POST iniciado.');
+  } else if(data&&data.finalidade&&data.finalidade!=='troca')throw new functions.https.HttpsError('invalid-argument','Finalidade inválida.');
+  return _eopExecutarTrocaAgrupadaUmaVez(data,loja,linhas,cfg);
+});
+exports.transformarProdutosArquivo = functions.region(AP_REGION).runWith({timeoutSeconds:540,memory:'256MB'}).https.onCall(async (data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError('unauthenticated','Faça login novamente.');
+  const acesso=await acessoSolicitante(context); _eopRequire(acesso,'estoque-transformacao-api','executar');
+  const loja=await _apRequireLoja(acesso,data&&data.lojaId), cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db), linhas=_eopLinhas(data), resultados=[];
+  await _eopResolverSetores(linhas,'transf',loja,cfg);
+  _eopValidarLote(linhas,'transf');
+  await _eopConferirCadastroAntesPost(linhas,'transf',cfg);
+  for (const [indice,l] of linhas.entries()) {
+    const resultado=await _eopExecutarUmaVez(data,loja,'transf',data.indices[indice],l,async()=>{
+      let transformacaoKey=Number(l.transformacaoKey||0);
+      if (!(transformacaoKey>0) && Number(l.produtoKey)>0) {
+        const resp=await _bluesoftGetSomenteLeitura('/api/comercial/produtos/transformacao?produtoKey='+encodeURIComponent(Number(l.produtoKey)),cfg);
+        const lista=Array.isArray(resp)?resp:(resp&&Array.isArray(resp.data)?resp.data:[]);
+        if (lista.length!==1) throw new Error(lista.length?'Produto possui mais de uma transformação; informe transformacaoKey.':'Nenhuma transformação cadastrada para produtoKey '+l.produtoKey+'.');
+        transformacaoKey=Number(lista[0].transformacaoKey);
+      }
+      const localDeEstoqueKey=Number(l.localDeEstoqueKey), quantidadeTransformacao=Number(l.quantidadeTransformacao||l.quantidade), origem=String(l.origemDaTransformacao||'').trim().toUpperCase();
+      if (!(transformacaoKey>0)||!(localDeEstoqueKey>0)||!(quantidadeTransformacao>0)||!['ESTOQUE_VENDA','ESTOQUE_TROCA'].includes(origem)) throw new Error('Obrigatórios: transformacaoKey (ou produtoKey único), localDeEstoqueKey, quantidadeTransformacao e origemDaTransformacao.');
+      const payload={lojaKey:loja.bluesoftLojaKey,localDeEstoqueKey,formaGeracaoDaTransformacao:'COMUM',quantidadeTransformacao,origemDaTransformacao:origem};
+      if (Number(l.setorOperacionalKey)>0) payload.setorOperacionalKey=Number(l.setorOperacionalKey);
+      await _eopPost('/api/comercial/produtos/transformacao/'+transformacaoKey+'/transformar',cfg,payload);
+      return {detalhe:'Transformação '+transformacaoKey+' concluída'};
+    });
+    resultados.push(resultado);
+  }
+  return {resultados,sucessos:resultados.filter(x=>x.ok).length,erros:resultados.filter(x=>!x.ok).length};
+});
+
+// Consulta auditável de lançamentos de troca/descarte; esta função não baixa nem estorna estoque.
+exports.consultarTrocasDescarte = functions.region(AP_REGION).https.onCall(async (data,context)=>{
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login.');
+  const acesso=await acessoSolicitante(context);_eopRequire(acesso,'estoque-lote-trocas','visualizar');
+  const loja=await _apRequireLoja(acesso,data&&data.lojaId);
+  const cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db);
+  const pagina=Number(data&&data.currentPage||0);
+  if(!Number.isSafeInteger(pagina)||pagina<0||pagina>10000)throw new functions.https.HttpsError('invalid-argument','Página inválida.');
+  return await _bluesoftGetSomenteLeitura('/api/estoque/trocas?currentPage='+pagina+'&pageSize=100&lojaKey='+encodeURIComponent(loja.bluesoftLojaKey),cfg);
+});
+
+// Exclusivamente GET: consulta de documentos fiscais e devoluções já criadas na BlueSoft.
+// A emissão, recusa, estorno fiscal ou baixa nunca acontece nesta função.
+exports.consultarDevolucoesEstoque = functions.region(AP_REGION).runWith({timeoutSeconds:120,memory:'256MB'}).https.onCall(async (data,context)=>{
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login.');
+  const acesso=await acessoSolicitante(context);
+  _eopRequire(acesso,'estoque-lote-trocas','visualizar');
+  const loja=await _apRequireLoja(acesso,data&&data.lojaId);
+  const cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db);
+  const tipo=String(data&&data.tipo||'');
+  const pagina=Number(data&&data.currentPage||0);
+  if(!Number.isSafeInteger(pagina)||pagina<0||pagina>10000)throw new functions.https.HttpsError('invalid-argument','Página inválida.');
+  if(tipo==='monitoramento'){
+    const requestId=String(data&&data.requestId||'');
+    if(!/^[a-zA-Z0-9_-]{1,128}$/.test(requestId))throw new functions.https.HttpsError('invalid-argument','requestId inválido.');
+    return {tipo,resultado:await _bluesoftGetSomenteLeitura('/monitoramento/async/'+encodeURIComponent(requestId),cfg)};
+  }
+  const paths={compras:'/api/estoques/notas-fiscais',entre_lojas:'/api/estoque/operacoes-entre-lojas/devolucao-troca'};
+  if(!Object.prototype.hasOwnProperty.call(paths,tipo))throw new functions.https.HttpsError('invalid-argument','Tipo de devolução inválido.');
+  const path=paths[tipo]+'?currentPage='+pagina+'&pageSize=100&lojaKey='+encodeURIComponent(loja.bluesoftLojaKey);
+  const resultado=await _bluesoftGetSomenteLeitura(path,cfg);
+  if(!resultado||(!Array.isArray(resultado)&&!Array.isArray(resultado.data)))throw new functions.https.HttpsError('failed-precondition','Consulta não retornou dados no formato esperado; não inferir ausência de devoluções.');
+  return {tipo,resultado,observacao:tipo==='compras'?'Consulta geral de notas fiscais; identificar devoluções conforme os campos fiscais disponíveis na conta.':'Consulta das notas elegíveis para devolução entre lojas.'};
+});
+
+// Estorno de um movimento previamente lançado: requer confirmação explícita no cliente,
+// e trava persistente. A BlueSoft pode impedir estorno de movimento com nota fiscal.
+exports.estornarTrocaDescarte = functions.region(AP_REGION).runWith({timeoutSeconds:120,memory:'256MB'}).https.onCall(async(data,context)=>{
+  if(!context.auth)throw new functions.https.HttpsError('unauthenticated','Faça login.');
+  const acesso=await acessoSolicitante(context);_eopRequire(acesso,'estoque-lote-trocas','executar');
+  const loja=await _apRequireLoja(acesso,data&&data.lojaId);
+  const movimento=Number(data&&data.movimentoEstoqueKey);
+  if(!Number.isSafeInteger(movimento)||movimento<=0||data.confirmacao!=='CONFIRMO ESTORNO')throw new functions.https.HttpsError('invalid-argument','Movimento válido e confirmação explícita são obrigatórios.');
+  const cfg=await _lerConfigIntegracaoApiEstoque(loja.id,db);
+  const crypto=require('crypto');
+  const id=crypto.createHash('sha256').update(String(loja.id)+':estorno:'+movimento).digest('hex');
+  const ref=db.collection('dt_estoque_operacoes_execucoes').doc(id);
+  const anterior=await db.runTransaction(async tx=>{const snap=await tx.get(ref);if(snap.exists)return snap.data();tx.create(ref,{lojaId:String(loja.id),modo:'estorno',movimentoEstoqueKey:movimento,status:'processando',criadoEm:admin.firestore.FieldValue.serverTimestamp()});return null;});
+  if(anterior)return {ok:anterior.status==='concluido',jaProcessado:true,status:anterior.status,detalhe:'Estorno anterior já iniciado. Não repetido.'};
+  try{
+    const baseUrl=_baseUrlBluesoftEstoque(cfg);
+    if(!baseUrl||!cfg.token)throw Object.assign(new Error('Configuração BlueSoft incompleta.'),{apTipo:'rejeitado'});
+    let resposta;
+    try{resposta=await fetch(baseUrl.replace(/\/+$/,'')+'/api/estoque/troca/lote-troca/'+movimento,{method:'DELETE',headers:{'x-CustomToken':String(cfg.token)}});}
+    catch(e){throw Object.assign(new Error('Falha de rede; resultado do estorno incerto.'),{apTipo:'incerto'});}
+    if(!resposta.ok)throw Object.assign(new Error('BlueSoft recusou o estorno (HTTP '+resposta.status+').'),{apTipo:resposta.status===409||resposta.status===422?'rejeitado':'incerto'});
+    await ref.update({status:'concluido',finalizadoEm:admin.firestore.FieldValue.serverTimestamp()});
+    return {ok:true,status:'concluido',movimentoEstoqueKey:movimento};
+  }catch(e){const status=e.apTipo==='rejeitado'?'rejeitado':'conferencia_necessaria';await ref.update({status,erro:String(e.message||e).slice(0,500),finalizadoEm:admin.firestore.FieldValue.serverTimestamp()}).catch(()=>{});return {ok:false,status,requerConferencia:status!=='rejeitado',erro:String(e.message||e)};}
+});

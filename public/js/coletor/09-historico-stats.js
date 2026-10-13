@@ -66,7 +66,7 @@ function renderHistorico() {
         <div style="font-size:.68rem;color:var(--muted);margin-top:2px">
           📍 ${escHTML(c.endereco)} &nbsp;·&nbsp; CP ${escHTML(c.capa)}${c.lote_produto || c.loteProduto ? ` &nbsp;·&nbsp; Lote ${escHTML(c.lote_produto || c.loteProduto)}` : ''}${c.validade ? ` &nbsp;·&nbsp; Val ${escHTML(c.validade)}` : ''}
         </div>
-        ${div ? `<div style="font-size:.68rem;color:var(--warn);margin-top:2px">Esperado: ${c.quantidade_esperada} · Contado: ${c.quantidade}</div>` : ''}
+        ${div ? `<div style="font-size:.68rem;color:var(--warn);margin-top:2px">⚠️ Marcado para conferência pelo Analista.</div>` : ''}
         ${c.bateu_auditoria ? `<div style="font-size:.68rem;color:var(--success);margin-top:2px;font-weight:700">✅ Bateu com auditoria</div>` : ''}
       </div>
       <div style="text-align:right;flex-shrink:0">

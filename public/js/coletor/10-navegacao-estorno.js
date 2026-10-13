@@ -119,11 +119,15 @@ async function renderEstorno() {
             </div>` : ''}
           </div>
           <div style="flex-shrink:0">
-            ${!isEstornada ? `<button onclick="estornarContagem('${c._docId}', ${!!c._local})"
-                  style="background:rgba(255,71,87,.12);border:1px solid rgba(255,71,87,.3);color:#ff4757;
-                         border-radius:8px;padding:6px 12px;font-size:.72rem;font-weight:700;cursor:pointer;white-space:nowrap">
-                  ↩ Estornar
-                </button>` : `<span style="font-size:.65rem;color:var(--muted);font-weight:700">ESTORNADA</span>`}
+            ${isEstornada
+              ? `<span style="font-size:.65rem;color:var(--muted);font-weight:700">ESTORNADA</span>`
+              : c._local
+                ? `<button onclick="estornarContagem('${c._docId}', ${!!c._local})"
+                      style="background:rgba(255,71,87,.12);border:1px solid rgba(255,71,87,.3);color:#ff4757;
+                             border-radius:8px;padding:6px 12px;font-size:.72rem;font-weight:700;cursor:pointer;white-space:nowrap">
+                      ↩ Estornar
+                    </button>`
+                : `<span style="font-size:.65rem;color:var(--success);font-weight:700" title="Já enviada pro Analista — não pode mais ser estornada">✅ Enviada</span>`}
           </div>
         </div>
       </div>`;
@@ -150,6 +154,13 @@ async function renderEstorno() {
  */
 async function estornarContagem(docId, isLocal = false) {
   var _APP$operador2;
+  // Contagem já enviada (ver enviarFilaPendente/enviarFilaManual) fica
+  // travada — pedido ao vivo 2026-09-29: depois de enviada, o Analista já
+  // pode estar tratando o endereço, então não pode mais ser estornada.
+  if (!isLocal) {
+    toast('🔒 Contagem já enviada pro Analista — não pode mais ser estornada.', 'e');
+    return;
+  }
   const op = ((_APP$operador2 = APP.operador) === null || _APP$operador2 === void 0 ? void 0 : _APP$operador2.name) || 'Operador';
   const confirmado = await _confirmarEstorno(docId);
   if (!confirmado) return;

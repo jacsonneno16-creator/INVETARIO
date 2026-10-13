@@ -523,6 +523,29 @@ function confirmarEndereco() {
   _prosseguirComEndereco(valNorm);
 }
 
+/**
+ * Ajusta os rótulos da etapa de Produto (GTIN/DUN) conforme o endereço exige
+ * ou não DUN obrigatório. Pedido ao vivo 2026-09-29: Produto agora é a 2ª
+ * etapa do fluxo (logo após o endereço, antes da Capa/Palete) — este ajuste
+ * de rótulo, que antes acontecia em confirmarCapa() (ETAPA 2→3 antiga),
+ * precisa acontecer aqui, assim que o endereço é confirmado.
+ */
+function _aplicarLabelGtin() {
+  if (APP.atual.somentesDun) {
+    document.getElementById('gtin-label').textContent = '🔢 Etapa 2 — DUN (obrigatório)';
+    document.getElementById('gtin-sublabel').textContent = 'Este endereço só aceita DUN';
+    const _glt = document.getElementById('gtin-label-txt');
+    if (_glt) _glt.textContent = 'DUN (obrigatório)';
+    document.getElementById('f-gtin').placeholder = 'DUN (14 dígitos)';
+  } else {
+    document.getElementById('gtin-label').textContent = '🔢 Etapa 2 — GTIN / DUN';
+    document.getElementById('gtin-sublabel').textContent = 'Bipe ou digite o código';
+    const _glt2 = document.getElementById('gtin-label-txt');
+    if (_glt2) _glt2.textContent = 'GTIN / DUN';
+    document.getElementById('f-gtin').placeholder = 'GTIN (13) ou DUN (14)';
+  }
+}
+
 /** Prossegue para a etapa 2 após validar o endereço */
 function _prosseguirComEndereco(valNorm) {
   var _APP$endCapacidade2;
@@ -553,11 +576,13 @@ function _prosseguirComEndereco(valNorm) {
       if (_loteVerificarOferta(valNorm, valNorm, capRec)) return; // painel lote assumiu o controle
     }
     fb.innerHTML = `<div class="fb ok">✓ Endereço confirmado — iniciando nova rodada</div>`;
-    APP.atual.step = APP.atual.enderecoVirtual ? 3 : 2;
+    // Produto é a etapa 2 pra endereço físico e virtual (virtual só pula a
+    // Capa/Palete, não o Produto).
+    APP.atual.step = 2;
     beepSuave();
-    const el2 = document.getElementById('cp-proximo-hint');
-    const el3 = document.getElementById('f-capa');
-    const el4 = document.getElementById('fb-capa');
+    _aplicarLabelGtin();
+    const el3 = document.getElementById('f-gtin');
+    const el4 = document.getElementById('fb-gtin');
     if (el3) el3.value = '';
     if (el4) el4.innerHTML = '';
     updateSteps();
@@ -576,8 +601,9 @@ function _prosseguirComEndereco(valNorm) {
     APP.atual.capa = '';
     APP.atual.loteProduto = '';
     APP.atual.validade = '';
-    APP.atual.step = 3;
+    APP.atual.step = 2;
     if (fb) fb.innerHTML = '<div class="fb ok">✓ Endereço virtual — informe produto e quantidade</div>';
+    _aplicarLabelGtin();
     const fg = document.getElementById('f-gtin');
     if (fg) fg.value = '';
     const fbg = document.getElementById('fb-gtin');
@@ -615,13 +641,9 @@ function _prosseguirComEndereco(valNorm) {
   APP.atual.somentesDun = valNorm.includes('14.1520');
   APP.atual.step = 2;
   beepSuave();
-  const el2 = document.getElementById('cp-proximo-hint');
-  const el3 = document.getElementById('f-capa');
-  const el4 = document.getElementById('fb-capa');
-  if (el2) {
-    const range = APP.capaRange;
-    el2.textContent = range !== null && range !== void 0 && range.min && range !== null && range !== void 0 && range.max ? `Range: ${range.min}–${range.max} · Próximo: ${APP.proximoCapa}` : 'Próximo disponível: ' + APP.proximoCapa;
-  }
+  _aplicarLabelGtin();
+  const el3 = document.getElementById('f-gtin');
+  const el4 = document.getElementById('fb-gtin');
   if (el3) el3.value = '';
   if (el4) el4.innerHTML = '';
   updateSteps();
@@ -630,7 +652,7 @@ function _prosseguirComEndereco(valNorm) {
   if (_vaziow && !APP.lote) _vaziow.style.display = '';
   setTimeout(() => {
     try {
-      document.getElementById('f-capa').focus();
+      document.getElementById('f-gtin').focus();
     } catch (e) {
       console.warn("[Erro tratado]", e);
     }
@@ -855,7 +877,7 @@ function _loteSetPainel(ativo) {
   const painel = document.getElementById('painel-lote');
   const steps = document.getElementById('steps');
   // step-fields que devem sumir quando lote estiver ativo
-  const stepIds = ['step-capa', 'step-gtin', 'step-validade', 'step-quantidade', 'bloco-endereco-travado'];
+  const stepIds = ['step-gtin', 'step-capa', 'step-vencimento', 'step-validade', 'step-quantidade', 'bloco-endereco-travado'];
   const btVazio = document.getElementById('btn-vazio-wrap');
   if (ativo) {
     if (painel) painel.style.display = '';
@@ -935,10 +957,11 @@ function loteRecusar() {
   // Operador prefere modo manual — fechar painel e continuar fluxo normal
   APP.lote = null;
   _loteSetPainel(false);
-  // Redirecionar para step 2 (capa)
+  // Redirecionar para step 2 (produto/GTIN)
   APP.atual.step = 2;
+  _aplicarLabelGtin();
   updateSteps();
-  const el = document.getElementById('f-capa');
+  const el = document.getElementById('f-gtin');
   if (el) {
     el.value = '';
     el.disabled = false;
@@ -1052,6 +1075,7 @@ function _buscarProduto(gtin) {
 // ──────────────────────────────────────────────────────────────────
 //  TELA QTD PADRÃO
 // ──────────────────────────────────────────────────────────────────
+// CONTAGEM CEGA V4: o modo lote nunca exibe quantidade esperada do sistema; só a quantidade informada pelo operador.
 function loteConfirmarQtdPadrao() {
   var _document$getElementB8;
   const val = parseInt((_document$getElementB8 = document.getElementById('lote-f-qtd-padrao')) === null || _document$getElementB8 === void 0 ? void 0 : _document$getElementB8.value);
@@ -1636,9 +1660,11 @@ function resetEndereco() {
   APP.atual.gtin = '';
   APP.atual.produtoAtual = null;
   APP.atual.validade = '';
+  APP.atual.loteProduto = '';
+  APP.atual.dataValidade = '';
   APP.atual.quantidade = 0;
   _endVerif = null;
-  ['f-endereco', 'f-capa', 'f-gtin', 'f-validade'].forEach(id => {
+  ['f-endereco', 'f-capa', 'f-gtin', 'f-validade', 'f-vencimento'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.value = '';
@@ -1646,11 +1672,11 @@ function resetEndereco() {
       el.className = el.className.replace(/\bfield-(ok|err|warn)\b/g, '').trim();
     }
   });
-  ['fb-endereco', 'fb-capa', 'fb-gtin', 'fb-validade'].forEach(id => {
+  ['fb-endereco', 'fb-capa', 'fb-gtin', 'fb-validade', 'fb-vencimento'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = '';
   });
-  ['sf-val-endereco', 'sf-val-capa', 'sf-val-gtin', 'sf-val-validade'].forEach(id => {
+  ['sf-val-endereco', 'sf-val-capa', 'sf-val-gtin', 'sf-val-validade', 'sf-val-vencimento'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.textContent = '';

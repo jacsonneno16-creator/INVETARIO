@@ -3,7 +3,10 @@
   "private": true,
   "description": "Verificação real (não regex) de firestore.rules via Firestore Rules Unit Testing + emulador local. Ver rules-tests/README.md.",
   "scripts": {
-    "test:rules": "firebase emulators:exec --only firestore \"node rules-tests/verify.js\""
+    "test:rules": "firebase emulators:exec --only firestore \"node rules-tests/verify.js\"",
+    "dev": "node scripts/dev-emulators.js",
+    "dev:clean": "firebase emulators:start --only hosting,auth,firestore,functions",
+    "dev:export": "firebase emulators:export ./dados-emulador --force"
   },
   "devDependencies": {
     "@firebase/rules-unit-testing": "^3.0.4"

@@ -65,6 +65,16 @@ function criarFirestoreFake() {
         });
         return { docs, empty: docs.length === 0 };
       },
+      where(campo, op, valorEsperado) {
+        return {
+          async get() {
+            if (op !== '==') throw new Error('fake where só suporta ==');
+            const snap = await colRef(prefixo).get();
+            const docs = snap.docs.filter(d => (d.data() || {})[campo] === valorEsperado);
+            return { docs, empty: docs.length === 0 };
+          },
+        };
+      },
     };
   }
   return {
@@ -195,6 +205,84 @@ test('_sincronizarAgendaBiLoja: cada item carrega código do produto, custo unit
   assert.equal(item.quantidadePendente, 130, '100 + 30 das duas parcelas');
   assert.equal(item.quantidadeRecebida, 30, '20 + 10 das duas parcelas');
   assert.equal(item.valorPendente, 650, '500 + 150 das duas parcelas');
+});
+
+
+test('_sincronizarAgendaBiLoja: pedido que ficou 100% recebido atualiza a agenda existente sem criar histórico novo', async () => {
+  const { fakeDb, internals } = carregarComFirestoreFake();
+  fakeDb._dump().set('lojas/loja1/recebimento_agendamentos/a1', {
+    numeroPedido: '900', origem: 'bi', itensPedido: [{produtoKey:'77', quantidadePendente:10, quantidadeRecebida:0}],
+  });
+  const registros = [
+    { loja_key: 14, pedido_key: 900, qtd_unidades_pendentes: 0, qtd_unidades_recebidas: 10, valor_pendente: 0, custo_unitario: 7, fornecedor: 'Fornecedor Final', comprador: 'Ana', produto_key: 77, descricao: 'Filme' },
+    { loja_key: 14, pedido_key: 901, qtd_unidades_pendentes: 0, qtd_unidades_recebidas: 5, valor_pendente: 0, custo_unitario: 3, fornecedor: 'Fornecedor Histórico', comprador: 'Ana', produto_key: 88, descricao: 'Outro' },
+  ];
+  const r = await internals._sincronizarAgendaBiLoja('loja1', {id:'loja1',nome:'Loja 1',bluesoft_loja_key:14}, registros);
+  assert.equal(r.totalPedidosPendentes, 0);
+  assert.equal(fakeDb._dump().get('lojas/loja1/recebimento_agendamentos/a1').itensPedido[0].quantidadeRecebida, 10);
+  const criados901=[...fakeDb._dump().values()].filter(x=>x&&x.numeroPedido==='901');
+  assert.equal(criados901.length,0,'pedido já recebido sem agenda anterior não deve poluir a agenda com histórico novo');
+});
+
+test('_sincronizarRecebimentoAgendaNoPcp: espelha quantidade e só grava recebidoEm quando existe evidência real', async () => {
+  const { fakeDb, internals } = carregarComFirestoreFake();
+  fakeDb._dump().set('lojas/loja1/pcp_agendamentos/req_r1', {
+    numeroCompra:'PED-1', prodKey:'42', quantidade:100, quantidadeRecebida:0, status:'prevista',
+  });
+  await internals._sincronizarRecebimentoAgendaNoPcp('loja1', {
+    numeroPedido:'PED-1', itensPedido:[{produtoKey:'42', quantidadeRecebida:60}],
+  }, fakeDb);
+  let pcp=fakeDb._dump().get('lojas/loja1/pcp_agendamentos/req_r1');
+  assert.equal(pcp.quantidadeRecebida,60);
+  assert.equal(pcp.recebidoEm,undefined,'data prevista/sync não pode virar recebimento real');
+  assert.equal(pcp.status,'prevista');
+
+  await internals._sincronizarRecebimentoAgendaNoPcp('loja1', {
+    numeroPedido:'PED-1', recebidoEm:'2026-09-27T14:00:00.000Z',
+    itensPedido:[{produtoKey:'42', quantidadeRecebida:100}],
+  }, fakeDb);
+  pcp=fakeDb._dump().get('lojas/loja1/pcp_agendamentos/req_r1');
+  assert.equal(pcp.quantidadeRecebida,100);
+  assert.equal(pcp.recebidoEm,'2026-09-27T14:00:00.000Z');
+  assert.equal(pcp.status,'finalizada');
+});
+
+
+test('_sincronizarRecebimentoFisicoNaAgenda: finalização física vinculada grava o horário real na agenda e permite fechar o PCP', async () => {
+  const { fakeDb, internals } = carregarComFirestoreFake();
+  fakeDb._dump().set('lojas/loja1/recebimento_agendamentos/ag1', {
+    numeroPedido:'PED-77', fornecedorNome:'Fornecedor X', status:'AGENDADO',
+    itensPedido:[{produtoKey:'42', quantidadeRecebida:100}],
+  });
+  fakeDb._dump().set('lojas/loja1/pcp_agendamentos/req_r77', {
+    numeroCompra:'PED-77', prodKey:'42', quantidade:100, quantidadeRecebida:0, status:'prevista',
+  });
+  const recebidoEm='2026-09-27T18:30:00.000Z';
+  const r=await internals._sincronizarRecebimentoFisicoNaAgenda('loja1', {
+    status:'FINALIZADO', numeroPedido:'PED-77', agendamentoRecebimentoId:'ag1', horaFechamentoRecebimento:recebidoEm,
+  }, 'rec1', fakeDb);
+  assert.equal(r.atualizados,1);
+  const agenda=fakeDb._dump().get('lojas/loja1/recebimento_agendamentos/ag1');
+  assert.equal(agenda.recebidoEm,recebidoEm);
+  assert.equal(agenda.horaFechamentoRecebimento,recebidoEm);
+  assert.equal(agenda.recebimentoId,'rec1');
+  assert.equal(agenda.status,'FINALIZADO');
+
+  await internals._sincronizarRecebimentoAgendaNoPcp('loja1', agenda, fakeDb);
+  const pcp=fakeDb._dump().get('lojas/loja1/pcp_agendamentos/req_r77');
+  assert.equal(pcp.quantidadeRecebida,100);
+  assert.equal(pcp.recebidoEm,recebidoEm);
+  assert.equal(pcp.status,'finalizada');
+});
+
+test('_sincronizarRecebimentoFisicoNaAgenda: sem pedido vinculado não tenta adivinhar pelo fornecedor', async () => {
+  const { fakeDb, internals } = carregarComFirestoreFake();
+  fakeDb._dump().set('lojas/loja1/recebimento_agendamentos/ag1', { numeroPedido:'PED-1', fornecedorNome:'Mesmo Fornecedor' });
+  const r=await internals._sincronizarRecebimentoFisicoNaAgenda('loja1', {
+    status:'FINALIZADO', fornecedorNome:'Mesmo Fornecedor', horaFechamentoRecebimento:'2026-09-27T18:30:00.000Z',
+  }, 'rec-sem-pedido', fakeDb);
+  assert.equal(r.atualizados,0);
+  assert.equal(fakeDb._dump().get('lojas/loja1/recebimento_agendamentos/ag1').recebidoEm,undefined);
 });
 
 test('_sincronizarAgendaBiLoja: sem nenhum pedido pendente pra loja, não grava nada e não quebra', async () => {
@@ -648,7 +736,7 @@ test('_sincronizarDevolucoesBiLoja: motivo que DISPENSA o Coletor (ex.: "Desacor
   fakeDb._dump().forEach(v => { if (Array.isArray(v.chaves) && v.chaves[0] === 'NFD1') doc = v; });
   assert.ok(doc, 'deve gravar um recebimento_recusas automático');
   assert.equal(doc.origem, 'AUTOMATICO');
-  assert.equal(doc.motivoNome, 'Desacordo com pedido');
+  assert.equal(doc.motivoNome, 'DESACORDO COM PEDIDO');
   assert.equal(doc.conferenciaStatus, 'CONFERIDO');
   assert.equal(doc.valorTotal, 40);
 });

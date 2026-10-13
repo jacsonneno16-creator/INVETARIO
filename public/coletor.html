@@ -29,13 +29,14 @@
      derrubava/trocava a sessão da outra na hora (Firebase Auth sincroniza
      entre abas por storage). Precisa vir ANTES de firebase-shared.js. -->
 <script>window.DT_FIREBASE_APP_NOME = 'coletor';</script>
-<link rel="stylesheet" href="/css/coletor.css?v=20260911-fix-inset-memor-k">
+<link rel="stylesheet" href="/css/coletor.css?v=20261006-apont-rolagem">
 <link rel="manifest" href="/manifest.webmanifest?v=20260804-1309"><meta name="theme-color" content="#0f5b3a"><script>(function(){window.DT_ERRORS=[];window.addEventListener('error',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:e.message,f:e.filename,l:e.lineno});});window.addEventListener('unhandledrejection',function(e){DT_ERRORS.push({t:new Date().toISOString(),m:String(e.reason&&e.reason.message||e.reason)});});})();</script><link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png">
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <meta name="theme-color" content="#0d4f2f">
 
+<link rel="stylesheet" href="css/separacao.css?v=20261012-separacao-v1">
 </head>
 <body>
 <!-- ══════════ SCREEN: LOGIN ══════════ -->
@@ -93,8 +94,8 @@
 <form class="login-box" id="login-form-legacy" action="#" method="post">
 <div>
 <div class="f-label">Login</div>
-<input autocomplete="off" class="field" id="l-login" oninput="this.value=this.value.toLowerCase()" placeholder="Ex: joao.silva" style="text-transform:lowercase" type="text"/>
-<div style="font-size:.68rem;color:#94a3b8;margin-top:5px">Use o formato: <b>primeironome.ultimonome</b></div>
+<input autocomplete="off" class="field" id="l-login" oninput="this.value=this.value.toLowerCase()" placeholder="E-mail de login ou joao.silva" style="text-transform:lowercase" type="text"/>
+<div style="font-size:.68rem;color:#94a3b8;margin-top:5px">Use o e-mail completo cadastrado. Logins antigos <b>nome.sobrenome</b> continuam funcionando.</div>
 </div>
 <div>
 <div class="f-label">Senha</div>
@@ -108,6 +109,7 @@
 <button class="btn btn-primary" id="btn-login" type="submit" style="margin-top:4px">ENTRAR</button>
 <div id="fb-login-erro"></div>
 <div style="text-align:center;margin-top:4px">
+<button class="login-link" type="button" onclick="enviarRecuperacaoSenhaColetor()">Esqueci minha senha</button>
 <button class="login-link" type="button" onclick="doCriarConta()">Primeiro acesso? Criar conta</button>
 </div>
 </form>
@@ -137,8 +139,9 @@
 <div class="screen-content">
 <div class="screen-title">O que deseja acessar?</div>
 <div class="menu-list">
-<button type="button" class="menu-list-item" onclick="abrirAreaInventario()"><span class="mli-arrow">»</span>Inventário</button>
-<button type="button" class="menu-list-item" onclick="abrirAreaRecebimento()"><span class="mli-arrow">»</span>Recebimento</button>
+<button type="button" class="menu-list-item" data-perm-grupo="inventario" onclick="abrirAreaInventario()"><span class="mli-arrow">»</span>Inventário</button>
+<button type="button" class="menu-list-item" data-perm-grupo="recebimento" onclick="abrirAreaRecebimento()"><span class="mli-arrow">»</span>Recebimento</button>
+<button type="button" class="menu-list-item" data-perm-grupo="estoque" onclick="abrirAreaEstoque()"><span class="mli-arrow">»</span>Estoque</button>
 </div></div>
 </div>
 <!-- ══════════ SCREEN: MODO ══════════ -->
@@ -173,8 +176,8 @@
   <div id="coletor-loja-nome" style="font-weight:800;font-size:.95rem">—</div>
 </div>
 <div class="menu-list">
-<button type="button" class="menu-list-item" onclick="abrirModoInventario()"><span class="mli-arrow">»</span>Inventário</button>
-<button type="button" class="menu-list-item" onclick="abrirModoAuditoria()"><span class="mli-arrow">»</span>Auditoria</button>
+<button type="button" class="menu-list-item" data-perm-modulo="inventarios" data-perm-acao="visualizar" onclick="if(coletorExigirPermissao('inventarios','visualizar'))abrirModoInventario()"><span class="mli-arrow">»</span>Inventário</button>
+<button type="button" class="menu-list-item" data-perm-modulo="auditoria" data-perm-acao="visualizar" onclick="if(coletorExigirPermissao('auditoria','visualizar'))abrirModoAuditoria()"><span class="mli-arrow">»</span>Auditoria</button>
 </div></div>
 </div>
 <!-- ══════════ SCREEN: AUDITORIAS ══════════ -->
@@ -275,7 +278,7 @@
 <div class="dl-steps" id="dl-steps"></div>
 <div style="display:flex;gap:10px;margin-top:16px">
 <button class="dl-btn-sec" id="dl-btn-cancel" onclick="cancelarDownload()">Cancelar</button>
-<button class="dl-btn-pri" id="dl-btn-entrar" onclick="entrarInventario()" style="display:none">Entrar →</button>
+<button class="dl-btn-pri" id="dl-btn-entrar" data-perm-modulo="inventarios" data-perm-acao="contar" onclick="if(coletorExigirPermissao('inventarios','contar'))entrarInventario()" style="display:none">Entrar →</button>
 </div>
 <div class="dl-erro" id="dl-erro" style="display:none"></div>
 </div>
@@ -353,6 +356,8 @@
 <div class="step-dot" id="sd-4">4</div>
 <div class="step-line" id="sl-4"></div>
 <div class="step-dot" id="sd-5">5</div>
+<div class="step-line" id="sl-5"></div>
+<div class="step-dot" id="sd-6">6</div>
 </div>
 <!-- ETAPA 1: Endereço -->
 <div class="step-field ativo" id="step-endereco">
@@ -511,7 +516,26 @@
         📭 ENDEREÇO VAZIO — encerrar este endereço
       </button>
 </div>
-<!-- ETAPA 2: Capa/Palete -->
+<!-- ETAPA 2: GTIN / DUN -->
+<div class="step-field" id="step-gtin" style="display:none">
+<div class="sf-row">
+<div class="sf-label"><span id="gtin-label-txt">DUN</span></div>
+<div class="sf-sep"></div>
+<div class="sf-input-wrap">
+<input autocomplete="off" class="field" id="f-gtin" inputmode="numeric" oninput="onGtinInput(); flashField('f-gtin')" placeholder="Bipe o código" type="text"/>
+<span class="sf-val" id="sf-val-gtin" style="display:none;font-size:.82rem"></span>
+<span onclick="document.getElementById('f-gtin').focus()" style="cursor:pointer;font-size:1.2rem;flex-shrink:0">🔫</span>
+</div>
+</div>
+<div class="sf-extra">
+<div id="fb-gtin" style="padding-top:4px"></div>
+<div id="prod-found-box" style="margin-top:6px;display:none"></div>
+<span id="gtin-label" style="display:none"></span>
+<span id="gtin-sublabel" style="display:none"></span>
+<button class="btn btn-primary" id="btn-confirmar-gtin" onclick="confirmarGtin()" style="margin-top:8px;padding:11px 14px;font-size:.9rem;width:100%">Confirmar →</button>
+</div>
+</div>
+<!-- ETAPA 3: Capa/Palete -->
 <div class="step-field" id="step-capa" style="display:none">
 <div class="sf-row">
 <div class="sf-label">Capa Palete</div>
@@ -531,26 +555,22 @@
 <button class="btn btn-primary" id="btn-confirmar-capa" onclick="confirmarCapa()" style="margin-top:8px;padding:11px 14px;font-size:.9rem;width:100%">Confirmar →</button>
 </div>
 </div>
-<!-- ETAPA 3: GTIN / DUN -->
-<div class="step-field" id="step-gtin" style="display:none">
+<!-- ETAPA 4: Data de validade -->
+<div class="step-field" id="step-vencimento" style="display:none">
 <div class="sf-row">
-<div class="sf-label"><span id="gtin-label-txt">DUN</span></div>
+<div class="sf-label">Data de validade</div>
 <div class="sf-sep"></div>
 <div class="sf-input-wrap">
-<input autocomplete="off" class="field" id="f-gtin" inputmode="numeric" oninput="onGtinInput(); flashField('f-gtin')" placeholder="Bipe o código" type="text"/>
-<span class="sf-val" id="sf-val-gtin" style="display:none;font-size:.82rem"></span>
-<span onclick="document.getElementById('f-gtin').focus()" style="cursor:pointer;font-size:1.2rem;flex-shrink:0">🔫</span>
+<input autocomplete="off" class="field" id="f-vencimento" inputmode="numeric" maxlength="10" oninput="onVencimentoInput()" placeholder="DD/MM/AAAA" type="text"/>
+<span class="sf-val" id="sf-val-vencimento" style="display:none"></span>
 </div>
 </div>
 <div class="sf-extra">
-<div id="fb-gtin" style="padding-top:4px"></div>
-<div id="prod-found-box" style="margin-top:6px;display:none"></div>
-<span id="gtin-label" style="display:none"></span>
-<span id="gtin-sublabel" style="display:none"></span>
-<button class="btn btn-primary" id="btn-confirmar-gtin" onclick="confirmarGtin()" style="margin-top:8px;padding:11px 14px;font-size:.9rem;width:100%">Confirmar →</button>
+<div id="fb-vencimento" style="padding-top:4px"></div>
+<button class="btn btn-primary" id="btn-confirmar-vencimento" onclick="confirmarVencimento()" style="margin-top:8px;padding:11px 14px;font-size:.9rem;width:100%">Confirmar →</button>
 </div>
 </div>
-<!-- ETAPA 4: Lote do produto (campo antigo de "validade" reaproveitado) -->
+<!-- ETAPA 5: Lote do produto (campo antigo de "validade" reaproveitado) -->
 <div class="step-field" id="step-validade" style="display:none">
 <div class="sf-row">
 <div class="sf-label">Lote do produto</div>
@@ -565,7 +585,7 @@
 <button class="btn btn-primary" id="btn-confirmar-validade" onclick="confirmarValidade()" style="margin-top:8px;padding:11px 14px;font-size:.9rem;width:100%">Confirmar →</button>
 </div>
 </div>
-<!-- ETAPA 5: Quantidade -->
+<!-- ETAPA 6: Quantidade -->
 <div class="step-field" id="step-quantidade" style="display:none">
 <div class="sf-row">
 <div class="sf-label">Quantidade</div>
@@ -724,7 +744,7 @@
 </div>
 </div>
 <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-<button class="btn btn-primary" onclick="enviarFilaManual()" style="flex:1">⬆️ Sincronizar agora</button>
+<button class="btn btn-primary" onclick="enviarFilaManual()" style="flex:1">📤 Enviar Contagens</button>
 <button class="btn btn-ghost" id="btn-refresh-locais" onclick="atualizarCacheLocais()">🔄 Atualizar endereços</button>
 <button class="btn btn-ghost" onclick="voltarInventarios()">← Trocar</button>
 </div>
@@ -814,6 +834,73 @@
 })();
 </script>
 
+<!-- ══════════ SCREEN: ESTOQUE — APONTAMENTO DE PRODUÇÃO ══════════ -->
+<div class="screen" id="screen-estoque-modo"><div class="top-bar"><button class="btn-back" onclick="goScreen('acesso')">←</button><div class="top-logo">Estoque</div></div><div class="screen-content"><div class="screen-title">Estoque</div><div class="menu-list"><button class="menu-list-item" data-perm-grupo="apontamento" onclick="abrirAreaEstoqueApontamento()">🏷️ Apontamento</button><button class="menu-list-item" data-perm-modulo="estoque-separacao" data-perm-acao="visualizar" onclick="abrirSeparacaoColetor()">📦 Separação · Registrar erros</button></div></div></div>
+<div class="screen" id="screen-separacao-erros"><div class="top-bar"><button class="btn-back" onclick="goScreen('estoque-modo')">←</button><div class="top-logo">Separação</div></div><div class="screen-content"><div class="screen-title">Erros de conferência</div><div id="sep-coletor-body"></div></div></div>
+<div class="screen" id="screen-estoque-apontamento-modo">
+<div class="top-bar"><div style="display:flex;align-items:center;gap:8px"><button class="btn-back" onclick="goScreen('acesso')">←</button><div class="top-logo">DT Inventário</div></div></div>
+<div class="screen-content">
+<div class="screen-title">📦 Estoque</div>
+<div class="screen-sub">Apontamento de produção e conferência física dos pallets.</div>
+<div class="menu-list">
+<button type="button" class="menu-list-item" data-perm-modulo="estoque-rel-apontamento" data-perm-acao="criar" onclick="if(coletorExigirPermissao('estoque-rel-apontamento','criar'))abrirApontamentoProducao()"><span class="mli-arrow">»</span>Apontar produção</button>
+<button type="button" class="menu-list-item" data-perm-modulo="estoque-rel-apontamento" data-perm-acao="conferir" onclick="if(coletorExigirPermissao('estoque-rel-apontamento','conferir'))abrirConferenciaApontamento()"><span class="mli-arrow">»</span>Conferir pallets</button>
+<button type="button" class="menu-list-item" data-perm-modulo="estoque-rel-apontamento" data-perm-acao="visualizar" onclick="if(coletorExigirPermissao('estoque-rel-apontamento','visualizar'))abrirHistoricoApontamento()"><span class="mli-arrow">»</span>Histórico</button>
+</div></div></div>
+
+<div class="screen" id="screen-apontamento-producao">
+<div class="top-bar"><div style="display:flex;align-items:center;gap:8px"><button class="btn-back" onclick="goScreen('estoque-apontamento-modo')">←</button><div class="top-logo">DT Inventário</div></div></div>
+<div class="screen-content">
+<div><div class="screen-title">🏷️ Apontar produção</div><div class="screen-sub">A capa é criada aqui, mas o estoque só será enviado à BlueSoft depois da conferência da Logística.</div></div>
+<div class="form-group"><label>Produto (GTIN / DUN)</label><input class="field" id="ap-produto-gtin" inputmode="numeric" autocomplete="off" placeholder="Bipe o produto"/></div>
+<button class="btn btn-ghost" id="ap-produto-buscar" type="button" onclick="apontamentoBuscarProduto()" style="padding:11px">Buscar produto</button>
+<div id="ap-produto-info" style="display:none;border:1px solid var(--border,#29445f);border-radius:10px;padding:10px;font-size:.82rem"></div>
+<div class="form-group"><label>Lote</label><input class="field" id="ap-lote" maxlength="30" autocomplete="off" placeholder="Informe o lote"/></div>
+<div class="form-group"><label>Validade</label><input class="field" id="ap-validade" type="date"/></div>
+<div class="form-group"><label>Quantidade do pallet</label><input class="field" id="ap-quantidade" type="number" min="0.0001" step="0.0001" inputmode="decimal"/></div>
+<div id="ap-status" style="font-size:.8rem;min-height:20px"></div>
+<button class="btn btn-primary" id="ap-salvar" type="button" onclick="apontamentoCriarCapa()" style="padding:15px;font-size:1rem">Gerar capa do pallet</button>
+<div id="ap-capa-gerada" style="display:none;margin-top:12px;border:2px solid #F59E0B;border-radius:14px;padding:16px;text-align:center">
+<div style="font-size:.74rem;letter-spacing:.08em;font-weight:800;color:#F59E0B">CAPA GERADA</div>
+<div id="ap-capa-numero" style="font-size:2.4rem;font-weight:900;letter-spacing:.12em;margin:8px 0"></div>
+<div id="ap-capa-resumo" style="font-size:.82rem"></div>
+</div>
+</div></div>
+
+<div class="screen" id="screen-apontamento-conferencia">
+<div class="top-bar"><div style="display:flex;align-items:center;gap:8px"><button class="btn-back" onclick="goScreen('estoque-apontamento-modo')">←</button><div class="top-logo">DT Inventário</div></div></div>
+<div class="screen-content">
+<div><div class="screen-title">✅ Conferir pallet</div><div class="screen-sub">Escolha o pallet da lista (ou bipe a capa física). Só após esta conferência o apontamento será enviado à BlueSoft.</div></div>
+<div style="display:flex;gap:8px;flex-wrap:wrap"><div style="flex:1;min-width:130px"><div style="font-size:.7rem;color:var(--muted)">De</div><input class="field" type="date" id="ap-conf-ini"/></div><div style="flex:1;min-width:130px"><div style="font-size:.7rem;color:var(--muted)">Até</div><input class="field" type="date" id="ap-conf-fim"/></div></div>
+<div style="margin-top:8px"><div style="font-size:.7rem;color:var(--muted)">Produto (opcional)</div><input class="field" id="ap-conf-produto" list="ap-conf-produtos" autocomplete="off" placeholder="código, nome ou GTIN"/><datalist id="ap-conf-produtos"></datalist></div>
+<div style="margin-top:8px"><div style="font-size:.7rem;color:var(--muted)">Status</div><select class="field" id="ap-conf-status-filtro"><option value="PENDENTES">Pendentes</option><option value="APROVADOS">Aprovados</option><option value="REPROVADOS">Reprovados</option><option value="INTEGRADOS">Integrados BlueSoft</option><option value="TODOS">Todos</option></select></div>
+<div id="ap-conf-contagem" style="font-size:.78rem;color:var(--muted);margin-top:8px"></div>
+<div id="ap-conf-lista" style="display:flex;flex-direction:column;gap:0;margin-top:8px"></div>
+<div class="form-group"><label>Capa do pallet</label><input class="field" id="ap-conf-capa" inputmode="numeric" maxlength="7" autocomplete="off" placeholder="7 dígitos"/></div>
+<button class="btn btn-ghost" type="button" onclick="apontamentoCarregarCapa()" style="padding:11px">Carregar capa</button>
+<div id="ap-conf-detalhe" style="display:none;border:1px solid var(--border,#29445f);border-radius:10px;padding:12px;margin-top:8px"></div>
+<div id="ap-conf-campos" style="display:none">
+<div class="form-group"><label>Confirmar produto (bipe novamente)</label><input class="field" id="ap-conf-gtin" inputmode="numeric" autocomplete="off"/></div>
+<div class="form-group"><label>Confirmar lote</label><input class="field" id="ap-conf-lote" maxlength="30" autocomplete="off"/></div>
+<div class="form-group"><label>Confirmar validade</label><input class="field" id="ap-conf-validade" type="date"/></div>
+<div class="form-group"><label>Quantidade conferida</label><input class="field" id="ap-conf-qtd" type="number" min="0.0001" step="0.0001" inputmode="decimal"/></div>
+<div class="form-group"><label>Observação / motivo da divergência</label><textarea class="field" id="ap-conf-obs" rows="3" maxlength="500"></textarea></div>
+<button class="btn btn-primary" type="button" onclick="apontamentoConfirmarConferencia()" style="padding:15px;font-size:1rem">Confirmar conferência</button>
+<button class="btn btn-warning" id="ap-conf-aprovar-qtd" type="button" onclick="apontamentoAprovarQuantidadeDivergente()" style="display:none;padding:15px;font-size:1rem;margin-top:8px">Aprovar quantidade conferida e enviar</button>
+<div id="ap-conf-divergencia-aviso" style="display:none;margin-top:8px;border:1px solid #F59E0B;border-radius:10px;padding:10px;font-size:.8rem"></div>
+</div>
+<div id="ap-conf-status" style="font-size:.8rem;min-height:20px;margin-top:8px"></div>
+</div></div>
+
+<div class="screen" id="screen-apontamento-historico">
+<div class="top-bar"><div style="display:flex;align-items:center;gap:8px"><button class="btn-back" onclick="goScreen('estoque-apontamento-modo')">←</button><div class="top-logo">DT Inventário</div></div></div>
+<div class="screen-content">
+<div><div class="screen-title">🧾 Histórico de apontamentos</div><div class="screen-sub">Últimos pallets da loja atual.</div></div>
+<button class="btn btn-ghost" type="button" onclick="carregarHistoricoApontamento()" style="padding:10px">Atualizar</button>
+<div id="ap-historico-status" style="font-size:.8rem;min-height:20px"></div>
+<div id="ap-historico-lista"></div>
+</div></div>
+
 <!-- ══════════ SCREEN: RECEBIMENTO — escolha do módulo (mesmo padrão de screen-mode) ══════════ -->
 <div class="screen" id="screen-recebimento-modo">
 <div class="top-bar">
@@ -841,13 +928,23 @@
 <div class="screen-content">
 <div class="screen-title">🚚 Recebimento</div>
 <div class="menu-list">
-<button type="button" class="menu-list-item" onclick="abrirTransbordoRecebimento()"><span class="mli-arrow">»</span>Transbordo</button>
-<button type="button" class="menu-list-item" onclick="abrirRecusasRecebimento()"><span class="mli-arrow">»</span>Notas Retornadas</button>
-<button type="button" class="menu-list-item" onclick="abrirControlePaletes()"><span class="mli-arrow">»</span>Controle de Paletes</button>
-<button type="button" class="menu-list-item" onclick="abrirNovaMovimentacaoRecebimento()"><span class="mli-arrow">»</span>Nova Movimentação</button>
-<button type="button" class="menu-list-item" onclick="abrirInventarioPatio()"><span class="mli-arrow">»</span>Inventário Inicial do Pátio</button>
+<button type="button" class="menu-list-item" data-perm-coletor="recebimento-transbordo" data-perm-modulo="recebimento-transbordo" data-perm-acao="visualizar" onclick="if(coletorExigirPermissao('recebimento-transbordo','visualizar'))abrirTransbordoRecebimento()"><span class="mli-arrow">»</span>Transbordo</button>
+<button type="button" class="menu-list-item" data-perm-coletor="recebimento-recusas" data-perm-modulo="recebimento-recusas" data-perm-acao="visualizar" onclick="if(coletorExigirPermissao('recebimento-recusas','visualizar'))abrirRecusasRecebimento()"><span class="mli-arrow">»</span>Notas Retornadas</button>
+<button type="button" class="menu-list-item" data-perm-coletor="recebimento-paletes" data-perm-modulo="recebimento-paletes" data-perm-acao="visualizar" onclick="if(coletorExigirPermissao('recebimento-paletes','visualizar'))abrirControlePaletes()"><span class="mli-arrow">»</span>Controle de Paletes</button>
+<button type="button" class="menu-list-item" data-perm-modulo="recebimento-agendamentos" data-perm-acao="visualizar" onclick="if(coletorExigirPermissao('recebimento-agendamentos','visualizar'))abrirAgendaEntregasColetor()"><span class="mli-arrow">»</span>Agenda de Entregas</button>
+<button type="button" class="menu-list-item" data-perm-modulo="recebimento-transbordo" data-perm-acao="criar" onclick="if(coletorExigirPermissao('recebimento-transbordo','criar'))abrirNovaMovimentacaoRecebimento()"><span class="mli-arrow">»</span>Transbordo Geral</button>
+<button type="button" class="menu-list-item" data-perm-modulo="recebimento-recusas" data-perm-acao="identificar" onclick="if(coletorExigirPermissao('recebimento-recusas','identificar'))abrirInventarioPatio()"><span class="mli-arrow">»</span>Inventário do Pátio</button>
 </div></div>
 </div>
+<!-- ══════════ SCREEN: RECEBIMENTO — Agenda de Entregas ══════════ -->
+<div class="screen" id="screen-recebimento-agenda">
+<div class="top-bar"><div style="display:flex;align-items:center;gap:8px"><button class="btn-back" onclick="goScreen('recebimento-modo')">←</button><div class="top-logo">DT Inventário</div></div></div>
+<div class="screen-content">
+<div><div class="screen-title">📅 Agenda de Entregas</div><div class="screen-sub">Escolha o dia para ver as cargas agendadas.</div></div>
+<div class="form-group"><label>Data</label><input class="field" id="recebimento-agenda-data" type="date" onchange="carregarAgendaEntregasColetor(this.value)"></div>
+<div id="recebimento-agenda-status" style="font-size:.8rem;color:var(--muted,#5a7a9a);min-height:18px"></div>
+<div id="recebimento-agenda-lista"></div>
+</div></div>
 <!-- ══════════ SCREEN: RECEBIMENTO — Transbordo (fase 4) ══════════ -->
 <div class="screen" id="screen-recebimento">
 <div class="top-bar">
@@ -901,7 +998,7 @@
 </div>
 </div>
 
-<!-- ══════════ SCREEN: RECEBIMENTO — Inventário Inicial do Pátio ══════════ -->
+<!-- ══════════ SCREEN: RECEBIMENTO — Inventário do Pátio ══════════ -->
 <div class="screen" id="screen-recebimento-patio-inventario">
 <div class="top-bar">
 <div style="display:flex;align-items:center;gap:8px">
@@ -977,8 +1074,8 @@
 <div class="screen-content">
 <div class="screen-title">🎯 Controle de Paletes</div>
 <div class="menu-list">
-<button type="button" class="menu-list-item" onclick="abrirPaletesEstoque()"><span class="mli-arrow">»</span>Paletes em Estoque</button>
-<button type="button" class="menu-list-item" onclick="abrirPaletesRecebimento()"><span class="mli-arrow">»</span>Saída de Paletes</button>
+<button type="button" class="menu-list-item" data-perm-coletor="paletes-estoque" data-perm-modulo="recebimento-paletes" data-perm-acao="estoque" onclick="if(coletorExigirPermissao('recebimento-paletes','estoque'))abrirPaletesEstoque()"><span class="mli-arrow">»</span>Paletes em Estoque</button>
+<button type="button" class="menu-list-item" data-perm-coletor="paletes-saida" data-perm-modulo="recebimento-paletes" data-perm-acao="saida" onclick="if(coletorExigirPermissao('recebimento-paletes','saida'))abrirPaletesRecebimento()"><span class="mli-arrow">»</span>Saída de Paletes</button>
 </div>
 </div>
 </div>
@@ -993,16 +1090,18 @@
 <div class="screen-content">
 <div>
 <div class="screen-title">📦 Paletes em Estoque</div>
-<div class="screen-sub">Informe a quantidade de paletes que tem hoje nesta loja</div>
+<div class="screen-sub">Conte por partes. Adicione cada quantidade e finalize para transformar o total no saldo da loja.</div>
 </div>
 <div id="paletes-estoque-ultimo" style="font-size:.78rem;color:var(--muted,#5a7a9a);text-align:center;min-height:18px"></div>
-<div class="form-group"><label>Quantidade de paletes hoje</label><input class="field" id="paletes-estoque-quantidade" type="number" min="0" inputmode="numeric" placeholder="Ex.: 120"></div>
-<button class="btn btn-primary" onclick="confirmarPaletesEstoque()" style="padding:14px;margin-top:6px">Salvar</button>
+<div class="form-group"><label>Quantidade deste lançamento</label><input class="field" id="paletes-estoque-quantidade" type="number" min="0" inputmode="numeric" placeholder="Ex.: 120"></div>
+<button class="btn btn-ghost" data-perm-modulo="recebimento-paletes" data-perm-acao="estoque" onclick="if(coletorExigirPermissao('recebimento-paletes','estoque'))adicionarPaletesEstoqueContagem()" style="padding:12px;margin-top:2px">+ Adicionar quantidade</button>
+<div id="paletes-estoque-lancamentos" style="margin:10px 0"></div>
+<button class="btn btn-primary" data-perm-modulo="recebimento-paletes" data-perm-acao="estoque" onclick="if(coletorExigirPermissao('recebimento-paletes','estoque'))confirmarPaletesEstoque()" style="padding:14px;margin-top:6px">Enviar / Finalizar inventário</button>
 <div id="paletes-estoque-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
 </div>
 </div>
 
-<!-- ══════════ SCREEN: Nova Movimentação (menu) ══════════ -->
+<!-- ══════════ SCREEN: Transbordo Geral (antigo "Nova Movimentação") ══════════ -->
 <div class="screen" id="screen-nova-movimentacao-menu">
 <div class="top-bar">
 <div style="display:flex;align-items:center;gap:8px">
@@ -1027,10 +1126,10 @@
 </div>
 </div>
 <div class="screen-content">
-<div class="screen-title">📋 Nova Movimentação</div>
+<div class="screen-title">📋 Transbordo Geral</div>
 <div class="menu-list">
-<button type="button" class="menu-list-item" onclick="abrirCargasRecebimento()"><span class="mli-arrow">»</span>Transbordo de mercadorias</button>
-<button type="button" class="menu-list-item" onclick="abrirTransferenciaMenu()"><span class="mli-arrow">»</span>Transferência de paletes</button>
+<button type="button" class="menu-list-item" data-perm-modulo="recebimento-transbordo" data-perm-acao="criar" onclick="if(coletorExigirPermissao('recebimento-transbordo','criar'))abrirCargasRecebimento()"><span class="mli-arrow">»</span>Transbordo de mercadorias</button>
+<button type="button" class="menu-list-item" data-perm-modulo="recebimento-paletes" data-perm-acao="transferir" onclick="if(coletorExigirPermissao('recebimento-paletes','transferir'))abrirTransferenciaMenu()"><span class="mli-arrow">»</span>Transferência de paletes</button>
 </div>
 </div>
 </div>
@@ -1045,8 +1144,8 @@
 <div class="screen-content">
 <div class="screen-title">🪵 Transferência de Paletes</div>
 <div class="menu-list">
-<button type="button" class="menu-list-item" onclick="abrirTransferenciaPaletes()"><span class="mli-arrow">»</span>Enviar paletes pra outra loja</button>
-<button type="button" class="menu-list-item" onclick="abrirConfirmarRecebimentoTransferencia()"><span class="mli-arrow">»</span>Confirmar recebimento</button>
+<button type="button" class="menu-list-item" data-perm-modulo="recebimento-paletes" data-perm-acao="transferir" onclick="if(coletorExigirPermissao('recebimento-paletes','transferir'))abrirTransferenciaPaletes()"><span class="mli-arrow">»</span>Enviar paletes pra outra loja</button>
+<button type="button" class="menu-list-item" data-perm-modulo="recebimento-paletes" data-perm-acao="transferir" onclick="if(coletorExigirPermissao('recebimento-paletes','transferir'))abrirConfirmarRecebimentoTransferencia()"><span class="mli-arrow">»</span>Confirmar recebimento</button>
 </div>
 </div>
 </div>
@@ -1066,7 +1165,7 @@
 <div class="form-group"><label>Destino</label><select class="field" id="transferencia-destino"></select></div>
 <div class="form-group"><label>Quantidade de paletes</label><input class="field" id="transferencia-quantidade" type="number" min="0" inputmode="numeric"></div>
 <div class="form-group"><label>Observação (opcional)</label><input class="field" id="transferencia-observacao"></div>
-<button class="btn btn-primary" onclick="confirmarTransferenciaPaletes()" style="padding:14px;margin-top:6px">Confirmar envio</button>
+<button class="btn btn-primary" data-perm-modulo="recebimento-paletes" data-perm-acao="transferir" onclick="if(coletorExigirPermissao('recebimento-paletes','transferir'))confirmarTransferenciaPaletes()" style="padding:14px;margin-top:6px">Confirmar envio</button>
 <div id="transferencia-status" style="text-align:center;font-size:.85rem;color:var(--muted,#5a7a9a);min-height:20px"></div>
 </div>
 </div>
@@ -1377,7 +1476,7 @@
 <script defer src="js/shared/address-state-engine.js?v=20260901-webview66-compat"></script>
 <script defer src="js/shared/address-state-selectors.js?v=20260901-webview66-compat"></script>
 <script defer src="js/shared/address-state-view.js?v=20260901-webview66-compat"></script>
-<script defer src="js/shared/common-utils.js?v=20260901-webview66-compat"></script><script defer src="js/shared/firebase-shared.js?v=20260911-revert-enablePersistence"></script><script defer src="js/shared/enderecos-service.js?v=20260901-webview66-compat"></script><script defer src="js/shared/produtos-service.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/00-bootstrap-manifest.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/01-core-firebase-cache.js?v=20260906-diag-persistencia"></script><script defer src="js/coletor/02-sync-dispositivo.js?v=20260906-app-nomeado"></script><script defer src="js/coletor/03-estado-app.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/04-auth-login.js?v=20260908-cor-menu-trocar-loja"></script><script defer src="js/coletor/05-inventarios-download.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/06-capa-fluxo-steps.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/07-etapa-endereco.js?v=20260911-fix-inset-memor-k"></script><script defer src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20260911-fix-inset-memor-k"></script><script defer src="js/coletor/09-historico-stats.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/10-navegacao-estorno.js?v=20260911-fix-inset-memor-k"></script><script defer src="js/coletor/11-recontagens.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/12-scanner-hardware.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/13-audio-feedback.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/14-toast.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/15-utils-init.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/16-menu-atualizacao.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/17-auditoria-meta.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/18-auditoria-fluxo.js?v=20260906-app-nomeado"></script><script defer src="js/coletor/19-runtime-estavel-v15.js?v=20260911-fix-inset-memor-k"></script><script defer src="js/coletor/20-menu-compat.js?v=20260904-descoberta-generica"></script><script defer src="js/coletor/22-recebimento.js?v=20260910-escolha-carga-ativa-multipla"></script><script defer src="js/coletor/23-recebimento-offline.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/24-recebimento-recusas.js?v=20260911d-identificar-acha-mercado"></script><script defer src="js/coletor/25-recebimento-paletes.js?v=20260904b-alimenta-ledger"></script><script defer src="js/coletor/26-recebimento-cargas.js?v=20260908i-ledger-transito-no-destino"></script><script defer src="js/coletor/27-transferencia-paletes.js?v=20260904-transferencia-inicial"></script><script defer src="js/coletor/28-recebimento-paletes-ledger.js?v=20260904-ledger-inicial"></script><script defer src="js/coletor/29-recebimento-patio-inventario.js?v=20260911d-conferente-pelo-login"></script><script defer src="js/legacy-ui-compat.js?v=20260906-remove-menu-double-bind"></script><script>(function(){if('serviceWorker' in navigator){window.addEventListener('load',function(){
+<script defer src="js/shared/common-utils.js?v=20260901-webview66-compat"></script><script defer src="js/shared/firebase-shared.js?v=20261009-setores-gestao-v1"></script><script defer src="js/shared/enderecos-service.js?v=20260901-webview66-compat"></script><script defer src="js/shared/produtos-service.js?v=20261007-indexa-fator-caixa"></script><script defer src="js/coletor/00-bootstrap-manifest.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/01-core-firebase-cache.js?v=20260929-esconde-faixa-sync"></script><script defer src="js/coletor/02-sync-dispositivo.js?v=20260929-envio-manual-contagens"></script><script defer src="js/coletor/03-estado-app.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/04-auth-login.js?v=20261012-separacao-v1"></script><script defer src="js/coletor/05-inventarios-download.js?v=20261006-loja-do-caminho"></script><script defer src="js/coletor/06-capa-fluxo-steps.js?v=20261006-corrigir-etapa-coleta"></script><script defer src="js/coletor/07-etapa-endereco.js?v=20260929-etapa-ordem-final-produto-capa"></script><script defer src="js/coletor/08-etapas-produto-quantidade-salvamento.js?v=20261007-fator-produto-bipado"></script><script defer src="js/coletor/09-historico-stats.js?v=20260928-inventario-v4-cega"></script><script defer src="js/coletor/10-navegacao-estorno.js?v=20260929-envio-manual-contagens"></script><script defer src="js/coletor/11-recontagens.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/12-scanner-hardware.js?v=20260929-etapa-ordem-final-produto-capa"></script><script defer src="js/coletor/13-audio-feedback.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/14-toast.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/15-utils-init.js?v=20260929-envio-manual-contagens"></script><script defer src="js/coletor/16-menu-atualizacao.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/17-auditoria-meta.js?v=20260928-permissoes-granulares-v2"></script><script defer src="js/coletor/18-auditoria-fluxo.js?v=20260906-app-nomeado"></script><script defer src="js/coletor/19-runtime-estavel-v15.js?v=20260911-fix-inset-memor-k"></script><script defer src="js/coletor/20-menu-compat.js?v=20260904-descoberta-generica"></script><script defer src="js/coletor/22-recebimento.js?v=20261002-bloqueia-criacao-adhoc-transbordo"></script><script defer src="js/coletor/23-recebimento-offline.js?v=20260901-webview66-compat"></script><script defer src="js/coletor/24-recebimento-recusas.js?v=20260922-confirmado-ausente"></script><script defer src="js/coletor/25-recebimento-paletes.js?v=20260928-permissoes-granulares-v2"></script><script defer src="js/coletor/26-recebimento-cargas.js?v=20260928-permissoes-granulares-v2"></script><script defer src="js/coletor/27-transferencia-paletes.js?v=20260928-permissoes-granulares-v2"></script><script defer src="js/coletor/28-recebimento-paletes-ledger.js?v=20260914-inventario-absoluto"></script><script defer src="js/coletor/29-recebimento-patio-inventario.js?v=20261002-grava-snapshot-sessao"></script><script defer src="js/coletor/30-recebimento-agenda.js?v=20260914-agenda-letras-visiveis"></script><script defer src="js/shared/separacao-ui.js?v=20261012-separacao-v1"></script><script defer src="js/coletor/32-separacao-erros.js?v=20261012-separacao-v1"></script><script defer src="js/coletor/31-apontamento-producao.js?v=20261012-separacao-v1"></script><script defer src="js/legacy-ui-compat.js?v=20260906-remove-menu-double-bind"></script><script>(function(){if('serviceWorker' in navigator){window.addEventListener('load',function(){
   /* BUG AO VIVO REAL (2026-09-11): "Pátio em Tempo Real travando" — o
      Service Worker (escopo raiz "/", sem `scope` explícito) registrado
      aqui controlava analista.html TAMBÉM, não só coletor.html, e travava

@@ -58,6 +58,15 @@
       familiaCodigo: texto(raw.familiaCodigo || raw.familia_codigo) || fam.familiaCodigo,
       familiaNome: texto(raw.familiaNome || raw.familia_nome || raw.produtoPrincipal) || fam.familiaNome,
       produtoPrincipal: texto(raw.produtoPrincipal) || texto(raw.familiaNome) || fam.familiaNome,
+      // Fator de conversão caixa→unidade do PRODUTO (Base de Produtos já grava
+      // isso em dt_produtos — ver 39-base-produtos.js). Antes este normalizador
+      // descartava o campo ao montar o índice global, então DTProdutos.buscarSync()
+      // nunca devolvia o fator do código realmente bipado; o Coletor só tinha o
+      // fator do item esperado no endereço, e bipar um produto diferente do
+      // esperado (mas também vendido em caixa) gravava fator 1 por falta de
+      // outra fonte (ver 08-etapas-produto-quantidade-salvamento.js).
+      fatorCaixa: Math.max(1, Number(raw.fatorCaixa || raw.fator_caixa) || 1),
+      fator_caixa: Math.max(1, Number(raw.fatorCaixa || raw.fator_caixa) || 1),
       ativo: raw.ativo !== false,
       criadoEm: raw.criadoEm || raw.criado_em || null,
       atualizadoEm: raw.atualizadoEm || raw.atualizado_em || null

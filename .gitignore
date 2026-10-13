@@ -7,3 +7,5 @@ functions/.env.*
 # ficar versionado pra "firebase deploy --only extensions" ser reproduzível.
 !extensions/*.env
 .scratch-*
+# Dados persistidos do Firebase Emulator Suite (somente ambiente local)
+dados-emulador/

@@ -1,4 +1,10 @@
 // Configuração e bootstrap compartilhados do Firebase
+// Ambiente local seguro: localhost/127.0.0.1 usa exclusivamente o Firebase
+// Emulator Suite. Em produção esta flag fica false e nada abaixo altera o
+// comportamento atual.
+window.DT_AMBIENTE_LOCAL = typeof location !== 'undefined' && (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
+window.DT_FIREBASE_REGION = 'southamerica-east1';
+
 window.DT_FIREBASE_CFG = {
   apiKey: "AIzaSyCpeTNeJUGgn5yEmIIM8aGos9VIN0VqcgA",
   authDomain: "daterrinha-inventario.firebaseapp.com",
@@ -46,14 +52,73 @@ window.DT_FCOL = {
 window.getDTFirebaseApp = function () {
   if (!window.firebase) throw new Error('Firebase SDK não carregado.');
   var nome = window.DT_FIREBASE_APP_NOME || '[DEFAULT]';
+  var app;
   try {
-    return firebase.app(nome);
+    app = firebase.app(nome);
   } catch (e) {
-    return nome === '[DEFAULT]' ?
+    app = nome === '[DEFAULT]' ?
       firebase.initializeApp(window.DT_FIREBASE_CFG) :
       firebase.initializeApp(window.DT_FIREBASE_CFG, nome);
   }
+  window.dtConectarEmuladoresFirebase(app);
+  return app;
 };
+
+window.dtConectarEmuladoresFirebase = function (app) {
+  if (!window.DT_AMBIENTE_LOCAL || !app || app.__dtEmuladoresConectados) return app;
+  // Firestore/Auth já estão carregados antes deste arquivo nas duas entradas.
+  // Functions pode carregar depois no Analista; nesse caso o retry abaixo
+  // conclui a conexão antes de qualquer interação do usuário.
+  try {
+    if (typeof app.firestore === 'function' && !app.__dtFirestoreEmulator) {
+      app.firestore().useEmulator('127.0.0.1', 8089);
+      app.__dtFirestoreEmulator = true;
+    }
+    if (typeof app.auth === 'function' && !app.__dtAuthEmulator) {
+      app.auth().useEmulator('http://127.0.0.1:9099', {disableWarnings: true});
+      app.__dtAuthEmulator = true;
+    }
+    if (typeof app.functions === 'function' && !app.__dtFunctionsEmulator) {
+      app.functions(window.DT_FIREBASE_REGION).useEmulator('127.0.0.1', 5001);
+      app.__dtFunctionsEmulator = true;
+    }
+    app.__dtEmuladoresConectados = !!(app.__dtFirestoreEmulator && app.__dtAuthEmulator && app.__dtFunctionsEmulator);
+  } catch (e) {
+    console.error('[DT Teste] Falha ao conectar Firebase Emulator Suite:', e);
+    throw e;
+  }
+  return app;
+};
+
+window.dtGarantirEmuladoresLocais = function () {
+  if (!window.DT_AMBIENTE_LOCAL || !window.firebase) return;
+  var apps = firebase.apps || [];
+  for (var i = 0; i < apps.length; i++) window.dtConectarEmuladoresFirebase(apps[i]);
+  if (!apps.length) window.getDTFirebaseApp();
+};
+
+if (window.DT_AMBIENTE_LOCAL) {
+  // No Analista, firebase-functions-compat.js é carregado depois deste arquivo.
+  // Repetimos por poucos segundos apenas para completar essa ligação.
+  var dtTentativasEmulador = 0;
+  var dtTimerEmulador = setInterval(function () {
+    dtTentativasEmulador++;
+    try { window.dtGarantirEmuladoresLocais(); } catch (e) { clearInterval(dtTimerEmulador); throw e; }
+    var apps = (window.firebase && firebase.apps) || [];
+    var pronto = apps.length && apps.every(function (a) { return a.__dtEmuladoresConectados; });
+    if (pronto || dtTentativasEmulador >= 100) clearInterval(dtTimerEmulador);
+  }, 50);
+
+  window.addEventListener('DOMContentLoaded', function () {
+    var faixa = document.createElement('div');
+    faixa.id = 'dt-ambiente-teste';
+    faixa.setAttribute('role', 'status');
+    faixa.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;padding:6px 12px;text-align:center;background:#fff3e0;color:#8a3b00;border-bottom:1px solid #f59e0b;font:700 12px/1.3 Arial,sans-serif;box-sizing:border-box';
+    faixa.textContent = '🧪 AMBIENTE DE TESTE — Dados locais; produção não está sendo acessada';
+    document.body.appendChild(faixa);
+  });
+}
+
 window.getDTRawFirestore = function () {
   return getDTFirebaseApp().firestore();
 };
@@ -223,3 +288,28 @@ window.DTLoja = {
     return lojas;
   }
 };
+// Uma assinatura por sessão, somente do documento de acesso do próprio UID.
+// Mantém menus e permissões locais atualizados após revogação pelo responsável.
+(function(g){
+  var unsubscribe=null,uidAtual='',canalAtual='',authObservado=false;
+  g.DTObservarAcessoAtual=function(user,canal){
+    if(!user)return;
+    if(!authObservado){authObservado=true;g.getDTAuth().onAuthStateChanged(function(u){if(!u&&typeof g.DTPararObservacaoAcesso==='function')g.DTPararObservacaoAcesso();});}
+    if(uidAtual===user.uid&&canalAtual===canal)return;
+    if(unsubscribe)unsubscribe();uidAtual=user.uid;canalAtual=canal;
+    unsubscribe=g.getDTRawFirestore().collection('usuarios_acessos').doc(user.uid).onSnapshot(function(s){
+      if(s.metadata&&s.metadata.fromCache)return; // servidor decide revogação
+      var a=s.exists?s.data():null;
+      if(!a||a.ativo===false||(a.canais_acesso&&a.canais_acesso[canal]!==true)){
+        if(unsubscribe)unsubscribe();unsubscribe=null;uidAtual='';g.DT_USUARIO_ACESSO_ATUAL=null;
+        g.getDTAuth().signOut().catch(function(e){console.warn('[Acessos] Falha ao encerrar sessão:',e.message);});return;
+      }
+      g.DT_USUARIO_ACESSO_ATUAL=Object.assign({uid:user.uid},a);
+      var loja=typeof g.getDTLojaAtiva==='function'?g.getDTLojaAtiva():'';
+      if(loja&&a.acesso_todas_lojas!==true&&(a.lojas_permitidas||[]).indexOf(loja)<0){g.DTPararObservacaoAcesso();g.getDTAuth().signOut().catch(function(){});return;}
+      if(canal==='analista'&&typeof g.aplicarPermissoesAnalista==='function')g.aplicarPermissoesAnalista();
+      if(canal==='coletor'&&typeof g.aplicarPermissoesMenuColetor==='function')g.aplicarPermissoesMenuColetor();
+    },function(e){if(e.code==='permission-denied'){g.DT_USUARIO_ACESSO_ATUAL=null;g.DTPararObservacaoAcesso();g.getDTAuth().signOut().catch(function(){});}else console.warn('[Acessos] Atualização de acesso indisponível:',e.message);});
+  };
+  g.DTPararObservacaoAcesso=function(){if(unsubscribe)unsubscribe();unsubscribe=null;uidAtual='';};
+})(window);

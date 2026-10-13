@@ -20,7 +20,9 @@ function carregarComFirestoreFake() {
   admin.initializeApp = () => {};
   // Esta função não toca em `db` — só precisa que o módulo carregue sem
   // quebrar no `admin.firestore()` do topo do arquivo.
-  Object.defineProperty(admin, 'firestore', {value: () => ({}), configurable: true});
+  const firestore = () => ({});
+  firestore.FieldPath = {documentId: () => '__name__'};
+  Object.defineProperty(admin, 'firestore', {value: firestore, configurable: true});
   const indexModule = require(path.join(__dirname, '..', 'index.js'));
   return indexModule._graphBiInternals;
 }
@@ -35,6 +37,28 @@ function bigqueryFake(linhas) {
     },
   };
 }
+
+test('resumo de notas usa projeção no servidor e nunca seleciona itens/documento completo', async () => {
+  const {_buscarResumoNotasRetorno} = carregarComFirestoreFake();
+  const chamadas = [];
+  const docs = [
+    {id: 'CH1', data: () => ({chave: 'CH1', numeroNota: '100', destinatario: 'Mercado X', itens: new Array(5000).fill({descricao: 'pesado'})})},
+  ];
+  const consulta = {
+    where(campo, operador, valores) { chamadas.push({tipo: 'where', campo, operador, valores}); return this; },
+    select(...campos) { chamadas.push({tipo: 'select', campos}); return this; },
+    async get() { return {docs}; },
+  };
+  const firestoreDb = {collection: () => ({doc: () => ({collection: () => consulta})})};
+  const resumo = await _buscarResumoNotasRetorno('loja_matriz', ['CH1'], firestoreDb);
+  const selecao = chamadas.find(c => c.tipo === 'select');
+  assert.ok(selecao, 'a consulta precisa aplicar select() no servidor');
+  assert.ok(selecao.campos.includes('numeroNota'));
+  assert.ok(selecao.campos.includes('destinatario'));
+  assert.equal(selecao.campos.includes('itens'), false, 'a lista pesada de itens não pode ser transferida');
+  assert.equal(Object.hasOwn(resumo.CH1, 'itens'), false, 'a resposta ao navegador não contém itens');
+  assert.deepEqual(chamadas.find(c => c.tipo === 'where').valores, ['CH1']);
+});
 
 const ACESSO_TODAS_LOJAS = {acesso_todas_lojas: true};
 const ACESSO_LOJA_MATRIZ = {lojas_permitidas: ['loja_matriz']};

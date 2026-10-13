@@ -68,6 +68,15 @@ function criarFirestoreFake() {
   };
 }
 
+
+function criarBigQueryLoadFake() {
+  return {
+    dataset() {
+      return { table() { return { async load() { return [{}]; } }; } };
+    },
+  };
+}
+
 function carregarComFirestoreFake() {
   delete require.cache[require.resolve('firebase-admin')];
   delete require.cache[require.resolve('../index.js')];
@@ -85,7 +94,7 @@ test('_sincronizarComprasHistoricoBi: filtra por ano mínimo (2026), ignora regi
     { nota_fiscal_item_key: 1, data_emissao: '2025-12-31T00:00:00', nf_numero: 1 },
     { nota_fiscal_item_key: 2, data_emissao: '2026-01-01T00:00:00', nf_numero: 2 },
   ];
-  const resultado = await internals._sincronizarComprasHistoricoBi(registros);
+  const resultado = await internals._sincronizarComprasHistoricoBi(registros, criarBigQueryLoadFake());
   assert.equal(resultado.totalFiltrados, 1, 'só o registro de 2026 deveria passar no filtro');
   assert.equal(resultado.novos, 1);
 });
@@ -100,7 +109,7 @@ test('_sincronizarComprasHistoricoBi: grava departamento/grupo/seção/tipo_oper
     { nota_fiscal_item_key: 10, produto_key: 27745, descricao: 'Tapioca', grupo: 'TAPIOCA DA TERRINHA', Departamento: 'PRODUTO DE VENDA', Secao: 'TAPIOCA DA TERRINHA', TIPO_OPERACAO: 'TRANSFERENCIA', data_emissao: '2026-02-01T00:00:00', nf_numero: 10 },
     { nota_fiscal_item_key: 11, produto_key: 50095, descricao: 'Mandioca in natura', grupo: 'IN NATURA', Departamento: 'COMPRAS', Secao: 'IN NATURA', TIPO_OPERACAO: 'COMPRA', data_emissao: '2026-02-02T00:00:00', nf_numero: 11 },
   ];
-  await internals._sincronizarComprasHistoricoBi(registros);
+  await internals._sincronizarComprasHistoricoBi(registros, criarBigQueryLoadFake());
   const linha10 = fakeDb._dump().get('relatorios_bi_compras_historico_chunks/chunk_0').registros['10'];
   assert.equal(linha10.departamento, 'PRODUTO DE VENDA');
   assert.equal(linha10.secao, 'TAPIOCA DA TERRINHA');
@@ -169,7 +178,7 @@ test('_sincronizarComprasHistoricoBi: também grava a classificação de produto
     { nota_fiscal_item_key: 1, produto_key: 100, descricao: 'Parafuso', grupo: 'MANUTENCAO', Departamento: 'MRO', Secao: 'MANUTENCAO', data_emissao: '2024-01-01T00:00:00', nf_numero: 1 },
     { nota_fiscal_item_key: 2, produto_key: 200, descricao: 'Tapioca 1kg', grupo: 'TAPIOCA DA TERRINHA', Departamento: 'PRODUTO DE VENDA', Secao: 'TAPIOCA DA TERRINHA', data_emissao: '2026-01-01T00:00:00', nf_numero: 2 },
   ];
-  const resultado = await internals._sincronizarComprasHistoricoBi(registros);
+  const resultado = await internals._sincronizarComprasHistoricoBi(registros, criarBigQueryLoadFake());
   assert.equal(resultado.totalFiltrados, 1, 'a tela de Histórico continua vendo só 2026+, sem mudar nada visível');
   assert.equal(resultado.classificacaoProdutos.gravados, 2, 'mas a classificação usa os 2 produtos, mesmo o de 2024');
   assert.ok(fakeDb._dump().get('bi_classificacao_produtos/100'), 'produto de 2024 (fora do filtro visível) ainda fica classificado');
@@ -228,17 +237,27 @@ test('_gravarConsumoInsumosResumoBi: grava um doc por sku', async () => {
 // PEDIDO AO VIVO (2026-08-28): "eu quero uma aba de cortes... só puxe o
 // total... vai somar o que aconteceu, vai colocar por mês, por produtos" —
 // dados_cortes.json (53 mil linhas) agregado por mês+produto, nunca cru.
-test('_construirCortesResumoMensalBi: soma por mês+produto, ignora linha sem data ou sem produto_key', () => {
+// PEDIDO AO VIVO (2026-09-17): "só precisa ler do dia anterior pra frente,
+// é dados que não mudam" — só agrega mês atual + anterior (referência
+// injetável via agoraISO, pra o teste ficar determinístico e não depender
+// do dia real em que a suíte roda); meses mais antigos que isso nunca
+// mais são reprocessados. "Só a 2JM Amidos é intercompany" — loja_key 11
+// nunca entra; TODAS as outras entram normalmente (Terrinha Matriz/Filial,
+// OK Matriz/Filial, J E Comércio etc. também fazem venda real pra cliente).
+test('_construirCortesResumoMensalBi: soma por mês+produto (só mês atual/anterior, loja 11 sempre fora), ignora linha sem data, sem produto_key, da 2JM Amidos, ou de mês fechado antigo', () => {
   const { internals } = carregarComFirestoreFake();
+  const agoraISO = '2026-08-15T12:00:00.000Z'; // "hoje" simulado — mês atual=2026-08, anterior=2026-07
   const registros = [
-    { data: '2026-07-05T00:00:00', produto_key: 100, descricao: 'Tapioca', quantidadePedidaCx: 50, quantidadeFaturadaCx: 45, corteRoteiroCx: 5, valorPedidoTotal: 500, faturamentoRs: 450 },
-    { data: '2026-07-20T00:00:00', produto_key: 100, descricao: 'Tapioca', quantidadePedidaCx: 30, quantidadeFaturadaCx: 30, corteRoteiroCx: 0, valorPedidoTotal: 300, faturamentoRs: 300 },
-    { data: '2026-08-01T00:00:00', produto_key: 100, descricao: 'Tapioca', quantidadePedidaCx: 10, quantidadeFaturadaCx: 10, corteRoteiroCx: 0, valorPedidoTotal: 100, faturamentoRs: 100 },
-    { data: null, produto_key: 200, descricao: 'Sem data' },
-    { data: '2026-07-01T00:00:00', produto_key: null, descricao: 'Sem produto' },
+    { data: '2026-07-05T00:00:00', loja_key: '1', produto_key: 100, descricao: 'Tapioca', quantidadePedidaCx: 50, quantidadeFaturadaCx: 45, corteRoteiroCx: 5, valorPedidoTotal: 500, faturamentoRs: 450 },
+    { data: '2026-07-20T00:00:00', loja_key: '17', produto_key: 100, descricao: 'Tapioca', quantidadePedidaCx: 30, quantidadeFaturadaCx: 30, corteRoteiroCx: 0, valorPedidoTotal: 300, faturamentoRs: 300 },
+    { data: '2026-08-01T00:00:00', loja_key: '1', produto_key: 100, descricao: 'Tapioca', quantidadePedidaCx: 10, quantidadeFaturadaCx: 10, corteRoteiroCx: 0, valorPedidoTotal: 100, faturamentoRs: 100 },
+    { data: null, loja_key: '1', produto_key: 200, descricao: 'Sem data' },
+    { data: '2026-07-01T00:00:00', loja_key: '1', produto_key: null, descricao: 'Sem produto' },
+    { data: '2026-07-10T00:00:00', loja_key: '11', produto_key: 100, descricao: 'Tapioca', quantidadePedidaCx: 999, quantidadeFaturadaCx: 999, corteRoteiroCx: 999, valorPedidoTotal: 9999, faturamentoRs: 9999 }, // 2JM Amidos — fora
+    { data: '2026-05-10T00:00:00', loja_key: '1', produto_key: 100, descricao: 'Tapioca', quantidadePedidaCx: 999, quantidadeFaturadaCx: 999, corteRoteiroCx: 999, valorPedidoTotal: 9999, faturamentoRs: 9999 }, // mês fechado antigo — fora
   ];
-  const itens = internals._construirCortesResumoMensalBi(registros);
-  assert.equal(itens.length, 2, 'julho/produto100 somado + agosto/produto100 — as 2 linhas inválidas ficam de fora');
+  const itens = internals._construirCortesResumoMensalBi(registros, agoraISO);
+  assert.equal(itens.length, 2, 'julho/produto100 (loja 1) somado + agosto/produto100 — loja 17 (OK Filial) soma junto no mesmo produto/mês, só a 11 (2JM) e o mês antigo ficam fora');
   const julho = itens.find(x => x.mes === '2026-07' && x.produtoKey === '100');
   assert.equal(julho.quantidadePedidaCx, 80);
   assert.equal(julho.quantidadeFaturadaCx, 75);

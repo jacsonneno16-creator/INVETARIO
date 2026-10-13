@@ -822,8 +822,6 @@ let FILA_ENVIO = filaLoad();
 // ── Indicador de conectividade / fila ──
 function atualizarBarraStatus() {
   const bar = document.getElementById('sync-bar');
-  const barText = document.getElementById('sync-bar-text');
-  const barSpin = document.getElementById('sync-bar-spinner');
   const pill = document.getElementById('conn-pill');
   const dot = document.getElementById('conn-dot');
   const label = document.getElementById('conn-label');
@@ -859,25 +857,11 @@ function atualizarBarraStatus() {
     }
   }
 
-  // ── Atualiza a BARRA de sincronização ──────────────────────
-  if (!bar) return;
-  if (!online) {
-    bar.style.display = 'flex';
-    bar.style.background = 'linear-gradient(90deg,#7c2d12,#92400e)';
-    if (barText) barText.textContent = `📵 Sem internet — ${pending} contagem(ns) salva(s) localmente`;
-    if (barSpin) barSpin.textContent = '💾';
-  } else if (pending > 0) {
-    bar.style.display = 'flex';
-    bar.style.background = 'linear-gradient(90deg,#1e3a8a,#1d4ed8)';
-    if (barText) barText.textContent = `⬆️ Sincronizando ${pending} contagem(ns) com Firebase…`;
-    if (barSpin) barSpin.textContent = '🔄';
-  } else {
-    // Mostra "tudo certo" e some
-    bar.style.background = 'linear-gradient(90deg,#14532d,#166534)';
-    if (barText) barText.textContent = `✅ Firebase sincronizado — todas as contagens enviadas`;
-    if (barSpin) barSpin.textContent = '';
-    setTimeout(() => {
-      if (bar && FILA_ENVIO.length === 0) bar.style.display = 'none';
-    }, 3000);
-  }
+  // ── Barra de sincronização (topo da tela) — pedido ao vivo 2026-09-29:
+  // como o envio agora é sempre manual (botão "Enviar Contagens" na aba
+  // Status), essa faixa dizendo "Sincronizando... com Firebase" ficou
+  // enganosa — nada é enviado sozinho. A informação de pendências já
+  // aparece no pill do topo (conn-pill) e em detalhe na aba Status, então
+  // a faixa grande fica sempre escondida.
+  if (bar) bar.style.display = 'none';
 }

@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════
-//  ETAPA 2: CAPA/PALETE
+//  ETAPA 3: CAPA/PALETE
 // ═══════════════════════════════════════════════════
 function _capaNumero(val) {
   if (!/^\d+$/.test(String(val || '').trim())) return NaN;
@@ -105,29 +105,15 @@ function confirmarCapa() {
   beepSuave();
   APP.atual.capa = capaFinal;
   APP.atual.capaGerada = !!v.nova;
-  APP.atual.step = 3;
-  if (APP.atual.somentesDun) {
-    document.getElementById('gtin-label').textContent = '🔢 Etapa 3 — DUN (obrigatório)';
-    document.getElementById('gtin-sublabel').textContent = 'Este endereço só aceita DUN';
-    const _glt = document.getElementById('gtin-label-txt');
-    if (_glt) _glt.textContent = 'DUN (obrigatório)';
-    document.getElementById('f-gtin').placeholder = 'DUN (14 dígitos)';
-  } else {
-    document.getElementById('gtin-label').textContent = '🔢 Etapa 3 — GTIN / DUN';
-    document.getElementById('gtin-sublabel').textContent = 'Bipe ou digite o código';
-    const _glt2 = document.getElementById('gtin-label-txt');
-    if (_glt2) _glt2.textContent = 'GTIN / DUN';
-    document.getElementById('f-gtin').placeholder = 'GTIN (13) ou DUN (14)';
-  }
-  document.getElementById('f-gtin').value = '';
-  document.getElementById('fb-gtin').innerHTML = '';
-  document.getElementById('prod-found-box').style.display = 'none';
+  APP.atual.step = 4;
+  document.getElementById('f-vencimento').value = '';
+  document.getElementById('fb-vencimento').innerHTML = '';
   updateSteps();
-  setTimeout(() => document.getElementById('f-gtin').focus(), 100);
+  setTimeout(() => document.getElementById('f-vencimento').focus(), 100);
 }
 
 // ═══════════════════════════════════════════════════
-//  ETAPA 3: GTIN / DUN  (melhoria 2: usa base normalizada)
+//  ETAPA 2: GTIN / DUN  (melhoria 2: usa base normalizada)
 // ═══════════════════════════════════════════════════
 function onGtinInput() {
   const val = document.getElementById('f-gtin').value.trim();
@@ -272,7 +258,8 @@ function confirmarGtin() {
     APP.atual.capa = '';
     APP.atual.loteProduto = '';
     APP.atual.validade = '';
-    APP.atual.step = 5;
+    APP.atual.dataValidade = '';
+    APP.atual.step = 6;
     _calcExpr = '';
     _calcResultado = null;
     _calcMode = false;
@@ -288,16 +275,21 @@ function confirmarGtin() {
     return;
   }
 
-  // Endereço físico: solicitar obrigatoriamente o número do lote.
-  APP.atual.step = 4;
-  document.getElementById('f-validade').value = '';
-  document.getElementById('fb-validade').innerHTML = '';
+  // Endereço físico: solicitar obrigatoriamente a capa/palete.
+  APP.atual.step = 3;
+  document.getElementById('f-capa').value = '';
+  document.getElementById('fb-capa').innerHTML = '';
+  const elHint = document.getElementById('cp-proximo-hint');
+  if (elHint) {
+    const range = APP.capaRange;
+    elHint.textContent = range && range.min && range.max ? `Range: ${range.min}–${range.max} · Próximo: ${APP.proximoCapa}` : 'Próximo disponível: ' + APP.proximoCapa;
+  }
   updateSteps();
-  setTimeout(() => document.getElementById('f-validade').focus(), 100);
+  setTimeout(() => document.getElementById('f-capa').focus(), 100);
 }
 
 // ═══════════════════════════════════════════════════
-//  ETAPA 4: LOTE DO PRODUTO
+//  ETAPA 5: LOTE DO PRODUTO
 // ═══════════════════════════════════════════════════
 function onValidadeInput() {
   const el = document.getElementById('f-validade');
@@ -323,8 +315,7 @@ function confirmarValidade() {
     return;
   }
   APP.atual.loteProduto = val;
-  APP.atual.validade = '';
-  APP.atual.step = 5;
+  APP.atual.step = 6;
   beepOk();
   _calcExpr = '';
   _calcResultado = null;
@@ -338,7 +329,59 @@ function confirmarValidade() {
 }
 
 // ═══════════════════════════════════════════════════
-//  ETAPA 5: QUANTIDADE + CALCULADORA
+//  ETAPA 4: DATA DE VALIDADE
+// ═══════════════════════════════════════════════════
+function onVencimentoInput() {
+  const el = document.getElementById('f-vencimento');
+  const fb = document.getElementById('fb-vencimento');
+  if (!el) return;
+  // Máscara automática DD/MM/AAAA: o operador só digita números, as barras
+  // entram sozinhas (pedido ao vivo 2026-09-29) — mantém a posição do
+  // cursor no fim, que é onde o scanner/teclado numérico sempre digita.
+  const digitos = String(el.value || '').replace(/\D/g, '').slice(0, 8);
+  let val = digitos;
+  if (digitos.length > 4) val = digitos.slice(0, 2) + '/' + digitos.slice(2, 4) + '/' + digitos.slice(4);else if (digitos.length > 2) val = digitos.slice(0, 2) + '/' + digitos.slice(2);
+  el.value = val;
+  if (!fb || digitos.length < 8) {
+    if (fb) fb.innerHTML = '';
+    el.className = 'field';
+    return;
+  }
+  // Formato completo aceito: DD/MM/AAAA (a máscara sempre entrega esse
+  // formato) — a validação em confirmarVencimento também aceita MM/AAAA
+  // por compatibilidade com registros antigos/colados manualmente.
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(val)) {
+    fb.innerHTML = `<div class="fb ok">✓ Validade: ${escHTML(val)}</div>`;
+    el.className = 'field field-ok';
+  } else {
+    fb.innerHTML = '';
+    el.className = 'field';
+  }
+}
+function confirmarVencimento() {
+  const el = document.getElementById('f-vencimento');
+  const val = String((el === null || el === void 0 ? void 0 : el.value) || '').trim();
+  if (!val) {
+    toast('Informe a data de validade', 'e');
+    beepErr();
+    return;
+  }
+  if (!/^\d{2}\/\d{4}$/.test(val) && !/^\d{2}\/\d{2}\/\d{4}$/.test(val)) {
+    toast('Data de validade inválida — use DD/MM/AAAA', 'e');
+    beepErr();
+    return;
+  }
+  APP.atual.dataValidade = val;
+  APP.atual.step = 5;
+  beepOk();
+  document.getElementById('f-validade').value = '';
+  document.getElementById('fb-validade').innerHTML = '';
+  updateSteps();
+  setTimeout(() => document.getElementById('f-validade').focus(), 100);
+}
+
+// ═══════════════════════════════════════════════════
+//  ETAPA 6: QUANTIDADE + CALCULADORA
 // ═══════════════════════════════════════════════════
 function _onQtyInput() {
   var _document$getElementB3;
@@ -403,7 +446,7 @@ function toggleCalculadora() {
 }
 
 // ═══════════════════════════════════════════════════
-//  ETAPA 5: CALCULADORA  (usa f-qty como display)
+//  ETAPA 6: CALCULADORA  (usa f-qty como display)
 // ═══════════════════════════════════════════════════
 let _calcExpr = ''; // expressão em construção
 let _calcResultado = null; // último resultado confirmado
@@ -469,7 +512,7 @@ let _ultimaAssinaturaContagem = null;
 let _ultimoSalvamentoTs = 0;
 function _assinaturaContagem(atual, qty) {
   var _APP$operador;
-  return [String(atual._endNorm || atual.endereco || '').trim().toUpperCase(), String(atual.capa || '').trim().toUpperCase(), String(atual.gtin || '').trim().toUpperCase(), String(atual.validade || '').trim(), Number(qty), String(((_APP$operador = APP.operador) === null || _APP$operador === void 0 ? void 0 : _APP$operador.name) || '').trim().toUpperCase()].join('|');
+  return [String(atual._endNorm || atual.endereco || '').trim().toUpperCase(), String(atual.capa || '').trim().toUpperCase(), String(atual.gtin || '').trim().toUpperCase(), String(atual.loteProduto || '').trim(), String(atual.dataValidade || '').trim(), Number(qty), String(((_APP$operador = APP.operador) === null || _APP$operador === void 0 ? void 0 : _APP$operador.name) || '').trim().toUpperCase()].join('|');
 }
 function salvarContagem() {
   var _a$produtoAtual;
@@ -623,10 +666,22 @@ function _executarSalvar(qty) {
   // A conversão para unidades ocorre APENAS na Análise por Produto do analista
   const _gtinBipado = normProd(a.gtin);
   const _isDunBipado = _gtinBipado.length === 14;
-  const _fatorCx = Math.max(1, parseFloat((_a$produtoAtual3 = a.produtoAtual) === null || _a$produtoAtual3 === void 0 ? void 0 : _a$produtoAtual3.fator_caixa) || 1);
   const _produtoGlobal = ((_window$DTProdutos4 = window.DTProdutos) === null || _window$DTProdutos4 === void 0 ? void 0 : _window$DTProdutos4.buscarSync(_gtinBipado)) || {
     encontrado: false
   };
+  // CORREÇÃO (2026-10-07): o fator de caixa precisa ser o do PRODUTO REALMENTE
+  // BIPADO (_produtoGlobal), não o do produto esperado nesse endereço
+  // (a.produtoAtual) — antes, bipar um produto diferente do esperado (produto
+  // errado no endereço, mas também vendido em caixa de verdade) gravava
+  // fator 1, porque a.produtoAtual só carrega o fator do item esperado da
+  // base, nunca o do código realmente lido. Isso fazia a quantidade em caixas
+  // (ex.: 48) ser salva como se já fosse em unidade, em vez das 960 unidades
+  // reais. Só cai pro fator do endereço quando o bipado não foi encontrado no
+  // catálogo (produto sem cadastro — aí não há fator real pra usar mesmo).
+  var _fatorProdutoLidoBruto = _produtoGlobal.encontrado ? _produtoGlobal.fatorCaixa !== undefined && _produtoGlobal.fatorCaixa !== null ? _produtoGlobal.fatorCaixa : _produtoGlobal.fator_caixa : undefined;
+  var _fatorProdutoLido = parseFloat(_fatorProdutoLidoBruto);
+  var _fatorEnderecoBruto = (_a$produtoAtual3 = a.produtoAtual) === null || _a$produtoAtual3 === void 0 ? void 0 : _a$produtoAtual3.fator_caixa;
+  const _fatorCx = Math.max(1, (Number.isFinite(_fatorProdutoLido) && _fatorProdutoLido > 0 ? _fatorProdutoLido : parseFloat(_fatorEnderecoBruto)) || 1);
   const _nomeProdutoLido = _produtoGlobal.encontrado ? _produtoGlobal.nomeProduto : ((_a$produtoAtual4 = a.produtoAtual) === null || _a$produtoAtual4 === void 0 ? void 0 : _a$produtoAtual4.descricao_produto) || 'Produto não identificado';
   const contagem = {
     id: Date.now(),
@@ -647,7 +702,7 @@ function _executarSalvar(qty) {
     descricao: _nomeProdutoLido,
     descricao_produto: _nomeProdutoLido,
     lote_produto: a.enderecoVirtual ? '' : a.loteProduto || '',
-    validade: a.enderecoVirtual ? '' : a.validade || '',
+    validade: a.enderecoVirtual ? '' : a.dataValidade || '',
     tipo_endereco: a.enderecoVirtual ? 'VIRTUAL' : a.tipoEndereco || 'FISICO',
     contabiliza_inventario: a.contabilizaInventario !== false,
     permite_multiplos_operadores: a.permiteMultiplosOperadores === true,
@@ -732,15 +787,10 @@ function _executarSalvar(qty) {
   updateStats();
 
   // Toast de confirmação (sempre positivo — divergência real é processada no analista)
-  toast('✓ Salvo: ' + contagem.descricao + ' × ' + qty, 's');
+  toast('✅ Quantidade registrada.', 's');
   beepOk();
 
-  // Alerta informativo de quantidade — puramente visual, não influencia o fluxo
-  if (_alertaQtd) {
-    setTimeout(() => {
-      toast(`⚠ Atenção: esperado ${qtdEsp} · contado ${qty}. Validação final no analista.`, 'w');
-    }, 600);
-  }
+  // Contagem cega: quantidade esperada continua gravada para o Analista, mas nunca é exibida no Coletor.
 
   // Em recontagem, a rodada deve respeitar a mesma capacidade de paletes
   // cadastrada na base geral de enderecos. Nao concluir apos o primeiro
@@ -820,6 +870,8 @@ function finalizarEnderecoAtual() {
     produtoAtual: null,
     produtoDivergenteEnd: false,
     validade: '',
+    loteProduto: '',
+    dataValidade: '',
     quantidade: 0,
     somentesDun: false
   };
@@ -832,7 +884,7 @@ function finalizarEnderecoAtual() {
   if (stepEnd) stepEnd.style.display = '';
 
   // Limpar inputs
-  ['f-endereco', 'f-capa', 'f-gtin', 'f-validade'].forEach(id => {
+  ['f-endereco', 'f-capa', 'f-gtin', 'f-validade', 'f-vencimento'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.value = '';
@@ -850,7 +902,7 @@ function finalizarEnderecoAtual() {
   calcAc === null || calcAc === void 0 || calcAc();
 
   // Limpar feedbacks
-  ['fb-endereco', 'fb-capa', 'fb-gtin', 'fb-validade', 'fb-rebipar'].forEach(id => {
+  ['fb-endereco', 'fb-capa', 'fb-gtin', 'fb-validade', 'fb-vencimento', 'fb-rebipar'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = '';
   });
@@ -899,12 +951,14 @@ function _manterEnderecoAtivo(endereco, endNorm, cap, somentesDun) {
     produtoAtual: null,
     produtoDivergenteEnd: false,
     validade: '',
+    loteProduto: '',
+    dataValidade: '',
     quantidade: 0,
     somentesDun: somentesDun || false
   };
 
   // Limpar campos das etapas 2-5
-  ['f-capa', 'f-gtin', 'f-validade'].forEach(id => {
+  ['f-capa', 'f-gtin', 'f-validade', 'f-vencimento'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.value = '';
@@ -920,7 +974,7 @@ function _manterEnderecoAtivo(endereco, endNorm, cap, somentesDun) {
   const cw = document.getElementById('calc-wrap');
   if (cw) cw.style.display = 'none';
   calcAc();
-  ['fb-capa', 'fb-gtin', 'fb-validade'].forEach(id => {
+  ['fb-capa', 'fb-gtin', 'fb-validade', 'fb-vencimento'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = '';
   });
@@ -998,6 +1052,7 @@ function resetContagem() {
     produtoDivergenteEnd: false,
     loteProduto: '',
     validade: '',
+    dataValidade: '',
     quantidade: 0,
     somentesDun: false,
     capacidadeEnd: 0,
@@ -1016,7 +1071,7 @@ function resetContagem() {
   if (stepEnd) stepEnd.style.display = '';
 
   // Limpar inputs e classes de validação
-  ['f-endereco', 'f-capa', 'f-gtin', 'f-validade'].forEach(id => {
+  ['f-endereco', 'f-capa', 'f-gtin', 'f-validade', 'f-vencimento'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.value = '';
@@ -1036,7 +1091,7 @@ function resetContagem() {
   calcAc();
 
   // Limpar feedbacks
-  ['fb-endereco', 'fb-capa', 'fb-gtin', 'fb-validade'].forEach(id => {
+  ['fb-endereco', 'fb-capa', 'fb-gtin', 'fb-validade', 'fb-vencimento'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = '';
   });
@@ -1044,7 +1099,7 @@ function resetContagem() {
   if (pb) pb.style.display = 'none';
 
   // Limpar sf-val (valor inline)
-  ['sf-val-endereco', 'sf-val-capa', 'sf-val-gtin', 'sf-val-validade'].forEach(id => {
+  ['sf-val-endereco', 'sf-val-capa', 'sf-val-gtin', 'sf-val-validade', 'sf-val-vencimento'].forEach(id => {
     const el = document.getElementById(id);
     if (el) {
       el.textContent = '';
@@ -1055,7 +1110,8 @@ function resetContagem() {
       'sf-val-endereco': 'step-endereco',
       'sf-val-capa': 'step-capa',
       'sf-val-gtin': 'step-gtin',
-      'sf-val-validade': 'step-validade'
+      'sf-val-validade': 'step-validade',
+      'sf-val-vencimento': 'step-vencimento'
     };
     const stepEl = document.getElementById(stepMap[id]);
     if (stepEl) {
@@ -1069,7 +1125,7 @@ function resetContagem() {
   if (vaziow) vaziow.style.display = 'none';
 
   // Limpar classes dos step-fields
-  ['step-endereco', 'step-capa', 'step-gtin', 'step-validade', 'step-quantidade'].forEach(id => {
+  ['step-endereco', 'step-gtin', 'step-capa', 'step-vencimento', 'step-validade', 'step-quantidade'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.classList.remove('done', 'ativo');
   });

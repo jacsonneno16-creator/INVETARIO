@@ -7,7 +7,7 @@
 
 // Foco automático: ao entrar na etapa, focar o campo correto
 function focarCampoAtivo() {
-  const steps = ['step-endereco', 'step-capa', 'step-gtin', 'step-validade', 'step-quantidade'];
+  const steps = ['step-endereco', 'step-gtin', 'step-capa', 'step-vencimento', 'step-validade', 'step-quantidade'];
   for (const id of steps) {
     const el = document.getElementById(id);
     if (el && el.style.display !== 'none') {
@@ -55,6 +55,11 @@ document.addEventListener('keydown', e => {
     if (id === 'f-validade') {
       e.preventDefault();
       confirmarValidade();
+      return;
+    }
+    if (id === 'f-vencimento') {
+      e.preventDefault();
+      confirmarVencimento();
       return;
     }
     if (id === 'f-qty') {

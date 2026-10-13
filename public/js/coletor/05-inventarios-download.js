@@ -24,15 +24,19 @@ async function carregarAtribuicoesContagem(invId) {
 // exatamente no fluxo de sempre (screen-mode, com Inventário/Auditoria
 // dentro), sem nenhuma mudança de comportamento.
 function abrirAreaInventario() {
+  if (typeof coletorTemAlgumaPermissao === 'function' && !coletorTemAlgumaPermissao([['inventarios','visualizar'],['auditoria','visualizar'],['recontagens','visualizar']])) return;
   goScreen('mode');
+  if (typeof aplicarPermissoesMenuColetor === 'function') aplicarPermissoesMenuColetor();
 }
 function abrirModoInventario() {
+  if (typeof coletorExigirPermissao === 'function' && !coletorExigirPermissao('inventarios','visualizar')) return;
   APP.modoAcesso = 'inventario';
   APP.modoPendente = 'inventario';
   goScreen('inventarios');
   carregarInventarios();
 }
 function abrirModoAuditoria() {
+  if (typeof coletorExigirPermissao === 'function' && !coletorExigirPermissao('auditoria','visualizar')) return;
   APP.modoAcesso = 'auditoria';
   APP.modoPendente = 'auditoria';
   goScreen('auditorias');
@@ -108,10 +112,18 @@ function carregarInventarios() {
   // inventário ABERTO/EM_ANDAMENTO por diferença de texto.
   FS.collection(FCOL.inventarios).get().then(snap => {
     dbg('[Firestore] inventários encontrados:', snap.size);
-    const lista = snap.docs.map(d => ({
-      id: d.id,
-      ...d.data()
-    })).filter(i => ['ATIVO', 'ABERTO', 'EM_ANDAMENTO', 'PAUSADO'].includes(String(i.status || '').trim().toUpperCase())).filter(i => !i.oculto_coletor); // 🙈 ocultos pelo analista não aparecem
+    // Inventário lido de lojas/{loja}/dt_inventarios pertence a essa loja.
+    // Sem isto, inventários criados sem loja_principal (campo sai vazio na
+    // criação) somem da lista de operadores com lojas restritas.
+    const lojaDoCaminho = String((window.getDTLojaAtiva && window.getDTLojaAtiva()) || '').trim();
+    const lista = snap.docs.map(d => {
+      const dados = d.data();
+      return {
+        id: d.id,
+        ...dados,
+        loja_principal: String(dados.loja_principal || '').trim() || lojaDoCaminho
+      };
+    }).filter(i => ['ATIVO', 'ABERTO', 'EM_ANDAMENTO', 'PAUSADO'].includes(String(i.status || '').trim().toUpperCase())).filter(i => !i.oculto_coletor); // 🙈 ocultos pelo analista não aparecem
     APP.inventariosDisponiveis = lista;
     invCacheSave(lista);
     limparInventariosObsoletos(lista.map(i => i.id)); // 🗑 remove cache de inv. excluídos
@@ -533,6 +545,7 @@ function cancelarDownload() {
   }
 }
 function entrarInventario() {
+  if (typeof coletorExigirPermissao === 'function' && !coletorExigirPermissao('inventarios','contar')) return;
   _aplicarInventario(APP.inventario, APP.modoPendente || APP.modoAcesso || 'inventario');
 }
 
@@ -789,11 +802,15 @@ function _concluirDownload(totalReg) {
   document.getElementById('dl-status-txt').textContent = `Pronto! ${totalReg} registros carregados`;
   const btnEntrar = document.getElementById('dl-btn-entrar');
   const btnCancel = document.getElementById('dl-btn-cancel');
-  if (btnEntrar) btnEntrar.style.display = '';
+  if (btnEntrar) {
+    btnEntrar.setAttribute('data-perm-modulo','inventarios');
+    btnEntrar.setAttribute('data-perm-acao','contar');
+    btnEntrar.style.display = (typeof coletorTemPermissao !== 'function' || coletorTemPermissao('inventarios','contar')) ? '' : 'none';
+  }
   if (btnCancel) btnCancel.style.display = 'none';
-  // Auto-entrar
+  // Auto-entrar só para quem tem permissão operacional de contagem.
   setTimeout(() => {
-    if (!_dlCancelado) entrarInventario();
+    if (!_dlCancelado && (typeof coletorTemPermissao !== 'function' || coletorTemPermissao('inventarios','contar'))) entrarInventario();
   }, 800);
 }
 function _dlSetErro(msg) {

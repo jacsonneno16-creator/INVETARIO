@@ -42,7 +42,7 @@ function updateSteps() {
   const s = APP.atual.step;
 
   // ── Indicador de progresso (dots) ──
-  for (let i = 1; i <= 5; i++) {
+  for (let i = 1; i <= 6; i++) {
     const dot = document.getElementById('sd-' + i);
     const line = document.getElementById('sl-' + i);
     if (!dot) continue;
@@ -60,7 +60,9 @@ function updateSteps() {
   }
 
   // ── Mostrar / ocultar step-fields ──
-  const ordem = ['step-endereco', 'step-capa', 'step-gtin', 'step-validade', 'step-quantidade'];
+  // Ordem final (pedido ao vivo 2026-09-29): Endereço → Produto → Capa/Palete
+  // → Validade → Lote → Quantidade.
+  const ordem = ['step-endereco', 'step-gtin', 'step-capa', 'step-vencimento', 'step-validade', 'step-quantidade'];
   ordem.forEach((id, idx) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -73,7 +75,7 @@ function updateSteps() {
   });
 
   // ── Desabilitar inputs de etapas já concluídas ──
-  const inputs = ['f-endereco', 'f-capa', 'f-gtin', 'f-validade'];
+  const inputs = ['f-endereco', 'f-gtin', 'f-capa', 'f-vencimento', 'f-validade'];
   inputs.forEach((id, idx) => {
     const el = document.getElementById(id);
     if (el) el.disabled = s > idx + 1;
@@ -82,9 +84,13 @@ function updateSteps() {
   // ── sf-val: mostrar valor confirmado inline na linha ──
   const a = APP.atual;
   _sfVal('step-endereco', 'sf-val-endereco', a.step > 1, a.endereco);
-  _sfVal('step-capa', 'sf-val-capa', a.step > 2, a.capa);
-  _sfVal('step-gtin', 'sf-val-gtin', a.step > 3, (_a$produtoAtual = a.produtoAtual) !== null && _a$produtoAtual !== void 0 && _a$produtoAtual.descricao_produto ? a.produtoAtual.descricao_produto.slice(0, 26) : a.gtin);
-  _sfVal('step-validade', 'sf-val-validade', a.step > 4, a.validade);
+  _sfVal('step-gtin', 'sf-val-gtin', a.step > 2, (_a$produtoAtual = a.produtoAtual) !== null && _a$produtoAtual !== void 0 && _a$produtoAtual.descricao_produto ? a.produtoAtual.descricao_produto.slice(0, 26) : a.gtin);
+  _sfVal('step-capa', 'sf-val-capa', a.step > 3, a.capa);
+  // Fix: o campo `a.validade` é sempre limpo em confirmarValidade() (o valor
+  // real do lote vai para a.loteProduto) — usar a.validade aqui sempre
+  // mostrava o resumo em branco depois de confirmar o lote.
+  _sfVal('step-vencimento', 'sf-val-vencimento', a.step > 4, a.dataValidade);
+  _sfVal('step-validade', 'sf-val-validade', a.step > 5, a.loteProduto);
 
   // ── Botão END. VAZIO: aparece sempre que o endereço estiver confirmado,
   //    exceto quando o painel lote estiver ativo (tem seu próprio botão de encerrar)
@@ -107,6 +113,17 @@ function updateSteps() {
   if (r) r.style.display = 'none';
 }
 
+// Toque no valor já confirmado (GTIN, capa, validade ou lote) pra corrigir sem
+// recomeçar o produto: volta o passo para aquela etapa e reabre o campo.
+function _reabrirEtapaColeta(stepId) {
+  const passo = { 'step-gtin': 2, 'step-capa': 3, 'step-vencimento': 4, 'step-validade': 5 }[stepId];
+  if (!passo || !APP.atual) return;
+  APP.atual.step = passo;
+  updateSteps();
+  const campo = document.querySelector('#' + stepId + ' .sf-input-wrap .field');
+  if (campo) setTimeout(function () { campo.focus(); }, 0);
+}
+
 /** Mostra o valor confirmado no sf-val e esconde o input na linha */
 function _sfVal(stepId, valId, show, texto) {
   const stepEl = document.getElementById(stepId);
@@ -115,6 +132,12 @@ function _sfVal(stepId, valId, show, texto) {
   if (show && texto) {
     valEl.textContent = texto;
     valEl.style.display = '';
+    if (stepId !== 'step-endereco' && !valEl.dataset.corrigivel) {
+      valEl.dataset.corrigivel = '1';
+      valEl.style.cursor = 'pointer';
+      valEl.title = 'Toque para corrigir';
+      valEl.addEventListener('click', function () { _reabrirEtapaColeta(stepId); });
+    }
     const inp = stepEl.querySelector('.sf-input-wrap .field');
     if (inp) inp.style.display = 'none';
   } else {
