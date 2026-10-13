@@ -125,16 +125,13 @@
   // uma planilha (Veículo/Motorista, Placa, Motivo) de uma vez só, sem
   // repetir os que já existem. Preview antes de salvar.
   let _previewImportacaoCadastros = null;
-  // PEDIDO AO VIVO (2026-09-11): "baixar um arquivo com todas as notas...
-  // cadastra em cada uma o mercado e o valor que faltam" / "outro arquivo
-  // pra colocar o tratamento... e os motivos" — 2 planilhas reais da
-  // operação (Relatório de Viagens da transportadora; CONTROLE DE
-  // REENTREGAS E RECUSAS, aba "BASE GERAL", confirmada com o usuário como
-  // a fonte confiável). NUNCA sobrescreve o que já está preenchido — só
-  // completa o que está vazio, mesmo princípio já usado em
-  // _corrigirVolumeEsperadoRecusas/buscarMercadoFaltante (105). Preview
-  // antes de aplicar, mesmo padrão de lerImportacaoCadastros acima.
-  let _previewImportDadosNotas = null;
+  // PEDIDO AO VIVO (2026-09-17): "esses três completar aí, que tinha sido
+  // pra completar em outra fase" — as 2 importações de planilha que só
+  // completavam mercado/valor/reentrega/tratamento de notas antigas (fase
+  // pontual de arrumação de dados) saíram da tela; a importação de
+  // Motoristas + Motivos continua, mas escondida atrás do modo "Importar"
+  // no card de Motoristas (ver _modoAddMotorista) em vez de card próprio.
+  let _modoAddMotorista = 'manual';
 
   // FASE 9 — "Tratamento do retorno" é SEMPRE separado da "Natureza da NF"
   // (pedido explícito do usuário: nunca sobrescreve o dado da nota) e da
@@ -148,6 +145,10 @@
   // 24-recebimento-recusas.js do Coletor).
   function _estaNoPatio(doc, nota) {
     if (doc.origem !== 'COLETOR' && doc.origem !== 'INVENTARIO_INICIAL') return false;
+    // PEDIDO AO VIVO (2026-09-22): mesmo campo novo de 24-recebimento-
+    // recusas.js/29-recebimento-patio-inventario.js — ver comentário lá.
+    const confirmadoAusente = nota.confirmadoAusenteEm != null ? nota.confirmadoAusenteEm : doc.confirmadoAusenteEm;
+    if (confirmadoAusente) return false;
     const tratamento = nota.tratamento != null ? nota.tratamento : (doc.tratamento || '');
     if (tratamento === 'REENTREGA') {
       const saida = nota.dataSaidaEm != null ? nota.dataSaidaEm : doc.dataSaidaEm;
@@ -263,6 +264,20 @@
   function intVol(v) {
     const n = numero(v);
     return Number.isFinite(n) ? Math.round(n) : NaN;
+  }
+  // BUG AO VIVO REAL (2026-09-17): "diz que teve 5 hoje dia 17, mas não tem
+  // nenhuma dia 17 na tabela" — RETORNOS HOJE comparava a data em UTC
+  // (toISOString) contra o criadoEm também em UTC, então "batia" certinho
+  // nesse sentido — mas a TABELA mostra a data/hora convertida pro fuso
+  // local (toLocaleString, mesmo padrão de fmtDataHora logo abaixo). Um
+  // retorno feito às 23h+ (Brasília) já vira o dia seguinte em UTC — o
+  // card contava como "hoje" um registro que a tabela, corretamente,
+  // mostrava como "ontem" no relógio local. Card e tabela precisam
+  // concordar no mesmo fuso (local), não um em UTC e outro local.
+  function _dataLocalDe(iso) {
+    const d = new Date(iso);
+    if (!iso || Number.isNaN(d.getTime())) return '';
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
   function fmtDataHora(v) {
     if (!v) return '—';
@@ -556,42 +571,56 @@
   // correção precisa ser garantida (`_importarNotasVendaBiRegistros`, antes
   // de `_gravarNotasVenda` usar `_notas` pra saber o que já existe).
   let _cadastrosRecusasCarregados = false;
+  let _cadastrosRecusasCarregandoPromise = null;
   async function _carregarCadastrosRecusas(forcar) {
     if (_cadastrosRecusasCarregados && !forcar) return;
-    const [m, mot, conf, tar, vm] = await Promise.all([
-      fs().collection(COL_MOTORISTAS).get(),
-      fs().collection(COL_MOTIVOS).get(),
-      fs().collection(COL_CONFERENTES).get(),
-      fs().collection(COL_TAREFAS).get(),
-      fs().collection(COL_VENDEDORES_MERCADO).get(),
-    ]);
-    _motoristas = m.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
-    _motivos = mot.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
-    _conferentes = conf.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
-    _vendedoresMercado = vm.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nomeMercado || '').localeCompare(String(b.nomeMercado || ''), 'pt-BR'));
-    // FASE 8 — indexado por recusaId (o mesmo id do doc de tarefa, ver
-    // confirmarAtribuicaoConferenciaRecusa) pra achar rápido se já existe
-    // uma conferência delegada em andamento pra cada linha da tabela.
-    _tarefas = new Map(tar.docs.map(d => [d.id, { _id:d.id, ...d.data() }]));
-    _cadastrosRecusasCarregados = true;
+    if (_cadastrosRecusasCarregandoPromise) return _cadastrosRecusasCarregandoPromise;
+    _cadastrosRecusasCarregandoPromise = (async () => {
+      const [m, mot, conf, tar, vm] = await Promise.all([
+        fs().collection(COL_MOTORISTAS).get(),
+        fs().collection(COL_MOTIVOS).get(),
+        fs().collection(COL_CONFERENTES).get(),
+        fs().collection(COL_TAREFAS).get(),
+        fs().collection(COL_VENDEDORES_MERCADO).get(),
+      ]);
+      _motoristas = m.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
+      _motivos = mot.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
+      _conferentes = conf.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nome || '').localeCompare(String(b.nome || ''), 'pt-BR'));
+      _vendedoresMercado = vm.docs.map(d => ({ _id:d.id, ...d.data() })).sort((a,b) => String(a.nomeMercado || '').localeCompare(String(b.nomeMercado || ''), 'pt-BR'));
+      // FASE 8 — indexado por recusaId (o mesmo id do doc de tarefa, ver
+      // confirmarAtribuicaoConferenciaRecusa) pra achar rápido se já existe
+      // uma conferência delegada em andamento pra cada linha da tabela.
+      _tarefas = new Map(tar.docs.map(d => [d.id, { _id:d.id, ...d.data() }]));
+      _cadastrosRecusasCarregados = true;
+    })();
+    try {
+      await _cadastrosRecusasCarregandoPromise;
+    } finally {
+      _cadastrosRecusasCarregandoPromise = null;
+    }
   }
-
   // Ledger de vendas (_notas) — separado dos cadastros leves acima de
   // propósito (ver comentário acima). `forcar` sempre revalida contra
   // COL_NOTAS_CHUNKS (barato quando já existe); só reprocessa do zero
   // quando os chunks ainda não existem de verdade.
   let _notasVendaCarregando = false;
+  let _notasVendaCarregandoPromise = null;
   let _notasCarregadas = false;
   async function _carregarNotasVendaLedger(forcar) {
     if (_notasCarregadas && !forcar) return _notas;
+    if (_notasVendaCarregandoPromise) return _notasVendaCarregandoPromise;
     _notasVendaCarregando = true;
-    try {
+    _notasVendaCarregandoPromise = (async () => {
       _notas = await _migrarParaChunksSeNecessario();
       _notasCarregadas = true;
+      return _notas;
+    })();
+    try {
+      return await _notasVendaCarregandoPromise;
     } finally {
       _notasVendaCarregando = false;
+      _notasVendaCarregandoPromise = null;
     }
-    return _notas;
   }
   // PEDIDO AO VIVO (2026-09-10, 2ª rodada): "não ia funcionar parecido com
   // a base de produtos?" — a ideia era trocar a busca única por uma
@@ -630,6 +659,11 @@
       const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarIndicadoresRetornosBigQuery');
       const resposta = await callable({ lojaId, ini, fim });
       const docs = (resposta && resposta.data && resposta.data.recusas) || [];
+      const notasResumo = (resposta && resposta.data && resposta.data.notasResumo) || {};
+      const resumoPorChave = new Map(Object.entries(notasResumo));
+      _notas = [...new Map([..._notas, ...resumoPorChave.values()].map(n => [String(n.chave || ''), n])).values()];
+      global.DT_NOTAS_VENDA_CACHE = global.DT_NOTAS_VENDA_CACHE || { porChave: new Map(), completa: false };
+      resumoPorChave.forEach((nota, chave) => global.DT_NOTAS_VENDA_CACHE.porChave.set(chave, nota));
       _recusas = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
       _recusasPeriodoBuscado = chave;
     })();
@@ -653,8 +687,8 @@
   }
 
   function resumoCards() {
-    const hoje = new Date().toISOString().slice(0,10);
-    const hojeQtd = _recusas.filter(r => String(r.criadoEm || '').slice(0,10) === hoje).length;
+    const hoje = _dataLocalDe(new Date());
+    const hojeQtd = _recusas.filter(r => _dataLocalDe(r.criadoEm) === hoje).length;
     const diverg = _recusas.filter(r => Number(r.diferencaVolumes || 0) !== 0).length;
     const vols = _recusas.reduce((s,r) => s + Number(r.volumeInformado || 0), 0);
     return `
@@ -698,6 +732,18 @@
       <input class="field" id="recusas-filtro" value="${esc(_filtro)}" placeholder="Pesquisar NF, motorista, motivo, box..." style="max-width:280px;padding:8px">
     </div>`;
   }
+  // PEDIDO AO VIVO (2026-10-12): o <select> nativo de Motivo ficava comprido
+  // demais (lista cresce sem limite, cadastrada à mão em "Cadastros") e
+  // obrigava rolar pra achar o item — mesma reclamação já resolvida no
+  // Coletor (24-recebimento-recusas.js/comboBuscaHtml), só que lá é 1
+  // seleção por tela; aqui é 1 combo POR LINHA da tabela, então um
+  // <datalist> nativo compartilhado (1 só, referenciado por todas as linhas
+  // via list="...") filtra digitando sem precisar de JS de combo próprio por
+  // linha — mais leve numa tabela que pode ter muitas linhas.
+  const ID_DATALIST_MOTIVOS = 'recusas-motivos-datalist';
+  function motivosDatalistHtml() {
+    return `<datalist id="${ID_DATALIST_MOTIVOS}">${_motivos.filter(m=>m.ativo!==false).map(m=>`<option value="${esc(m.nome)}">`).join('')}</datalist>`;
+  }
   function renderRecusasTabela() {
     if (_recusasCarregandoPeriodo && !_recusasPeriodoBuscado) {
       return '<div class="empty"><div class="empty-icon">🔄</div><div class="empty-title">Conectando ao período...</div></div>';
@@ -706,10 +752,10 @@
       return '<div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">Escolha o período e clique em Buscar</div></div>';
     }
     const lista = filtrarRecusas();
-    return `<div style="overflow:auto"><table class="dt-table"><thead><tr><th>Data/Hora</th><th>Notas</th><th>Origem</th><th>Motorista</th><th>Conferente</th><th>Motivo</th><th>Box</th><th>Esperado</th><th>Contado</th><th>Dif.</th><th>Status</th><th>Conferência de produtos</th><th>Tratamento</th><th></th></tr></thead><tbody>${lista.length ? lista.map(r => {
+    return `${motivosDatalistHtml()}<div style="overflow:auto"><table class="dt-table"><thead><tr><th>Data/Hora</th><th>Notas</th><th>Origem</th><th>Motorista</th><th>Conferente</th><th>Motivo</th><th>Box</th><th>Esperado</th><th>Contado</th><th>Dif.</th><th>Status</th><th>Conferência de produtos</th><th>Tratamento</th><th></th></tr></thead><tbody>${lista.length ? lista.map(r => {
       const dif = Number(r.diferencaVolumes || 0);
-      const opcoesMotivo=_motivos.filter(m=>m.ativo!==false||m._id===r.motivoId).map(m=>`<option value="${esc(m._id)}" ${m._id===r.motivoId?'selected':''}>${esc(m.nome)}</option>`).join('');
-      return `<tr><td>${fmtDataHora(r.criadoEm)}</td><td><b>${esc((r.notas || []).map(n => n.numeroNota).filter(Boolean).join(', ') || '—')}</b></td><td>${r.origem==='AUTOMATICO'?'<span class="badge" style="background:#4a3114;color:#ffd18a;font-size:.65rem">⚡ automático</span>':(r.origem==='COLETOR'?'<span class="badge b-blue" style="font-size:.65rem">📱 coletor</span>':'—')}</td><td>${esc(r.motoristaNome || '—')}</td><td>${esc(r.conferenteNome || '—')}</td><td><select class="field" style="min-width:150px;padding:6px;font-size:.72rem" data-recusa-motivo="${esc(r._id)}"><option value="">— Sem motivo —</option>${opcoesMotivo}${r.motivoId&&!_motivos.some(m=>m._id===r.motivoId)?`<option value="${esc(r.motivoId)}" selected>${esc(r.motivoNome||'Motivo antigo')}</option>`:''}</select></td><td><b>${esc(r.box || '—')}</b></td><td>${Number(r.volumeEsperado || 0)}</td><td>${Number(r.volumeInformado || 0)}</td><td style="font-weight:800;color:${dif ? '#dc2626':'#15803d'}">${dif > 0 ? '+' : ''}${dif}</td><td>${dif ? '<span class="badge red">Divergente</span>' : '<span class="badge green">Conferido</span>'}</td><td>${statusConferenciaHtml(r)}</td><td>${tratamentoSelectHtml(r)}</td><td><button class="btn btn-ghost btn-sm" data-recusa-detalhe="${esc(r._id)}">🔍</button> <button class="btn btn-ghost btn-sm" data-recusa-excluir="${esc(r._id)}" title="Excluir esta nota retornada registrada">🗑️</button></td></tr>`;
+      const motivoAtualNome = r.motivoId ? (_motivos.find(m=>m._id===r.motivoId)?.nome || r.motivoNome || '') : '';
+      return `<tr><td>${fmtDataHora(r.criadoEm)}</td><td><b>${esc((r.notas || []).map(n => n.numeroNota).filter(Boolean).join(', ') || '—')}</b></td><td>${r.origem==='AUTOMATICO'?'<span class="badge" style="background:#4a3114;color:#ffd18a;font-size:.65rem">⚡ automático</span>':(r.origem==='COLETOR'?'<span class="badge b-blue" style="font-size:.65rem">📱 coletor</span>':'—')}</td><td>${esc(r.motoristaNome || '—')}</td><td>${esc(r.conferenteNome || '—')}</td><td><input class="field" list="${ID_DATALIST_MOTIVOS}" autocomplete="off" style="min-width:160px;padding:6px;font-size:.72rem" data-recusa-motivo="${esc(r._id)}" data-recusa-motivo-anterior="${esc(motivoAtualNome)}" value="${esc(motivoAtualNome)}" placeholder="— Sem motivo —"></td><td><b>${esc(r.box || '—')}</b></td><td>${Number(r.volumeEsperado || 0)}</td><td>${Number(r.volumeInformado || 0)}</td><td style="font-weight:800;color:${dif ? '#dc2626':'#15803d'}">${dif > 0 ? '+' : ''}${dif}</td><td>${dif ? '<span class="badge red">Divergente</span>' : '<span class="badge green">Conferido</span>'}</td><td>${statusConferenciaHtml(r)}</td><td>${tratamentoSelectHtml(r)}</td><td><button class="btn btn-ghost btn-sm" data-recusa-detalhe="${esc(r._id)}">🔍</button> <button class="btn btn-ghost btn-sm" data-recusa-excluir="${esc(r._id)}" title="Excluir esta nota retornada registrada">🗑️</button></td></tr>`;
     }).join('') : '<tr><td colspan="14"><div class="empty"><div class="empty-icon">↩️</div><div class="empty-title">Nenhuma nota retornada com esses filtros</div></div></td></tr>'}</tbody></table></div>`;
   }
 
@@ -742,9 +788,27 @@
     // campo, em vez de pedir pra escolher na tela. Só o cadastro de
     // conferente ganha e-mail (motorista/motivo não precisam disso).
     const campoEmail = tipo === 'conferente' ? `<input class="field" id="recusas-${tipo}-novo-email" placeholder="E-mail de login (Coletor)" style="margin-top:6px">` : '';
+    // PEDIDO AO VIVO (2026-09-17): "o importar motorista pode ficar ali, na
+    // adicionar — na hora que eu clicar, aparecem as duas opções, importar
+    // e manual" — a importação por planilha (Motoristas + Motivos) deixou
+    // de ser um card próprio sempre visível e virou um 2º modo dentro do
+    // card de Motoristas, ao lado do jeito manual de sempre.
+    const blocoAdicionar = tipo === 'motorista' ? `
+      <div style="display:flex;gap:6px;margin-bottom:8px">
+        <button type="button" class="btn ${_modoAddMotorista === 'manual' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-recusa-motorista-modo="manual">✍️ Manual</button>
+        <button type="button" class="btn ${_modoAddMotorista === 'importar' ? 'btn-primary' : 'btn-ghost'} btn-sm" data-recusa-motorista-modo="importar">📤 Importar planilha</button>
+      </div>
+      ${_modoAddMotorista === 'importar' ? `
+        <div style="font-size:.72rem;color:var(--muted);margin-bottom:6px"><b>Importar Motoristas + Motivos</b> — colunas: Veículo/Motorista, Placa, Motivo. Cadastra o que ainda não existe, nunca duplica.</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap"><input id="recusas-import-cadastros-arquivo" type="file" accept=".xlsx,.xls,.csv" style="max-width:220px"><button class="btn btn-ghost btn-sm" data-recusa-ler-import-cadastros="1">Ler planilha</button></div>
+        ${renderPreviewImportacaoCadastros()}
+      ` : `
+        <div style="display:flex;gap:7px"><input class="field" id="recusas-${tipo}-novo" placeholder="${ph}"><button class="btn btn-primary btn-sm" data-recusa-add="${tipo}">Adicionar</button></div>
+      `}
+    ` : `<div style="display:flex;gap:7px"><input class="field" id="recusas-${tipo}-novo" placeholder="${ph}"><button class="btn btn-primary btn-sm" data-recusa-add="${tipo}">Adicionar</button></div>${campoEmail}</div>`;
     return `<div class="tc" style="padding:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px"><b>${ic} ${title}</b></div>
-      <div style="margin-bottom:10px"><div style="display:flex;gap:7px"><input class="field" id="recusas-${tipo}-novo" placeholder="${ph}"><button class="btn btn-primary btn-sm" data-recusa-add="${tipo}">Adicionar</button></div>${campoEmail}</div>
+      <div style="margin-bottom:10px">${blocoAdicionar}</div>
       <div style="display:flex;flex-direction:column;gap:6px;max-height:260px;overflow:auto">${arr.length ? arr.map(x => `<div style="display:flex;align-items:center;justify-content:space-between;border:1px solid var(--border);border-radius:8px;padding:8px 10px"><span>${esc(x.nome || '')}${tipo === 'motorista' && x.placa ? ' <small style="color:var(--muted)">(' + esc(x.placa) + ')</small>' : ''}${tipo === 'conferente' ? ' <small style="color:var(--muted)">(' + esc(x.email || 'sem e-mail') + ')</small>' : ''}${x.ativo === false ? ' <small style="color:var(--muted)">(inativo)</small>' : ''}</span><div style="display:flex;gap:5px">${tipo === 'conferente' ? `<button class="btn btn-ghost btn-sm" data-recusa-editar-email="${esc(x._id)}">✉️</button>` : ''}<button class="btn btn-ghost btn-sm" data-recusa-toggle="${tipo}:${esc(x._id)}">${x.ativo === false ? 'Ativar':'Inativar'}</button><button class="btn btn-ghost btn-sm" data-recusa-del="${tipo}:${esc(x._id)}">🗑️</button></div></div>`).join('') : '<div class="empty-sub">Nenhum cadastro ainda.</div>'}</div>
     </div>`;
   }
@@ -778,11 +842,11 @@
         if (l.motorista) {
           const key = normUpper(l.motorista);
           if (l.placa) placaPorMotorista.set(key, l.placa);
-          if (!motoristasExistentes.has(key) && !motoristasNovos.has(key)) motoristasNovos.set(key, { nome: l.motorista, placa: l.placa || '' });
+          if (!motoristasExistentes.has(key) && !motoristasNovos.has(key)) motoristasNovos.set(key, { nome: l.motorista.toUpperCase(), placa: l.placa || '' });
         }
         if (l.motivo) {
           const key = normUpper(l.motivo);
-          if (!motivosExistentes.has(key) && !motivosNovos.has(key)) motivosNovos.set(key, { nome: l.motivo });
+          if (!motivosExistentes.has(key) && !motivosNovos.has(key)) motivosNovos.set(key, { nome: l.motivo.toUpperCase() });
         }
       });
       const motoristasParaAtualizarPlaca = _motoristas
@@ -834,166 +898,6 @@
     </div>`;
   }
 
-  // ── Completar mercado/valor e tratamento/motivo por planilha ───────────
-  // "193044-1" na planilha de viagens vira "193044" — mesmo número que o
-  // app já guarda em numeroNota (sem o sufixo de item da viagem).
-  function _normalizarNumeroNota(v) {
-    return String(v == null ? '' : v).trim().split('-')[0].trim();
-  }
-  // BUG AO VIVO REAL (2026-09-11): "o site travou" — ler o arquivo inteiro
-  // (todas as abas) de uma planilha de controle com 142 mil linhas na aba
-  // "BASE GERAL" (mais 6 outras abas) travava a aba do navegador por mais
-  // de 15s. Corrigido em 2 passos: 1º passe só pega os NOMES das abas
-  // (bookSheets:true — não lê célula nenhuma, é quase instantâneo), decide
-  // qual aba interessa, e SÓ ENTÃO faz o 2º passe restrito a essa aba
-  // (sheets:[aba]) — as outras 6 abas nunca são parseadas.
-  async function _lerWorkbook(file, escolherAba) {
-    if (!global.XLSX) throw new Error('Biblioteca do Excel não carregada.');
-    const buf = await file.arrayBuffer();
-    const nomes = global.XLSX.read(buf, { type: 'array', bookSheets: true }).SheetNames;
-    const aba = (escolherAba ? escolherAba(nomes) : nomes[0]) || nomes[0];
-    const wb = global.XLSX.read(buf, { type: 'array', sheets: [aba] });
-    return { wb, aba };
-  }
-  // Relatório de Viagens da transportadora: N° NF/CF (com sufixo "-N"),
-  // Destinatário, Valor NF/CF. Em nota duplicada na planilha, a ÚLTIMA
-  // linha manda (mesma convenção usada pra chave duplicada na Base Geral).
-  // BUG AO VIVO REAL (2026-09-11): "mesma nota mas não trouxe as
-  // informações" — esta planilha também tem "Status da Entrega", que já
-  // vem com "Reentrega" preenchido pra nota recém-chegada, antes até dela
-  // aparecer na Base Geral (arquivo separado, atualizado com menos
-  // frequência). Só o valor "Reentrega" é inequívoco — "Em aberto"/
-  // "Cancelado"/"Devolução" não mapeiam 1:1 pro tratamento do sistema, e
-  // por isso são ignorados aqui de propósito (ficam só pra Base Geral
-  // decidir, se um dia entrarem lá com ACAO=RECUSA).
-  async function lerPlanilhaMercadoValor(file) {
-    const { wb, aba } = await _lerWorkbook(file);
-    const linhas = global.XLSX.utils.sheet_to_json(wb.Sheets[aba], { defval: '' });
-    const mapa = new Map();
-    linhas.forEach(l => {
-      const nf = _normalizarNumeroNota(l['N° NF/CF']);
-      if (!nf) return;
-      const destinatario = String(l['Destinatário'] || '').trim();
-      const valorTotal = Number(String(l['Valor NF/CF'] || '').replace(',', '.')) || 0;
-      const tratamento = normUpper(l['Status da Entrega']) === 'REENTREGA' ? 'REENTREGA' : '';
-      if (!destinatario && !valorTotal && !tratamento) return;
-      mapa.set(nf, { destinatario, valorTotal, tratamento });
-    });
-    return { totalLinhas: linhas.length, mapa };
-  }
-  // CONTROLE DE REENTREGAS E RECUSAS, aba "BASE GERAL" (confirmado com o
-  // usuário como fonte confiável — 142 mil linhas, mas só ~4 mil têm ACAO
-  // preenchida de verdade; o resto é log sem classificação e é ignorado
-  // aqui). Só RECUSA/REENTREGA entram — são os 2 únicos valores que a
-  // tela de Notas Retornadas realmente aceita (TRATAMENTO_OPCOES_SELECT).
-  async function lerPlanilhaTratamentoMotivo(file) {
-    const { wb, aba } = await _lerWorkbook(file, nomes => nomes.find(n => /base\s*geral/i.test(n)));
-    const linhas = global.XLSX.utils.sheet_to_json(wb.Sheets[aba], { defval: '' });
-    const mapa = new Map();
-    linhas.forEach(l => {
-      const acao = normUpper(l.ACAO);
-      if (acao !== 'RECUSA' && acao !== 'REENTREGA') return;
-      const nf = _normalizarNumeroNota(l['NOTA FISCAL']);
-      if (!nf) return;
-      mapa.set(nf, { tratamento: acao, motivo: String(l.MOTIVO || '').trim() });
-    });
-    return { totalLinhas: linhas.length, mapa };
-  }
-  // Monta o preview (nunca escreve ainda) — escaneia recebimento_recusas
-  // INTEIRA (loja ativa, é operação rara/1x, mesmo padrão já aceito em
-  // migrarStatusFisico/buscarMercadoFaltante), casa por número, e só marca
-  // como "afetada" a nota que está genuinamente vazia no campo em questão
-  // — nunca sobrescreve o que o Analista já classificou/preencheu.
-  async function prepararImportDadosNotas(tipo, file) {
-    try {
-      const { totalLinhas, mapa } = tipo === 'mercado'
-        ? await lerPlanilhaMercadoValor(file)
-        : await lerPlanilhaTratamentoMotivo(file);
-      const snap = await fs().collection(COL_RECUSAS).get();
-      const docs = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-      const docsParaAtualizar = [];
-      let totalNotasAfetadas = 0;
-      docs.forEach(doc => {
-        const notas = Array.isArray(doc.notas) && doc.notas.length ? doc.notas : [{}];
-        let mudouDoc = false;
-        let mudouTratamentoDoc = false;
-        let motivoNovoDoDoc = '';
-        const notasAtualizadas = notas.map(nota => {
-          const numero = _normalizarNumeroNota(nota.numeroNota != null ? nota.numeroNota : doc.numeroNota);
-          if (!numero) return nota;
-          const achado = mapa.get(numero);
-          if (!achado) return nota;
-          const patch = {};
-          if (tipo === 'mercado') {
-            const destAtual = nota.destinatario != null ? nota.destinatario : doc.destinatario;
-            const valorAtual = nota.valorTotal != null ? nota.valorTotal : doc.valorTotal;
-            if (!destAtual && achado.destinatario) patch.destinatario = achado.destinatario;
-            if (!valorAtual && achado.valorTotal) patch.valorTotal = achado.valorTotal;
-          }
-          // Vale pros 2 tipos de planilha — a de mercado/valor também traz
-          // "Status da Entrega"=Reentrega (ver lerPlanilhaMercadoValor) pra
-          // notas recém-chegadas que ainda nem apareceram na Base Geral.
-          const tratAtual = nota.tratamento != null ? nota.tratamento : doc.tratamento;
-          if (!tratAtual && achado.tratamento) {
-            const agora = agoraIso();
-            patch.tratamento = achado.tratamento;
-            patch.tratamentoDefinidoEm = agora;
-            patch.tratamentoDefinidoPor = tipo === 'mercado' ? 'Importação de planilha (Relatório de Viagens)' : 'Importação de planilha';
-            if (achado.tratamento === 'RECUSA' && !nota.liberadoParaRecusarEm && !doc.liberadoParaRecusarEm) patch.liberadoParaRecusarEm = agora;
-            if (achado.motivo && !motivoNovoDoDoc) motivoNovoDoDoc = achado.motivo;
-            mudouTratamentoDoc = true;
-          }
-          if (!Object.keys(patch).length) return nota;
-          mudouDoc = true; totalNotasAfetadas++;
-          return Object.assign({}, nota, patch);
-        });
-        if (!mudouDoc) return;
-        const docPatch = { notas: notasAtualizadas };
-        if (mudouTratamentoDoc) {
-          docPatch.statusFisico = _recalcularStatusFisico(Object.assign({}, doc, { notas: notasAtualizadas }));
-          if (motivoNovoDoDoc && !doc.motivoNome) docPatch.motivoNome = motivoNovoDoDoc;
-        }
-        docsParaAtualizar.push({ _id: doc._id, patch: docPatch });
-      });
-      _previewImportDadosNotas = { tipo, totalLinhas, notasNaPlanilha: mapa.size, docsParaAtualizar, totalNotasAfetadas };
-      desenharCadastros();
-    } catch (e) {
-      global.showToast?.('Erro ao ler a planilha: ' + (e.message || e), 'error');
-    }
-  }
-  async function salvarImportDadosNotas() {
-    const p = _previewImportDadosNotas;
-    if (!p || !p.docsParaAtualizar.length) return;
-    try {
-      const rawFs = raw();
-      for (let i = 0; i < p.docsParaAtualizar.length; i += 300) {
-        const lote = p.docsParaAtualizar.slice(i, i + 300);
-        const batch = rawFs.batch();
-        lote.forEach(item => batch.update(fs().collection(COL_RECUSAS).doc(item._id), item.patch));
-        await batch.commit();
-      }
-      const resumo = `${p.totalNotasAfetadas} nota(s) completada(s) em ${p.docsParaAtualizar.length} registro(s).`;
-      _previewImportDadosNotas = null;
-      await carregarDados(true);
-      desenharCadastros();
-      global.showToast?.(resumo, 'success');
-    } catch (e) {
-      global.showToast?.('Erro ao aplicar a importação: ' + (e.message || e), 'error');
-    }
-  }
-  function renderPreviewImportDadosNotas() {
-    const p = _previewImportDadosNotas;
-    if (!p) return '';
-    const rotulo = p.tipo === 'mercado' ? 'mercado/valor/reentrega' : 'tratamento/motivo';
-    if (!p.docsParaAtualizar.length) {
-      return `<div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;font-size:.78rem;color:var(--muted)">${p.totalLinhas} linha(s) lida(s), ${p.notasNaPlanilha} nota(s) reconhecida(s) na planilha — nenhuma nota do sistema está faltando ${rotulo} que essa planilha resolva.</div>`;
-    }
-    return `<div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px">
-      <div style="font-size:.78rem;margin-bottom:8px">${p.totalLinhas} linha(s) lida(s) · <b>${p.notasNaPlanilha}</b> nota(s) reconhecida(s) na planilha · <b>${p.totalNotasAfetadas}</b> nota(s) do sistema vão ganhar ${rotulo} em <b>${p.docsParaAtualizar.length}</b> registro(s) — nunca sobrescreve o que já está preenchido</div>
-      <button class="btn btn-primary" data-recusa-salvar-import-dados="1">Confirmar e completar</button>
-    </div>`;
-  }
-
   function desenharCadastros() {
     const pagina = document.getElementById('page-recebimento-recusas-cadastros');
     if (!pagina) return;
@@ -1001,18 +905,6 @@
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap">
         <div><h2 style="margin:0">🗂️ Cadastros — Notas Retornadas</h2><div style="color:var(--muted);font-size:.78rem;margin-top:4px">Motoristas de entrega, motivos de devolução, conferentes e vendedores por mercado usados ao registrar um retorno.</div></div>
         <button class="btn btn-ghost" data-recusa-cad-atualizar="1">↻ Atualizar</button>
-      </div>
-      <div class="tc" style="padding:14px;margin:14px 0">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px"><div><b>📥 Importar Motoristas + Motivos (planilha)</b><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Colunas: Veículo/Motorista, Placa, Motivo. Cadastra o que ainda não existe — nunca duplica.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><input id="recusas-import-cadastros-arquivo" type="file" accept=".xlsx,.xls,.csv" style="max-width:280px"><button class="btn btn-ghost" data-recusa-ler-import-cadastros="1">Ler planilha</button></div></div>
-        ${renderPreviewImportacaoCadastros()}
-      </div>
-      <div class="tc" style="padding:14px;margin:14px 0">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px"><div><b>🏪 Completar mercado/valor/reentrega (Relatório de Viagens)</b><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Colunas: N° NF/CF, Destinatário, Valor NF/CF, Status da Entrega. Só preenche nota que está sem mercado, sem valor ou sem tratamento (quando o Status da Entrega diz "Reentrega") — nunca sobrescreve.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><input id="recusas-import-mercado-arquivo" type="file" accept=".xlsx,.xls,.csv" style="max-width:280px"><button class="btn btn-ghost" data-recusa-ler-import-dados="mercado">Ler planilha</button></div></div>
-        ${_previewImportDadosNotas && _previewImportDadosNotas.tipo === 'mercado' ? renderPreviewImportDadosNotas() : ''}
-      </div>
-      <div class="tc" style="padding:14px;margin:14px 0">
-        <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px"><div><b>🗂️ Completar tratamento/motivo (Controle de Reentregas e Recusas)</b><div style="font-size:.72rem;color:var(--muted);margin-top:3px">Aba "BASE GERAL" — só RECUSA/REENTREGA entram. Só classifica nota que ainda está sem tratamento — nunca reclassifica o que o Analista já definiu.</div></div><div style="display:flex;gap:8px;flex-wrap:wrap"><input id="recusas-import-tratamento-arquivo" type="file" accept=".xlsx,.xls,.csv" style="max-width:280px"><button class="btn btn-ghost" data-recusa-ler-import-dados="tratamento">Ler planilha</button></div></div>
-        ${_previewImportDadosNotas && _previewImportDadosNotas.tipo === 'tratamento' ? renderPreviewImportDadosNotas() : ''}
       </div>
       <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,1fr);gap:14px">${cadastroLista('motorista')}${cadastroLista('motivo')}${cadastroLista('conferente')}</div>
       ${renderVendedoresMercado()}`;
@@ -1171,7 +1063,7 @@
     const r = await fs().collection(COL_RECUSAS).get();
     return r.docs.map(d => ({ _id: d.id, ...d.data() })).filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
   }
-  async function _gravarNotasVenda(notas) {
+  async function _gravarNotasVenda(notas, recusasParaSincronizacao) {
     const chavesExistentes = new Set(_notas.map(n => n.chave));
     const notasNovas = notas.filter(n => !chavesExistentes.has(n.chave));
     const rawFs = raw();
@@ -1240,7 +1132,7 @@
     let removidas = 0;
     if (notas.length) {
       const chavesAbertasAgora = new Set(notas.map(n => n.chave));
-      const recusasParaProtecao = await _todasRecusasParaSincronizacaoBi();
+      const recusasParaProtecao = recusasParaSincronizacao || await _todasRecusasParaSincronizacaoBi();
       const chavesComRecebimento = new Set(recusasParaProtecao.flatMap(r => r.chaves || []));
       const paraRemover = _notas.filter(n => n.origemImportacao === 'BI' && n.naturezaLabel === 'Venda' && !chavesAbertasAgora.has(n.chave) && !chavesComRecebimento.has(n.chave));
       for (let i = 0; i < paraRemover.length; i += 300) {
@@ -1276,10 +1168,10 @@
   // aproveita pra corrigir sozinha qualquer nota já recebida que ficou com
   // esperado 0 e cuja chave apareceu nesta busca com itens de verdade —
   // sem precisar de nenhum clique manual do Analista.
-  async function _corrigirVolumeEsperadoRecusas(notasComItens) {
+  async function _corrigirVolumeEsperadoRecusas(notasComItens, recusasParaSincronizacao) {
     const porChave = new Map(notasComItens.map(n => [n.chave, n]));
     let corrigidas = 0;
-    const todasRecusas = await _todasRecusasParaSincronizacaoBi();
+    const todasRecusas = recusasParaSincronizacao || await _todasRecusasParaSincronizacaoBi();
     for (const r of todasRecusas) {
       if (!Array.isArray(r.notas) || !r.notas.length) continue;
       let mudou = false;
@@ -1315,8 +1207,12 @@
     // carregado e ATUALIZADO antes daqui, nunca só o que sobrou de uma
     // carga antiga da tela (ver comentário de _carregarNotasVendaLedger).
     await _carregarNotasVendaLedger(true);
-    const { novas, removidas } = await _gravarNotasVenda(notas);
-    const volumesCorrigidos = await _corrigirVolumeEsperadoRecusas(notas);
+    // Esta base histórica era lida duas vezes seguidas na mesma sincronização
+    // (uma para proteger notas recebidas da limpeza e outra para corrigir
+    // volume esperado). Compartilha a mesma fotografia entre as duas etapas.
+    const recusasParaSincronizacao = await _todasRecusasParaSincronizacaoBi();
+    const { novas, removidas } = await _gravarNotasVenda(notas, recusasParaSincronizacao);
+    const volumesCorrigidos = await _corrigirVolumeEsperadoRecusas(notas, recusasParaSincronizacao);
     await carregarDados(true);
     await _carregarNotasVendaLedger(true);
     return { totalNotas: novas, totalRemovidas: removidas, totalEncontradas: notas.length, totalLinhas: vendas.length, volumesCorrigidos };
@@ -1510,15 +1406,7 @@
   // Iniciado uma única vez por carregamento de página (guard de
   // idempotência) — desenhar() roda de novo a cada re-render da tela.
   function _iniciarAutoRefreshBi() {
-    if (_autoRefreshIniciado) return;
-    if (!global.DTBiPastaLocal?.suportado?.() || typeof global.setInterval !== 'function') return;
-    _autoRefreshIniciado = true;
-    global.setInterval(async () => {
-      try {
-        const status = await global.DTBiPastaLocal.status();
-        if (status === 'conectado') await buscarBiAutomatico();
-      } catch (e) { /* silencioso — só o clique manual mostra erro */ }
-    }, INTERVALO_AUTO_BUSCA_MS);
+    _autoRefreshIniciado = true; // sincronização já ocorre no servidor a cada 4h
   }
 
   // FASE 8 — modal injetado via JS.
@@ -1633,10 +1521,16 @@
     global.openModal?.('modal-recusa-detalhe');
   }
 
+  // PEDIDO AO VIVO (2026-09-17): "já deixe maiúsculo já o nome" — motorista
+  // e motivo nascem em MAIÚSCULO pra nunca mais duplicar no gráfico
+  // "Ocorrências por Transportadora"/"Motivos da Volta" (98) por causa só
+  // de caixa (esses dois agrupam por string exata). Conferente fica de
+  // fora de propósito — é nome de pessoa da equipe, mantém a grafia normal.
   async function adicionarCadastro(tipo) {
     const input = document.getElementById(`recusas-${tipo}-novo`);
-    const nome = String(input?.value || '').trim();
+    let nome = String(input?.value || '').trim();
     if (!nome) { global.showToast?.('Informe o nome.', 'error'); return; }
+    if (tipo === 'motorista' || tipo === 'motivo') nome = nome.toUpperCase();
     const col = colCadastro(tipo);
     const ja = arrCadastro(tipo).some(x => String(x.nome || '').toLowerCase() === nome.toLowerCase());
     if (ja) { global.showToast?.('Esse cadastro já existe.', 'error'); return; }
@@ -1678,7 +1572,18 @@
       const [recusaId, notaChave] = String(sel.dataset.recusaTratamento).split('|');
       alterarTratamento(recusaId, notaChave, sel.value);
     }));
-    document.querySelectorAll('[data-recusa-motivo]').forEach(sel => sel.addEventListener('change', () => alterarMotivo(sel.dataset.recusaMotivo, sel.value)));
+    document.querySelectorAll('[data-recusa-motivo]').forEach(inp => inp.addEventListener('change', () => {
+      const texto = inp.value.trim();
+      if (!texto) { alterarMotivo(inp.dataset.recusaMotivo, ''); inp.dataset.recusaMotivoAnterior = ''; return; }
+      const achado = _motivos.find(m => m.nome.trim().toLowerCase() === texto.toLowerCase());
+      if (!achado) {
+        global.showToast?.('Escolha um motivo da lista (ou apague o campo pra tirar o motivo).', 'error');
+        inp.value = inp.dataset.recusaMotivoAnterior || '';
+        return;
+      }
+      alterarMotivo(inp.dataset.recusaMotivo, achado._id);
+      inp.dataset.recusaMotivoAnterior = achado.nome;
+    }));
   }
   function redesenharTabela() {
     const host = document.getElementById('recusas-tabela');
@@ -1862,14 +1767,7 @@
     document.querySelector('[data-recusa-cad-atualizar]')?.addEventListener('click', async()=>{ await carregarDados(true); desenharCadastros(); });
     document.querySelector('[data-recusa-ler-import-cadastros]')?.addEventListener('click', lerImportacaoCadastros);
     document.querySelector('[data-recusa-salvar-import-cadastros]')?.addEventListener('click', salvarImportacaoCadastros);
-    document.querySelectorAll('[data-recusa-ler-import-dados]').forEach(b => b.addEventListener('click', () => {
-      const tipo = b.dataset.recusaLerImportDados;
-      const input = document.getElementById(tipo === 'mercado' ? 'recusas-import-mercado-arquivo' : 'recusas-import-tratamento-arquivo');
-      const file = input?.files?.[0];
-      if (!file) { global.showToast?.('Selecione uma planilha.', 'error'); return; }
-      prepararImportDadosNotas(tipo, file);
-    }));
-    document.querySelector('[data-recusa-salvar-import-dados]')?.addEventListener('click', salvarImportDadosNotas);
+    document.querySelectorAll('[data-recusa-motorista-modo]').forEach(b => b.addEventListener('click', () => { _modoAddMotorista = b.dataset.recusaMotoristaModo; desenharCadastros(); }));
     document.querySelectorAll('[data-recusa-add]').forEach(b => b.addEventListener('click', () => adicionarCadastro(b.dataset.recusaAdd)));
     document.querySelectorAll('[data-recusa-editar-email]').forEach(b => b.addEventListener('click', () => editarEmailConferente(b.dataset.recusaEditarEmail)));
     document.querySelectorAll('[data-recusa-toggle]').forEach(b => b.addEventListener('click', () => { const [t,id]=b.dataset.recusaToggle.split(':'); toggleCadastro(t,id); }));
@@ -1901,17 +1799,8 @@
     try { await _carregarCadastrosRecusas(); } catch(e) { pagina.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Não foi possível carregar Notas Retornadas</div><div class="empty-sub">${esc(e.message || e)}</div></div>`; return; }
     desenhar();
     _buscarRecusasPeriodo(_filtroPeriodoInicio, _filtroPeriodoFim).then(() => desenhar()).catch(e => { global.showToast?.('Erro ao buscar notas retornadas: ' + (e.message || e), 'error'); desenhar(); });
-    // Ledger de vendas (_notas) roda em segundo plano, NUNCA aguardado
-    // aqui — só enriquece o card "Notas de venda (ledger)" e o detalhe da
-    // nota quando terminar (ver comentário de _carregarNotasVendaLedger).
-    // Se a página já foi trocada quando terminar, `pagina` não existe mais
-    // no DOM e desenhar() vira no-op (já checa `document.getElementById`).
-    // A chamada em si já marca `_notasVendaCarregando=true` de forma
-    // síncrona (roda até o 1º `await` antes de devolver a Promise) —
-    // redesenha logo em seguida pra mostrar esse estado, não só no fim.
-    const notasPromise = _carregarNotasVendaLedger();
-    desenhar();
-    notasPromise.then(() => desenhar()).catch(() => {});
+    // O resumo das notas já vem projetado junto com a busca BigQuery. O
+    // ledger completo só é carregado nas ações que realmente o alteram.
   }
   async function renderRecebimentoRecusasCadastros() {
     const pagina = document.getElementById('page-recebimento-recusas-cadastros');

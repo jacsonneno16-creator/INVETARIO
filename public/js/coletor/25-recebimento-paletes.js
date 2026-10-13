@@ -47,10 +47,12 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
 // — o card do menu de Recebimento agora abre este menu intermediário
 // (screen-paletes-menu), não mais direto a lista de trânsito.
 function abrirControlePaletes() {
+  if(typeof coletorExigirPermissao==='function'&&!coletorExigirPermissao('recebimento-paletes','visualizar'))return;
   goScreen('paletes-menu');
 }
 
 function abrirPaletesRecebimento() {
+  if(typeof coletorExigirPermissao==='function'&&!coletorExigirPermissao('recebimento-paletes','saida'))return;
   goScreen('paletes');
   carregarPaletesColetor();
 }
@@ -276,70 +278,96 @@ async function confirmarRetornoPaletes() {
   }
 }
 
-// ── Paletes em Estoque (registro diário) ────────────────────────────────
-// PEDIDO AO VIVO (2026-09-04): "paletes em estoque é onde a pessoa vai
-// colocar todo dia a quantidade de paletes que tem" — 1 doc por LOJA+DIA
-// (doc id = data local AAAA-MM-DD), pra reenviar no mesmo dia atualizar em
-// vez de duplicar, e pro Analista enxergar o histórico dia a dia por loja.
+// ── Paletes em Estoque (inventário por lançamentos) ─────────────────────
 const COL_PALETES_ESTOQUE = 'recebimento_paletes_estoque';
+let PALETES_CONTAGEM_ATUAL = [];
 function _dataHojeIsoPaletes() {
   const d = new Date();
-  const pad = n => String(n).padStart(2, '0');
+  const pad = function (n) { return String(n).padStart(2, '0'); };
   return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
 }
+function _renderContagemPaletes() {
+  const host = document.getElementById('paletes-estoque-lancamentos');
+  if (!host) return;
+  const total = PALETES_CONTAGEM_ATUAL.reduce(function (a,b) { return a + b; }, 0);
+  host.innerHTML = '<div style="font-weight:800;margin-bottom:6px">Total contado: ' + total.toLocaleString('pt-BR') + '</div>' +
+    (PALETES_CONTAGEM_ATUAL.length ? PALETES_CONTAGEM_ATUAL.map(function (q,i) {
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 9px;border:1px solid #dbe5ef;border-radius:8px;margin:5px 0"><span>Lançamento ' + (i+1) + ': <b>' + q.toLocaleString('pt-BR') + '</b></span><button type="button" class="btn btn-ghost" style="padding:5px 9px" onclick="removerPaletesEstoqueContagem(' + i + ')">Remover</button></div>';
+    }).join('') : '<div style="color:#5a7a9a;font-size:.8rem">Nenhuma quantidade adicionada ainda.</div>');
+}
 async function abrirPaletesEstoque() {
+  if(typeof coletorExigirPermissao==='function'&&!coletorExigirPermissao('recebimento-paletes','estoque'))return;
+  PALETES_CONTAGEM_ATUAL = [];
   const qtd = document.getElementById('paletes-estoque-quantidade'); if (qtd) qtd.value = '';
   const status = document.getElementById('paletes-estoque-status'); if (status) status.textContent = '';
   const ultimo = document.getElementById('paletes-estoque-ultimo'); if (ultimo) ultimo.textContent = 'Carregando...';
+  _renderContagemPaletes();
   goScreen('paletes-estoque');
   try {
     const hoje = _dataHojeIsoPaletes();
     const doc = await FS.collection(COL_PALETES_ESTOQUE).doc(hoje).get();
     if (doc && doc.exists) {
-      const dados = doc.data();
-      if (qtd) qtd.value = dados && dados.quantidade != null ? dados.quantidade : '';
-      if (ultimo) ultimo.textContent = 'Já registrado hoje: ' + (dados && dados.quantidade != null ? dados.quantidade : '—') + ' palete(s). Salvar de novo substitui.';
-    } else if (ultimo) {
-      ultimo.textContent = 'Ainda não registrado hoje.';
-    }
+      const dados = doc.data() || {};
+      if (ultimo) ultimo.textContent = 'Inventário finalizado hoje: ' + (dados.quantidade != null ? Number(dados.quantidade).toLocaleString('pt-BR') : '—') + ' palete(s). Um novo envio substitui o saldo inventariado.';
+    } else if (ultimo) ultimo.textContent = 'Ainda não há inventário finalizado hoje.';
   } catch (e) {
     if (ultimo) ultimo.textContent = '';
-    console.warn('[Paletes] Falha ao carregar estoque de hoje:', e && e.message ? e.message : e);
+    console.warn('[Paletes] Falha ao carregar inventário de hoje:', e && e.message ? e.message : e);
   }
 }
+function adicionarPaletesEstoqueContagem() {
+  if(typeof coletorExigirPermissao==='function'&&!coletorExigirPermissao('recebimento-paletes','estoque'))return;
+  const el = document.getElementById('paletes-estoque-quantidade');
+  const status = document.getElementById('paletes-estoque-status');
+  const txt = el ? String(el.value || '').trim() : '';
+  const n = Number(txt);
+  if (!txt || !Number.isFinite(n) || n < 0) { if (status) status.textContent = 'Informe uma quantidade válida.'; return false; }
+  PALETES_CONTAGEM_ATUAL.push(Math.round(n));
+  if (el) { el.value = ''; el.focus(); }
+  if (status) status.textContent = '';
+  _renderContagemPaletes();
+  return true;
+}
+function removerPaletesEstoqueContagem(indice) {
+  if (indice >= 0 && indice < PALETES_CONTAGEM_ATUAL.length) PALETES_CONTAGEM_ATUAL.splice(indice, 1);
+  _renderContagemPaletes();
+}
 async function confirmarPaletesEstoque() {
+  if(typeof coletorExigirPermissao==='function'&&!coletorExigirPermissao('recebimento-paletes','estoque'))return;
   const status = document.getElementById('paletes-estoque-status');
   const elQtd = document.getElementById('paletes-estoque-quantidade');
-  const valorDigitado = (elQtd ? elQtd.value : '').trim();
-  const quantidade = Number(valorDigitado);
-  // Campo vazio ("" -> Number("")=0) não pode passar como "0 paletes"
-  // digitado de propósito — checa a string antes de converter.
-  if (!valorDigitado || !Number.isFinite(quantidade) || quantidade < 0) { if (status) status.textContent = 'Informe uma quantidade válida de paletes.'; return; }
+  if (elQtd && String(elQtd.value || '').trim()) {
+    if (!adicionarPaletesEstoqueContagem()) return;
+  }
+  if (!PALETES_CONTAGEM_ATUAL.length) { if (status) status.textContent = 'Adicione pelo menos uma quantidade antes de finalizar.'; return; }
+  const total = PALETES_CONTAGEM_ATUAL.reduce(function (a,b) { return a + b; }, 0);
   const agora = new Date().toISOString();
   const autor = (typeof APP !== 'undefined' && APP.operador && APP.operador.email) || '';
   const lojaId = _lojaAtivaRec();
   const nomeLoja = await _obterNomeLojaPaletes(lojaId);
   const payload = {
-    data: _dataHojeIsoPaletes(),
-    quantidade: Math.round(quantidade),
-    origemLojaId: lojaId,
-    origem: nomeLoja,
-    registradoEm: agora, registradoPor: autor,
-    atualizadoEm: agora, atualizadoPor: autor
+    data: _dataHojeIsoPaletes(), quantidade: total, lancamentos: PALETES_CONTAGEM_ATUAL.slice(), finalizado: true,
+    origemLojaId: lojaId, origem: nomeLoja,
+    registradoEm: agora, registradoPor: autor, atualizadoEm: agora, atualizadoPor: autor
   };
-  if (status) status.textContent = 'Salvando...';
+  if (status) status.textContent = 'Finalizando inventário e atualizando saldo...';
   try {
     await FS.collection(COL_PALETES_ESTOQUE).doc(payload.data).set(payload, { merge: true });
-    toast('Estoque de paletes registrado!', 's');
+    if (typeof _definirSaldoPaletesPorInventario !== 'function') throw new Error('Serviço de saldo de paletes indisponível.');
+    await _definirSaldoPaletesPorInventario(lojaId, total, { colecao: COL_PALETES_ESTOQUE, id: payload.data });
+    toast('Inventário finalizado. Saldo atualizado para ' + total.toLocaleString('pt-BR') + ' palete(s).', 's');
+    PALETES_CONTAGEM_ATUAL = [];
     goScreen('paletes-menu');
   } catch (e) {
-    if (status) status.textContent = 'Erro ao salvar: ' + (e && e.message ? e.message : e);
+    if (status) status.textContent = 'Erro ao finalizar: ' + (e && e.message ? e.message : e);
   }
 }
 
 window.abrirControlePaletes = abrirControlePaletes;
 window.abrirPaletesEstoque = abrirPaletesEstoque;
 window.confirmarPaletesEstoque = confirmarPaletesEstoque;
+window.adicionarPaletesEstoqueContagem = adicionarPaletesEstoqueContagem;
+window.removerPaletesEstoqueContagem = removerPaletesEstoqueContagem;
 window.abrirPaletesRecebimento = abrirPaletesRecebimento;
 window.carregarPaletesColetor = carregarPaletesColetor;
 window.abrirNovaSaidaPaletes = abrirNovaSaidaPaletes;
@@ -349,5 +377,6 @@ window.confirmarRetornoPaletes = confirmarRetornoPaletes;
 window._recebimentoPaletesInternals = {
   getPaletes: function () { return PALETES_CACHE; },
   getMotoristas: function () { return PALETES_MOTORISTAS_CACHE; },
-  dataHojeIso: _dataHojeIsoPaletes
+  dataHojeIso: _dataHojeIsoPaletes,
+  getContagemAtual: function () { return PALETES_CONTAGEM_ATUAL.slice(); }
 };

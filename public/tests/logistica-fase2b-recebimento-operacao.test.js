@@ -34,6 +34,11 @@ function loadOperacao(colecoes){
     openModal:()=>{}, closeModal:()=>{}, showToast:()=>{}, showConfirm:(msg,exec)=>exec(),
     _currentAnalistaUser:{email:'teste@daterrinha.com'},
   };
+  window.firebase={ app:()=>({ functions:()=>({ httpsCallable:(nome)=>async()=>{
+    if(nome!=='buscarRecebimentosOperacaoBigQuery') throw new Error('função não mockada: '+nome);
+    const col=colecoes.recebimentos||mockColecao([]);
+    return {data:{recebimentos:[...col._registro.entries()].map(([id,data])=>({_id:id,_lojaId:'',...data})),incluiTransbordosParceiros:true}};
+  } }) }) };
   // setInterval/clearInterval fakes (não-op): 93-recebimento-operacao.js
   // passou a usar setInterval pra atualização periódica (ver comentário
   // "2026-09-11" no arquivo) — nenhum teste aqui exercita esse polling em
@@ -116,6 +121,9 @@ test('fluxo completo: criar recebimento manual (equivalente ao 1º bip) → inic
 
 test('76/93: modal "+ Novo Recebimento" e as 9 colunas principais da tabela existem; rota registrada',()=>{
   assert.match(htmlCode,/id="modal-recop"/);
+  assert.match(htmlCode,/id="recop-pedido"/, 'novo recebimento pode ser vinculado ao pedido da agenda');
+  assert.match(opCode,/agendamentoRecebimentoId/);
+  assert.match(opCode,/numeroPedido: agendaCompra\?\.numeroPedido/);
   assert.match(htmlCode,/93-recebimento-operacao\.js/);
   assert.match(opCode,/data-recop-novo/);
   assert.match(opCode,/data-recop-iniciar-descarga/);
@@ -179,6 +187,7 @@ test('REGRESSÃO: reorganização em 3 abas (pedido ao vivo: "EM TRÂNSITO | EM 
     {id:'r7',data:{tipo:'TRANSBORDO',status:'CANCELADO',motoristaNome:'G'}},
   ]);
   const {window,elFake}=loadOperacao({recebimentos,recebimento_motoristas:mockColecao([]),recebimento_veiculos:mockColecao([]),recebimento_docas:mockColecao([])});
+  await window._recebimentoOperacaoInternals.carregar(true);
   await window.renderRecebimentoOperacao();
 
   // não deve mais existir o dropdown solto de status — virou abas fixas

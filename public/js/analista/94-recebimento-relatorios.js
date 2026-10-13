@@ -34,6 +34,14 @@
   let _filtroBsSoDivergencia = false;
   let _filtroBsCategoria = ''; // '' = FORNECEDOR (padrão) | 'FORNECEDOR' | 'TRANSBORDO' | 'TODAS' (Fornecedor+Transbordo) — devolução some sempre (nunca é opção de filtro) e transbordo tem tela própria (95), por padrão (pedido ao vivo do usuário)
   let _paginaBs = 1;
+  let _paginaBsLinhas = [];
+  let _paginaBsTotal = 0;
+  let _paginaBsBackend = false;
+  let _paginaBsCarregando = false;
+  let _paginaBsErro = '';
+  let _paginaBsReqSeq = 0;
+  let _opcoesBs = { fornecedores: [], status: [], naturezas: [] };
+  let _opcoesBsCarregadas = false;
   let _filtroNotasPeriodo = '';
   let _filtroNotasFornecedor = '';
   function _notasAchatadas() {
@@ -62,31 +70,104 @@
       return true;
     }).sort((a, b) => String(b.dataRecebimento || b.processamento || '').localeCompare(String(a.dataRecebimento || a.processamento || '')));
   }
+  function _chavePaginaBs() {
+    return [_paginaBs, _filtroBsPeriodo, _filtroBsFornecedor, _filtroBsStatus, _filtroBsNatureza, _filtroBsSoDivergencia ? '1' : '0', _filtroBsCategoria || 'FORNECEDOR'].join('|');
+  }
+  async function _carregarPaginaNotasBs() {
+    const seq = ++_paginaBsReqSeq;
+    const chave = _chavePaginaBs();
+    _paginaBsCarregando = true;
+    _paginaBsErro = '';
+    try {
+      if (!global.firebase?.app) throw new Error('Firebase Functions indisponível.');
+      const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarNotasRecebimentoPaginadasBigQuery');
+      const resp = await callable({
+        pagina: _paginaBs, limite: ITENS_POR_PAGINA_BS,
+        periodo: _filtroBsPeriodo || '', fornecedor: _filtroBsFornecedor || '',
+        status: _filtroBsStatus || '', natureza: _filtroBsNatureza || '',
+        categoria: _filtroBsCategoria || 'FORNECEDOR', soDivergencia: _filtroBsSoDivergencia === true,
+        incluirOpcoes: !_opcoesBsCarregadas,
+      });
+      if (!resp?.data || !Array.isArray(resp.data.linhas)) throw new Error('Página de notas vazia.');
+      if (seq !== _paginaBsReqSeq || chave !== _chavePaginaBs()) return;
+      _paginaBsLinhas = resp.data.linhas;
+      _paginaBsTotal = Number(resp.data.total) || 0;
+      _paginaBsBackend = true;
+      if (resp.data.opcoes) {
+        _opcoesBs = {
+          fornecedores: Array.isArray(resp.data.opcoes.fornecedores) ? resp.data.opcoes.fornecedores : [],
+          status: Array.isArray(resp.data.opcoes.status) ? resp.data.opcoes.status : [],
+          naturezas: Array.isArray(resp.data.opcoes.naturezas) ? resp.data.opcoes.naturezas : [],
+        };
+        _opcoesBsCarregadas = true;
+      }
+    } catch (e) {
+      console.warn('[Recebimento] Paginação BigQuery indisponível:', e?.message || e);
+      if (seq !== _paginaBsReqSeq || chave !== _chavePaginaBs()) return;
+      _paginaBsErro = e?.message || String(e);
+      _paginaBsBackend = true;
+    } finally {
+      if (seq === _paginaBsReqSeq) _paginaBsCarregando = false;
+    }
+  }
+  function _aplicarPaginaFallbackLocalBs() {
+    const filtradas = _notasBluesoftFiltradas();
+    _paginaBsTotal = filtradas.length;
+    const totalPaginas = Math.max(1, Math.ceil(_paginaBsTotal / ITENS_POR_PAGINA_BS));
+    if (_paginaBs > totalPaginas) _paginaBs = totalPaginas;
+    _paginaBsLinhas = filtradas.slice((_paginaBs - 1) * ITENS_POR_PAGINA_BS, _paginaBs * ITENS_POR_PAGINA_BS);
+  }
+  async function _recarregarPaginaNotasBs() {
+    // Quando já estamos no fallback, mantém o comportamento antigo: filtro
+    // instantâneo sobre a base local. Em paralelo tenta recuperar o caminho
+    // paginado do backend para as próximas interações.
+    if (!_paginaBsBackend && _opcoesBsCarregadas) {
+      _aplicarPaginaFallbackLocalBs();
+      _desenharRecebimentoNotas();
+    } else {
+      _paginaBsCarregando = true;
+      _paginaBsLinhas = [];
+      _desenharRecebimentoNotas();
+    }
+    await _carregarPaginaNotasBs();
+    _desenharRecebimentoNotas();
+  }
   async function renderRecebimentoNotas() {
     const pagina = document.getElementById('page-recebimento-notas');
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try { await Promise.all([global._recebimentoOperacaoInternals?.carregar?.(), global._recebimentoInternals?.carregar?.()]); }
+    try { await Promise.all([global._recebimentoOperacaoInternals?.carregar?.(), _carregarPaginaNotasBs()]); }
     catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
     _desenharRecebimentoNotas();
   }
   async function _salvarPortariaBs(notaFiscalKey, valorDatetimeLocal) {
-    await global._recebimentoInternals?.salvarPortaria?.(notaFiscalKey, valorDatetimeLocal);
+    const notaPagina = _paginaBsLinhas.find(x => String(x.notaFiscalKey) === String(notaFiscalKey));
+    if (_paginaBsBackend && notaPagina?._id) {
+      const chegada = valorDatetimeLocal ? new Date(valorDatetimeLocal).toISOString() : null;
+      let tempoPortariaAteRecebimentoMin = null;
+      if (chegada) {
+        const alvo = notaPagina.dataRecebimento || notaPagina.fimLancamento || notaPagina.processamento;
+        if (alvo) { const d = Math.round((new Date(alvo) - new Date(chegada)) / 60000); if (!isNaN(d)) tempoPortariaAteRecebimentoMin = d; }
+      }
+      try {
+        await fs().collection('recebimento_notas').doc(notaPagina._id).set({ chegadaPortaria: chegada, tempoPortariaAteRecebimentoMin, atualizadoEm: new Date().toISOString(), atualizadoPor: global._currentAnalistaUser?.email || '' }, { merge: true });
+        notaPagina.chegadaPortaria = chegada; notaPagina.tempoPortariaAteRecebimentoMin = tempoPortariaAteRecebimentoMin;
+      } catch (e) { global.showToast?.('Erro ao salvar chegada na portaria: ' + (e.message || e), 'error'); }
+    } else {
+      await global._recebimentoInternals?.salvarPortaria?.(notaFiscalKey, valorDatetimeLocal);
+    }
     _desenharRecebimentoNotas();
   }
   function _desenharRecebimentoNotas() {
     const pagina = document.getElementById('page-recebimento-notas');
     if (!pagina) return;
 
-    // Bluesoft (principal)
-    const todasBs = global._recebimentoInternals?.notasTodas?.() || [];
-    const linhasBs = _notasBluesoftFiltradas();
-    const fornecedoresOptsBs = [...new Set(todasBs.map(x => x.fornecedorNome).filter(Boolean))].sort();
-    const statusOptsBs = [...new Set(todasBs.map(x => x.statusRecebimento).filter(Boolean))].sort();
-    const naturezaOptsBs = [...new Set(todasBs.map(x => x.natureza).filter(Boolean))].sort();
-    const totalPaginasBs = Math.max(1, Math.ceil(linhasBs.length / ITENS_POR_PAGINA_BS));
-    if (_paginaBs > totalPaginasBs) _paginaBs = totalPaginasBs;
-    const linhasBsPagina = linhasBs.slice((_paginaBs - 1) * ITENS_POR_PAGINA_BS, _paginaBs * ITENS_POR_PAGINA_BS);
+    // Bluesoft (principal): somente a página atual vem do backend.
+    const linhasBsPagina = _paginaBsLinhas;
+    const fornecedoresOptsBs = _opcoesBs.fornecedores || [];
+    const statusOptsBs = _opcoesBs.status || [];
+    const naturezaOptsBs = _opcoesBs.naturezas || [];
+    const totalPaginasBs = Math.max(1, Math.ceil(_paginaBsTotal / ITENS_POR_PAGINA_BS));
 
     // Achatada (secundária, registrada manualmente nos recebimentos)
     const todas = _notasAchatadas();
@@ -101,7 +182,7 @@
     pagina.innerHTML = `
       <div style="margin-bottom:14px">
         <div class="page-title" style="font-size:1.15rem">📄 Notas Fiscais</div>
-        <div style="font-size:.74rem;color:var(--muted)">${linhasBs.length.toLocaleString('pt-BR')} nota(s)${(_filtroBsCategoria || 'FORNECEDOR') === 'FORNECEDOR' ? ' (categoria: Fornecedor — transbordo fica na aba Transbordo)' : ''}</div>
+        <div style="font-size:.74rem;color:var(--muted)">${_paginaBsTotal.toLocaleString('pt-BR')} nota(s)${(_filtroBsCategoria || 'FORNECEDOR') === 'FORNECEDOR' ? ' (categoria: Fornecedor — transbordo fica na aba Transbordo)' : ''}</div>
       </div>
       <div class="tc" style="padding:12px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         <input type="month" class="field" id="recnf-bs-f-periodo" value="${esc(_filtroBsPeriodo)}" style="max-width:160px">
@@ -155,27 +236,51 @@
   }
 
   // ── Fornecedores (ranking, seção 5) ──────────────────────────────────────
+  let _divergenciasFornecedores = new Map();
+  let _divergenciasFornecedoresCarregadas = false;
+  let _divergenciasFornecedoresPromise = null;
+  async function _carregarDivergenciasFornecedores(forcar) {
+    if (_divergenciasFornecedoresCarregadas && !forcar) return _divergenciasFornecedores;
+    if (_divergenciasFornecedoresPromise) return _divergenciasFornecedoresPromise;
+    _divergenciasFornecedoresPromise = (async () => {
+      try {
+        if (!global.firebase?.app) throw new Error('Firebase Functions indisponível.');
+        const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarDivergenciasFornecedoresRecebimentoBigQuery');
+        const resp = await callable({});
+        const itens = resp?.data?.fornecedores;
+        if (!Array.isArray(itens)) throw new Error('Resumo de divergências inválido.');
+        const mapa = new Map();
+        itens.forEach(item => {
+          const chave = normFornecedor(item?.fornecedor);
+          if (chave) mapa.set(chave, n(item?.divergencias));
+        });
+        _divergenciasFornecedores = mapa;
+        _divergenciasFornecedoresCarregadas = true;
+        return mapa;
+      } catch (e) {
+        console.warn('[Recebimento] Divergências por fornecedor no backend indisponíveis:', e?.message || e);
+        _divergenciasFornecedores = new Map();
+        _divergenciasFornecedoresCarregadas = true;
+        return _divergenciasFornecedores;
+      }
+    })();
+    try { return await _divergenciasFornecedoresPromise; }
+    finally { _divergenciasFornecedoresPromise = null; }
+  }
   async function renderRecebimentoFornecedores() {
     const pagina = document.getElementById('page-recebimento-fornecedores');
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try { await Promise.all([global._recebimentoOperacaoInternals?.carregar?.(), global._recebimentoInternals?.carregar?.()]); }
+    try { await Promise.all([global._recebimentoOperacaoInternals?.carregar?.(), _carregarDivergenciasFornecedores()]); }
     catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
     _desenharRecebimentoFornecedores();
   }
   function _agregarFornecedores() {
     const recs = recebimentosOperacionais().filter(r => r.tipo === 'FORNECEDOR' && r.fornecedorNome);
-    // O ranking não pode herdar filtros deixados na tela de Notas Fiscais:
-    // usa a base completa e apenas cruza as divergências do fornecedor.
-    const notasBluesoft = typeof global._recebimentoInternals?.notasTodas === 'function'
-      ? global._recebimentoInternals.notasTodas()
-      : (global._recebimentoInternals?.notasFiltradas?.() || []);
-    const divergenciasPorFornecedor = new Map();
-    notasBluesoft.forEach(x => {
-      if (!x.temDivergencia || !x.fornecedorNome) return;
-      const chave = normFornecedor(x.fornecedorNome);
-      divergenciasPorFornecedor.set(chave, (divergenciasPorFornecedor.get(chave) || 0) + 1);
-    });
+    // O ranking não herda filtros deixados na tela de Notas Fiscais. As
+    // divergências já chegam agregadas do backend e a base bruta só é lida
+    // no fallback de compatibilidade.
+    const divergenciasPorFornecedor = _divergenciasFornecedores;
     const porFornecedor = new Map();
     recs.forEach(r => {
       const chave = r.fornecedorNome;
@@ -240,6 +345,7 @@
   // ── Agenda / Cargas (CRUD, seção 18) ─────────────────────────────────────
   let _agendamentos = [];
   let _agendamentosCarregados = false;
+  let _agendamentosCarregandoPromise = null;
   let _filtrosAgenda = { loja: '', produto: '', tipo: '', agendado: '' };
   // Precisa ser estado do módulo (não só textContent do elemento) porque
   // _sincronizarAgenda chama _desenharRecebimentoAgendamentos logo depois de
@@ -250,9 +356,14 @@
   let _ultimoSyncAgenda = '';
   async function _carregarAgendamentos(forcar) {
     if (_agendamentosCarregados && !forcar) return;
-    const snap = await fs().collection(COL_AGENDAMENTOS).get();
-    _agendamentos = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-    _agendamentosCarregados = true;
+    if (_agendamentosCarregandoPromise) return _agendamentosCarregandoPromise;
+    _agendamentosCarregandoPromise = (async () => {
+      const snap = await fs().collection(COL_AGENDAMENTOS).get();
+      _agendamentos = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+      _agendamentosCarregados = true;
+    })();
+    try { await _agendamentosCarregandoPromise; }
+    finally { _agendamentosCarregandoPromise = null; }
   }
   async function renderRecebimentoAgendamentos() {
     const pagina = document.getElementById('page-recebimento-agendamentos');
@@ -262,7 +373,6 @@
     catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
     _desenharRecebimentoAgendamentos();
   }
-  const AGENDA_STATUS_INFO = { AGENDADO: { label: 'Agendado', cor: 'b-blue' }, UTILIZADO: { label: 'Utilizado', cor: 'b-green' }, CANCELADO: { label: 'Cancelado', cor: 'b-gray' } };
   function _tipoItemAgenda(item) { const t=String(item?.tipoProduto||'').toUpperCase(),p=String(item?.produto||'').toUpperCase(); return t==='INSUMO'||/^MP\s*[-–]/.test(p)?'materia_prima':t==='PRODUTO_ACABADO'||t==='VENDA'?'produto_acabado':'outros'; }
   function _desenharRecebimentoAgendamentos() {
     const pagina = document.getElementById('page-recebimento-agendamentos');
@@ -282,23 +392,20 @@
       ${_ultimaBuscaBiCompras ? `<div style="font-size:.7rem;color:var(--muted);margin:0 0 12px;padding:6px 10px;border-radius:8px;background:#f3f4f6">${esc(_ultimaBuscaBiCompras)}</div>` : ''}
       <div class="tc" style="padding:10px;margin-bottom:12px;display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:7px"><select class="field" data-recag-filter="loja"><option value="">Todas as lojas</option>${lojas.map(([id,nome])=>`<option value="${esc(id)}" ${_filtrosAgenda.loja===id?'selected':''}>${esc(nome)}</option>`).join('')}</select><select class="field" data-recag-filter="produto"><option value="">Todos os produtos</option>${produtos.map(p=>`<option ${_filtrosAgenda.produto===p?'selected':''}>${esc(p)}</option>`).join('')}</select><select class="field" data-recag-filter="tipo"><option value="">Matéria-prima + produto acabado</option><option value="materia_prima" ${_filtrosAgenda.tipo==='materia_prima'?'selected':''}>Matéria-prima</option><option value="produto_acabado" ${_filtrosAgenda.tipo==='produto_acabado'?'selected':''}>Produto acabado</option><option value="outros" ${_filtrosAgenda.tipo==='outros'?'selected':''}>Outros</option></select><select class="field" data-recag-filter="agendado"><option value="">Agendados e não agendados</option><option value="sim" ${_filtrosAgenda.agendado==='sim'?'selected':''}>Agendados</option><option value="nao" ${_filtrosAgenda.agendado==='nao'?'selected':''}>Não agendados</option></select></div>
       <div class="tc"><div style="overflow:auto"><table class="dt-table">
-        <thead><tr><th>Origem</th><th>Loja</th><th>Pedido</th><th>Fornecedor</th><th>Produtos</th><th>Previsto</th><th>Agendado</th><th>Hora</th><th>Status</th><th></th></tr></thead>
-        <tbody>${linhas.length ? linhas.map(a => { const st = AGENDA_STATUS_INFO[a.status] || AGENDA_STATUS_INFO.AGENDADO,itens=a.itensPedido||[]; return `<tr><td>${a.origem==='bi'?'<span class="badge b-blue" style="font-size:.6rem">🔗 SharePoint</span>':a.origem==='bluesoft'?'<span class="badge b-blue" style="font-size:.6rem">🔗 Bluesoft</span>':'<span class="badge b-gray" style="font-size:.6rem">Manual</span>'}</td><td>${esc(a.lojaNome||a.lojaId||'—')}</td><td class="mono">${esc(a.numeroPedido||a.codigo||'—')}</td><td><b>${esc(a.fornecedorNome)}</b></td><td>${itens.length?itens.map(i=>`<div><b>${esc(i.produto||'Produto')}</b> · ${Number(i.quantidadePendente||0).toLocaleString('pt-BR')}</div>`).join(''):'—'}</td><td>${fmtData(a.dataPrevista)}</td><td>${a.dataAgendada?`<span class="badge b-green">${fmtData(a.dataAgendada)}</span>`:'<span class="badge b-orange">Não agendado</span>'}</td><td>${esc(a.horaAgendada || '—')}</td><td><span class="badge ${st.cor}" style="font-size:.62rem">${st.label}</span></td><td style="white-space:nowrap"><button type="button" class="acao-lapis" title="Editar" data-recag-editar="${esc(a._id)}">✏️</button><button type="button" class="acao-lapis" title="Excluir" data-recag-excluir="${esc(a._id)}">🗑️</button></td></tr>`; }).join('') : '<tr><td colspan="10"><div class="empty"><div class="empty-icon">📅</div><div class="empty-title">Nenhum agendamento encontrado</div></div></td></tr>'}</tbody>
+        <thead><tr><th>Origem</th><th>Loja</th><th>Pedido</th><th>Fornecedor</th><th>Produtos</th><th>Quantidade</th><th>Previsto</th><th>Agendado</th><th></th></tr></thead>
+        <tbody>${linhas.length ? linhas.map(a => { const itens=a.itensPedido||[]; return `<tr><td>${a.origem==='bi'?'<span class="badge b-blue" style="font-size:.6rem">🔗 SharePoint</span>':'<span class="badge b-gray" style="font-size:.6rem">Manual</span>'}</td><td>${esc(a.lojaNome||a.lojaId||'—')}</td><td class="mono">${esc(a.numeroPedido||a.codigo||'—')}</td><td><b>${esc(a.fornecedorNome)}</b></td><td>${itens.length?itens.map(i=>`<div><b>${esc(i.produto||'Produto')}</b></div>`).join(''):'—'}</td><td>${itens.length?itens.map(i=>`<div>${Number(i.quantidadePendente||i.quantidade||0).toLocaleString('pt-BR')}</div>`).join(''):'—'}</td><td>${fmtData(a.dataPrevista)}</td><td>${a.dataAgendada?`<span class="badge b-green">Agendado</span><div style="font-size:.66rem;color:var(--muted);margin-top:3px">${fmtData(a.dataAgendada)}</div>`:'<span class="badge b-orange">Não agendado</span>'}</td><td style="white-space:nowrap"><button type="button" class="acao-lapis" title="Editar" data-recag-editar="${esc(a._id)}">✏️</button><button type="button" class="acao-lapis" title="Excluir" data-recag-excluir="${esc(a._id)}">🗑️</button></td></tr>`; }).join('') : '<tr><td colspan="9"><div class="empty"><div class="empty-icon">📅</div><div class="empty-title">Nenhum agendamento encontrado</div></div></td></tr>'}</tbody>
       </table></div></div>`;
     global.aplicarPermissoesAnalista?.();
     _iniciarAutoRefreshBiCompras();
   }
   async function _sincronizarAgenda() {
     const statusEl = document.getElementById('recag-sync-status');
-    if (typeof global.sincronizarAgendaBluesoft !== 'function') { global.showToast?.('Serviço de busca indisponível.', 'error'); return; }
-    if (statusEl) statusEl.textContent = '⏳ Buscando pedidos de compra pendentes...';
+    if (statusEl) statusEl.textContent = '⏳ Atualizando agenda sincronizada...';
     try {
-      const r = await global.sincronizarAgendaBluesoft();
-      const avisoSemPedidos = r.totalPedidos === 0 ? ' — esta loja não tem nenhum Pedido de Compra cadastrado (provavelmente lança nota direto, sem PO)' : '';
-      _ultimoSyncAgenda = r.totalPedidosPendentes.toLocaleString('pt-BR') + ' de ' + r.totalPedidos.toLocaleString('pt-BR') + ' pedido(s) pendente(s) (' + r.criados + ' novo(s), ' + r.atualizados + ' atualizado(s))' + avisoSemPedidos + ' · ' + new Date().toLocaleString('pt-BR');
       await _carregarAgendamentos(true);
+      _ultimoSyncAgenda = _agendamentos.length.toLocaleString('pt-BR') + ' agendamento(s) carregado(s) do espelho do BI · ' + new Date().toLocaleString('pt-BR');
       _desenharRecebimentoAgendamentos();
-      global.showToast?.('Agenda sincronizada: ' + r.criados + ' novo(s), ' + r.atualizados + ' atualizado(s).', 'success');
+      global.showToast?.('Agenda atualizada.', 'success');
     } catch (e) {
       if (statusEl) statusEl.textContent = 'Erro: ' + (e.message || e);
       global.showToast?.('Erro ao sincronizar agenda: ' + (e.message || e), 'error');
@@ -307,7 +414,7 @@
   // PEDIDO AO VIVO (2026-08-26): mesmo padrão "conecta a pasta do BI uma
   // vez, clica em Buscar" das outras telas — compras_a_receber.json alimenta
   // a MESMA Agenda de Recebimento (recebimento_agendamentos), via
-  // importarComprasAReceberBiJson (90-bluesoft-service.js).
+  // importarComprasAReceberBiJson (90-bi-recebimento-service.js).
   const ARQUIVO_BI_COMPRAS_A_RECEBER = 'compras_a_receber.json';
   const INTERVALO_AUTO_BUSCA_BI_MS = 30 * 60 * 1000; // pedido ao vivo: a cada 30 minutos
   let _ultimaBuscaBiCompras = '';
@@ -345,41 +452,26 @@
     }
   }
   function _iniciarAutoRefreshBiCompras() {
-    if (_autoRefreshBiComprasIniciado) return;
-    if (!global.DTBiPastaLocal?.suportado?.() || typeof global.setInterval !== 'function') return;
-    _autoRefreshBiComprasIniciado = true;
-    global.setInterval(async () => {
-      try {
-        const status = await global.DTBiPastaLocal.status();
-        if (status === 'conectado') await _buscarComprasAReceberBiAutomatico();
-      } catch (e) { /* silencioso — só o clique manual mostra erro */ }
-    }, INTERVALO_AUTO_BUSCA_BI_MS);
+    _autoRefreshBiComprasIniciado = true; // sincronização já ocorre no servidor a cada 4h
   }
-  function recagNovo() { _abrirModalRecag({ _novo: true, fornecedorNome: '', dataAgendada: '', horaAgendada: '', codigo: '', motoristaNome: '', placa: '', status: 'AGENDADO', observacao: '' }); }
+  function recagNovo() { _abrirModalRecag({ _novo: true, fornecedorNome: '', dataAgendada: '', tipoCarga: 'PALETIZADA', observacao: '' }); }
   function recagEditar(id) { const item = _agendamentos.find(a => a._id === id); if (item) _abrirModalRecag(item); }
   function _abrirModalRecag(item) {
     document.getElementById('recag-title').textContent = item._novo ? 'Novo agendamento' : 'Editar agendamento';
     document.getElementById('recag-doc-id').value = item._id || '';
     document.getElementById('recag-fornecedor').value = item.fornecedorNome || '';
     document.getElementById('recag-data').value = item.dataAgendada || '';
-    document.getElementById('recag-hora').value = item.horaAgendada || '';
-    document.getElementById('recag-codigo').value = item.codigo || '';
-    document.getElementById('recag-motorista').value = item.motoristaNome || '';
-    document.getElementById('recag-placa').value = item.placa || '';
-    document.getElementById('recag-status').value = item.status || 'AGENDADO';
+    document.getElementById('recag-tipo-carga').value = String(item.tipoCarga || 'PALETIZADA').toUpperCase();
     document.getElementById('recag-observacao').value = item.observacao || '';
     global.openModal?.('modal-recag');
   }
   async function recagSalvar() {
     const fornecedorNome = String(document.getElementById('recag-fornecedor').value || '').trim();
     const dataAgendada = document.getElementById('recag-data').value || '';
-    if (!fornecedorNome || !dataAgendada) { global.showToast?.('Informe fornecedor e data.', 'error'); return; }
+    const tipoCarga = String(document.getElementById('recag-tipo-carga').value || '').toUpperCase();
+    if (!fornecedorNome || !dataAgendada || !['PALETIZADA','BATIDA'].includes(tipoCarga)) { global.showToast?.('Informe fornecedor, data e tipo da carga.', 'error'); return; }
     const payload = {
-      fornecedorNome, dataAgendada, horaAgendada: document.getElementById('recag-hora').value || '',
-      codigo: String(document.getElementById('recag-codigo').value || '').trim(),
-      motoristaNome: String(document.getElementById('recag-motorista').value || '').trim(),
-      placa: String(document.getElementById('recag-placa').value || '').trim().toUpperCase(),
-      status: document.getElementById('recag-status').value || 'AGENDADO',
+      fornecedorNome, dataAgendada, tipoCarga, status: 'AGENDADO',
       observacao: String(document.getElementById('recag-observacao').value || '').trim(),
       agendamentoConfirmadoManual: true,
       lojaId: global.getDTLojaAtiva?.() || '',
@@ -390,10 +482,8 @@
     try {
       if (docId) await fs().collection(COL_AGENDAMENTOS).doc(docId).set(payload, { merge: true });
       else { payload.criadoEm = payload.atualizadoEm; await fs().collection(COL_AGENDAMENTOS).add(payload); }
-      global.closeModal?.('modal-recag');
-      global.showToast?.('Agendamento salvo.', 'success');
-      await _carregarAgendamentos(true);
-      _desenharRecebimentoAgendamentos();
+      global.closeModal?.('modal-recag'); global.showToast?.('Agendamento salvo.', 'success');
+      await _carregarAgendamentos(true); _desenharRecebimentoAgendamentos();
     } catch (e) { global.showToast?.('Erro ao salvar: ' + (e.message || e), 'error'); }
   }
   async function recagExcluir(id) {
@@ -413,19 +503,67 @@
 
   // ── Histórico (finalizados/cancelados + export CSV, seção 27) ──────────
   let _filtroHistPeriodo = '';
+  let _historicoBackend = [];
+  let _historicoUsaBackend = false;
+  let _historicoCarregando = false;
+  let _historicoReqSeq = 0;
+  let _historicoChave = '';
+  let _historicoPromise = null;
+  function _chaveHistorico() { return String(global.getDTLojaAtiva?.() || '') + '|' + (_filtroHistPeriodo || ''); }
+  async function _carregarHistoricoBackend(forcar) {
+    const chave = _chaveHistorico();
+    if (!forcar && _historicoUsaBackend && _historicoChave === chave) return _historicoBackend;
+    if (_historicoPromise && _historicoPromise._dtChave === chave) return _historicoPromise;
+    const seq = ++_historicoReqSeq;
+    _historicoCarregando = true;
+    const promise = (async () => {
+      try {
+        if (!global.firebase?.app) throw new Error('Firebase Functions indisponível.');
+        const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarHistoricoRecebimentosBigQuery');
+        const resp = await callable({ lojaId: global.getDTLojaAtiva?.() || '', periodo: _filtroHistPeriodo || '' });
+        if (!resp?.data || !Array.isArray(resp.data.recebimentos)) throw new Error('Histórico vazio ou inválido.');
+        if (seq !== _historicoReqSeq || chave !== _chaveHistorico()) return resp.data.recebimentos;
+        _historicoBackend = resp.data.recebimentos;
+        _historicoUsaBackend = true;
+        _historicoChave = chave;
+        return _historicoBackend;
+      } catch (e) {
+        console.warn('[Recebimento] Histórico BigQuery indisponível:', e?.message || e);
+        if (seq === _historicoReqSeq && chave === _chaveHistorico()) {
+          _historicoBackend = [];
+          _historicoUsaBackend = false;
+          _historicoChave = '';
+        }
+        return [];
+      } finally {
+        if (seq === _historicoReqSeq) _historicoCarregando = false;
+      }
+    })();
+    promise._dtChave = chave;
+    _historicoPromise = promise;
+    try { return await promise; }
+    finally { if (_historicoPromise === promise) _historicoPromise = null; }
+  }
   async function renderRecebimentoHistorico() {
     const pagina = document.getElementById('page-recebimento-historico');
     if (!pagina) return;
     pagina.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
-    try { await global._recebimentoOperacaoInternals?.carregar?.(); }
+    try { await _carregarHistoricoBackend(false); }
     catch (e) { pagina.innerHTML = '<div class="empty"><div class="empty-title">Falha ao carregar</div><div class="empty-sub">' + esc(e.message || e) + '</div></div>'; return; }
     _desenharRecebimentoHistorico();
   }
   function _historicoFiltrado() {
-    return recebimentosOperacionais()
+    const fonte = _historicoUsaBackend ? _historicoBackend : recebimentosOperacionais();
+    return fonte
       .filter(r => ['FINALIZADO', 'CANCELADO'].includes(r.status))
       .filter(r => !_filtroHistPeriodo || String(r.horaChegada || r.criadoEm || '').slice(0, 7) === _filtroHistPeriodo)
       .sort((a, b) => String(b.horaChegada || b.criadoEm || '').localeCompare(String(a.horaChegada || a.criadoEm || '')));
+  }
+  async function _recarregarHistorico() {
+    if (!_historicoUsaBackend) { _desenharRecebimentoHistorico(); }
+    else { _historicoCarregando = true; _desenharRecebimentoHistorico(); }
+    await _carregarHistoricoBackend(true);
+    _desenharRecebimentoHistorico();
   }
   function _desenharRecebimentoHistorico() {
     const pagina = document.getElementById('page-recebimento-historico');
@@ -472,7 +610,7 @@
     return (_auditoriaPorRecebimento.get(recebimentoId) || []).slice().sort((a, b) => String(a.dataHora || '').localeCompare(String(b.dataHora || '')));
   }
   async function _verEtapasHistorico(recebimentoId) {
-    const r = recebimentosOperacionais().find(x => x._id === recebimentoId);
+    const r = _historicoFiltrado().find(x => x._id === recebimentoId) || recebimentosOperacionais().find(x => x._id === recebimentoId);
     const corpo = document.getElementById('recist-etapas-corpo');
     if (corpo) corpo.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
     global.openModal?.('modal-recist-etapas');
@@ -491,7 +629,7 @@
   global.renderRecebimentoAgendamentos = renderRecebimentoAgendamentos;
   global.renderRecebimentoHistorico = renderRecebimentoHistorico;
   global.recagSalvar = recagSalvar;
-  global._recebimentoRelatoriosInternals = { notasAchatadas: _notasAchatadas, notasBluesoftFiltradas: _notasBluesoftFiltradas, agregarFornecedores: _agregarFornecedores, historicoFiltrado: _historicoFiltrado, sincronizarAgenda: _sincronizarAgenda, etapasDoRecebimento: _etapasDoRecebimento, carregarAuditoriaTodas: _carregarAuditoriaTodas, verEtapasHistorico: _verEtapasHistorico, buscarComprasAReceberBiAutomatico: _buscarComprasAReceberBiAutomatico, ARQUIVO_BI_COMPRAS_A_RECEBER };
+  global._recebimentoRelatoriosInternals = { notasAchatadas: _notasAchatadas, notasBluesoftFiltradas: _notasBluesoftFiltradas, carregarPaginaNotasBs: _carregarPaginaNotasBs, agregarFornecedores: _agregarFornecedores, historicoFiltrado: _historicoFiltrado, carregarHistoricoBackend: _carregarHistoricoBackend, sincronizarAgenda: _sincronizarAgenda, etapasDoRecebimento: _etapasDoRecebimento, carregarAuditoriaTodas: _carregarAuditoriaTodas, verEtapasHistorico: _verEtapasHistorico, buscarComprasAReceberBiAutomatico: _buscarComprasAReceberBiAutomatico, ARQUIVO_BI_COMPRAS_A_RECEBER };
 
   document.addEventListener('click', function (event) {
     if (event.target.closest('[data-recag-sync]')) { _sincronizarAgenda(); return; }
@@ -500,20 +638,20 @@
     const edit = event.target.closest('[data-recag-editar]'); if (edit) { recagEditar(edit.getAttribute('data-recag-editar')); return; }
     const del = event.target.closest('[data-recag-excluir]'); if (del) { recagExcluir(del.getAttribute('data-recag-excluir')); return; }
     if (event.target.closest('[data-recist-exportar]')) { _exportarHistoricoCsv(); return; }
-    const pgBs = event.target.closest('[data-recnf-bs-pg]'); if (pgBs) { _paginaBs += Number(pgBs.getAttribute('data-recnf-bs-pg')); _desenharRecebimentoNotas(); return; }
+    const pgBs = event.target.closest('[data-recnf-bs-pg]'); if (pgBs) { _paginaBs += Number(pgBs.getAttribute('data-recnf-bs-pg')); _recarregarPaginaNotasBs(); return; }
     const etapas = event.target.closest('[data-recist-etapas]'); if (etapas) { _verEtapasHistorico(etapas.getAttribute('data-recist-etapas')); return; }
   });
   document.addEventListener('change', function (event) {
     const agendaFiltro=event.target.closest('[data-recag-filter]'); if(agendaFiltro){_filtrosAgenda[agendaFiltro.getAttribute('data-recag-filter')]=agendaFiltro.value;_desenharRecebimentoAgendamentos();return;}
     if (event.target.id === 'recnf-f-periodo') { _filtroNotasPeriodo = event.target.value; _desenharRecebimentoNotas(); return; }
     if (event.target.id === 'recnf-f-fornecedor') { _filtroNotasFornecedor = event.target.value; _desenharRecebimentoNotas(); return; }
-    if (event.target.id === 'recist-f-periodo') { _filtroHistPeriodo = event.target.value; _desenharRecebimentoHistorico(); return; }
-    if (event.target.id === 'recnf-bs-f-periodo') { _filtroBsPeriodo = event.target.value; _paginaBs = 1; _desenharRecebimentoNotas(); return; }
-    if (event.target.id === 'recnf-bs-f-fornecedor') { _filtroBsFornecedor = event.target.value; _paginaBs = 1; _desenharRecebimentoNotas(); return; }
-    if (event.target.id === 'recnf-bs-f-status') { _filtroBsStatus = event.target.value; _paginaBs = 1; _desenharRecebimentoNotas(); return; }
-    if (event.target.id === 'recnf-bs-f-natureza') { _filtroBsNatureza = event.target.value; _paginaBs = 1; _desenharRecebimentoNotas(); return; }
-    if (event.target.id === 'recnf-bs-f-divergencia') { _filtroBsSoDivergencia = event.target.checked; _paginaBs = 1; _desenharRecebimentoNotas(); return; }
-    if (event.target.id === 'recnf-bs-f-categoria') { _filtroBsCategoria = event.target.value || ''; _paginaBs = 1; _desenharRecebimentoNotas(); return; }
+    if (event.target.id === 'recist-f-periodo') { _filtroHistPeriodo = event.target.value; _recarregarHistorico(); return; }
+    if (event.target.id === 'recnf-bs-f-periodo') { _filtroBsPeriodo = event.target.value; _paginaBs = 1; _recarregarPaginaNotasBs(); return; }
+    if (event.target.id === 'recnf-bs-f-fornecedor') { _filtroBsFornecedor = event.target.value; _paginaBs = 1; _recarregarPaginaNotasBs(); return; }
+    if (event.target.id === 'recnf-bs-f-status') { _filtroBsStatus = event.target.value; _paginaBs = 1; _recarregarPaginaNotasBs(); return; }
+    if (event.target.id === 'recnf-bs-f-natureza') { _filtroBsNatureza = event.target.value; _paginaBs = 1; _recarregarPaginaNotasBs(); return; }
+    if (event.target.id === 'recnf-bs-f-divergencia') { _filtroBsSoDivergencia = event.target.checked; _paginaBs = 1; _recarregarPaginaNotasBs(); return; }
+    if (event.target.id === 'recnf-bs-f-categoria') { _filtroBsCategoria = event.target.value || ''; _paginaBs = 1; _recarregarPaginaNotasBs(); return; }
     const portariaBs = event.target.closest('[data-recnf-bs-portaria]'); if (portariaBs) { _salvarPortariaBs(portariaBs.getAttribute('data-recnf-bs-portaria'), portariaBs.value); return; }
   });
 })(window);

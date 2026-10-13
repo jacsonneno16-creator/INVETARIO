@@ -358,7 +358,8 @@ test('irParaSetor alterna entre o shell de Inventário e o de Recebimento sem af
 test('dashboard de Recebimento tem botão de sync, filtro de período e vários gráficos agregados (a tabela crua de notas e a edição de portaria mudaram pra aba Notas Fiscais)',()=>{
   assert.match(dashCode,/data-reb-sync/);
   assert.match(dashCode,/id="reb-f-periodo"/);
-  assert.match(dashCode,/sincronizarRecebimentoBluesoft/);
+  assert.doesNotMatch(dashCode,/sincronizarRecebimentoBluesoft/);
+  assert.match(dashCode,/buscarResumoHistoricoRecebimentoBigQuery/);
   assert.doesNotMatch(dashCode,/data-reb-portaria/); // editar chegada na portaria não é mais responsabilidade do dashboard
   assert.doesNotMatch(dashCode,/data-reb-pg/); // paginação de nota-a-nota também não
   const qtdGraficos=[...dashCode.matchAll(/new global\.Chart/g)].length;
@@ -435,7 +436,28 @@ function carregarDashboardRecebimento(notas, cargas, comprasBi) {
       return { get: async () => ({ docs: [] }) };
     },
   });
-  win.obterHistoricoComprasRealBi = async () => comprasBi || [];
+  function mensalDoHistorico(linhas) {
+    const porMes = new Map();
+    const notasMes = new Map();
+    const mesChave = valor => {
+      const s = String(valor || '');
+      let m = s.match(/^(\d{4})-(\d{2})/); if (m) return m[1] + '-' + m[2];
+      m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})/); if (m) return m[3] + '-' + m[2];
+      return '';
+    };
+    (linhas || []).filter(x => String(x.loja_key) === '9' && String(x.tipo_operacao || '').toUpperCase() === 'COMPRA').forEach(x => {
+      const mes = mesChave(x.data_recebimento || x.data_emissao); if (!mes) return;
+      const chave = String(x.loja_key) + '|' + String(x.nf_numero) + '|' + String(x.data_emissao || '').slice(0,10);
+      if (!notasMes.has(mes)) notasMes.set(mes, new Set()); notasMes.get(mes).add(chave);
+      porMes.set(mes, (porMes.get(mes) || 0) + (Number(x.Custo_liquido_total) || 0));
+    });
+    return [...new Set([...porMes.keys(), ...notasMes.keys()])].sort().map(mes => ({ mes, notas: (notasMes.get(mes) || new Set()).size, valor: porMes.get(mes) || 0 }));
+  }
+  win.firebase = { app: () => ({ functions: () => ({ httpsCallable: nome => async () => {
+    if (nome === 'buscarResumoHistoricoRecebimentoBigQuery') return { data: { resumo: { totalNotas:0, fornecedoresDistintos:0, valorTotal:0, comparaveis:0, comDivergencia:0, tempoPorMes:[], rankingFornecedores:[] } } };
+    if (nome === 'buscarResumoRecebimentoComprasBigQuery') return { data: { mensal: mensalDoHistorico(comprasBi || []) } };
+    throw new Error('função não mockada: ' + nome);
+  } }) }) };
   win.eval(dashCode);
   return { win, document, chamadasChart };
 }
@@ -447,6 +469,7 @@ test('gráfico "Notas recebidas por mês": rótulos são "mês/ano" mesmo com da
   ];
   const { win, chamadasChart } = carregarDashboardRecebimento([], [], comprasBi);
   await win.renderRecebimentoDashboard();
+  await win._recebimentoDashboardBuscaInternals.buscarManual();
   const cfg = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Notas recebidas');
   assert.ok(cfg, 'gráfico de notas por mês precisa existir');
   assert.deepEqual([...cfg.data.labels], ['jan/2026'], 'as duas notas de janeiro têm que virar um rótulo só, "jan/2026"');
@@ -462,6 +485,7 @@ test('gráfico "Notas recebidas por mês": mistura de formato ISO e BR nos dados
   ];
   const { win, chamadasChart } = carregarDashboardRecebimento([], [], comprasBi);
   await win.renderRecebimentoDashboard();
+  await win._recebimentoDashboardBuscaInternals.buscarManual();
   const cfg = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Valor recebido (R$)');
   assert.deepEqual([...cfg.data.labels], ['jan/2026', 'mar/2026']);
   assert.deepEqual([...cfg.data.datasets[0].data], [30, 30], 'os dois formatos (ISO e BR) de janeiro somam juntos (10+20=30); março fica separado');
@@ -475,6 +499,7 @@ test('gráfico "Notas recebidas por mês": meses saem em ordem CRONOLÓGICA, nã
   ];
   const { win, chamadasChart } = carregarDashboardRecebimento([], [], comprasBi);
   await win.renderRecebimentoDashboard();
+  await win._recebimentoDashboardBuscaInternals.buscarManual();
   const cfg = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Notas recebidas');
   assert.deepEqual([...cfg.data.labels], ['dez/2025', 'fev/2026', 'nov/2026'], 'ordem cronológica: dez/2025 antes de fev/2026 antes de nov/2026');
 });
@@ -490,6 +515,7 @@ test('gráfico "Notas recebidas por mês": conta NOTA única (loja+número+emiss
   ];
   const { win, chamadasChart } = carregarDashboardRecebimento([], [], comprasBi);
   await win.renderRecebimentoDashboard();
+  await win._recebimentoDashboardBuscaInternals.buscarManual();
   const cfgNotas = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Notas recebidas');
   const cfgValor = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Valor recebido (R$)');
   assert.deepEqual([...cfgNotas.data.datasets[0].data], [1], '3 itens da MESMA nota contam como 1 nota só');
@@ -508,6 +534,7 @@ test('gráfico "Notas recebidas por mês": ignora loja diferente (loja_key) e op
   ];
   const { win, chamadasChart } = carregarDashboardRecebimento([], [], comprasBi);
   await win.renderRecebimentoDashboard();
+  await win._recebimentoDashboardBuscaInternals.buscarManual();
   const cfgValor = [...chamadasChart].reverse().find(c => c.type === 'bar' && c.data.datasets[0].label === 'Valor recebido (R$)');
   assert.deepEqual([...cfgValor.data.datasets[0].data], [10], 'só a linha da loja1 (loja_key 9) com tipo_operacao COMPRA deveria contar');
 });

@@ -19,6 +19,9 @@
   let _filtroLoja = '';
   let _filtroStatus = '';
   let _filtroBusca = '';
+  const _hojeCarga = new Date();
+  let _filtroDataInicio = _hojeCarga.getFullYear() + '-' + String(_hojeCarga.getMonth()+1).padStart(2,'0') + '-01';
+  let _filtroDataFim = _hojeCarga.getFullYear() + '-' + String(_hojeCarga.getMonth()+1).padStart(2,'0') + '-' + String(_hojeCarga.getDate()).padStart(2,'0');
   let _cargaExpandidaId = null; // _id da carga com o detalhe aberto
   const _itensPorCarga = {}; // cache: cargaId -> [{_id,capa,codigoProduto,nomeProduto,quantidade}]
   let _cargasCarregando = false;
@@ -70,7 +73,7 @@
       const lojasSnap = await raw().collection('lojas').get().catch(() => vazio);
       _lojas = lojasSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(x => x.ativa !== false);
       const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarCargasTodasLojasBigQuery');
-      const resposta = await callable({ incluirFinalizadas: !!incluirFinalizadas });
+      const resposta = await callable({ incluirFinalizadas: !!incluirFinalizadas, dataInicio: _filtroDataInicio || '', dataFim: _filtroDataFim || '' });
       _cargas = (resposta && resposta.data && resposta.data.cargas) || [];
       _cargasComFinalizadas = !!incluirFinalizadas;
     })();
@@ -99,6 +102,9 @@
     return _cargas.filter(c => {
       if (_filtroLoja && c.lojaId !== _filtroLoja) return false;
       if (_filtroStatus && c.status !== _filtroStatus) return false;
+      const dataCarga = String(c.criadoEm || c.criado_em || '').slice(0,10);
+      if (_filtroDataInicio && dataCarga && dataCarga < _filtroDataInicio) return false;
+      if (_filtroDataFim && dataCarga && dataCarga > _filtroDataFim) return false;
       if (busca && !String(c.nomeCarga || '').toLowerCase().includes(busca) && !String(c.motoristaNome || '').toLowerCase().includes(busca)) return false;
       return true;
     }).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
@@ -131,26 +137,7 @@
   // direto em `notasFiscais` da carga, sem mexer em totalVolumes (esse
   // campo é a soma das QUANTIDADES bipadas, um conceito diferente do
   // "volumes" de cada NF, que é a contagem de caixas daquela nota).
-  function _notasFiscaisHtml(carga) {
-    const notas = carga.notasFiscais || [];
-    const linhas = notas.map((n, i) => `<tr>
-        <td class="mono">${esc(n.numero)}</td>
-        <td class="mono">${esc(n.volumes)}</td>
-        <td><button type="button" class="btn btn-ghost btn-sm" data-nf-remover="${esc(carga._id)}" data-nf-indice="${i}" title="Remover nota fiscal">🗑</button></td>
-      </tr>`).join('');
-    return `
-      <div style="font-weight:700;font-size:.8rem;margin-bottom:6px">📄 Notas Fiscais</div>
-      <div style="overflow:auto;margin-bottom:8px"><table class="dt-table">
-        <thead><tr><th>Número</th><th>Volumes</th><th></th></tr></thead>
-        <tbody>${linhas || '<tr><td colspan="3">Nenhuma nota fiscal cadastrada.</td></tr>'}</tbody>
-      </table></div>
-      <div class="fg" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px">
-        <div style="flex:1;min-width:120px"><div class="fl" style="font-size:.7rem;color:var(--muted)">Número da NF</div><input class="field" id="nf-novo-numero-${esc(carga._id)}" placeholder="Ex.: 55501"></div>
-        <div style="width:110px"><div class="fl" style="font-size:.7rem;color:var(--muted)">Volumes</div><input class="field" id="nf-novo-volumes-${esc(carga._id)}" type="number" min="1" step="1"></div>
-        <button type="button" class="btn btn-primary btn-sm" data-nf-adicionar="${esc(carga._id)}">+ Adicionar NF</button>
-      </div>
-      <div id="nf-status-${esc(carga._id)}" style="font-size:.72rem;color:var(--muted);min-height:16px;margin-bottom:6px"></div>`;
-  }
+  // NF manual removida: a carga usa exclusivamente o vínculo NF × produtos.
 
   // PEDIDO AO VIVO (2026-09-08): "quando colocar uma nota vinculada com os
   // produtos não precisa criar mais novas linhas com os produtos, ali
@@ -167,6 +154,58 @@
       });
     });
     return mapa;
+  }
+
+  function _documentosNotasHtml(carga) {
+    const notas = (carga.notasFiscaisProdutos || []).filter(n => (n.produtos || []).length);
+    if (!notas.length) return '';
+    return `<div style="font-weight:700;font-size:.8rem;margin:8px 0 6px">🧾 Documentos para impressão</div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">${notas.map(n => `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:7px 9px;border:1px solid var(--border);border-radius:8px">
+        <span class="mono" style="font-weight:700">NF ${esc(n.numero)}</span>
+        <span class="badge ${n.documentoUrl ? 'b-green' : ''}">${n.documentoUrl ? 'PDF anexado' : 'sem PDF'}</span>
+        <label class="btn btn-ghost btn-sm" style="cursor:pointer">📎 ${n.documentoUrl ? 'Trocar PDF' : 'Anexar PDF'}<input type="file" accept="application/pdf" data-npv-pdf="${esc(carga._id)}" data-npv-pdf-numero="${esc(n.numero)}" style="display:none"></label>
+      </div>`).join('')}</div>`;
+  }
+
+  async function _anexarPdfNota(cargaId, numero, arquivo) {
+    const carga = _cargas.find(c => c._id === cargaId);
+    if (!carga || !arquivo) return;
+    if (arquivo.type && arquivo.type !== 'application/pdf') { global.showToast?.('Selecione um arquivo PDF.', 'error'); return; }
+    _statusNpv(cargaId, 'Enviando PDF para o servidor de impressão...');
+    try {
+      const local = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+      let servidores = [];
+      try {
+        const snap = await raw().collection('impressoras_rede').where('ativo', '==', true).get();
+        servidores = snap.docs.map(d => d.data()).filter(x => !x.lojaId || x.lojaId === carga.lojaId);
+      } catch (erroConfig) {
+        // Em localhost o ambiente de teste pode começar sem o cadastro global
+        // de impressoras (ou com usuário local simplificado). Nunca fazemos
+        // fallback para produção: usamos somente o agente local na porta 9101.
+        if (!local) throw erroConfig;
+        console.warn('[PDF NF] Configuração de impressora local indisponível; usando agente local.', erroConfig);
+      }
+      const endpoint = servidores.length
+        ? String(servidores[0].endpoint || '').replace(/\/$/, '')
+        : (local ? 'http://127.0.0.1:9101' : '');
+      if (!endpoint) throw new Error('Cadastre uma impressora/agente de rede em Configurações > Impressoras.');
+      const resp = await fetch(endpoint + '/documents', { method:'POST', headers:{'Content-Type':'application/pdf','X-Filename':encodeURIComponent(arquivo.name || ('NF-'+numero+'.pdf'))}, body:arquivo });
+      if (!resp.ok) {
+        let detalhe = '';
+        try { const erroAgente = await resp.json(); detalhe = erroAgente && erroAgente.error ? ': ' + erroAgente.error : ''; } catch (_) {}
+        throw new Error('Agente respondeu HTTP ' + resp.status + detalhe);
+      }
+      const dados = await resp.json();
+      if (!dados || !dados.url) throw new Error('Agente não retornou a URL do documento.');
+      const atualizadas = (carga.notasFiscaisProdutos || []).map(n => n.numero === numero ? Object.assign({}, n, {documentoUrl:dados.url, documentoNome:arquivo.name || '', documentoAnexadoEm:new Date().toISOString()}) : n);
+      await raw().collection('lojas').doc(carga.lojaId).collection(COL_CARGAS).doc(cargaId).update({notasFiscaisProdutos:atualizadas});
+      carga.notasFiscaisProdutos = atualizadas;
+      _redesenharDetalhe(cargaId);
+      global.showToast?.('PDF anexado à nota e liberado para impressão no coletor.', 'success');
+    } catch(e) {
+      _statusNpv(cargaId, 'Erro ao anexar PDF: ' + (e.message || e));
+      global.showToast?.('Erro ao anexar PDF: ' + (e.message || e), 'error');
+    }
   }
 
   function _detalheHtml(carga, itens) {
@@ -209,7 +248,7 @@
     }).join('');
     return `
       <div style="padding:10px 12px;border-top:1px dashed var(--border,#e5e7eb)">
-        ${_notasFiscaisHtml(carga)}
+        
         <div style="font-weight:700;font-size:.8rem;margin-bottom:6px">📊 Resumo por produto</div>
         <div style="overflow:auto;margin-bottom:8px"><table class="dt-table">
           <thead><tr><th></th><th>Produto</th><th>Código</th><th>Quantidade</th><th>Nota</th></tr></thead>
@@ -220,6 +259,7 @@
           <button type="button" class="btn btn-primary btn-sm" data-npv-vincular="${esc(carga._id)}">+ Vincular</button>
         </div>
         <div id="npv-status-${esc(carga._id)}" style="font-size:.72rem;color:var(--muted);min-height:16px;margin-bottom:10px"></div>
+        ${_documentosNotasHtml(carga)}
         <div style="font-weight:700;font-size:.8rem;margin-bottom:6px">📦 Itens (por capa) <span style="font-weight:400;color:var(--muted);font-size:.7rem">— marque "capa-palete não existe no Bluesoft" quando encontrar uma divergência</span></div>
         <div style="overflow:auto;max-height:320px"><table class="dt-table">
           <thead><tr><th></th><th>Capa</th><th>Código</th><th>Produto</th><th>Quantidade</th></tr></thead>
@@ -228,8 +268,37 @@
       </div>`;
   }
 
+  // BUG AO VIVO REAL (2026-09-18): "não fica verde já na hora, só depois de
+  // clicar pra expandir e recolher de novo" — vincular/desvincular só
+  // redesenhava a subárvore do detalhe (_redesenharDetalhe), nunca o badge
+  // no cabeçalho do card (fora dessa subárvore). Recolher/expandir de novo
+  // "por acaso" corrigia porque _alternarDetalheCarga chama o redesenho da
+  // LISTA inteira, que recalcula o badge com dado fresco — mas isso nunca
+  // acontecia sozinho ao vincular. Cálculo extraído pra dar pra atualizar
+  // só o badge (_atualizarBadgeStatusCarga), sem redesenhar a lista toda
+  // (perderia texto digitado em outro card expandido).
+  function _statusBadgeInfo(c) {
+    const itensCache = _itensPorCarga[c._id];
+    const resumoCache = itensCache ? _resumoPorProduto(itensCache) : [];
+    const mapaNfCache = _notaPorChaveProduto(c);
+    const notasCompletas = resumoCache.length > 0 && resumoCache.every(r => mapaNfCache.has((r.codigoProduto || '—') + '|' + (r.nomeProduto || '—')));
+    return {
+      classe: 'badge ' + (notasCompletas ? 'b-green' : (STATUS_CLASSE[c.status] || '')),
+      texto: notasCompletas ? 'NF vinculada em todos os produtos' : ((c.status === 'PENDENTE' && c.totalPaletesFisico > 0) ? 'Pronta pra expedição' : (STATUS_LABEL[c.status] || c.status)),
+    };
+  }
+  function _atualizarBadgeStatusCarga(cargaId) {
+    const carga = _cargas.find(c => c._id === cargaId);
+    const el = document.querySelector('[data-carga-badge-status="' + cargaId + '"]');
+    if (!carga || !el) return;
+    const info = _statusBadgeInfo(carga);
+    el.className = info.classe;
+    el.textContent = info.texto;
+  }
+
   function _cardHtml(c) {
     const expandida = _cargaExpandidaId === c._id;
+    const infoBadge = _statusBadgeInfo(c);
     // BUG AO VIVO REAL (2026-09-08): "vinculei pelo analista as notas nos
     // produtos e não apareceu as notas" — o badge só olhava `notasFiscais`
     // (a NF manual, "número+volume" solto). Vincular produto→nota grava em
@@ -249,7 +318,7 @@
           <span class="badge">${esc(todosNumerosNf.join(', ') || 'sem NF')}</span>
           <span class="badge">${esc(c.totalVolumes || 0)} volume(s)</span>
           <span class="badge">${esc(c.totalPaletesFisico != null ? c.totalPaletesFisico : '—')} palete(s)</span>
-          <span class="badge ${STATUS_CLASSE[c.status] || ''}">${esc((c.status === 'PENDENTE' && c.totalPaletesFisico > 0) ? 'Pronta pra expedição' : (STATUS_LABEL[c.status] || c.status))}</span>
+          <span class="${infoBadge.classe}" data-carga-badge-status="${esc(c._id)}">${esc(infoBadge.texto)}</span>
           <button type="button" class="btn btn-ghost btn-sm" data-carga-pdf="${esc(c._id)}" title="Baixar PDF com as informações da carga">📄 PDF</button>
           <button type="button" class="btn btn-ghost btn-sm" data-carga-excluir="${esc(c._id)}" data-carga-excluir-loja="${esc(c.lojaId)}" title="Excluir carga">🗑</button>
           <span style="font-size:.9rem">${expandida ? '▲' : '▼'}</span>
@@ -314,7 +383,7 @@
       ${_cargasCarregandoHtml()}
       ${_cargasErroHtml()}
       <div class="tc" style="padding:12px;margin-bottom:14px">
-        <div class="fg" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+        <div class="fg" style="display:grid;grid-template-columns:repeat(5,minmax(140px,1fr));gap:8px">
           <select class="field" id="cargas-f-loja">
             <option value="">Todas as lojas</option>
             ${_lojas.map(l => `<option value="${esc(l.id)}" ${_filtroLoja === l.id ? 'selected' : ''}>${esc(l.nome || l.codigo || l.id)}</option>`).join('')}
@@ -326,6 +395,8 @@
             <option value="RECEBIDA" ${_filtroStatus === 'RECEBIDA' ? 'selected' : ''}>Recebida</option>
             <option value="CANCELADA" ${_filtroStatus === 'CANCELADA' ? 'selected' : ''}>Cancelada</option>
           </select>
+          <input class="field" id="cargas-f-data-inicio" type="date" value="${esc(_filtroDataInicio)}" title="Data inicial">
+          <input class="field" id="cargas-f-data-fim" type="date" value="${esc(_filtroDataFim)}" title="Data final">
           <input class="field" id="cargas-f-busca" placeholder="🔎 Nome da carga ou motorista" value="${esc(_filtroBusca)}">
         </div>
       </div>
@@ -501,45 +572,6 @@
     }
   }
 
-  async function _adicionarNotaFiscalCarga(cargaId) {
-    const carga = _cargas.find(c => c._id === cargaId);
-    if (!carga) return;
-    const elNumero = document.getElementById('nf-novo-numero-' + cargaId);
-    const elVolumes = document.getElementById('nf-novo-volumes-' + cargaId);
-    const numero = String((elNumero && elNumero.value) || '').trim();
-    const volumes = Number((elVolumes && elVolumes.value) || '');
-    if (!numero) { _statusNf(cargaId, 'Digite o número da NF.'); return; }
-    if (!Number.isFinite(volumes) || volumes <= 0) { _statusNf(cargaId, 'Informe um volume maior que zero.'); return; }
-    const atuais = carga.notasFiscais || [];
-    if (atuais.some(n => String(n.numero) === numero)) { _statusNf(cargaId, 'Essa NF já está cadastrada nessa carga.'); return; }
-    const novasNotas = atuais.concat([{ numero, volumes: Math.round(volumes) }]);
-    _statusNf(cargaId, 'Salvando...');
-    try {
-      await raw().collection('lojas').doc(carga.lojaId).collection(COL_CARGAS).doc(cargaId).update({ notasFiscais: novasNotas });
-      carga.notasFiscais = novasNotas;
-      _redesenharDetalhe(cargaId);
-      if (global.showToast) global.showToast('Nota fiscal adicionada.', 'success');
-    } catch (e) {
-      _statusNf(cargaId, 'Erro ao salvar: ' + (e.message || e));
-    }
-  }
-
-  async function _removerNotaFiscalCarga(cargaId, indice) {
-    const carga = _cargas.find(c => c._id === cargaId);
-    if (!carga) return;
-    const atuais = carga.notasFiscais || [];
-    const novasNotas = atuais.filter((_, i) => i !== indice);
-    _statusNf(cargaId, 'Removendo...');
-    try {
-      await raw().collection('lojas').doc(carga.lojaId).collection(COL_CARGAS).doc(cargaId).update({ notasFiscais: novasNotas });
-      carga.notasFiscais = novasNotas;
-      _redesenharDetalhe(cargaId);
-      if (global.showToast) global.showToast('Nota fiscal removida.', 'success');
-    } catch (e) {
-      _statusNf(cargaId, 'Erro ao remover: ' + (e.message || e));
-    }
-  }
-
   function _statusNpv(cargaId, msg) {
     const el = document.getElementById('npv-status-' + cargaId);
     if (el) el.textContent = msg || '';
@@ -571,7 +603,7 @@
     const agora = new Date().toISOString();
     const autor = (global._currentAnalistaUser && global._currentAnalistaUser.email) || '';
     let notasAtualizadas = (carga.notasFiscaisProdutos || []).map(n => ({
-      numero: n.numero, criadoEm: n.criadoEm, criadoPor: n.criadoPor,
+      numero: n.numero, criadoEm: n.criadoEm, criadoPor: n.criadoPor, documentoUrl: n.documentoUrl || '', documentoNome: n.documentoNome || '', documentoAnexadoEm: n.documentoAnexadoEm || '',
       produtos: (n.produtos || []).filter(p => !chavesSelecionadas.has((p.codigoProduto || '—') + '|' + (p.nomeProduto || '—'))),
     })).filter(n => n.produtos.length > 0);
     const existente = notasAtualizadas.find(n => n.numero === numero);
@@ -586,10 +618,15 @@
     }
     _statusNpv(cargaId, 'Salvando...');
     try {
-      await raw().collection('lojas').doc(carga.lojaId).collection(COL_CARGAS).doc(cargaId).update({ notasFiscaisProdutos: notasAtualizadas });
+      const vinculadas = new Set();
+      notasAtualizadas.forEach(n => (n.produtos || []).forEach(p => vinculadas.add((p.codigoProduto || '—') + '|' + (p.nomeProduto || '—'))));
+      const todasVinculadas = resumo.length > 0 && resumo.every(r => vinculadas.has((r.codigoProduto || '—') + '|' + (r.nomeProduto || '—')));
+      await raw().collection('lojas').doc(carga.lojaId).collection(COL_CARGAS).doc(cargaId).update({ notasFiscaisProdutos: notasAtualizadas, notasProdutosCompletas: todasVinculadas });
       carga.notasFiscaisProdutos = notasAtualizadas;
+      carga.notasProdutosCompletas = todasVinculadas;
       if (elNumero) elNumero.value = '';
       _redesenharDetalhe(cargaId);
+      _atualizarBadgeStatusCarga(cargaId);
       if (global.showToast) global.showToast('Produto(s) vinculado(s) à nota.', 'success');
     } catch (e) {
       _statusNpv(cargaId, 'Erro ao salvar: ' + (e.message || e));
@@ -604,9 +641,16 @@
       return Object.assign({}, n, { produtos: (n.produtos || []).filter(p => (p.codigoProduto || '—') + '|' + (p.nomeProduto || '—') !== chave) });
     }).filter(n => (n.produtos || []).length > 0);
     try {
-      await raw().collection('lojas').doc(carga.lojaId).collection(COL_CARGAS).doc(cargaId).update({ notasFiscaisProdutos: notasAtualizadas });
+      const itens = _itensPorCarga[cargaId] || [];
+      const resumo = _resumoPorProduto(itens);
+      const vinculadas = new Set();
+      notasAtualizadas.forEach(n => (n.produtos || []).forEach(p => vinculadas.add((p.codigoProduto || '—') + '|' + (p.nomeProduto || '—'))));
+      const todasVinculadas = resumo.length > 0 && resumo.every(r => vinculadas.has((r.codigoProduto || '—') + '|' + (r.nomeProduto || '—')));
+      await raw().collection('lojas').doc(carga.lojaId).collection(COL_CARGAS).doc(cargaId).update({ notasFiscaisProdutos: notasAtualizadas, notasProdutosCompletas: todasVinculadas });
       carga.notasFiscaisProdutos = notasAtualizadas;
+      carga.notasProdutosCompletas = todasVinculadas;
       _redesenharDetalhe(cargaId);
+      _atualizarBadgeStatusCarga(cargaId);
       if (global.showToast) global.showToast('Produto desvinculado da nota.', 'success');
     } catch (e) {
       if (global.showToast) global.showToast('Erro ao desvincular: ' + (e.message || e), 'error');
@@ -744,10 +788,6 @@
     if (excluir) { _excluirCarga(excluir.getAttribute('data-carga-excluir'), excluir.getAttribute('data-carga-excluir-loja')); return; }
     const pdf = event.target.closest('[data-carga-pdf]');
     if (pdf) { _baixarPdfCarga(pdf.getAttribute('data-carga-pdf')); return; }
-    const nfAdd = event.target.closest('[data-nf-adicionar]');
-    if (nfAdd) { _adicionarNotaFiscalCarga(nfAdd.getAttribute('data-nf-adicionar')); return; }
-    const nfRem = event.target.closest('[data-nf-remover]');
-    if (nfRem) { _removerNotaFiscalCarga(nfRem.getAttribute('data-nf-remover'), Number(nfRem.getAttribute('data-nf-indice'))); return; }
     const npvVincular = event.target.closest('[data-npv-vincular]');
     if (npvVincular) { _vincularProdutosANota(npvVincular.getAttribute('data-npv-vincular')); return; }
     const npvDesvincular = event.target.closest('[data-npv-desvincular]');
@@ -757,8 +797,15 @@
   });
   document.addEventListener('input', function (event) {
     if (event.target.id === 'cargas-f-busca') { _filtroBusca = event.target.value || ''; _desenharCargas(); }
+    if (event.target.id === 'cargas-f-data-inicio') { _filtroDataInicio = event.target.value || ''; }
+    if (event.target.id === 'cargas-f-data-fim') { _filtroDataFim = event.target.value || ''; }
   });
   document.addEventListener('change', async function (event) {
+    if (event.target.id === 'cargas-f-data-inicio' || event.target.id === 'cargas-f-data-fim') {
+      _cargasCarregando = true; _desenharCargas();
+      try { await carregarCargasAnalista(true, _cargasComFinalizadas); } catch (e) { _cargasErro = e.message || String(e); }
+      _cargasCarregando = false; _desenharCargas(); return;
+    }
     if (event.target.id === 'cargas-f-loja') { _filtroLoja = event.target.value || ''; _desenharCargas(); }
     if (event.target.id === 'cargas-f-status') {
       _filtroStatus = event.target.value || '';
@@ -772,6 +819,11 @@
         _cargasCarregando = false;
       }
       _desenharCargas();
+    }
+    if (event.target.matches && event.target.matches('[data-npv-pdf]')) {
+      const arq = event.target.files && event.target.files[0];
+      if (arq) await _anexarPdfNota(event.target.getAttribute('data-npv-pdf'), event.target.getAttribute('data-npv-pdf-numero'), arq);
+      return;
     }
     const marcarCapa = event.target.matches && event.target.matches('[data-item-bluesoft-pendente]');
     if (marcarCapa) {
@@ -794,8 +846,6 @@
     alternarDetalheCarga: _alternarDetalheCarga,
     getItensPorCarga: () => _itensPorCarga,
     resumoPorProduto: _resumoPorProduto,
-    adicionarNotaFiscalCarga: _adicionarNotaFiscalCarga,
-    removerNotaFiscalCarga: _removerNotaFiscalCarga,
     excluirCarga: _excluirCarga,
     vincularProdutosANota: _vincularProdutosANota,
     desvincularProdutoDaNota: _desvincularProdutoDaNota,

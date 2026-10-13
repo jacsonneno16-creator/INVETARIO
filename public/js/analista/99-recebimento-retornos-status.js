@@ -61,6 +61,10 @@
   // alterarTratamento, e 24-recebimento-recusas.js do Coletor).
   function _estaNoPatio(doc, nota) {
     if (doc.origem !== 'COLETOR' && doc.origem !== 'INVENTARIO_INICIAL') return false;
+    // PEDIDO AO VIVO (2026-09-22): mesmo campo novo de 24-recebimento-
+    // recusas.js/29-recebimento-patio-inventario.js — ver comentário lá.
+    const confirmadoAusente = nota.confirmadoAusenteEm != null ? nota.confirmadoAusenteEm : doc.confirmadoAusenteEm;
+    if (confirmadoAusente) return false;
     const tratamento = nota.tratamento != null ? nota.tratamento : (doc.tratamento || '');
     if (tratamento === 'REENTREGA') {
       const saida = nota.dataSaidaEm != null ? nota.dataSaidaEm : doc.dataSaidaEm;

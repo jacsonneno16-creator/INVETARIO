@@ -359,10 +359,10 @@ test('confirmarExpedicaoCarga: sem conexão, recusa expedir (limitação conheci
   assert.equal(cargas._registro.get('c1').status, 'PENDENTE', 'carga não pode ser marcada como expedida sem o transbordo ter sido criado de verdade');
 });
 
-test('confirmarExpedicaoCarga: se o ledger falhar, a expedição em si (recebimentos + carga) continua salva', async () => {
+test('confirmarExpedicaoCarga: se o ledger falhar, a expedição em si (recebimentos + carga) continua salva, MAS avisa por toast (não só console) — antes o Controle de Paletes perdia os paletes em silêncio', async () => {
   const cargas = mockColecao([CARGA_PRONTA]);
   const motoristas = mockColecao([{ id: 'm1', data: { nome: 'Carlos' } }]);
-  const { window, document, telas } = loadCargas(
+  const { window, document, telas, toasts } = loadCargas(
     { recebimento_transbordo_cargas: cargas, recebimento_motoristas: motoristas, recebimentos: mockColecao([]) },
     { ledgerFalha: true }
   );
@@ -375,6 +375,27 @@ test('confirmarExpedicaoCarga: se o ledger falhar, a expedição em si (recebime
 
   assert.equal(cargas._registro.get('c1').status, 'EM_TRANSITO', 'falha no ledger não pode impedir a expedição real de salvar');
   assert.ok(telas.includes('cargas-lista'));
+  const ultimoToast = toasts[toasts.length - 1];
+  assert.match(ultimoToast.msg, /NÃO entraram no Controle de Paletes/);
+  assert.equal(ultimoToast.tipo, 'e');
+  assert.ok(!toasts.some(t => t.msg === 'Carga expedida!'), 'o toast de sucesso genérico não pode mascarar a falha do ledger');
+});
+
+test('confirmarExpedicaoCarga: ledger funcionando normalmente mostra só o toast de sucesso (sem aviso de falha)', async () => {
+  const cargas = mockColecao([CARGA_PRONTA]);
+  const motoristas = mockColecao([{ id: 'm1', data: { nome: 'Carlos' } }]);
+  const { window, document, toasts } = loadCargas(
+    { recebimento_transbordo_cargas: cargas, recebimento_motoristas: motoristas, recebimentos: mockColecao([]) }
+  );
+  await window.abrirExpedicaoCarga('c1');
+  document.getElementById('carga-expedicao-motorista').value = 'm1';
+  const lista = document.getElementById('carga-expedicao-nf-lista');
+  lista.querySelector('[data-cnf-input="0"]').value = '100';
+  lista.querySelector('[data-cnf-volume="0"]').value = '10';
+  await window.confirmarExpedicaoCarga();
+
+  assert.ok(toasts.some(t => t.msg === 'Carga expedida!' && t.tipo === 's'));
+  assert.ok(!toasts.some(t => /Controle de Paletes/.test(t.msg)));
 });
 
 test('adicionarNotaFiscalCarga: acrescenta uma 2ª linha de NF, e recusa repetida', async () => {

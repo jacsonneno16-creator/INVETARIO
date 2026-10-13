@@ -287,14 +287,39 @@
   // chamadores (esta aba, 89-compras-dashboard.js e o Dashboard de
   // Recebimento) — protegendo aqui protege todos de uma vez. Mesmo padrão
   // de 30s já usado em produtos-service.js/99-recebimento-retornos-status.js.
-  async function obterHistoricoComprasRealBi(forcar) {
-    if (!forcar && _linhasPorRelatorio.has('compras-historico')) return _linhasPorRelatorio.get('compras-historico');
-    const snap = await Promise.race([global.getDTRawFirestore().collection('relatorios_bi_compras_historico_chunks').get(), new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Tempo excedido ao carregar histórico de compras (BI) — conexão lenta ou instável.')), 30000);
-    })]);
-    const linhas = _achatarChunks(snap);
-    _linhasPorRelatorio.set('compras-historico', linhas);
-    return linhas;
+  let _historicoComprasCarregandoPromise = null;
+  let _historicoComprasFiltroCache = '';
+  async function obterHistoricoComprasRealBi(forcar, filtros) {
+    const inicio = filtros && filtros.inicio ? String(filtros.inicio) : '';
+    const fim = filtros && filtros.fim ? String(filtros.fim) : '';
+    const chaveFiltro = inicio && fim ? [inicio, fim, filtros.lojaKey || '', filtros.tipoOperacao || ''].join('|') : '';
+    if (!forcar && _linhasPorRelatorio.has('compras-historico') && (!chaveFiltro || chaveFiltro === _historicoComprasFiltroCache)) return _linhasPorRelatorio.get('compras-historico');
+    // Uma busca desse histórico pode ser pedida ao mesmo tempo pelo
+    // Dashboard de Compras, Dashboard de Recebimento e Relatórios BI.
+    // Enquanto a primeira estiver em andamento, todos aguardam a MESMA
+    // consulta em vez de abrir outra leitura gigante em paralelo.
+    if (_historicoComprasCarregandoPromise) return _historicoComprasCarregandoPromise;
+    _historicoComprasCarregandoPromise = (async () => {
+      // Caminho profissional: quando há um período explícito, o BigQuery já
+      // filtra no servidor e devolve apenas as linhas pedidas. O fallback
+      // Firestore fica temporariamente para a transição/primeiro deploy.
+      if (inicio && fim && global.firebase && global.firebase.app) {
+        try {
+          const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarHistoricoComprasBigQuery');
+          const resp = await callable({ inicio, fim, lojaKey: filtros.lojaKey || '', tipoOperacao: filtros.tipoOperacao || '' });
+          const linhasBq = (resp && resp.data && Array.isArray(resp.data.linhas)) ? resp.data.linhas : [];
+          _linhasPorRelatorio.set('compras-historico', linhasBq);
+          _historicoComprasFiltroCache = chaveFiltro;
+          return linhasBq;
+        } catch (e) { throw new Error('Histórico indisponível no BigQuery: ' + (e && e.message ? e.message : e)); }
+      }
+      throw new Error('Informe um período para consultar o histórico de compras no BigQuery.');
+    })();
+    try {
+      return await _historicoComprasCarregandoPromise;
+    } finally {
+      _historicoComprasCarregandoPromise = null;
+    }
   }
   global.obterHistoricoComprasRealBi = obterHistoricoComprasRealBi;
 
@@ -307,15 +332,26 @@
     // servidor buscar de novo.
     if (r.origemFirestore) {
       try {
-        const snap = await global.getDTRawFirestore().collection(r.origemFirestore).get();
-        let linhas = _achatarChunks(snap);
-        if (r.somenteProdutoAcabado) linhas = await _filtrarSomenteProdutoAcabado(linhas);
-        _linhasPorRelatorio.set(r.id, linhas);
+        // Relatório grande já define o período ANTES da leitura: assim o
+        // BigQuery filtra na origem em vez de baixar o histórico inteiro e
+        // só depois aplicar os 30 dias no navegador.
         if (r.grande && !_filtroPeriodoIni && !_filtroPeriodoFim) {
           const fim = new Date(); const ini = new Date(); ini.setDate(ini.getDate() - 30);
           _filtroPeriodoIni = ini.toISOString().slice(0, 10);
           _filtroPeriodoFim = fim.toISOString().slice(0, 10);
         }
+        // O histórico de compras já possui carregador compartilhado entre
+        // três telas. Usá-lo aqui evita que a própria aba Relatórios BI
+        // abra uma segunda leitura da mesma coleção enquanto outro dashboard
+        // ainda está carregando.
+        let linhas;
+        if (r.id === 'compras-historico') linhas = await obterHistoricoComprasRealBi(true, {inicio: _filtroPeriodoIni, fim: _filtroPeriodoFim});
+        else {
+          const snap = await global.getDTRawFirestore().collection(r.origemFirestore).get();
+          linhas = _achatarChunks(snap);
+        }
+        if (r.somenteProdutoAcabado) linhas = await _filtrarSomenteProdutoAcabado(linhas);
+        _linhasPorRelatorio.set(r.id, linhas);
         _ultimaBuscaPorRelatorio.set(r.id, `${linhas.length.toLocaleString('pt-BR')} linha(s) já sincronizada(s) (o servidor atualiza sozinho a cada 4h).`);
         _desenhar();
       } catch (e) {

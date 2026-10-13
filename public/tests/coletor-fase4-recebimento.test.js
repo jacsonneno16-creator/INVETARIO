@@ -344,78 +344,38 @@ test('scan por código inexistente não trava e avisa na tela, sem gravar nada',
   assert.match(els['rec-scan-status'].textContent,/não encontrado/i);
 });
 
-test('REGRESSÃO/FASE 4b: bip do código FIXO do motorista (sem transbordo em andamento) cria o transbordo sozinho — sem o Analista preencher formulário nenhum, com origem=loja atual, destino=padrão configurado e veículo habitual',async()=>{
+// PEDIDO AO VIVO (2026-10-02): "tem transbordo em trânsito e não tá
+// aparecendo o saldo em trânsito de paletes" — investigado e confirmado
+// que TODO transbordo real nascia por este bipe (nunca pela Cargas, única
+// que alimenta o saldo de paletes). Esta suíte testava o comportamento
+// ANTIGO (bipar motorista sem viagem ativa criava um transbordo sozinho);
+// o pedido reverteu isso de propósito — agora só a Cargas ("Transbordo
+// Geral" no menu) cria transbordo novo; este bipe passou a servir só pra
+// AVANÇAR/CONFIRMAR o que já existe.
+test('REGRESSÃO (comportamento ANTIGO revertido): bip do código do motorista SEM nenhum transbordo em andamento NÃO cria mais nada sozinho — avisa pra usar "Transbordo Geral"',async()=>{
   const motoristas=mockColecao([{id:'mo1',data:{nome:'Carlos Silva',codigo:'MOT-ABC123',transportadora:'Transp X',ativo:true}}]);
   const veiculos=mockColecao([{id:'v1',data:{placa:'XYZ9A87',motoristaHabitualId:'mo1',transportadora:'Transp X'}}]);
   const rotas=mockColecao([{id:'rt1',data:{origemLojaId:'loja1',origemNome:'Loja Matriz',destinoLojaId:'loja_filial',destinoNome:'Filial Centro'}}]);
   const recebimentos=mockColecao([]);
-  const { ctx, els, telas }=loadRecebimento({ recebimento_motoristas:motoristas, recebimento_veiculos:veiculos, recebimento_rotas_transbordo:rotas, recebimentos, recebimento_identificadores:mockColecao([]) }, { lojaNome:'Loja Matriz' });
+  const { ctx, els, toasts }=loadRecebimento({ recebimento_motoristas:motoristas, recebimento_veiculos:veiculos, recebimento_rotas_transbordo:rotas, recebimentos, recebimento_identificadores:mockColecao([]) }, { lojaNome:'Loja Matriz' });
   await ctx.carregarRecebimentoColetor();
 
   els['rec-scan-input'].value='mot-abc123'; // minúsculo — precisa normalizar
   await ctx.confirmarCodigoRecebimento();
 
-  assert.equal(recebimentos._registro.size,1); // criou sozinho, sem Analista
-  const novo=[...recebimentos._registro.values()][0];
-  assert.equal(novo.status,'PREVISTO');
-  assert.equal(novo.motoristaId,'mo1');
-  assert.equal(novo.motoristaNome,'Carlos Silva');
-  assert.equal(novo.origem,'Loja Matriz'); // loja atual do Coletor
-  assert.equal(novo.destino,'Filial Centro'); // padrão configurado
-  assert.equal(novo.destinoLojaId,'loja_filial'); // id real da loja parceira, usado pro cruzamento cross-loja
-  assert.equal(novo.placa,'XYZ9A87'); // veículo habitual do motorista
-  assert.equal(novo.identificadorCodigo,'MOT-ABC123');
-  // REGRESSÃO (bug ao vivo: "erro de permissão" bem na hora de confirmar a
-  // NF da saída) — firestore.rules trata campo AUSENTE e campo `null` como
-  // coisas diferentes; o guard de primeira-escrita derruba a regra inteira
-  // se o campo nunca existiu no documento. Este mock não reproduz essa
-  // distinção sozinho (por isso o bug passou batido antes), então a
-  // checagem explícita abaixo é o que realmente trava a regressão.
-  ['horaChegada','horaSaida','horaInicioDescarga','horaFimDescarga','horaFechamentoRecebimento','notaFiscalTransferencia','notaFiscalConfirmadaEm','notaFiscalConfirmadaPor'].forEach(campo=>{
-    assert.ok(Object.prototype.hasOwnProperty.call(novo,campo),'campo '+campo+' precisa existir no documento (mesmo que null)');
-    assert.equal(novo[campo],null,'campo '+campo+' precisa ser null explícito, não ausente');
-  });
-  assert.ok(telas.includes('recebimento-nf')); // já entra direto na tela de NF da saída
-  assert.match(els['rec-nf-subtitulo'].textContent,/Carlos Silva/);
-
-  // completa a NF — vira a saída de verdade (mesmo fluxo de sempre)
-  preencherNf(ctx.document,0,'NF-999',3);
-  await ctx.confirmarNotaFiscalRecebimento();
-  const atualizado=recebimentos._registro.get([...recebimentos._registro.keys()][0]);
-  assert.equal(atualizado.status,'EM_TRANSITO');
-  assert.equal(atualizado.notaFiscalTransferencia,'NF-999');
+  assert.equal(recebimentos._registro.size,0,'não pode criar nada sozinho — só a Cargas cria transbordo novo agora');
+  assert.ok(toasts.some(t=>/Transbordo Geral/.test(t.msg)&&t.tipo==='w'),'precisa avisar o operador a usar "Transbordo Geral" em vez de criar ad-hoc');
 });
 
-test('CORREÇÃO ESTRUTURAL (bug ao vivo real, documento em produção com destinoLojaId:null apesar da rota existir): ROTAS_CACHE vazio no instante do bip (carregarRecebimentoColetor não foi chamado antes, ou ainda não terminou) consulta o Firestore ao vivo antes de criar sem destino',async()=>{
-  const motoristas=mockColecao([{id:'mo1',data:{nome:'Carlos Silva',codigo:'MOT-ABC123',ativo:true}}]);
-  const rotas=mockColecao([{id:'rt1',data:{origemLojaId:'loja1',origemNome:'Loja Matriz',destinoLojaId:'loja_filial',destinoNome:'Filial Centro'}}]);
-  const recebimentos=mockColecao([]);
-  const { ctx, els }=loadRecebimento({ recebimento_motoristas:motoristas, recebimento_veiculos:mockColecao([]), recebimento_rotas_transbordo:rotas, recebimentos, recebimento_identificadores:mockColecao([]) }, { lojaNome:'Loja Matriz' });
-  // Propositalmente NÃO chama carregarRecebimentoColetor() antes — simula o
-  // bip acontecendo antes do carregamento de fundo terminar (abrirScanRecebimento
-  // dispara isso sem esperar). MOTORISTAS_CACHE também fica vazio, então o
-  // código cai no backstop _buscarMotoristaPorCodigoAoVivo (já existente) —
-  // aqui o que importa é o backstop NOVO, de rotas.
-  els['rec-scan-input'].value='mot-abc123';
-  await ctx.confirmarCodigoRecebimento();
-
-  assert.equal(recebimentos._registro.size,1,'tinha que ter criado o transbordo (rota existe, só não estava em cache)');
-  const novo=[...recebimentos._registro.values()][0];
-  assert.equal(novo.destinoLojaId,'loja_filial','NUNCA pode ficar null quando existe rota real — isso desliga a proteção de posse pra sempre neste registro');
-  assert.equal(novo.destino,'Filial Centro');
-});
-
-test('CORREÇÃO ESTRUTURAL: sem NENHUMA rota cadastrada (nem em cache, nem no Firestore), bloqueia a criação com aviso claro em vez de criar um transbordo sem dono',async()=>{
-  const motoristas=mockColecao([{id:'mo1',data:{nome:'Carlos Silva',codigo:'MOT-ABC123',ativo:true}}]);
-  const recebimentos=mockColecao([]);
-  const { ctx, els }=loadRecebimento({ recebimento_motoristas:motoristas, recebimento_veiculos:mockColecao([]), recebimento_rotas_transbordo:mockColecao([]), recebimentos, recebimento_identificadores:mockColecao([]) }, { lojaNome:'Loja Matriz' });
-
-  els['rec-scan-input'].value='mot-abc123';
-  await ctx.confirmarCodigoRecebimento();
-
-  assert.equal(recebimentos._registro.size,0,'NUNCA pode criar um transbordo sem destino — isso desliga a proteção de posse pra sempre');
-  assert.match(els['rec-scan-status'].textContent,/nenhuma rota/i);
-});
+// PEDIDO AO VIVO (2026-10-02): "tem transbordo em trânsito e não tá
+// aparecendo o saldo em trânsito de paletes" — desde que a criação ad-hoc
+// foi bloqueada (ver _resolverBipPorMotorista, agora avisa em vez de criar
+// quando o motorista não tem viagem ativa), o teste "sem NENHUMA rota
+// cadastrada, bloqueia a criação com aviso claro" testava um ramo de
+// _iniciarNovaViagemPorMotorista que não é mais alcançável pela UI — essa
+// função continua no arquivo (reaproveitada por _criarTransbordoPorMotorista
+// via Cargas), só não tem mais chamador vindo do bipe de QR direto.
+// Removido por testar código agora inalcançável, não por perda de cobertura real.
 
 test('FASE 4b: bipar o código do motorista DE NOVO enquanto já tem viagem em andamento continua ela — não cria um transbordo duplicado',async()=>{
   const motoristas=mockColecao([{id:'mo1',data:{nome:'Carlos Silva',codigo:'MOT-ABC123'}}]);
@@ -450,9 +410,12 @@ test('BUG AO VIVO REAL (2026-09-10): motorista com DUAS viagens ativas ao mesmo 
 
 test('REGRESSÃO/FASE 4e: motorista cadastrado DEPOIS que o Coletor já tinha carregado a tela (cache desatualizado) ainda é reconhecido — busca ao vivo no Firestore como backstop, sem depender de reabrir o app (bug ao vivo: "código não encontrado" logo após cadastrar)',async()=>{
   const motoristas=mockColecao([]); // Coletor carrega ANTES do motorista existir
-  const rotas=mockColecao([{id:'rt1',data:{origemLojaId:'loja1',origemNome:'Loja Matriz',destinoLojaId:'loja_filial',destinoNome:'Filial Centro'}}]);
-  const recebimentos=mockColecao([]);
-  const { ctx, els }=loadRecebimento({ recebimento_motoristas:motoristas, recebimento_veiculos:mockColecao([]), recebimento_config_geral:mockColecao([]), recebimento_rotas_transbordo:rotas, recebimentos, recebimento_identificadores:mockColecao([]) });
+  // PEDIDO AO VIVO (2026-10-02): criação ad-hoc bloqueada — este teste
+  // cobria o backstop criando um transbordo novo; adaptado pra cobrir o
+  // MESMO backstop (achar o motorista ao vivo quando o cache ainda está
+  // vazio) AVANÇANDO uma viagem já ativa, que é o que o bipe ainda faz.
+  const recebimentos=mockColecao([{id:'r1',data:{tipo:'TRANSBORDO',status:'EM_TRANSITO',motoristaId:'mo9',motoristaNome:'Ana Nova',notaFiscalTransferencia:'NF-1'}}]);
+  const { ctx, els }=loadRecebimento({ recebimento_motoristas:motoristas, recebimento_veiculos:mockColecao([]), recebimento_config_geral:mockColecao([]), recebimentos, recebimento_identificadores:mockColecao([]) });
   await ctx.carregarRecebimentoColetor(); // cache vazio de motoristas, de propósito
 
   // só DEPOIS o motorista é cadastrado (simula o Analista criando em outra sessão)
@@ -462,8 +425,8 @@ test('REGRESSÃO/FASE 4e: motorista cadastrado DEPOIS que o Coletor já tinha ca
   await ctx.confirmarCodigoRecebimento();
 
   assert.doesNotMatch(els['rec-scan-status'].textContent||'',/não encontrado/i);
-  assert.equal(recebimentos._registro.size,1); // achou o motorista ao vivo e criou o transbordo normalmente
-  assert.equal([...recebimentos._registro.values()][0].motoristaNome,'Ana Nova');
+  assert.equal(recebimentos._registro.size,1); // achou o motorista ao vivo e avançou a viagem existente — não criou outra
+  assert.match(els['rec-nf-subtitulo'].textContent,/Ana Nova/);
 });
 
 test('FASE 4b: bipar código de motorista sem transbordo em andamento OFFLINE agora entra na fila durável (mesmo padrão dos bips) em vez de recusar — bug ao vivo real: sem isso, a criação sem rede ficava pendurada pra sempre no SDK e sumia se o app fosse fechado antes da internet voltar',async()=>{
@@ -486,20 +449,11 @@ test('FASE 4b: bipar código de motorista sem transbordo em andamento OFFLINE ag
   assert.equal(recebimentos._registro.size,0); // nada criado no servidor — ficou só na fila local
 });
 
-test('FASE 4b: motorista sem veículo habitual cadastrado não quebra — placa fica vazia',async()=>{
-  const motoristas=mockColecao([{id:'mo1',data:{nome:'Ana',codigo:'MOT-SOLO'}}]);
-  const rotas=mockColecao([{id:'rt1',data:{origemLojaId:'loja1',origemNome:'Loja Matriz',destinoLojaId:'loja_filial',destinoNome:'Filial Centro'}}]);
-  const recebimentos=mockColecao([]);
-  const { ctx, els }=loadRecebimento({ recebimento_motoristas:motoristas, recebimento_veiculos:mockColecao([]), recebimento_config_geral:mockColecao([]), recebimento_rotas_transbordo:rotas, recebimentos, recebimento_identificadores:mockColecao([]) });
-  await ctx.carregarRecebimentoColetor();
-
-  els['rec-scan-input'].value='MOT-SOLO';
-  await ctx.confirmarCodigoRecebimento();
-
-  const novo=[...recebimentos._registro.values()][0];
-  assert.equal(novo.placa,'');
-  assert.equal(novo.veiculoId,'');
-});
+// PEDIDO AO VIVO (2026-10-02): "FASE 4b: motorista sem veículo habitual
+// cadastrado não quebra — placa fica vazia" testava diretamente a
+// resolução de placa DENTRO de _iniciarNovaViagemPorMotorista — removido
+// pelo mesmo motivo do teste de "sem rota" logo acima (código agora
+// inalcançável pela UI, não exercitado por este fluxo nunca mais).
 
 test('REGRESSÃO/FASE 4d: fluxo completo bipando SEMPRE o mesmo QR fixo do motorista — matriz gera, filial confirma chegada/descarga/fim, e um 5º bip fecha a conferência da nota (pedido ao vivo do usuário: "o QR Code fixo do motorista é o identificador de todo o processo")',async()=>{
   // Reescrito pra usar DOIS aparelhos/lojas de verdade (Matriz e Filial),
@@ -511,18 +465,23 @@ test('REGRESSÃO/FASE 4d: fluxo completo bipando SEMPRE o mesmo QR fixo do motor
   // chegada — o mesmo aparelho da Matriz bipando de novo já não é mais dono.
   const motoristas=mockColecao([{id:'mo1',data:{nome:'Carlos Silva',codigo:'MOT-ABC123'}}]);
   const rotas=mockColecao([{id:'rt1',data:{origemLojaId:'loja1',origemNome:'Loja Matriz',destinoLojaId:'loja_filial',destinoNome:'Filial Centro'}}]);
-  const recebimentos=mockColecao([]);
+  // PEDIDO AO VIVO (2026-10-02): criação ad-hoc bloqueada — a carga PREVISTO
+  // que o 1º bip costumava criar sozinho agora é semeada direto (é
+  // exatamente o que a Cargas/"Transbordo Geral" grava ao expedir). O que
+  // este teste cobre de verdade — avançar a MESMA carga por chegada,
+  // descarga, fim e conferência, cruzando Matriz/Filial — continua intacto.
+  const recebimentos=mockColecao([{id:'id1',data:{tipo:'TRANSBORDO',status:'PREVISTO',motoristaId:'mo1',motoristaNome:'Carlos Silva',origem:'Loja Matriz',destino:'Filial Centro',destinoLojaId:'loja_filial',horaSaida:null,horaChegada:null,horaInicioDescarga:null,horaFimDescarga:null,horaFechamentoRecebimento:null,notaFiscalTransferencia:null,notaFiscalConfirmadaEm:null,notaFiscalConfirmadaPor:null}}]);
   const auditoria=mockColecao([]);
   const matriz=loadRecebimento({ recebimento_motoristas:motoristas, recebimento_veiculos:mockColecao([]), recebimento_config_geral:mockColecao([]), recebimento_rotas_transbordo:rotas, recebimentos, recebimento_identificadores:mockColecao([]), recebimento_auditoria:auditoria });
   const filial=loadRecebimento({ recebimento_motoristas:motoristas, recebimento_veiculos:mockColecao([]), recebimento_config_geral:mockColecao([]), recebimento_rotas_transbordo:rotas, recebimentos:mockColecao([]), recebimento_identificadores:mockColecao([]), recebimento_auditoria:mockColecao([]) },
     { lojaId:'loja_filial', lojaNome:'Filial Centro', lojasParceiras:{ loja1:{ recebimentos, recebimento_auditoria:auditoria } } });
   await matriz.ctx.carregarRecebimentoColetor();
 
-  // 1) Matriz: bipa o QR do motorista pela 1ª vez — gera o transbordo sozinho
+  // 1) Matriz: bipa o QR do motorista pela 1ª vez — avança a carga PREVISTO já semeada (saída)
   matriz.els['rec-scan-input'].value='MOT-ABC123';
   await matriz.ctx.confirmarCodigoRecebimento();
-  assert.equal(recebimentos._registro.size,1); // nenhuma carga pré-existente, nenhum código de carga pedido
-  const id=[...recebimentos._registro.keys()][0];
+  assert.equal(recebimentos._registro.size,1); // nenhuma carga NOVA foi criada, só avançou a semeada
+  const id='id1';
   assert.equal(recebimentos._registro.get(id).status,'PREVISTO');
   preencherNf(matriz.ctx.document,0,'NF-777',7);
   await matriz.ctx.confirmarNotaFiscalRecebimento();
@@ -661,17 +620,21 @@ test('REGRESSÃO/FASE 4d: Filial enxerga um transbordo criado pela Matriz (loja 
 test('REGRESSÃO/FASE 4d: depois que a Matriz despacha (bipa a saída), a carga some da lista "em andamento" DELA — não é mais sua responsabilidade, e o botão "Voltar etapa" some junto (bug ao vivo: continuava aparecendo pra reverter mesmo sem nada a fazer ali)',async()=>{
   const motoristas=mockColecao([{id:'mo1',data:{nome:'Carlos Silva',codigo:'MOT-ABC123'}}]);
   const rotas=mockColecao([{id:'rt1',data:{origemLojaId:'loja_matriz',origemNome:'Loja Matriz',destinoLojaId:'loja_filial',destinoNome:'Filial Centro'}}]);
-  const recebimentos=mockColecao([]);
+  // PEDIDO AO VIVO (2026-10-02): criação ad-hoc bloqueada — carga PREVISTO
+  // semeada direto (é o que a Cargas grava ao expedir), em vez de criada
+  // pelo 1º bip. O que importa aqui (some da lista da Matriz após
+  // despachar) continua coberto normalmente.
+  const recebimentos=mockColecao([{id:'id1',data:{tipo:'TRANSBORDO',status:'PREVISTO',motoristaId:'mo1',motoristaNome:'Carlos Silva',destinoLojaId:'loja_filial',horaSaida:null,notaFiscalTransferencia:null}}]);
   const { ctx, els }=loadRecebimento(
     { recebimento_motoristas:motoristas, recebimento_veiculos:mockColecao([]), recebimento_rotas_transbordo:rotas, recebimentos, recebimento_identificadores:mockColecao([]), recebimento_auditoria:mockColecao([]) },
     { lojaId:'loja_matriz', lojaNome:'Loja Matriz' }
   );
   await ctx.carregarRecebimentoColetor();
 
-  els['rec-scan-input'].value='MOT-ABC123';
-  await ctx.confirmarCodigoRecebimento(); // cria PREVISTO — ainda é da Matriz, precisa despachar
-  const id=[...recebimentos._registro.keys()][0];
+  const id='id1';
   assert.ok(ctx._cargasEmAndamento().some(r=>r._id===id)); // aparece: falta bipar a saída
+  els['rec-scan-input'].value='MOT-ABC123';
+  await ctx.confirmarCodigoRecebimento(); // avança a PREVISTO já semeada — ainda é da Matriz, precisa despachar
 
   preencherNf(ctx.document,0,'NF-777',4);
   await ctx.confirmarNotaFiscalRecebimento(); // bip de saída — vira EM_TRANSITO
@@ -767,75 +730,40 @@ test('REGRESSÃO/FASE 4h: loja com MAIS DE UMA rota de entrada (duas origens apo
   assert.ok(cargas.some(r=>r._id==='t2'));
 });
 
-test('REGRESSÃO/FASE 4h: com MAIS DE UMA rota de saída (duas rotas partindo desta loja), bipar um motorista sem carga ativa pergunta pra qual loja vai a viagem antes de criar — não escolhe sozinho',async()=>{
-  const motoristas=mockColecao([{id:'mo1',data:{nome:'Carlos Silva',codigo:'MOT-ABC123'}}]);
-  const rotas=mockColecao([
-    {id:'rt1',data:{origemLojaId:'loja_matriz',origemNome:'Loja Matriz',destinoLojaId:'loja_filial',destinoNome:'Filial Centro'}},
-    {id:'rt2',data:{origemLojaId:'loja_matriz',origemNome:'Loja Matriz',destinoLojaId:'loja_norte',destinoNome:'Filial Norte'}},
-  ]);
-  const recebimentos=mockColecao([]);
-  const { ctx, els, telas }=loadRecebimento(
-    { recebimento_motoristas:motoristas, recebimento_veiculos:mockColecao([]), recebimento_rotas_transbordo:rotas, recebimentos, recebimento_identificadores:mockColecao([]), recebimento_auditoria:mockColecao([]) },
-    { lojaId:'loja_matriz', lojaNome:'Loja Matriz' }
-  );
-  await ctx.carregarRecebimentoColetor();
+// PEDIDO AO VIVO (2026-10-02): "com MAIS DE UMA rota de saída, bipar
+// pergunta pra qual loja vai a viagem antes de criar" testava o
+// seletor de destino DENTRO de _iniciarNovaViagemPorMotorista/
+// _confirmarEscolhaDestino — removido pelo mesmo motivo dos outros acima
+// (ramo de criação ad-hoc agora inalcançável pela UI).
 
-  els['rec-scan-input'].value='MOT-ABC123';
-  await ctx.confirmarCodigoRecebimento();
-
-  assert.equal(recebimentos._registro.size,0); // ainda não criou nada — falta escolher o destino
-  assert.ok(telas.includes('recebimento-destino'));
-  const html=els['rec-destino-lista'].innerHTML;
-  assert.match(html,/Filial Centro/);
-  assert.match(html,/Filial Norte/);
-  assert.match(html,/data-destino-id="loja_filial"/);
-  assert.match(html,/data-destino-id="loja_norte"/);
-
-  // simula o toque na opção "Filial Norte" (chama o handler interno
-  // diretamente, reproduzindo o mesmo caminho de código que o clique real dispara)
-  await ctx._confirmarEscolhaDestino({ id:'loja_norte', nome:'Filial Norte' });
-
-  assert.equal(recebimentos._registro.size,1);
-  const novo=[...recebimentos._registro.values()][0];
-  assert.equal(novo.destino,'Filial Norte');
-  assert.equal(novo.destinoLojaId,'loja_norte');
-  assert.ok(telas.includes('recebimento-nf')); // depois de escolher, segue pro fluxo normal de NF da saída
-});
-
-test('REGRESSÃO/FASE 4d: bipar o MESMO motorista de novo na Matriz depois de já ter despachado a carga anterior (EM_TRANSITO) cria uma carga NOVA — não reabre a antiga pedindo a NF dela de novo (bug ao vivo: "gerando outro B.O., pede a confirmação da nota da outra que já não tem mais nada a ver")',async()=>{
+// PEDIDO AO VIVO (2026-10-02): criação ad-hoc bloqueada — o que este teste
+// cobria de verdade (bipar o motorista de novo depois que a carga anterior
+// JÁ SAIU não pode reabrir/mexer na antiga) continua valendo e é
+// exatamente o tipo de engano que motivou o pedido; só a expectativa de
+// "cria uma 2ª carga sozinho" muda pra "avisa e não cria nada".
+test('REGRESSÃO/FASE 4d (comportamento ANTIGO de "criar 2ª carga" revertido): bipar o MESMO motorista de novo na Matriz depois de já ter despachado a carga anterior (EM_TRANSITO) NÃO cria nada nem reabre a antiga — só avisa',async()=>{
   const motoristas=mockColecao([{id:'mo1',data:{nome:'Carlos Silva',codigo:'MOT-ABC123'}}]);
   const veiculos=mockColecao([]);
   const rotas=mockColecao([{id:'rt1',data:{origemLojaId:'loja_matriz',origemNome:'Loja Matriz',destinoLojaId:'loja_filial',destinoNome:'Filial Centro'}}]);
-  const recebimentos=mockColecao([]);
-  const { ctx, els }=loadRecebimento(
+  // 1ª carga já despachada (EM_TRANSITO) — semeada direto, no lugar de
+  // criada e despachada via bipe (que já não cria mais nada sozinho).
+  const recebimentos=mockColecao([{id:'idPrimeira',data:{tipo:'TRANSBORDO',status:'EM_TRANSITO',motoristaId:'mo1',motoristaNome:'Carlos Silva',destinoLojaId:'loja_filial',horaSaida:'2026-10-01T06:00:00.000Z',notaFiscalTransferencia:'NF-AAA'}}]);
+  const { ctx, els, toasts }=loadRecebimento(
     { recebimento_motoristas:motoristas, recebimento_veiculos:veiculos, recebimento_rotas_transbordo:rotas, recebimentos, recebimento_identificadores:mockColecao([]), recebimento_auditoria:mockColecao([]) },
     { lojaId:'loja_matriz', lojaNome:'Loja Matriz' }
   );
   await ctx.carregarRecebimentoColetor();
 
-  // 1ª carga: cria e despacha (vira EM_TRANSITO — já não é mais "minha vez")
+  // Bipa o MESMO motorista de novo na Matriz — a 1ª já saiu (EM_TRANSITO),
+  // já não é "minha vez" (é turno da Filial agora), então pra Matriz é como
+  // se não houvesse nenhuma ativa — antes isso criava uma 2ª sozinho, agora avisa.
   els['rec-scan-input'].value='MOT-ABC123';
   await ctx.confirmarCodigoRecebimento();
-  preencherNf(ctx.document,0,'NF-AAA',2);
-  await ctx.confirmarNotaFiscalRecebimento();
-  assert.equal(recebimentos._registro.size,1);
-  const idPrimeira=[...recebimentos._registro.keys()][0];
-  assert.equal(recebimentos._registro.get(idPrimeira).status,'EM_TRANSITO');
 
-  await ctx.carregarRecebimentoColetor(true); // recarrega, como aconteceria entre uma carga e outra
-
-  // 2ª carga: bipa o MESMO motorista de novo — tem que criar uma carga NOVA,
-  // não reabrir a NF da primeira (que já não tem mais nada a ver com a Matriz)
-  els['rec-scan-input'].value='MOT-ABC123';
-  await ctx.confirmarCodigoRecebimento();
-  assert.match(els['rec-nf-titulo'].textContent,/Saída/); // é a tela de NF da SAÍDA (nova carga), não "Confirme a Nota Fiscal" (chegada)
-  assert.equal(recebimentos._registro.size,2); // criou a 2ª, não reaproveitou a 1ª
-
-  preencherNf(ctx.document,0,'NF-BBB',2);
-  await ctx.confirmarNotaFiscalRecebimento();
-  const idSegunda=[...recebimentos._registro.keys()].find(id=>id!==idPrimeira);
-  assert.equal(recebimentos._registro.get(idSegunda).notaFiscalTransferencia,'NF-BBB');
-  assert.equal(recebimentos._registro.get(idPrimeira).notaFiscalTransferencia,'NF-AAA'); // a 1ª carga não foi tocada
+  assert.equal(recebimentos._registro.size,1,'não pode ter criado uma 2ª carga');
+  assert.equal(recebimentos._registro.get('idPrimeira').notaFiscalTransferencia,'NF-AAA','a 1ª carga não pode ter sido tocada/reaberta');
+  assert.equal(recebimentos._registro.get('idPrimeira').status,'EM_TRANSITO');
+  assert.ok(toasts.some(t=>/Transbordo Geral/.test(t.msg)));
 });
 
 test('sem loja parceira configurada (fluxo antigo de trip-QR ou destino sem loja de verdade): carga continua visível em TODAS as etapas na mesma loja, como sempre — não regride quem não usa loja parceira',async()=>{

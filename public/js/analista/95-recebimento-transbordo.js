@@ -103,6 +103,8 @@
 
   let _identificadores = [];
   let _observacoesTransbordo = [];
+  let _identificadoresCarregandoPromise = null;
+  let _observacoesCarregandoPromise = null;
   let _carregado = false;
   let _ouvinteRegistrado = false;
   // Período com início E fim (pedido ao vivo do usuário: "eu posso escolher
@@ -162,16 +164,26 @@
 
   async function _carregarIdentificadores(forcar) {
     if (_carregado && !forcar) return;
-    const snap = await fs().collection(COL_IDENTIFICADORES).get();
-    _identificadores = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
-    _carregado = true;
+    if (_identificadoresCarregandoPromise) return _identificadoresCarregandoPromise;
+    _identificadoresCarregandoPromise = (async () => {
+      const snap = await fs().collection(COL_IDENTIFICADORES).get();
+      _identificadores = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+      _carregado = true;
+    })();
+    try { await _identificadoresCarregandoPromise; }
+    finally { _identificadoresCarregandoPromise = null; }
   }
 
   async function _carregarObservacoesTransbordo() {
-    const snap = await fs().collection(COL_OBSERVACOES_TRANSBORDO).get();
-    _observacoesTransbordo = snap.docs.map(d => ({ _id: d.id, ...d.data() }))
-      .sort((a,b) => String(a.texto || '').localeCompare(String(b.texto || ''), 'pt-BR'));
-    return _observacoesTransbordo;
+    if (_observacoesCarregandoPromise) return _observacoesCarregandoPromise;
+    _observacoesCarregandoPromise = (async () => {
+      const snap = await fs().collection(COL_OBSERVACOES_TRANSBORDO).get();
+      _observacoesTransbordo = snap.docs.map(d => ({ _id: d.id, ...d.data() }))
+        .sort((a,b) => String(a.texto || '').localeCompare(String(b.texto || ''), 'pt-BR'));
+      return _observacoesTransbordo;
+    })();
+    try { return await _observacoesCarregandoPromise; }
+    finally { _observacoesCarregandoPromise = null; }
   }
   function _normalizarTextoObs(v) { return String(v || '').trim().replace(/\s+/g, ' '); }
   async function recbtCadastrarObservacao() {
@@ -811,7 +823,9 @@
     };
     try {
       await raw.collection('lojas').doc(lojaDocumento).collection('recebimentos').doc(r._id).update(patch);
-      await opInternals()?.carregar?.(true);
+      // Mesmo bug/conserto de recbtSalvarEdicaoCompleta acima: carregar(true)
+      // relê pelo espelho do BigQuery, que atrasa pra refletir esta escrita.
+      Object.assign(r, patch);
       _desenharTransbordo();
       global.showToast?.('Remetente e destino invertidos. Horários preservados.', 'success');
     } catch (e) {
@@ -920,7 +934,9 @@
       if (!raw) throw new Error('Firestore indisponível.');
       await raw.collection('lojas').doc(lojaDocumento).collection('recebimentos').doc(r._id).update(patch);
       global.closeModal?.('modal-rebt-editar-rota');
-      await opInternals()?.carregar?.(true);
+      // Mesmo bug/conserto de recbtSalvarEdicaoCompleta acima: carregar(true)
+      // relê pelo espelho do BigQuery, que atrasa pra refletir esta escrita.
+      Object.assign(r, patch);
       _desenharTransbordo();
       global.showToast?.('Remetente e destino corrigidos. Horários e demais dados foram preservados.', 'success');
     } catch (e) {
@@ -1141,6 +1157,7 @@
     const r = transbordos().find(x => x._id === id);
     if (!r) { global.showToast?.('Transbordo não encontrado.', 'error'); return; }
     _ensureEdicaoCompletaModal();
+    await opInternals()?.carregarCadastrosAuxiliares?.();
     _edicaoCompletaId = id;
     const info = document.getElementById('rebt-edit-completo-info');
     if (info) info.textContent = (r.origem || '—') + ' → ' + (r.destino || '—') + (r.placa ? ' · ' + r.placa : '');
@@ -1278,7 +1295,17 @@
       await raw.collection('lojas').doc(lojaDocumento).collection('recebimentos').doc(r._id).update(payload);
       try { await i?.registrarAuditoria?.(r._id, 'EDICAO_COMPLETA', r.status, status, lojaDocumento); } catch (eAud) { /* auditoria nunca trava a ação */ }
       global.closeModal?.('modal-rebt-editar-completo');
-      await opInternals()?.carregar?.(true);
+      // BUG AO VIVO REAL (2026-09-18): "salvo e não atualiza, só na segunda
+      // edição que funciona" — carregar(true) relê pelo espelho do
+      // BigQuery (ver 93-recebimento-operacao.js), que replica a escrita
+      // no Firestore com atraso: a releitura logo em seguida ainda vinha
+      // com o dado ANTIGO, e um redesenho nessa hora reverteria o valor
+      // certo que acabou de ser salvo de volta pro antigo. Corrige o
+      // registro em memória na hora (mesmo objeto usado por
+      // transbordos()/_desenharTransbordo, nunca precisa reler do zero)
+      // pra tela refletir o salvamento já — sem depender do BigQuery
+      // alcançar o Firestore a tempo.
+      Object.assign(r, payload);
       _desenharTransbordo();
       global.showToast?.('Transbordo atualizado.', 'success');
     } catch (e) {

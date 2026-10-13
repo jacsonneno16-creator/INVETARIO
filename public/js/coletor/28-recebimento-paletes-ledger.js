@@ -81,6 +81,36 @@ async function _aplicarMovimentoLedger(lojaId, tipo, deltas, referencia) {
   }, { merge: true });
 }
 
+// Inventário finalizado: a contagem passa a ser o saldo absoluto disponível.
+// Usa transação para não calcular delta sobre um saldo que possa mudar entre leitura e escrita.
+async function _definirSaldoPaletesPorInventario(lojaId, novoDisponivel, referencia) {
+  if (!lojaId) throw new Error('_definirSaldoPaletesPorInventario: lojaId é obrigatório');
+  novoDisponivel = Math.max(0, Math.round(Number(novoDisponivel)));
+  if (!Number.isFinite(novoDisponivel)) throw new Error('Saldo de inventário inválido');
+  const db = getDTRawFirestore();
+  const ledgerRef = _refPaletesLedger(lojaId);
+  const movRef = _refPaletesMovimentos(lojaId).doc();
+  const agora = new Date().toISOString();
+  const autor = (typeof APP !== 'undefined' && APP.operador && APP.operador.email) || (typeof window !== 'undefined' && window._currentAnalistaUser && window._currentAnalistaUser.email) || '';
+  await db.runTransaction(async function (tx) {
+    const snap = await tx.get(ledgerRef);
+    const atual = snap && snap.exists ? (snap.data() || {}) : {};
+    const disponivelAnterior = Number.isFinite(atual.disponivel) ? atual.disponivel : 0;
+    const emTransito = Number.isFinite(atual.emTransito) ? atual.emTransito : 0;
+    const delta = novoDisponivel - disponivelAnterior;
+    tx.set(movRef, {
+      tipo: 'INVENTARIO_CONTAGEM', disponivelDelta: delta, emTransitoDelta: 0, totalDelta: delta,
+      saldoAnterior: disponivelAnterior, saldoInventariado: novoDisponivel,
+      referenciaColecao: (referencia && referencia.colecao) || '', referenciaId: (referencia && referencia.id) || '',
+      criadoEm: agora, criadoPor: autor
+    });
+    tx.set(ledgerRef, {
+      disponivel: novoDisponivel, emTransito: emTransito, total: novoDisponivel + emTransito,
+      atualizadoEm: agora, atualizadoPor: autor, ultimoInventarioEm: agora
+    }, { merge: true });
+  });
+}
+
 async function obterLedgerPaletes(lojaId) {
   if (!lojaId) return null;
   const doc = await _refPaletesLedger(lojaId).get();
@@ -94,8 +124,10 @@ async function obterLedgerPaletes(lojaId) {
 }
 
 window._aplicarMovimentoLedger = _aplicarMovimentoLedger;
+window._definirSaldoPaletesPorInventario = _definirSaldoPaletesPorInventario;
 window.obterLedgerPaletes = obterLedgerPaletes;
 window._recebimentoPaletesLedgerInternals = {
   refLedger: _refPaletesLedger,
-  refMovimentos: _refPaletesMovimentos
+  refMovimentos: _refPaletesMovimentos,
+  definirSaldoInventario: _definirSaldoPaletesPorInventario
 };

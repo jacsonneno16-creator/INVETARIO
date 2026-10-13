@@ -45,21 +45,27 @@
   // categorias/regex já validadas com o usuário no Excel de devoluções por
   // motivo (scratchpad gerar_motivo_por_mes.js). Movida de
   // 97-recebimento-recusas.js pra cá junto com a devolução (2026-08-27).
+  // PEDIDO AO VIVO (2026-09-17): "padronizar, para não ficar duas coisas do
+  // mesmo jeito" — categorias em maiúsculo pra nascer no mesmo padrão do
+  // cadastro manual de motivos (recebimento_recusas_motivos), já que o
+  // gráfico "Motivos da Volta" (98) agrupa por string exata, sem normalizar
+  // caixa. Mesma lista duplicada em functions/index.js
+  // (CATEGORIAS_MOTIVO_DEVOLUCAO_BI) — atualizar junto.
   const CATEGORIAS_MOTIVO_DEVOLUCAO = [
-    ['Troca', /\bTROCA/],
-    ['Impróprio para consumo/venda', /IMPROPRI/],
-    ['Avaria', /AVARI/],
-    ['Falta na carga/entrega', /FALTA|FALTOU/],
-    ['Produto errado/divergente', /ERRAD|DIVERGEN/],
-    ['Vencido/vencimento', /VENCID|VENC:/],
-    ['Desacordo com pedido', /DESACORDO/],
+    ['TROCA', /\bTROCA/],
+    ['IMPRÓPRIO PARA CONSUMO/VENDA', /IMPROPRI/],
+    ['AVARIA', /AVARI/],
+    ['FALTA NA CARGA/ENTREGA', /FALTA|FALTOU/],
+    ['PRODUTO ERRADO/DIVERGENTE', /ERRAD|DIVERGEN/],
+    ['VENCIDO/VENCIMENTO', /VENCID|VENC:/],
+    ['DESACORDO COM PEDIDO', /DESACORDO/],
   ];
-  const SEM_MOTIVO_NO_TEXTO = '(sem motivo no texto)';
+  const SEM_MOTIVO_NO_TEXTO = '(SEM MOTIVO NO TEXTO)';
   // PEDIDO AO VIVO (2026-09-01): "impróprio pra consumo também não é pra
   // gravar. Essas notas de impróprio pra consumo pode descartar também" —
   // entra pro mesmo grupo de Troca/Avaria/Vencido/sem-motivo (descartado,
   // não grava recebimento_recusas, não aguarda Coletor).
-  const CATEGORIAS_MOTIVO_PRECISAM_COLETOR = new Set(['Troca', 'Avaria', 'Vencido/vencimento', 'Impróprio para consumo/venda', SEM_MOTIVO_NO_TEXTO]);
+  const CATEGORIAS_MOTIVO_PRECISAM_COLETOR = new Set(['TROCA', 'AVARIA', 'VENCIDO/VENCIMENTO', 'IMPRÓPRIO PARA CONSUMO/VENDA', SEM_MOTIVO_NO_TEXTO]);
   function classificarMotivoTexto(texto) {
     const t = String(texto || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
     for (const [nome, regex] of CATEGORIAS_MOTIVO_DEVOLUCAO) if (regex.test(t)) return nome;
@@ -264,15 +270,7 @@
     }
   }
   function _iniciarAutoRefreshBi() {
-    if (_autoRefreshIniciado) return;
-    if (!global.DTBiPastaLocal?.suportado?.() || typeof global.setInterval !== 'function') return;
-    _autoRefreshIniciado = true;
-    global.setInterval(async () => {
-      try {
-        const status = await global.DTBiPastaLocal.status();
-        if (status === 'conectado') await buscarVendasBiAutomatico();
-      } catch (e) { /* silencioso — só o clique manual mostra erro */ }
-    }, INTERVALO_AUTO_BUSCA_MS);
+    _autoRefreshIniciado = true; // sincronização já ocorre no servidor a cada 4h
   }
 
   const STATUS_INFO = {

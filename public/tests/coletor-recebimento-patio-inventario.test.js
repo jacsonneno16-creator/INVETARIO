@@ -1,7 +1,12 @@
-// Coletor > Recebimento > Inventário Inicial do Pátio (29-recebimento-
-// patio-inventario.js) — "fotografa" notas já paradas no pátio que nunca
-// passaram pelo fluxo normal de Entrada. Ver plano completo em
-// structured-sprouting-hoare.md.
+// Coletor > Recebimento > Inventário do Pátio (29-recebimento-patio-
+// inventario.js). Pedido ao vivo (2026-09-22): virou um fluxo só — pra
+// cada NÚMERO de nota digitado (não mais a chave de 44 dígitos), já
+// conhecida e presente só CONFIRMA; nova ou que já tinha saído pede o Box
+// e CADASTRA (igual sempre foi). Ao "Finalizar", quem não foi confirmado é
+// ENCERRADO (statusFisico:'SAIU') — nunca apagado, o histórico em Notas
+// Retornadas continua, só a classificação muda (Recusa→Finalizado,
+// Reentrega→dataSaidaEm, sem classificação→vira Reentrega finalizada
+// também com tratamento+dataSaidaEm).
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
@@ -12,9 +17,6 @@ const htmlCode = fs.readFileSync(path.join(__dirname, '../coletor.html'), 'utf8'
 const navCode = fs.readFileSync(path.join(baseColetor, '10-navegacao-estorno.js'), 'utf8');
 const patioCode = fs.readFileSync(path.join(baseColetor, '29-recebimento-patio-inventario.js'), 'utf8');
 
-// Chave de NF-e de 44 dígitos com dígito verificador (mod-11) válido.
-const CHAVE_VALIDA = '35260800123456780001235500100000123412345673';
-
 function mockColecao(docsIniciais) {
   const registro = new Map((docsIniciais || []).map(d => [d.id, d.data]));
   let seq = 0;
@@ -24,22 +26,25 @@ function mockColecao(docsIniciais) {
     doc: id => ({
       id: id || ('novo' + (seq++)),
       get: async () => { const data = registro.get(id); return { exists: data !== undefined, id, data: () => data }; },
+      update: async payload => { const atual = registro.get(id); if (atual === undefined) throw new Error('NOT_FOUND'); registro.set(id, Object.assign({}, atual, payload)); },
     }),
     add: async payload => { const docId = 'novo' + (seq++); registro.set(docId, payload); return { id: docId }; },
     _registro: registro,
   };
   base.where = (campo, op, valor) => ({
     get: async () => {
-      const bate = data => { const v = data ? data[campo] : undefined; if (op === 'array-contains') return Array.isArray(v) && v.includes(valor); return true; };
+      const bate = data => {
+        const v = data ? data[campo] : undefined;
+        if (op === 'array-contains') return Array.isArray(v) && v.includes(valor);
+        if (op === '==') return v === valor;
+        return true;
+      };
       return snapshot([...registro.entries()].filter(([, data]) => bate(data)));
     },
   });
   return base;
 }
 
-// setInterval não é usado por este arquivo (sem polling), mas mantém o
-// mesmo cuidado de fechar a janela jsdom por consistência com o resto da
-// suíte de Recebimento.
 let _janelasAbertas = [];
 test.afterEach(() => { _janelasAbertas.forEach(w => { try { w.close(); } catch (_) {} }); _janelasAbertas = []; });
 
@@ -47,7 +52,7 @@ function carregarColetor(colecoes) {
   const dom = new JSDOM(htmlCode, { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window; const document = win.document;
   _janelasAbertas.push(win);
-  win.getDTFirestore = () => ({ collection: nome => colecoes?.[nome] || mockColecao([]) });
+  win.getDTFirestore = () => ({ collection: nome => (colecoes && colecoes[nome]) || mockColecao([]) });
   win.getDTAuth = () => ({ currentUser: { uid: 'u1', email: 'operador@daterrinha.com' } });
   win.toast = () => {};
   win.eval(navCode);
@@ -55,19 +60,18 @@ function carregarColetor(colecoes) {
   return { win, document };
 }
 
-test('consultarChave + confirmarLancamento: nota nova (achada em recebimento_recusas_notas) grava doc com origem INVENTARIO_INICIAL, statusFisico NO_PATIO e Box informado', async () => {
-  const notas = mockColecao([{ id: CHAVE_VALIDA, data: { numeroNota: '12345', destinatario: 'Mercado Atacadão' } }]);
+test('número não encontrado: pede o Box e cadastra um novo evento de presença (INVENTARIO_INICIAL, NO_PATIO)', async () => {
   const recusas = mockColecao([]);
-  const { win, document } = carregarColetor({ recebimento_recusas_notas: notas, recebimento_recusas: recusas });
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
   win.APP = { operador: { name: 'Maria Operadora' } };
 
   await win.abrirInventarioPatio();
-  document.getElementById('patio-chave-input').value = CHAVE_VALIDA;
+  document.getElementById('patio-numero-input').value = '12345';
   document.getElementById('patio-consultar-btn').click();
   await new Promise(r => setTimeout(r, 0));
 
   assert.match(document.getElementById('patio-inventario-host').innerHTML, /12345/);
-  assert.match(document.getElementById('patio-inventario-host').innerHTML, /Mercado Atacadão/);
+  assert.match(document.getElementById('patio-inventario-host').innerHTML, /não está registrada/);
 
   document.getElementById('patio-box-input').value = 'box 7';
   document.getElementById('patio-confirmar-btn').click();
@@ -78,108 +82,102 @@ test('consultarChave + confirmarLancamento: nota nova (achada em recebimento_rec
   assert.equal(doc.origem, 'INVENTARIO_INICIAL');
   assert.equal(doc.statusFisico, 'NO_PATIO');
   assert.equal(doc.box, 'BOX 7');
-  // Arrays criados dentro do realm do jsdom não são reference-equal aos
-  // arrays do Node principal — deepEqual falha por causa disso mesmo com
-  // conteúdo idêntico; comparar por Array.from()/length evita o falso negativo.
-  assert.deepEqual(Array.from(doc.chaves), [CHAVE_VALIDA]);
   assert.deepEqual(Array.from(doc.numerosNotas), ['12345']);
   assert.equal(doc.notas.length, 1);
-  assert.equal(doc.notas[0].chave, CHAVE_VALIDA);
   assert.equal(doc.notas[0].numeroNota, '12345');
   assert.equal(doc.notas[0].box, 'BOX 7');
   assert.equal(doc.notas[0].tratamento, undefined, 'tratamento não é definido aqui — o Analista classifica depois, igual toda nota nova');
-  assert.match(document.getElementById('patio-inventario-host').innerHTML, /Nota lançada no pátio/);
-  // PEDIDO AO VIVO (2026-09-11): "por que não tá trazendo a pessoa na
-  // coluna de conferente? Na hora de criar o login já coloco o nome".
   assert.equal(doc.conferenteNome, 'Maria Operadora');
+  // volta pra tela de bipar, já com a nota confirmada na lista
+  assert.match(document.getElementById('patio-inventario-host').innerHTML, /CONFIRMADAS: 1/);
 });
 
-test('nota já registrada e ainda no pátio: bloqueia com a mensagem certa, não cria duplicata', async () => {
+test('nota nova: pallets é opcional (fica null se não preenchido) e motorista nunca é pedido — só Box e pallets', async () => {
+  const recusas = mockColecao([]);
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  document.getElementById('patio-numero-input').value = '55';
+  document.getElementById('patio-consultar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(document.getElementById('patio-motorista-input'), null, 'nunca pede motorista aqui — ninguém tem como saber quem trouxe');
+  assert.ok(document.getElementById('patio-pallets-input'));
+  document.getElementById('patio-box-input').value = 'BOX 4';
+  document.getElementById('patio-confirmar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+  const doc = [...recusas._registro.values()][0];
+  assert.equal(doc.pallets, null, 'sem preencher, fica null — nunca vira 0 por engano');
+  assert.equal(doc.motoristaNome, undefined);
+});
+
+test('nota nova: quantidade de pallets preenchida é gravada como número no doc', async () => {
+  const recusas = mockColecao([]);
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  document.getElementById('patio-numero-input').value = '56';
+  document.getElementById('patio-consultar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+  document.getElementById('patio-box-input').value = 'BOX 5';
+  document.getElementById('patio-pallets-input').value = '8';
+  document.getElementById('patio-confirmar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+  const doc = [...recusas._registro.values()][0];
+  assert.equal(doc.pallets, 8);
+});
+
+test('número já registrado e ainda no pátio: só CONFIRMA presença (sem pedir Box, sem gravar nada)', async () => {
   const recusas = mockColecao([
-    { id: 'r1', data: { origem: 'COLETOR', statusFisico: 'NO_PATIO', box: 'BOX 3', chaves: [CHAVE_VALIDA], notas: [{ chave: CHAVE_VALIDA, numeroNota: '999', tratamento: 'RECUSA' }] } },
+    { id: 'r1', data: { origem: 'COLETOR', statusFisico: 'NO_PATIO', box: 'BOX 3', numerosNotas: ['999'], notas: [{ numeroNota: '999', tratamento: 'RECUSA' }] } },
   ]);
-  const { win, document } = carregarColetor({ recebimento_recusas: recusas, recebimento_recusas_notas: mockColecao([]) });
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
 
   await win.abrirInventarioPatio();
-  document.getElementById('patio-chave-input').value = CHAVE_VALIDA;
+  document.getElementById('patio-numero-input').value = '999';
   document.getElementById('patio-consultar-btn').click();
   await new Promise(r => setTimeout(r, 0));
 
   const html = document.getElementById('patio-inventario-host').innerHTML;
-  assert.match(html, /já está registrada no pátio/);
-  assert.match(html, /BOX 3/);
-  assert.doesNotMatch(html, /patio-box-input/, 'não oferece o formulário de lançamento — é bloqueio, não edição');
+  assert.doesNotMatch(html, /patio-box-input/, 'não pede Box — a nota já está registrada e presente');
+  assert.match(html, /CONFIRMADAS: 1/);
   assert.equal(recusas._registro.size, 1, 'nenhum documento novo foi criado');
 });
 
-test('nota já registrada MAS já saiu do pátio (Recusa finalizada): NÃO bloqueia — permite lançar de novo (voltou fisicamente)', async () => {
+test('número já registrado MAS já saiu do pátio (Recusa finalizada): não bloqueia — pede Box pra confirmar que voltou', async () => {
   const recusas = mockColecao([
-    { id: 'r1', data: { origem: 'COLETOR', statusFisico: 'SAIU', box: 'BOX 3', chaves: [CHAVE_VALIDA], notas: [{ chave: CHAVE_VALIDA, numeroNota: '999', tratamento: 'RECUSA', statusRetorno: 'FINALIZADO' }] } },
+    { id: 'r1', data: { origem: 'COLETOR', statusFisico: 'SAIU', box: 'BOX 3', numerosNotas: ['999'], notas: [{ numeroNota: '999', tratamento: 'RECUSA', statusRetorno: 'FINALIZADO' }] } },
   ]);
-  const notas = mockColecao([{ id: CHAVE_VALIDA, data: { numeroNota: '999', destinatario: 'Mercado Y' } }]);
-  const { win, document } = carregarColetor({ recebimento_recusas: recusas, recebimento_recusas_notas: notas });
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
 
   await win.abrirInventarioPatio();
-  document.getElementById('patio-chave-input').value = CHAVE_VALIDA;
+  document.getElementById('patio-numero-input').value = '999';
   document.getElementById('patio-consultar-btn').click();
   await new Promise(r => setTimeout(r, 0));
 
-  const html = document.getElementById('patio-inventario-host').innerHTML;
-  assert.doesNotMatch(html, /já está registrada no pátio/);
-  assert.match(html, /patio-box-input/);
+  assert.match(document.getElementById('patio-inventario-host').innerHTML, /patio-box-input/);
 });
 
-// PEDIDO AO VIVO (2026-09-11): "na hora de fazer o inventário inicial e já
-// ter recebido, ele vai falar que já foi recebida" — mesmo não bloqueando
-// (o teste acima já cobre o "voltou fisicamente de novo"), tem que avisar
-// que já passou pelo sistema antes.
-test('nota já registrada MAS já saiu do pátio: mostra aviso "já foi recebida antes", com o Box do lançamento anterior', async () => {
+test('número já confirmado nesta conferência não é consultado de novo (evita gasto de leitura à toa)', async () => {
   const recusas = mockColecao([
-    { id: 'r1', data: { origem: 'COLETOR', statusFisico: 'SAIU', box: 'BOX 3', chaves: [CHAVE_VALIDA], notas: [{ chave: CHAVE_VALIDA, numeroNota: '999', tratamento: 'RECUSA', statusRetorno: 'FINALIZADO' }] } },
+    { id: 'r1', data: { origem: 'COLETOR', statusFisico: 'NO_PATIO', numerosNotas: ['999'], notas: [{ numeroNota: '999', tratamento: '' }] } },
   ]);
-  const notas = mockColecao([{ id: CHAVE_VALIDA, data: { numeroNota: '999', destinatario: 'Mercado Y' } }]);
-  const { win, document } = carregarColetor({ recebimento_recusas: recusas, recebimento_recusas_notas: notas });
-
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
   await win.abrirInventarioPatio();
-  document.getElementById('patio-chave-input').value = CHAVE_VALIDA;
+  document.getElementById('patio-numero-input').value = '999';
   document.getElementById('patio-consultar-btn').click();
   await new Promise(r => setTimeout(r, 0));
-
-  const html = document.getElementById('patio-inventario-host').innerHTML;
-  assert.match(html, /já foi recebida antes/);
-  assert.match(html, /BOX 3/);
-});
-
-test('nota SEM banco (não achada em recebimento_recusas_notas): cai no fluxo manual, pré-preenche número extraído da chave, e ainda lança normalmente', async () => {
-  const { win, document } = carregarColetor({ recebimento_recusas_notas: mockColecao([]), recebimento_recusas: mockColecao([]) });
-
-  await win.abrirInventarioPatio();
-  document.getElementById('patio-chave-input').value = CHAVE_VALIDA;
+  document.getElementById('patio-numero-input').value = '999';
   document.getElementById('patio-consultar-btn').click();
   await new Promise(r => setTimeout(r, 0));
-
-  const html = document.getElementById('patio-inventario-host').innerHTML;
-  assert.match(html, /ainda não está no sistema/);
-  const numeroInput = document.getElementById('patio-numero-input');
-  assert.ok(numeroInput.value, 'número pré-preenchido a partir da própria chave');
-
-  document.getElementById('patio-box-input').value = 'BOX 9';
-  document.getElementById('patio-confirmar-btn').click();
-  await new Promise(r => setTimeout(r, 0));
-
-  const recusas = document.defaultView.getDTFirestore().collection('recebimento_recusas');
-  assert.equal(recusas._registro.size, 1);
+  assert.equal(win._patioInventarioInternals.getEstado().confirmadas.length, 1);
 });
 
 test('sem Box informado: bloqueia a confirmação com aviso, não grava nada', async () => {
-  const notas = mockColecao([{ id: CHAVE_VALIDA, data: { numeroNota: '1', destinatario: 'X' } }]);
   const recusas = mockColecao([]);
-  const { win, document } = carregarColetor({ recebimento_recusas_notas: notas, recebimento_recusas: recusas });
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
   let avisoMostrado = '';
   win.toast = m => { avisoMostrado = m; };
 
   await win.abrirInventarioPatio();
-  document.getElementById('patio-chave-input').value = CHAVE_VALIDA;
+  document.getElementById('patio-numero-input').value = '1';
   document.getElementById('patio-consultar-btn').click();
   await new Promise(r => setTimeout(r, 0));
 
@@ -189,4 +187,151 @@ test('sem Box informado: bloqueia a confirmação com aviso, não grava nada', a
 
   assert.match(avisoMostrado, /Box/);
   assert.equal(recusas._registro.size, 0);
+});
+
+function docsIniciais() {
+  return [
+    { id: 'docRecusa', data: { origem: 'COLETOR', statusFisico: 'NO_PATIO', numerosNotas: ['100'], notas: [{ numeroNota: '100', tratamento: 'RECUSA', statusRetorno: '' }] } },
+    { id: 'docReentrega', data: { origem: 'COLETOR', statusFisico: 'NO_PATIO', numerosNotas: ['101'], notas: [{ numeroNota: '101', tratamento: 'REENTREGA' }] } },
+    { id: 'docSemClassificacao', data: { origem: 'INVENTARIO_INICIAL', statusFisico: 'NO_PATIO', numerosNotas: ['102'], notas: [{ numeroNota: '102', tratamento: '' }] } },
+    { id: 'docConfirmada', data: { origem: 'COLETOR', statusFisico: 'NO_PATIO', numerosNotas: ['103'], notas: [{ numeroNota: '103', tratamento: 'RECUSA', statusRetorno: '' }] } },
+  ];
+}
+async function confirmarEIrProResumo(win, document) {
+  document.getElementById('patio-numero-input').value = '103';
+  document.getElementById('patio-consultar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+  await win._patioInventarioInternals.irParaResumo();
+}
+
+test('resumo: nota confirmada fica de fora do que vai ser encerrado; as outras 3 (Recusa/Reentrega/sem classificação) entram', async () => {
+  const recusas = mockColecao(docsIniciais());
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  await confirmarEIrProResumo(win, document);
+  const r = win._patioInventarioInternals.getEstado().resumo;
+  assert.equal(r.qtdEncontradas, 1);
+  assert.equal(r.qtdTotalEncerrar, 3);
+  assert.equal(r.qtdRecusa, 1);
+  assert.equal(r.qtdReentrega, 1);
+  assert.equal(r.qtdSemClassificacao, 1);
+});
+
+test('confirmarFinalizacao: Recusa não confirmada vira statusRetorno FINALIZADO (não é apagada)', async () => {
+  const recusas = mockColecao(docsIniciais());
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  await confirmarEIrProResumo(win, document);
+  await win._patioInventarioInternals.confirmarFinalizacao();
+  const doc = recusas._registro.get('docRecusa');
+  assert.equal(doc.notas[0].statusRetorno, 'FINALIZADO');
+  assert.equal(doc.statusFisico, 'SAIU');
+  assert.ok(Array.isArray(doc.notas[0].statusRetornoHistorico) && doc.notas[0].statusRetornoHistorico.length === 1);
+});
+
+test('confirmarFinalizacao: Reentrega não confirmada grava dataSaidaEm (mesmo campo da tela de Saída normal)', async () => {
+  const recusas = mockColecao(docsIniciais());
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  await confirmarEIrProResumo(win, document);
+  await win._patioInventarioInternals.confirmarFinalizacao();
+  const doc = recusas._registro.get('docReentrega');
+  assert.ok(doc.notas[0].dataSaidaEm);
+  assert.equal(doc.statusFisico, 'SAIU');
+});
+
+test('confirmarFinalizacao: nota SEM classificação não confirmada vira Reentrega finalizada (tratamento+dataSaidaEm)', async () => {
+  const recusas = mockColecao(docsIniciais());
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  await confirmarEIrProResumo(win, document);
+  await win._patioInventarioInternals.confirmarFinalizacao();
+  const doc = recusas._registro.get('docSemClassificacao');
+  assert.equal(doc.notas[0].tratamento, 'REENTREGA', 'pedido ao vivo: não classificado + não encontrado vira Reentrega');
+  assert.ok(doc.notas[0].dataSaidaEm);
+  assert.equal(doc.statusFisico, 'SAIU');
+});
+test('estaNoPatio: nota com tratamento legado (fora de RECUSA/REENTREGA/vazio) ainda usa confirmadoAusenteEm como rede de segurança', async () => {
+  const { win } = carregarColetor();
+  const doc = { origem: 'COLETOR' };
+  const nota = { tratamento: 'DEVOLUCAO', confirmadoAusenteEm: '2026-09-22T00:00:00.000Z' };
+  assert.equal(win._patioInventarioInternals.estaNoPatio(doc, nota), false);
+});
+
+test('confirmarFinalizacao: nota confirmada continua intacta — statusFisico permanece NO_PATIO', async () => {
+  const recusas = mockColecao(docsIniciais());
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  await confirmarEIrProResumo(win, document);
+  await win._patioInventarioInternals.confirmarFinalizacao();
+  const doc = recusas._registro.get('docConfirmada');
+  assert.equal(doc.statusFisico, 'NO_PATIO');
+  assert.equal(doc.notas[0].statusRetorno, '');
+});
+
+test('nada confirmado: pedir resumo sem confirmar nenhuma nota mostra erro e não avança de etapa', async () => {
+  const recusas = mockColecao(docsIniciais());
+  const { win } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  await win._patioInventarioInternals.irParaResumo();
+  assert.equal(win._patioInventarioInternals.getEstado().etapa, 'bipar');
+});
+
+test('estaNoPatio: nota com confirmadoAusenteEm nunca conta como presente, mesmo sendo Reentrega sem dataSaidaEm', async () => {
+  const { win } = carregarColetor();
+  const doc = { origem: 'COLETOR' };
+  const nota = { tratamento: 'REENTREGA', confirmadoAusenteEm: '2026-09-22T00:00:00.000Z' };
+  assert.equal(win._patioInventarioInternals.estaNoPatio(doc, nota), false);
+});
+
+// PEDIDO AO VIVO (2026-10-02): "teria que ter uma aba de relatório de
+// inventário de notas no pátio" — confirmarFinalizacao() agora grava um
+// retrato da sessão em recebimento_patio_inventarios, pra ser consultado
+// depois (124-recebimento-patio-inventarios-relatorio.js, no Analista).
+test('confirmarFinalizacao: grava 1 snapshot da sessão em recebimento_patio_inventarios com as notas encontradas e encerradas', async () => {
+  const recusas = mockColecao(docsIniciais());
+  const inventarios = mockColecao([]);
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas, recebimento_patio_inventarios: inventarios });
+  win.APP = { operador: { name: 'Maria Operadora' } };
+  await win.abrirInventarioPatio();
+  await confirmarEIrProResumo(win, document);
+  await win._patioInventarioInternals.confirmarFinalizacao();
+
+  assert.equal(inventarios._registro.size, 1);
+  const snap = [...inventarios._registro.values()][0];
+  assert.deepEqual(Array.from(snap.notasEncontradas), ['103']);
+  assert.equal(snap.qtdEncontradas, 1);
+  assert.equal(snap.operadorNome, 'Maria Operadora');
+  assert.equal(snap.operadorEmail, 'operador@daterrinha.com');
+  assert.equal(snap.qtdRecusa, 1);
+  assert.equal(snap.qtdReentrega, 1);
+  assert.equal(snap.qtdSemClassificacao, 1);
+  assert.equal(snap.qtdTotalEncerrar, 3);
+  const porNumero = Object.fromEntries(snap.notasEncerradas.map(n => [n.numeroNota, n.tratamento]));
+  assert.equal(porNumero['100'], 'RECUSA');
+  assert.equal(porNumero['101'], 'REENTREGA');
+  assert.equal(porNumero['102'], 'SEM_CLASSIFICACAO');
+});
+
+test('confirmarFinalizacao: sem nada a encerrar (tudo confirmado), não grava snapshot nenhum', async () => {
+  const recusas = mockColecao([
+    { id: 'docConfirmada', data: { origem: 'COLETOR', statusFisico: 'NO_PATIO', numerosNotas: ['103'], notas: [{ numeroNota: '103', tratamento: 'RECUSA', statusRetorno: '' }] } },
+  ]);
+  const inventarios = mockColecao([]);
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas, recebimento_patio_inventarios: inventarios });
+  await win.abrirInventarioPatio();
+  await confirmarEIrProResumo(win, document);
+  await win._patioInventarioInternals.confirmarFinalizacao();
+  assert.equal(inventarios._registro.size, 0, 'early-return antes do try — nada a encerrar, nada pra registrar');
+});
+
+test('confirmarFinalizacao: falha ao gravar o snapshot do histórico não impede o encerramento nem a tela de "concluído"', async () => {
+  const recusas = mockColecao(docsIniciais());
+  const inventariosQueFalha = { add: async () => { throw new Error('indisponível'); } };
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas, recebimento_patio_inventarios: inventariosQueFalha });
+  await win.abrirInventarioPatio();
+  await confirmarEIrProResumo(win, document);
+  await win._patioInventarioInternals.confirmarFinalizacao();
+  assert.equal(win._patioInventarioInternals.getEstado().etapa, 'concluido', 'mesmo com o histórico falhando, o inventário termina normalmente');
+  assert.equal(recusas._registro.get('docRecusa').statusFisico, 'SAIU', 'o encerramento das notas já gravado não é desfeito');
 });

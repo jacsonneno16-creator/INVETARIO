@@ -46,6 +46,10 @@
   // uma nota está fisicamente presente têm que concordar sempre.
   function estaNoPatio(doc, nota) {
     if (doc.origem !== 'COLETOR' && doc.origem !== 'INVENTARIO_INICIAL') return false;
+    // PEDIDO AO VIVO (2026-09-22): mesmo campo novo de 24-recebimento-
+    // recusas.js/29-recebimento-patio-inventario.js — ver comentário lá.
+    const confirmadoAusente = nota.confirmadoAusenteEm != null ? nota.confirmadoAusenteEm : doc.confirmadoAusenteEm;
+    if (confirmadoAusente) return false;
     const tratamento = nota.tratamento != null ? nota.tratamento : (doc.tratamento || '');
     if (tratamento === 'REENTREGA') {
       const saida = nota.dataSaidaEm != null ? nota.dataSaidaEm : doc.dataSaidaEm;
@@ -70,7 +74,13 @@
   // e virava R$0,00 mesmo com o valor certo dentro da própria nota. Mesmo
   // bug duplicado em functions/index.js (_CAMPOS_POR_NOTA_PATIO_CACHE) —
   // corrigido junto.
-  const CAMPOS_POR_NOTA = ['tratamento', 'statusRetorno', 'dataSaidaEm', 'dataProgramadaEm', 'box', 'numeroNota', 'chave', 'destinatario', 'volumeEsperado', 'valorTotal'];
+  // BUG AO VIVO REAL (2026-09-17): "aqui ainda tá vazio" — vendedorNome/
+  // supervisorNome preenchidos manualmente (importação de planilha) direto
+  // na nota nunca apareciam aqui pela mesma razão do bug acima: faltavam
+  // nesta lista, então `linha.vendedorNome` vinha do documento (sempre
+  // ausente) em vez da própria nota. Mesmo bug duplicado em
+  // functions/index.js (_CAMPOS_POR_NOTA_PATIO_CACHE) — corrigido junto.
+  const CAMPOS_POR_NOTA = ['tratamento', 'statusRetorno', 'dataSaidaEm', 'dataProgramadaEm', 'box', 'numeroNota', 'chave', 'destinatario', 'volumeEsperado', 'valorTotal', 'vendedorNome', 'supervisorNome'];
   function _linhaDaNota(r, nota) {
     const linha = Object.assign({}, r, { notas: [nota], _recusaId: r._id, _notaChave: nota.chave || '' });
     CAMPOS_POR_NOTA.forEach(c => { linha[c] = nota[c] != null ? nota[c] : r[c]; });
@@ -107,51 +117,23 @@
   let _filtroDataInicio = '';
   let _filtroDataFim = '';
 
-  // Enriquecimento (mercado/vendedor/supervisor/valor) — busca DIRECIONADA
-  // só pelas chaves que realmente estão no pátio agora (Promise.all de
-  // `.doc(chave).get()`, mesmo padrão já usado em
-  // iniciarConferenciaDelegada do Coletor), nunca a coleção
-  // recebimento_recusas_notas inteira (fica pra outra rodada o mesmo
-  // ajuste em 98-recebimento-retornos-indicadores.js, documentado lá).
-  // PEDIDO AO VIVO (2026-09-11): "Pátio em Tempo Real demora pra
-  // atualizar" — 1 leitura POR NOTA (Promise.all de N `.doc().get()`)
-  // fica cada vez mais pesado conforme o pátio cresce (com Identificar/
-  // Inventário Inicial, cresce mais rápido ainda) — a cada carregamento E
-  // a cada tick do polling de 45s. Agrupa em lotes de 30 chaves por
-  // consulta (limite do operador `in` do Firestore) em vez de 1 leitura
-  // por nota — pátio com 100 notas vira 4 consultas, não 100.
-  // PEDIDO AO VIVO (2026-09-11): "os dados se conversarem entre as telas"
-  // — antes de buscar QUALQUER coisa no Firestore, aproveita o cache
-  // compartilhado com Indicadores de Retornos (98). Se essa tela já foi
-  // aberta nesta sessão, `completa===true` e ZERO leituras acontecem
-  // aqui; senão, busca só o que falta e ALIMENTA o cache compartilhado
-  // também, pra próxima vez (aqui ou em qualquer outra tela) ser de graça.
+  // O backend já projeta apenas os cinco campos pequenos necessários. Esta
+  // função consulta somente o cache em memória; nunca volta ao Firestore
+  // para baixar os documentos completos de notas no navegador.
   async function _enriquecerComNotas(linhas) {
     const chaves = [...new Set(linhas.map(l => l.chave).filter(Boolean))];
     if (!chaves.length) return linhas;
     const cache = global.DT_NOTAS_VENDA_CACHE;
     const porChave = new Map();
-    const faltando = [];
     chaves.forEach(c => {
       if (cache.porChave.has(c)) porChave.set(c, cache.porChave.get(c));
-      else if (!cache.completa) faltando.push(c);
     });
-    if (faltando.length) {
-      const LOTE = 30;
-      const lotes = [];
-      for (let i = 0; i < faltando.length; i += LOTE) lotes.push(faltando.slice(i, i + LOTE));
-      await Promise.all(lotes.map(lote =>
-        fs().collection(COL_NOTAS).where(global.firebase.firestore.FieldPath.documentId(), 'in', lote).get()
-          .then(snap => snap.docs.forEach(d => { porChave.set(d.id, d.data()); cache.porChave.set(d.id, d.data()); }))
-          .catch(() => {})
-      ));
-    }
     return linhas.map(l => {
       const n = porChave.get(l.chave) || {};
       return Object.assign({}, l, {
         destinatario: l.destinatario || n.destinatario || '',
-        vendedorNome: n.vendedorNome || '',
-        supervisorNome: n.supervisorNome || '',
+        vendedorNome: l.vendedorNome || n.vendedorNome || '',
+        supervisorNome: l.supervisorNome || n.supervisorNome || '',
         valorTotal: Number(l.valorTotal != null ? l.valorTotal : n.valorTotal) || 0,
       });
     });
@@ -181,24 +163,26 @@
   // não importa a causa real da demora.
   const LIMITE_TEMPO_REDE_MS = 15000;
   function _comLimiteDeTempo(promessa, mensagemTimeout) {
+    let timer;
     return Promise.race([
       promessa,
-      new Promise((_, reject) => setTimeout(() => reject(new Error(mensagemTimeout)), LIMITE_TEMPO_REDE_MS)),
-    ]);
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(mensagemTimeout)), LIMITE_TEMPO_REDE_MS); }),
+    ]).finally(() => clearTimeout(timer));
   }
   async function _tentarCarregarDoCache(lojaId) {
     try {
       const snap = await fs().collection('recebimento_patio_cache').doc('atual').get();
-      if (!snap.exists) return false;
+      if (!snap.exists) return null;
       const dados = snap.data() || {};
-      if (!Array.isArray(dados.linhas)) return false;
+      if (!Array.isArray(dados.linhas)) return null;
       const atualizadoEm = dados.atualizadoEm ? new Date(dados.atualizadoEm) : null;
       const idadeMin = atualizadoEm && !isNaN(atualizadoEm) ? (Date.now() - atualizadoEm.getTime()) / 60000 : Infinity;
-      if (idadeMin > LIMITE_IDADE_CACHE_MIN) return false;
-      _linhas = dados.linhas.filter(l => estaNoPatio(l, l));
-      return true;
+      if (idadeMin > LIMITE_IDADE_CACHE_MIN) return null;
+      // Só o carregamento que ainda está aguardando pode publicar o resultado.
+      // Uma leitura que terminou depois do timeout não sobrescreve a busca ao vivo.
+      return dados.linhas.filter(l => estaNoPatio(l, l));
     } catch (e) {
-      return false;
+      return null;
     }
   }
   // migrarStatusFisico() continua lendo o Firestore direto de propósito
@@ -209,16 +193,22 @@
     if (_carregando) return;
     _carregando = true;
     _erro = '';
+    desenhar();
     try {
       const lojaId = typeof global.getDTLojaAtiva === 'function' ? global.getDTLojaAtiva() : '';
       if (!lojaId) throw new Error('Nenhuma loja selecionada.');
-      const veioDoCache = await _comLimiteDeTempo(_tentarCarregarDoCache(lojaId), 'Tempo esgotado ao ler o cache — conexão lenta ou instável. Clique em Atualizar pra tentar de novo.');
-      if (!veioDoCache) {
+      // Cache é uma otimização: falha ou timeout deve tentar a fonte alternativa.
+      const linhasCache = await _comLimiteDeTempo(_tentarCarregarDoCache(lojaId), 'Tempo esgotado ao ler o cache.').catch(() => null);
+      if (linhasCache !== null) {
+        _linhas = linhasCache;
+      } else {
         const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarPatioTempoRealBigQuery');
-        const resposta = await _comLimiteDeTempo(callable({ lojaId }), 'Tempo esgotado ao buscar os dados — conexão lenta ou instável. Clique em Atualizar pra tentar de novo.');
+        const resposta = await _comLimiteDeTempo(callable({ lojaId }), 'Tempo esgotado ao buscar os dados. Tente atualizar novamente.');
         const docs = (resposta && resposta.data && resposta.data.recusas) || [];
+        const notasResumo = (resposta && resposta.data && resposta.data.notasResumo) || {};
+        Object.keys(notasResumo).forEach(chave => global.DT_NOTAS_VENDA_CACHE.porChave.set(chave, notasResumo[chave]));
         const todasLinhas = linhasPorNota(docs).filter(l => estaNoPatio(l, l));
-        _linhas = await _enriquecerComNotas(todasLinhas);
+        _linhas = await _comLimiteDeTempo(_enriquecerComNotas(todasLinhas), 'Tempo esgotado ao complementar os dados das notas. Tente atualizar novamente.');
       }
       _carregado = true;
     } catch (e) {
@@ -313,7 +303,9 @@
       if (_filtroTipo === 'RECUSA' && l.tratamento !== 'RECUSA') return false;
       if (_filtroTipo === 'REENTREGA' && l.tratamento !== 'REENTREGA') return false;
       if (_filtroTipo === 'OUTROS' && (l.tratamento === 'RECUSA' || l.tratamento === 'REENTREGA')) return false;
-      if (_filtroEmTratamento && !(l.tratamento === 'RECUSA' && l.statusRetorno && l.statusRetorno !== 'FINALIZADO')) return false;
+      // Mesma composição de kpis().emTratamento: Recusa com status ativo
+      // OU nota ainda sem tratamento nenhum.
+      if (_filtroEmTratamento && !((l.tratamento === 'RECUSA' && l.statusRetorno && l.statusRetorno !== 'FINALIZADO') || l.tratamento === '')) return false;
       if (_filtroMercado && (l.destinatario || '') !== _filtroMercado) return false;
       if (_filtroStatus && (l.statusRetorno || '') !== _filtroStatus) return false;
       if (_filtroBox && !String(l.box || '').toUpperCase().includes(_filtroBox.toUpperCase())) return false;
@@ -330,7 +322,13 @@
     const todas = _linhas;
     const recusas = todas.filter(l => l.tratamento === 'RECUSA');
     const reentregas = todas.filter(l => l.tratamento === 'REENTREGA');
-    const emTratamento = recusas.filter(l => l.statusRetorno && l.statusRetorno !== 'FINALIZADO');
+    // PEDIDO AO VIVO (2026-10-02): "essas notas em tratamento quero que
+    // coloque ali as notas não classificadas" — o card passou a somar
+    // Recusa com status ativo (igual já era) MAIS toda nota sem
+    // tratamento nenhum (''), já que ambas precisam de alguma ação do
+    // Analista pra sair desse limbo.
+    const naoClassificadas = todas.filter(l => l.tratamento === '');
+    const emTratamento = recusas.filter(l => l.statusRetorno && l.statusRetorno !== 'FINALIZADO').concat(naoClassificadas);
     const somaValor = arr => arr.reduce((s, l) => s + Number(l.valorTotal || 0), 0);
     return {
       total: todas.length, valorTotal: somaValor(todas),
@@ -355,8 +353,12 @@
     else if (card === 'recusa') { _filtroEmTratamento = false; _filtroTipo = _CARD_ATIVO_RECUSA() ? '' : 'RECUSA'; }
     else if (card === 'reentrega') { _filtroEmTratamento = false; _filtroTipo = _CARD_ATIVO_REENTREGA() ? '' : 'REENTREGA'; }
     else if (card === 'tratamento') {
-      if (_CARD_ATIVO_TRATAMENTO()) { _filtroEmTratamento = false; _filtroTipo = ''; }
-      else { _filtroEmTratamento = true; _filtroTipo = 'RECUSA'; }
+      // Não força mais _filtroTipo='RECUSA' — o card agora mistura Recusa
+      // ativa COM nota não classificada (tratamento===''), então o filtro
+      // de TIPO precisa ficar livre pra _filtradas() decidir sozinho (ver
+      // condição de _filtroEmTratamento logo abaixo).
+      _filtroEmTratamento = !_CARD_ATIVO_TRATAMENTO();
+      _filtroTipo = '';
     }
     desenhar();
   }
@@ -376,8 +378,8 @@
     const borda = ativo ? `border:2px solid var(--accent);box-shadow:0 0 0 1px var(--accent)` : '';
     return `<div class="tc" data-patio-card="${opts.card}" style="padding:14px;cursor:pointer;${borda}" title="Clique para filtrar a tabela por ${opts.titulo}">
       <div style="font-size:.72rem;color:var(--muted)">${opts.rotulo}${ativo && opts.mostrarFiltrando !== false ? ' · FILTRANDO' : ''}</div>
-      <div style="font-size:1.55rem;font-weight:850">${_aindaCarregando() ? '⏳' : opts.numero}</div>
-      <div style="font-size:.78rem;color:var(--muted)">${_aindaCarregando() ? 'Carregando...' : opts.rodape}</div>
+      <div style="font-size:1.55rem;font-weight:850">${!_carregado ? (_carregando ? '⏳' : '—') : opts.numero}</div>
+      <div style="font-size:.78rem;color:var(--muted)">${!_carregado ? (_carregando ? 'Carregando...' : 'Dados não carregados') : opts.rodape}</div>
     </div>`;
   }
   function _cardsHtml() {
@@ -386,7 +388,7 @@
       ${_cardHtml({ card: 'total', ativo: _CARD_ATIVO_TOTAL(), mostrarFiltrando: false, titulo: 'todas as notas', rotulo: 'TOTAL NO PÁTIO', numero: k.total.toLocaleString('pt-BR'), rodape: fmtBRL(k.valorTotal) })}
       ${_cardHtml({ card: 'recusa', ativo: _CARD_ATIVO_RECUSA(), titulo: 'Recusas', rotulo: 'RECUSAS', numero: k.recusas.toLocaleString('pt-BR'), rodape: fmtBRL(k.valorRecusas) })}
       ${_cardHtml({ card: 'reentrega', ativo: _CARD_ATIVO_REENTREGA(), titulo: 'Reentregas', rotulo: 'REENTREGAS', numero: k.reentregas.toLocaleString('pt-BR'), rodape: fmtBRL(k.valorReentregas) })}
-      ${_cardHtml({ card: 'tratamento', ativo: _CARD_ATIVO_TRATAMENTO(), titulo: 'notas em tratamento', rotulo: 'NOTAS EM TRATAMENTO', numero: k.emTratamento.toLocaleString('pt-BR'), rodape: 'Aguard. Fiscal/CTE/Endereçando' })}
+      ${_cardHtml({ card: 'tratamento', ativo: _CARD_ATIVO_TRATAMENTO(), titulo: 'notas em tratamento', rotulo: 'NOTAS EM TRATAMENTO', numero: k.emTratamento.toLocaleString('pt-BR'), rodape: 'Aguard. Fiscal/CTE/Endereçando + Não classificadas' })}
     </div>`;
   }
 
@@ -410,6 +412,7 @@
 
   function _rankingHtml() {
     if (_aindaCarregando()) return '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
+    if (!_carregado) return '<div class="empty"><div class="empty-title">Dados não carregados</div></div>';
     const ranking = _rankingMercados().slice(0, 15);
     if (!ranking.length) return '<div class="empty"><div class="empty-title">Sem dados para exibir</div></div>';
     return `<div style="overflow-x:auto"><table class="dt-table"><thead><tr><th>#</th><th>Mercado</th><th>Qtd.</th><th>Valor</th><th>Recusas</th><th>Reentregas</th></tr></thead><tbody>
@@ -447,6 +450,7 @@
 
   function _tabelaHtml() {
     if (_aindaCarregando()) return '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-title">Carregando...</div></div>';
+    if (!_carregado) return '<div class="empty"><div class="empty-title">Dados não carregados</div></div>';
     const linhas = _filtradas().sort((a, b) => String(a.criadoEm || '').localeCompare(String(b.criadoEm || '')));
     if (!linhas.length) return '<div class="empty"><div class="empty-icon">📦</div><div class="empty-title">Nenhuma nota parada com esses filtros</div></div>';
     return `<div style="overflow-x:auto"><table class="dt-table"><thead><tr>
@@ -486,6 +490,8 @@
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button type="button" class="btn btn-ghost btn-sm" id="patio-migrar-btn" title="Roda 1x — organiza registros antigos que ainda não têm o campo novo desta tela">🔧 Preparar dados antigos</button>
           <button type="button" class="btn btn-ghost btn-sm" id="patio-mercado-btn" title="Tenta achar o mercado pelo número das notas que estão sem (ex.: lançadas por Identificar)">🏪 Buscar mercado que falta</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="patio-relatorio-btn" title="Escolha os 3 arquivos Relatorio (47/48/49).xlsx (Monitoramento Geral da Bluesoft) para preencher mercado e valor das notas">📥 Completar com relatório Bluesoft</button>
+          <input type="file" id="patio-relatorio-input" accept=".xlsx,.xls" multiple style="display:none">
           <button class="btn btn-ghost" data-patio-atualizar="1">↻ Atualizar</button>
         </div>
       </div>
@@ -504,9 +510,23 @@
 
   function _ligarEventos() {
     document.querySelectorAll('[data-patio-card]').forEach(el => el.addEventListener('click', () => _clicarCard(el.dataset.patioCard)));
-    document.querySelector('[data-patio-atualizar]')?.addEventListener('click', async () => { await carregarPatio(true); desenhar(); });
+    document.querySelectorAll('#page-recebimento-patio-tempo-real [data-patio-atualizar]').forEach(btn => {
+      btn.disabled = _carregando;
+      btn.addEventListener('click', async () => { await carregarPatio(true); desenhar(); });
+    });
     document.getElementById('patio-migrar-btn')?.addEventListener('click', migrarStatusFisico);
     document.getElementById('patio-mercado-btn')?.addEventListener('click', buscarMercadoFaltante);
+    document.getElementById('patio-relatorio-btn')?.addEventListener('click', () => document.getElementById('patio-relatorio-input')?.click());
+    document.getElementById('patio-relatorio-input')?.addEventListener('change', async e => {
+      const arquivos = [...(e.target.files || [])];
+      e.target.value = '';
+      if (!arquivos.length) return;
+      try {
+        await completarPeloRelatorioBluesoft(arquivos);
+      } catch (erro) {
+        global.showToast?.('Erro ao completar pelo relatório: ' + (erro.message || erro), 'error');
+      }
+    });
     document.getElementById('patio-f-data-ini')?.addEventListener('change', e => { _filtroDataInicio = e.target.value || ''; desenhar(); });
     document.getElementById('patio-f-data-fim')?.addEventListener('change', e => { _filtroDataFim = e.target.value || ''; desenhar(); });
     document.getElementById('patio-f-tipo')?.addEventListener('change', e => { _filtroTipo = e.target.value || ''; desenhar(); });
@@ -515,6 +535,130 @@
     document.getElementById('patio-f-box')?.addEventListener('input', e => { _filtroBox = e.target.value || ''; desenhar(); });
     document.getElementById('patio-f-vendedor')?.addEventListener('input', e => { _filtroVendedor = e.target.value || ''; desenhar(); });
     document.getElementById('patio-f-supervisor')?.addEventListener('input', e => { _filtroSupervisor = e.target.value || ''; desenhar(); });
+  }
+
+  // PEDIDO AO VIVO (2026-10-06): "completar as informações das notas no
+  // pátio" com os 3 arquivos "Relatorio (47/48/49).xlsx" (Monitoramento
+  // Geral da Bluesoft). Planilha sem cabeçalho — colunas fixas por posição:
+  // A = nº da viagem, L = NF-série ("181357-1"), M = valor da NF, O =
+  // destinatário (o mercado). Só preenche campo VAZIO da nota — nunca troca
+  // um valor já gravado. Mostra a prévia e pede confirmação antes de gravar.
+  const RELATORIO_BLUESOFT = { VIAGEM: 'A', NF_SERIE: 'L', VALOR: 'M', DESTINATARIO: 'O' };
+  function _chaveNfRelatorio(numero, serie) {
+    return String(numero).replace(/\D/g, '').replace(/^0+/, '') + '|' + String(Number(serie));
+  }
+  // Recebe as linhas de cada planilha (objetos por letra de coluna, ver
+  // sheet_to_json com header:'A'). Mesma NF em mais de um arquivo com valor
+  // ou destinatário diferente vira "conflito" e não é usada.
+  function indiceRelatoriosBluesoft(listasLinhas) {
+    const porChave = new Map();
+    const seriesPorNumero = new Map();
+    let linhasNf = 0;
+    listasLinhas.forEach(linhas => linhas.forEach(r => {
+      const nf = String(r[RELATORIO_BLUESOFT.NF_SERIE] == null ? '' : r[RELATORIO_BLUESOFT.NF_SERIE]).trim();
+      const viagem = String(r[RELATORIO_BLUESOFT.VIAGEM] == null ? '' : r[RELATORIO_BLUESOFT.VIAGEM]).trim();
+      if (!/^\d+-\d+$/.test(nf) || !/^\d+(\.0)?$/.test(viagem)) return;
+      linhasNf++;
+      const [numero, serie] = nf.split('-');
+      const chave = _chaveNfRelatorio(numero, serie);
+      const destinatario = String(r[RELATORIO_BLUESOFT.DESTINATARIO] == null ? '' : r[RELATORIO_BLUESOFT.DESTINATARIO]).trim();
+      const valor = Number(r[RELATORIO_BLUESOFT.VALOR]) || 0;
+      const atual = porChave.get(chave);
+      if (!atual) {
+        porChave.set(chave, { destinatario, valor, conflito: false });
+        const [num, ser] = chave.split('|');
+        if (!seriesPorNumero.has(num)) seriesPorNumero.set(num, new Set());
+        seriesPorNumero.get(num).add(ser);
+      } else if (atual.destinatario !== destinatario || atual.valor !== valor) {
+        atual.conflito = true;
+      }
+    }));
+    return { porChave, seriesPorNumero, linhasNf };
+  }
+  // null = NF não está no relatório. {conflito:true} = NF sem série na nota
+  // e o número existe em mais de uma série (ou a chave tem conflito).
+  function achaNotaNoRelatorio(indice, nota) {
+    const numero = String(nota.numeroNota || '').replace(/\D/g, '').replace(/^0+/, '');
+    if (!numero) return null;
+    let serie = nota.serie != null && String(nota.serie).trim() !== '' ? String(Number(nota.serie)) : '';
+    if (!serie) {
+      const series = indice.seriesPorNumero.get(numero);
+      if (!series) return null;
+      if (series.size !== 1) return { conflito: true };
+      serie = [...series][0];
+    }
+    const achada = indice.porChave.get(numero + '|' + serie);
+    if (!achada) return null;
+    return achada.conflito ? { conflito: true } : achada;
+  }
+  // Só o que está vazio na nota (ou herdado vazio do documento, mesma regra
+  // de _linhaDaNota). Devolve {} quando não há nada a preencher.
+  function planejarCompletarNota(doc, nota, achada) {
+    const destAtual = nota.destinatario != null ? nota.destinatario : (doc.destinatario || '');
+    const valAtual = nota.valorTotal != null ? nota.valorTotal : doc.valorTotal;
+    const mudancas = {};
+    if (!String(destAtual).trim() && achada.destinatario) mudancas.destinatario = achada.destinatario;
+    if (!(Number(valAtual) > 0) && achada.valor > 0) mudancas.valorTotal = achada.valor;
+    return mudancas;
+  }
+  function _lerLinhasArquivo(arquivo) {
+    return new Promise((ok, err) => {
+      const leitor = new FileReader();
+      leitor.onload = () => {
+        try {
+          const wb = global.XLSX.read(new Uint8Array(leitor.result), { type: 'array' });
+          ok(global.XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 'A', defval: '', raw: true }));
+        } catch (e) { err(e); }
+      };
+      leitor.onerror = () => err(leitor.error);
+      leitor.readAsArrayBuffer(arquivo);
+    });
+  }
+  async function completarPeloRelatorioBluesoft(arquivos) {
+    if (!global.XLSX) throw new Error('Leitor de planilha não carregou. Atualize a página.');
+    const listas = await Promise.all(arquivos.map(_lerLinhasArquivo));
+    const indice = indiceRelatoriosBluesoft(listas);
+    if (!indice.linhasNf) throw new Error('Nenhuma linha com NF-série encontrada. Confira se são os arquivos Monitoramento Geral da Bluesoft.');
+    const ids = [...new Set(_linhas.map(l => l._recusaId).filter(Boolean))];
+    const pendencias = [];
+    const contagem = { notas: 0, destinatario: 0, valorTotal: 0, naoAchadas: 0, conflitos: 0 };
+    for (const id of ids) {
+      const snap = await fs().collection(COL_RECUSAS).doc(id).get();
+      if (!snap.exists) continue;
+      const dados = snap.data() || {};
+      const notas = Array.isArray(dados.notas) ? dados.notas.slice() : [];
+      let mudou = false;
+      notas.forEach((nota, idx) => {
+        if (!estaNoPatio(dados, nota)) return;
+        const achada = achaNotaNoRelatorio(indice, nota);
+        if (!achada) { contagem.naoAchadas++; return; }
+        if (achada.conflito) { contagem.conflitos++; return; }
+        const mudancas = planejarCompletarNota(dados, nota, achada);
+        const campos = Object.keys(mudancas);
+        if (!campos.length) return;
+        campos.forEach(c => contagem[c]++);
+        contagem.notas++;
+        notas[idx] = Object.assign({}, nota, mudancas);
+        mudou = true;
+      });
+      if (mudou) pendencias.push({ id, notas });
+    }
+    if (!pendencias.length) {
+      global.showToast?.('Nenhuma nota do pátio precisava de dados do relatório.', 'info');
+      return;
+    }
+    const msg = `Vou completar ${contagem.notas} nota(s) em ${pendencias.length} registro(s): ${contagem.destinatario} com mercado e ${contagem.valorTotal} com valor. Só preencho campos vazios. Notas que não estão no relatório: ${contagem.naoAchadas}. Notas com série ambígua (não gravadas): ${contagem.conflitos}.`;
+    global.showConfirm(msg, async () => {
+      const rawFs = raw();
+      for (let i = 0; i < pendencias.length; i += 300) {
+        const batch = rawFs.batch();
+        pendencias.slice(i, i + 300).forEach(p => batch.update(fs().collection(COL_RECUSAS).doc(p.id), { notas: p.notas }));
+        await batch.commit();
+      }
+      global.showToast?.(`${contagem.notas} nota(s) completada(s).`, 'success');
+      await carregarPatio(true);
+      desenhar();
+    }, { title: 'Completar notas pelo relatório', icon: '📥', okLabel: 'Gravar', okClass: 'btn-primary' });
   }
 
   // Polling leve (45s) — decisão tomada com o usuário (não usar
@@ -550,6 +694,7 @@
   global._recebimentoPatioTempoRealInternals = {
     estaNoPatio, recalcularStatusFisico, linhasPorNota, carregarPatio, kpis,
     rankingMercados: _rankingMercados, fmtTempoParado, migrarStatusFisico, buscarMercadoFaltante,
+    indiceRelatoriosBluesoft, achaNotaNoRelatorio, planejarCompletarNota, completarPeloRelatorioBluesoft,
     getLinhas: () => _linhas,
     setFiltroTipo: v => { _filtroTipo = v || ''; }, getFiltroTipo: () => _filtroTipo,
     clicarCard: card => _clicarCard(card), getFiltroEmTratamento: () => _filtroEmTratamento,

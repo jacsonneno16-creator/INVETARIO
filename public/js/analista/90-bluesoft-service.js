@@ -290,8 +290,8 @@
   // prova que outro fluxo (ficha técnica/PCP) já configurou esse produto de
   // propósito, mesmo que agora esteja sem estoque — nunca apaga isso.
   const CAMPOS_PROTEGIDOS_PRODUTO = ['metaCoberturaDias', 'estoqueMinimo', 'estoqueMaximo', 'estoqueSeguranca',
-    'leadTimeDias', 'loteMinimoCompra', 'criticidade', 'pc_min', 'maquina', 'producaoMinima', 'multiploProducao',
-    'tipoMinimo', 'prioridadeProducao', 'alergenico', 'empresaProdutoraId', 'insumos'];
+    'leadTimeDias', 'loteMinimoCompra', 'multiploCompra', 'criticidade', 'fornecedorPadrao', 'capacidadePorCaminhao', 'maxCaminhoesPorEntrega',
+    'pc_min', 'maquina', 'producaoMinima', 'multiploProducao', 'tipoMinimo', 'prioridadeProducao', 'alergenico', 'empresaProdutoraId', 'insumos'];
   function _produtoProtegidoPcp(x) { return CAMPOS_PROTEGIDOS_PRODUTO.some(campo => x[campo] !== undefined); }
   // Busca um-a-um por tipo (o filtro da Bluesoft aceita só um valor por
   // chamada) e junta sem duplicar — um produto raramente casa com mais de
@@ -671,6 +671,35 @@
   // manual (não existe API de portaria/YMS confirmada) — o payload nunca
   // inclui essa chave, então merge:true nunca sobrescreve o que o analista
   // digitou na tela.
+  // Leitura targetada dos documentos que realmente vieram da Bluesoft.
+  // Antes cada sincronização fazia `.get()` na coleção INTEIRA de notas e
+  // cargas só para montar `key -> docId`; isso piora indefinidamente com o
+  // histórico. Agora o Firestore procura somente as chaves deste lote.
+  async function _buscarDocsExistentesPorCampo(col, campo, valores) {
+    const unicos = [...new Set((valores || []).filter(v => v != null).map(v => String(v)))];
+    const mapa = new Map();
+    if (!unicos.length) return mapa;
+    if (!col || typeof col.where !== 'function') {
+      const snap = await col.get();
+      snap.docs.forEach(d => { const x = d.data() || {}; if (x[campo] != null) mapa.set(String(x[campo]), d.id); });
+      return mapa;
+    }
+    try {
+      const lotes = [];
+      for (let i = 0; i < unicos.length; i += 10) lotes.push(unicos.slice(i, i + 10));
+      for (let i = 0; i < lotes.length; i += 4) {
+        const snaps = await Promise.all(lotes.slice(i, i + 4).map(lote => col.where(campo, 'in', lote).get()));
+        snaps.forEach(snap => snap.docs.forEach(d => { const x = d.data() || {}; if (x[campo] != null) mapa.set(String(x[campo]), d.id); }));
+      }
+      return mapa;
+    } catch (e) {
+      console.warn('[Bluesoft] Busca targetada por ' + campo + ' indisponível; usando fallback integral:', e && e.message ? e.message : e);
+      const snap = await col.get();
+      snap.docs.forEach(d => { const x = d.data() || {}; if (x[campo] != null) mapa.set(String(x[campo]), d.id); });
+      return mapa;
+    }
+  }
+
   async function sincronizarRecebimentoBluesoft(opcoes) {
     opcoes = opcoes || {};
     const meses = Math.max(1, Math.min(24, Number(opcoes.meses) || 12));
@@ -716,14 +745,10 @@
 
     const fs = global.getDTFirestore();
     const rawFs = raw();
-    const [notasSnap, cargasSnap] = await Promise.all([
-      fs.collection('recebimento_notas').get(),
-      fs.collection('recebimento_cargas').get(),
+    const [notaDocPorKey, cargaDocPorKey] = await Promise.all([
+      _buscarDocsExistentesPorCampo(fs.collection('recebimento_notas'), 'notaFiscalKey', notasBrutas.map(n => n.notaFiscalKey)),
+      _buscarDocsExistentesPorCampo(fs.collection('recebimento_cargas'), 'movimentacaoCargaKey', cargas.map(c => c.movimentacaoCargaKey)),
     ]);
-    const notaDocPorKey = new Map();
-    notasSnap.docs.forEach(d => { const x = d.data() || {}; if (x.notaFiscalKey != null) notaDocPorKey.set(String(x.notaFiscalKey), d.id); });
-    const cargaDocPorKey = new Map();
-    cargasSnap.docs.forEach(d => { const x = d.data() || {}; if (x.movimentacaoCargaKey != null) cargaDocPorKey.set(String(x.movimentacaoCargaKey), d.id); });
 
     const agora = new Date().toISOString();
     let comDivergencia = 0, criadas = 0, atualizadas = 0;
@@ -1516,7 +1541,11 @@
     const [pedidos, fornecedores, pcpSnap] = await Promise.all([
       obterPedidosCompraBluesoft(filtrosPedidos),
       obterFornecedoresBluesoft(false),
-      global.getDTFirestore().collection('pcp_agendamentos').get().catch(()=>({docs:[]})),
+      (async()=>{
+        const col=global.getDTFirestore().collection('pcp_agendamentos');
+        try{return await col.where('origem','==','bluesoft').get();}
+        catch(e){console.warn('[Bluesoft] Filtro de origem em PCP indisponível; usando fallback completo:',e?.message||e);return col.get().catch(()=>({docs:[]}));}
+      })(),
     ]);
     const fornecedorPorKey = new Map(fornecedores.map(f => [f.fornecedorKey, f.nome]));
     // Compras/PCP usa /api/compras/pedidospendentes, que é a fonte que
@@ -1548,14 +1577,31 @@
     fornecedorPorKey = fornecedorPorKey || new Map();
     const fs = global.getDTFirestore();
     const rawFs = raw();
-    const snap = await fs.collection('recebimento_agendamentos').get();
+    const listaPendentes = Array.isArray(pendentes) ? pendentes : [];
+    if (!listaPendentes.length) return { criados: 0, atualizados: 0 };
+
+    // Não varrer a Agenda inteira só para saber quais pedidos desta sincronização
+    // já existem. Busca somente os números recebidos agora, em lotes compatíveis
+    // com o operador `in`; se o ambiente/índice não suportar a consulta, mantém
+    // o full-scan antigo como fallback para não alterar o comportamento.
+    const numeros = [...new Set(listaPendentes.map(p => p && p.numeroPedido != null ? String(p.numeroPedido) : '').filter(Boolean))];
     const docPorNumeroPedido = new Map();
-    snap.docs.forEach(d => { const x = d.data() || {}; if (x.numeroPedido != null) docPorNumeroPedido.set(String(x.numeroPedido), {id:d.id,dados:x}); });
+    try {
+      for (let i = 0; i < numeros.length; i += 10) {
+        const loteNumeros = numeros.slice(i, i + 10);
+        const snap = await fs.collection('recebimento_agendamentos').where('numeroPedido', 'in', loteNumeros).get();
+        snap.docs.forEach(d => { const x = d.data() || {}; if (x.numeroPedido != null) docPorNumeroPedido.set(String(x.numeroPedido), {id:d.id,dados:x}); });
+      }
+    } catch (e) {
+      console.warn('[Bluesoft] Consulta direcionada da Agenda indisponível; usando fallback completo:', e?.message || e);
+      const snap = await fs.collection('recebimento_agendamentos').get();
+      snap.docs.forEach(d => { const x = d.data() || {}; if (x.numeroPedido != null) docPorNumeroPedido.set(String(x.numeroPedido), {id:d.id,dados:x}); });
+    }
 
     const agora = new Date().toISOString();
     let criados = 0, atualizados = 0;
-    for (let i = 0; i < pendentes.length; i += 300) {
-      const lote = pendentes.slice(i, i + 300);
+    for (let i = 0; i < listaPendentes.length; i += 300) {
+      const lote = listaPendentes.slice(i, i + 300);
       const batch = rawFs.batch();
       lote.forEach(p => {
         const fornecedorNome = p.fornecedorNome || fornecedorPorKey.get(p.fornecedorKey) || ('Fornecedor ' + p.fornecedorKey);

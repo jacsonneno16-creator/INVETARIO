@@ -119,21 +119,15 @@
     if (Number.isNaN(dIni.getTime()) || Number.isNaN(dFim.getTime()) || dIni > dFim) return false;
     return (dFim - dIni) / 86400000 <= DIAS_MAX_PERIODO;
   }
-  // COL_NOTAS (ledger de venda inteiro, usado só pra enriquecer cada nota
-  // com dado que o resumo embutido em recebimento_recusas não carrega —
-  // ex.: valorTotal, vendedorNome) não depende do período escolhido — busca
-  // só 1 vez por sessão, independente de quantas vezes o período mudar.
-  let _notasCarregadas = false;
-  async function _carregarNotasVenda(forcar) {
-    if (_notasCarregadas && !forcar) return;
-    const n = await fs().collection(COL_NOTAS).get();
-    _notas = n.docs.map(d => ({ _id: d.id, ...d.data() }));
-    _notasPorChave = new Map(_notas.map(x => [x.chave, x]));
-    _notasCarregadas = true;
-    // Alimenta o cache compartilhado (ver DT_NOTAS_VENDA_CACHE acima) —
-    // Pátio em Tempo Real aproveita isso pra não buscar de novo.
-    _notas.forEach(x => global.DT_NOTAS_VENDA_CACHE.porChave.set(x._id, x));
-    global.DT_NOTAS_VENDA_CACHE.completa = true;
+  // O backend devolve um resumo projetado das notas junto com as recusas.
+  // Aqui só incorporamos esse resumo em memória; nenhuma leitura adicional
+  // da coleção pesada é permitida no navegador.
+  async function _carregarNotasVenda(chaves) {
+    const unicas = [...new Set((chaves || []).filter(Boolean).map(String))];
+    if (!unicas.length) return;
+    const cache = global.DT_NOTAS_VENDA_CACHE;
+    cache.porChave.forEach((v, k) => { if (!_notasPorChave.has(k)) _notasPorChave.set(k, v); });
+    _notas = [..._notasPorChave.values()];
   }
   // PEDIDO AO VIVO (2026-09-11, Fase 2 do espelho BigQuery): "por que a
   // Bluesoft não demora com 1 ano de dados e aqui demora?" — a resposta
@@ -168,7 +162,6 @@
     // `forcar` direto aqui (bug real, não intencional) fazia toda
     // atualização — inclusive a automática entre telas — rebaixar a
     // coleção inteira à toa, o gargalo de verdade que deixava a tela lenta.
-    await _carregarNotasVenda(false);
     if (_periodoBuscado !== chave || forcar) {
       if (!_indicadoresCarregandoPromise) {
         _indicadoresCarregandoPromise = (async () => {
@@ -177,12 +170,16 @@
           const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarIndicadoresRetornosBigQuery');
           const resposta = await callable({ lojaId, ini, fim });
           const docs = (resposta && resposta.data && resposta.data.recusas) || [];
+          const notasResumo = (resposta && resposta.data && resposta.data.notasResumo) || {};
+          Object.keys(notasResumo).forEach(chave => global.DT_NOTAS_VENDA_CACHE.porChave.set(chave, notasResumo[chave]));
           // PEDIDO AO VIVO (2026-08-31): devolução auto-gravada (origem:
           // 'AUTOMATICO') tem indicador próprio e separado — ver
           // 102-devolucoes-bi-indicadores.js. Excluída daqui pra não
           // misturar motorista/transportadora/box (que ela não tem) com
           // os retornos físicos de verdade processados pelo Coletor.
           _recusas = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
+          const chavesNotas = _recusas.flatMap(r => (r.notas || []).map(n => n && n.chave).filter(Boolean));
+          await _carregarNotasVenda(chavesNotas);
           _periodoBuscado = chave;
         })();
       }

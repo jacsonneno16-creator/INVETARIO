@@ -50,6 +50,17 @@ function loadAnalista(colecoes) {
     qrcode: () => ({ addData() {}, make() {}, createDataURL: () => 'data:image/gif;base64,AAAA' }),
     _currentAnalistaUser: { email: 'analista@daterrinha.com' },
   };
+  window.getDTLojaAtiva=()=> 'loja_matriz';
+  window.getDTRawFirestore=()=>({collection:(nome)=> nome==='lojas'?{doc:()=>({collection:(sub)=>colecoes?.[sub]||mockColecao([])})}:mockColecao([])});
+  window.firebase={ app:()=>({ functions:()=>({ httpsCallable:(nome)=>async()=>{
+    const rec=colecoes?.recebimentos||mockColecao([]);
+    const lista=[...rec._registro.entries()].map(([id,data])=>({_id:id,_lojaId:'loja_matriz',...data}));
+    if(nome==='buscarRecebimentosOperacaoBigQuery') return {data:{recebimentos:lista,incluiTransbordosParceiros:true}};
+    if(nome==='buscarResumoHistoricoRecebimentoBigQuery') return {data:{resumo:{totalNotas:0,totalCargas:lista.length,porMes:[],fornecedores:[],tempos:{}}}};
+    if(nome==='buscarHistoricoRecebimentosBigQuery') return {data:{recebimentos:lista.filter(x=>['FINALIZADO','CANCELADO'].includes(x.status))}};
+    if(nome==='buscarTransbordoTodasLojasBigQuery') return {data:{recebimentos:lista.filter(x=>x.tipo==='TRANSBORDO')}};
+    throw new Error('função não mockada: '+nome);
+  } }) }) };
   // setInterval/clearInterval fakes (não-op): 93-recebimento-operacao.js
   // passou a usar setInterval pra atualização periódica (ver comentário
   // "2026-09-11" no arquivo) — nenhum teste aqui exercita esse polling em

@@ -43,6 +43,16 @@ function loadOperacao(colecoes,opts){
     openModal:()=>{}, closeModal:()=>{}, showToast:()=>{}, showConfirm:(msg,exec)=>exec(),
     _currentAnalistaUser:{email:'teste@daterrinha.com'},
   };
+  window.firebase={ app:()=>({ functions:()=>({ httpsCallable:(nome)=>async()=>{
+    if(nome!=='buscarRecebimentosOperacaoBigQuery') throw new Error('função não mockada: '+nome);
+    const col=colecoes?.recebimentos||mockColecao([]);
+    const lista=[...col._registro.entries()].map(([id,data])=>({_id:id,_lojaId:opts?.lojaAtiva||'',...data}));
+    for(const [lojaId,subs] of Object.entries(opts?.lojasParceiras||{})){
+      const parceiro=subs?.recebimentos;
+      if(parceiro?._registro) for(const [id,data] of parceiro._registro.entries()) lista.push({_id:id,_lojaId:lojaId,...data});
+    }
+    return {data:{recebimentos:lista,incluiTransbordosParceiros:true}};
+  } }) }) };
   // setInterval/clearInterval fakes (não-op): 93-recebimento-operacao.js
   // passou a usar setInterval pra atualização periódica (ver comentário
   // "2026-09-11" no arquivo) — nenhum teste aqui exercita esse polling em

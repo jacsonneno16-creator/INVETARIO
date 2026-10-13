@@ -18,14 +18,18 @@
   let _veiculos = [];
   let _docas = [];
   let _rotas = [];
+  let _cadastrosAuxCarregados = false;
+  let _cadastrosAuxPromise = null;
   let _carregado = false;
   let _carregando = false;
+  let _carregamentoPromise = null;
   let _erroCarregamento = '';
   let _lojaCarregada = '';
   let _assinaturaTempoReal = '';
   let _pagina = 1;
   let _filtroHoje = false;
   let _notasEditando = [];
+  let _agendasCompra = [];
 
   // ── Organização em 3 abas (pedido ao vivo do usuário) — substitui o
   // filtro de status solto por um agrupamento fixo, mais fácil de ler de
@@ -44,7 +48,17 @@
   function _abaDoStatus(status) { return Object.keys(ABA_STATUS).find(aba => ABA_STATUS[aba].includes(status)) || 'andamento'; }
   let _abaRecebimento = 'transito';
 
-  function _ehHoje(iso) { return iso && String(iso).slice(0, 10) === new Date().toISOString().slice(0, 10); }
+  // BUG AO VIVO REAL (2026-09-17, mesmo bug encontrado em 97-recebimento-
+  // recusas.js): comparar em UTC (toISOString) faz um registro de fim de
+  // noite (Brasília) já virar "amanhã" em UTC — o filtro "Hoje" escondia
+  // registros que, no relógio local, são de hoje mesmo. Comparação agora é
+  // sempre em data local, nos dois lados.
+  function _dataLocalDe(iso) {
+    const d = new Date(iso);
+    if (!iso || Number.isNaN(d.getTime())) return '';
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function _ehHoje(iso) { return !!iso && _dataLocalDe(iso) === _dataLocalDe(new Date()); }
 
   function fs() { return global.getDTFirestore(); }
   function _lojaAtivaOp() { return (typeof global.getDTLojaAtiva === 'function') ? global.getDTLojaAtiva() : ''; }
@@ -100,20 +114,9 @@
     });
   }
 
-  // BUG AO VIVO REAL (2026-09-11): "carreguei o site e já tá a 2 minutos
-  // sem trazer as informações" (sintoma visto no Pátio em Tempo Real, mas
-  // a causa nem era lá) — este onSnapshot cruzando a loja própria + CADA
-  // loja parceira de transbordo mantinha várias conexões permanentes
-  // abertas ao mesmo tempo. Numa conexão instável, o WebChannel do
-  // Firestore caía e reconectava sozinho — cada reconexão baixava o
-  // snapshot INTEIRO de novo (visto na aba Network: pacotes de 18,8MB e
-  // 8,5MB), lotando as conexões do navegador e travando QUALQUER outra
-  // tela aberta, mesmo sem relação nenhuma com Recebimento. Mesmo ajuste
-  // já feito em Produtos/Notas Retornadas/Recusas/Status nesta sessão:
-  // busca periódica (45s, mesmo intervalo já usado no Pátio em Tempo
-  // Real) em vez de conexão permanente — só continua rodando enquanto
-  // Operação OU Transbordo (que reaproveita estes mesmos dados) estiver
-  // com a página aberta; para sozinho quando nenhuma das duas está ativa.
+  // Abertura e permanência na tela nunca iniciam leituras. O temporizador de
+  // 45 s que atualizava esta tela em segundo plano foi removido: dados só são
+  // consultados por uma ação manual explícita no botão "Buscar dados".
   let _intervalTempoReal = null;
   function _pararTempoRealRecebimento() {
     if (_intervalTempoReal) { clearInterval(_intervalTempoReal); _intervalTempoReal = null; }
@@ -125,18 +128,7 @@
     return !!((op && op.classList.contains('on')) || (tr && tr.classList.contains('on')));
   }
   function _ativarTempoRealRecebimento() {
-    const ativa = _lojaAtivaOp();
-    const origens = _origensParaCruzar();
-    _assinaturaTempoReal = [ativa, ...origens.map(o => o.id).sort()].join('|');
-    if (_intervalTempoReal) return; // já está rodando o poll — próximo tick já usa a assinatura atual
-    _intervalTempoReal = setInterval(() => {
-      if (!_algumaTelaUsandoRecebimentosEstaAberta()) { _pararTempoRealRecebimento(); return; }
-      carregarRecebimentoOperacao(true).then(() => {
-        const paginaOp = document.getElementById('page-recebimento-operacao');
-        if (paginaOp && paginaOp.classList.contains('on')) _desenharRecebimentoOperacao();
-        _notificarMudanca();
-      });
-    }, 45000);
+    _pararTempoRealRecebimento();
   }
 
   // Dona operacional ATUAL de uma carga (correção estrutural — mesma regra
@@ -235,87 +227,94 @@
     const lojaAtual = _lojaAtivaOp();
     if (_lojaCarregada && _lojaCarregada !== lojaAtual) forcar = true;
     if (_carregado && !forcar) return;
-    if (_carregando) return;
+    if (_carregamentoPromise) return _carregamentoPromise;
     _carregando = true;
     _erroCarregamento = '';
-    const fontes = [
-      ['recebimentos', fs().collection(COL_RECEBIMENTOS).get()],
-      ['motoristas', fs().collection('recebimento_motoristas').get()],
-      ['veículos', fs().collection('recebimento_veiculos').get()],
-      ['docas', fs().collection('recebimento_docas').get()],
-      ['rotas', fs().collection(COL_ROTAS).get()],
-    ];
-    const resultados = await Promise.allSettled(fontes.map(([, promise]) => promise));
-    const snap = indice => resultados[indice].status === 'fulfilled' ? resultados[indice].value : { docs: [] };
-    const falhas = resultados.map((r, i) => r.status === 'rejected' ? fontes[i][0] : '').filter(Boolean);
-    const [snapRec, snapMot, snapVeic, snapDoca, snapRotas] = [snap(0), snap(1), snap(2), snap(3), snap(4)];
-    const _lojaDaLeitura = _lojaAtivaOp();
-    if (resultados[0].status === 'fulfilled') _recebimentos = snapRec.docs.map(d => ({ _id: d.id, _lojaId: _lojaDaLeitura, ...d.data() }));
-    if (resultados[1].status === 'fulfilled') _motoristas = snapMot.docs.map(d => ({ _id: d.id, ...d.data() })).filter(m => m.ativo !== false);
-    if (resultados[2].status === 'fulfilled') _veiculos = snapVeic.docs.map(d => ({ _id: d.id, ...d.data() })).filter(v => v.ativo !== false);
-    if (resultados[3].status === 'fulfilled') _docas = snapDoca.docs.map(d => ({ _id: d.id, ...d.data() })).filter(d => d.ativo !== false);
-    if (resultados[4].status === 'fulfilled') _rotas = snapRotas.docs.map(d => ({ _id: d.id, ...d.data() }));
-    // Cruza com TODAS as origens que têm rota pra esta loja — mesmo padrão
-    // do Coletor (ver comentário em _refRecCrossLoja acima). Nunca trava o
-    // carregamento por conta disso: sem rota configurada, ou se alguma
-    // consulta cross-loja falhar, o resto continua funcionando normalmente.
-    const origens = _origensParaCruzar();
-    if (origens.length) {
-      const resultadosParceira = await Promise.all(origens.map(async p => {
+    _carregamentoPromise = (async () => {
+      // A coleção operacional cresce sem limite. Em vez de reler todos os
+      // documentos do Firestore a cada entrada, usa o espelho atual do
+      // BigQuery. Falha do BigQuery é exibida; não há fallback integral.
+      // O formato devolvido é o mesmo ({_id, _lojaId, ...dados}), então
+      // filtros, transições e regras da tela permanecem inalterados.
+      const carregarRecebimentosPrincipal = async () => {
         try {
-          // `.where('tipo','==','TRANSBORDO')` exigido pela regra do
-          // Firestore (mesmo motivo do Coletor) — sem o filtro, a consulta
-          // falha inteira com permission-denied.
-          const snapParc = await global.getDTRawFirestore().collection('lojas').doc(p.id).collection(COL_RECEBIMENTOS).where('tipo', '==', 'TRANSBORDO').get();
-          return snapParc.docs.map(d => ({ _id: d.id, _lojaId: p.id, ...d.data() }));
-        } catch (e) {
-          console.warn('[Recebimento] Falha ao buscar transbordos da loja parceira ' + p.id + ':', e?.message || e);
-          return [];
+          const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarRecebimentosOperacaoBigQuery');
+          const resp = await callable({ lojaId: lojaAtual });
+          const lista = resp && resp.data && Array.isArray(resp.data.recebimentos) ? resp.data.recebimentos : [];
+          return { __dtListaPronta: true, lista, incluiTransbordosParceiros: resp?.data?.incluiTransbordosParceiros === true };
+        } catch (eBq) {
+          console.warn('[Recebimento] BigQuery operacional indisponível:', eBq?.message || eBq);
+          throw eBq;
         }
-      }));
-      resultadosParceira.forEach(recsParceira => { _recebimentos = _recebimentos.concat(recsParceira); });
+      };
+      const fontes = [
+        ['recebimentos', carregarRecebimentosPrincipal()],
+        ['rotas', fs().collection(COL_ROTAS).get()],
+      ];
+      const resultados = await Promise.allSettled(fontes.map(([, promise]) => promise));
+      const snap = indice => resultados[indice].status === 'fulfilled' ? resultados[indice].value : { docs: [] };
+      const falhas = resultados.map((r, i) => r.status === 'rejected' ? fontes[i][0] : '').filter(Boolean);
+      const [snapRec, snapRotas] = [snap(0), snap(1)];
+      const _lojaDaLeitura = _lojaAtivaOp();
+      const backendIncluiParceiros = !!(snapRec && snapRec.__dtListaPronta && snapRec.incluiTransbordosParceiros);
+      if (resultados[0].status === 'fulfilled') {
+        _recebimentos = snapRec && snapRec.__dtListaPronta
+          ? snapRec.lista.map(r => ({ ...r, _lojaId: r._lojaId || _lojaDaLeitura }))
+          : snapRec.docs.map(d => ({ _id: d.id, _lojaId: _lojaDaLeitura, ...d.data() }));
+      }
+      if (resultados[1].status === 'fulfilled') _rotas = snapRotas.docs.map(d => ({ _id: d.id, ...d.data() }));
+      // Cruza com TODAS as origens que têm rota pra esta loja — mesmo padrão
+      // do Coletor (ver comentário em _refRecCrossLoja acima). Nunca trava o
+      // carregamento por conta disso: sem rota configurada, ou se alguma
+      // consulta cross-loja falhar, o resto continua funcionando normalmente.
+      const origens = backendIncluiParceiros ? [] : _origensParaCruzar();
+      if (origens.length) {
+        const resultadosParceira = await Promise.all(origens.map(async p => {
+          try {
+            // `.where('tipo','==','TRANSBORDO')` exigido pela regra do
+            // Firestore (mesmo motivo do Coletor) — sem o filtro, a consulta
+            // falha inteira com permission-denied.
+            const snapParc = await global.getDTRawFirestore().collection('lojas').doc(p.id).collection(COL_RECEBIMENTOS).where('tipo', '==', 'TRANSBORDO').get();
+            return snapParc.docs.map(d => ({ _id: d.id, _lojaId: p.id, ...d.data() }));
+          } catch (e) {
+            console.warn('[Recebimento] Falha ao buscar transbordos da loja parceira ' + p.id + ':', e?.message || e);
+            return [];
+          }
+        }));
+        resultadosParceira.forEach(recsParceira => { _recebimentos = _recebimentos.concat(recsParceira); });
+      }
+      _recebimentos = _deduplicarRecebimentos(_recebimentos);
+      _lojaCarregada = lojaAtual;
+      _carregado = true;
+      _erroCarregamento = falhas.length ? 'Não responderam: ' + falhas.join(', ') + '. Os demais dados foram carregados.' : '';
+      _ativarTempoRealRecebimento();
+    })();
+    try {
+      await _carregamentoPromise;
+    } finally {
+      _carregando = false;
+      _carregamentoPromise = null;
     }
-    _recebimentos = _deduplicarRecebimentos(_recebimentos);
-    _lojaCarregada = lojaAtual;
-    _carregado = true;
-    _carregando = false;
-    _erroCarregamento = falhas.length ? 'Não responderam: ' + falhas.join(', ') + '. Os demais dados foram carregados.' : '';
-    _ativarTempoRealRecebimento();
   }
-
-  // BUG NO PRÓPRIO FIX (2026-09-09): precisa ser função comum, NÃO async —
-  // `return atualizacao` dentro de uma `async function` faz a função devolver
-  // uma Promise NOVA que só "adota" o resultado de `atualizacao`, sem
-  // carregar as propriedades marcadas nela (`.__dtBackground` desaparecia,
-  // confirmado ao testar isolado: `async function` sempre embrulha o
-  // retorno numa Promise própria). Sem `async`/`await` nenhum aqui dentro,
-  // não muda nada retornar `atualizacao` direto — e aí a marcação chega
-  // intacta em quem chama (_callPage).
-  function renderRecebimentoOperacao(forcar) {
+  // Renderizar esta rota monta somente a interface. Nenhuma consulta é
+  // iniciada aqui; a única porta de entrada para leitura é a função manual
+  // abaixo, chamada exclusivamente pelos botões de busca/tentativa.
+  function renderRecebimentoOperacao() {
     const pagina = document.getElementById('page-recebimento-operacao');
     if (!pagina) return;
-    // PEDIDO AO VIVO (2026-09-09): a estrutura aparece imediatamente (com o
-    // que já estiver em memória); a rede atualiza os dados em segundo
-    // plano. Uma consulta lenta nunca mais produz página branca.
     _desenharRecebimentoOperacao();
-    // BUG AO VIVO REAL (2026-09-10): "trocar de tela continua lento" — esta
-    // tela forçava `forcar=true` em TODA reentrada (motivo original: canal
-    // onSnapshot instável, ver histórico), diferente do resto do sistema
-    // que já respeita cache. Agora só força quando pedido explicitamente
-    // (botão "↻ Atualizar", ou "Tentar novamente" depois de uma falha) —
-    // carregarRecebimentoOperacao() já tem seu próprio cache por sessão.
-    const atualizacao = carregarRecebimentoOperacao(forcar);
-    // Marca pro timeout genérico de navegação (03-core-navigation.js,
-    // _callPage) não cobrir esta tela com o aviso dele por cima — esta tela
-    // já cuida do próprio carregamento/erro em segundo plano, granular por
-    // fonte.
-    atualizacao.__dtBackground = true;
-    atualizacao.then(_desenharRecebimentoOperacao).catch(e => {
+  }
+
+  async function _buscarRecebimentosManual() {
+    if (_carregando) return;
+    _desenharRecebimentoOperacao();
+    try {
+      await carregarRecebimentoOperacao(true);
+    } catch (e) {
       _carregando = false;
       _erroCarregamento = e.message || String(e);
-      _desenharRecebimentoOperacao();
-    });
-    return atualizacao;
+    }
+    _desenharRecebimentoOperacao();
   }
 
   function fmtMin(m) { return m == null ? '—' : (m >= 60 ? (m / 60).toFixed(1) + 'h' : Math.round(m) + 'min'); }
@@ -337,11 +336,12 @@
 
     pagina.innerHTML = `
       ${_carregando ? '<div style="font-size:.76rem;color:var(--muted);margin-bottom:10px">🔄 Atualizando recebimentos...</div>' : ''}
+      ${!_carregado && !_carregando && !_erroCarregamento ? '<div style="font-size:.76rem;color:var(--muted);background:var(--surface-2,#f8fafc);border:1px solid var(--border,#e2e8f0);border-radius:8px;padding:8px 12px;margin-bottom:10px">Selecione os filtros desejados e clique em <b>Buscar dados</b>. Abrir esta tela não consulta nenhuma base.</div>' : ''}
       ${_erroCarregamento ? '<div style="font-size:.76rem;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;margin-bottom:10px">⚠️ ' + esc(_erroCarregamento) + ' <button type="button" class="btn btn-ghost btn-sm" data-recop-recarregar="1">Tentar novamente</button></div>' : ''}
       <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:14px">
         <div><div class="page-title" style="font-size:1.15rem">🚚 Recebimentos</div><div style="font-size:.74rem;color:var(--muted)">${_recebimentos.length.toLocaleString('pt-BR')} carga(s) registrada(s)</div></div>
         <div style="display:flex;gap:8px">
-          <button type="button" class="btn btn-ghost btn-sm" data-recop-atualizar="1" title="Buscar os dados mais recentes">↻ Atualizar</button>
+          <button type="button" class="btn btn-ghost btn-sm" data-recop-atualizar="1" title="Buscar os dados mais recentes">🔎 Buscar dados</button>
           <button type="button" class="btn btn-primary btn-sm" data-recop-novo="1">+ Novo Recebimento</button>
         </div>
       </div>
@@ -392,11 +392,44 @@
     global.aplicarPermissoesAnalista?.();
   }
 
+
+  async function _carregarCadastrosAuxiliares(forcar) {
+    if (_cadastrosAuxCarregados && !forcar) return;
+    if (_cadastrosAuxPromise) return _cadastrosAuxPromise;
+    _cadastrosAuxPromise = (async () => {
+      const fontes = [
+        fs().collection('recebimento_motoristas').get(),
+        fs().collection('recebimento_veiculos').get(),
+        fs().collection('recebimento_docas').get(),
+      ];
+      const resultados = await Promise.allSettled(fontes);
+      const snap = i => resultados[i].status === 'fulfilled' ? resultados[i].value : { docs: [] };
+      if (resultados[0].status === 'fulfilled') _motoristas = snap(0).docs.map(d => ({ _id: d.id, ...d.data() })).filter(m => m.ativo !== false);
+      if (resultados[1].status === 'fulfilled') _veiculos = snap(1).docs.map(d => ({ _id: d.id, ...d.data() })).filter(v => v.ativo !== false);
+      if (resultados[2].status === 'fulfilled') _docas = snap(2).docs.map(d => ({ _id: d.id, ...d.data() })).filter(d => d.ativo !== false);
+      _cadastrosAuxCarregados = resultados.some(r => r.status === 'fulfilled');
+      const falhas = resultados.filter(r => r.status === 'rejected').length;
+      if (falhas) console.warn('[Recebimento] Cadastros auxiliares incompletos: ' + falhas + ' fonte(s) falharam.');
+    })();
+    try { await _cadastrosAuxPromise; } finally { _cadastrosAuxPromise = null; }
+  }
+
+  async function _carregarAgendasCompra() {
+    const snap = await fs().collection('recebimento_agendamentos').get().catch(() => ({ docs: [] }));
+    _agendasCompra = snap.docs.map(d => ({ _id: d.id, ...d.data() }))
+      .filter(a => a.numeroPedido && !/final|cancel/i.test(String(a.status || '')))
+      .sort((a,b) => String(a.dataPrevista || a.dataAgendada || '').localeCompare(String(b.dataPrevista || b.dataAgendada || '')));
+    return _agendasCompra;
+  }
+
   // ── "+ Novo Recebimento" (equivalente manual do 1º bip, seção 9) ────────
-  function recopNovo() {
+  async function recopNovo() {
+    await Promise.all([_carregarCadastrosAuxiliares(), _carregarAgendasCompra()]);
     _notasEditando = [];
     document.getElementById('recop-doc-id').value = '';
     document.getElementById('recop-fornecedor').value = '';
+    const selPedido = document.getElementById('recop-pedido');
+    if (selPedido) selPedido.innerHTML = '<option value="">— Sem vínculo / recebimento avulso —</option>' + _agendasCompra.map(a => `<option value="${esc(a._id)}">Pedido ${esc(a.numeroPedido)} · ${esc(a.fornecedorNome || 'Fornecedor')} · ${esc(a.dataPrevista || a.dataAgendada || 'sem data')}</option>`).join('');
     document.getElementById('recop-observacao').value = '';
     const selMot = document.getElementById('recop-motorista');
     if (selMot) selMot.innerHTML = '<option value="">— Selecionar —</option>' + _motoristas.map(m => `<option value="${esc(m._id)}">${esc(m.nome)}</option>`).join('');
@@ -423,6 +456,14 @@
   function recopNotaRemover(i) { _notasEditando.splice(i, 1); _redesenharNotasEditando(); }
   function recopNotaCampoAlterado(i, campo, valor) { if (_notasEditando[i]) _notasEditando[i][campo] = valor; }
 
+  function recopPedidoAlterado() {
+    const id = document.getElementById('recop-pedido')?.value || '';
+    const agenda = _agendasCompra.find(a => a._id === id);
+    if (!agenda) return;
+    const f = document.getElementById('recop-fornecedor');
+    if (f && !String(f.value || '').trim()) f.value = agenda.fornecedorNome || '';
+  }
+
   function recopMotoristaAlterado() {
     const motId = document.getElementById('recop-motorista')?.value || '';
     if (!motId) return;
@@ -434,7 +475,9 @@
   }
 
   async function recopSalvar() {
-    const fornecedorNome = String(document.getElementById('recop-fornecedor').value || '').trim();
+    const agendaId = document.getElementById('recop-pedido')?.value || '';
+    const agendaCompra = _agendasCompra.find(a => a._id === agendaId) || null;
+    const fornecedorNome = String(document.getElementById('recop-fornecedor').value || agendaCompra?.fornecedorNome || '').trim();
     if (!fornecedorNome) { global.showToast?.('Informe o fornecedor.', 'error'); return; }
     const motoristaId = document.getElementById('recop-motorista').value || '';
     const veiculoId = document.getElementById('recop-veiculo').value || '';
@@ -450,7 +493,7 @@
     const autor = global._currentAnalistaUser?.email || '';
     const payload = {
       tipo: 'FORNECEDOR', status: docaId ? 'AGUARDANDO_DOCA' : 'CHEGOU', horaChegada: agora,
-      fornecedorNome, motoristaId, motoristaNome: motorista?.nome || '', veiculoId, placa: veiculo?.placa || '',
+      fornecedorNome, numeroPedido: agendaCompra?.numeroPedido || '', agendamentoRecebimentoId: agendaCompra?._id || '', motoristaId, motoristaNome: motorista?.nome || '', veiculoId, placa: veiculo?.placa || '',
       transportadora: motorista?.transportadora || veiculo?.transportadora || '', docaId, docaNome: doca?.nome || '',
       notas, observacao: String(document.getElementById('recop-observacao').value || '').trim(),
       responsavel: autor, criadoEm: agora, criadoPor: autor, atualizadoEm: agora, atualizadoPor: autor,
@@ -658,6 +701,7 @@
 
   global.renderRecebimentoOperacao = renderRecebimentoOperacao;
   global.recopSalvar = recopSalvar;
+  global.recopPedidoAlterado = recopPedidoAlterado;
   global.recopAbrirComFiltro = recopAbrirComFiltro;
   global._recebimentoOperacaoInternals = {
     carregar: carregarRecebimentoOperacao, recebimentos: () => _recebimentos,
@@ -680,12 +724,17 @@
     statusInfo: _statusInfo, onMudanca: fn => _ouvintesMudanca.push(fn),
     // Correção estrutural — posse operacional (mesmo contrato do Coletor).
     lojaResponsavelAtual: _lojaResponsavelAtual, minhaVezDeAgir: _minhaVezDeAgir,
+    carregarCadastrosAuxiliares: _carregarCadastrosAuxiliares,
   };
   global.recopVoltarEtapa = recopVoltarEtapa;
+  global._recebimentoOperacaoBuscaInternals = {
+    buscarManual: _buscarRecebimentosManual,
+    carregado: () => _carregado,
+  };
 
   document.addEventListener('click', function (event) {
-    if (event.target.closest('[data-recop-recarregar]')) { renderRecebimentoOperacao(true); return; }
-    if (event.target.closest('[data-recop-atualizar]')) { renderRecebimentoOperacao(true); return; }
+    if (event.target.closest('[data-recop-recarregar]')) { _buscarRecebimentosManual(); return; }
+    if (event.target.closest('[data-recop-atualizar]')) { _buscarRecebimentosManual(); return; }
     if (event.target.closest('[data-recop-novo]')) { recopNovo(); return; }
     const pg = event.target.closest('[data-recop-pg]'); if (pg) { _pagina += Number(pg.dataset.recopPg); _desenharRecebimentoOperacao(); return; }
     if (event.target.closest('[data-recop-nota-adicionar]')) { recopNotaAdicionar(); return; }

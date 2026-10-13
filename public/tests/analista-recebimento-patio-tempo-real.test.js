@@ -75,7 +75,9 @@ function carregarPagina(colecoes) {
     const col = colecoes?.recebimento_recusas || mockColecao([]);
     const snap = await col.get();
     const recusas = snap.docs.filter(d => (d.data() || {}).statusFisico === 'NO_PATIO').map(d => ({ _id: d.id, ...d.data() }));
-    return { data: { recusas } };
+    const notasCol = colecoes?.recebimento_recusas_notas || mockColecao([]);
+    const notasResumo = Object.fromEntries([...(notasCol._registro || new Map()).entries()].map(([id, data]) => [String(data.chave || id), { ...data }]));
+    return { data: { recusas, notasResumo } };
   } }) }), firestore: { FieldPath: { documentId: () => ({ __isDocumentIdSentinel: true }) } } };
   win.showToast = () => {};
   win.aplicarPermissoesAnalista = () => {};
@@ -84,6 +86,82 @@ function carregarPagina(colecoes) {
 }
 
 const I = win => win._recebimentoPatioTempoRealInternals;
+
+test('timeout do cache usa a consulta alternativa e ignora resposta atrasada do cache', async () => {
+  let resolverCache;
+  const cache = { doc: () => ({ get: () => new Promise(resolve => { resolverCache = resolve; }) }) };
+  const recusas = mockColecao([{ id: 'r1', data: {
+    origem: 'COLETOR', statusFisico: 'NO_PATIO', numeroNota: 'ATUAL', tratamento: 'RECUSA', valorTotal: 50,
+  } }]);
+  const { win } = carregarPagina({ recebimento_patio_cache: cache, recebimento_recusas: recusas });
+  const timer = win.setTimeout.bind(win);
+  win.setTimeout = (fn, ms) => timer(fn, ms === 15000 ? 0 : ms);
+  await win.renderPatioTempoReal();
+  assert.equal(I(win).getLinhas()[0].numeroNota, 'ATUAL');
+  resolverCache({ exists: true, data: () => ({ atualizadoEm: new Date().toISOString(), linhas: [
+    { origem: 'COLETOR', numeroNota: 'ANTIGA', tratamento: 'RECUSA' },
+  ] }) });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(I(win).getLinhas()[0].numeroNota, 'ATUAL', 'cache atrasado não substitui resultado já publicado');
+});
+
+test('falha inicial não informa pátio vazio; botão Tentar de novo recupera os dados', async () => {
+  let falhar = true;
+  const { win, document } = carregarPagina({});
+  win.firebase.app = () => ({ functions: () => ({ httpsCallable: () => async () => {
+    if (falhar) throw new Error('Serviço indisponível');
+    return { data: { recusas: [{ origem: 'COLETOR', numeroNota: '123', tratamento: 'RECUSA', valorTotal: 50 }] } };
+  } }) });
+  await win.renderPatioTempoReal();
+  const pagina = document.getElementById('page-recebimento-patio-tempo-real');
+  assert.match(pagina.textContent, /Dados não carregados/);
+  assert.doesNotMatch(pagina.textContent, /Nenhuma nota parada|R\$ 0,00/);
+  falhar = false;
+  const botoes = [...pagina.querySelectorAll('[data-patio-atualizar]')];
+  assert.equal(botoes.length, 2);
+  botoes.find(b => b.textContent === 'Tentar de novo').click();
+  assert.match(pagina.textContent, /Atualizando/);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(I(win).getLinhas()[0].numeroNota, '123');
+  assert.doesNotMatch(pagina.textContent, /Serviço indisponível|Dados não carregados/);
+});
+
+test('falha na atualização preserva as notas e valores já carregados', async () => {
+  let falhar = false;
+  const { win, document } = carregarPagina({});
+  win.firebase.app = () => ({ functions: () => ({ httpsCallable: () => async () => {
+    if (falhar) throw new Error('Serviço indisponível');
+    return { data: { recusas: [{ origem: 'COLETOR', numeroNota: '123', tratamento: 'RECUSA', valorTotal: 50 }] } };
+  } }) });
+  await win.renderPatioTempoReal();
+  falhar = true;
+  await I(win).carregarPatio(true);
+  await win.renderPatioTempoReal();
+  assert.equal(I(win).kpis().valorTotal, 50);
+  assert.match(document.getElementById('page-recebimento-patio-tempo-real').textContent, /Serviço indisponível/);
+});
+
+test('Function do Pátio pendurada encerra com erro recuperável após 15 segundos', async () => {
+  const { win, document } = carregarPagina({});
+  win.firebase.app = () => ({ functions: () => ({ httpsCallable: () => () => new Promise(() => {}) }) });
+  const timer = win.setTimeout.bind(win);
+  win.setTimeout = (fn, ms) => timer(fn, ms === 15000 ? 0 : ms);
+  await win.renderPatioTempoReal();
+  assert.match(document.getElementById('page-recebimento-patio-tempo-real').textContent, /Tempo esgotado|Dados não carregados/);
+  assert.equal(document.querySelector('[data-patio-atualizar]').disabled, false);
+});
+
+test('cache válido vazio representa zero confirmado, sem chamar a consulta alternativa', async () => {
+  const { win, document } = carregarPagina({ recebimento_patio_cache: mockColecao([
+    { id: 'atual', data: { atualizadoEm: new Date().toISOString(), linhas: [] } },
+  ]) });
+  let chamadas = 0;
+  win.firebase.app = () => ({ functions: () => ({ httpsCallable: () => async () => { chamadas++; throw new Error('Não deve chamar'); } }) });
+  await win.renderPatioTempoReal();
+  assert.equal(chamadas, 0);
+  assert.match(document.getElementById('page-recebimento-patio-tempo-real').textContent, /Nenhuma nota parada/);
+  assert.doesNotMatch(document.getElementById('page-recebimento-patio-tempo-real').textContent, /Dados não carregados/);
+});
 
 // ── estaNoPatio / recalcularStatusFisico ────────────────────────────────
 test('estaNoPatio: Recusa ainda não finalizada continua no pátio; FINALIZADO sai', () => {
@@ -181,40 +259,26 @@ test('carregarPatio: filtro fino por nota — documento com statusFisico NO_PATI
 // polling de 45s. Agora agrupa em lotes de até 30 chaves por consulta
 // `in` — prova aqui: 33 notas viram 2 consultas em lote, nunca 33
 // leituras individuais via .doc().get().
-test('carregarPatio: enriquecimento busca em LOTES (in, até 30 chaves), não 1 leitura por nota', async () => {
-  const notasRecusa = [];
-  const notasDocs = [];
-  for (let i = 1; i <= 33; i++) {
-    const chave = 'CH' + i;
-    notasRecusa.push({ chave, numeroNota: String(1000 + i), tratamento: 'RECUSA', statusRetorno: 'AGUARD_FISCAL' });
-    notasDocs.push({ id: chave, data: { destinatario: 'Mercado ' + i, valorTotal: i } });
-  }
+test('carregarPatio: enriquecimento vem de notasResumo da Function e não consulta recebimento_recusas_notas no navegador', async () => {
+  let leiturasNotas = 0;
   const recusas = mockColecao([
-    { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: notasRecusa } },
+    { id: 'r1', data: { origem:'COLETOR', statusFisico:'NO_PATIO', notas:[{chave:'A',numeroNota:'100',tratamento:'RECUSA'}] } },
+    { id: 'r2', data: { origem:'COLETOR', statusFisico:'NO_PATIO', notas:[{chave:'B',numeroNota:'200',tratamento:'RECUSA'}] } },
   ]);
-  const notas = mockColecao(notasDocs);
-  let chamadasDoc = 0;
-  const docOriginal = notas.doc;
-  notas.doc = id => { chamadasDoc++; return docOriginal(id); };
-  let chamadasWhereIn = 0;
-  const whereOriginal = notas.where;
-  notas.where = (campo, op, valor) => { if (op === 'in') chamadasWhereIn++; return whereOriginal(campo, op, valor); };
-
-  const { win } = carregarPagina({ recebimento_recusas: recusas, recebimento_recusas_notas: notas });
+  const notas = mockColecao([
+    { id:'A', data:{ chave:'A', destinatario:'Mercado 1', valorTotal:10 } },
+    { id:'B', data:{ chave:'B', destinatario:'Mercado 2', valorTotal:20 } },
+  ]);
+  const getOriginal = notas.get;
+  notas.get = async (...args) => { leiturasNotas++; return getOriginal(...args); };
+  const { win } = carregarPagina({ recebimento_recusas:recusas, recebimento_recusas_notas:notas });
   await I(win).carregarPatio(true);
-  const linhas = I(win).getLinhas();
-
-  assert.equal(linhas.length, 33);
-  assert.equal(linhas.find(l => l.numeroNota === '1005').destinatario, 'Mercado 5', 'enriquecimento em lote traz o dado certo pra cada nota');
-  assert.equal(chamadasDoc, 0, 'nunca usa .doc() individual pra buscar nota');
-  assert.equal(chamadasWhereIn, 2, '33 chaves em lotes de 30 = 2 consultas em lote (30 + 3)');
+  assert.equal(leiturasNotas, 0, 'browser não lê coleção pesada de notas');
+  const linhas=I(win).getLinhas();
+  assert.equal(linhas[0].destinatario,'Mercado 1');
+  assert.equal(linhas[1].destinatario,'Mercado 2');
 });
 
-// PEDIDO AO VIVO (2026-09-11): "olha se não tem como os dados se
-// conversarem entre as telas" — quando Indicadores de Retornos (98) já
-// carregou a coleção inteira nesta sessão (DT_NOTAS_VENDA_CACHE.completa
-// = true), Pátio em Tempo Real reaproveita 100% — zero leituras no
-// Firestore pro enriquecimento.
 test('carregarPatio: com o cache compartilhado (DT_NOTAS_VENDA_CACHE) já completo, não busca NADA no Firestore pro enriquecimento', async () => {
   const recusas = mockColecao([
     { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [
@@ -300,6 +364,7 @@ test('carregarPatio: cache PARADO há mais de 10min (job quebrado) cai pro camin
 test('BUG AO VIVO REAL: carregarPatio nunca fica pendurado pra sempre — desiste depois do limite de tempo e mostra erro com "Tentar de novo"', async () => {
   const cachePendurado = { doc: () => ({ get: () => new Promise(() => {}) }) }; // nunca resolve nem rejeita
   const { win, document } = carregarPagina({ recebimento_patio_cache: cachePendurado, recebimento_recusas: mockColecao([]), recebimento_recusas_notas: mockColecao([]) });
+  win.firebase.app = () => ({ functions: () => ({ httpsCallable: () => () => new Promise(() => {}) }) });
   const setTimeoutOriginal = win.setTimeout;
   win.setTimeout = (fn) => setTimeoutOriginal(fn, 0); // dispara o limite de tempo já, sem esperar 15s de verdade
 
@@ -338,6 +403,29 @@ test('kpis: soma total/recusas/reentregas (qtd+valor) e conta notas em tratament
   assert.equal(k.reentregas, 1);
   assert.equal(k.valorReentregas, 30);
   assert.equal(k.emTratamento, 1, 'só a recusa com status AGUARD_FISCAL conta — a sem status (Aguard. Monitoramento) e a Reentrega não');
+});
+
+// PEDIDO AO VIVO (2026-10-02): "essas notas em tratamento quero que
+// coloque ali as notas não classificadas" — o card (e o filtro por trás
+// dele) passou a somar nota sem tratamento nenhum ('') junto com a Recusa
+// de status ativo que já contava antes.
+test('kpis/clicar card "tratamento": nota sem classificação nenhuma (\'\') agora também conta e aparece ao filtrar', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'A', numeroNota: '1', tratamento: 'RECUSA', statusRetorno: 'AGUARD_FISCAL' }] } },
+    { id: 'r2', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'B', numeroNota: '2', tratamento: '' }] } },
+    { id: 'r3', data: { origem: 'COLETOR', criadoEm: '2026-08-01T00:00:00.000Z', statusFisico: 'NO_PATIO', notas: [{ chave: 'C', numeroNota: '3', tratamento: 'REENTREGA' }] } },
+  ]);
+  const { win } = carregarPagina({ recebimento_recusas: recusas, recebimento_recusas_notas: mockColecao([]) });
+  await I(win).carregarPatio(true);
+  assert.equal(I(win).kpis().emTratamento, 2, 'Recusa com status ativo (1) + não classificada (2) — Reentrega (3) fica de fora');
+
+  I(win).clicarCard('tratamento');
+  assert.deepEqual(Array.from(I(win).filtradas().map(l => l.numeroNota)).sort(), ['1', '2']);
+  assert.equal(I(win).getFiltroEmTratamento(), true);
+
+  I(win).clicarCard('tratamento'); // clicar de novo desliga
+  assert.equal(I(win).getFiltroEmTratamento(), false);
+  assert.equal(I(win).filtradas().length, 3);
 });
 test('ranking de mercados: agrupa por destinatario com qtd/valor/recusas/reentregas', async () => {
   const recusas = mockColecao([

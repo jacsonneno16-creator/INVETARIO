@@ -74,6 +74,15 @@ function carregarPagina(colecoes){
   win.eval(recusasCode);
   return { win, document };
 }
+// PEDIDO AO VIVO (2026-09-17): "o importar motorista pode ficar ali, na
+// adicionar — na hora que eu clicar, aparecem as duas opções, importar e
+// manual" — a importação por planilha saiu de card próprio sempre visível
+// e virou um modo alternativo dentro do card de Motoristas (padrão manual
+// por default); precisa clicar no botão "Importar planilha" pra revelar o
+// input de arquivo antes de qualquer coisa.
+function abrirModoImportar(document){
+  document.querySelector('[data-recusa-motorista-modo="importar"]').click();
+}
 function selecionarArquivoFalso(document){
   const input=document.getElementById('recusas-import-cadastros-arquivo');
   Object.defineProperty(input,'files',{ value:[{ name:'motoristas.xlsx', arrayBuffer: async()=>new ArrayBuffer(0) }], configurable:true });
@@ -85,6 +94,7 @@ test('lê a planilha, pula o cabeçalho e mostra prévia com contagem de motoris
   const motivos=mockColecao([]);
   const { win, document }=carregarPagina({ recebimento_recusas_motoristas:motoristas, recebimento_recusas_motivos:motivos, recebimento_recusas_notas:mockColecao([]), recebimento_recusas:mockColecao([]) });
   await win.renderRecebimentoRecusasCadastros();
+  abrirModoImportar(document);
   selecionarArquivoFalso(document);
   document.querySelector('[data-recusa-ler-import-cadastros]').click();
   await new Promise(r=>setTimeout(r,0));
@@ -101,6 +111,7 @@ test('confirmar a importação grava os motoristas/motivos novos, completa a pla
   const motivos=mockColecao([{id:'v1',data:{nome:'Validade curta',ativo:true}}]); // já existe (case-insensitive) — não deve duplicar
   const { win, document }=carregarPagina({ recebimento_recusas_motoristas:motoristas, recebimento_recusas_motivos:motivos, recebimento_recusas_notas:mockColecao([]), recebimento_recusas:mockColecao([]) });
   await win.renderRecebimentoRecusasCadastros();
+  abrirModoImportar(document);
   selecionarArquivoFalso(document);
   document.querySelector('[data-recusa-ler-import-cadastros]').click();
   await new Promise(r=>setTimeout(r,0));
@@ -137,6 +148,7 @@ test('planilha sem nada de novo (tudo já cadastrado) mostra mensagem clara em v
   ]);
   const { win, document }=carregarPagina({ recebimento_recusas_motoristas:motoristas, recebimento_recusas_motivos:motivos, recebimento_recusas_notas:mockColecao([]), recebimento_recusas:mockColecao([]) });
   await win.renderRecebimentoRecusasCadastros();
+  abrirModoImportar(document);
   selecionarArquivoFalso(document);
   document.querySelector('[data-recusa-ler-import-cadastros]').click();
   await new Promise(r=>setTimeout(r,0));
@@ -150,6 +162,7 @@ test('sem arquivo selecionado, avisa e não tenta ler nada',async()=>{
   const toasts=[];
   win.showToast=(m,t)=>toasts.push({m,t});
   await win.renderRecebimentoRecusasCadastros();
+  abrirModoImportar(document);
   document.querySelector('[data-recusa-ler-import-cadastros]').click();
   await new Promise(r=>setTimeout(r,0));
   assert.ok(toasts.some(t=>/Selecione uma planilha/.test(t.m)));
@@ -180,6 +193,7 @@ test('PEDIDO AO VIVO: tela de Notas Retornadas NÃO mostra mais cadastro de moto
   assert.match(htmlCadastros,/Carlos/);
   assert.match(htmlCadastros,/Sem pedido/);
   assert.match(htmlCadastros,/Ana/);
-  assert.match(htmlCadastros,/Importar Motoristas \+ Motivos/);
-  assert.equal(doc2.querySelectorAll('[data-recusa-add]').length,3,'os 3 cadastros (motorista/motivo/conferente) aparecem juntos, bem separados em cards próprios');
+  assert.equal(doc2.querySelectorAll('[data-recusa-add]').length,3,'os 3 cadastros (motorista/motivo/conferente) aparecem juntos, bem separados em cards próprios, no modo manual (padrão)');
+  abrirModoImportar(doc2);
+  assert.match(doc2.getElementById('page-recebimento-recusas-cadastros').innerHTML,/Importar Motoristas \+ Motivos/,'importação por planilha continua existindo, só que atrás do modo "Importar" no card de Motoristas');
 });

@@ -109,15 +109,33 @@
     // 28-recebimento-paletes-ledger.js. Só leitura aqui — a contagem manual
     // (COL_PALETES_ESTOQUE) continua existindo só como CONFERÊNCIA, nunca
     // ajusta o ledger sozinha.
+    // PEDIDO AO VIVO (2026-10-02): "carga em trânsito mas não tem nada" —
+    // confirmado com dados reais: "Em Trânsito/Transbordo" ficava preso num
+    // número velho (ex.: 5, 26) mesmo depois de usar "↺ Zerar Em Trânsito"
+    // e mesmo sem nenhuma carga pendente em Cargas (Montagem/Expedição).
+    // Causa: esta coluna soma TODO o histórico de movimentos TRANSBORDO_*
+    // desde sempre (linha ~100 acima), incluindo sobras de testes antigos
+    // da feature de Cargas (de antes da exclusão de carga desfazer o
+    // ledger direito — ver recebimento_paletes_movimentos órfãos,
+    // expedição sem recebimento correspondente). "Zerar Em Trânsito" só
+    // ajusta o TOTAL do ledger (ledger.emTransito, via AJUSTE_MANUAL — não
+    // é um tipo em TIPOS_TRANSBORDO, de propósito), nunca o log de
+    // movimentos em si, então essa soma nunca se corrigia sozinha. Como o
+    // total do ledger é a fonte de verdade (comentário na linha ~106
+    // acima), a parte "transbordo" NUNCA pode ser fisicamente maior que
+    // esse total — por isso agora ela é limitada a no máximo o total
+    // atual, o que também corrige automaticamente qualquer sobra futura
+    // sem precisar de um campo/migração novos.
     _ledgerPorLoja = _lojas.map((loja, i) => {
       const doc = porLojaLedger[i];
       const dados = doc && doc.exists ? doc.data() || {} : {};
+      const emTransito = Number.isFinite(dados.emTransito) ? dados.emTransito : 0;
       return {
         lojaId: loja.id,
         lojaNome: loja.nome || loja.codigo || loja.id,
         disponivel: Number.isFinite(dados.disponivel) ? dados.disponivel : 0,
-        emTransito: Number.isFinite(dados.emTransito) ? dados.emTransito : 0,
-        emTransitoTransbordo: emTransitoTransbordoPorLoja[i] || 0,
+        emTransito,
+        emTransitoTransbordo: Math.min(emTransitoTransbordoPorLoja[i] || 0, emTransito),
         total: Number.isFinite(dados.total) ? dados.total : 0,
       };
     });
@@ -283,6 +301,31 @@
   // toca Em Trânsito. Este botão zera especificamente essa coluna, pra
   // quando o Analista sabe que não tem nenhum palete de verdade em
   // trânsito daquela loja no momento.
+  async function _ajustarSaldoComoContagem(lojaId) {
+    const contagem = _contagemManualDe(lojaId);
+    if (contagem == null) { if (global.showToast) global.showToast('Essa loja ainda não tem nenhuma contagem manual registrada.', 'info'); return; }
+    const ledger = _ledgerDe(lojaId);
+    const disponivelAtual = ledger ? ledger.disponivel : 0;
+    const diferenca = contagem - disponivelAtual;
+    if (diferenca === 0) { if (global.showToast) global.showToast('Já está batendo — nada pra ajustar.', 'info'); return; }
+    const loja = _lojas.find(l => l.id === lojaId);
+    const msg = 'Ajustar o Disponível (sistema) de ' + (loja ? (loja.nome || loja.id) : lojaId) + ' de ' + disponivelAtual + ' pra ' + contagem + ' (contagem manual mais recente)?';
+    if (!confirm(msg)) return;
+    try {
+      await global._aplicarMovimentoLedger(lojaId, 'AJUSTE_MANUAL', { disponivelDelta: diferenca }, { colecao: COL_PALETES_LEDGER, id: 'atual' });
+      if (ledger) {
+        ledger.disponivel = contagem;
+        ledger.total = ledger.disponivel + ledger.emTransito;
+      } else {
+        _ledgerPorLoja.push({ lojaId, lojaNome: loja ? (loja.nome || loja.id) : lojaId, disponivel: contagem, emTransito: 0, emTransitoTransbordo: 0, total: contagem });
+      }
+      _desenharPaletes();
+      if (global.showToast) global.showToast('Saldo ajustado.', 'success');
+    } catch (e) {
+      if (global.showToast) global.showToast('Erro ao ajustar: ' + (e.message || e), 'error'); else alert('Erro ao ajustar: ' + (e.message || e));
+    }
+  }
+
   async function _zerarEmTransito(lojaId) {
     const ledger = _ledgerDe(lojaId);
     if (!ledger || !ledger.emTransito) { if (global.showToast) global.showToast('Já está zerado — nada pra ajustar.', 'info'); return; }
@@ -301,62 +344,42 @@
     }
   }
 
-  async function _ajustarSaldoComoContagem(lojaId) {
-    const estoque = _estoquePorLoja.find(e => e.lojaId === lojaId);
-    if (!estoque || estoque.quantidade == null) return;
-    const ledger = _ledgerDe(lojaId) || { disponivel: 0, emTransito: 0, total: 0 };
-    const alvo = Number(estoque.quantidade);
-    const delta = alvo - ledger.disponivel;
-    if (delta === 0) { if (global.showToast) global.showToast('Já está batendo — nada pra ajustar.', 'info'); return; }
-    const msg = 'Ajustar o Disponível (sistema) de ' + estoque.lojaNome + ' de ' + ledger.disponivel + ' para ' + alvo + ' (a contagem manual registrada)?';
-    if (!confirm(msg)) return;
-    try {
-      await global._aplicarMovimentoLedger(lojaId, 'AJUSTE_MANUAL', { disponivelDelta: delta }, { colecao: COL_PALETES_ESTOQUE, id: estoque.data || '' });
-      ledger.disponivel = alvo;
-      ledger.total = ledger.disponivel + ledger.emTransito;
-      if (!_ledgerPorLoja.some(l => l.lojaId === lojaId)) _ledgerPorLoja.push(Object.assign({ lojaId, lojaNome: estoque.lojaNome }, ledger));
-      _desenharPaletes();
-      if (global.showToast) global.showToast('Saldo ajustado.', 'success');
-    } catch (e) {
-      if (global.showToast) global.showToast('Erro ao ajustar: ' + (e.message || e), 'error'); else alert('Erro ao ajustar: ' + (e.message || e));
-    }
-  }
 
+  // PEDIDO AO VIVO (2026-09-06): mostrar a Diferença entre o Disponível
+  // (sistema, calculado pelo ledger) e a Contagem manual mais recente, e um
+  // botão pra aplicar a contagem como novo saldo (ver
+  // _ajustarSaldoComoContagem abaixo) — nunca ajusta sozinho, só avisa.
+  function _contagemManualDe(lojaId) {
+    const e = _estoquePorLoja.find(x => x.lojaId === lojaId);
+    return e && e.quantidade != null ? Number(e.quantidade) : null;
+  }
   function _estoqueTabelaHtml() {
     const linhas = _estoqueFiltrado().map(e => {
       const ledger = _ledgerDe(e.lojaId);
       const disponivel = ledger ? ledger.disponivel : null;
       const emTransitoTotal = ledger ? ledger.emTransito : null;
       const emTransitoTransbordo = ledger ? (ledger.emTransitoTransbordo || 0) : null;
-      // PEDIDO AO VIVO (2026-09-08): "Em Trânsito" (a coluna que já existia)
-      // passa a mostrar só entrega de motorista/transferência/ajuste — o
-      // que sobra do total depois de tirar o que é carga de transbordo.
-      // Math.max(0,...) protege contra "Zerar Em Trânsito" (zera só o
-      // TOTAL do ledger, não o log de movimentos de transbordo) deixar
-      // esse resto artificialmente negativo — nunca mostra número
-      // negativo, mesmo que as duas colunas deixem de somar exatamente o
-      // total nesse cenário específico (uso do botão de correção manual).
       const emTransitoEntrega = emTransitoTotal != null ? Math.max(0, emTransitoTotal - (emTransitoTransbordo || 0)) : null;
-      const diferenca = (ledger && e.quantidade != null) ? (disponivel - Number(e.quantidade)) : null;
-      const corDiferenca = diferenca == null ? 'var(--muted)' : (diferenca === 0 ? 'var(--muted)' : 'var(--danger,#ef4444)');
-      const botaoAjustar = e.quantidade != null ? `<button type="button" class="btn btn-ghost btn-sm" data-paletes-ajustar-saldo="${esc(e.lojaId)}" title="Faz o Disponível (sistema) virar este número">✓ Aplicar contagem como saldo</button>` : '';
+      const contagemManual = _contagemManualDe(e.lojaId);
+      const diferenca = (disponivel != null && contagemManual != null) ? (disponivel - contagemManual) : null;
+      const botaoAjustarSaldo = contagemManual != null ? `<button type="button" class="btn btn-ghost btn-sm" data-paletes-ajustar-saldo="${esc(e.lojaId)}" title="Ajusta o Disponível (sistema) pra bater com a contagem manual mais recente">🎯 Aplicar contagem como saldo</button>` : '';
       const botaoZerarTransito = emTransitoTotal ? `<button type="button" class="btn btn-ghost btn-sm" data-paletes-zerar-transito="${esc(e.lojaId)}" title="Zera o Em Trânsito — use quando souber que não tem palete de verdade em trânsito">↺ Zerar Em Trânsito</button>` : '';
       return `<tr>
       <td><b>${esc(e.lojaNome)}</b></td>
-      <td class="mono" style="font-weight:700">${e.quantidade != null ? esc(e.quantidade) : '<span style="color:var(--muted)">—</span>'}</td>
       <td style="color:var(--muted);font-size:.78rem">${e.data ? esc(String(e.data).split('-').reverse().join('/')) : 'Nunca registrado'}</td>
       <td class="mono" style="font-weight:700">${disponivel != null ? esc(disponivel) : '<span style="color:var(--muted)">—</span>'}</td>
+      <td class="mono" style="${diferenca ? 'font-weight:700;color:var(--danger,#ef4444)' : ''}">${diferenca != null ? esc(diferenca) : '<span style="color:var(--muted)">—</span>'}</td>
       <td class="mono">${emTransitoTransbordo != null ? esc(emTransitoTransbordo) : '<span style="color:var(--muted)">—</span>'}</td>
       <td class="mono">${emTransitoEntrega != null ? esc(emTransitoEntrega) : '<span style="color:var(--muted)">—</span>'}</td>
-      <td class="mono" style="font-weight:700;color:${corDiferenca}">${diferenca != null ? esc(diferenca > 0 ? '+' + diferenca : diferenca) : '<span style="color:var(--muted)">—</span>'}</td>
-      <td style="display:flex;gap:6px;flex-wrap:wrap">${botaoAjustar}${botaoZerarTransito}</td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">${botaoAjustarSaldo}${botaoZerarTransito}</td>
     </tr>`;
     }).join('');
-    return `<div class="tc"><div style="padding:10px 12px;border-bottom:1px solid var(--border,#e5e7eb);font-weight:700;font-size:.85rem">📦 Paletes em Estoque — último registro de cada loja</div><div style="overflow:auto"><table class="dt-table">
-      <thead><tr><th>Loja</th><th>Contagem manual</th><th>Registrado em</th><th>Disponível (sistema)</th><th>Em Trânsito/Transbordo</th><th>Em Trânsito</th><th>Diferença</th><th></th></tr></thead>
-      <tbody>${linhas || '<tr><td colspan="8">Nenhuma loja com estoque registrado ainda.</td></tr>'}</tbody>
+    return `<div class="tc"><div style="padding:10px 12px;border-bottom:1px solid var(--border,#e5e7eb);font-weight:700;font-size:.85rem">📦 Paletes em Estoque — saldo do último inventário finalizado</div><div style="overflow:auto"><table class="dt-table">
+      <thead><tr><th>Loja</th><th>Inventariado em</th><th>Disponível (sistema)</th><th>Diferença</th><th>Em Trânsito/Transbordo</th><th>Em Trânsito</th><th></th></tr></thead>
+      <tbody>${linhas || '<tr><td colspan="7">Nenhuma loja com inventário registrado ainda.</td></tr>'}</tbody>
     </table></div></div>`;
   }
+
   // PEDIDO AO VIVO (2026-09-04): "tem que ter um histórico de paletes por
   // dia" — série completa (não só o último registro), filtrável por loja
   // igual o resto da tela.
@@ -464,10 +487,10 @@
     }
     const excluir = event.target.closest('[data-paletes-excluir]');
     if (excluir) { _excluirViagemPaletes(excluir.getAttribute('data-paletes-excluir'), excluir.getAttribute('data-paletes-excluir-loja')); return; }
-    const ajustar = event.target.closest('[data-paletes-ajustar-saldo]');
-    if (ajustar) { _ajustarSaldoComoContagem(ajustar.getAttribute('data-paletes-ajustar-saldo')); return; }
     const zerarTransito = event.target.closest('[data-paletes-zerar-transito]');
     if (zerarTransito) { _zerarEmTransito(zerarTransito.getAttribute('data-paletes-zerar-transito')); return; }
+    const ajustarSaldo = event.target.closest('[data-paletes-ajustar-saldo]');
+    if (ajustarSaldo) { _ajustarSaldoComoContagem(ajustarSaldo.getAttribute('data-paletes-ajustar-saldo')); return; }
     const aba = event.target.closest('[data-paletes-aba]');
     if (aba) { _abaAtiva = aba.getAttribute('data-paletes-aba') || 'transito'; _desenharPaletes(); }
   });
@@ -495,8 +518,8 @@
     kpis: _kpis,
     saldoDe,
     excluirViagemPaletes: _excluirViagemPaletes,
-    ajustarSaldoComoContagem: _ajustarSaldoComoContagem,
     zerarEmTransito: _zerarEmTransito,
+    ajustarSaldoComoContagem: _ajustarSaldoComoContagem,
     saldoPorMercado: _saldoPorMercado
   };
 })(window);

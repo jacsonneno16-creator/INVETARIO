@@ -63,11 +63,13 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
 
 // ── Menu "Nova Movimentação" ────────────────────────────────────────────
 function abrirNovaMovimentacaoRecebimento() {
+  if(typeof coletorExigirPermissao==='function'&&!coletorExigirPermissao('recebimento-transbordo','criar'))return;
   goScreen('nova-movimentacao-menu');
 }
 
 // ── Lista de cargas (PENDENTE/EM_TRANSITO) ──────────────────────────────
 function abrirCargasRecebimento() {
+  if(typeof coletorExigirPermissao==='function'&&!coletorExigirPermissao('recebimento-transbordo','criar'))return;
   goScreen('cargas-lista');
   carregarCargasColetor();
 }
@@ -102,6 +104,43 @@ function _cargasEmAberto() {
     .sort(function (a, b) { return String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')); });
 }
 
+var _impressorasRedeCache = null;
+async function _listarImpressorasRedeCarga() {
+  if (_impressorasRedeCache) return _impressorasRedeCache;
+  var raw = typeof getDTRawFirestore === 'function' ? getDTRawFirestore() : null;
+  if (!raw) return [];
+  var lojaId = (typeof getDTLojaAtiva === 'function' && getDTLojaAtiva()) || (APP.lojaAtual && APP.lojaAtual.id) || APP.lojaId || '';
+  var snap = await raw.collection('impressoras_rede').get();
+  _impressorasRedeCache = snap.docs.map(function(d){return Object.assign({_id:d.id}, d.data() || {});}).filter(function(x){return x.ativo !== false && (!x.lojaId || x.lojaId === lojaId);});
+  return _impressorasRedeCache;
+}
+function _documentosImprimiveisCarga(carga) {
+  return ((carga && carga.notasFiscaisProdutos) || []).filter(function(n){return n.produtos && n.produtos.length && n.documentoUrl;});
+}
+async function imprimirDocumentosCarga(cargaId) {
+  var carga = CARGAS_CACHE.find(function(c){return c._id === cargaId;});
+  if (!carga) return toast('Carga não encontrada.', 'e');
+  var docs = _documentosImprimiveisCarga(carga);
+  if (!docs.length) return toast('Ainda não há PDF de nota disponível para impressão.', 'w');
+  var impressoras = [];
+  try { impressoras = await _listarImpressorasRedeCarga(); } catch(e) { return toast('Não foi possível carregar as impressoras cadastradas.', 'e'); }
+  if (!impressoras.length) return toast('Nenhuma impressora de rede disponível para esta loja.', 'w');
+  var opcoes = impressoras.map(function(x,i){return (i+1) + ' - ' + (x.nome || x.modelo || 'Impressora');}).join('\n');
+  var escolha = window.prompt('Escolha a impressora:\n' + opcoes, '1');
+  if (escolha == null) return;
+  var imp = impressoras[Number(escolha)-1];
+  if (!imp) return toast('Impressora inválida.', 'e');
+  var endpoint = String(imp.endpoint || '').replace(/\/$/, '');
+  try {
+    for (var i=0;i<docs.length;i++) {
+      var n=docs[i];
+      var r=await fetch(endpoint + '/print', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({documentUrl:n.documentoUrl,documentName:n.documentoNome || ('NF-'+n.numero+'.pdf'),nota:n.numero,cargaId:cargaId,cargaNome:carga.nomeCarga || '',printerName:imp.nome || '',printerModel:imp.modelo || ''})});
+      if (!r.ok) throw new Error('HTTP '+r.status);
+    }
+    toast(docs.length + ' documento(s) enviado(s) para ' + (imp.nome || 'impressora') + '.', 's');
+  } catch(e) { toast('Falha ao imprimir: ' + (e && e.message ? e.message : e), 'e'); }
+}
+
 function _desenharListaCargas() {
   const lista = document.getElementById('cargas-lista-itens');
   if (!lista) return;
@@ -131,10 +170,12 @@ function _desenharListaCargas() {
       .concat((c.notasFiscaisProdutos || []).filter(function (n) { return n.produtos && n.produtos.length; }).map(function (n) { return n.numero; }));
     const nfUnicas = numerosNf.filter(function (numero, idx) { return numerosNf.indexOf(numero) === idx; });
     const badgeNf = nfUnicas.length ? '<span class="badge badge-info">NF ' + _escRec(nfUnicas.join(', ')) + '</span>' : '';
+    const podeImprimir = c.notasProdutosCompletas === true && _documentosImprimiveisCarga(c).length > 0;
+    const botaoImprimir = podeImprimir ? '<button type="button" class="btn btn-ghost btn-sm" data-carga-imprimir="' + _escRec(c._id) + '" title="Imprimir nota(s)">🖨️</button>' : '';
     return '<div class="inv-card" data-carga-id="' + _escRec(c._id) + '">'
       + '<div class="inv-card-code">' + _escRec(c.origemNome || '—') + ' → ' + _escRec(c.destinoNome || '—') + '</div>'
       + '<div class="inv-card-name">' + _escRec(c.nomeCarga || '(sem nome)') + '</div>'
-      + '<div class="inv-card-meta"><span class="badge badge-info">' + _escRec(rotulo) + '</span>' + badgeNf + '</div>'
+      + '<div class="inv-card-meta"><span class="badge badge-info">' + _escRec(rotulo) + '</span>' + badgeNf + botaoImprimir + '</div>'
       + '</div>';
   }).join('');
   // BUG AO VIVO REAL (2026-09-06): "clico nela e aparece a opção de
@@ -143,8 +184,12 @@ function _desenharListaCargas() {
   // pra expedição" (montagem finalizada é PENDENTE de propósito, só muda no
   // status na Expedição) — não existia NENHUM jeito de chegar na Expedição
   // clicando no card. Mesmo critério do rótulo acima decide pra onde abrir.
+  Array.prototype.forEach.call(lista.querySelectorAll('[data-carga-imprimir]'), function(btn){
+    btn.addEventListener('click', function(ev){ev.stopPropagation(); imprimirDocumentosCarga(btn.getAttribute('data-carga-imprimir'));});
+  });
   Array.prototype.forEach.call(lista.querySelectorAll('[data-carga-id]'), function (card) {
-    card.addEventListener('click', function () {
+    card.addEventListener('click', function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('[data-carga-imprimir]')) return;
       abrirCargaPorId(card.getAttribute('data-carga-id'));
     });
   });
@@ -800,6 +845,7 @@ async function confirmarExpedicaoCarga() {
     // 25-recebimento-paletes.js (uma falha aqui não pode travar a
     // expedição, que já aconteceu de verdade; log de movimentos permite
     // reconciliar depois).
+    let falhaLedger = false;
     try {
       const totalPaletes = Math.round(Number(carga.totalPaletesFisico) || 0);
       // PEDIDO AO VIVO (2026-09-08): "se o palete tiver em trânsito ele tem
@@ -813,9 +859,20 @@ async function confirmarExpedicaoCarga() {
         _aplicarMovimentoLedger(carga.destinoLojaId, 'TRANSBORDO_EXPEDICAO', { emTransitoDelta: totalPaletes }, referenciaLedger)
       ]);
     } catch (eLedger) {
+      // PEDIDO AO VIVO (2026-09-18): "Controle de Paletes não captura os
+      // paletes de uma carga em trânsito" — a carga em si sempre é expedida
+      // certa (o payload principal já foi salvo antes desta tentativa), mas
+      // até aqui uma falha no ledger só ia pro console (nunca visível pra
+      // quem expediu) — os paletes ficavam "perdidos" sem nenhum aviso.
+      // Isto não corrige a causa raiz (não reproduzida em código: o
+      // roteamento já bloqueia expedir com totalPaletesFisico zerado) — só
+      // torna a falha visível na hora, pra poder reconciliar manualmente e
+      // ajudar a identificar a causa se acontecer de novo.
       console.warn('[Cargas] Falha ao atualizar ledger na expedição:', eLedger && eLedger.message ? eLedger.message : eLedger);
+      falhaLedger = true;
     }
-    toast('Carga expedida!', 's');
+    if (falhaLedger) toast('Carga expedida, mas os paletes NÃO entraram no Controle de Paletes (avise o suporte).', 'e');
+    else toast('Carga expedida!', 's');
     goScreen('cargas-lista');
     _desenharListaCargas();
   } catch (e) {
@@ -1126,6 +1183,7 @@ window.confirmarFinalizarMontagemCarga = confirmarFinalizarMontagemCarga;
 window.abrirExpedicaoCarga = abrirExpedicaoCarga;
 window.adicionarNotaFiscalCarga = adicionarNotaFiscalCarga;
 window.confirmarExpedicaoCarga = confirmarExpedicaoCarga;
+window.imprimirDocumentosCarga = imprimirDocumentosCarga;
 window.abrirCargaPorId = abrirCargaPorId;
 window.abrirDetalheCarga = abrirDetalheCarga;
 window._recebimentoCargasInternals = {

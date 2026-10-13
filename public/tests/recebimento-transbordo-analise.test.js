@@ -142,13 +142,13 @@ function loadTransbordo(colecoes) {
   return { window: win, els, document, dispararChange, dispararClick };
 }
 
-test('91: notasTodas() ignora o filtro de período/fornecedor da tela de Notas — nunca fica vazia por causa de um filtro deixado em outra aba', async () => {
+test('91: carregar Operação não baixa coleção bruta de notas — Notas Fiscais usa paginação backend separada', async () => {
   const notas = mockColecao([{ id: 'n1', data: { numeroNota: '9001', processamento: '2026-01-01' } }]);
   const { window } = loadTransbordo({ recebimento_notas: notas });
   await window._recebimentoInternals.carregar(true);
-  // mesmo sem chamar nenhum filtro, notasTodas() traz tudo
-  assert.equal(window._recebimentoInternals.notasTodas().length, 1);
-  assert.equal(window._recebimentoInternals.notasTodas()[0].numeroNota, '9001');
+  // Regra nova de desempenho: Operação/Transbordo não materializa a coleção
+  // inteira de notas no navegador. A aba Notas consulta a Function paginada.
+  assert.equal(window._recebimentoInternals.notasTodas().length, 0);
 });
 
 test('REGRESSÃO: tela de Transbordo não usa mais a Bluesoft pra nada — sem sync, sem cruzamento de NF, sem seção de notas importadas (pedido ao vivo do usuário: "o coletor passa a ser a origem dos dados do nosso transbordo")', () => {
@@ -447,6 +447,59 @@ test('PEDIDO AO VIVO: "Editar" abre uma carga JÁ FINALIZADA pelo Coletor preenc
   const trecho = rules.slice(rules.indexOf("hasAny(['corrigir-horario'])"), rules.indexOf("hasAny(['corrigir-horario'])") + 1200);
   const camposDaRegra = trecho.match(/affectedKeys\(\)\.hasOnly\(\[([^\]]+)\]\)/)[1].split(',').map(s => s.trim().replace(/'/g, ''));
   assert.deepEqual(new Set(camposDaRegra), CAMPOS_PERMITIDOS, 'lista de campos da regra mudou — atualize este teste E confirme que o payload de recbtSalvarEdicaoCompleta ainda cabe nela');
+});
+
+// BUG AO VIVO REAL (2026-09-18): "atualizo e salvo, ele não atualiza, aí
+// quando eu vou na segunda vez, atualiza e salva" — recbtSalvarEdicaoCompleta
+// recarregava a tela via carregar(true), que relê pelo espelho do BigQuery
+// (buscarRecebimentosOperacaoBigQuery); esse espelho atrasa pra refletir a
+// escrita que acabou de ser feita no Firestore, então a 1ª releitura ainda
+// vinha com o horário ANTIGO. Este teste nunca mocka essa Cloud Function de
+// propósito (fica "não mockada"/rejeitada, igual no ambiente real quando o
+// espelho ainda não alcançou) — se o conserto (atualizar o registro em
+// memória direto, sem depender da releitura) regredir, a tabela volta a
+// mostrar o horário antigo depois de salvar.
+test('REGRESSÃO: salvar a edição completa reflete o novo horário na tabela IMEDIATAMENTE, mesmo quando a releitura (BigQuery) ainda não pegou a escrita', async () => {
+  const recebimentos = mockColecao([
+    { id: 'r1', data: {
+      tipo: 'TRANSBORDO', status: 'FINALIZADO', origem: 'Matriz', destino: 'Filial',
+      motoristaId: 'm-carlos', motoristaNome: 'Carlos', placa: 'ABC1D23', volumes: 10,
+      horaSaida: '2026-08-17T09:00:00.000Z', horaChegada: '2026-08-17T10:00:00.000Z',
+      horaInicioDescarga: '2026-08-17T10:10:00.000Z', horaFimDescarga: '2026-08-17T10:40:00.000Z',
+      horaFechamentoRecebimento: '2026-08-17T10:45:00.000Z',
+    } },
+  ]);
+  const motoristas = mockColecao([{ id: 'm-carlos', data: { nome: 'Carlos', transportadora: 'Transp. A' } }]);
+  const { window, document } = loadTransbordo({ recebimentos, recebimento_auditoria: mockColecao([]), recebimento_motoristas: motoristas, recebimento_veiculos: mockColecao([]) });
+  window.getDTLojaAtiva = () => 'loja_matriz';
+  window.getDTRawFirestore = () => mockRawLojas({ loja_matriz: { recebimentos, recebimento_auditoria: mockColecao([]) } });
+  await window._recebimentoOperacaoInternals.carregar(true);
+  await window._recebimentoTransbordoInternals.carregarTodosTransbordos(true);
+  await window._recebimentoTransbordoInternals.desenharTransbordo?.();
+
+  await window.recbtAbrirEdicaoCompleta('r1');
+  // Os campos de data/hora do modal são LOCAIS (fuso da máquina), não UTC —
+  // o valor original de chegada aparece como "07:00" local (10:00 UTC), com
+  // saída às "06:00" e início da descarga às "07:10". Troca só o horário
+  // (mesmo dia), pra um valor que ainda respeita a ordem saída <= chegada
+  // <= início-descarga, senão _validarHorariosNovo recusa por outro motivo.
+  const horaSaida=document.getElementById('rebtedit-hora-saida-hora').value;
+  const horaInicio=document.getElementById('rebtedit-hora-inicio-descarga-hora').value;
+  const paraMin=v=>{const [h,m]=String(v||'0:0').split(':').map(Number);return h*60+m;};
+  const paraHora=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+  // Escolhe um horário diferente e válido ENTRE saída e início da descarga,
+  // sem assumir que o runner está em UTC-3 (CI pode estar em UTC).
+  const novoMin=Math.floor((paraMin(horaSaida)+paraMin(horaInicio))/2);
+  const novaHora=paraHora(novoMin);
+  document.getElementById('rebtedit-hora-chegada-hora').value = novaHora;
+
+  await window.recbtSalvarEdicaoCompleta();
+
+  const doc = recebimentos._registro.get('r1');
+  assert.notEqual(doc.horaChegada, '2026-08-17T10:00:00.000Z', 'gravou o novo horário no Firestore (isso já funcionava antes)');
+
+  const htmlTabela = document.getElementById('page-recebimento-transbordo').innerHTML;
+  assert.match(htmlTabela, new RegExp(novaHora.replace(':','\\:')), 'tabela já mostra o novo horário de chegada sem precisar salvar de novo');
 });
 
 // BUG AO VIVO REAL (usuário: "toda vez que eu edito alguma informação o

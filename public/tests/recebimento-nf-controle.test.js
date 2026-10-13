@@ -67,6 +67,11 @@ function loadTransbordo(colecoes, domValores) {
     getDTLojaAtiva: () => 'loja_matriz',
     DTLoja: { listar: async () => ([{ id: 'loja_matriz', nome: 'Matriz' }, { id: 'loja_filial2', nome: 'Filial 2' }]) },
   };
+  window.firebase={ app:()=>({ functions:()=>({ httpsCallable:(nome)=>async()=>{
+    if(nome==='buscarRecebimentosOperacaoBigQuery'){ const col=colecoes?.recebimentos||mockColecao([]); return {data:{recebimentos:[...col._registro.entries()].map(([id,data])=>({_id:id,_lojaId:'loja_matriz',...data})),incluiTransbordosParceiros:true}}; }
+    if(nome==='buscarTransbordoTodasLojasBigQuery'){ const col=colecoes?.recebimentos||mockColecao([]); return {data:{recebimentos:[...col._registro.entries()].filter(([,d])=>d.tipo==='TRANSBORDO').map(([id,data])=>({_id:id,_lojaId:'loja_matriz',...data}))}}; }
+    throw new Error('função não mockada: '+nome);
+  } }) }) };
   const ctx = { window, document, console, Date, Math, Number, String, Array, Object, Set, Map, Promise, isNaN, setTimeout, setInterval: () => 0, clearInterval: () => {} };
   vm.createContext(ctx);
   vm.runInContext(opCode, ctx, { filename: '93-recebimento-operacao.js' });
@@ -107,6 +112,11 @@ function loadTransbordoRealDom(colecoes) {
   win._currentAnalistaUser = { email: 'analista@daterrinha.com' };
   win.getDTLojaAtiva = () => 'loja_matriz';
   win.DTLoja = { listar: async () => ([{ id: 'loja_matriz', nome: 'Matriz' }, { id: 'loja_filial2', nome: 'Filial 2' }]) };
+  win.firebase={ app:()=>({ functions:()=>({ httpsCallable:(nome)=>async()=>{
+    if(nome==='buscarRecebimentosOperacaoBigQuery'){ const col=colecoes?.recebimentos||mockColecao([]); return {data:{recebimentos:[...col._registro.entries()].map(([id,data])=>({_id:id,_lojaId:'loja_matriz',...data})),incluiTransbordosParceiros:true}}; }
+    if(nome==='buscarTransbordoTodasLojasBigQuery'){ const col=colecoes?.recebimentos||mockColecao([]); return {data:{recebimentos:[...col._registro.entries()].filter(([,d])=>d.tipo==='TRANSBORDO').map(([id,data])=>({_id:id,_lojaId:'loja_matriz',...data}))}}; }
+    throw new Error('função não mockada: '+nome);
+  } }) }) };
   win.eval(opCode + '\n' + trbCode);
   return { window: win, document };
 }
@@ -262,7 +272,15 @@ test('94: Histórico mostra a Nota Fiscal na tabela e no CSV exportado (antes fi
   }]);
   const dom = elMap({});
   const document = { addEventListener: () => {}, getElementById: dom.getElementById };
-  const window = { getDTFirestore: () => ({ collection: nome => (nome === 'recebimentos' ? recebimentos : mockColecao([])) }) };
+  const window = {
+    getDTFirestore: () => ({ collection: nome => (nome === 'recebimentos' ? recebimentos : mockColecao([])) }),
+    getDTLojaAtiva: () => 'loja_matriz',
+    firebase: { app:()=>({ functions:()=>({ httpsCallable:(nome)=>async()=>{
+      if(nome==='buscarRecebimentosOperacaoBigQuery') return {data:{recebimentos:[...recebimentos._registro.entries()].map(([id,data])=>({_id:id,_lojaId:'loja_matriz',...data})),incluiTransbordosParceiros:true}};
+      if(nome==='buscarHistoricoRecebimentosBigQuery') return {data:{recebimentos:[...recebimentos._registro.entries()].map(([id,data])=>({_id:id,_lojaId:'loja_matriz',...data}))}};
+      throw new Error('função não mockada: '+nome);
+    } }) }) }
+  };
   const ctx = { window, document, console, Date, Math, Number, String, Array, Object, Set, Map, Promise, isNaN, setInterval: () => 0, clearInterval: () => {} };
   vm.createContext(ctx);
   vm.runInContext(opCode, ctx, { filename: '93-recebimento-operacao.js' });

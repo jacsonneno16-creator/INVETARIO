@@ -177,9 +177,12 @@ function _origensParaCruzar() {
 // abrirTransbordoRecebimento() é o corpo antigo de abrirAreaRecebimento(),
 // agora acionado pelo card "Transbordo" daquela tela de escolha.
 function abrirAreaRecebimento() {
+  if (typeof coletorTemAlgumaPermissao === 'function' && !coletorTemAlgumaPermissao([['recebimento-transbordo','visualizar'],['recebimento-operacao','visualizar'],['recebimento-recusas','visualizar'],['recebimento-paletes','visualizar'],['recebimento-agendamentos','visualizar']])) return;
   goScreen('recebimento-modo');
+  if (typeof aplicarPermissoesMenuColetor === 'function') aplicarPermissoesMenuColetor();
 }
 function abrirTransbordoRecebimento() {
+  if (typeof coletorExigirPermissao === 'function' && !coletorExigirPermissao('recebimento-transbordo','visualizar')) return;
   goScreen('recebimento');
   carregarRecebimentoColetor();
 }
@@ -654,9 +657,15 @@ async function _buscarMotoristaPorCodigoAoVivo(codigo) {
 }
 
 // Carga já em andamento pra esse motorista (bipou a saída, agora bipando de
-// novo pra avançar chegada/descarga) → continua ela, igual sempre. Nenhuma
-// em andamento → bipar de novo é começar uma viagem nova (mesmo código,
-// reaproveitado — é assim que o QR fixo por motorista funciona).
+// novo pra avançar chegada/descarga) → continua ela, igual sempre.
+// PEDIDO AO VIVO (2026-10-02): "tem transbordo em trânsito e não tá
+// aparecendo o saldo em trânsito de paletes" — investigado e confirmado
+// com dados reais que TODO transbordo nasce por aqui (bipe de QR direto),
+// nunca pela Cargas (Montagem/Expedição, "Transbordo Geral"), que é a
+// única que alimenta o saldo de paletes. Pedido do usuário: só a Cargas
+// pode CRIAR transbordo novo daqui pra frente — este bipe continua
+// servindo só pra AVANÇAR/CONFIRMAR o que já existe (chegada, descarga
+// etc.), inclusive o que nascer pela Cargas.
 async function _resolverBipPorMotorista(motorista) {
   // `_minhaVezDeAgir` entra aqui também (bug ao vivo: bipar o MESMO
   // motorista pra uma carga NOVA reabria a carga antiga já despachada, que
@@ -681,7 +690,13 @@ async function _resolverBipPorMotorista(motorista) {
     _abrirEscolhaCargaAtiva(motorista, ativas);
     return;
   }
-  await _iniciarNovaViagemPorMotorista(motorista);
+  // Nenhuma viagem ativa pra este motorista — ANTES criava uma do zero
+  // aqui mesmo (_iniciarNovaViagemPorMotorista, função mantida no arquivo
+  // de propósito, só sem chamador alcançável pela UI agora — mesma
+  // situação de _confirmarNovaViagemAoInvesDeEscolherCarga logo abaixo).
+  // Transbordo novo só pela Cargas ("Transbordo Geral" no menu) de agora
+  // em diante.
+  toast('Nenhum transbordo em andamento para este motorista. Pra começar um novo, use "Transbordo Geral" no menu.', 'w');
 }
 async function _iniciarNovaViagemPorMotorista(motorista) {
   if (!navigator.onLine) {

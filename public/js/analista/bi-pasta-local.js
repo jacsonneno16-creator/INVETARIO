@@ -20,6 +20,10 @@
 (function (global) {
   'use strict';
 
+  const cache = new Map();
+  const pendentes = new Map();
+  const TTL_MS = 15 * 60 * 1000;
+
   function suportado() {
     return typeof global.firebase?.app === 'function';
   }
@@ -34,15 +38,26 @@
 
   async function desconectar() {}
 
-  async function lerJson(nomeArquivo) {
+  async function lerJson(nomeArquivo, opcoes) {
+    const nome = String(nomeArquivo || '').trim();
+    const forcar = opcoes && opcoes.forcar === true;
+    const salvo = cache.get(nome);
+    if (!forcar && salvo && Date.now() - salvo.em < TTL_MS) return salvo.dados;
+    if (!forcar && pendentes.has(nome)) return pendentes.get(nome);
+    const tarefa = (async () => {
     if (typeof global.firebase?.app !== 'function') throw new Error('Firebase ainda não carregou nesta página. Recarregue e tente de novo.');
     const app = global.firebase.app();
     if (typeof app.functions !== 'function') throw new Error('Serviço de functions do Firebase indisponível.');
     const callable = app.functions('southamerica-east1').httpsCallable('buscarArquivoBiGraphApi');
-    const resposta = await callable({ arquivo: nomeArquivo });
+    const resposta = await callable({ arquivo: nome });
     if (!resposta || !resposta.data || resposta.data.ok !== true) throw new Error('Resposta inesperada da API do BI.');
+    cache.set(nome, { em: Date.now(), dados: resposta.data.dados });
     return resposta.data.dados;
+    })();
+    pendentes.set(nome, tarefa);
+    try { return await tarefa; } finally { pendentes.delete(nome); }
   }
 
-  global.DTBiPastaLocal = { suportado, conectar, status, desconectar, lerJson };
+  function limparCache(nomeArquivo) { if (nomeArquivo) cache.delete(String(nomeArquivo)); else cache.clear(); }
+  global.DTBiPastaLocal = { suportado, conectar, status, desconectar, lerJson, limparCache };
 })(window);

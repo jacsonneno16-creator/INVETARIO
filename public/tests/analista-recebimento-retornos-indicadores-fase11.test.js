@@ -26,6 +26,7 @@ const statusCode=fs.readFileSync(path.join(base,'99-recebimento-retornos-status.
 function mockColecao(docsIniciais){
   const registro=new Map((docsIniciais||[]).map(d=>[d.id,d.data]));
   return {
+    _registro: registro,
     get: async()=>({ docs:[...registro.entries()].map(([id,data])=>({id,data:()=>data})) }),
     where(campo, op, valor) {
       const construir = (condicoesAtuais) => ({
@@ -68,7 +69,9 @@ function carregarPagina(colecoes,opts){
   win.firebase={ app:()=>({ functions:()=>({ httpsCallable:(nomeFuncao)=>async(payload)=>{
     if(nomeFuncao!=='buscarIndicadoresRetornosBigQuery') throw new Error('função não mockada: '+nomeFuncao);
     const r=await colRecusas.where('criadoEm','>=',payload.ini+'T00:00:00.000Z').where('criadoEm','<=',payload.fim+'T23:59:59.999Z').get();
-    return { data: { recusas: r.docs.map(d=>({ _id:d.id, ...d.data() })) } };
+    const notasCol=colecoes?.recebimento_recusas_notas||mockColecao([]);
+    const notasResumo=Object.fromEntries([...(notasCol._registro||new Map()).entries()].map(([id,data])=>[String(data.chave||id),{...data}]));
+    return { data: { recusas: r.docs.map(d=>({ _id:d.id, ...d.data() })), notasResumo } };
   } }) }) };
   win.TRATAMENTO_LABELS=opts.tratamentoLabels;
   win.eval(indicCode);

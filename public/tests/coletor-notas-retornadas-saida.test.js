@@ -419,8 +419,8 @@ test('Identificar: motorista e motivo preenchidos são salvos quando informados'
 
   const salvo = [...recusas._registro.values()][0];
   assert.equal(salvo.pallets, 3);
-  assert.equal(salvo.motoristaNome, 'José');
-  assert.equal(salvo.motivoNome, 'Avaria');
+  assert.equal(salvo.motoristaNome, 'JOSÉ');
+  assert.equal(salvo.motivoNome, 'AVARIA');
 });
 
 test('Identificar: sem número da nota ou sem Box, bloqueia e não grava nada', async () => {

@@ -68,12 +68,14 @@ const SHELL = `<!doctype html><html><body>
 <div id="paletes-estoque-ultimo"></div>
 <input id="paletes-estoque-quantidade">
 <div id="paletes-estoque-status"></div>
+<div id="paletes-estoque-lancamentos"></div>
 </body></html>`;
 
 function loadPaletes(colecoes, opts) {
   const telas = [];
   const toasts = [];
   const chamadasLedger = [];
+  const chamadasInventario = [];
   const dom = new JSDOM(SHELL, { url: 'http://localhost/', runScripts: 'outside-only' });
   const win = dom.window;
   const document = win.document;
@@ -95,10 +97,14 @@ function loadPaletes(colecoes, opts) {
     chamadasLedger.push({ lojaId, tipo, deltas, referencia });
     if (opts && opts.ledgerFalha) throw new Error('Falha simulada no ledger');
   };
+  win._definirSaldoPaletesPorInventario = async function (lojaId, total, referencia) {
+    chamadasInventario.push({ lojaId, total, referencia });
+    if (opts && opts.inventarioFalha) throw new Error('Falha simulada ao definir saldo do inventário');
+  };
   Object.defineProperty(win.navigator, 'onLine', { get: () => !opts || opts.online !== false, configurable: true });
   win.eval(recCode);
   win.eval(paletesCode);
-  return { window: win, document, telas, toasts, chamadasLedger };
+  return { window: win, document, telas, toasts, chamadasLedger, chamadasInventario };
 }
 
 test('carregarPaletesColetor: carrega viagens e motoristas, e a lista mostra só as EM_TRANSITO', async () => {
@@ -311,44 +317,52 @@ test('abrirPaletesEstoque: sem registro ainda hoje, avisa "ainda não registrado
   assert.equal(document.getElementById('paletes-estoque-quantidade').value, '');
 });
 
-test('abrirPaletesEstoque: já registrado hoje, pré-preenche o campo com a quantidade salva', async () => {
+test('abrirPaletesEstoque: inventário já finalizado hoje é exibido como referência, mas uma nova contagem começa vazia', async () => {
   const hoje = window_dataHojeIso();
-  const estoque = mockColecao([{ id: hoje, data: { data: hoje, quantidade: 75 } }]);
+  const estoque = mockColecao([{ id: hoje, data: { data: hoje, quantidade: 75, finalizado: true } }]);
   const { window, document } = loadPaletes({ recebimento_paletes_estoque: estoque });
   await window.abrirPaletesEstoque();
-  assert.equal(document.getElementById('paletes-estoque-quantidade').value, '75');
+  assert.equal(document.getElementById('paletes-estoque-quantidade').value, '');
   assert.match(document.getElementById('paletes-estoque-ultimo').textContent, /75/);
 });
 
-test('confirmarPaletesEstoque: grava a quantidade de hoje com a loja certa, e volta pro menu', async () => {
+test('confirmarPaletesEstoque: soma vários lançamentos, finaliza o inventário, substitui o saldo da loja e volta pro menu', async () => {
   const estoque = mockColecao([]);
-  const { window, document, telas, toasts } = loadPaletes({ recebimento_paletes_estoque: estoque }, { lojaId: 'loja1', lojaNome: 'Loja Matriz' });
+  const { window, document, telas, toasts, chamadasInventario } = loadPaletes({ recebimento_paletes_estoque: estoque }, { lojaId: 'loja1', lojaNome: 'Loja Matriz' });
   await window.abrirPaletesEstoque();
-  document.getElementById('paletes-estoque-quantidade').value = '120';
+  document.getElementById('paletes-estoque-quantidade').value = '70';
+  assert.equal(window.adicionarPaletesEstoqueContagem(), true);
+  document.getElementById('paletes-estoque-quantidade').value = '50';
   await window.confirmarPaletesEstoque();
 
   assert.equal(estoque._registro.size, 1);
   const doc = [...estoque._registro.values()][0];
   assert.equal(doc.quantidade, 120);
+  assert.deepEqual(Array.from(doc.lancamentos), [70, 50]);
+  assert.equal(doc.finalizado, true);
   assert.equal(doc.origemLojaId, 'loja1');
   assert.equal(doc.origem, 'Loja Matriz');
   assert.equal(doc.data, window_dataHojeIso());
+  assert.equal(chamadasInventario.length, 1);
+  assert.equal(chamadasInventario[0].total, 120);
   assert.ok(telas.includes('paletes-menu'));
-  assert.ok(toasts.some(t => /registrado/i.test(t.msg)));
+  assert.ok(toasts.some(t => /saldo atualizado/i.test(t.msg)));
 });
 
-test('confirmarPaletesEstoque: registrar de novo no MESMO dia atualiza o mesmo doc (não duplica)', async () => {
+test('confirmarPaletesEstoque: novo inventário no mesmo dia substitui o saldo anterior, não soma com a contagem já finalizada', async () => {
   const estoque = mockColecao([]);
-  const { window, document } = loadPaletes({ recebimento_paletes_estoque: estoque });
+  const { window, document, chamadasInventario } = loadPaletes({ recebimento_paletes_estoque: estoque });
   await window.abrirPaletesEstoque();
   document.getElementById('paletes-estoque-quantidade').value = '100';
   await window.confirmarPaletesEstoque();
+  await window.abrirPaletesEstoque();
   document.getElementById('paletes-estoque-quantidade').value = '95';
   await window.confirmarPaletesEstoque();
 
   assert.equal(estoque._registro.size, 1, 'mesmo dia = mesmo doc, não 2 registros separados');
   const doc = [...estoque._registro.values()][0];
-  assert.equal(doc.quantidade, 95, 'o valor mais recente venceu');
+  assert.equal(doc.quantidade, 95, 'o segundo inventário finalizado substitui o saldo do primeiro');
+  assert.deepEqual(chamadasInventario.map(x => x.total), [100, 95]);
 });
 
 test('confirmarPaletesEstoque: recusa salvar quantidade inválida (vazia ou negativa)', async () => {

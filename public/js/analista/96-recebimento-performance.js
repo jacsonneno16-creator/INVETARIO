@@ -43,7 +43,16 @@
   function fmtHorasDec(h) { return h == null ? '—' : (Math.round(h * 10) / 10).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
   function fmtPct(v) { return v == null ? '—' : round1(v).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%'; }
   function fmtNumero(v, casas) { return Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: casas || 0, maximumFractionDigits: casas || 0 }); }
-  function dataDoRegistro(r) { return String(r.horaSaida || r.criadoEm || r.horaChegada || '').slice(0, 10); }
+  // BUG AO VIVO REAL (2026-09-17, mesmo bug encontrado em 97-recebimento-
+  // recusas.js): fatiar a string ISO direto pega a data em UTC, não a
+  // local — um registro de fim de noite (Brasília) contava pro dia
+  // seguinte. Agora sempre converte pra data local antes de comparar.
+  function _dataLocalDe(iso) {
+    const d = new Date(iso);
+    if (!iso || Number.isNaN(d.getTime())) return '';
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function dataDoRegistro(r) { return _dataLocalDe(r.horaSaida || r.criadoEm || r.horaChegada || ''); }
   function mesDoRegistro(r) { return dataDoRegistro(r).slice(0, 7); }
   function placaDe(r) { return String(r.placa || '').trim().toUpperCase(); }
   function terminalDe(r) { return r.horaFechamentoRecebimento || r.horaFimDescarga || r.horaChegada || null; }
@@ -153,7 +162,13 @@
     const viagensNaJornada = soma(jornadasValidas.map(j => j.viagens));
     const viagensPorHora = horasAcumuladas > 0 ? viagensNaJornada / horasAcumuladas : null;
 
-    const carretasDiaMeta = totalFrotaOperacional * diasOperacao.length;
+    // Meta em carreta-dia: soma, dia a dia, só das carretas que REALMENTE
+    // rodaram naquele dia — não o tamanho da frota inteira × dias com
+    // operação de qualquer carreta. Carreta que não roda num dia (ou no mês
+    // inteiro) não conta meta nesse dia (ou não conta nada, se não aparece
+    // em nenhum dia) — pedido ao vivo: "vai multiplicar se o carro
+    // trabalhou, se o carro não trabalhou, não conta".
+    const carretasDiaMeta = diasOperacao.reduce((soma, d) => soma + (placaDia.get(d) || new Set()).size, 0);
     const metaViagensTotal = metaViagensCarretaDia * carretasDiaMeta;
     const pctMetaViagens = metaViagensTotal ? viagens.length / metaViagensTotal * 100 : null;
 
@@ -188,7 +203,10 @@
     jornadasValidas.forEach(j => { const acc = porPlacaMap.get(j.placa); if (acc) acc.horas += j.minutos / 60; });
     intervalos.forEach(it => { const acc = porPlacaMap.get(it.placa); if (acc) acc.intervalos.push(it.minutos); });
     const porCarreta = [...porPlacaMap.values()].map(acc => {
-      const metaCarreta = metaViagensCarretaDia * diasOperacao.length;
+      // Meta individual usa os dias que ESSA carreta trabalhou (acc.dias),
+      // não o calendário de dias com operação de qualquer carreta — cada
+      // carreta só é cobrada pelos dias em que de fato rodou.
+      const metaCarreta = metaViagensCarretaDia * acc.dias.size;
       const mediaDescarga = media(acc.descargas), mediaIntervalo = media(acc.intervalos);
       const mediaHorasDia = acc.dias.size ? acc.horas / acc.dias.size : null;
       const pctMeta = metaCarreta ? acc.viagens / metaCarreta * 100 : null;
@@ -212,7 +230,7 @@
     ];
 
     const acimaMetaDescarga = descargas.filter(x => x.min > metaDescargaMin).length;
-    const rodaramHoje = new Set(todosTransbordos.filter(r => dataDoRegistro(r) === new Date().toISOString().slice(0,10) && r.horaSaida).map(placaDe).filter(Boolean));
+    const rodaramHoje = new Set(todosTransbordos.filter(r => dataDoRegistro(r) === _dataLocalDe(new Date()) && r.horaSaida).map(placaDe).filter(Boolean));
     const alertas = [];
     if (acimaMetaDescarga) alertas.push({ tipo:'danger', texto:`${acimaMetaDescarga} viagem(ns) acima de ${fmtDuracao(metaDescargaMin)} no mês.` });
     if (pctDentroMeta != null && pctDentroMeta < alvoCumprimentoPct) alertas.push({ tipo:'warn', texto:`Cumprimento da meta em ${fmtPct(pctDentroMeta)}, abaixo de ${fmtPct(alvoCumprimentoPct)}.` });

@@ -425,6 +425,39 @@ test('aba Estoque: "Em Trânsito" nunca fica negativo mesmo se "Zerar Em Trânsi
   assert.doesNotMatch(html, /-5/, 'nunca mostra "Em Trânsito" negativo');
 });
 
+// BUG AO VIVO REAL (2026-10-02): "carga em trânsito mas não tem nada" —
+// "Em Trânsito/Transbordo" ficava preso numa sobra antiga do log de
+// movimentos (5, 26...) mesmo depois de "Zerar Em Trânsito" zerar o total
+// do ledger pra 0 — porque aquele botão só ajusta ledger.emTransito (via
+// AJUSTE_MANUAL, que nem entra na soma de TIPOS_TRANSBORDO), nunca o log de
+// movimentos em si. Como o total do ledger é a fonte de verdade, a parte
+// "transbordo" nunca pode passar dele.
+test('REGRESSÃO ("carga em trânsito mas não tem nada"): "Em Trânsito/Transbordo" nunca mostra mais do que o total REAL do ledger, mesmo com sobra antiga no log de movimentos', async () => {
+  const ledger = { matriz: { disponivel: 100, emTransito: 0, total: 100 } }; // já zerado (via "Zerar Em Trânsito")
+  const movimentos = { matriz: [{ id: 'm1', data: { tipo: 'TRANSBORDO_EXPEDICAO', emTransitoDelta: 26 } }] }; // sobra órfã de carga antiga
+  const { win, document } = carregarPagina(LOJAS, {}, {}, ledger, null, movimentos);
+  await win.renderRecebimentoPaletes();
+  document.querySelector('[data-paletes-aba="estoque"]').dispatchEvent(new win.Event('click', { bubbles: true }));
+
+  const linhas = win._recebimentoPaletesMonitoramentoInternals.getLedgerPorLoja();
+  const matriz = linhas.find(l => l.lojaId === 'matriz');
+  assert.equal(matriz.emTransitoTransbordo, 0, 'o total real já é 0 (zerado) — a sobra de 26 no log não pode "ressuscitar" um saldo que não existe mais');
+
+  const html = document.getElementById('page-recebimento-paletes').innerHTML;
+  assert.doesNotMatch(html, />26</, 'não pode aparecer na tela um "em trânsito" que o total do ledger não respalda');
+});
+
+test('"Em Trânsito/Transbordo" nunca passa do total do ledger mesmo com transbordo REAL em andamento (só limita o excesso, não o saldo de verdade)', async () => {
+  const ledger = { matriz: { disponivel: 100, emTransito: 8, total: 108 } };
+  const movimentos = { matriz: [{ id: 'm1', data: { tipo: 'TRANSBORDO_EXPEDICAO', emTransitoDelta: 8 } }] };
+  const { win } = carregarPagina(LOJAS, {}, {}, ledger, null, movimentos);
+  await win.renderRecebimentoPaletes();
+
+  const linhas = win._recebimentoPaletesMonitoramentoInternals.getLedgerPorLoja();
+  const matriz = linhas.find(l => l.lojaId === 'matriz');
+  assert.equal(matriz.emTransitoTransbordo, 8, 'transbordo real, dentro do total — continua aparecendo normalmente');
+});
+
 // PEDIDO AO VIVO (2026-09-06): "no palete monitoramento, quero que tenha a
 // opção de excluir" — viagem errada/duplicada na aba "Em Trânsito". Essa
 // tabela ALIMENTA o ledger (Disponível/Em Trânsito) — excluir sem desfazer

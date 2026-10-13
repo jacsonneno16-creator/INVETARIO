@@ -30,6 +30,18 @@ function loadRelatorios(recebimentosFake, notasBluesoftFake, colecoes, sincroniz
     _recebimentoOperacaoInternals:{ carregar: async()=>{}, recebimentos: ()=>recebimentosFake },
     _recebimentoInternals:{ carregar: async()=>{}, notasFiltradas: ()=>notasBluesoftFake||[] },
     sincronizarAgendaBluesoft: sincronizarAgendaBluesoftFake,
+    firebase:{ app:()=>({ functions:()=>({ httpsCallable:(nome)=>async()=>{
+      if(nome==='buscarDivergenciasFornecedoresRecebimentoBigQuery'){
+        const mapa=new Map();
+        (notasBluesoftFake||[]).filter(x=>x.temDivergencia).forEach(x=>{
+          const k=String(x.fornecedorNome||'').trim().toUpperCase();
+          mapa.set(k,(mapa.get(k)||0)+1);
+        });
+        return {data:{fornecedores:[...mapa].map(([fornecedor,divergencias])=>({fornecedor,divergencias}))}};
+      }
+      if(nome==='buscarHistoricoRecebimentosBigQuery') return {data:{recebimentos:(recebimentosFake||[]).filter(r=>['FINALIZADO','CANCELADO'].includes(r.status))}};
+      throw new Error('função não mockada: '+nome);
+    } }) }) },
     openModal:()=>{}, closeModal:()=>{}, showToast:()=>{}, showConfirm:(msg,exec)=>exec(),
   };
   vm.runInNewContext(relCode,{window,document,console,Date,Math,Number,String,Array,Object,Set,Map,Promise,Blob:class{},URL:{createObjectURL:()=>''}},{filename:'94-recebimento-relatorios.js'});
@@ -49,7 +61,7 @@ test('notas achatadas: junta recebimentos[].notas de todos os recebimentos num s
   assert.equal(notas[1].valor,50);
 });
 
-test('ranking de fornecedores: agrega tempos médios e cruza divergência com o histórico real da Bluesoft por nome normalizado',()=>{
+test('ranking de fornecedores: agrega tempos médios e cruza divergência com o resumo backend por nome normalizado',async()=>{
   const recs=[
     {tipo:'FORNECEDOR',fornecedorNome:'Fornecedor Teste',status:'FINALIZADO',horaChegada:'2026-08-01T08:00:00Z',tempoEsperaMin:10,tempoDescargaMin:20,tempoTotalMin:30,notas:[{numero:'1',quantidadeVolumes:5}]},
     {tipo:'FORNECEDOR',fornecedorNome:'Fornecedor Teste',status:'FINALIZADO',horaChegada:'2026-08-05T08:00:00Z',tempoEsperaMin:20,tempoDescargaMin:40,tempoTotalMin:60,notas:[{numero:'2',quantidadeVolumes:3}]},
@@ -60,6 +72,7 @@ test('ranking de fornecedores: agrega tempos médios e cruza divergência com o 
     {fornecedorNome:'FORNECEDOR TESTE',temDivergencia:false},
   ];
   const {window}=loadRelatorios(recs,notasBluesoft);
+  await window.renderRecebimentoFornecedores();
   const rank=window._recebimentoRelatoriosInternals.agregarFornecedores();
   const ft=rank.find(x=>x.fornecedor==='Fornecedor Teste');
   assert.ok(ft);
@@ -96,24 +109,23 @@ test('agendamento: cria e edita (upsert por doc-id), exige fornecedor e data',as
 
   elFake('recag-fornecedor').value='Fornecedor X';
   elFake('recag-data').value='2026-08-20';
-  elFake('recag-hora').value='10:00';
-  elFake('recag-status').value='AGENDADO';
+  elFake('recag-tipo-carga').value='PALETIZADA';
   await window.recagSalvar();
   assert.equal(agendamentos._registro.size,1);
   assert.equal([...agendamentos._registro.values()][0].fornecedorNome,'Fornecedor X');
 });
 
-test('agenda: mostra botão de sincronizar pedidos pendentes e coluna de Origem, distinguindo o que veio da Bluesoft do que foi cadastrado à mão (pedido ao vivo do usuário: puxar agenda de mercadoria)',async()=>{
+test('agenda: mostra botão de sincronizar pedidos pendentes e coluna de Origem, distinguindo o que veio do SharePoint/BI do que foi cadastrado à mão',async()=>{
   const agendamentos=mockColecao([
-    {id:'a1',data:{fornecedorNome:'Fornecedor Bluesoft',dataAgendada:'2026-08-20',status:'AGENDADO',origem:'bluesoft',numeroPedido:500}},
+    {id:'a1',data:{fornecedorNome:'Fornecedor SharePoint',dataAgendada:'2026-08-20',status:'AGENDADO',origem:'bi',numeroPedido:500,tipoCarga:'PALETIZADA'}},
     {id:'a2',data:{fornecedorNome:'Fornecedor Manual',dataAgendada:'2026-08-21',status:'AGENDADO'}},
   ]);
   const {window,elFake}=loadRelatorios([],[],{recebimento_agendamentos:agendamentos});
   await window.renderRecebimentoAgendamentos();
   const html=elFake('page-recebimento-agendamentos').innerHTML;
   assert.match(html,/data-recag-sync/);
-  assert.match(html,/Fornecedor Bluesoft/);
-  assert.match(html,/🔗 Bluesoft/);
+  assert.match(html,/Fornecedor SharePoint/);
+  assert.match(html,/🔗 SharePoint/);
   assert.match(html,/Fornecedor Manual/);
   assert.match(html,/Manual</);
 });
@@ -131,8 +143,7 @@ test('REGRESSÃO: mensagem de status da sincronização da Agenda sobrevive ao r
   // próximo innerHTML=... apagaria (era exatamente o bug: só sobrava o
   // "⏳ Buscando..." de antes do redesenho)
   const html=elFake('page-recebimento-agendamentos').innerHTML;
-  assert.match(html,/0 de 0 pedido\(s\) pendente\(s\)/);
-  assert.match(html,/não tem nenhum Pedido de Compra cadastrado/);
+  assert.match(html,/0 agendamento\(s\) carregado\(s\) do espelho do BI/);
 });
 
 test('navegação: as 4 telas de relatório estão registradas e o modal de agendamento existe',()=>{

@@ -140,6 +140,15 @@
   // em 99) — nunca decidir "saiu do pátio" de um jeito diferente em cada um.
   function estaNoPatio(doc, nota) {
     if (doc.origem !== 'COLETOR' && doc.origem !== 'INVENTARIO_INICIAL') return false;
+    // PEDIDO AO VIVO (2026-09-22): conferência física do pátio ("Inventário
+    // do Pátio" → Finalizar, 29-recebimento-patio-inventario.js) confirma
+    // que uma nota SEM classificação (nem Recusa nem Reentrega) não está
+    // mais lá — as 2
+    // branches abaixo são os únicos jeitos de "sair" hoje, então sem este
+    // campo uma nota em branco nunca teria como deixar de contar como
+    // presente.
+    const confirmadoAusente = nota.confirmadoAusenteEm != null ? nota.confirmadoAusenteEm : doc.confirmadoAusenteEm;
+    if (confirmadoAusente) return false;
     const tratamento = nota.tratamento != null ? nota.tratamento : (doc.tratamento || '');
     if (tratamento === 'REENTREGA') {
       const saida = nota.dataSaidaEm != null ? nota.dataSaidaEm : doc.dataSaidaEm;
@@ -509,9 +518,9 @@
     const palletsInput = document.getElementById('ident-pallets-input');
     const pallets = String((palletsInput && palletsInput.value) || '').trim();
     const motoristaInput = document.getElementById('ident-motorista-input');
-    const motorista = String((motoristaInput && motoristaInput.value) || '').trim();
+    const motorista = String((motoristaInput && motoristaInput.value) || '').trim().toUpperCase();
     const motivoInput = document.getElementById('ident-motivo-input');
-    const motivo = String((motivoInput && motivoInput.value) || '').trim();
+    const motivo = String((motivoInput && motivoInput.value) || '').trim().toUpperCase();
     const u = usuario();
     const agora = new Date().toISOString();
     // PEDIDO AO VIVO (2026-09-11): "tem 11 falando que tá sem mercado" —
@@ -703,14 +712,20 @@
     return `
     ${tarefasPendentesHtml()}
     <div><div class="screen-title">↩️ Notas Retornadas</div><div class="screen-sub">Entrada é pra registrar uma nota que voltou. Saída é pra confirmar que uma nota já registrada foi embora de novo (reentrega).</div></div>
-    <button class="btn btn-primary" data-recusa-modo="entrada" style="padding:18px;font-size:1.05rem">📥 Entrada</button>
-    <button class="btn btn-ghost" data-recusa-modo="saida" style="padding:18px;font-size:1.05rem">📤 Saída</button>
-    <button class="btn btn-ghost" data-recusa-modo="rastrear" style="padding:18px;font-size:1.05rem">🔎 Rastrear</button>
-    <button class="btn btn-ghost" data-recusa-modo="identificar" style="padding:18px;font-size:1.05rem">🆕 Identificar</button>`;
+    <button class="btn btn-primary" data-recusa-modo="entrada" data-perm-acao="entrada" style="padding:18px;font-size:1.05rem">📥 Entrada</button>
+    <button class="btn btn-ghost" data-recusa-modo="saida" data-perm-acao="saida" style="padding:18px;font-size:1.05rem">📤 Saída</button>
+    <button class="btn btn-ghost" data-recusa-modo="rastrear" data-perm-acao="rastrear" style="padding:18px;font-size:1.05rem">🔎 Rastrear</button>
+    <button class="btn btn-ghost" data-recusa-modo="identificar" data-perm-acao="identificar" style="padding:18px;font-size:1.05rem">🆕 Identificar</button>`;
   }
   // PEDIDO AO VIVO (2026-09-11): "Rastrear" — mesma linguagem visual de
   // Saída (buscar → resultado), mas SÓ leitura: mostra onde a nota está
   // (Box) e quantos paletes tem no evento, nenhum botão de ação.
+  function aplicarPermissoesModoRecusas() {
+    ['entrada','saida','rastrear','identificar'].forEach(function(acao){
+      var el=document.querySelector('[data-recusa-modo="'+acao+'"]');
+      if(el && typeof global.coletorTemPermissao==='function' && !global.coletorTemPermissao('recebimento-recusas',acao)) el.style.display='none';
+    });
+  }
   function etapaRastrearBuscar() {
     return `
     <div><div class="screen-title">🔎 Rastrear — buscar nota</div><div class="screen-sub">Digite ou bipe o NÚMERO da nota (não a chave de 44 dígitos) pra ver onde ela está.</div></div>
@@ -1035,6 +1050,10 @@
     var _document$getElementB3, _document$getElementB4, _document$getElementB5, _document$getElementB7, _document$getElementB8, _document$getElementB0, _document$getElementB10, _document$getElementB11, _document$getElementB12, _document$getElementB13, _document$getElementB16, _document$getElementB19, _document$getElementB21, _document$getElementB22, _document$getElementB23, _document$getElementB24, _document$getElementB25;
     document.querySelectorAll('[data-recusa-modo]').forEach(btn => btn.addEventListener('click', () => {
       const modo = btn.getAttribute('data-recusa-modo');
+      if (modo !== 'voltar' && typeof coletorTemPermissao === 'function' && !coletorTemPermissao('recebimento-recusas', modo)) {
+        toast('Seu login não possui permissão para esta função.', 'e');
+        return;
+      }
       if (modo === 'entrada') { S.etapa = 'chave'; render(); focarScan(); return; }
       if (modo === 'saida') { S.etapa = 'saida-buscar'; render(); focarSaidaInput(); return; }
       if (modo === 'rastrear') { S.etapa = 'rastrear-buscar'; render(); focarRastrearInput(); return; }

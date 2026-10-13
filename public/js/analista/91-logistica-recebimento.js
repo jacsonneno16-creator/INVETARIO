@@ -1,9 +1,6 @@
-// Logística — Recebimento (fase 15). Dashboard alimentado 100% pela API
-// real da Bluesoft (status-processamento-nfe + recebimentocargas + entregas
-// de pedido de compra, todas em 90-bluesoft-service.js) — sem upload manual.
-// Único campo digitado nesta tela é "chegada na portaria": a Bluesoft não
-// tem endpoint de portaria/pátio/YMS confirmado, e o YMS usado aqui não tem
-// API disponível hoje — fica manual até existir uma integração real.
+// Logística — Recebimento. O Dashboard consulta apenas após o clique em
+// "Buscar dados" e usa BigQuery/bases materializadas. Não dispara API da
+// BlueSoft nem leitura operacional automática ao abrir o setor.
 (function (global) {
   'use strict';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -52,22 +49,57 @@
   let _filtroDashPeriodo = ''; // 'AAAA-MM' — filtra só os cards/gráficos agregados do Dashboard
   let _filtroDashCategoria = ''; // '' = FORNECEDOR (padrão) | 'FORNECEDOR' | 'TRANSBORDO' | 'DEVOLUCAO' | 'TODAS'
   let _ultimoSync = '';
+  let _resumoHistoricoDash = null;
+  let _resumoHistoricoDashChave = '';
+  let _resumoHistoricoDashPromise = null;
+  // Só muda depois do clique explícito no botão de busca. Abrir o setor
+  // deve montar apenas a interface, sem tocar em nenhuma fonte de dados.
+  let _buscaManualRealizada = false;
 
-  async function carregarLogisticaRecebimento(forcar) {
-    if (_carregado && !forcar) return;
-    // Sem timeout artificial: bases grandes devem terminar de carregar,
-    // mesmo quando levam mais de 20/30 segundos (Promise.race com timeout
-    // não cancela a busca real, só desiste de esperar — pior UX numa
-    // consulta só lenta, não travada de verdade).
-    const [notasSnap, cargasSnap] = await Promise.all([
-      fs().collection('recebimento_notas').get(),
-      fs().collection('recebimento_cargas').get(),
-    ]);
-    _notas = notasSnap.docs.map(d => ({ _id: d.id, ...d.data() }));
-    _cargas = cargasSnap.docs.map(d => ({ _id: d.id, ...d.data() }));
-    _carregado = true;
+  function _chaveResumoHistoricoDashAtual() {
+    return (_filtroDashPeriodo || '') + '|' + (_filtroDashCategoria || 'FORNECEDOR');
+  }
+  async function _carregarResumoHistoricoDash(forcar) {
+    const periodo = _filtroDashPeriodo || '';
+    const categoria = _filtroDashCategoria || 'FORNECEDOR';
+    const chave = periodo + '|' + categoria;
+    if (!forcar && _resumoHistoricoDash && _resumoHistoricoDashChave === chave) return _resumoHistoricoDash;
+    if (_resumoHistoricoDashPromise && _resumoHistoricoDashPromise._dtChave === chave) return _resumoHistoricoDashPromise;
+    const promise = (async () => {
+      try {
+        const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarResumoHistoricoRecebimentoBigQuery');
+        const resp = await callable({ periodo, categoria });
+        if (!resp?.data?.resumo) throw new Error('Resumo histórico vazio.');
+        // Se o usuário trocou período/categoria enquanto a consulta estava
+        // em andamento, a resposta antiga não pode sobrescrever a tela nova.
+        if (_chaveResumoHistoricoDashAtual() === chave) {
+          _resumoHistoricoDash = resp.data.resumo;
+          _resumoHistoricoDashChave = chave;
+        }
+        return resp.data.resumo;
+      } catch (e) {
+        console.warn('[Recebimento] Resumo BigQuery indisponível:', e?.message || e);
+        if (_chaveResumoHistoricoDashAtual() === chave) {
+          _resumoHistoricoDash = null;
+          _resumoHistoricoDashChave = '';
+        }
+        return null;
+      }
+    })();
+    promise._dtChave = chave;
+    _resumoHistoricoDashPromise = promise;
+    try { return await promise; }
+    finally { if (_resumoHistoricoDashPromise === promise) _resumoHistoricoDashPromise = null; }
   }
 
+  async function carregarLogisticaRecebimento(forcar) {
+    // Compatibilidade para módulos antigos: não faz leitura. As telas novas
+    // têm consultas paginadas/agregadas próprias e o Dashboard usa
+    // _buscarManual(). Manter esta função como no-op impede que um chamador
+    // legado reintroduza a varredura integral de notas e cargas.
+    _carregado = true;
+    return { notas: _notas, cargas: _cargas, forcar: forcar === true };
+  }
   // BUG AO VIVO REAL (2026-09-09): "por que não tá puxando os meses mais
   // próximos, tipo julho agosto" — os gráficos "Notas recebidas por mês" e
   // "Valor recebido por mês" vinham de `recebimento_notas`, que só ganha
@@ -84,7 +116,9 @@
   // tempoLancamentoMin/temDivergencia/comparavel não existem no BI de
   // compras, misturar as duas fontes ali bagunçaria os números.
   let _comprasBi = [];
+  let _comprasBiMensal = [];
   let _comprasBiCarregado = false;
+  let _comprasBiCarregandoPromise = null;
   // PEDIDO AO VIVO (2026-09-09): "a tela precisa ficar o tempo todo em
   // carregamento sem mostrar nem a estrutura do site?" — a estrutura
   // (título, filtros, botão de sync) não depende de nenhum dado do
@@ -95,24 +129,39 @@
   let _dashErro = '';
   async function _carregarComprasBi(forcar) {
     if (_comprasBiCarregado && !forcar) return;
-    _comprasBi = [];
-    const lojaId = global.getDTLojaAtiva?.();
-    if (!lojaId) { _comprasBiCarregado = true; return; }
+    if (_comprasBiCarregandoPromise) return _comprasBiCarregandoPromise;
+    _comprasBiCarregandoPromise = (async () => {
+      _comprasBi = [];
+      const lojaId = global.getDTLojaAtiva?.();
+      if (!lojaId) { _comprasBiCarregado = true; return; }
+      try {
+        const lojaSnap = await fs().collection('lojas').doc(lojaId).get();
+        const chaveBluesoft = lojaSnap.exists ? String(lojaSnap.data().bluesoft_loja_key || '').trim() : '';
+        if (!chaveBluesoft) { _comprasBiCarregado = true; return; } // loja não vinculada à Bluesoft — nada pra cruzar
+        // Para os 2 gráficos históricos desta tela não precisamos dos
+        // milhares de itens de NF. O BigQuery devolve somente 14 linhas
+        // mensais já com nº de notas distintas + valor somado.
+        try {
+          const callable = global.firebase.app().functions('southamerica-east1').httpsCallable('buscarResumoRecebimentoComprasBigQuery');
+          const resp = await callable({ lojaKey: chaveBluesoft });
+          _comprasBiMensal = (resp && resp.data && Array.isArray(resp.data.mensal)) ? resp.data.mensal : [];
+          _comprasBi = [];
+        } catch (eBq) {
+          console.warn('[Recebimento] BigQuery mensal indisponível:', eBq && eBq.message ? eBq.message : eBq);
+          _comprasBi = [];
+          _comprasBiMensal = [];
+        }
+      } catch (e) {
+        console.warn('[Recebimento] Falha ao ler histórico de compras (BI):', e && e.message ? e.message : e);
+      }
+      _comprasBiCarregado = true;
+    })();
     try {
-      const lojaSnap = await fs().collection('lojas').doc(lojaId).get();
-      const chaveBluesoft = lojaSnap.exists ? String(lojaSnap.data().bluesoft_loja_key || '').trim() : '';
-      if (!chaveBluesoft) { _comprasBiCarregado = true; return; } // loja não vinculada à Bluesoft — nada pra cruzar
-      const todas = typeof global.obterHistoricoComprasRealBi === 'function' ? await global.obterHistoricoComprasRealBi(forcar) : [];
-      // TIPO_OPERACAO 'COMPRA' = fornecedor de verdade — TRANSFERENCIA
-      // (entre lojas) e outros tipos já têm tela própria (Transbordo), mesmo
-      // recorte que o resto desta tela já aplica em cima de `_notas`.
-      _comprasBi = todas.filter(r => String(r.loja_key) === chaveBluesoft && String(r.tipo_operacao || '').toUpperCase() === 'COMPRA');
-    } catch (e) {
-      console.warn('[Recebimento] Falha ao ler histórico de compras (BI):', e && e.message ? e.message : e);
+      await _comprasBiCarregandoPromise;
+    } finally {
+      _comprasBiCarregandoPromise = null;
     }
-    _comprasBiCarregado = true;
   }
-
   // Dashboard/histórico geral é a tela de FORNECEDOR — devolução NUNCA conta
   // nem aparece, ponto (não é recebimento de mercadoria — pedido explícito
   // do usuário: "tirar fora", não é pra virar opção de filtro). Transbordo
@@ -167,22 +216,11 @@
     return [...porFornecedor.entries()].map(([nome, acc]) => ({ nome, entregas: acc.entregas, valor: acc.valor })).sort((a, b) => b.entregas - a.entregas);
   }
 
-  // Sempre resolve (nunca rejeita — erro vira _dashErro, tratado dentro do
-  // próprio _desenhar), então não precisa de __dtBackground nem de deixar
-  // de ser async: o .catch() genérico de _callPage nunca chega a disparar
-  // aqui de qualquer jeito.
-  async function renderRecebimentoDashboard() {
+  // Entrada no setor: somente HTML, filtros e botões. Todas as leituras
+  // ficam exclusivamente em _buscarManual().
+  function renderRecebimentoDashboard() {
     const pagina = document.getElementById('page-recebimento-dashboard');
     if (!pagina) return;
-    _dashCarregando = true;
-    _dashErro = '';
-    _desenhar(); // estrutura + o que já estiver em memória (zerado na 1ª vez, ou da última visita) — nunca espera a rede pra aparecer
-    try {
-      await Promise.all([carregarLogisticaRecebimento(), global._recebimentoOperacaoInternals?.carregar?.(), _carregarComprasBi()]);
-    } catch (e) {
-      _dashErro = e.message || String(e);
-    }
-    _dashCarregando = false;
     _desenhar();
   }
 
@@ -239,17 +277,18 @@
   function _statusCarregamentoDashHtml() {
     if (_dashCarregando) return '<div style="font-size:.76rem;color:var(--muted);margin-bottom:10px">🔄 Atualizando dados...</div>';
     if (_dashErro) return '<div style="font-size:.76rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;gap:10px"><span>⚠️ Não foi possível atualizar: ' + esc(_dashErro) + '</span><button type="button" class="btn btn-ghost btn-sm" data-reb-tentar-de-novo="1">Tentar de novo</button></div>';
+    if (!_buscaManualRealizada) return '<div style="font-size:.76rem;color:var(--muted);margin-bottom:10px">Selecione os filtros e clique em <b>Buscar dados</b>. Nenhuma consulta é executada ao abrir esta tela.</div>';
     return '';
   }
 
   function _desenhar() {
     const pagina = document.getElementById('page-recebimento-dashboard');
     if (!pagina) return;
-    const linhas = _notasFiltradas();
-    const cargasLinhas = _cargasFiltradas();
-    const notasDoPeriodo = _notas.filter(x => !_filtroDashPeriodo || _mesChave(x.processamento || x.dataRecebimento) === _filtroDashPeriodo);
-    const transbordoNoPeriodo = notasDoPeriodo.filter(x => (global.categoriaNotaBluesoft?.(x) || 'FORNECEDOR') === 'TRANSBORDO').length;
-    const devolucoesExcluidas = notasDoPeriodo.filter(x => global.ehNotaDevolucaoBluesoft?.(x)).length;
+    const linhas = _resumoHistoricoDash ? [] : _notasFiltradas();
+    const cargasLinhas = _resumoHistoricoDash ? [] : _cargasFiltradas();
+    const notasDoPeriodo = _resumoHistoricoDash ? [] : _notas.filter(x => !_filtroDashPeriodo || _mesChave(x.processamento || x.dataRecebimento) === _filtroDashPeriodo);
+    const transbordoNoPeriodo = _resumoHistoricoDash ? n(_resumoHistoricoDash.transbordoNoPeriodo) : notasDoPeriodo.filter(x => (global.categoriaNotaBluesoft?.(x) || 'FORNECEDOR') === 'TRANSBORDO').length;
+    const devolucoesExcluidas = _resumoHistoricoDash ? n(_resumoHistoricoDash.devolucoesExcluidas) : notasDoPeriodo.filter(x => global.ehNotaDevolucaoBluesoft?.(x)).length;
 
     const categoriaAtiva = _filtroDashCategoria || 'FORNECEDOR';
     const rotuloCategoria = { FORNECEDOR: 'de fornecedor', TRANSBORDO: 'de transbordo', TODAS: '' }[categoriaAtiva] || '';
@@ -261,20 +300,20 @@
       categoriaAtiva === 'FORNECEDOR' && transbordoNoPeriodo ? transbordoNoPeriodo.toLocaleString('pt-BR') + ' transbordo(s) não contam aqui — veja na aba Transbordo' : '',
       categoriaAtiva === 'TRANSBORDO' ? 'esses mesmos dados também aparecem na aba Transbordo' : '',
     ].filter(Boolean).join(' · ');
-    const totalNotas = linhas.length;
-    const fornecedoresDistintos = new Set(linhas.map(x => x.fornecedorNome).filter(Boolean)).size;
-    const comTempo = linhas.filter(x => x.tempoLancamentoMin != null);
-    const tempoMedioLancamento = comTempo.length ? comTempo.reduce((s, x) => s + x.tempoLancamentoMin, 0) / comTempo.length : null;
-    const comparaveis = linhas.filter(x => x.comparavel);
-    const comDivergencia = linhas.filter(x => x.temDivergencia).length;
+    const totalNotas = _resumoHistoricoDash ? n(_resumoHistoricoDash.totalNotas) : linhas.length;
+    const fornecedoresDistintos = _resumoHistoricoDash ? n(_resumoHistoricoDash.fornecedoresDistintos) : new Set(linhas.map(x => x.fornecedorNome).filter(Boolean)).size;
+    const comTempo = _resumoHistoricoDash ? [] : linhas.filter(x => x.tempoLancamentoMin != null);
+    const tempoMedioLancamento = _resumoHistoricoDash ? (_resumoHistoricoDash.tempoMedioLancamento ?? null) : (comTempo.length ? comTempo.reduce((s, x) => s + x.tempoLancamentoMin, 0) / comTempo.length : null);
+    const comparaveis = _resumoHistoricoDash ? { length: n(_resumoHistoricoDash.comparaveis) } : linhas.filter(x => x.comparavel);
+    const comDivergencia = _resumoHistoricoDash ? n(_resumoHistoricoDash.comDivergencia) : linhas.filter(x => x.temDivergencia).length;
     const pctDivergencia = comparaveis.length ? (comDivergencia / comparaveis.length * 100) : null;
-    const valorTotal = linhas.reduce((s, x) => s + n(x.valor), 0);
-    const temposRecebimento = cargasLinhas.map(_tempoRecebimentoMin).filter(v => v != null);
-    const tempoMedioRecebimento = temposRecebimento.length ? temposRecebimento.reduce((s, v) => s + v, 0) / temposRecebimento.length : null;
-    const temposEspera = cargasLinhas.map(_tempoEsperaMin).filter(v => v != null);
-    const tempoMedioEspera = temposEspera.length ? temposEspera.reduce((s, v) => s + v, 0) / temposEspera.length : null;
-    const temposConferencia = cargasLinhas.map(_tempoConferenciaMin).filter(v => v != null);
-    const tempoMedioConferencia = temposConferencia.length ? temposConferencia.reduce((s, v) => s + v, 0) / temposConferencia.length : null;
+    const valorTotal = _resumoHistoricoDash ? n(_resumoHistoricoDash.valorTotal) : linhas.reduce((s, x) => s + n(x.valor), 0);
+    const temposRecebimento = _resumoHistoricoDash ? [] : cargasLinhas.map(_tempoRecebimentoMin).filter(v => v != null);
+    const tempoMedioRecebimento = _resumoHistoricoDash ? (_resumoHistoricoDash.tempoMedioRecebimento ?? null) : (temposRecebimento.length ? temposRecebimento.reduce((s, v) => s + v, 0) / temposRecebimento.length : null);
+    const temposEspera = _resumoHistoricoDash ? [] : cargasLinhas.map(_tempoEsperaMin).filter(v => v != null);
+    const tempoMedioEspera = _resumoHistoricoDash ? (_resumoHistoricoDash.tempoMedioEspera ?? null) : (temposEspera.length ? temposEspera.reduce((s, v) => s + v, 0) / temposEspera.length : null);
+    const temposConferencia = _resumoHistoricoDash ? [] : cargasLinhas.map(_tempoConferenciaMin).filter(v => v != null);
+    const tempoMedioConferencia = _resumoHistoricoDash ? (_resumoHistoricoDash.tempoMedioConferencia ?? null) : (temposConferencia.length ? temposConferencia.reduce((s, v) => s + v, 0) / temposConferencia.length : null);
 
     // ── Séries por mês (notas: quantidade e valor; cargas: tempo de recebimento) ──
     // Fonte: _comprasBi (relatorios_bi_compras_historico_chunks, atualizado
@@ -286,32 +325,52 @@
     // (a soma dos itens já É o valor da nota).
     const notasChavesPorMes = new Map();
     const valorPorMes = new Map();
-    _comprasBi.forEach(x => {
-      const mes = _mesChave(x.data_recebimento || x.data_emissao);
-      if (!mes) return;
-      const chaveNota = x.loja_key + '|' + x.nf_numero + '|' + String(x.data_emissao || '').slice(0, 10);
-      if (!notasChavesPorMes.has(mes)) notasChavesPorMes.set(mes, new Set());
-      notasChavesPorMes.get(mes).add(chaveNota);
-      valorPorMes.set(mes, (valorPorMes.get(mes) || 0) + n(x.Custo_liquido_total));
-    });
-    const notasPorMes = new Map([...notasChavesPorMes.entries()].map(([mes, set]) => [mes, set.size]));
+    const notasPorMes = new Map();
+    if (_comprasBiMensal.length) {
+      _comprasBiMensal.forEach(x => {
+        const mes = String(x.mes || '');
+        if (!mes) return;
+        notasPorMes.set(mes, n(x.notas));
+        valorPorMes.set(mes, n(x.valor));
+      });
+    } else {
+      _comprasBi.forEach(x => {
+        const mes = _mesChave(x.data_recebimento || x.data_emissao);
+        if (!mes) return;
+        const chaveNota = x.loja_key + '|' + x.nf_numero + '|' + String(x.data_emissao || '').slice(0, 10);
+        if (!notasChavesPorMes.has(mes)) notasChavesPorMes.set(mes, new Set());
+        notasChavesPorMes.get(mes).add(chaveNota);
+        valorPorMes.set(mes, (valorPorMes.get(mes) || 0) + n(x.Custo_liquido_total));
+      });
+      notasChavesPorMes.forEach((set, mes) => notasPorMes.set(mes, set.size));
+    }
     const tempoRecebPorMes = new Map();
     const tempoEsperaPorMes = new Map();
     const tempoConferenciaPorMes = new Map();
-    cargasLinhas.forEach(c => {
-      const mes = _mesChave(c.dataGeracao);
-      if (!mes) return;
-      const t = _tempoRecebimentoMin(c);
-      if (t != null) { const arr = tempoRecebPorMes.get(mes) || []; arr.push(t); tempoRecebPorMes.set(mes, arr); }
-      const te = _tempoEsperaMin(c);
-      if (te != null) { const arr = tempoEsperaPorMes.get(mes) || []; arr.push(te); tempoEsperaPorMes.set(mes, arr); }
-      const tc = _tempoConferenciaMin(c);
-      if (tc != null) { const arr = tempoConferenciaPorMes.get(mes) || []; arr.push(tc); tempoConferenciaPorMes.set(mes, arr); }
-    });
+    if (_resumoHistoricoDash) {
+      (_resumoHistoricoDash.tempoPorMes || []).forEach(x => {
+        const mes = String(x.mes || '');
+        if (!mes) return;
+        if (x.total != null) tempoRecebPorMes.set(mes, [Number(x.total)]);
+        if (x.espera != null) tempoEsperaPorMes.set(mes, [Number(x.espera)]);
+        if (x.conferencia != null) tempoConferenciaPorMes.set(mes, [Number(x.conferencia)]);
+      });
+    } else {
+      cargasLinhas.forEach(c => {
+        const mes = _mesChave(c.dataGeracao);
+        if (!mes) return;
+        const t = _tempoRecebimentoMin(c);
+        if (t != null) { const arr = tempoRecebPorMes.get(mes) || []; arr.push(t); tempoRecebPorMes.set(mes, arr); }
+        const te = _tempoEsperaMin(c);
+        if (te != null) { const arr = tempoEsperaPorMes.get(mes) || []; arr.push(te); tempoEsperaPorMes.set(mes, arr); }
+        const tc = _tempoConferenciaMin(c);
+        if (tc != null) { const arr = tempoConferenciaPorMes.get(mes) || []; arr.push(tc); tempoConferenciaPorMes.set(mes, arr); }
+      });
+    }
     const meses = [...new Set([...notasPorMes.keys(), ...tempoRecebPorMes.keys()])].sort().slice(-14);
     const mediaArr = arr => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
 
-    const rankingFornecedores = _rankingFornecedoresBluesoft(linhas).slice(0, 10);
+    const rankingFornecedores = _resumoHistoricoDash ? (_resumoHistoricoDash.rankingFornecedores || []) : _rankingFornecedoresBluesoft(linhas).slice(0, 10);
 
     pagina.innerHTML = `
       <div style="margin-bottom:10px">
@@ -329,7 +388,7 @@
             <option value="TODAS"${_filtroDashCategoria === 'TODAS' ? ' selected' : ''}>Todas</option>
           </select>
           <input type="month" class="field" id="reb-f-periodo" value="${esc(_filtroDashPeriodo)}" style="max-width:150px" title="Filtrar por período">
-          <button type="button" class="btn btn-primary btn-sm" data-reb-sync>🔎 Buscar recebimento</button>
+          <button type="button" class="btn btn-primary btn-sm" data-reb-sync>🔎 Buscar dados</button>
         </div>
       </div>
       <div id="reb-sync-status" style="font-size:.72rem;color:var(--muted);margin:-8px 0 12px">${esc(_ultimoSync)}</div>
@@ -344,8 +403,8 @@
         <div class="kpi purple"><div class="kpi-val">${fmtMin(tempoMedioConferencia)}</div><div class="kpi-lbl">Tempo médio de conferência (início → fechamento)</div></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
-        <div class="tc" style="padding:12px"><b>📈 Notas recebidas por mês</b><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Compras (BI) — atualiza sozinho a cada 4h, sem precisar clicar em nada</div><div style="height:220px;margin-top:8px"><canvas id="reb-graf-notas"></canvas></div></div>
-        <div class="tc" style="padding:12px"><b>💰 Valor recebido por mês</b><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Custo líquido das compras (BI) — atualiza sozinho a cada 4h</div><div style="height:220px;margin-top:8px"><canvas id="reb-graf-valor"></canvas></div></div>
+        <div class="tc" style="padding:12px"><b>📈 Notas recebidas por mês</b><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Compras consolidadas no BI — exibidas após a busca manual</div><div style="height:220px;margin-top:8px"><canvas id="reb-graf-notas"></canvas></div></div>
+        <div class="tc" style="padding:12px"><b>💰 Valor recebido por mês</b><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Custo líquido consolidado no BI — exibido após a busca manual</div><div style="height:220px;margin-top:8px"><canvas id="reb-graf-valor"></canvas></div></div>
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
         <div class="tc" style="padding:12px"><b>⏱️ Tempo de recebimento por mês (espera + conferência)</b><div style="height:220px;margin-top:8px"><canvas id="reb-graf-tempo"></canvas></div></div>
@@ -381,23 +440,30 @@
     }
   }
 
-  async function _sincronizar() {
+  async function _buscarManual() {
     const statusEl = document.getElementById('reb-sync-status');
-    if (typeof global.sincronizarRecebimentoBluesoft !== 'function') { global.showToast?.('Serviço de busca indisponível.', 'error'); return; }
-    if (statusEl) statusEl.textContent = '⏳ Buscando recebimento...';
+    if (_dashCarregando) return;
+    _dashCarregando = true;
+    _dashErro = '';
+    if (statusEl) statusEl.textContent = '⏳ Buscando dados consolidados...';
+    _desenhar();
     try {
-      const r = await global.sincronizarRecebimentoBluesoft({
-        meses: 12,
-        onProgresso: n2 => { if (statusEl) statusEl.textContent = '⏳ ' + n2.toLocaleString('pt-BR') + ' nota(s) recebida(s)...'; },
-      });
-      _ultimoSync = r.totalNotas.toLocaleString('pt-BR') + ' nota(s) (' + r.criadas + ' nova(s), ' + r.atualizadas + ' atualizada(s)) — ' +
-        r.comDivergencia + ' com divergência — ' + r.totalCargas.toLocaleString('pt-BR') + ' carga(s) — últimos ' + r.meses + ' mês(es) · ' + new Date().toLocaleString('pt-BR');
-      await carregarLogisticaRecebimento(true);
-      _desenhar();
-      global.showToast?.('Recebimento sincronizado: ' + r.criadas + ' nova(s), ' + r.atualizadas + ' atualizada(s).', 'success');
+      _resumoHistoricoDash = null;
+      _resumoHistoricoDashChave = '';
+      await Promise.all([
+        _carregarResumoHistoricoDash(true),
+        global._recebimentoOperacaoInternals?.carregar?.(true),
+        _carregarComprasBi(true),
+      ]);
+      _buscaManualRealizada = true;
+      _ultimoSync = 'Busca concluída no BigQuery/bases materializadas · ' + new Date().toLocaleString('pt-BR');
+      global.showToast?.('Busca de recebimento concluída.', 'success');
     } catch (e) {
-      if (statusEl) statusEl.textContent = 'Erro: ' + (e.message || e);
-      global.showToast?.('Erro ao sincronizar recebimento: ' + (e.message || e), 'error');
+      _dashErro = e.message || String(e);
+      global.showToast?.('Erro ao buscar recebimento: ' + _dashErro, 'error');
+    } finally {
+      _dashCarregando = false;
+      _desenhar();
     }
   }
 
@@ -749,16 +815,27 @@
   };
 
   document.addEventListener('click', function (event) {
-    if (event.target.closest('[data-reb-sync]')) _sincronizar();
-    if (event.target.closest('[data-reb-tentar-de-novo]')) renderRecebimentoDashboard();
+    if (event.target.closest('[data-reb-sync]')) _buscarManual();
+    if (event.target.closest('[data-reb-tentar-de-novo]')) _buscarManual();
     const perfAtualizar = event.target.closest('[data-rebperf-atualizar]');
     if (perfAtualizar) { global._recebimentoOperacaoInternals?.carregar?.(true).then(() => _desenharRecebimentoTempos()).catch(e => global.showToast?.('Erro ao atualizar performance: ' + (e.message || e), 'error')); }
     const kpi = event.target.closest('[data-reb-kpi-status]');
     if (kpi) global.recopAbrirComFiltro?.({ status: kpi.getAttribute('data-reb-kpi-status') || '', hoje: kpi.getAttribute('data-reb-kpi-hoje') === '1' });
   });
   document.addEventListener('change', function (event) {
-    if (event.target.id === 'reb-f-periodo') { _filtroDashPeriodo = event.target.value || ''; _desenhar(); }
-    if (event.target.id === 'reb-f-categoria') { _filtroDashCategoria = event.target.value || ''; _desenhar(); }
+    if (event.target.id === 'reb-f-periodo' || event.target.id === 'reb-f-categoria') {
+      if (event.target.id === 'reb-f-periodo') _filtroDashPeriodo = event.target.value || '';
+      else _filtroDashCategoria = event.target.value || '';
+      _buscaManualRealizada = false;
+      _dashErro = '';
+      _resumoHistoricoDash = null;
+      _resumoHistoricoDashChave = '';
+      _desenhar();
+    }
     if (event.target.id === 'rebperf-mes') { _filtroPerfMes = event.target.value || ''; _desenharRecebimentoTempos(); }
   });
+  global._recebimentoDashboardBuscaInternals = {
+    buscarManual: _buscarManual,
+    buscaManualRealizada: () => _buscaManualRealizada,
+  };
 })(window);

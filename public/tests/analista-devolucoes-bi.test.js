@@ -63,14 +63,14 @@ const usuario = { uid: 'u1', email: 'analista@daterrinha.com' };
 test('classificarMotivoTexto: reconhece as 7 categorias + "sem motivo no texto"', () => {
   const { win } = carregarPagina({});
   const c = win._DTConsultaNotasFiscaisInternals.classificarMotivoTexto;
-  assert.equal(c('Devolução ref NF 123 - TROCA de produto'), 'Troca');
-  assert.equal(c('produto IMPROPRIO para consumo'), 'Impróprio para consumo/venda');
-  assert.equal(c('mercadoria com AVARIA no transporte'), 'Avaria');
-  assert.equal(c('FALTA de mercadoria na carga'), 'Falta na carga/entrega');
-  assert.equal(c('produto ERRADO enviado'), 'Produto errado/divergente');
-  assert.equal(c('VENCIDO na data de entrega'), 'Vencido/vencimento');
-  assert.equal(c('DESACORDO com o pedido de compra'), 'Desacordo com pedido');
-  assert.equal(c(''), '(sem motivo no texto)');
+  assert.equal(c('Devolução ref NF 123 - TROCA de produto'), 'TROCA');
+  assert.equal(c('produto IMPROPRIO para consumo'), 'IMPRÓPRIO PARA CONSUMO/VENDA');
+  assert.equal(c('mercadoria com AVARIA no transporte'), 'AVARIA');
+  assert.equal(c('FALTA de mercadoria na carga'), 'FALTA NA CARGA/ENTREGA');
+  assert.equal(c('produto ERRADO enviado'), 'PRODUTO ERRADO/DIVERGENTE');
+  assert.equal(c('VENCIDO na data de entrega'), 'VENCIDO/VENCIMENTO');
+  assert.equal(c('DESACORDO com o pedido de compra'), 'DESACORDO COM PEDIDO');
+  assert.equal(c(''), '(SEM MOTIVO NO TEXTO)');
 });
 
 test('_motivoDispensaColetor: true só pras 4 categorias fora da exceção (pedido ao vivo)', () => {
@@ -88,7 +88,7 @@ test('_construirRecebimentoAutomatico: motivo preenchido gera payload mesmo sem 
   const payload = win._DTConsultaNotasFiscaisInternals._construirRecebimentoAutomatico({ chave: '1'.repeat(44), numeroNota: '100', destinatario: 'Mercado X', valorTotal: 50, informacoesComplementares: 'FALTA na entrega' }, usuario);
   assert.ok(payload);
   assert.equal(payload.origem, 'AUTOMATICO');
-  assert.equal(payload.motivoNome, 'Falta na carga/entrega');
+  assert.equal(payload.motivoNome, 'FALTA NA CARGA/ENTREGA');
   assert.equal(payload.statusConferenciaOperacional, 'CONFERIDA');
   assert.equal(payload.notas[0].valorTotal, 50, 'valor da nota precisa ir junto (pedido ao vivo)');
 });
@@ -284,5 +284,5 @@ test('tela: tabela mostra uma coluna Motivo com o motivo classificado de cada de
   await new Promise(r => setTimeout(r, 0));
   const html = document.getElementById('page-recebimento-consulta-notas').innerHTML;
   assert.match(html, /<th>Motivo<\/th>/, 'cabeçalho precisa ter a coluna Motivo (pedido ao vivo)');
-  assert.match(html, /Impróprio para consumo\/venda/);
+  assert.match(html, /IMPRÓPRIO PARA CONSUMO\/VENDA/);
 });

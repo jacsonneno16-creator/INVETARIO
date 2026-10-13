@@ -28,11 +28,13 @@ if (typeof window !== 'undefined' && typeof window.addEventListener === 'functio
 }
 
 function abrirTransferenciaMenu() {
+  if(typeof coletorExigirPermissao==='function'&&!coletorExigirPermissao('recebimento-paletes','transferir'))return;
   goScreen('transferencia-menu');
 }
 
 // ── Enviar (origem) ──────────────────────────────────────────────────────
 async function abrirTransferenciaPaletes() {
+  if(typeof coletorExigirPermissao==='function'&&!coletorExigirPermissao('recebimento-paletes','transferir'))return;
   const qtd = document.getElementById('transferencia-quantidade'); if (qtd) qtd.value = '';
   const obs = document.getElementById('transferencia-observacao'); if (obs) obs.value = '';
   const status = document.getElementById('transferencia-status'); if (status) status.textContent = '';
@@ -51,6 +53,7 @@ async function abrirTransferenciaPaletes() {
 }
 
 async function confirmarTransferenciaPaletes() {
+  if(typeof coletorExigirPermissao==='function'&&!coletorExigirPermissao('recebimento-paletes','transferir'))return;
   const status = document.getElementById('transferencia-status');
   const elDestino = document.getElementById('transferencia-destino');
   const elQtd = document.getElementById('transferencia-quantidade');
@@ -98,6 +101,7 @@ async function confirmarTransferenciaPaletes() {
 
 // ── Confirmar recebimento (destino, cross-loja) ─────────────────────────
 async function abrirConfirmarRecebimentoTransferencia() {
+  if(typeof coletorExigirPermissao==='function'&&!coletorExigirPermissao('recebimento-paletes','transferir'))return;
   goScreen('transferencia-confirmar-lista');
   await carregarTransferenciasPendentes();
 }

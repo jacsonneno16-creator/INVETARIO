@@ -12,6 +12,7 @@ const perfCode = fs.readFileSync(path.join(base, '96-recebimento-performance.js'
 function mockColecao(docsIniciais) {
   const registro = new Map((docsIniciais || []).map(d => [d.id, d.data]));
   return {
+    _registro: registro,
     get: async () => ({ size: registro.size, docs: [...registro.entries()].map(([id, data]) => ({ id, data: () => data })) }),
     doc: id => ({ id, get: async () => ({ exists: registro.has(id), data: () => registro.get(id) }) }),
   };
@@ -32,6 +33,11 @@ function loadPerformance(colecoes) {
   const els = new Proxy({}, { get: (_, id) => document.getElementById(id) });
   win.getDTFirestore = () => ({ collection: nome => colecoes?.[nome] || mockColecao([]) });
   win.getDTRawFirestore = () => ({ collection: () => ({ doc: () => ({ collection: () => mockColecao([]) }) }) });
+  win.firebase={ app:()=>({ functions:()=>({ httpsCallable:(nome)=>async()=>{
+    if(nome!=='buscarRecebimentosOperacaoBigQuery') throw new Error('função não mockada: '+nome);
+    const col=colecoes?.recebimentos||mockColecao([]);
+    return {data:{recebimentos:[...(col._registro||new Map()).entries()].map(([id,data])=>({_id:id,_lojaId:'',...data})),incluiTransbordosParceiros:true}};
+  } }) }) };
   win.showToast = () => {};
   win.eval(opCode + '\n' + perfCode);
   const dispararChange = (id, value) => {
@@ -143,6 +149,38 @@ test('calcularPerformance: a comparação de tendência (1ª x 2ª metade) usa o
   assert.equal(k.mediaPrimeiraMetade, 30);
   assert.equal(k.mediaSegundaMetade, 90);
   assert.equal(k.variacaoMetades, 60);
+});
+
+// PEDIDO AO VIVO: "a meta de viagem por motorista de transbordo... o
+// motorista não vai fazer transbordo todo dia, um dia sim um dia não... a
+// meta vai baixar conforme a pessoa trabalha... vai multiplicar se o carro
+// trabalhou, se o carro não trabalhou, não conta" — a meta (geral e por
+// carreta) não pode mais ser tamanho-da-frota × dias-com-QUALQUER-operação;
+// tem que ser a soma real de dias em que CADA carreta especificamente rodou.
+test('calcularPerformance: meta em carreta-dia soma só os dias que cada carreta realmente rodou (não frota × dias com qualquer operação)', () => {
+  const { window } = loadPerformance({});
+  const { calcularPerformance } = window._recebimentoPerformanceInternals;
+  // Carreta A roda em dias alternados (01, 03, 05) — 3 dias ativos.
+  // Carreta B roda só em 02 e 04 — 2 dias ativos.
+  // 5 dias com operação no total (união), mas nenhuma carreta rodou nos 5.
+  const recebimentos = [
+    { tipo: 'TRANSBORDO', status: 'FINALIZADO', horaSaida: '2026-08-01T08:00:00.000Z', horaInicioDescarga: '2026-08-01T09:00:00.000Z', horaFimDescarga: '2026-08-01T09:30:00.000Z', placa: 'AAA1B11' },
+    { tipo: 'TRANSBORDO', status: 'FINALIZADO', horaSaida: '2026-08-02T08:00:00.000Z', horaInicioDescarga: '2026-08-02T09:00:00.000Z', horaFimDescarga: '2026-08-02T09:30:00.000Z', placa: 'BBB2C22' },
+    { tipo: 'TRANSBORDO', status: 'FINALIZADO', horaSaida: '2026-08-03T08:00:00.000Z', horaInicioDescarga: '2026-08-03T09:00:00.000Z', horaFimDescarga: '2026-08-03T09:30:00.000Z', placa: 'AAA1B11' },
+    { tipo: 'TRANSBORDO', status: 'FINALIZADO', horaSaida: '2026-08-04T08:00:00.000Z', horaInicioDescarga: '2026-08-04T09:00:00.000Z', horaFimDescarga: '2026-08-04T09:30:00.000Z', placa: 'BBB2C22' },
+    { tipo: 'TRANSBORDO', status: 'FINALIZADO', horaSaida: '2026-08-05T08:00:00.000Z', horaInicioDescarga: '2026-08-05T09:00:00.000Z', horaFimDescarga: '2026-08-05T09:30:00.000Z', placa: 'AAA1B11' },
+  ];
+  const k = calcularPerformance(recebimentos, [], { inicio: '', fim: '' }, { metaViagensCarretaDia: 5 });
+  assert.equal(k.diasOperacao.length, 5, 'união de dias com QUALQUER operação continua 5 (não é o que muda)');
+  // Errado (antigo): 2 carretas × 5 dias = 10. Certo: 3 dias da A + 2 da B = 5.
+  assert.equal(k.carretasDiaMeta, 5, 'carreta-dia tem que somar só os dias em que cada carreta rodou, não frota × dias-com-operação-de-qualquer-uma');
+  assert.equal(k.metaViagensTotal, 25, '5 viagens/carreta-dia × 5 carreta-dia real = 25 (não 50)');
+  const carretaA = k.porCarreta.find(c => c.placa === 'AAA1B11');
+  const carretaB = k.porCarreta.find(c => c.placa === 'BBB2C22');
+  assert.equal(carretaA.diasAtivos, 3);
+  assert.equal(carretaA.metaViagens, 15, 'meta da carreta A usa OS DIAS DELA (3), não os 5 dias gerais');
+  assert.equal(carretaB.diasAtivos, 2);
+  assert.equal(carretaB.metaViagens, 10, 'meta da carreta B usa OS DIAS DELA (2) — carreta que roda menos tem meta menor, não a mesma da A');
 });
 
 test('renderRecebimentoTempos(): sem filtro escolhido ainda, o padrão é o mês mais recente COM dado (não o calendário atual, que pode estar vazio)', async () => {

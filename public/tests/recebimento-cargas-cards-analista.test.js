@@ -462,68 +462,16 @@ test('clicar "Atualizar" com o card aberto busca os itens de novo — capa corri
   assert.match(html, /CAPA-999/, 'mostra a capa nova, não a antiga cacheada');
 });
 
-test('adicionarNotaFiscalCarga: acrescenta NF+volumes na carga e grava no Firestore, sem mexer em totalVolumes', async () => {
-  const { win, document, raw, toasts } = carregarPagina(LOJAS, {
-    loja1: [{ id: 'c1', data: { nomeCarga: 'Carga 1', status: 'PENDENTE', totalVolumes: 65, notasFiscais: [] } }],
-  }, { 'loja1/c1': [] });
+test('NF manual foi removida: detalhe não oferece número+volume manual e só mantém vínculo NF × produtos', async () => {
+  const { win, document } = carregarPagina(LOJAS, {
+    loja1: [{ id: 'c1', data: { nomeCarga: 'Carga 1', status: 'PENDENTE', notasFiscais: [] } }],
+  }, { 'loja1/c1': [{ id:'i1', data:{codigoProduto:'P1',nomeProduto:'Produto 1',quantidade:10,capa:'C1'} }] });
   await win.renderRecebimentoCargas();
   await win._recebimentoCargasCardsInternals.alternarDetalheCarga('c1');
-
-  document.getElementById('nf-novo-numero-c1').value = '55501';
-  document.getElementById('nf-novo-volumes-c1').value = '12';
-  await win._recebimentoCargasCardsInternals.adicionarNotaFiscalCarga('c1');
-
-  const cargaSalva = raw._registrosPorLoja.loja1.get('c1');
-  assert.equal(cargaSalva.notasFiscais.length, 1);
-  assert.equal(cargaSalva.notasFiscais[0].numero, '55501');
-  assert.equal(cargaSalva.notasFiscais[0].volumes, 12);
-  assert.equal(cargaSalva.totalVolumes, 65, 'totalVolumes (soma das quantidades bipadas) não deve mudar ao adicionar NF');
-  assert.equal(win._recebimentoCargasCardsInternals.getCargas().find(c => c._id === 'c1').notasFiscais.length, 1);
-  const html = document.getElementById('page-recebimento-cargas').innerHTML;
-  assert.match(html, /55501/);
-  assert.ok(toasts.some(t => /adicionada/i.test(t.msg)));
-});
-
-test('adicionarNotaFiscalCarga: recusa NF sem número, sem volume, ou repetida', async () => {
-  const { win, document, raw } = carregarPagina(LOJAS, {
-    loja1: [{ id: 'c1', data: { nomeCarga: 'Carga 1', status: 'PENDENTE', notasFiscais: [{ numero: '111', volumes: 5 }] } }],
-  }, { 'loja1/c1': [] });
-  await win.renderRecebimentoCargas();
-  await win._recebimentoCargasCardsInternals.alternarDetalheCarga('c1');
-
-  document.getElementById('nf-novo-numero-c1').value = '';
-  document.getElementById('nf-novo-volumes-c1').value = '10';
-  await win._recebimentoCargasCardsInternals.adicionarNotaFiscalCarga('c1');
-  assert.match(document.getElementById('nf-status-c1').textContent, /número/i);
-
-  document.getElementById('nf-novo-numero-c1').value = '222';
-  document.getElementById('nf-novo-volumes-c1').value = '0';
-  await win._recebimentoCargasCardsInternals.adicionarNotaFiscalCarga('c1');
-  assert.match(document.getElementById('nf-status-c1').textContent, /volume/i);
-
-  document.getElementById('nf-novo-numero-c1').value = '111';
-  document.getElementById('nf-novo-volumes-c1').value = '8';
-  await win._recebimentoCargasCardsInternals.adicionarNotaFiscalCarga('c1');
-  assert.match(document.getElementById('nf-status-c1').textContent, /já está cadastrada/i);
-
-  assert.equal(raw._registrosPorLoja.loja1.get('c1').notasFiscais.length, 1, 'nenhuma das 3 tentativas inválidas devia ter gravado nada');
-});
-
-test('removerNotaFiscalCarga: remove a NF pelo índice e grava no Firestore', async () => {
-  const { win, document, raw } = carregarPagina(LOJAS, {
-    loja1: [{ id: 'c1', data: { nomeCarga: 'Carga 1', status: 'PENDENTE', notasFiscais: [{ numero: '111', volumes: 5 }, { numero: '222', volumes: 8 }] } }],
-  }, { 'loja1/c1': [] });
-  await win.renderRecebimentoCargas();
-  await win._recebimentoCargasCardsInternals.alternarDetalheCarga('c1');
-
-  await win._recebimentoCargasCardsInternals.removerNotaFiscalCarga('c1', 0);
-
-  const cargaSalva = raw._registrosPorLoja.loja1.get('c1');
-  assert.equal(cargaSalva.notasFiscais.length, 1);
-  assert.equal(cargaSalva.notasFiscais[0].numero, '222');
-  const html = document.getElementById('page-recebimento-cargas').innerHTML;
-  assert.doesNotMatch(html, />111</);
-  assert.match(html, /222/);
+  assert.equal(document.getElementById('nf-novo-numero-c1'), null);
+  assert.equal(document.getElementById('nf-novo-volumes-c1'), null);
+  assert.equal(typeof win._recebimentoCargasCardsInternals.adicionarNotaFiscalCarga, 'undefined');
+  assert.ok(document.getElementById('npv-numero-c1'), 'fluxo de vínculo NF × produtos continua disponível');
 });
 
 // PEDIDO AO VIVO (2026-09-08): "no início a gente sempre faz testes... isso
@@ -763,6 +711,29 @@ test('vincularProdutosANota: quantidade exibida é recalculada ao vivo — bipar
 
   const html = document.getElementById('page-recebimento-cargas').innerHTML;
   assert.match(html, />25</, '20 (já vinculado) + 5 (bipado depois) = 25, sem precisar revincular');
+});
+
+// BUG AO VIVO REAL (2026-09-18): "não fica verde já na hora, só depois de
+// clicar pra expandir e recolher de novo" — vincular só redesenhava a
+// subárvore do detalhe, nunca o badge no cabeçalho do card (fora dela).
+test('vincularProdutosANota: badge do CABEÇALHO do card vira "NF vinculada em todos os produtos" na hora, sem precisar recolher/expandir de novo', async () => {
+  const itensUmProduto = { 'loja1/c1': [{ id: 'i1', data: { capa: 'CAPA-001', codigoProduto: '1001', nomeProduto: 'Tapioca 1kg Fardo', quantidade: 20 } }] };
+  const { win, document } = carregarPagina(LOJAS, {
+    loja1: [{ id: 'c1', data: { nomeCarga: 'Carga 1', status: 'PENDENTE' } }],
+  }, itensUmProduto);
+  await win.renderRecebimentoCargas();
+  await win._recebimentoCargasCardsInternals.alternarDetalheCarga('c1');
+
+  let badge = document.querySelector('[data-carga-badge-status="c1"]');
+  assert.doesNotMatch(badge.outerHTML, /NF vinculada em todos os produtos/, 'antes de vincular, badge ainda não está verde');
+
+  marcarCheckbox(document, 'c1', '1001|Tapioca 1kg Fardo');
+  document.getElementById('npv-numero-c1').value = '123456';
+  await win._recebimentoCargasCardsInternals.vincularProdutosANota('c1');
+
+  badge = document.querySelector('[data-carga-badge-status="c1"]');
+  assert.match(badge.className, /b-green/, 'badge fica verde imediatamente, sem recolher/expandir de novo');
+  assert.match(badge.textContent, /NF vinculada em todos os produtos/);
 });
 
 test('desvincularProdutoDaNota: remove o produto da nota e grava no Firestore; nota some se ficar sem nenhum produto', async () => {

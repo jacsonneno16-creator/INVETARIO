@@ -46,7 +46,49 @@ function loadAmbiente(colecoes) {
       },
     }),
     getDTLojaAtiva: () => 'loja1',
-    firebase: { auth: () => ({ currentUser: { getIdToken: async () => 'idtoken' } }) },
+    firebase: {
+      auth: () => ({ currentUser: { getIdToken: async () => 'idtoken' } }),
+      app: () => ({ functions: () => ({ httpsCallable: nome => async payload => {
+        const docs = nomeColecao => [...((colecoes?.[nomeColecao]?._registro) || new Map()).entries()].map(([id,data]) => ({ _id:id, ...data }));
+        const categoria = x => {
+          const t = String(x.tipoTransferencia || '').toUpperCase();
+          const nat = String(x.natureza || '').toUpperCase();
+          if (t.includes('DEVOL') || nat.includes('DEVOL') || nat.includes('RETORNO')) return 'DEVOLUCAO';
+          if (t.includes('TRANSFERENCIA')) return 'TRANSBORDO';
+          return 'FORNECEDOR';
+        };
+        if (nome === 'buscarRecebimentosOperacaoBigQuery') return { data:{ recebimentos:[], incluiTransbordosParceiros:true } };
+        if (nome === 'buscarResumoRecebimentoComprasBigQuery') return { data:{ mensal:[] } };
+        if (nome === 'buscarResumoHistoricoRecebimentoBigQuery') {
+          const todas = docs('recebimento_notas'); const cat = payload?.categoria || 'FORNECEDOR';
+          const devolucoes = todas.filter(x=>categoria(x)==='DEVOLUCAO');
+          const elegiveis = todas.filter(x=>categoria(x)!=='DEVOLUCAO');
+          const linhas = cat==='TODAS' ? elegiveis : elegiveis.filter(x=>categoria(x)===cat);
+          const cargas = docs('recebimento_cargas');
+          const min=(a,b)=>Math.round((new Date(b)-new Date(a))/60000);
+          const esperas=cargas.filter(c=>c.dataGeracao&&c.dataInicioRecebimento).map(c=>min(c.dataGeracao,c.dataInicioRecebimento));
+          const confs=cargas.filter(c=>c.dataInicioRecebimento&&c.dataFimRecebimento).map(c=>min(c.dataInicioRecebimento,c.dataFimRecebimento));
+          const totais=cargas.filter(c=>c.dataGeracao&&c.dataFimRecebimento).map(c=>min(c.dataGeracao,c.dataFimRecebimento));
+          const media=a=>a.length?a.reduce((s,v)=>s+v,0)/a.length:null;
+          const rank=new Map(); linhas.forEach(x=>{const k=x.fornecedorNome||'—';const a=rank.get(k)||{nome:k,entregas:0,valor:0};a.entregas++;a.valor+=Number(x.valor)||0;rank.set(k,a)});
+          return {data:{resumo:{ totalNotas:linhas.length, fornecedoresDistintos:new Set(linhas.map(x=>x.fornecedorNome).filter(Boolean)).size,
+            valorTotal:linhas.reduce((a,x)=>a+(Number(x.valor)||0),0), comparaveis:linhas.filter(x=>x.comparavel).length,
+            comDivergencia:linhas.filter(x=>x.temDivergencia).length, devolucoesExcluidas:devolucoes.length,
+            transbordoNoPeriodo:elegiveis.filter(x=>categoria(x)==='TRANSBORDO').length,
+            tempoMedioEspera:media(esperas), tempoMedioConferencia:media(confs), tempoMedioRecebimento:media(totais), tempoMedioLancamento:null,
+            tempoPorMes:[], rankingFornecedores:[...rank.values()] }}};
+        }
+        if (nome === 'buscarNotasRecebimentoPaginadasBigQuery') {
+          const todas=docs('recebimento_notas').filter(x=>categoria(x)!=='DEVOLUCAO'); const cat=payload?.categoria||'FORNECEDOR';
+          let linhas=cat==='TODAS'?todas:todas.filter(x=>categoria(x)===cat);
+          if(payload?.natureza) linhas=linhas.filter(x=>x.natureza===payload.natureza);
+          return {data:{linhas,total:linhas.length,opcoes:{fornecedores:[...new Set(todas.map(x=>x.fornecedorNome).filter(Boolean))],status:[],naturezas:[...new Set(todas.map(x=>x.natureza).filter(Boolean))]}}};
+        }
+        if (nome === 'buscarDivergenciasFornecedoresRecebimentoBigQuery') return {data:{fornecedores:[]}};
+        if (nome === 'buscarHistoricoRecebimentosBigQuery') return {data:{recebimentos:[]}};
+        throw new Error('função não mockada: '+nome);
+      } }) })
+    },
     fetch: async () => ({ ok: true, text: async () => JSON.stringify({ currentPage: 0, pageSize: 200, data: [] }) }),
     showToast: () => {}, _currentAnalistaUser: { email: 'analista@daterrinha.com' },
   };
@@ -61,8 +103,9 @@ function loadAmbiente(colecoes) {
   vm.runInContext(dashCode, ctx, { filename: '91-logistica-recebimento.js' });
   vm.runInContext(relCode, ctx, { filename: '94-recebimento-relatorios.js' });
   const dispararChange = (id, value, checked) => changeHandlers.forEach(fn => fn({ target: { id, value, checked, closest: () => null } }));
+  const dispararPortaria = (notaFiscalKey, value) => changeHandlers.forEach(fn => fn({ target: { id:'', value, checked:false, closest: sel => sel.includes('data-recnf-bs-portaria') ? { value, getAttribute: () => String(notaFiscalKey) } : null } }));
   const dispararClick = attrObj => clickHandlers.forEach(fn => fn({ target: { closest: sel => (attrObj && sel.includes(attrObj.attr)) ? { getAttribute: () => attrObj.valor } : null } }));
-  return { window, els: dom._els, dispararChange, dispararClick };
+  return { window, els: dom._els, dispararChange, dispararPortaria, dispararClick };
 }
 
 test('_fmtMesLabel: mês abreviado + ano completo, nunca corta o ano (bug relatado ao vivo: "01/02/2" sem dar pra saber o ano)', () => {
@@ -72,38 +115,30 @@ test('_fmtMesLabel: mês abreviado + ano completo, nunca corta o ano (bug relata
   assert.equal(window._recebimentoInternals.fmtMesLabel(''), '—');
 });
 
-test('Dashboard: carrega cargas junto com notas, e cargasTodas()/tempoRecebimentoMin() ficam disponíveis pro resto do app', async () => {
-  const cargas = mockColecao([
-    { id: 'c1', data: { movimentacaoCargaKey: 1, dataGeracao: '2026-08-01T08:00:00.000Z', dataFimRecebimento: '2026-08-01T09:30:00.000Z' } },
-    { id: 'c2', data: { movimentacaoCargaKey: 2, dataGeracao: '2026-08-02T08:00:00.000Z' } }, // sem fechamento ainda
-  ]);
-  const { window } = loadAmbiente({ recebimento_cargas: cargas, recebimento_notas: mockColecao([]) });
-  await window._recebimentoInternals.carregar(true);
-  const todas = window._recebimentoInternals.cargasTodas();
-  assert.equal(todas.length, 2);
-  assert.equal(window._recebimentoInternals.tempoRecebimentoMin(todas[0]), 90);
-  assert.equal(window._recebimentoInternals.tempoRecebimentoMin(todas[1]), null); // sem os dois horários, não opina
+test('Dashboard: abrir não baixa notas/cargas brutas; somente a busca manual carrega o resumo agregado', async () => {
+  const notas = mockColecao([{id:'n1',data:{numeroNota:'1',fornecedorNome:'Fornecedor A',valor:100}}]);
+  const cargas = mockColecao([{id:'c1',data:{dataGeracao:'2026-08-01T08:00:00Z',dataFimRecebimento:'2026-08-01T09:30:00Z'}}]);
+  const { window, els } = loadAmbiente({recebimento_notas:notas, recebimento_cargas:cargas});
+  await window.renderRecebimentoDashboard();
+  assert.equal(window._recebimentoInternals.notasTodas().length,0);
+  assert.equal(window._recebimentoInternals.cargasTodas().length,0);
+  assert.match(els['page-recebimento-dashboard'].innerHTML,/Buscar dados/);
+  await window._recebimentoDashboardBuscaInternals.buscarManual();
+  assert.match(els['page-recebimento-dashboard'].innerHTML,/1 nota\(s\)/);
+  assert.equal(window._recebimentoInternals.notasTodas().length,0);
+  assert.equal(window._recebimentoInternals.cargasTodas().length,0);
 });
 
-test('Dashboard: quebra o tempo de recebimento em Espera (geração → início) e Conferência (início → fechamento), usando dataInicioRecebimento que a Bluesoft confirma como evento real, não proxy', async () => {
-  const cargas = mockColecao([
-    { id: 'c1', data: { movimentacaoCargaKey: 1, dataGeracao: '2026-08-01T08:00:00.000Z', dataInicioRecebimento: '2026-08-01T08:20:00.000Z', dataFimRecebimento: '2026-08-01T09:30:00.000Z' } },
-    { id: 'c2', data: { movimentacaoCargaKey: 2, dataGeracao: '2026-08-02T08:00:00.000Z', dataFimRecebimento: '2026-08-02T09:00:00.000Z' } }, // sem início — não opina em nenhuma das duas partes
-  ]);
-  const { window, els } = loadAmbiente({ recebimento_cargas: cargas, recebimento_notas: mockColecao([]) });
-  await window._recebimentoInternals.carregar(true);
-  const todas = window._recebimentoInternals.cargasTodas();
-
-  assert.equal(window._recebimentoInternals.tempoEsperaMin(todas[0]), 20); // 08:00 → 08:20
-  assert.equal(window._recebimentoInternals.tempoConferenciaMin(todas[0]), 70); // 08:20 → 09:30
-  assert.equal(window._recebimentoInternals.tempoRecebimentoMin(todas[0]), 90); // total continua batendo (20+70)
-  assert.equal(window._recebimentoInternals.tempoEsperaMin(todas[1]), null);
-  assert.equal(window._recebimentoInternals.tempoConferenciaMin(todas[1]), null);
-
+test('Dashboard: resumo backend preserva Espera, Conferência e Tempo total sem baixar cargas brutas', async () => {
+  const cargas = mockColecao([{id:'c1',data:{dataGeracao:'2026-08-01T08:00:00Z',dataInicioRecebimento:'2026-08-01T08:20:00Z',dataFimRecebimento:'2026-08-01T09:30:00Z'}}]);
+  const {window,els}=loadAmbiente({recebimento_notas:mockColecao([]),recebimento_cargas:cargas});
   await window.renderRecebimentoDashboard();
-  const html = els['page-recebimento-dashboard'].innerHTML;
-  assert.match(html, /Tempo médio de espera/);
-  assert.match(html, /Tempo médio de conferência/);
+  await window._recebimentoDashboardBuscaInternals.buscarManual();
+  const html=els['page-recebimento-dashboard'].innerHTML;
+  assert.match(html,/Tempo médio de espera/); assert.match(html,/20min/);
+  assert.match(html,/Tempo médio de conferência/); assert.match(html,/1\.2h|70min/);
+  assert.match(html,/1\.5h|90min/);
+  assert.equal(window._recebimentoInternals.cargasTodas().length,0);
 });
 
 test('Dashboard: renderiza pelo menos 4 gráficos e o ranking de fornecedores, com filtro de período afetando tudo', async () => {
@@ -115,6 +150,7 @@ test('Dashboard: renderiza pelo menos 4 gráficos e o ranking de fornecedores, c
   const cargas = mockColecao([{ id: 'c1', data: { dataGeracao: '2026-08-01T08:00:00.000Z', dataFimRecebimento: '2026-08-01T09:00:00.000Z' } }]);
   const { window, els } = loadAmbiente({ recebimento_notas: notas, recebimento_cargas: cargas });
   await window.renderRecebimentoDashboard();
+  await window._recebimentoDashboardBuscaInternals.buscarManual();
 
   const html = els['page-recebimento-dashboard'].innerHTML;
   assert.match(html, /3 nota\(s\)/);
@@ -136,7 +172,7 @@ test('94: aba Notas Fiscais agora mostra a tabela crua da Bluesoft (com filtros,
 
 test('94: editar a chegada na portaria grava via o serviço único de 91 e redesenha só a tela de Notas', async () => {
   const notas = mockColecao([{ id: 'n1', data: { notaFiscalKey: 555, numeroNota: '777', dataRecebimento: '2026-08-10T12:00:00.000Z' } }]);
-  const { window } = loadAmbiente({ recebimento_notas: notas, recebimento_cargas: mockColecao([]) });
+  const { window, dispararPortaria } = loadAmbiente({ recebimento_notas: notas, recebimento_cargas: mockColecao([]) });
   await window.renderRecebimentoNotas();
 
   await window._recebimentoRelatoriosInternals.notasBluesoftFiltradas(); // sanity: função exposta
@@ -150,7 +186,8 @@ test('94: editar a chegada na portaria grava via o serviço único de 91 e redes
   // dependendo do fuso de quem roda o teste).
   const chegadaLocal = '2026-08-10T10:00:00';
   const esperadoMin = Math.round((new Date('2026-08-10T12:00:00.000Z') - new Date(chegadaLocal)) / 60000);
-  await window._recebimentoInternals.salvarPortaria(555, chegadaLocal);
+  dispararPortaria(555, chegadaLocal);
+  await new Promise(resolve => setTimeout(resolve, 0));
   const atualizado = notas._registro.get('n1');
   assert.equal(atualizado.chegadaPortaria, new Date(chegadaLocal).toISOString());
   assert.equal(atualizado.tempoPortariaAteRecebimentoMin, esperadoMin);
@@ -163,6 +200,7 @@ test('Dashboard: devolução não conta como recebimento — some dos KPIs/gráf
   ]);
   const { window, els } = loadAmbiente({ recebimento_notas: notas, recebimento_cargas: mockColecao([]) });
   await window.renderRecebimentoDashboard();
+  await window._recebimentoDashboardBuscaInternals.buscarManual();
 
   const html = els['page-recebimento-dashboard'].innerHTML;
   assert.match(html, /1 nota\(s\) de fornecedor neste período/); // só a nota 1 conta
@@ -178,6 +216,7 @@ test('Dashboard: filtro de categoria deixa ver Transbordo/Todas em vez do padrã
   ]);
   const { window, els, dispararChange } = loadAmbiente({ recebimento_notas: notas, recebimento_cargas: mockColecao([]) });
   await window.renderRecebimentoDashboard();
+  await window._recebimentoDashboardBuscaInternals.buscarManual();
 
   let html = els['page-recebimento-dashboard'].innerHTML;
   assert.match(html, /1 nota\(s\) de fornecedor/); // padrão: só fornecedor
@@ -186,6 +225,7 @@ test('Dashboard: filtro de categoria deixa ver Transbordo/Todas em vez do padrã
   assert.doesNotMatch(html, /Devolução</); // não existe opção "Devolução" no select
 
   dispararChange('reb-f-categoria', 'TRANSBORDO');
+  await window._recebimentoDashboardBuscaInternals.buscarManual();
   html = els['page-recebimento-dashboard'].innerHTML;
   assert.match(html, /1 nota\(s\) de transbordo/);
   assert.match(html, /Loja Matriz/);
@@ -193,6 +233,7 @@ test('Dashboard: filtro de categoria deixa ver Transbordo/Todas em vez do padrã
   assert.doesNotMatch(html, /Cliente X/);
 
   dispararChange('reb-f-categoria', 'TODAS');
+  await window._recebimentoDashboardBuscaInternals.buscarManual();
   html = els['page-recebimento-dashboard'].innerHTML;
   assert.match(html, /2 nota\(s\)/); // Fornecedor + Transbordo, devolução nunca entra nem em "Todas"
   assert.match(html, /Fornecedor A/);
@@ -203,6 +244,7 @@ test('Dashboard: filtro de categoria deixa ver Transbordo/Todas em vez do padrã
   // deveria acontecer pela UI, já que a opção nem existe mais), a devolução
   // continua fora — o filtro duro roda antes de olhar a categoria escolhida.
   dispararChange('reb-f-categoria', 'DEVOLUCAO');
+  await window._recebimentoDashboardBuscaInternals.buscarManual();
   html = els['page-recebimento-dashboard'].innerHTML;
   assert.doesNotMatch(html, /Cliente X/);
 });
@@ -234,12 +276,14 @@ test('94: Notas Fiscais escondem devolução E transbordo por padrão (só Forne
   assert.doesNotMatch(html, /Devolução</); // não existe opção "Devolução" no select
 
   dispararChange('recnf-bs-f-categoria', 'TRANSBORDO');
+  await new Promise(resolve => setTimeout(resolve, 0));
   html = els['page-recebimento-notas'].innerHTML;
   assert.match(html, />3<\/td>/);
   assert.match(html, /transbordo<\/span>/); // com o selo de transbordo
   assert.doesNotMatch(html, />2<\/td>/); // devolução continua fora
 
   dispararChange('recnf-bs-f-categoria', 'TODAS');
+  await new Promise(resolve => setTimeout(resolve, 0));
   html = els['page-recebimento-notas'].innerHTML;
   assert.match(html, />1<\/td>/);
   assert.match(html, />3<\/td>/);
@@ -248,6 +292,7 @@ test('94: Notas Fiscais escondem devolução E transbordo por padrão (só Forne
   // defensivo: mesmo forçando o valor "DEVOLUCAO" (a opção nem existe na UI),
   // a devolução continua fora — filtro duro roda antes da categoria escolhida.
   dispararChange('recnf-bs-f-categoria', 'DEVOLUCAO');
+  await new Promise(resolve => setTimeout(resolve, 0));
   html = els['page-recebimento-notas'].innerHTML;
   assert.doesNotMatch(html, />2<\/td>/);
 });
