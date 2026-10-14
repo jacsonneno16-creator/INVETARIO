@@ -803,9 +803,9 @@
         <div style="display:flex;gap:7px;flex-wrap:wrap"><input id="recusas-import-cadastros-arquivo" type="file" accept=".xlsx,.xls,.csv" style="max-width:220px"><button class="btn btn-ghost btn-sm" data-recusa-ler-import-cadastros="1">Ler planilha</button></div>
         ${renderPreviewImportacaoCadastros()}
       ` : `
-        <div style="display:flex;gap:7px"><input class="field" id="recusas-${tipo}-novo" placeholder="${ph}"><button class="btn btn-primary btn-sm" data-recusa-add="${tipo}">Adicionar</button></div>
+        <div style="display:flex;gap:7px"><input class="field" id="recusas-${tipo}-novo" placeholder="${ph}"><button class="btn btn-primary btn-sm" data-recusa-add="${tipo}" data-perm-modulo="recebimento-recusas" data-perm-acao="criar">Adicionar</button></div>
       `}
-    ` : `<div style="display:flex;gap:7px"><input class="field" id="recusas-${tipo}-novo" placeholder="${ph}"><button class="btn btn-primary btn-sm" data-recusa-add="${tipo}">Adicionar</button></div>${campoEmail}</div>`;
+    ` : `<div style="display:flex;gap:7px"><input class="field" id="recusas-${tipo}-novo" placeholder="${ph}"><button class="btn btn-primary btn-sm" data-recusa-add="${tipo}" data-perm-modulo="recebimento-recusas" data-perm-acao="criar">Adicionar</button></div>${campoEmail}</div>`;
     return `<div class="tc" style="padding:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px"><b>${ic} ${title}</b></div>
       <div style="margin-bottom:10px">${blocoAdicionar}</div>

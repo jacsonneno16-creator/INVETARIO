@@ -173,6 +173,29 @@ test('Relatórios: bipar uma chave já recebida (ex.: pelo Coletor) mostra aviso
   assert.doesNotMatch(html, /✓ Confirmada/);
 });
 
+test('Relatórios: "Confirmar" (botão) bipa a chave sem precisar apertar Enter', async () => {
+  const rawFs = { collection: () => ({ doc: () => ({ collection: () => ({ add: async () => ({ id: 'rel-1' }) }) }) }), batch: () => ({ set: () => {}, commit: async () => {} }) };
+  const { win, document } = carregarPagina({
+    rawFs,
+    respostas: {
+      consultarDevolucaoPorChave: { nota: { chave: CHAVE1, numeroNota: '777' } },
+      confirmarRecebimentoDevolucao: { ok: true, jaRecebida: false, recebimento: { confirmadoPor: 'analista@daterrinha.com', confirmadoEm: '2026-10-14T10:00:00.000Z' } },
+    },
+  });
+  await win.renderRecebimentoDevolucoes('page-recebimento-devolucoes');
+  document.querySelector('[data-devol-aba="relatorios"]').click();
+  document.querySelector('[data-devol-rel-iniciar]').click();
+  await new Promise(r => setTimeout(r, 0));
+  document.getElementById('devol-rel-scan').value = CHAVE1;
+  document.querySelector('[data-devol-rel-confirmar-chave]').click();
+  await new Promise(r => setTimeout(r, 0));
+  await new Promise(r => setTimeout(r, 0));
+
+  const html = document.getElementById('page-recebimento-devolucoes').innerHTML;
+  assert.match(html, /✓ Confirmada/);
+  assert.equal(document.getElementById('devol-rel-scan').value, '', 'campo limpa depois de confirmar, igual o Enter já fazia');
+});
+
 test('Relatórios: chave que não existe no catálogo fiscal vira linha de erro, com botão de tentar de novo — não trava as outras', async () => {
   const rawFs = { collection: () => ({ doc: () => ({ collection: () => ({ add: async () => ({ id: 'rel-1' }) }) }) }), batch: () => ({ set: () => {}, commit: async () => {} }) };
   const { win, document } = carregarPagina({
@@ -265,4 +288,61 @@ test('Indicadores: buscar usa listarDevolucoesBigQuery com limite maior que o pa
   const chamada = chamadasCallable.find(c => c.nome === 'listarDevolucoesBigQuery');
   assert.ok(chamada);
   assert.equal(chamada.dados.limite, 5000);
+});
+
+// BUG AO VIVO REAL (2026-10-14): "aperto Tentar de novo e fala que não
+// tenho permissão" — 37-usuarios-permissoes.js tem uma 2ª camada global
+// (document.addEventListener('click',...,true)) que INFERE a ação de um
+// botão pelo texto quando ele não declara data-perm-acao explícito
+// (_inferirAcaoElemento). "Tentar de NOVO" contém a palavra "novo", que
+// bate no regex de 'criar' — 'criar' nem existe no catálogo de
+// recebimento-devolucoes, então a checagem nega pra todo mundo, sempre.
+// Os testes acima (carregarPagina) stubavam win.temPermissao/
+// aplicarPermissoesAnalista, então nunca exercitavam essa 2ª camada de
+// verdade — por isso o bug passou despercebido. Estes testes carregam o
+// 37-usuarios-permissoes.js REAL (não stubado) ao lado de 106-devolucoes.js,
+// simulando um analista com permissões granulares de verdade.
+test('REGRESSÃO: clicar em "Tentar de novo"/"Confirmar"/"Finalizar relatório" não é bloqueado pela 2ª camada global de permissões (ela inferia a ação errado a partir do texto do botão)', async () => {
+  const permCode = fs.readFileSync(path.join(base, '37-usuarios-permissoes.js'), 'utf8');
+  const dom = new JSDOM('<!doctype html><html><body><div class="page on" id="page-recebimento-devolucoes"></div></body></html>', { url: 'http://localhost/', runScripts: 'outside-only' });
+  const win = dom.window; const document = win.document;
+  const toasts = [];
+  win.showToast = (m) => toasts.push(m);
+  win.getDTLojaAtiva = () => 'matriz';
+  win.getDTRawFirestore = () => ({ collection: () => ({ doc: () => ({ collection: () => ({ add: async () => ({ id: 'rel-1' }), doc: () => ({ collection: () => ({ doc: () => ({}) }), update: async () => {} }) }) }) }), batch: () => ({ set: () => {}, commit: async () => {} }) });
+  win.getDTFirestore = win.getDTRawFirestore;
+  win.firebase = {
+    auth: () => ({ currentUser: { uid: 'u1', email: 'analista@daterrinha.com' } }),
+    app: () => ({ functions: () => ({ httpsCallable: (nome) => () => {
+      // Propositalmente "não encontrada" — não importa pra este teste se a
+      // chave existe de verdade, só que clicar nos botões nunca seja
+      // barrado pela 2ª camada de permissões.
+      if (nome === 'consultarDevolucaoPorChave') return Promise.resolve({ data: { nota: null } });
+      return Promise.resolve({ data: {} });
+    } }) }),
+  };
+  // Analista real: tem relatorio_criar e relatorio_finalizar, mas NÃO tem
+  // confirmar/estornar/excluir — exatamente o que a migração grava (ver
+  // scripts/migrar-permissoes-devolucoes-unificadas.js, "sempre false").
+  win.DT_USUARIO_ACESSO_ATUAL = { permissoes: { 'recebimento-devolucoes': { visualizar: true, importar: false, confirmar: false, relatorio_criar: true, relatorio_finalizar: true, exportar: false, estornar: false, excluir: false } } };
+  win.eval(permCode);
+  win.eval(code);
+
+  await win.renderRecebimentoDevolucoes('page-recebimento-devolucoes');
+  document.querySelector('[data-devol-aba="relatorios"]').click();
+  document.querySelector('[data-devol-rel-iniciar]').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  // 1) "Confirmar" (botão do scan) — chave não encontrada na 1ª tentativa, vira erro
+  document.getElementById('devol-rel-scan').value = CHAVE1;
+  document.querySelector('[data-devol-rel-confirmar-chave]').click();
+  await new Promise(r => setTimeout(r, 0));
+  await new Promise(r => setTimeout(r, 0));
+  assert.deepEqual(toasts, [], 'nenhum toast de "sem permissão" ao clicar em Confirmar');
+  assert.match(document.getElementById('page-recebimento-devolucoes').innerHTML, /✗ Erro/);
+
+  // 2) "Tentar de novo" — é o botão que disparou o bug ao vivo
+  document.querySelector('[data-devol-rel-retry]').click();
+  await new Promise(r => setTimeout(r, 0));
+  assert.ok(!toasts.some(t => /possui permiss/.test(t)), 'clicar em "Tentar de novo" não pode ser barrado por permissão');
 });

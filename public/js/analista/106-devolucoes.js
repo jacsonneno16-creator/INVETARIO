@@ -107,7 +107,7 @@
       <div class="tc" style="padding:14px;margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
           <b>📊 Importação do BI</b>
-          ${tem('importar') ? `<button type="button" class="btn btn-primary btn-sm" data-devol-atualizar-bi="1" ${_ctrlSincronizando ? 'disabled' : ''}>${_ctrlSincronizando ? '⏳ Atualizando...' : '📊 Atualizar do BI'}</button>` : ''}
+          ${tem('importar') ? `<button type="button" class="btn btn-primary btn-sm" data-devol-atualizar-bi="1" data-perm-acao="importar" ${_ctrlSincronizando ? 'disabled' : ''}>${_ctrlSincronizando ? '⏳ Atualizando...' : '📊 Atualizar do BI'}</button>` : ''}
         </div>
         ${_ctrlSyncTexto ? `<div style="font-size:.72rem;color:var(--muted);margin-top:8px;padding:8px 10px;border-radius:8px;background:var(--surface-2)">${esc(_ctrlSyncTexto)}</div>` : ''}
       </div>
@@ -126,7 +126,7 @@
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">DE</div><input type="date" class="field" id="devol-f-ini" value="${esc(f.ini)}" style="padding:7px"></div>
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input type="date" class="field" id="devol-f-fim" value="${esc(f.fim)}" style="padding:7px"></div>
         </div>
-        <div style="margin-top:10px"><button type="button" class="btn btn-primary btn-sm" data-devol-consultar="1" ${_ctrlCarregando ? 'disabled' : ''}>${_ctrlCarregando ? '⏳ Consultando...' : '🔍 Consultar'}</button></div>
+        <div style="margin-top:10px"><button type="button" class="btn btn-primary btn-sm" data-devol-consultar="1" data-perm-acao="visualizar" ${_ctrlCarregando ? 'disabled' : ''}>${_ctrlCarregando ? '⏳ Consultando...' : '🔍 Consultar'}</button></div>
       </div>
       ${_ctrlErro ? `<div style="font-size:.76rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;margin-bottom:10px">⚠️ ${esc(_ctrlErro)}</div>` : ''}
       <div class="tc" style="padding:14px"><div style="overflow:auto"><table class="dt-table">
@@ -210,6 +210,17 @@
     } finally { _relProcessando = false; }
   }
 
+  // PEDIDO AO VIVO (2026-10-14): "eu coloco a chave de acesso e não
+  // acontece nada" — só dava pra confirmar apertando Enter (pensado pra
+  // leitor de código de barras, que manda Enter sozinho); quem digita na
+  // mão no navegador não necessariamente sabe disso. Botão "Confirmar"
+  // visível cobre os dois jeitos, sem tirar o Enter.
+  function _relSubmeterScanDoInput() {
+    const input = document.getElementById('devol-rel-scan');
+    if (!input) return;
+    const valor = input.value; input.value = '';
+    _relScan(valor);
+  }
   function _relTentarDeNovo(chave) {
     const linha = _rel.linhas.find(l => l.chave === chave);
     if (!linha) return;
@@ -254,7 +265,7 @@
     const info = REL_ESTADO_INFO[l.estado] || REL_ESTADO_INFO.queued;
     let detalhe = '';
     if (l.estado === 'ja_recebida') detalhe = `Já recebida por ${esc(l.origemAnterior || '—')} em ${l.confirmadoEm ? fmtDataBR(String(l.confirmadoEm).slice(0, 10)) : '—'}`;
-    else if (l.estado === 'erro') detalhe = `<span style="color:#ffb3b3">${esc(l.erroMsg || 'Falha desconhecida')}</span> <button type="button" class="btn btn-ghost btn-sm" data-devol-rel-retry="${esc(l.chave)}">↻ Tentar de novo</button>`;
+    else if (l.estado === 'erro') detalhe = `<span style="color:#ffb3b3">${esc(l.erroMsg || 'Falha desconhecida')}</span> <button type="button" class="btn btn-ghost btn-sm" data-devol-rel-retry="${esc(l.chave)}" data-perm-acao="visualizar">↻ Tentar de novo</button>`;
     return `<tr>
       <td class="mono" style="font-size:.68rem;max-width:180px;word-break:break-all">${esc(l.chave)}</td>
       <td>${esc(l.numeroNota || '—')}</td>
@@ -270,17 +281,20 @@
     if (!_rel) {
       alvo.innerHTML = `
         <div style="color:var(--muted);font-size:.78rem;margin-bottom:10px">Bipe a chave da própria nota de devolução pra confirmar que ela voltou fisicamente — sem duplicar com o que o Coletor já tiver confirmado.</div>
-        ${tem('relatorio_criar') ? '<button type="button" class="btn btn-primary" data-devol-rel-iniciar="1">📋 Montar relatório</button>' : '<div class="empty"><div class="empty-title">Sem permissão pra montar relatório</div></div>'}`;
+        ${tem('relatorio_criar') ? '<button type="button" class="btn btn-primary" data-devol-rel-iniciar="1" data-perm-acao="relatorio_criar">📋 Montar relatório</button>' : '<div class="empty"><div class="empty-title">Sem permissão pra montar relatório</div></div>'}`;
       return;
     }
     const podeFinalizar = _relPodeFinalizar();
     alvo.innerHTML = `
       <div class="tc" style="padding:14px;margin-bottom:12px">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-          <div><b>📋 Relatório em andamento</b><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Bipe (ou digite) a chave de 44 dígitos e tecle Enter.</div></div>
-          ${tem('relatorio_finalizar') ? `<button type="button" class="btn btn-primary btn-sm" data-devol-rel-finalizar="1" ${podeFinalizar ? '' : 'disabled'}>✅ Finalizar relatório</button>` : ''}
+          <div><b>📋 Relatório em andamento</b><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Bipe (ou digite) a chave de 44 dígitos — Enter confirma sozinho (leitor de código de barras), ou clique em Confirmar.</div></div>
+          ${tem('relatorio_finalizar') ? `<button type="button" class="btn btn-primary btn-sm" data-devol-rel-finalizar="1" data-perm-acao="relatorio_finalizar" ${podeFinalizar ? '' : 'disabled'}>✅ Finalizar relatório</button>` : ''}
         </div>
-        <input type="text" class="field" id="devol-rel-scan" placeholder="Chave de acesso (44 dígitos)" style="margin-top:10px;padding:9px;font-size:1rem" autofocus>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input type="text" class="field" id="devol-rel-scan" placeholder="Chave de acesso (44 dígitos)" style="padding:9px;font-size:1rem;flex:1" autofocus>
+          <button type="button" class="btn btn-primary" data-devol-rel-confirmar-chave="1" data-perm-acao="visualizar">Confirmar</button>
+        </div>
       </div>
       <div class="tc" style="padding:14px"><div style="overflow:auto"><table class="dt-table">
         <thead><tr><th>Chave</th><th>NF</th><th>Destinatário</th><th>Status</th><th>Detalhe</th></tr></thead>
@@ -455,7 +469,7 @@
       </table></div>
       <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;font-size:.74rem;color:var(--muted)">
         <span>Mostrando ${de}–${ate} de ${total}</span>
-        <span style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" data-devind-pagina="-1" ${_indPagina <= 0 ? 'disabled' : ''}>‹ Anterior</button><button class="btn btn-ghost btn-sm" data-devind-pagina="1" ${_indPagina >= totalPaginas - 1 ? 'disabled' : ''}>Próxima ›</button></span>
+        <span style="display:flex;gap:6px"><button class="btn btn-ghost btn-sm" data-devind-pagina="-1" data-perm-acao="visualizar" ${_indPagina <= 0 ? 'disabled' : ''}>‹ Anterior</button><button class="btn btn-ghost btn-sm" data-devind-pagina="1" data-perm-acao="visualizar" ${_indPagina >= totalPaginas - 1 ? 'disabled' : ''}>Próxima ›</button></span>
       </div>
     </div>`;
   }
@@ -484,12 +498,12 @@
         <div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap">
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">EMISSÃO — DE</div><input type="date" class="field" id="devind-periodo-ini" value="${esc(_indPeriodoInicio)}" style="padding:7px"></div>
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">ATÉ</div><input type="date" class="field" id="devind-periodo-fim" value="${esc(_indPeriodoFim)}" style="padding:7px"></div>
-          <button class="btn btn-primary btn-sm" data-devind-buscar-periodo="1" style="padding:7px 14px">🔍 Buscar</button>
+          <button class="btn btn-primary btn-sm" data-devind-buscar-periodo="1" data-perm-acao="visualizar" style="padding:7px 14px">🔍 Buscar</button>
           <div style="font-size:.64rem;color:var(--muted);align-self:center">Máx. 2 anos</div>
           <div><div style="font-size:.66rem;color:var(--muted);margin-bottom:3px">ESTADO</div><select class="field" id="devind-filtro-estado" style="padding:7px">
             <option value="" ${_indFiltroEstado === '' ? 'selected' : ''}>Todas</option><option value="PENDENTE" ${_indFiltroEstado === 'PENDENTE' ? 'selected' : ''}>Aguardando retorno</option><option value="RECEBIDA" ${_indFiltroEstado === 'RECEBIDA' ? 'selected' : ''}>Já retornou</option>
           </select></div>
-          <button class="btn btn-ghost" data-devind-atualizar="1">↻ Atualizar</button>
+          <button class="btn btn-ghost" data-devind-atualizar="1" data-perm-acao="visualizar">↻ Atualizar</button>
         </div>
       </div>
       ${_indCarregando ? '<div style="font-size:.76rem;color:var(--muted);padding:6px 0">⏳ Atualizando...</div>' : ''}
@@ -501,7 +515,7 @@
           <div class="tc-title" style="margin:0">🔥 Motivo por mês</div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <input type="search" class="field" id="devind-busca" placeholder="Buscar loja ou rede…" value="${esc(_indBusca)}" style="padding:6px 8px;font-size:.78rem;min-width:200px">
-            ${temFiltro ? '<button class="btn btn-ghost btn-sm" data-devind-limpar-filtros="1">✕ limpar filtros</button>' : ''}
+            ${temFiltro ? '<button class="btn btn-ghost btn-sm" data-devind-limpar-filtros="1" data-perm-acao="visualizar">✕ limpar filtros</button>' : ''}
           </div>
         </div>
         ${_indMatrizHtml()}
@@ -524,7 +538,7 @@
   // ───────────────────────── SHELL / ABAS ─────────────────────────
   function _tabBtn(id, label) {
     const ativo = _aba === id;
-    return `<button type="button" class="btn ${ativo ? 'btn-primary' : 'btn-ghost'} btn-sm" data-devol-aba="${id}" style="border-radius:8px 8px 0 0">${label}</button>`;
+    return `<button type="button" class="btn ${ativo ? 'btn-primary' : 'btn-ghost'} btn-sm" data-devol-aba="${id}" data-perm-acao="visualizar" style="border-radius:8px 8px 0 0">${label}</button>`;
   }
   function _desenharAbaAtiva() {
     if (_aba === 'controle') desenharControle();
@@ -557,6 +571,7 @@
     if (e.target.closest('[data-devol-atualizar-bi]')) { _ctrlAtualizarBi(); return; }
     if (e.target.closest('[data-devol-rel-iniciar]')) { _relIniciar(); return; }
     if (e.target.closest('[data-devol-rel-finalizar]')) { _relFinalizar(); return; }
+    if (e.target.closest('[data-devol-rel-confirmar-chave]')) { _relSubmeterScanDoInput(); return; }
     const retry = e.target.closest('[data-devol-rel-retry]');
     if (retry) { _relTentarDeNovo(retry.getAttribute('data-devol-rel-retry')); return; }
 
@@ -575,8 +590,7 @@
   document.addEventListener('keydown', e => {
     if (e.target && e.target.id === 'devol-rel-scan' && e.key === 'Enter') {
       e.preventDefault();
-      const valor = e.target.value; e.target.value = '';
-      _relScan(valor);
+      _relSubmeterScanDoInput();
       return;
     }
     if (e.key !== 'Enter' && e.key !== ' ') return;
