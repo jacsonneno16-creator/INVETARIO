@@ -64,7 +64,7 @@
       "js/analista/94-recebimento-relatorios.js?v=20260918-agenda-coluna-quantidade",
       "js/analista/95-recebimento-transbordo.js?v=20260918-fix-salvar-primeira-vez",
       "js/analista/96-recebimento-performance.js?v=20260928-meta-carreta-dia-real",
-      "js/analista/97-recebimento-recusas.js?v=20261014-fix-permissao-adicionar-cadastro",
+      "js/analista/97-recebimento-recusas.js?v=20261014-override-bigquery-atraso",
       "js/analista/98-recebimento-retornos-indicadores.js?v=20260913-resumo-servidor",
       "js/analista/106-devolucoes.js?v=20261014-botao-confirmar-chave",
       "js/analista/99-recebimento-retornos-status.js?v=20260922-confirmado-ausente",

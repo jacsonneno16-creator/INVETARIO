@@ -115,6 +115,85 @@
   // sessão", te mostra o convite pra escolher o período em vez da tabela.
   let _recusasPeriodoBuscado = '';
   let _recusasCarregandoPeriodo = false;
+  // BUG AO VIVO REAL (2026-10-14): "o analista muda o motivo de 5 notas,
+  // recarrega na hora e elas voltam pro motivo antigo" — esta tela não lê
+  // direto do Firestore, lê de uma Cloud Function que consulta o BigQuery
+  // (_buscarRecusasPeriodo → buscarIndicadoresRetornosBigQuery), que é um
+  // ESPELHO do Firestore com alguns segundos de atraso de propagação (a
+  // extensão firestore-bigquery-export). alterarMotivo()/alterarTratamento()
+  // gravam no Firestore corretamente e na hora — o problema é só que, se a
+  // tela busca de novo (F5 ou "Buscar") ANTES do espelho atualizar, ela
+  // mostra o valor antigo por cima da edição real. Guarda cada edição
+  // recém-feita em localStorage com o MESMO timestamp gravado no Firestore
+  // (motivoAlteradoEm/tratamentoDefinidoEm) e reaplica por cima do que o
+  // BigQuery devolver, só enquanto o timestamp do BigQuery ainda for mais
+  // antigo que o da edição — assim que o espelho alcança a edição, o
+  // override se apaga sozinho (nunca mascara uma mudança de verdade feita
+  // por outra pessoa depois).
+  const LS_RECUSAS_OVERRIDES = 'dt_recusas_edicoes_pendentes';
+  function _lsChaveOverrides() {
+    const lojaId = (typeof global.getDTLojaAtiva === 'function' && global.getDTLojaAtiva()) || 'sem_loja';
+    return LS_RECUSAS_OVERRIDES + '_' + lojaId;
+  }
+  function _lerOverridesPendentes() {
+    try {
+      const txt = global.localStorage && global.localStorage.getItem(_lsChaveOverrides());
+      const dados = txt ? JSON.parse(txt) : {};
+      return dados && typeof dados === 'object' ? dados : {};
+    } catch (e) { return {}; }
+  }
+  function _salvarOverridesPendentes(mapa) {
+    try { global.localStorage && global.localStorage.setItem(_lsChaveOverrides(), JSON.stringify(mapa)); } catch (e) { /* ignora — pior caso, a edição só fica visível até o próximo F5 */ }
+  }
+  function _registrarOverrideMotivo(recusaId, payload) {
+    const mapa = _lerOverridesPendentes();
+    mapa[recusaId] = Object.assign({}, mapa[recusaId], { motivo: { motivoId: payload.motivoId, motivoNome: payload.motivoNome, motivoAlteradoEm: payload.motivoAlteradoEm } });
+    _salvarOverridesPendentes(mapa);
+  }
+  function _registrarOverrideTratamento(recusaId, notaChave, patchNota) {
+    const mapa = _lerOverridesPendentes();
+    const atual = mapa[recusaId] || {};
+    const tratamentos = Object.assign({}, atual.tratamentos);
+    tratamentos[notaChave || ''] = patchNota;
+    mapa[recusaId] = Object.assign({}, atual, { tratamentos });
+    _salvarOverridesPendentes(mapa);
+  }
+  // Aplica os overrides ainda pendentes por cima dos docs recém-buscados do
+  // BigQuery — e já aproveita pra apagar (podar) qualquer override cujo
+  // timestamp o espelho já alcançou, pra esse localStorage nunca crescer
+  // pra sempre.
+  function _aplicarOverridesPendentes(docs) {
+    const mapa = _lerOverridesPendentes();
+    if (!Object.keys(mapa).length) return docs;
+    let mudou = false;
+    const resultado = docs.map(r => {
+      const ov = mapa[r._id];
+      if (!ov) return r;
+      let doc = r;
+      if (ov.motivo) {
+        if (String(ov.motivo.motivoAlteradoEm || '') > String(r.motivoAlteradoEm || '')) {
+          doc = Object.assign({}, doc, { motivoId: ov.motivo.motivoId, motivoNome: ov.motivo.motivoNome, motivoAlteradoEm: ov.motivo.motivoAlteradoEm });
+        } else { delete ov.motivo; mudou = true; }
+      }
+      if (ov.tratamentos && Object.keys(ov.tratamentos).length) {
+        const notas = Array.isArray(doc.notas) && doc.notas.length ? doc.notas.slice() : [{}];
+        Object.keys(ov.tratamentos).forEach(notaChave => {
+          const patch = ov.tratamentos[notaChave];
+          const idx = notas.findIndex(n => (n.chave || '') === notaChave);
+          const alvo = idx === -1 ? 0 : idx;
+          const notaAtual = notas[alvo] || {};
+          if (String(patch.tratamentoDefinidoEm || '') > String(notaAtual.tratamentoDefinidoEm || '')) {
+            notas[alvo] = Object.assign({}, notaAtual, patch);
+          } else { delete ov.tratamentos[notaChave]; mudou = true; }
+        });
+        doc = Object.assign({}, doc, { notas });
+      }
+      if (!ov.motivo && (!ov.tratamentos || !Object.keys(ov.tratamentos).length)) { delete mapa[r._id]; mudou = true; }
+      return doc;
+    });
+    if (mudou) _salvarOverridesPendentes(mapa);
+    return resultado;
+  }
   let _recusaAtribuindoId = '';
   let _recusaDetalheId = '';
   // Diagnóstico persistente do último "Buscar do BI" — mesma ideia dos
@@ -664,7 +743,8 @@
       _notas = [...new Map([..._notas, ...resumoPorChave.values()].map(n => [String(n.chave || ''), n])).values()];
       global.DT_NOTAS_VENDA_CACHE = global.DT_NOTAS_VENDA_CACHE || { porChave: new Map(), completa: false };
       resumoPorChave.forEach((nota, chave) => global.DT_NOTAS_VENDA_CACHE.porChave.set(chave, nota));
-      _recusas = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
+      const docsFiltrados = docs.filter(x => x.origem !== 'AUTOMATICO' && x.motivoAutomaticoTexto == null);
+      _recusas = _aplicarOverridesPendentes(docsFiltrados).sort((a, b) => String(b.criadoEm || '').localeCompare(String(a.criadoEm || '')));
       _recusasPeriodoBuscado = chave;
     })();
     try {
@@ -1653,6 +1733,7 @@
       await fs().collection(COL_RECUSAS).doc(recusaId).update({ notas: notasAtualizadas, statusFisico });
       r.notas = notasAtualizadas;
       r.statusFisico = statusFisico;
+      _registrarOverrideTratamento(recusaId, notaChave, patchNota);
       redesenharTabela();
       _marcarRetornosDesatualizados();
       global.showToast?.('Tratamento atualizado.', 'success');
@@ -1669,6 +1750,8 @@
     try {
       await fs().collection(COL_RECUSAS).doc(recusaId).update(payload);
       Object.assign(r,payload);
+      _registrarOverrideMotivo(recusaId, payload);
+      redesenharTabela();
       _marcarRetornosDesatualizados();
       global.showToast?.('Motivo atualizado.', 'success');
     } catch(e){ redesenharTabela(); global.showToast?.('Erro ao salvar motivo: '+(e.message||e),'error'); }
