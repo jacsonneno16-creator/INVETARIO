@@ -120,8 +120,51 @@
     S = { etapa: 'bipar', confirmadas: [], pendenteNovo: '', carregando: false, resumo: null };
   }
 
+  // PEDIDO AO VIVO (2026-10-14): "se ele tiver fazendo e sair da página ou
+  // do aplicativo ele perde o progresso" — S vivia só em memória; sair da
+  // tela (ou o app fechar/recarregar) zerava tudo que já tinha sido
+  // confirmado. Mesmo padrão de rascunho em localStorage já usado em
+  // 106-devolucoes.js (Analista): salva a cada confirmação, antes de
+  // qualquer coisa que possa interromper a sessão, e só é apagado quando o
+  // inventário é FINALIZADO de verdade — "Voltar sem finalizar" é
+  // literalmente isso, sem finalizar, então o rascunho continua ali pra
+  // retomar depois.
+  function _lsChave() {
+    const lojaId = (typeof global.getDTLojaAtiva === 'function' && global.getDTLojaAtiva()) || 'sem_loja';
+    return 'dt_patio_inventario_rascunho_' + lojaId;
+  }
+  function _salvarRascunho() {
+    try {
+      global.localStorage.setItem(_lsChave(), JSON.stringify({ etapa: S.etapa, confirmadas: S.confirmadas, pendenteNovo: S.pendenteNovo }));
+    } catch (e) { /* localStorage indisponível — pior caso volta a perder progresso, sem travar o fluxo */ }
+  }
+  function _carregarRascunho() {
+    try {
+      const txt = global.localStorage.getItem(_lsChave());
+      if (!txt) return null;
+      const dados = JSON.parse(txt);
+      if (dados && Array.isArray(dados.confirmadas)) return dados;
+    } catch (e) { /* rascunho corrompido — ignora e começa do zero */ }
+    return null;
+  }
+  function _limparRascunho() {
+    try { global.localStorage.removeItem(_lsChave()); } catch (e) { /* ignora */ }
+  }
+
   function abrirInventarioPatio() {
-    reset();
+    const rascunho = _carregarRascunho();
+    if (rascunho && rascunho.confirmadas.length) {
+      S = {
+        etapa: (rascunho.etapa === 'novo') ? 'novo' : 'bipar',
+        confirmadas: rascunho.confirmadas,
+        pendenteNovo: rascunho.pendenteNovo || '',
+        carregando: false,
+        resumo: null,
+      };
+      toast('Retomando conferência anterior — ' + rascunho.confirmadas.length + ' nota(s) já confirmada(s).', 'warning');
+    } else {
+      reset();
+    }
     if (global.goScreen) global.goScreen('recebimento-patio-inventario');
     render();
     focarNumero();
@@ -148,6 +191,7 @@
       const achado = await _buscarRecusaPorNumero(numero);
       if (achado && estaNoPatio(achado.doc, achado.nota)) {
         S.confirmadas.push(numero);
+        _salvarRascunho();
         toast('Nota ' + numero + ' confirmada (' + S.confirmadas.length + ').', 'success');
         if (input) input.value = '';
         S.carregando = false;
@@ -160,6 +204,7 @@
       // cadastram um novo evento de presença.
       S.pendenteNovo = numero;
       S.etapa = 'novo';
+      _salvarRascunho();
       render();
     } catch (e) {
       toast('Erro ao consultar a nota: ' + (e.message || e), 'error');
@@ -204,6 +249,7 @@
       S.confirmadas.push(numero);
       S.pendenteNovo = '';
       S.etapa = 'bipar';
+      _salvarRascunho();
       toast('Nota ' + numero + ' cadastrada e confirmada.', 'success');
       render();
       focarNumero();
@@ -215,6 +261,7 @@
 
   function removerConfirmada(numero) {
     S.confirmadas = S.confirmadas.filter(function (n) { return n !== numero; });
+    _salvarRascunho();
     render();
   }
 
@@ -268,7 +315,7 @@
   // — nunca troca statusFisico sem recalcular a partir das notas[] já
   // atualizadas).
   async function confirmarFinalizacao() {
-    if (!S.resumo || !S.resumo.aEncerrar.length) { S.etapa = 'concluido'; render(); return; }
+    if (!S.resumo || !S.resumo.aEncerrar.length) { _limparRascunho(); S.etapa = 'concluido'; render(); return; }
     const btn = document.getElementById('patio-finalizar-confirmar-btn');
     if (btn) btn.disabled = true;
     const u = usuario();
@@ -338,6 +385,7 @@
           qtdTotalEncerrar: S.resumo.qtdTotalEncerrar,
         });
       } catch (eHist) { /* histórico é best-effort — ver comentário acima */ }
+      _limparRascunho();
       S.etapa = 'concluido';
       render();
       toast('Inventário finalizado.', 'success');
@@ -414,5 +462,5 @@
   }
 
   global.abrirInventarioPatio = abrirInventarioPatio;
-  global._patioInventarioInternals = { estaNoPatio: estaNoPatio, recalcularStatusFisico: recalcularStatusFisico, consultarNumero: consultarNumero, confirmarNovoLancamento: confirmarNovoLancamento, irParaResumo: irParaResumo, confirmarFinalizacao: confirmarFinalizacao, getEstado: function () { return S; } };
+  global._patioInventarioInternals = { estaNoPatio: estaNoPatio, recalcularStatusFisico: recalcularStatusFisico, consultarNumero: consultarNumero, confirmarNovoLancamento: confirmarNovoLancamento, irParaResumo: irParaResumo, confirmarFinalizacao: confirmarFinalizacao, getEstado: function () { return S; }, _lsChave: _lsChave, _carregarRascunho: _carregarRascunho, _limparRascunho: _limparRascunho };
 })(window);

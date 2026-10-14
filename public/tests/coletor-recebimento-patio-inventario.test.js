@@ -335,3 +335,86 @@ test('confirmarFinalizacao: falha ao gravar o snapshot do histórico não impede
   assert.equal(win._patioInventarioInternals.getEstado().etapa, 'concluido', 'mesmo com o histórico falhando, o inventário termina normalmente');
   assert.equal(recusas._registro.get('docRecusa').statusFisico, 'SAIU', 'o encerramento das notas já gravado não é desfeito');
 });
+
+// PEDIDO AO VIVO (2026-10-14): "se ele tiver fazendo e sair da página ou do
+// aplicativo ele perde o progresso" — S vivia só em memória; sair da tela
+// (ou o app fechar/recarregar) zerava tudo que já tinha sido confirmado.
+// Estes testes cobrem o rascunho novo em localStorage: salva a cada
+// confirmação, sobrevive a reabrir a tela (nova "sessão" de abrirInventarioPatio),
+// e só é apagado quando o inventário é FINALIZADO de verdade.
+test('progresso sobrevive a sair e reabrir a tela: confirmar 1 nota, "reabrir" (nova chamada de abrirInventarioPatio) restaura a lista', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', statusFisico: 'NO_PATIO', numerosNotas: ['999'], notas: [{ numeroNota: '999', tratamento: '' }] } },
+  ]);
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  document.getElementById('patio-numero-input').value = '999';
+  document.getElementById('patio-consultar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(win._patioInventarioInternals.getEstado().confirmadas.length, 1);
+
+  // Simula sair da página/app e voltar: chama abrirInventarioPatio() de
+  // novo, igual o botão de menu faria numa sessão nova do mesmo app aberto.
+  let avisoMostrado = '';
+  win.toast = m => { avisoMostrado = m; };
+  await win.abrirInventarioPatio();
+
+  assert.equal(win._patioInventarioInternals.getEstado().confirmadas.length, 1, 'não perdeu a nota já confirmada');
+  assert.deepEqual(Array.from(win._patioInventarioInternals.getEstado().confirmadas), ['999']);
+  assert.match(avisoMostrado, /Retomando conferência anterior/);
+  assert.match(document.getElementById('patio-inventario-host').innerHTML, /CONFIRMADAS: 1/);
+});
+
+test('rascunho persiste mesmo na etapa "novo" (nota pendente de Box) e restaura nessa mesma etapa', async () => {
+  const recusas = mockColecao([]);
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  document.getElementById('patio-numero-input').value = '42';
+  document.getElementById('patio-consultar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+  assert.equal(win._patioInventarioInternals.getEstado().etapa, 'novo');
+
+  const rascunho = win._patioInventarioInternals._carregarRascunho();
+  assert.equal(rascunho.etapa, 'novo');
+  assert.equal(rascunho.pendenteNovo, '42');
+});
+
+test('rascunho é apagado quando o inventário é finalizado de verdade — reabrir depois começa do zero', async () => {
+  const recusas = mockColecao(docsIniciais());
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  await confirmarEIrProResumo(win, document);
+  await win._patioInventarioInternals.confirmarFinalizacao();
+
+  assert.equal(win._patioInventarioInternals._carregarRascunho(), null);
+  await win.abrirInventarioPatio();
+  assert.deepEqual(Array.from(win._patioInventarioInternals.getEstado().confirmadas), []);
+  assert.equal(win._patioInventarioInternals.getEstado().etapa, 'bipar');
+});
+
+test('"Voltar sem finalizar" (sair sem clicar Finalizar) preserva o rascunho — não é um cancelamento', async () => {
+  const recusas = mockColecao([
+    { id: 'r1', data: { origem: 'COLETOR', statusFisico: 'NO_PATIO', numerosNotas: ['7'], notas: [{ numeroNota: '7', tratamento: '' }] } },
+  ]);
+  const { win, document } = carregarColetor({ recebimento_recusas: recusas });
+  await win.abrirInventarioPatio();
+  document.getElementById('patio-numero-input').value = '7';
+  document.getElementById('patio-consultar-btn').click();
+  await new Promise(r => setTimeout(r, 0));
+
+  document.querySelector('[data-patio-voltar]').click(); // "← Voltar sem finalizar"
+
+  const rascunho = win._patioInventarioInternals._carregarRascunho();
+  assert.ok(rascunho, 'o rascunho continua salvo — "sem finalizar" não é um descarte');
+  assert.deepEqual(Array.from(rascunho.confirmadas), ['7']);
+});
+
+test('sem rascunho salvo, abrirInventarioPatio() começa do zero normalmente (sem aviso de retomada)', async () => {
+  const { win, document } = carregarColetor({ recebimento_recusas: mockColecao([]) });
+  let avisoMostrado = '';
+  win.toast = m => { avisoMostrado = m; };
+  await win.abrirInventarioPatio();
+  assert.deepEqual(Array.from(win._patioInventarioInternals.getEstado().confirmadas), []);
+  assert.equal(avisoMostrado, '');
+  assert.match(document.getElementById('patio-inventario-host').innerHTML, /Nenhuma nota confirmada ainda/);
+});
